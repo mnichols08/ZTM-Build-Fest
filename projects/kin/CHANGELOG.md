@@ -2,6 +2,29 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
+## [0.1.4]
+
+### Fixed
+
+- Preserved the original IndexedDB write failure cause so quota errors receive actionable retry guidance without losing the draft or changing the event log.
+
+### Improved
+
+- Refreshed same-origin peer tabs from the canonical IndexedDB event stream through Rust replay using content-free BroadcastChannel invalidations.
+- Added cross-platform build and version-consistency tooling, an explicit WASM-focused Rust toolchain pin, and a same-origin Content Security Policy.
+- Expanded malformed protocol, deterministic replay, storage retry, cross-tab, and accessibility regression coverage.
+
+### Tests
+
+- 32 Rust tests and 3 built-in Node bridge tests passed.
+- `cargo fmt --check`, Clippy with warnings denied, `wasm32-unknown-unknown` release build, both build scripts, and the version-consistency check passed.
+- Browser checks passed for add/complete/reload, keyboard submission, Unicode and inert rendering, malformed-row preservation, quota abort/retry, two-tab refresh, 320px layout, and same-origin requests.
+
+### Validation
+
+- Tested on Windows 10 x64 with Rust 1.93.0, Node 22.12.0, and headless Edge 154.0.4258.48 through local CDP; CSP loaded with no CSP violations. An automatic `/favicon.ico` request returned 404.
+- Forced-colors, increased text spacing, and 320px reflow were checked in the integrated VS Code browser (Code 1.139.1, Electron 43.6.0, Chromium 150). Native 200% browser zoom, Firefox, Safari, standalone Chrome, NVDA, and VoiceOver remain unverified.
+
 ## [0.1.3]
 
 ### Audited
@@ -64,12 +87,13 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 
 ### Added
 
-- Corrected the preserved bug-report template's prototype status and updated the implementation file map without removing v0.0.10 community guidance.
+- Established a project-scoped changelog and documented how release entries are maintained.
+
+### Changed
 
 - Updated Kin's current release references through `v0.0.12`; `v0.0.9` remains the specification freeze and `v0.1.0` remains the first implementation milestone.
 
-- All 25 Rust tests and 3 built-in Node bridge tests passed; formatting, Clippy, the `wasm32-unknown-unknown` build, and the browser reload/persistence checks passed.
-- Browser checks covered malformed-row preservation, Unicode roundtrip, keyboard/draft recovery, 320px/360px/640px reflow, and same-origin-only requests.
+## [0.0.11]
 
 ### Added
 
