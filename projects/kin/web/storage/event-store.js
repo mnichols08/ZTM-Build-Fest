@@ -319,7 +319,7 @@ function transactionResult(transaction, schedule) {
 
 function abortWith(transaction, error) {
   try {
-    transaction.__kinFailure = error;
+    transaction.__kinFailure ??= error;
     transaction.abort();
   } catch {
     transaction.__kinFailure ??= error;
@@ -327,10 +327,11 @@ function abortWith(transaction, error) {
 }
 
 function storageError(cause) {
-  const error = new EventStoreError(
-    "Kin could not safely access local household storage. Your saved information was not intentionally deleted.",
-    cause,
-  );
+  const message =
+    cause?.name === "QuotaExceededError"
+      ? "Kin couldn't save because local browser storage is full. Free some space, then try again. Your saved information was not deleted."
+      : "Kin could not safely access local household storage. Your saved information was not intentionally deleted.";
+  const error = new EventStoreError(message, cause);
   return error;
 }
 

@@ -18,8 +18,13 @@ class KinApp extends HTMLElement {
     this.busy = false;
     this.starting = null;
     this.initialized = false;
+    this.channel = null;
+    this.refreshing = false;
+    this.pendingRefresh = false;
+    this.retryAction = null;
     this.onAddItem = (event) => this.handleAddItem(event);
     this.onCompleteItem = (event) => this.handleCompleteItem(event);
+    this.onPeerMessage = (event) => this.handlePeerMessage(event);
   }
 
   connectedCallback() {
@@ -29,6 +34,7 @@ class KinApp extends HTMLElement {
     }
     this.addEventListener("kin:add-item", this.onAddItem);
     this.addEventListener("kin:complete-item", this.onCompleteItem);
+    this.openPeerChannel();
     this.initialize();
   }
 
@@ -71,12 +77,13 @@ class KinApp extends HTMLElement {
     feedback.append(this.status, this.alert, this.retryButton);
 
     this.replaceChildren(header, main, feedback);
-    this.retryButton.addEventListener("click", () => this.initialize());
+    this.retryButton.addEventListener("click", () => this.retryAction?.());
   }
 
   disconnectedCallback() {
     this.removeEventListener("kin:add-item", this.onAddItem);
     this.removeEventListener("kin:complete-item", this.onCompleteItem);
+    this.closePeerChannel();
   }
 
   async initialize() {
@@ -100,6 +107,7 @@ class KinApp extends HTMLElement {
       this.store?.close();
       this.engine = await loadKinEngine();
       this.store = await EventStore.open();
+      this.openPeerChannel();
       const events = await this.store.loadEvents();
       this.state = this.engine.applyEvents(
         events.map((event) => event.encoded_event),
@@ -110,13 +118,14 @@ class KinApp extends HTMLElement {
     } catch (error) {
       this.store?.close();
       this.store = null;
-      this.showAlert(error.userMessage ?? START_ERROR, true);
+      this.showAlert(error.userMessage ?? START_ERROR, () => this.initialize());
       this.setStatus("");
     } finally {
       this.setBusy(false);
       if (retrying && this.store) {
         this.compose.focusInput();
       }
+      this.flushPeerRefresh();
     }
   }
 
@@ -136,9 +145,12 @@ class KinApp extends HTMLElement {
       this.renderState();
       this.compose.clear();
       this.setStatus("Added.");
+      this.broadcastEventChange();
       restoreComposeFocus = true;
     } catch (error) {
-      this.showAlert(error.userMessage ?? SAVE_ERROR);
+      this.showAlert(error.userMessage ?? SAVE_ERROR, () =>
+        this.handleAddItem({ detail: { text: event.detail.text } }),
+      );
       this.setStatus("");
       restoreComposeFocus = true;
     } finally {
@@ -146,6 +158,7 @@ class KinApp extends HTMLElement {
       if (restoreComposeFocus) {
         this.compose.focusInput();
       }
+      this.flushPeerRefresh();
     }
   }
 
@@ -164,9 +177,12 @@ class KinApp extends HTMLElement {
       );
       this.renderState();
       this.setStatus("Marked complete.");
+      this.broadcastEventChange();
       restoreComposeFocus = true;
     } catch (error) {
-      this.showAlert(error.userMessage ?? SAVE_ERROR);
+      this.showAlert(error.userMessage ?? SAVE_ERROR, () =>
+        this.handleCompleteItem({ detail: { itemId: event.detail.itemId } }),
+      );
       this.setStatus("");
       restoreComposeFocus = true;
     } finally {
@@ -174,7 +190,83 @@ class KinApp extends HTMLElement {
       if (restoreComposeFocus) {
         this.compose.focusInput();
       }
+      this.flushPeerRefresh();
     }
+  }
+
+  openPeerChannel() {
+    if (this.channel || !("BroadcastChannel" in globalThis)) {
+      return;
+    }
+    try {
+      this.channel = new BroadcastChannel("kin-household-events-v1");
+      this.channel.addEventListener("message", this.onPeerMessage);
+    } catch {
+      this.channel = null;
+    }
+  }
+
+  closePeerChannel() {
+    this.channel?.removeEventListener("message", this.onPeerMessage);
+    this.channel?.close();
+    this.channel = null;
+  }
+
+  broadcastEventChange() {
+    try {
+      this.channel?.postMessage({ type: "events-changed" });
+    } catch {
+      // Cross-tab refresh is best-effort; IndexedDB remains authoritative.
+    }
+  }
+
+  handlePeerMessage(event) {
+    if (event.data?.type !== "events-changed") {
+      return;
+    }
+    if (this.busy || this.refreshing) {
+      this.pendingRefresh = true;
+      return;
+    }
+    this.refreshFromEvents();
+  }
+
+  async refreshFromEvents() {
+    if (!this.store || !this.engine || this.busy || this.refreshing) {
+      this.pendingRefresh = true;
+      return;
+    }
+    this.refreshing = true;
+    this.setBusy(true);
+    this.clearAlert();
+    this.setStatus("Updating from another tab…");
+    try {
+      const events = await this.store.loadEvents();
+      this.state = this.engine.applyEvents(
+        events.map((storedEvent) => storedEvent.encoded_event),
+      );
+      this.renderState();
+      this.setStatus("Updated from another tab.");
+    } catch (error) {
+      this.showAlert(
+        error.userMessage ??
+          "Kin could not refresh from local household storage. Your saved information was not deleted.",
+        () => this.refreshFromEvents(),
+      );
+      this.setStatus("");
+    } finally {
+      this.refreshing = false;
+      this.setBusy(false);
+      this.flushPeerRefresh();
+    }
+  }
+
+  flushPeerRefresh() {
+    if (!this.pendingRefresh || this.busy || this.refreshing) {
+      return;
+    }
+    this.pendingRefresh = false;
+    queueMicrotask(() => this.refreshFromEvents());
   }
 
   renderState() {
@@ -196,12 +288,14 @@ class KinApp extends HTMLElement {
     this.alert.textContent = "";
     this.alert.hidden = true;
     this.retryButton.hidden = true;
+    this.retryAction = null;
   }
 
-  showAlert(message, canRetry = false) {
+  showAlert(message, retryAction = null) {
     this.alert.textContent = message;
     this.alert.hidden = false;
-    this.retryButton.hidden = !canRetry;
+    this.retryAction = retryAction;
+    this.retryButton.hidden = typeof retryAction !== "function";
   }
 }
 

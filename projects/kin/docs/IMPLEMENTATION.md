@@ -61,6 +61,8 @@ See [ABI](ABI.md), [Storage](STORAGE.md), and [Components](COMPONENTS.md) for im
 
 The target is `wasm32-unknown-unknown`. The local WASM artifact is loaded by the page; no remote code loader is used. Kin has no `wasm-bindgen`, `web-sys`, `js-sys`, `serde`, `serde_json`, UI framework, or runtime library dependency. `build-wasm.ps1` builds and copies the artifact for local static serving.
 
+`web/index.html` applies a same-origin Content Security Policy. It allows `wasm-unsafe-eval` only for WebAssembly compilation/instantiation; scripts, styles, fetches, images, and fonts remain same-origin. The policy denies objects and restricts base/form targets. A meta-delivered policy cannot set `frame-ancestors`; production hosting should add that directive as an HTTP response header if framing must be prohibited.
+
 ## Browser support floor
 
 The target remains the latest two stable major releases of desktop and mobile Chrome, Firefox, and Safari. The browser must provide core WebAssembly, ES modules, Custom Elements, IndexedDB, `CustomEvent`, `TextEncoder`/`TextDecoder`, `crypto.getRandomValues`, and a secure context (including localhost for development). Do not target Internet Explorer or obsolete browsers. The v0.1.0 release was exercised in desktop Chrome through the integrated VS Code browser; the broader target is not certified by that check.
