@@ -30,7 +30,7 @@ From the repository root in PowerShell:
 py -m http.server 8000 --directory projects/kin/web
 ```
 
-Open `http://localhost:8000`. On macOS/Linux, from `projects/kin/`, run `cargo build --target wasm32-unknown-unknown --release`, copy `target/wasm32-unknown-unknown/release/kin.wasm` to `web/wasm/kin_engine.wasm`, then serve `web/` with `python3 -m http.server 8000 --directory web`. Never run Cargo from the Build Fest repository root for Kin; generated artifacts belong under `projects/kin/`.
+Open `http://localhost:8000`. On macOS/Linux, build from the repository root with `sh projects/kin/build-wasm.sh`, then serve with `python3 -m http.server 8000 --directory projects/kin/web`. Never run Cargo from the Build Fest repository root for Kin; generated artifacts belong under `projects/kin/`.
 
 ## First-class operating systems
 
@@ -45,6 +45,7 @@ Windows developers should be able to use PowerShell and standard Rust tooling. m
 - A lightweight static-file server bound to localhost during development
 - Optional system Python for serving static files (`py -m http.server` on Windows or `python3 -m http.server` on macOS/Linux); this is not an application dependency
 - Optional Node.js for the built-in bridge regression tests; no npm packages are required
+- Python 3.11 or later for the built-in TOML-based version consistency check
 
 No npm dependency tree or framework runtime is planned. If static serving later requires a helper, prefer a minimal cross-platform option with a clear security/update story.
 

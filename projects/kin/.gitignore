@@ -1,2 +1,3 @@
 /target/
 /web/wasm/kin_engine.wasm
+__pycache__/

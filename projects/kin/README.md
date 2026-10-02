@@ -48,7 +48,7 @@ rustup target add wasm32-unknown-unknown
 py -m http.server 8000 --directory projects/kin/web
 ```
 
-Then open `http://localhost:8000`. macOS/Linux can build from `projects/kin/` with `cargo build --target wasm32-unknown-unknown --release`, copy `target/wasm32-unknown-unknown/release/kin.wasm` to `web/wasm/kin_engine.wasm`, then serve `web/` with `python3 -m http.server 8000 --directory web`.
+Then open `http://localhost:8000`. On macOS/Linux, build and copy the local WASM artifact with `sh projects/kin/build-wasm.sh`, then serve with `python3 -m http.server 8000 --directory projects/kin/web`.
 
 Kin stores household events in the current browser profile's IndexedDB and may keep the in-progress compose draft in tab-scoped `sessionStorage`. It does not provide accounts, backup, encryption, pairing, or cross-device sync; browser storage is not a security boundary against device compromise or extensions. Use synthetic household text while evaluating this prototype.
 
