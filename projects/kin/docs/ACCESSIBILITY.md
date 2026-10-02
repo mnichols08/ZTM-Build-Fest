@@ -33,4 +33,4 @@ Kin should remain usable one-handed on a phone and during interruptions:
 
 ## v0.1.0 acceptance
 
-The add and complete flows work with keyboard alone, restore focus after asynchronous updates, announce relevant result/error state, expose a busy state, and remain understandable without color. Reflow has been checked at 320px, 360px, and 640px CSS widths; full assistive-technology and cross-browser validation remain open. Mobile usability and accessibility checks are release requirements, not optional polish.
+The add and complete flows work with keyboard alone, restore focus after asynchronous updates, announce relevant result/error state, expose a busy state, and remain understandable without color. On Windows 10 x64 in the integrated VS Code browser (Code 1.139.1, Electron 43.6.0, Chromium 150), forced-colors emulation, increased text spacing, and 320px reflow were exercised; focus retained a 3px outline, text did not clip, and the document did not overflow. Native 200% browser zoom, Firefox, Safari, standalone Chrome, NVDA, and VoiceOver remain unverified. Mobile usability and accessibility checks are release requirements, not optional polish.
