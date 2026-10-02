@@ -266,6 +266,59 @@ mod tests {
     }
 
     #[test]
+    fn truncated_request_header_is_rejected_at_every_short_length() {
+        let header = request_with(&[], PROTOCOL_VERSION, 0);
+        for length in 0..REQUEST_HEADER_BYTES {
+            assert_eq!(
+                decode_request(&header[..length]),
+                Err(KinError::MalformedProtocol),
+                "length {length}"
+            );
+        }
+    }
+
+    #[test]
+    fn nonzero_request_reserved_field_is_rejected() {
+        let mut request = request_with(&[], PROTOCOL_VERSION, 0);
+        request[6] = 1;
+        assert_eq!(decode_request(&request), Err(KinError::MalformedProtocol));
+    }
+
+    #[test]
+    fn truncated_event_header_is_rejected_at_every_short_length() {
+        let record = added_record(b"Milk");
+        for record_length in 0..EVENT_HEADER_BYTES {
+            let request = request_with(&record[..record_length], PROTOCOL_VERSION, 1);
+            assert_eq!(
+                decode_request(&request),
+                Err(KinError::MalformedProtocol),
+                "record length {record_length}"
+            );
+        }
+    }
+
+    #[test]
+    fn truncated_event_payload_is_rejected_at_every_short_length() {
+        let record = added_record(b"Milk");
+        for record_length in EVENT_HEADER_BYTES..record.len() {
+            let request = request_with(&record[..record_length], PROTOCOL_VERSION, 1);
+            assert_eq!(
+                decode_request(&request),
+                Err(KinError::MalformedProtocol),
+                "record length {record_length}"
+            );
+        }
+    }
+
+    #[test]
+    fn declared_payload_larger_than_available_bytes_is_rejected() {
+        let mut record = added_record(b"Milk");
+        record[84..88].copy_from_slice(&u32::MAX.to_le_bytes());
+        let request = request_with(&record, PROTOCOL_VERSION, 1);
+        assert_eq!(decode_request(&request), Err(KinError::MalformedProtocol));
+    }
+
+    #[test]
     fn unsupported_event_schema_is_rejected() {
         let mut record = added_record(b"Buy milk");
         record[..2].copy_from_slice(&2u16.to_le_bytes());
@@ -282,12 +335,31 @@ mod tests {
     }
 
     #[test]
+    fn completion_payload_with_wrong_length_is_rejected() {
+        let mut record = added_record(b"Milk");
+        record[2..4].copy_from_slice(&2u16.to_le_bytes());
+        let request = request_with(&record, PROTOCOL_VERSION, 1);
+        assert_eq!(decode_request(&request), Err(KinError::MalformedProtocol));
+    }
+
+    #[test]
     fn malformed_text_length_is_rejected() {
         let mut record = added_record(b"hi");
         record[EVENT_HEADER_BYTES + 16..EVENT_HEADER_BYTES + 20]
             .copy_from_slice(&5u32.to_le_bytes());
         let request = request_with(&record, PROTOCOL_VERSION, 1);
         assert_eq!(decode_request(&request), Err(KinError::MalformedProtocol));
+    }
+
+    #[test]
+    fn empty_or_oversized_text_payloads_are_rejected() {
+        for (declared_length, text) in [(0u32, b"".as_slice()), (4097, b"x".as_slice())] {
+            let mut record = added_record(text);
+            record[EVENT_HEADER_BYTES + 16..EVENT_HEADER_BYTES + 20]
+                .copy_from_slice(&declared_length.to_le_bytes());
+            let request = request_with(&record, PROTOCOL_VERSION, 1);
+            assert_eq!(decode_request(&request), Err(KinError::MalformedProtocol));
+        }
     }
 
     #[test]

@@ -225,7 +225,12 @@ mod tests {
                 },
             ),
         ];
-        assert_eq!(rebuild(&events), rebuild(&events));
+        let state_a = rebuild(&events).unwrap();
+        let state_b = rebuild(&events).unwrap();
+        let state_c = rebuild(&events).unwrap();
+        assert_eq!(state_a, state_b);
+        assert_eq!(state_b, state_c);
+        assert_eq!(state_a, state_c);
     }
 
     #[test]
