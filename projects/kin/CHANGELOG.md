@@ -2,7 +2,17 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
-## Unreleased — v0.13.2 Recovery candidate
+## Unreleased — v0.13.3 Recovery candidate
+
+### v0.13.3 — Recovery UX, Documentation, and Release Gate
+
+- Added plain-language “Replace this device” and “Authorize recovery” actions
+  to the existing trusted-device and household-access views.
+- Explain before approval which old credentials/devices stop working, that
+  copied information cannot be erased, and that the recovering adult must
+  create and activate a fresh passkey.
+- Completed recovery, key continuity, stale-backup, disaster, irreversible
+  boundary, threat-model, and accessibility documentation.
 
 ### v0.13.2 — Rollback, Stale Backup, and Disaster Hardening
 

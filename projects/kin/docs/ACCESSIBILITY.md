@@ -1,5 +1,16 @@
 # Accessibility Contract
 
+## Recovery controls (v0.13.3)
+
+“Replace this device” and “Authorize recovery” are native buttons reachable in
+the trusted-device and household-access views. Destructive authority changes
+use an explicit confirmation and fresh passkey ceremony. Pairing/recovery state
+uses live status text; failures use alert semantics. Fingerprint confirmation
+is a labelled native checkbox, activation remains keyboard-operable, countdowns
+are visible, controls retain 48-pixel targets, and flex actions wrap on narrow
+screens. Expired recovery returns to the code-entry flow without silently
+continuing.
+
 **Status:** Current through v0.7.0 Routines; earlier version sections are historical contracts. See v0.7.0 below.
 
 ## Baseline requirements

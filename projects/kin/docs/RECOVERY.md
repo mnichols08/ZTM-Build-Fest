@@ -1,6 +1,6 @@
 # Recovery and Household Continuity
 
-**Status:** implemented through v0.13.2. Recovery restores only authority that a
+**Status:** implemented through v0.13.3. Recovery restores only authority that a
 currently active adult and trusted device can legitimately grant. It never
 turns an archive, an old passkey, a stale device, or a server backup into new
 household authority.
@@ -121,4 +121,25 @@ plaintext content. If a surviving current database exists, keep it so restore
 can preserve newer authority and tombstones. With only an old backup, later
 revocations/deletions cannot be reconstructed and global rollback resistance is
 not claimed.
+
+## User-visible boundaries
+
+The household view uses “Replace this device,” “Recover access,” and
+“Authorize recovery,” not key-epoch or wrapping terminology. Before approval it
+states whether another adult is required, which old devices/credentials stop
+working, and that previously copied information cannot be erased. Missing key
+errors say that some encrypted history cannot be recovered instead of silently
+omitting it.
+
+Final household deletion cannot be recovered. A removed member must be invited
+as a new member rather than silently reactivated. An old backup cannot override
+authority preserved by a newer surviving database. Loss of all entitled epoch
+keys and archive secrets is permanent.
+
+Native buttons, checkboxes, forms, confirmation dialogs, live status text, and
+alert messages preserve keyboard operation and announcements. Controls retain
+48-pixel targets, wrap in narrow layouts, and recovery uses the existing
+visible countdown/expiry behavior. Revocation and recovery completion require
+explicit confirmation plus WebAuthn approval; activation requires a second
+passkey action on the recovering device.
 

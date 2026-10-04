@@ -2,6 +2,22 @@
 
 **Status:** v0.12.3 implementation candidate; awaiting human review. Local authenticated encryption, credential/recovery root wrappers, locked startup, encrypted archives and signed transport-key migration complement encrypted sync. The service has durable identity/relay storage, backup/restore and explicit household lifecycle. Independent security audit, cross-browser certification and general rollback protection are not provided.
 
+## v0.13 recovery authority
+
+Recovery requires a current trusted adult/device and a fresh claimant
+credential; it never derives authority from an archive, stale device, or old
+credential. Same-member replacement revokes the selected lost device.
+Member-assisted recovery keeps the target member identity but replaces all of
+that member's credentials/devices/sessions. A malicious approving adult can
+authorize an attacker and lock out the other adult, consistent with the
+existing one-adult removal authority; audit attribution and separate claimant
+activation prevent silent impersonation but cannot prove honest human intent.
+
+Restore over a surviving database preserves its newer authority and lifecycle
+ledger. Loss of that database/ledger leaves no global anti-rollback witness.
+Servers never hold plaintext content keys. All trusted key-bearing devices and
+archives being lost makes encrypted history permanently unrecoverable.
+
 ## v0.10 local-at-rest boundary
 
 Implemented protection after verified migration: an unauthorized person with persisted browser site data but
