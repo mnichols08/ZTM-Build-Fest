@@ -1,0 +1,9 @@
+# Local environment overrides.
+#
+# Intentionally empty: `base.toml` already holds the local defaults. Add keys
+# here to diverge from base without touching the other environments, e.g.
+#
+#   [application]
+#   port = 8080
+#
+# Environment variables (APP_APPLICATION__PORT=8080) override both.

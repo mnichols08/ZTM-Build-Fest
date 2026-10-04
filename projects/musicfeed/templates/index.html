@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link
+      rel="stylesheet"
+      type="text/css"
+      href="/static/screen.css"
+      media="screen"
+    />
+    <title>Minimal To-Do App</title>
+  </head>
+  <body>
+    <header>
+      <h1>Minimal To-Do App</h1>
+    </header>
+
+    <main>
+      <form id="add-form" data-on:submit__prevent="@post('/items')">
+        <label for="item-input">Add item:</label>
+        <input id="item-input" type="text" data-bind:item required autofocus />
+        <button type="submit">Add</button>
+      </form>
+
+      <ul id="item-list">
+        {% for item in items %}{% include "item.html" %}{% endfor %}
+      </ul>
+    </main>
+
+    <script type="module" src="/static/datastar.js"></script>
+  </body>
+</html>

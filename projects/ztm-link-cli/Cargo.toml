@@ -1,0 +1,11 @@
+[package]
+name = "ztm-link-cli"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+crossterm = "0.29"
+csv = "1.4.0"
+open = "5.4.4"
+ureq = "3.4.2"
