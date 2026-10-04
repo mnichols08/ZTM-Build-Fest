@@ -2,7 +2,20 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
-## Unreleased — v0.12.4 Data Lifecycle candidate
+## Unreleased — v0.13.0 Recovery candidate
+
+### v0.13.0 — Recovery Model and Device Replacement
+
+- Defined the recovery capability matrix and separated identity, device,
+  content-key, server-restore, and membership authority.
+- Added bounded same-member replacement enrollment that gives the new browser
+  fresh device state and atomically revokes the selected lost device.
+- Reused recipient-bound epoch provisioning; the service receives no plaintext
+  household keys and archives remain local-only recovery.
+- Documented the honest unrecoverable boundary when all legitimate authority
+  and key copies are gone.
+
+### v0.12.4 — Data Lifecycle candidate
 
 ### v0.12.4 — Pending-Deletion Restore Authority Guard
 

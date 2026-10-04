@@ -367,7 +367,8 @@ async function api(request, response, url, context) {
       const pairing = service.validatePairingCode(body.code, {
         rateKey: request.socket.remoteAddress ?? "unknown",
       });
-      if (pairing.purpose === "device") flowPurpose = "device-claim";
+      if (pairing.purpose !== "adult")
+        flowPurpose = `${pairing.purpose}-claim`;
       if (claimToken) {
         service.clearClaim(claimToken);
         clearCookie(response, "kin_claim", secureCookies);
@@ -468,6 +469,17 @@ async function api(request, response, url, context) {
     json(response, 201, service.createDevicePairing(session));
     return;
   }
+  if (
+    request.method === "POST" &&
+    url.pathname === "/api/devices/replacements"
+  ) {
+    json(
+      response,
+      201,
+      service.createReplacementPairing(session, body.deviceId),
+    );
+    return;
+  }
   const pairingMatch = url.pathname.match(/^\/api\/pairings\/([a-f0-9]{32})$/);
   if (request.method === "GET" && pairingMatch) {
     json(response, 200, service.pairingForAdult(session, pairingMatch[1]));
@@ -526,7 +538,10 @@ async function api(request, response, url, context) {
       const device = service.devices.get(pairing?.confirmedDeviceId);
       if (device?.syncPublicKeys && device.syncHistoryFromEpoch == null)
         syncService.onDeviceAdded(auth.household.id, device.id, {
-          historyFromEpoch: pairing.purpose === "device" ? 1 : undefined,
+          historyFromEpoch:
+            pairing.purpose === "device" || pairing.purpose === "replacement"
+              ? 1
+              : undefined,
         });
       return result;
     });
