@@ -103,8 +103,12 @@ npm run restore -- C:\private\kin-backups\kin.sqlite --acknowledge-deletion-hist
 ```
 
 Restore requires an explicit acknowledgement that the backup may predate
-household deletions. It requires the service to be stopped, verifies the source,
-merges newer lifecycle tombstones from an existing target, and preserves
+household deletions. It requires the service to be stopped and refuses restore
+if any target household has a pending deletion. Cancel deletion using current
+valid household authority or allow it to finalize before restoring; this
+prevents restoring stale cancellation authority during the grace period.
+For active/finalized targets it verifies the source, merges existing finalized
+deletion tombstones so deleted household rows stay purged/non-authoritative, and preserves
 the replaced database/WAL sidecars as a `.pre-restore-...` copy. Missing, empty,
 directory or unsupported-schema restore sources are rejected before replacement;
 restore does not initialize a new database from an invalid backup. A database

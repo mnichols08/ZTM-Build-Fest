@@ -43,9 +43,14 @@ deadline that preserves anti-resurrection for arbitrarily old backups.
 
 ## Backup and restore guarantee
 
-An in-place restore reads lifecycle rows from the pre-restore target and merges
-them into the verified backup before replacement. `deleted` wins over
-`deletion_pending`, which wins over `active`; data for a deleted ID is purged.
+An in-place restore reads lifecycle rows from the pre-restore target before
+replacement. If any target household is `deletion_pending`, restore is refused:
+cancel deletion using current valid household authority or allow it to finalize
+first. This prevents a backup from restoring stale membership, device or
+credential authority that could authorize cancellation during the grace period.
+For other targets, existing finalized `deleted` tombstones override stale
+backups, including pending or active backup states; data for a deleted ID is
+purged and cannot become authoritative. Active targets remain restorable.
 The command refuses restore unless the operator supplies
 `--acknowledge-deletion-history` and prints a warning.
 

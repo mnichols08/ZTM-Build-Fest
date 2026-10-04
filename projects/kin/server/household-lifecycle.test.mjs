@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { DurableStore, HOUSEHOLD_DELETION_GRACE_MS } from "./durable-store.mjs";
+import { DurableConflictError, DurableStore, HOUSEHOLD_DELETION_GRACE_MS } from "./durable-store.mjs";
 import { PairingError, PairingService } from "./pairing-service.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
 import { createKinServer } from "./server.mjs";
@@ -159,6 +159,112 @@ test("deletion finalization is restart-safe and rejects cancellation at expiry",
   }
 });
 
+for (const removedAdult of [false, true]) {
+  test(`restore refuses a pending household over an older active backup${removedAdult ? " containing a removed adult and revoked device" : ""}`, async () => {
+    const fixture = createFixture();
+    const targetPath = join(fixture.directory, "kin.sqlite");
+    const backupPath = join(fixture.directory, "before-deletion.sqlite");
+    let joined;
+    try {
+      if (removedAdult) {
+        const invitation = fixture.service.createPairing(fixture.identity.sessionToken);
+        const claim = fixture.service.claimPairing({
+          code: invitation.code,
+          credential: {
+            id: "removed-passkey",
+            publicKey: "removed-public-key",
+            algorithm: -7,
+          },
+          deviceLabel: "Removed adult device",
+        });
+        fixture.service.approvePairing(
+          fixture.identity.sessionToken,
+          invitation.pairingId,
+          claim.version,
+        );
+        joined = fixture.service.activateClaim(claim.claimToken);
+      }
+      await fixture.store.backup(backupPath);
+      if (joined) {
+        fixture.service.removeOtherAdult(
+          fixture.identity.sessionToken,
+          joined.memberId,
+          fixture.identity.memberId,
+        );
+        assert.equal(fixture.store.loadIdentity().members.get(joined.memberId).active, false);
+        assert.ok(fixture.store.loadIdentity().devices.get(joined.deviceId).revokedAt);
+        const backup = new DurableStore(backupPath, { readonly: true });
+        try {
+          const identity = backup.loadIdentity();
+          assert.equal(identity.members.get(joined.memberId).active, true);
+          assert.equal(identity.devices.get(joined.deviceId).revokedAt, null);
+          assert.equal(identity.credentials.has("removed-passkey"), true);
+        } finally {
+          backup.close();
+        }
+      }
+      const pending = fixture.service.requestHouseholdDeletion(
+        fixture.identity.sessionToken,
+        fixture.identity.memberId,
+      );
+      const targetFiles = new Map(
+        ["", "-wal", "-shm"].map((suffix) => [
+          suffix,
+          readFileSync(`${targetPath}${suffix}`),
+        ]),
+      );
+      fixture.store.close();
+      // Keep an offline uncheckpointed snapshot to verify WAL/SHM preservation.
+      for (const [suffix, bytes] of targetFiles)
+        writeFileSync(`${targetPath}${suffix}`, bytes);
+      const originalFiles = new Map(
+        readdirSync(fixture.directory).sort().map((name) => [
+          name,
+          readFileSync(join(fixture.directory, name)),
+        ]),
+      );
+      await assert.rejects(
+        DurableStore.restoreBackup(backupPath, targetPath, {
+          acknowledgeDeletionHistory: true,
+        }),
+        (error) =>
+          error instanceof DurableConflictError &&
+          error.code === "restore_blocked_deletion_pending" &&
+          error.message ===
+            "Cannot restore over a household with a pending deletion. Cancel the deletion using current household authority or allow it to finalize first.",
+      );
+      assert.deepEqual(readdirSync(fixture.directory).sort(), [...originalFiles.keys()]);
+      for (const [name, bytes] of originalFiles)
+        assert.deepEqual(readFileSync(join(fixture.directory, name)), bytes, name);
+      const verification = new DurableStore(targetPath);
+      try {
+        assert.equal(verification.lifecycleInfo(fixture.identity.householdId).state, "deletion_pending");
+        assert.equal(verification.lifecycleInfo(fixture.identity.householdId).finalizeAt, pending.finalizeAt);
+        assert.equal(verification.eventCount(fixture.identity.householdId), 1);
+        const service = new PairingService({ store: verification, now: fixture.now });
+        if (joined) {
+          assert.equal(service.members.get(joined.memberId).active, false);
+          assert.ok(service.devices.get(joined.deviceId).revokedAt);
+          assert.throws(
+            () => service.cancelHouseholdDeletion(joined.deviceToken, "removed-passkey"),
+            (error) => error instanceof PairingError,
+          );
+        }
+        const cancelled = service.cancelHouseholdDeletion(
+          fixture.identity.deviceToken,
+          "lifecycle-passkey",
+        );
+        assert.equal(service.authorize(cancelled.sessionToken).member.id, fixture.identity.memberId);
+        assert.equal(verification.validate(), true);
+      } finally {
+        verification.close();
+      }
+    } finally {
+      fixture.close();
+    }
+  });
+}
+
 test("restore merges newer deletion tombstones from the existing database", async () => {
   const fixture = createFixture();
   const targetPath = join(fixture.directory, "kin.sqlite");
@@ -185,9 +291,18 @@ test("restore merges newer deletion tombstones from the existing database", asyn
         "deleted",
       );
       assert.equal(verification.eventCount(fixture.identity.householdId), 0);
-      assert.equal(
-        verification.loadIdentity().members.has(fixture.identity.memberId),
-        false,
+      const identity = verification.loadIdentity();
+      assert.equal(identity.members.size, 0);
+      assert.equal(identity.devices.size, 0);
+      assert.equal(identity.credentials.size, 0);
+      const service = new PairingService({ store: verification, now: fixture.now });
+      assert.throws(
+        () => service.reauthenticate(fixture.identity.deviceToken, "lifecycle-passkey"),
+        (error) => error instanceof PairingError,
+      );
+      assert.throws(
+        () => service.cancelHouseholdDeletion(fixture.identity.deviceToken, "lifecycle-passkey"),
+        (error) => error instanceof PairingError,
       );
       assert.equal(verification.validate(), true);
     } finally {

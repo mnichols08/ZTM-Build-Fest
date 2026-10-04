@@ -328,8 +328,11 @@ test("verified backup restores identity and opaque relay state offline", async (
     assert.equal(statSync(restored.previousDatabasePath).isFile(), true);
     target = new DurableStore(targetPath);
     assert.equal(target.validate(), true);
+    assert.equal(target.lifecycleInfo(sourceState.identity.householdId).state, "active");
     const identity = target.loadIdentity();
     assert.ok(identity.members.has(sourceState.identity.memberId));
+    assert.ok(identity.devices.has(sourceState.identity.deviceId));
+    assert.ok(identity.credentials.has("durable-adult"));
     assert.equal(identity.members.has(previousState.identity.memberId), false);
     const events = target.readEvents(
       sourceState.identity.householdId,

@@ -47,9 +47,13 @@ retaining a minimal opaque household-ID tombstone. The state machine does not
 delete browser stores, device-held plaintext/keys, exported archives or backups
 outside the active database.
 
-When an existing target is restored over, Kin merges its newer pending/deleted
-tombstones into the verified backup, so an old copy cannot override known newer
-deletion authority. The admin restore command requires explicit acknowledgement.
+Kin refuses restore over an existing target containing any `deletion_pending`
+household. The operator must cancel deletion using current valid household
+authority or allow it to finalize first; this prevents stale backup authority
+from enabling cancellation by a removed adult or revoked device during the
+grace period. Existing finalized deletion tombstones are still merged into the
+verified backup and its deleted household rows are purged/non-authoritative.
+Active targets remain restorable. The admin restore command requires explicit acknowledgement.
 If both the current database and the deletion record are lost, Kin cannot infer
 a later deletion from a stale backup; this remains a rollback limitation, not a
 global anti-rollback guarantee. The permanent tombstone is minimal but its

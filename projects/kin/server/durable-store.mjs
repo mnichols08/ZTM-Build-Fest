@@ -231,13 +231,6 @@ export class DurableStore {
         throw new DurableStoreError(
           "The Kin restore source must be an existing database file.",
         );
-      // The same startup validator checks the source without creating,
-      // migrating or changing it before replacement.
-      sourceStore = new DurableStore(source, {
-        acquireProcessLock: false,
-        readonly: true,
-      });
-      await sourceStore.backup(temporary, { maintenanceLockHeld: true });
       const currentDeletions = [];
       if (exists(target)) {
         if (!statSync(target).isFile())
@@ -253,9 +246,21 @@ export class DurableStore {
           readonly: true,
         });
         currentDeletions.push(...targetStore.loadNonActiveHouseholds());
+        if (currentDeletions.some((household) => household.state === "deletion_pending"))
+          throw new DurableConflictError(
+            "restore_blocked_deletion_pending",
+            "Cannot restore over a household with a pending deletion. Cancel the deletion using current household authority or allow it to finalize first.",
+          );
         targetStore.close();
         targetStore = undefined;
       }
+      // The same startup validator checks the source without creating,
+      // migrating or changing it before replacement.
+      sourceStore = new DurableStore(source, {
+        acquireProcessLock: false,
+        readonly: true,
+      });
+      await sourceStore.backup(temporary, { maintenanceLockHeld: true });
       restoredStore = new DurableStore(temporary, {
         acquireProcessLock: false,
       });
