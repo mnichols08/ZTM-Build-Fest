@@ -27,6 +27,17 @@ fn context(n: u8, logical_time: u64) -> CommandContext {
     }
 }
 
+fn context_for_device(n: u8, device: u8, logical_time: u64) -> CommandContext {
+    CommandContext {
+        event_id: EventId([n; 16]),
+        household_id: HouseholdId([1; 16]),
+        actor_id: ActorId([2; 16]),
+        device_id: DeviceId([device; 16]),
+        timestamp: 1_760_000_000_000 + i64::from(n),
+        logical_time,
+    }
+}
+
 fn run(events: &mut Vec<EventEnvelope>, command: C, n: u8) -> Result<EventEnvelope, KinError> {
     let result = execute(
         &command,
@@ -341,4 +352,144 @@ fn area_creation_has_a_fixed_household_limit() {
     )
     .unwrap_err();
     assert_eq!(error, KinError::InvalidEvent);
+}
+
+#[test]
+fn offline_rename_assignment_archive_and_duplicate_delivery_converge() {
+    let area_id = AreaId([61; 16]);
+    let item_id = ItemId([62; 16]);
+    let base = vec![
+        execute(
+            &C::CreateArea {
+                id: area_id,
+                name: "Home".into(),
+            },
+            context_for_device(1, 3, 1),
+            request(Vec::new()),
+        )
+        .unwrap()
+        .event,
+        execute(
+            &C::AddItem {
+                id: item_id,
+                text: "Replace bulb".into(),
+                classification: ItemClassification::Need,
+            },
+            context_for_device(2, 3, 2),
+            request(Vec::new()),
+        )
+        .unwrap()
+        .event,
+    ];
+
+    // Both devices start from the same base. Rename and assignment happen
+    // offline at the same logical time and must commute after deterministic
+    // ordering regardless of delivery order.
+    let rename = execute(
+        &C::RenameArea {
+            id: area_id,
+            name: "Inside".into(),
+        },
+        context_for_device(3, 3, 3),
+        request(base.clone()),
+    )
+    .unwrap()
+    .event;
+    let assignment = execute(
+        &C::ChangeItemArea {
+            item_id,
+            area_id: Some(area_id),
+        },
+        context_for_device(4, 4, 3),
+        request(base.clone()),
+    )
+    .unwrap()
+    .event;
+    let mut merged = base.clone();
+    merged.extend([rename.clone(), assignment.clone()]);
+    let reverse = [
+        base[0].clone(),
+        base[1].clone(),
+        assignment.clone(),
+        rename.clone(),
+    ];
+    let converged = crate::state::rebuild_distributed_on(
+        &merged,
+        1_760_000_000_100,
+        crate::recurrence::CivilDate::from_encoded(20261004).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        converged,
+        crate::state::rebuild_distributed_on(
+            &reverse,
+            1_760_000_000_100,
+            crate::recurrence::CivilDate::from_encoded(20261004).unwrap(),
+        )
+        .unwrap()
+    );
+    assert_eq!(converged.areas[0].name, "Inside");
+    assert_eq!(converged.items[0].area_id, Some(area_id));
+
+    let device_b_area = execute(
+        &C::CreateArea {
+            id: AreaId([63; 16]),
+            name: "Car".into(),
+        },
+        context_for_device(7, 4, 1),
+        request(Vec::new()),
+    )
+    .unwrap()
+    .event;
+    let two_area_orders = [
+        vec![base[0].clone(), base[1].clone(), device_b_area.clone()],
+        vec![device_b_area, base[1].clone(), base[0].clone()],
+    ];
+    let states = two_area_orders
+        .iter()
+        .map(|events| {
+            crate::state::rebuild_distributed_on(
+                events,
+                1_760_000_000_100,
+                crate::recurrence::CivilDate::from_encoded(20261004).unwrap(),
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(states[0], states[1]);
+    assert_eq!(states[0].areas.len(), 2);
+
+    // A stale device's assignment event was authored from its pre-archive
+    // history. The archive sorts before it on the shared logical clock, but
+    // historical context remains attached and replay is arrival-order safe.
+    let archive = execute(
+        &C::ArchiveArea(area_id),
+        context_for_device(5, 3, 3),
+        request(base.clone()),
+    )
+    .unwrap()
+    .event;
+    let mut archived_merge = base.clone();
+    archived_merge.push(archive);
+    archived_merge.extend([assignment.clone(), assignment.clone()]); // retry / duplicate delivery
+    let archived_state = crate::state::rebuild_distributed_on(
+        &archived_merge,
+        1_760_000_000_100,
+        crate::recurrence::CivilDate::from_encoded(20261004).unwrap(),
+    )
+    .unwrap();
+    assert!(archived_state.areas[0].archived);
+    assert_eq!(archived_state.items[0].area_id, Some(area_id));
+    assert_eq!(
+        execute(
+            &C::ChangeItemArea {
+                item_id,
+                area_id: Some(area_id),
+            },
+            context_for_device(6, 4, 5),
+            request(archived_merge),
+        )
+        .unwrap_err(),
+        KinError::InvalidEvent
+    );
 }

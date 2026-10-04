@@ -35,7 +35,14 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Keep connection errors and local storage errors separate from successful
   saved state; leave recovery, deletion, and domain authority unchanged.
 
-## Unreleased — v0.15.1 Area correctness candidate
+## Unreleased — v0.15.2 Offline and sync hardening candidate
+
+### v0.15.2 — Offline, sync, and hostile-state hardening
+
+- Prove deterministic two-device convergence for independent Area creation, concurrent rename/assignment, and stale pre-archive assignment in either delivery order.
+- Verify retry/duplicate delivery remains idempotent and archived Areas reject new commands while retaining old assignments.
+- Exercise an encrypted Area event through the relay; plaintext names remain absent from server-visible envelopes/state and decrypt/replay only on a trusted client.
+- Keep Areas under the existing household encryption, device revocation, backup, and restore boundaries; no plaintext relay metadata or server schema is added.
 
 ### v0.15.1 — Area correctness and migration
 

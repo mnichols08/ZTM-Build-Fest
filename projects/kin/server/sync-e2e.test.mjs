@@ -15,7 +15,8 @@ import { encodeAddedRecord, idFromHex, loadKinEngine } from "../web/wasm/kin-eng
 
 globalThis.crypto ??= webcrypto;
 const wasm = await readFile(new URL("../web/wasm/kin_engine.wasm", import.meta.url));
-await loadKinEngine(`data:application/wasm;base64,${wasm.toString("base64")}`);
+const wasmUrl = `data:application/wasm;base64,${wasm.toString("base64")}`;
+await loadKinEngine(wasmUrl);
 
 const credential = (id) => ({ id, publicKey: `key-${id}`, algorithm: -7 });
 
@@ -66,15 +67,48 @@ test("two trusted devices exchange an opaque canonical Kin event through the rel
     signingKey: deviceKeys.signingPrivateKey,
   });
 
-  const acknowledgement = sync.push(deviceA.sessionToken, [envelope]);
+  const engine = await loadKinEngine(wasmUrl);
+  const areaEventId = "03".repeat(16);
+  const areaId = "04".repeat(16);
+  const areaResult = engine.executeCommand(
+    { type: "create-area", areaId, name: "Secret Garden" },
+    {
+      eventId: idFromHex(areaEventId),
+      householdId: idFromHex(deviceA.householdId),
+      actorId: idFromHex(deviceA.memberId),
+      deviceId: idFromHex(deviceA.deviceId),
+      timestamp: 1_760_000_000_002,
+      logicalTime: 2n,
+      entityId: idFromHex(areaId),
+    },
+    [eventBytes],
+    1_760_000_000_002,
+    null,
+    20261004,
+  );
+  const areaEnvelope = await encryptEvent({
+    eventId: areaEventId,
+    householdId: deviceA.householdId,
+    deviceId: deviceA.deviceId,
+    deviceSequence: 2,
+    logicalTime: 2n,
+    keyEpoch: 1,
+    plaintext: areaResult.encodedEvent,
+    householdKey,
+    signingKey: deviceKeys.signingPrivateKey,
+  });
+  engine.dispose();
+
+  const acknowledgement = sync.push(deviceA.sessionToken, [envelope, areaEnvelope]);
   assert.equal(acknowledgement.durable, false);
   assert.equal(
-    sync.push(deviceA.sessionToken, [envelope]).latestCursor,
-    "AAAAAAAAAAE",
+    sync.push(deviceA.sessionToken, [envelope, areaEnvelope]).latestCursor,
+    "AAAAAAAAAAI",
   );
   const page = sync.pull(deviceB.sessionToken, "", "20");
-  assert.equal(page.events.length, 1);
+  assert.equal(page.events.length, 2);
   assert.deepEqual(page.events[0].envelope, envelope);
+  assert.deepEqual(page.events[1].envelope, areaEnvelope);
   assert.equal(
     JSON.stringify(page).includes("Pick up the prescription"),
     false,
@@ -94,6 +128,17 @@ test("two trusted devices exchange an opaque canonical Kin event through the rel
     }),
     eventBytes,
   );
+  const areaBytes = await decryptEvent({
+    envelope: page.events[1].envelope,
+    householdKey,
+    signingKey: deviceKeys.signingPublicKey,
+  });
+  const receiver = await loadKinEngine(wasmUrl);
+  assert.equal(
+    receiver.applyEvents([eventBytes, areaBytes], 1_760_000_000_002, null, 20261004).areas[0].name,
+    "Secret Garden",
+  );
+  receiver.dispose();
   await assert.rejects(
     decryptEvent({
       envelope: page.events[0].envelope,
