@@ -52,6 +52,8 @@ class KinItem extends HTMLElement {
     button.className = className;
     button.textContent = label;
     button.setAttribute("aria-label", `${label} ${this.record.text}`);
+    button.dataset.itemId = this.record.itemId;
+    button.dataset.itemAction = action;
     button.disabled = this.isDisabled;
     button.addEventListener("click", () => {
       this.dispatchEvent(

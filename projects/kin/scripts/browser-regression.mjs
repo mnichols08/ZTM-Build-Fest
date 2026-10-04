@@ -218,6 +218,29 @@ async function regressions() {
     );
   };
   check(app.status.textContent === "Ready.", "startup");
+  check(
+    [...app.nav.querySelectorAll("a")].map((link) => link.textContent.trim()).join(",") ===
+      "Today,Lists,Routines,Handoff,More" &&
+      app.nav.querySelectorAll('[aria-current="page"]').length === 1 &&
+      app.nav.querySelector('[aria-current="page"]').dataset.page === "today",
+    "the unlocked shell exposes five stable destinations and marks Today as current",
+  );
+  app.nav.querySelector('a[href="#lists"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check(
+    location.hash === "#lists" && !app.pages.get("lists").hidden &&
+      app.nav.querySelector('[aria-current="page"]').dataset.page === "lists" &&
+      app.pages.get("today").hidden,
+    "navigation changes the URL, current destination, and visible page together",
+  );
+  app.nav.querySelector('a[href="#today"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check(
+    app.today.display === "today" && app.needs.display === "need" &&
+      app.pages.get("more").contains(app.household) &&
+      app.pages.get("more").contains(app.security),
+    "Today and Lists remain views over existing records and More owns household/security controls",
+  );
   const initialCatchUp = await app.store.getCatchUpState();
   check(
     initialCatchUp.events.length === 0 &&
@@ -231,8 +254,7 @@ async function regressions() {
   check((await count()) === 1, "normal add exactly once");
   check(app.state.items.at(-1).classification === "need", "default is Needs");
   check(
-    app.today
-      .querySelectorAll("section")[1]
+    app.needs
       .querySelector("kin-item .item-text")?.textContent === "Normal success",
     "default item appears in Needs",
   );
@@ -650,7 +672,12 @@ async function regressions() {
     activations++;
   };
   app.addEventListener("click", recordActivation);
-  for (const button of [...app.main.querySelectorAll("button"), app.retryButton]) button.click();
+  for (const button of [
+    ...[...app.main.querySelectorAll("button")].filter(
+      (control) => !control.closest("kin-security"),
+    ),
+    app.retryButton,
+  ]) button.click();
   app.removeEventListener("click", recordActivation);
   check(activations === 0, "busy controls must not dispatch clicks");
   check((await count()) === actionEventCount, "pending retry has not appended");
@@ -931,15 +958,43 @@ try {
     await until(() => client.evaluate('Boolean(document.querySelector("kin-app")?.store && !document.querySelector("kin-app").busy)'));
   }
   const first = await tab();
+  async function visit(client, id) {
+    const hash = `#${id}`;
+    await client.evaluate(`location.hash=${JSON.stringify(hash)}`);
+    await until(() =>
+      client.evaluate(
+        `location.hash===${JSON.stringify(hash)}&&!document.querySelector('kin-app').pages.get(${JSON.stringify(id)}).hidden`,
+      ),
+    );
+  }
   console.log(await first.evaluate(`(${regressions.toString()})()`));
+  await first.evaluate(`document.querySelector('kin-app').nav.querySelector('a[href="#routines"]').focus()`);
+  await first.send("Input.dispatchKeyEvent", {
+    type: "keyDown", key: "Enter", code: "Enter", text: "\r", windowsVirtualKeyCode: 13,
+  });
+  await first.send("Input.dispatchKeyEvent", {
+    type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13,
+  });
+  await visit(first, "routines");
+  assert.equal(
+    await first.evaluate("document.activeElement===document.querySelector('kin-app').navLinks.get('routines')"),
+    true,
+    "keyboard Enter activates a primary destination and retains navigation focus",
+  );
+  await visit(first, "today");
+  await visit(first, "handoff");
   console.log(await first.evaluate(`(${handoffRegressions.toString()})()`));
   console.log(await first.evaluate(`(${talkRegressions.toString()})()`));
+  await visit(first, "more");
   console.log(await first.evaluate(`(${pulseRegressions.toString()})()`));
   console.log(
     await first.evaluate(`(${pulseResilienceRegressions.toString()})()`),
   );
+  await visit(first, "today");
   console.log(await first.evaluate(`(${catchUpRegressions.toString()})()`));
+  await visit(first, "routines");
   console.log(await first.evaluate(`(${routineRegressions.toString()})()`));
+  await visit(first, "today");
   await first.evaluate(
     'sessionStorage.setItem("kin.test.expectedState", JSON.stringify(document.querySelector("kin-app").state))',
   );
@@ -1014,6 +1069,7 @@ try {
   );
   console.log("PASS recovery unlock/replay, draft disposal, keyboard submission");
 
+  await visit(first, "handoff");
   assert.equal(
     await first.evaluate('document.querySelector("#handoff-text").value'),
     "",
@@ -1345,13 +1401,25 @@ try {
     "PASS two tabs, content-free invalidation, canonical IndexedDB reload, Rust replay",
   );
 
+  await visit(first, "handoff");
+  await visit(second, "handoff");
   await handoffPeerRegressions(first, second, until);
   await talkPeerRegressions(first, second, until);
+  await visit(first, "more");
+  await visit(second, "more");
   await pulsePeerRegressions(first, second, until, ready);
+  await visit(first, "today");
+  await visit(second, "today");
   await catchUpPeerRegressions(first, second, until);
+  await visit(first, "more");
   await pulseKeyboardRegressions(first, until);
+  await visit(first, "routines");
+  await visit(second, "routines");
   await routinePeerRegressions(first, second, until);
   await routineKeyboardRegressions(first, until);
+  await visit(first, "today");
+  await visit(second, "today");
+  await visit(first, "lists");
   await first.evaluate(`(()=>{
     const app=document.querySelector('kin-app');
     const item=[...app.querySelectorAll('kin-item')]
@@ -1378,10 +1446,10 @@ try {
   );
   assert.equal(
     await first.evaluate(
-      'document.activeElement===document.querySelector("input")',
+      'document.activeElement.getAttribute("aria-label")==="Reopen Peer addition"',
     ),
     true,
-    "keyboard completion restores capture focus",
+    "keyboard completion in Lists restores focus to that item's next action",
   );
   console.log("PASS keyboard item action and focus restoration");
 
@@ -1395,12 +1463,29 @@ try {
     ),
     1,
   );
+  await visit(first, "today");
   await first.send("Emulation.setDeviceMetricsOverride", {
     width: 320,
     height: 720,
     deviceScaleFactor: 1,
     mobile: false,
   });
+  await first.send("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-color-scheme", value: "dark" }],
+  });
+  assert.equal(
+    await first.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()"),
+    "#191a17",
+    "dark appearance follows the operating-system preference",
+  );
+  await first.send("Emulation.setEmulatedMedia", {
+    features: [{ name: "prefers-color-scheme", value: "light" }],
+  });
+  assert.equal(
+    await first.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()"),
+    "#f5f1ea",
+    "light appearance follows the operating-system preference",
+  );
   await first.evaluate('document.querySelector("input").focus()');
   assert.equal(
     await first.evaluate(
@@ -1424,7 +1509,7 @@ try {
         focusWidth:getComputedStyle(select).outlineWidth,
       };
     })()`),
-    { label: "Add to", targetHeight: 54, focusWidth: "3px" },
+    { label: "Add to", targetHeight: 48, focusWidth: "3px" },
   );
   await first.send("Emulation.setEmulatedMedia", {
     features: [
@@ -1435,6 +1520,7 @@ try {
   assert.deepEqual(
     await first.evaluate(`(()=>{
       const controls=[...document.querySelectorAll('button,select')];
+      controls.push(...document.querySelectorAll('.nav-link'));
       return {
         forcedColors:matchMedia('(forced-colors: active)').matches,
         reducedMotion:matchMedia('(prefers-reduced-motion: reduce)').matches,
@@ -1451,6 +1537,7 @@ try {
       overflow: false,
     },
   );
+  await visit(first, "handoff");
   assert.equal(
     await first.evaluate(`(()=>{
     const app=document.querySelector('kin-app');
@@ -1481,6 +1568,7 @@ try {
     true,
     "Talk semantics, announcements, focus and targets in forced colors",
   );
+  await visit(first, "more");
   assert.equal(
     await first.evaluate(`(()=>{
     const p=document.querySelector('kin-app').pulse;p.valueSelect.focus();
@@ -1493,6 +1581,7 @@ try {
     true,
     "Pulse semantics, native labels, focus and targets in forced colors",
   );
+  await visit(first, "routines");
   assert.equal(
     await first.evaluate(`(()=>{
       const app=document.querySelector('kin-app'),ui=app.routines;ui.cadence.focus();
@@ -1505,6 +1594,7 @@ try {
     true,
     "Routine semantics, labels, textual state, focus and targets in forced colors",
   );
+  await visit(first, "today");
   const spacingResult = await first.evaluate(`(()=>{
     const sheet=[...document.styleSheets].find(candidate=>candidate.href?.endsWith('/styles/app.css'));
     const ruleIndex=sheet.cssRules.length;

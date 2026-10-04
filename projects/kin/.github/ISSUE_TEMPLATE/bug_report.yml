@@ -5,14 +5,14 @@ body:
   - type: markdown
     attributes:
       value: |
-        Kin is a local-first v0.9.x prototype. Report runtime bugs only for behavior that exists in the version under test.
+        Kin is a local-first household app. Report runtime bugs only for behavior that exists in the version under test.
         Use synthetic data. Do not include household messages, personal details, credentials, tokens, or storage dumps.
   - type: input
     id: version
     attributes:
       label: Kin version or commit
       description: Identify the exact release/tag or commit tested.
-      placeholder: kin-v0.10.3
+      placeholder: kin-v0.14.0
     validations:
       required: true
   - type: input

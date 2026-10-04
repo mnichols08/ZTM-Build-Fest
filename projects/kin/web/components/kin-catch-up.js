@@ -6,7 +6,7 @@ class KinCatchUp extends HTMLElement {
     this.section = document.createElement("section");
     this.section.className = "catch-up-section today-section";
     this.heading = document.createElement("h2");
-    this.heading.textContent = "Since you last checked";
+    this.heading.textContent = "Catch up";
     this.heading.tabIndex = -1;
     this.since = document.createElement("p");
     this.since.className = "catch-up-since";

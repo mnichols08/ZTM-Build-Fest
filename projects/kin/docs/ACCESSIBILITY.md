@@ -1,5 +1,16 @@
 # Accessibility Contract
 
+## v0.14.0 app shell
+
+The primary shell uses five keyboard-reachable links with visible labels and
+`aria-current="page"`; mobile presents the same destinations in a fixed bottom
+bar with targets at least 48px tall. Each destination is a labeled section, and
+the active view is reflected in the URL fragment for bookmark/back-forward
+navigation. Household navigation is not exposed until the local household is
+unlocked. Light and dark colors follow the operating-system preference through
+semantic tokens. Browser-tested support claims are recorded per release in the
+changelog; this contract does not imply screen-reader or platform certification.
+
 ## Recovery controls (v0.13.3)
 
 “Replace this device” and “Authorize recovery” are native buttons reachable in
@@ -11,7 +22,7 @@ are visible, controls retain 48-pixel targets, and flex actions wrap on narrow
 screens. Expired recovery returns to the code-entry flow without silently
 continuing.
 
-**Status:** Current through v0.7.0 Routines; earlier version sections are historical contracts. See v0.7.0 below.
+**Status:** Current through v0.14.0 app shell; earlier version sections are historical contracts. See v0.14.0 below.
 
 ## Baseline requirements
 

@@ -2,7 +2,22 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
-## Unreleased — v0.13.5 Recovery candidate
+## Unreleased — v0.14.0 UX/UI Consolidation candidate
+
+### v0.14.0 — App Shell and Visual Foundation
+
+- Replaced the single long page with five stable destinations: Today, Lists,
+  Routines, Handoff, and More. Today and Lists remain views over existing item
+  records; no new domain capability or data model was added.
+- Added semantic design tokens, warm light/dark system themes, shared surfaces,
+  controls, list rows, navigation, and focused responsive layout.
+- Moved household access and privacy/continuity controls into More once
+  unlocked, while keeping the actual lock/unlock gate available before
+  navigation.
+- Preserved existing routines, Handoff, Talk, Pulse, identity, sync, backup,
+  restore, recovery, and deletion behaviors.
+- Deferred shopping, household areas/modes, notes, maintenance, and other
+  prototype-only capabilities.
 
 ### v0.13.5 — Cancelled-Deletion Restore Authority Correctness
 
