@@ -37,12 +37,14 @@ def main() -> int:
     )
 
     changelog = (PROJECT_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    require_match(
-        "CHANGELOG current implementation candidate",
-        r"^## Unreleased — v([0-9]+\.[0-9]+\.[0-9]+) [^\r\n]+ candidate$",
+    if not re.search(
+        rf"^## (?:Unreleased — )?v{re.escape(version)}[ —]",
         changelog,
-        version,
-    )
+        re.MULTILINE,
+    ):
+        raise ValueError(
+            f"CHANGELOG: current implementation line {version} is missing"
+        )
 
     issue_template = (PROJECT_ROOT / ".github/ISSUE_TEMPLATE/bug_report.yml").read_text(encoding="utf-8")
     require_match("bug report version placeholder", r"^\s+placeholder: kin-v([0-9]+\.[0-9]+\.[0-9]+)$", issue_template, version)

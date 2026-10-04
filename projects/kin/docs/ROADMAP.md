@@ -1,6 +1,6 @@
 # Roadmap
 
-Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. Tagged implementation candidates now include v0.11.7 through v0.15.2, with v0.15.3 in progress. The `v0.11.7` Durable Service & Deployment candidate and annotated `kin-v0.12.3` Data Lifecycle candidate remain historical review baselines, not published releases. The v0.12.3 candidate passed scripted Windows checks including PowerShell and POSIX (`run.sh` under Git Bash) launcher smokes. The WSL HTTP launcher itself was not run because WSL has no Node executable.
+Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. Tagged implementation candidates now include v0.11.7 through v0.15.3. The `v0.11.7` Durable Service & Deployment candidate and annotated `kin-v0.12.3` Data Lifecycle candidate remain historical review baselines, not published releases. The v0.12.3 candidate passed scripted Windows checks including PowerShell and POSIX (`run.sh` under Git Bash) launcher smokes. The WSL HTTP launcher itself was not run because WSL has no Node executable.
 
 ```text
 v0.9.3 — Encrypted Event Sync Stabilization
@@ -290,7 +290,7 @@ Keep the platform work in order: durable service, lifecycle/deletion, recovery a
 | `v0.12.x` | Tagged `v0.12.3` review candidate; scripted Windows checks passed, human review pending | [Data Lifecycle, Retention & Deletion](V0.12.0.md) — explicit deletion, retention, archive, revocation, backup and stale-device behavior. |
 | `v0.13.x` | Tagged candidate through `v0.13.5` | [Recovery & Household Continuity](V0.13.0.md) — explicit outcomes for loss of credentials, devices, browser profiles, server data and recovery material. |
 | `v0.14.x` | Complete through `v0.14.5` | [UX/UI Consolidation](V0.14.0.md) — one coherent, accessible presentation of the settled platform and household workflows. |
-| `v0.15.x` | `v0.15.0`–`v0.15.2` tagged; `v0.15.3` in progress | [Household Areas](releases/V0.15.0.md) — optional, bounded place/context without project management. |
+| `v0.15.x` | Complete through tagged `v0.15.3` | [Household Areas](releases/V0.15.0.md) — optional, bounded place/context without project management. |
 | `v0.16.x` | Planned | [Household Notes & Reference Context](releases/V0.16.0.md) — durable short reference context without chat or a document editor. |
 
 The [bridge plan](BRIDGE-0.11-0.16.md) records the dependency order. v0.12–v0.16 occupy October 3–7 in the daily schedule, followed by v0.17 on October 8. Each line requires the preceding gate; only v0.11 must be settled before the first daily target. A release contract is a plan, not evidence of completion.
@@ -388,7 +388,7 @@ Through the October plan, preserve the [product principles](PRINCIPLES.md) and [
 
 ## Scope discipline
 
-Each roadmap item is future work unless explicitly marked as implemented. v0.9.3 supplies authentication, pairing and encrypted sync; v0.10.x adds local security, portable commands/codecs and encrypted recovery archives. v0.11.7 is a prior review candidate; tagged v0.12.3 passed scripted Windows checks, including PowerShell and POSIX launchers. v0.13.x and v0.14.x are complete through their `.5` patches; v0.15.x is authorized through v0.15.3 and currently at its final release gate. The WSL HTTP launcher was not run because WSL has no Node executable. Later minor lines remain targets and v1.0 readiness-driven. Releases through `v0.0.12` were documentation-only; v0.1.0 was the first coded release.
+Each roadmap item is future work unless explicitly marked as implemented. v0.9.3 supplies authentication, pairing and encrypted sync; v0.10.x adds local security, portable commands/codecs and encrypted recovery archives. v0.11.7 is a prior review candidate; tagged v0.12.3 passed scripted Windows checks, including PowerShell and POSIX launchers. v0.13.x and v0.14.x are complete through their `.5` patches; v0.15.x is complete and verified through v0.15.3. Do not begin v0.16.x under the current authorization. The WSL HTTP launcher was not run because WSL has no Node executable. Later minor lines remain targets and v1.0 readiness-driven. Releases through `v0.0.12` were documentation-only; v0.1.0 was the first coded release.
 
 The v0.15.0–v0.15.3 line was explicitly authorized. Complete each release gate and stop at v0.15.3. Do not begin v0.16.x under this authorization. Follow the current [agent guidance](../AGENTS.md) and [release process](RELEASES.md); a date alone cannot bypass a release gate.
 

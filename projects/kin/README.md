@@ -98,7 +98,7 @@ The month targets a coherent, demoable pre-1.0 build at `v0.40.x`. The `v0.41.x`
 - Candidate: `v0.12.4` — Data Lifecycle, Retention & Deletion with Pending-Deletion Restore Authority Guard
 - Earlier candidate: `v0.13.5` — Cancelled-deletion restore authority correctness
 - Current line: `v0.15.3` — Household Areas UX polish and release gate
-- In progress: `v0.15.x` — Household Areas
+- Completed: `v0.15.x` — Household Areas through v0.15.3
 - Planned: `v0.16.x` — Household Notes & Reference Context
 - Planned: `v0.17.x`–`v0.40.x` — Incremental household capabilities, portability, and device migration within the October plan; see the [daily roadmap](docs/ROADMAP.md)
 - Planned after October, undated: `v0.41.x`–`v0.45.x` — Recovery drills, broader platform validation, performance, and release-candidate readiness

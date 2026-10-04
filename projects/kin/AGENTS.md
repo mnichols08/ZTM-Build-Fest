@@ -108,7 +108,7 @@ The v0.14.x UX/UI Consolidation line is complete through `kin-v0.14.5` on
 `kin-development`. The user explicitly authorized the full v0.15.0–v0.15.3
 Household Areas release line. Work one milestone at a time and complete its
 tests, docs, commit, annotated tag, individual tag push, and local/remote
-verification before continuing. Current milestone: v0.15.3. Do not begin
+verification before continuing. Current milestone: v0.15.3 complete. Do not begin
 v0.16.x. Preserve the v0.13.5 recovery authority guarantees and all earlier
 security/domain contracts.
 
