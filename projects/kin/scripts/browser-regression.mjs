@@ -984,6 +984,13 @@ try {
   await visit(first, "today");
   await visit(first, "handoff");
   console.log(await first.evaluate(`(${handoffRegressions.toString()})()`));
+  assert.equal(await first.evaluate(`(()=>{
+    const tabs=[...document.querySelectorAll('#handoff [role="tab"]')];
+    tabs[0].focus();
+    tabs[0].dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));
+    return document.activeElement===tabs[1] && tabs[1].getAttribute('aria-selected')==='true' &&
+      document.querySelector('#handoffs-panel').hidden && !document.querySelector('#talk-panel').hidden;
+  })()`), true, "Handoff/Talk tabs switch accessibly and keep the concepts distinct");
   console.log(await first.evaluate(`(${talkRegressions.toString()})()`));
   await visit(first, "more");
   console.log(await first.evaluate(`(${pulseRegressions.toString()})()`));
@@ -1116,6 +1123,7 @@ try {
   console.log(
     "PASS Handoff draft disposal, keyboard capture/acknowledgement, focus restoration",
   );
+  await first.evaluate('document.querySelector("#talk-tab").click()');
   assert.equal(
     await first.evaluate('document.querySelector("#talk-text").value'),
     "",
@@ -1404,6 +1412,8 @@ try {
   await visit(first, "handoff");
   await visit(second, "handoff");
   await handoffPeerRegressions(first, second, until);
+  await first.evaluate('document.querySelector("#talk-tab").click()');
+  await second.evaluate('document.querySelector("#talk-tab").click()');
   await talkPeerRegressions(first, second, until);
   await visit(first, "more");
   await visit(second, "more");
@@ -1553,6 +1563,7 @@ try {
     true,
     "Handoff semantics, announcements, focus and targets in forced colors",
   );
+  await first.evaluate('document.querySelector("#talk-tab").click()');
   assert.equal(
     await first.evaluate(`(()=>{
     const app=document.querySelector('kin-app'),capture=app.talks;

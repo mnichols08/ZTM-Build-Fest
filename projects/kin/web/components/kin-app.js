@@ -87,6 +87,20 @@ class KinApp extends HTMLElement {
       history.pushState(null, "", link.hash);
       this.showPageFromLocation();
     };
+    this.onHandoffTabClick = (event) => {
+      const tab = event.target.closest?.('[role="tab"][data-panel]');
+      if (tab) this.showHandoffPanel(tab.dataset.panel, true);
+    };
+    this.onHandoffTabKeydown = (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const tabs = [...this.handoffTabs.querySelectorAll('[role="tab"]')];
+      const current = tabs.indexOf(event.target);
+      if (current < 0) return;
+      event.preventDefault();
+      const step = event.key === "ArrowRight" ? 1 : -1;
+      tabs[(current + step + tabs.length) % tabs.length].focus();
+      this.showHandoffPanel(tabs[(current + step + tabs.length) % tabs.length].dataset.panel);
+    };
     this.onSetPulse = (event) => {
       const timestamp = Date.now();
       const hours = event.detail.hours;
@@ -315,7 +329,37 @@ class KinApp extends HTMLElement {
     routines.append(this.routines);
 
     const handoff = page("handoff", "Handoff", "Pass along what will help someone pick things up.");
-    handoff.append(this.handoffs, this.talks);
+    const tablist = document.createElement("div");
+    tablist.className = "section-tabs";
+    tablist.setAttribute("role", "tablist");
+    tablist.setAttribute("aria-label", "Handoff and Talk");
+    this.handoffTabs = tablist;
+    const handoffPanel = document.createElement("section");
+    handoffPanel.id = "handoffs-panel";
+    handoffPanel.setAttribute("role", "tabpanel");
+    handoffPanel.setAttribute("aria-labelledby", "handoffs-tab");
+    const talkPanel = document.createElement("section");
+    talkPanel.id = "talk-panel";
+    talkPanel.setAttribute("role", "tabpanel");
+    talkPanel.setAttribute("aria-labelledby", "talk-tab");
+    for (const [id, label, panel] of [
+      ["handoffs", "Handoffs", handoffPanel],
+      ["talk", "Talk", talkPanel],
+    ]) {
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.id = `${id}-tab`;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", panel.id);
+      tab.dataset.panel = id;
+      tab.textContent = label;
+      tablist.append(tab);
+    }
+    handoffPanel.append(this.handoffs);
+    talkPanel.append(this.talks);
+    handoff.append(tablist, handoffPanel, talkPanel);
+    tablist.addEventListener("click", this.onHandoffTabClick);
+    tablist.addEventListener("keydown", this.onHandoffTabKeydown);
 
     const more = page("more", "More", "Household context, people, devices, and continuity.");
     more.append(this.pulse);
@@ -331,6 +375,7 @@ class KinApp extends HTMLElement {
       this.pages.set(section.id, section);
       main.append(section);
     }
+    this.showHandoffPanel("handoffs");
     this.showPageFromLocation();
   }
 
@@ -343,6 +388,19 @@ class KinApp extends HTMLElement {
       if (id === active) link.setAttribute("aria-current", "page");
       else link.removeAttribute("aria-current");
     }
+  }
+
+  showHandoffPanel(id, focus = false) {
+    if (!this.handoffTabs) return;
+    const active = id === "talk" ? "talk" : "handoffs";
+    for (const tab of this.handoffTabs.querySelectorAll('[role="tab"]')) {
+      const selected = tab.dataset.panel === active;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      if (focus && selected) tab.focus();
+    }
+    this.pages?.get("handoff")?.querySelector("#handoffs-panel")?.toggleAttribute("hidden", active !== "handoffs");
+    this.pages?.get("handoff")?.querySelector("#talk-panel")?.toggleAttribute("hidden", active !== "talk");
   }
 
   disconnectedCallback() {
@@ -1196,6 +1254,8 @@ class KinApp extends HTMLElement {
     this.catchUp.disabled = isBusy || !this.store;
     this.routines.disabled = isBusy || !this.store;
     this.household.disabled = isBusy || !this.store;
+    for (const tab of this.handoffTabs?.querySelectorAll('[role="tab"]') ?? [])
+      tab.disabled = isBusy;
     this.retryButton.disabled = isBusy;
   }
 

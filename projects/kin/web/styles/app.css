@@ -163,6 +163,11 @@ kin-app { display: block; min-height: 100vh; }
 }
 .nav-link:hover { background: var(--surface-secondary); color: var(--ink); }
 
+.section-tabs { display: flex; gap: 6px; margin: 4px 0 16px; border-bottom: 1px solid var(--line); }
+.section-tabs [role="tab"] { min-height: 44px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: var(--r-control) var(--r-control) 0 0; background: transparent; color: var(--ink-muted); }
+.section-tabs [role="tab"][aria-selected="true"] { border-bottom-color: var(--accent); color: var(--accent); font-weight: 650; }
+[role="tabpanel"] { min-width: 0; }
+
 main {
   width: min(100%, 760px);
   min-width: 0;

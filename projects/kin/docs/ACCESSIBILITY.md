@@ -1,6 +1,6 @@
 # Accessibility Contract
 
-## v0.14.0 app shell
+## v0.14.x application shell
 
 The primary shell uses five keyboard-reachable links with visible labels and
 `aria-current="page"`; mobile presents the same destinations in a fixed bottom
@@ -22,7 +22,7 @@ are visible, controls retain 48-pixel targets, and flex actions wrap on narrow
 screens. Expired recovery returns to the code-entry flow without silently
 continuing.
 
-**Status:** Current through v0.14.0 app shell; earlier version sections are historical contracts. See v0.14.0 below.
+**Status:** Updated through v0.14.1; earlier version sections are historical contracts.
 
 ## Baseline requirements
 
