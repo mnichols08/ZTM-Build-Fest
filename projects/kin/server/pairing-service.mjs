@@ -868,13 +868,26 @@ export class PairingService {
         400,
       );
     if (["device", "replacement", "member-recovery"].includes(pairing.purpose)) {
-      if (this.activeTrustedDeviceCount(household) >= MAX_TRUSTED_DEVICES)
+      const existingMember = this.members.get(pairing.memberId);
+      const activeDevices = this.activeTrustedDeviceCount(household);
+      const targetActiveDevices = [...this.devices.values()].filter(
+        (device) =>
+          device.householdId === household.id &&
+          device.memberId === pairing.memberId &&
+          !device.revokedAt,
+      ).length;
+      const postRecoveryDevices =
+        pairing.purpose === "device"
+          ? activeDevices + 1
+          : pairing.purpose === "replacement"
+            ? activeDevices
+            : activeDevices - targetActiveDevices + 1;
+      if (postRecoveryDevices > MAX_TRUSTED_DEVICES)
         throw new PairingError(
           "device_limit",
           "This household reached its trusted-device limit.",
           409,
         );
-      const existingMember = this.members.get(pairing.memberId);
       if (
         !existingMember?.active ||
         existingMember.householdId !== household.id

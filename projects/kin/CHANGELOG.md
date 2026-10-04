@@ -2,7 +2,13 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
-## Unreleased — v0.13.3 Recovery candidate
+## v0.13.4 — Recovery Capacity and Predating-Backup Correction
+
+- Evaluate trusted-device limits after replacement/member-recovery revocations,
+  so legitimate recovery remains available at the 16-device boundary.
+- Refuse restore when a surviving active household is absent from the chosen
+  backup instead of silently dropping its current authority.
+- Add boundary regressions for both recovery modes and fail-closed restore.
 
 ### v0.13.3 — Recovery UX, Documentation, and Release Gate
 

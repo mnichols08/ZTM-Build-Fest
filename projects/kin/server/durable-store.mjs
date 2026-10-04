@@ -1083,7 +1083,12 @@ export class DurableStore {
       let preserved = 0;
       for (const snapshot of snapshots) {
         const current = this.statements.getHousehold.get(snapshot.householdId);
-        if (!current || current.lifecycle_state !== "active") continue;
+        if (!current)
+          throw new DurableConflictError(
+            "restore_missing_active_household",
+            "Cannot restore a backup that predates a currently active household.",
+          );
+        if (current.lifecycle_state !== "active") continue;
         if (
           !snapshot.household ||
           snapshot.household.id !== snapshot.householdId ||

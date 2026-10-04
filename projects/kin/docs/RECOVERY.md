@@ -1,6 +1,6 @@
 # Recovery and Household Continuity
 
-**Status:** implemented through v0.13.3. Recovery restores only authority that a
+**Status:** implemented through v0.13.4. Recovery restores only authority that a
 currently active adult and trusted device can legitimately grant. It never
 turns an archive, an old passkey, a stale device, or a server backup into new
 household authority.
@@ -96,6 +96,13 @@ and every later authority/deletion record are both lost, the service cannot
 infer changes made after the chosen backup. Operators must preserve the latest
 database/deletion ledger and choose a known-good backup. The explicit restore
 acknowledgement remains required.
+
+If the surviving target contains an active household that the selected backup
+does not contain, restore is refused. Kin does not reconstruct a household from
+authority metadata alone or silently discard authority created after the
+backup. Replacement and member-assisted recovery evaluate the trusted-device
+limit after their required revocations, so recovery remains possible at the
+configured limit without widening the final device count.
 
 ## Stale devices and missing keys
 

@@ -4,7 +4,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DurableStore } from "./durable-store.mjs";
-import { PairingService } from "./pairing-service.mjs";
+import {
+  MAX_TRUSTED_DEVICES,
+  PairingService,
+} from "./pairing-service.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
 
 const credential = (id) => ({ id, publicKey: `key-${id}`, algorithm: -7 });
@@ -15,6 +18,7 @@ function addSameMemberDevice(service, adult, suffix) {
     code: request.code,
     credential: credential(`credential-${suffix}`),
     deviceLabel: `Device ${suffix}`,
+    rateKey: `device-${suffix}`,
   });
   service.approvePairing(
     adult.sessionToken,
@@ -303,6 +307,109 @@ test("stale backup restore preserves newer recovery, revocation, credentials, an
       assert.equal(restored.validate(), true);
     } finally {
       restored.close();
+    }
+  } finally {
+    store?.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("replacement succeeds at the trusted-device limit using post-operation capacity", () => {
+  const service = new PairingService();
+  const adult = service.bootstrap({ credential: credential("limit-a") });
+  const devices = [];
+  for (let index = 1; index < MAX_TRUSTED_DEVICES; index += 1)
+    devices.push(addSameMemberDevice(service, adult, `limit-${index}`));
+  assert.equal(
+    service.activeTrustedDeviceCount(service.households.get(adult.householdId)),
+    MAX_TRUSTED_DEVICES,
+  );
+  const lost = devices.at(-1);
+  const request = service.createReplacementPairing(
+    adult.sessionToken,
+    lost.deviceId,
+  );
+  const claim = service.claimPairing({
+    code: request.code,
+    credential: credential("limit-replacement"),
+    deviceLabel: "Limit replacement",
+  });
+  service.approvePairing(
+    adult.sessionToken,
+    request.pairingId,
+    claim.version,
+  );
+  assert.equal(
+    service.activeTrustedDeviceCount(service.households.get(adult.householdId)),
+    MAX_TRUSTED_DEVICES,
+  );
+  assert.ok(service.devices.get(lost.deviceId).revokedAt);
+});
+
+test("member recovery succeeds at the trusted-device limit after target revocation", () => {
+  const service = new PairingService();
+  const adultA = service.bootstrap({ credential: credential("capacity-a") });
+  const adultB = addAdult(service, adultA, "capacity-b");
+  for (let index = 2; index < MAX_TRUSTED_DEVICES; index += 1)
+    addSameMemberDevice(service, adultA, `capacity-${index}`);
+  assert.equal(
+    service.activeTrustedDeviceCount(service.households.get(adultA.householdId)),
+    MAX_TRUSTED_DEVICES,
+  );
+  const request = service.createMemberRecoveryPairing(
+    adultA.sessionToken,
+    adultB.memberId,
+  );
+  const claim = service.claimPairing({
+    code: request.code,
+    credential: credential("capacity-recovered"),
+    deviceLabel: "Recovered at capacity",
+  });
+  service.approvePairing(
+    adultA.sessionToken,
+    request.pairingId,
+    claim.version,
+  );
+  assert.equal(
+    service.activeTrustedDeviceCount(service.households.get(adultA.householdId)),
+    MAX_TRUSTED_DEVICES,
+  );
+  assert.ok(service.devices.get(adultB.deviceId).revokedAt);
+});
+
+test("restore rejects a backup that predates a currently active household", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "kin-predating-recovery-"));
+  const targetPath = join(directory, "kin.sqlite");
+  const backupPath = join(directory, "before-household.sqlite");
+  let store = new DurableStore(targetPath, { acquireProcessLock: false });
+  try {
+    await store.backup(backupPath);
+    const service = new PairingService({ store });
+    const adult = service.bootstrap({
+      credential: credential("created-later"),
+      deviceLabel: "Current authority",
+    });
+    store.close();
+    store = null;
+    await assert.rejects(
+      DurableStore.restoreBackup(backupPath, targetPath, {
+        acknowledgeDeletionHistory: true,
+      }),
+      (error) =>
+        error.code === "restore_missing_active_household" &&
+        error.message ===
+          "Cannot restore a backup that predates a currently active household.",
+    );
+    const preserved = new DurableStore(targetPath, {
+      acquireProcessLock: false,
+    });
+    try {
+      const identity = preserved.loadIdentity();
+      assert.equal(identity.households.has(adult.householdId), true);
+      assert.equal(identity.credentials.has("created-later"), true);
+      assert.equal(preserved.validate(), true);
+    } finally {
+      preserved.close();
     }
   } finally {
     store?.close();
