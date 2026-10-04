@@ -1,6 +1,6 @@
 # Derived Household State
 
-**Status:** v0.15.0 implementation candidate. Rust owns deterministic commands and projection/replay; protocol 9 adds Area state while preserving canonical event bytes and deterministic distributed ordering. Browser startup obtains authorized local unlock before decrypting and replaying; locked state holds no household projection.
+**Status:** v0.15.1 implementation candidate. Rust owns deterministic commands and projection/replay; protocol 9 adds Area state while preserving canonical event bytes and deterministic distributed ordering. Browser startup obtains authorized local unlock before decrypting and replaying; locked state holds no household projection.
 
 ## Projection pipeline
 

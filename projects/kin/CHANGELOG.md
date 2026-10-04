@@ -35,7 +35,13 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Keep connection errors and local storage errors separate from successful
   saved state; leave recovery, deletion, and domain authority unchanged.
 
-## Unreleased — v0.15.0 Household Areas candidate
+## Unreleased — v0.15.1 Area correctness candidate
+
+### v0.15.1 — Area correctness and migration
+
+- Verify old pre-Area projections remain valid without synthesized records and reject Area state at older protocol versions.
+- Reject malformed Area names and zero Area identities during replay; preserve archive associations and treat assignment to a missing identity as invalid.
+- Keep known-name duplicate commands idempotently rejected while replay preserves independently created stable identities instead of merging them.
 
 ### v0.15.0 — Areas foundation
 

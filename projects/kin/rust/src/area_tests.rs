@@ -94,6 +94,64 @@ fn unassigned_pre_area_history_needs_no_synthetic_area() {
 }
 
 #[test]
+fn pre_area_projection_remains_valid_and_area_history_requires_protocol_nine() {
+    let empty = rebuild(&[]).unwrap();
+    let summary = crate::state::CatchUpSummary {
+        entries: Vec::new(),
+        total_count: 0,
+        through_event_id: None,
+    };
+    assert!(crate::protocol::encode_state_v8(&empty, &summary).is_ok());
+
+    let area = EventEnvelope {
+        event_id: EventId([31; 16]),
+        household_id: HouseholdId([1; 16]),
+        actor_id: ActorId([2; 16]),
+        device_id: DeviceId([3; 16]),
+        timestamp: 1_760_000_000_031,
+        logical_time: 1,
+        event_version: 1,
+        kind: EventKind::AreaCreated {
+            area_id: AreaId([32; 16]),
+            name: "Home".into(),
+        },
+        canonical_bytes: Vec::new(),
+    };
+    let state = rebuild(&[area]).unwrap();
+    assert_eq!(state.areas.len(), 1);
+    assert_eq!(
+        crate::protocol::encode_state_v8(&state, &summary),
+        Err(KinError::UnsupportedVersion)
+    );
+}
+
+#[test]
+fn replay_rejects_malformed_area_names_and_zero_area_identity() {
+    for (area_id, name) in [
+        (AreaId([41; 16]), "\u{0000}Kitchen"),
+        (AreaId([41; 16]), "   "),
+        (AreaId([41; 16]), &"x".repeat(MAX_AREA_NAME_BYTES + 1)),
+        (AreaId([0; 16]), "Home"),
+    ] {
+        let event = EventEnvelope {
+            event_id: EventId([42; 16]),
+            household_id: HouseholdId([1; 16]),
+            actor_id: ActorId([2; 16]),
+            device_id: DeviceId([3; 16]),
+            timestamp: 1_760_000_000_042,
+            logical_time: 1,
+            event_version: 1,
+            kind: EventKind::AreaCreated {
+                area_id,
+                name: name.to_owned(),
+            },
+            canonical_bytes: Vec::new(),
+        };
+        assert_eq!(rebuild(&[event]), Err(KinError::InvalidEvent));
+    }
+}
+
+#[test]
 fn invalid_area_references_archived_assignment_and_archiving_rules_are_explicit() {
     let mut events = Vec::new();
     let area_id = AreaId([12; 16]);
@@ -214,6 +272,48 @@ fn names_are_trimmed_bounded_and_duplicate_commands_reject_without_merging() {
     let duplicate = events[0].clone();
     let replay = rebuild(&[duplicate.clone(), duplicate]).unwrap();
     assert_eq!(replay.areas.len(), 1);
+}
+
+#[test]
+fn independently_created_same_name_areas_keep_distinct_stable_ids_on_replay() {
+    let first = EventEnvelope {
+        event_id: EventId([51; 16]),
+        household_id: HouseholdId([1; 16]),
+        actor_id: ActorId([2; 16]),
+        device_id: DeviceId([3; 16]),
+        timestamp: 1_760_000_000_051,
+        logical_time: 1,
+        event_version: 1,
+        kind: EventKind::AreaCreated {
+            area_id: AreaId([52; 16]),
+            name: "Garden".into(),
+        },
+        canonical_bytes: Vec::new(),
+    };
+    let second = EventEnvelope {
+        event_id: EventId([53; 16]),
+        household_id: HouseholdId([1; 16]),
+        actor_id: ActorId([2; 16]),
+        device_id: DeviceId([4; 16]),
+        timestamp: 1_760_000_000_053,
+        logical_time: 1,
+        event_version: 1,
+        kind: EventKind::AreaCreated {
+            area_id: AreaId([54; 16]),
+            name: " Garden ".into(),
+        },
+        canonical_bytes: Vec::new(),
+    };
+    let state = crate::state::rebuild_distributed_on(
+        &[first, second],
+        1_760_000_000_100,
+        crate::recurrence::CivilDate::from_encoded(20261004).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(state.areas.len(), 2);
+    assert_ne!(state.areas[0].area_id, state.areas[1].area_id);
+    assert_eq!(state.areas[0].name, "Garden");
+    assert_eq!(state.areas[1].name, "Garden");
 }
 
 #[test]

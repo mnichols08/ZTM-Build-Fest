@@ -290,7 +290,7 @@ Keep the platform work in order: durable service, lifecycle/deletion, recovery a
 | `v0.12.x` | Tagged `v0.12.3` review candidate; scripted Windows checks passed, human review pending | [Data Lifecycle, Retention & Deletion](V0.12.0.md) — explicit deletion, retention, archive, revocation, backup and stale-device behavior. |
 | `v0.13.x` | Tagged candidate through `v0.13.5` | [Recovery & Household Continuity](V0.13.0.md) — explicit outcomes for loss of credentials, devices, browser profiles, server data and recovery material. |
 | `v0.14.x` | Complete through `v0.14.5` | [UX/UI Consolidation](V0.14.0.md) — one coherent, accessible presentation of the settled platform and household workflows. |
-| `v0.15.x` | Authorized; `v0.15.0` implementation candidate | [Household Areas](releases/V0.15.0.md) — optional, bounded place/context without project management. |
+| `v0.15.x` | Authorized; `v0.15.0` tagged, `v0.15.1` in progress | [Household Areas](releases/V0.15.0.md) — optional, bounded place/context without project management. |
 | `v0.16.x` | Planned | [Household Notes & Reference Context](releases/V0.16.0.md) — durable short reference context without chat or a document editor. |
 
 The [bridge plan](BRIDGE-0.11-0.16.md) records the dependency order. v0.12–v0.16 occupy October 3–7 in the daily schedule, followed by v0.17 on October 8. Each line requires the preceding gate; only v0.11 must be settled before the first daily target. A release contract is a plan, not evidence of completion.

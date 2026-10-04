@@ -431,6 +431,11 @@ fn encode_state_with_summary(
     summary: &CatchUpSummary,
     version: u16,
 ) -> Result<Vec<u8>, KinError> {
+    if version < PROTOCOL_V9
+        && (!state.areas.is_empty() || state.items.iter().any(|item| item.area_id.is_some()))
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
     if version == PROTOCOL_V6
         && (!state.routines.is_empty() || summary.entries.iter().any(|entry| entry.kind as u8 > 11))
     {

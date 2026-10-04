@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** v0.15.0 implementation candidate. v0.10 added portable commands, metadata and archive operations. Protocol 9 adds Areas without changing earlier event bytes or protocol layouts. Earlier version sections are historical contracts.
+**Status:** v0.15.1 implementation candidate. v0.10 added portable commands, metadata and archive operations. Protocol 9 adds Areas without changing earlier event bytes or protocol layouts. Earlier version sections are historical contracts.
 
 ## Target and exports
 
