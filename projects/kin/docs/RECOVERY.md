@@ -86,8 +86,9 @@ When an older backup is restored over a surviving validated database, Kin uses
 the backup for durable relay history but preserves the target's newer active
 authority: member active/removed state, the exact current credential set,
 trusted and revoked devices, device-token verifiers, current epoch/rotation
-state, and live provisioning grants. Final deletion tombstones still override
-the backup, and pending deletion still blocks restore entirely. Thus an older
+state, live provisioning grants, and a newer cancellation that returned a
+household to active. Final deletion tombstones still override the backup, and
+pending deletion still blocks restore entirely. Thus an older
 device, credential, member record, completed recovery, or pre-rotation state
 cannot silently regain authority through restore.
 

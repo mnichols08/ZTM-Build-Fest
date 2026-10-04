@@ -2,7 +2,18 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
-## v0.13.4 — Recovery Capacity and Predating-Backup Correction
+## Unreleased — v0.13.5 Recovery candidate
+
+### v0.13.5 — Cancelled-Deletion Restore Authority Correctness
+
+- Preserve a current active household when restoring a backup captured during
+  an older, subsequently cancelled deletion request.
+- Keep pending current deletion, finalized tombstone, and predating-backup
+  protections unchanged.
+- Reconcile recovery release documentation and agent guidance with the completed
+  v0.13.x implementation line.
+
+### v0.13.4 — Recovery Capacity and Predating-Backup Correction
 
 - Evaluate trusted-device limits after replacement/member-recovery revocations,
   so legitimate recovery remains available at the 16-device boundary.

@@ -1088,7 +1088,6 @@ export class DurableStore {
             "restore_missing_active_household",
             "Cannot restore a backup that predates a currently active household.",
           );
-        if (current.lifecycle_state !== "active") continue;
         if (
           !snapshot.household ||
           snapshot.household.id !== snapshot.householdId ||
@@ -1100,10 +1099,13 @@ export class DurableStore {
         )
           throw new DurableStoreError("Kin household authority backup data is invalid.");
 
+        const restoreOverNonActive = current.lifecycle_state !== "active";
         this.db.prepare("DELETE FROM provisioning_grants WHERE household_id = ?").run(snapshot.householdId);
-        this.db.prepare("DELETE FROM devices WHERE household_id = ?").run(snapshot.householdId);
+        if (!restoreOverNonActive)
+          this.db.prepare("DELETE FROM devices WHERE household_id = ?").run(snapshot.householdId);
         this.db.prepare("DELETE FROM credentials WHERE member_id IN (SELECT id FROM members WHERE household_id = ?)").run(snapshot.householdId);
-        this.db.prepare("DELETE FROM members WHERE household_id = ?").run(snapshot.householdId);
+        if (!restoreOverNonActive)
+          this.db.prepare("DELETE FROM members WHERE household_id = ?").run(snapshot.householdId);
         this.db
           .prepare(
             `UPDATE households SET version = ?, lifecycle_state = 'active',
@@ -1112,7 +1114,12 @@ export class DurableStore {
           )
           .run(Math.max(current.version, snapshot.household.version), snapshot.householdId);
         const insertMember = this.db.prepare(
-          "INSERT INTO members(id, household_id, active, credential_ids) VALUES (?, ?, ?, ?)",
+          `INSERT INTO members(id, household_id, active, credential_ids)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             household_id = excluded.household_id,
+             active = excluded.active,
+             credential_ids = excluded.credential_ids`,
         );
         for (const row of snapshot.members)
           insertMember.run(row.id, row.household_id, row.active, row.credential_ids);
@@ -1122,7 +1129,14 @@ export class DurableStore {
         for (const row of snapshot.credentials)
           insertCredential.run(row.id, row.member_id, row.credential_json);
         const insertDevice = this.db.prepare(
-          "INSERT INTO devices(id, household_id, member_id, token_hash, revoked_at, device_json) VALUES (?, ?, ?, ?, ?, ?)",
+          `INSERT INTO devices(id, household_id, member_id, token_hash, revoked_at, device_json)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             household_id = excluded.household_id,
+             member_id = excluded.member_id,
+             token_hash = excluded.token_hash,
+             revoked_at = excluded.revoked_at,
+             device_json = excluded.device_json`,
         );
         for (const row of snapshot.devices)
           insertDevice.run(row.id, row.household_id, row.member_id, row.token_hash, row.revoked_at, row.device_json);

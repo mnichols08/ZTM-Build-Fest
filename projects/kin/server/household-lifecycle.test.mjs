@@ -265,6 +265,53 @@ for (const removedAdult of [false, true]) {
   });
 }
 
+test("restore preserves a newer deletion cancellation over a pending backup", async () => {
+  const fixture = createFixture();
+  const targetPath = join(fixture.directory, "kin.sqlite");
+  const backupPath = join(fixture.directory, "deletion-pending.sqlite");
+  try {
+    fixture.service.requestHouseholdDeletion(
+      fixture.identity.sessionToken,
+      fixture.identity.memberId,
+    );
+    await fixture.store.backup(backupPath);
+    const backup = new DurableStore(backupPath, { readonly: true });
+    try {
+      assert.equal(backup.lifecycleInfo(fixture.identity.householdId).state, "deletion_pending");
+    } finally {
+      backup.close();
+    }
+
+    const cancelled = fixture.service.cancelHouseholdDeletion(
+      fixture.identity.deviceToken,
+      "lifecycle-passkey",
+    );
+    assert.equal(
+      fixture.service.authorize(cancelled.sessionToken).household.id,
+      fixture.identity.householdId,
+    );
+    fixture.store.close();
+
+    const result = await DurableStore.restoreBackup(backupPath, targetPath, {
+      acknowledgeDeletionHistory: true,
+    });
+    assert.equal(result.preservedAuthorityCount, 1);
+    const verification = new DurableStore(targetPath);
+    try {
+      assert.equal(verification.lifecycleInfo(fixture.identity.householdId).state, "active");
+      const identity = verification.loadIdentity();
+      assert.equal(identity.members.get(fixture.identity.memberId).active, true);
+      assert.equal(identity.devices.get(fixture.identity.deviceId).revokedAt, null);
+      assert.equal(identity.credentials.has("lifecycle-passkey"), true);
+      assert.equal(verification.validate(), true);
+    } finally {
+      verification.close();
+    }
+  } finally {
+    rmSync(fixture.directory, { recursive: true, force: true });
+  }
+});
+
 test("restore merges newer deletion tombstones from the existing database", async () => {
   const fixture = createFixture();
   const targetPath = join(fixture.directory, "kin.sqlite");
