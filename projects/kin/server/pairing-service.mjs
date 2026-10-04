@@ -7,6 +7,7 @@ import {
   verify as verifySignature,
 } from "node:crypto";
 import { MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
+import { HOUSEHOLD_DELETION_GRACE_MS } from "./durable-store.mjs";
 export { MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
 
 export const PAIRING_TTL_MS = 10 * 60_000;
@@ -63,6 +64,7 @@ export class PairingService {
     this.secret = secret;
     this.maxRateBuckets = maxRateBuckets;
     this.store = store;
+    store?.finalizeExpiredDeletions(now());
     const identity = store?.loadIdentity();
     this.households = identity?.households ?? new Map();
     this.members = identity?.members ?? new Map();
@@ -129,6 +131,10 @@ export class PairingService {
       id: householdId,
       members: new Set([memberId]),
       version: 1,
+      lifecycleState: "active",
+      deletionRequestedAt: null,
+      deletionFinalizeAt: null,
+      deletedAt: null,
     });
     this.members.set(memberId, {
       id: memberId,
@@ -188,6 +194,19 @@ export class PairingService {
       );
     const member = this.members.get(session.memberId);
     const device = this.devices.get(session.deviceId);
+    const household = member && this.households.get(member.householdId);
+    if (household?.lifecycleState === "deletion_pending")
+      throw new PairingError(
+        "household_deletion_pending",
+        "This household is pending deletion and can no longer sync.",
+        410,
+      );
+    if (household?.lifecycleState === "deleted")
+      throw new PairingError(
+        "household_deleted",
+        "This household was deleted and can no longer sync.",
+        410,
+      );
     if (!member?.active || (requireTrusted && (!device || device.revokedAt))) {
       throw new PairingError(
         "device_not_trusted",
@@ -199,7 +218,7 @@ export class PairingService {
       session,
       member,
       device,
-      household: this.households.get(member.householdId),
+      household,
     };
   }
 
@@ -211,7 +230,7 @@ export class PairingService {
     return value;
   }
 
-  trustedDevice(deviceToken) {
+  trustedDevice(deviceToken, { allowDeletionPending = false } = {}) {
     this.store?.assertAvailable();
     const tokenHash = hash(String(deviceToken ?? ""));
     const device = this.devices.get(this.deviceTokens.get(tokenHash));
@@ -234,7 +253,156 @@ export class PairingService {
         "This browser is no longer trusted. Use an active trusted device.",
         403,
       );
+    const household = this.households.get(device.householdId);
+    if (household?.lifecycleState === "deleted")
+      throw new PairingError(
+        "household_deleted",
+        "This household was deleted and can no longer sync.",
+        410,
+      );
+    if (
+      household?.lifecycleState === "deletion_pending" &&
+      !allowDeletionPending
+    )
+      throw new PairingError(
+        "household_deletion_pending",
+        "This household is pending deletion and can no longer sync.",
+        410,
+      );
     return { device, member };
+  }
+
+  requestHouseholdDeletion(sessionToken, reauthenticatedMemberId) {
+    const { member, household } = this.authorize(sessionToken);
+    if (reauthenticatedMemberId !== member.id)
+      throw new PairingError(
+        "fresh_auth_required",
+        "Authenticate with this member's passkey again before deleting the household.",
+        401,
+      );
+    const requestedAt = this.now();
+    const finalizeAt = requestedAt + HOUSEHOLD_DELETION_GRACE_MS;
+    const lifecycle = this.store
+      ? this.store.requestHouseholdDeletion(
+          household.id,
+          requestedAt,
+          finalizeAt,
+        )
+      : {
+          state: "deletion_pending",
+          requestedAt,
+          finalizeAt,
+          deletedAt: null,
+        };
+    Object.assign(household, {
+      lifecycleState: lifecycle.state,
+      deletionRequestedAt: lifecycle.requestedAt,
+      deletionFinalizeAt: lifecycle.finalizeAt,
+      deletedAt: lifecycle.deletedAt,
+    });
+    for (const [sessionHash, session] of this.sessions)
+      if (this.members.get(session.memberId)?.householdId === household.id)
+        this.sessions.delete(sessionHash);
+    this.expireHouseholdPairings(household.id);
+    return {
+      state: lifecycle.state,
+      requestedAt: lifecycle.requestedAt,
+      finalizeAt: lifecycle.finalizeAt,
+    };
+  }
+
+  cancelHouseholdDeletion(deviceToken, credentialId) {
+    const { device, member } = this.trustedDevice(deviceToken, {
+      allowDeletionPending: true,
+    });
+    const household = this.households.get(member.householdId);
+    const credential = this.credentials.get(credentialId);
+    if (!credential || credential.memberId !== member.id)
+      throw new PairingError(
+        "invalid_passkey",
+        "That passkey could not be verified.",
+        401,
+      );
+    if (
+      household?.lifecycleState !== "deletion_pending" ||
+      household.deletionFinalizeAt <= this.now()
+    )
+      throw new PairingError(
+        "household_deletion_final",
+        "The household deletion can no longer be cancelled.",
+        409,
+      );
+    const lifecycle = this.store
+      ? this.store.cancelHouseholdDeletion(household.id, this.now())
+      : {
+          state: "active",
+          requestedAt: null,
+          finalizeAt: null,
+          deletedAt: null,
+        };
+    Object.assign(household, {
+      lifecycleState: lifecycle.state,
+      deletionRequestedAt: lifecycle.requestedAt,
+      deletionFinalizeAt: lifecycle.finalizeAt,
+      deletedAt: lifecycle.deletedAt,
+    });
+    const sessionToken = this.issueSession(member.id, device.id).sessionToken;
+    const refreshedDeviceToken = this.issueDeviceToken(device);
+    this.persistHousehold(household.id);
+    return {
+      sessionToken,
+      deviceToken: refreshedDeviceToken,
+      householdId: household.id,
+      memberId: member.id,
+      deviceId: device.id,
+    };
+  }
+
+  finalizeExpiredDeletions(now = this.now()) {
+    const expired = this.store?.finalizeExpiredDeletions(now) ?? [];
+    const householdIds = new Set(expired);
+    if (!this.store)
+      for (const household of this.households.values())
+        if (
+          household.lifecycleState === "deletion_pending" &&
+          household.deletionFinalizeAt <= now
+        )
+          householdIds.add(household.id);
+    for (const householdId of householdIds) {
+      const household = this.households.get(householdId);
+      if (!household) continue;
+      for (const [sessionHash, session] of this.sessions)
+        if (this.members.get(session.memberId)?.householdId === householdId)
+          this.sessions.delete(sessionHash);
+      for (const device of this.devices.values())
+        if (device.householdId === householdId && device.tokenHash)
+          this.deviceTokens.delete(device.tokenHash);
+      for (const [deviceId, device] of this.devices)
+        if (device.householdId === householdId) this.devices.delete(deviceId);
+      for (const [memberId, member] of this.members)
+        if (member.householdId === householdId) {
+          for (const credentialId of member.credentials)
+            this.credentials.delete(credentialId);
+          this.members.delete(memberId);
+        }
+      household.members.clear();
+      household.lifecycleState = "deleted";
+      household.deletionRequestedAt = null;
+      household.deletionFinalizeAt = null;
+      household.deletedAt = now;
+      this.expireHouseholdPairings(householdId);
+    }
+    return [...householdIds];
+  }
+
+  expireHouseholdPairings(householdId) {
+    for (const [pairingId, pairing] of this.pairings)
+      if (pairing.householdId === householdId) {
+        this.codeIndex.delete(pairing.verifier);
+        for (const [claimHash, storedPairingId] of this.claimTokens)
+          if (storedPairingId === pairingId) this.claimTokens.delete(claimHash);
+        this.pairings.delete(pairingId);
+      }
   }
 
   reauthenticationCredentialIds(deviceToken) {

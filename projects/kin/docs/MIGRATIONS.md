@@ -1,15 +1,17 @@
 # Data Migrations
 
-**Status:** v0.11.7 implementation candidate adds a transactional SQLite service-schema migration alongside the existing recoverable local-encryption migration, root replacement and bounded verification. v0.9.3's additive local schema 1→2 migration remains supported as input; canonical bytes are not rewritten. Earlier version sections are historical.
+**Status:** v0.12.3 implementation candidate adds the transactional household-lifecycle service-schema migration alongside the existing recoverable local-encryption migration, root replacement and bounded verification. v0.9.3's additive local schema 1→2 migration remains supported as input; canonical bytes are not rewritten. Earlier version sections are historical.
 
 ## v0.11 server database migration
 
-The Node service owns an independent `PRAGMA user_version` starting at schema
-1. Migration 0→1 creates normalized identity, authorization, encrypted relay,
-coordination and audit tables inside one SQLite transaction. Startup rejects
+The Node service owns an independent `PRAGMA user_version`. Migration 0→1
+creates normalized identity, authorization, encrypted relay, coordination and
+audit tables inside one SQLite transaction. Migration 1→2 adds household
+lifecycle state, deletion timestamps and insert guards that reject new
+authorization or relay records after deletion is requested. Startup rejects
 newer schema versions, inconsistent migration metadata and unversioned existing
-tables; it never resets or downgrades the database. Tests inject an interruption
-inside migration and verify rollback, then reopen successfully. See the
+tables; it never resets or downgrades the database. Tests verify initial
+migration rollback, the v1→v2 upgrade and lifecycle restart behavior. See the
 [v0.11 contract](V0.11.0.md) for the complete server schema and its relation to
 product and client-storage versions.
 

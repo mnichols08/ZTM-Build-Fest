@@ -35,6 +35,7 @@ export class SyncCoordinator {
     this.timer = null;
     this.running = null;
     this.stopped = false;
+    this.terminal = false;
     this.abortController = new AbortController();
   }
 
@@ -62,18 +63,62 @@ export class SyncCoordinator {
     if (this.stopped) return;
     await this.syncNow();
     if (this.stopped) return;
-    this.timer = setInterval(() => void this.syncNow(), 5_000);
+    if (!this.terminal) this.timer = setInterval(() => void this.syncNow(), 5_000);
   }
 
   async syncNow() {
-    if (this.stopped || !this.identity) return;
+    if (this.stopped || this.terminal || !this.identity) return;
     if (this.running) return this.running;
     this.running = this.runOnce()
-      .catch((error) => {
+      .catch(async (error) => {
         if (this.stopped) return;
+        let message = error.message || "Device sync is paused.";
+        let lifecycle = null;
+        if (
+          ["household_deleted", "household_deletion_pending"].includes(
+            error.code,
+          )
+        ) {
+          lifecycle = {
+            state:
+              error.code === "household_deleted"
+                ? "deleted"
+                : "deletion_pending",
+            message,
+          };
+        } else if (
+          [
+            "authentication_required",
+            "device_not_trusted",
+            "membership_removed",
+          ].includes(error.code)
+        ) {
+          try {
+            lifecycle = await api(
+              `/api/household/lifecycle?householdId=${encodeURIComponent(this.identity.householdId)}`,
+              { signal: this.abortController.signal },
+            );
+          } catch (lifecycleError) {
+            message = `${message} Kin could not confirm the household lifecycle: ${lifecycleError.message}`;
+          }
+        }
+        if (
+          lifecycle?.state === "deleted" ||
+          lifecycle?.state === "deletion_pending"
+        ) {
+          this.terminal = true;
+          clearInterval(this.timer);
+          this.timer = null;
+          this.onState({
+            state: "deleted",
+            lifecycleState: lifecycle.state,
+            message: lifecycle.message,
+          });
+          return;
+        }
         this.onState({
           state: "paused",
-          message: error.message || "Device sync is paused.",
+          message,
         });
       })
       .finally(() => {

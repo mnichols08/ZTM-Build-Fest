@@ -1,6 +1,6 @@
 # Privacy
 
-**Status:** v0.11.7 implementation candidate; awaiting human review. Local protected content is encrypted after verified migration. Sync is optional and uploads client-encrypted canonical event envelopes. The durable service receives no plaintext household event payloads or content keys, but it sees and persists routing and traffic metadata; no anonymity or zero-knowledge claim is made.
+**Status:** v0.12.3 implementation candidate; awaiting human review. Local protected content is encrypted after verified migration. Sync is optional and uploads client-encrypted canonical event envelopes. The durable service receives no plaintext household event payloads or content keys, but it sees and persists routing and traffic metadata; no anonymity or zero-knowledge claim is made.
 
 v0.10 encrypts local canonical events, duplicated outbox content, protected metadata
 and private sync key material. Household drafts remain in unlocked memory only;
@@ -68,7 +68,7 @@ The browser encrypts the exact canonical event bytes and signs envelopes with a 
 
 The service still sees household/member/device/session IDs, event IDs, per-device sequences, key epochs, cursors, ciphertext sizes, event counts/timing, provisioning participants, revocation timing, IP addresses, and connection patterns. It can infer which devices share a household and when they synchronize. Encryption does not make traffic anonymous.
 
-The v0.11 implementation candidate stores identity, credential-verification
+The v0.11 implementation candidate stored identity, credential-verification
 metadata, trusted-device authorization, opaque relay ciphertext, cursors,
 provisioning coordination and bounded security audit entries in SQLite.
 Successful relay acknowledgements follow a committed SQLite transaction;
@@ -77,16 +77,27 @@ not guaranteed. Sessions, WebAuthn ceremonies, unclaimed pairings and
 rate-limit windows are process-local and reset on restart. Local event bytes
 and cached exact envelopes remain on devices that hold them. Service backups
 contain sensitive routing metadata and encrypted envelopes, and a stale restore
-can roll back revocations or key epochs. New/replacement adults do not receive
+could roll back revocations or key epochs. v0.12 adds a durable deletion
+state-machine, immediate session/write invalidation, a 30-day cancellation
+window, final service-side purge and a minimal tombstone. Existing-target backup
+restore merges newer tombstones; restoring without the newer database/ledger
+remains a disclosed rollback limitation. Local event bytes, keys and exported
+copies remain on devices that hold them. New/replacement adults do not receive
 pre-join epoch keys in v0.9; missing history may be unavailable. All
 trusted-device/key loss can make content unrecoverable. See [V0.11.0](V0.11.0.md)
 and the [Threat Model](THREAT-MODEL.md).
 
 The planning design for these boundaries is documented in [Identity](IDENTITY.md), [Pairing](PAIRING.md), [Synchronization](SYNC.md), [Cryptography](CRYPTOGRAPHY.md), and the [Threat Model](THREAT-MODEL.md). These documents specify intended properties and open decisions; they do not establish implemented security guarantees.
 
-## Data lifecycle questions
+## Data lifecycle
 
-Event-oriented history is not an excuse to keep personal data indefinitely. The planning policy distinguishes routine archival, household deletion, device revocation, and member removal in [RETENTION](RETENTION.md), and specifies user-controlled portable copies in [PORTABILITY](PORTABILITY.md). Exact deletion propagation, durable-service backup windows, and relay metadata retention remain unresolved and are not implemented guarantees. v0.12 is planned to define lifecycle/deletion/retention; v0.13 is planned to define recovery and household continuity after loss. The [roadmap](ROADMAP.md) places these before v0.14 UX/UI consolidation.
+The implemented service retention policy distinguishes routine archival,
+household deletion, device revocation and member removal in
+[RETENTION](RETENTION.md), and specifies user-controlled portable copies in
+[PORTABILITY](PORTABILITY.md). Service backups remain operator-managed with no
+automatic expiry. Full encrypted relay history is retained until final
+deletion or the hard event cap; it is not compacted. Deletion does not erase
+copies already held by devices, archives or external backups.
 
 ## Claims boundary
 

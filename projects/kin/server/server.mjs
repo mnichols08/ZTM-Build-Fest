@@ -107,10 +107,17 @@ export function createKinServer(options = {}) {
           "authentication_required",
           "device_not_trusted",
           "membership_removed",
+          "household_deletion_pending",
+          "household_deleted",
         ].includes(error.code)
       ) {
         clearCookie(response, "kin_session", context.secureCookies);
-        if (error.code !== "authentication_required")
+        if (
+          ![
+            "authentication_required",
+            "household_deletion_pending",
+          ].includes(error.code)
+        )
           clearCookie(response, "kin_device", context.secureCookies);
       }
       const safe =
@@ -139,6 +146,22 @@ export function createKinServer(options = {}) {
       json(response, safe.status, { error: safe.code, message: safe.message });
     }
   });
+  const pruneExpiredDeletions = () => {
+    try {
+      for (const householdId of service.finalizeExpiredDeletions(context.now()))
+        syncService.forgetHousehold(householdId);
+    } catch {
+      console.error(
+        JSON.stringify({
+          event: "household_deletion_finalize_failed",
+          outcome: "durable_store_unavailable",
+        }),
+      );
+    }
+  };
+  const lifecycleTimer = setInterval(pruneExpiredDeletions, 60_000);
+  lifecycleTimer.unref?.();
+  server.on("close", () => clearInterval(lifecycleTimer));
   return {
     server,
     service,
@@ -248,6 +271,8 @@ function assertSecureOrigin(host, origin) {
 
 async function api(request, response, url, context) {
   const { service, syncService, webauthn, secureCookies } = context;
+  for (const householdId of service.finalizeExpiredDeletions(context.now()))
+    syncService.forgetHousehold(householdId);
   const body = ["POST", "PUT", "DELETE"].includes(request.method)
     ? await readJson(request)
     : {};
@@ -255,9 +280,41 @@ async function api(request, response, url, context) {
   const claimToken = cookies(request).kin_claim;
   const deviceToken = cookies(request).kin_device;
 
+  if (request.method === "GET" && url.pathname === "/api/household/lifecycle") {
+    const householdId = url.searchParams.get("householdId") ?? "";
+    if (!/^[a-f0-9]{32}$/.test(householdId)) throw badRequest();
+    const knownHousehold = service.households.get(householdId);
+    const lifecycle =
+      store?.lifecycleInfo(householdId) ??
+      (knownHousehold
+        ? {
+            state: knownHousehold.lifecycleState ?? "active",
+            finalizeAt: knownHousehold.deletionFinalizeAt ?? null,
+          }
+        : null);
+    if (!lifecycle)
+      throw new PairingError(
+        "household_not_found",
+        "That household is unavailable.",
+        404,
+      );
+    json(response, 200, {
+      state: lifecycle.state,
+      finalizeAt: lifecycle.finalizeAt,
+      message:
+        lifecycle.state === "deleted"
+          ? "This household was deleted and can no longer sync."
+          : lifecycle.state === "deletion_pending"
+            ? "This household is pending deletion and can no longer sync."
+            : "This household is active.",
+    });
+    return;
+  }
+
   if (request.method === "GET" && url.pathname === "/api/status") {
     let identity = null;
     let claim = null;
+    let householdLifecycle = null;
     try {
       const auth = service.authorize(session);
       identity = {
@@ -269,9 +326,23 @@ async function api(request, response, url, context) {
       if (session) clearCookie(response, "kin_session", secureCookies);
       if (deviceToken) {
         try {
-          service.trustedDevice(deviceToken);
-        } catch {
-          clearCookie(response, "kin_device", secureCookies);
+          const { member, device } = service.trustedDevice(deviceToken, {
+            allowDeletionPending: true,
+          });
+          const household = service.households.get(member.householdId);
+          if (household?.lifecycleState === "deletion_pending")
+            householdLifecycle = {
+              householdId: household.id,
+              state: "deletion_pending",
+              finalizeAt: household.deletionFinalizeAt,
+              message:
+                "This household is pending deletion and can no longer sync.",
+            };
+          else if (!device.revokedAt && !member.active)
+            clearCookie(response, "kin_device", secureCookies);
+        } catch (error) {
+          if (!["household_deletion_pending", "household_deleted"].includes(error.code))
+            clearCookie(response, "kin_device", secureCookies);
         }
       }
     }
@@ -283,7 +354,7 @@ async function api(request, response, url, context) {
     } catch {
       clearCookie(response, "kin_claim", secureCookies);
     }
-    json(response, 200, { identity, claim });
+    json(response, 200, { identity, claim, householdLifecycle });
     return;
   }
   if (
@@ -644,6 +715,140 @@ async function api(request, response, url, context) {
   }
   if (request.method === "POST" && url.pathname === "/api/sync/epochs") {
     json(response, 200, syncService.rotateEpoch(session, body));
+    return;
+  }
+  if (
+    request.method === "POST" &&
+    url.pathname === "/api/household/deletion/options"
+  ) {
+    const auth = service.authorize(session);
+    const flow = createFlow(
+      {
+        purpose: "delete-household",
+        householdId: auth.household.id,
+        memberId: auth.member.id,
+        deviceId: auth.device.id,
+      },
+      context,
+    );
+    json(response, 200, {
+      flow,
+      publicKey: webauthn.authenticationOptions(
+        flow,
+        [...auth.member.credentials],
+      ),
+    });
+    return;
+  }
+  if (
+    request.method === "POST" &&
+    url.pathname === "/api/household/deletion/finish"
+  ) {
+    const flow = consumeFlow(body.flow, context);
+    const auth = service.authorize(session);
+    if (
+      flow.purpose !== "delete-household" ||
+      flow.householdId !== auth.household.id ||
+      flow.memberId !== auth.member.id ||
+      flow.deviceId !== auth.device.id
+    )
+      throw badRequest();
+    const credential = service.credentialForAuthenticatedMember(
+      session,
+      body.credential?.id,
+    );
+    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    const result = withTransaction(context, () =>
+      service.requestHouseholdDeletion(session, auth.member.id),
+    );
+    for (const [flowId, activeFlow] of context.flows)
+      if (
+        activeFlow.householdId === auth.household.id ||
+        auth.household.members.has(activeFlow.memberId)
+      )
+        context.flows.delete(flowId);
+    clearCookie(response, "kin_session", secureCookies);
+    json(response, 200, {
+      ...result,
+      cancelable: true,
+      message:
+        "Household sync is stopped. Deletion becomes final after 30 days unless an adult cancels it with a passkey.",
+    });
+    return;
+  }
+  if (
+    request.method === "POST" &&
+    url.pathname === "/api/household/deletion/cancel/options"
+  ) {
+    const { device, member } = service.trustedDevice(deviceToken, {
+      allowDeletionPending: true,
+    });
+    const household = service.households.get(member.householdId);
+    if (household?.lifecycleState !== "deletion_pending")
+      throw new PairingError(
+        "household_deletion_unavailable",
+        "There is no pending household deletion to cancel.",
+        409,
+      );
+    const flow = createFlow(
+      {
+        purpose: "cancel-household-deletion",
+        householdId: household.id,
+        memberId: member.id,
+        deviceId: device.id,
+      },
+      context,
+    );
+    json(response, 200, {
+      flow,
+      publicKey: webauthn.authenticationOptions(
+        flow,
+        [...member.credentials],
+      ),
+    });
+    return;
+  }
+  if (
+    request.method === "POST" &&
+    url.pathname === "/api/household/deletion/cancel/finish"
+  ) {
+    const flow = consumeFlow(body.flow, context);
+    const { device, member } = service.trustedDevice(deviceToken, {
+      allowDeletionPending: true,
+    });
+    if (
+      flow.purpose !== "cancel-household-deletion" ||
+      flow.householdId !== member.householdId ||
+      flow.memberId !== member.id ||
+      flow.deviceId !== device.id
+    )
+      throw badRequest();
+    const credential = service.credentials.get(body.credential?.id);
+    if (!credential || credential.memberId !== member.id)
+      throw new PairingError(
+        "passkey_member_mismatch",
+        "Use this member's passkey to continue.",
+        401,
+      );
+    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    const result = withTransaction(context, () =>
+      service.cancelHouseholdDeletion(deviceToken, credential.id),
+    );
+    cookie(response, "kin_session", result.sessionToken, secureCookies);
+    cookie(
+      response,
+      "kin_device",
+      result.deviceToken,
+      secureCookies,
+      31_536_000,
+    );
+    json(response, 200, {
+      householdId: result.householdId,
+      memberId: result.memberId,
+      deviceId: result.deviceId,
+      state: "active",
+      message: "Household deletion was cancelled. Sync can be started again.",
+    });
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/household") {

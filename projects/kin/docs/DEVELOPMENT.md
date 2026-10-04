@@ -1,6 +1,6 @@
 # Development Workflow
 
-**Status:** v0.11.7 durable-service implementation candidate (October Roadmap & Startup Diagnostics); awaiting human review. Earlier version sections remain historical contracts.
+**Status:** v0.12.3 Data Lifecycle implementation candidate; awaiting full regression and human review. Earlier version sections remain historical contracts.
 
 ## Build and run
 
@@ -99,16 +99,23 @@ Backups are sensitive and must be stored outside the static web root:
 
 ```powershell
 npm run backup -- C:\private\kin-backups\kin.sqlite
-npm run restore -- C:\private\kin-backups\kin.sqlite
+npm run restore -- C:\private\kin-backups\kin.sqlite --acknowledge-deletion-history
 ```
 
-Restore requires the service to be stopped, verifies the source, and preserves
+Restore requires an explicit acknowledgement that the backup may predate
+household deletions. It requires the service to be stopped and refuses restore
+if any target household has a pending deletion. Cancel deletion using current
+valid household authority or allow it to finalize before restoring; this
+prevents restoring stale cancellation authority during the grace period.
+For active/finalized targets it verifies the source, merges existing finalized
+deletion tombstones so deleted household rows stay purged/non-authoritative, and preserves
 the replaced database/WAL sidecars as a `.pre-restore-...` copy. Missing, empty,
 directory or unsupported-schema restore sources are rejected before replacement;
 restore does not initialize a new database from an invalid backup. A database
-backup can roll identity and authorization state backward (including revocation
-and key epochs); it is not a rollback-proof recovery mechanism. Keep service
-backups separate from local encrypted browser archives.
+restored without its later deletion history can roll identity and authorization
+state backward; the explicit warning is not rollback protection when both the
+current database and its tombstones have been lost. Keep service backups
+separate from local encrypted browser archives.
 
 Startup and every `/readiness` check validate SQLite structure and Kin's durable
 identity, routing, sequence and epoch invariants across all households. Semantic

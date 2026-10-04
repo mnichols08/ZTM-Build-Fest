@@ -21,22 +21,31 @@ export async function runAdminCommand(args) {
     console.log(`Verified Kin backup created at ${result}`);
     return;
   }
-  if (command === "restore" && parameters.length === 1) {
+  if (
+    command === "restore" &&
+    parameters.length === 2 &&
+    parameters[1] === "--acknowledge-deletion-history"
+  ) {
     const source = resolveDurablePath(parameters[0]);
     const databasePath = resolveDurablePath(defaultDatabasePath);
     const result = await DurableStore.restoreBackup(
       source,
       databasePath,
+      { acknowledgeDeletionHistory: true },
     );
     console.log(
-      result.previousDatabasePath
-        ? `Kin database restored. The previous database and WAL sidecars, if any, were preserved at ${result.previousDatabasePath}.`
-        : `Kin database restored at ${result.databasePath}.`,
+      [
+        result.previousDatabasePath
+          ? `Kin database restored. The previous database and WAL sidecars, if any, were preserved at ${result.previousDatabasePath}.`
+          : `Kin database restored at ${result.databasePath}.`,
+        `Preserved ${result.preservedDeletionCount} newer household lifecycle tombstone(s) from the existing target.`,
+        "A backup restored without its later deletion ledger may contain older data; this command cannot detect deletions absent from both databases.",
+      ].join("\n"),
     );
     return;
   }
   throw new DurableStoreError(
-    "Usage: node server/admin.mjs backup <destination> | restore <backup-file>",
+    "Usage: node server/admin.mjs backup <destination> | restore <backup-file> --acknowledge-deletion-history",
   );
 }
 

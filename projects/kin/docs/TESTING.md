@@ -1,6 +1,46 @@
 # Testing Contracts
 
-**Status:** v0.11.7 durable-service implementation candidate; awaiting human review. Earlier version sections are historical release gates. See [V0.10.0](V0.10.0.md) for prior milestone and patch evidence and [V0.11.0](V0.11.0.md) for the current service contract.
+**Status:** v0.12.3 data-lifecycle implementation candidate; scripted Windows checks, including PowerShell and POSIX (`run.sh` under Git Bash) launcher smokes, passed. Human review is pending. The WSL HTTP launcher was not run because WSL has no Node executable. Earlier version sections are historical release gates. See [V0.11.0](V0.11.0.md) and [V0.12.0](V0.12.0.md) for the current service and lifecycle contracts.
+
+## v0.12 data-lifecycle release gate
+
+Run the complete v0.11 server gate, Rust/WASM and version checks, then the
+established browser and security regressions. Use an isolated browser profile
+and synthetic households only.
+
+```powershell
+npm run test:server --prefix projects/kin
+cargo fmt --manifest-path projects/kin/Cargo.toml -- --check
+cargo clippy --manifest-path projects/kin/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path projects/kin/Cargo.toml
+cargo build --manifest-path projects/kin/Cargo.toml --target wasm32-unknown-unknown --release
+Copy-Item projects/kin/target/wasm32-unknown-unknown/release/kin.wasm projects/kin/web/wasm/kin_engine.wasm
+node --test (rg --files projects/kin/server projects/kin/web -g '*.test.mjs')
+python projects/kin/scripts/check_version.py
+$kinBrowser = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
+node projects/kin/scripts/browser-regression.mjs $kinBrowser
+node projects/kin/scripts/security-storage-regression.mjs $kinBrowser
+node projects/kin/scripts/security-ui-regression.mjs $kinBrowser
+node projects/kin/scripts/passkey-regression.mjs $kinBrowser
+```
+
+The server gate covers schema 1→2 migration and rollback, lifecycle state
+transitions, fresh-passkey request/cancellation, write/session invalidation,
+expiry finalization, tombstone restore merging and explicit restore
+acknowledgement. Browser/UI runs preserve the existing keyboard, focus,
+forced-colors, reflow, lock and offline checks. The package candidate is
+server-only; the published Rust/WASM version and client event/storage formats
+remain unchanged. Passing these checks does not certify physical media
+sanitization, external backups, offline devices, other browsers or authenticators.
+
+Windows x64 validation passed on Node 22.12, Rust 1.93 and Edge 154: 218 server
+tests, 74 browser-unit tests and 118 Rust tests; formatting, warnings-denied
+Clippy, release WASM, version consistency, all four browser/security runners,
+and isolated PowerShell and POSIX (`run.sh` under Git Bash) launcher smokes also
+passed. A WSL-built WASM artifact passed the browser-unit and core browser
+regressions. The WSL HTTP launcher was not run because that distribution has no
+Node executable. Do not treat this as validation on Linux/macOS or as release
+publication approval.
 
 ## v0.11 durable-service gate
 

@@ -182,7 +182,12 @@ test("backup and restore reject semantic corruption without publishing or replac
   assert.equal(existsSync(backup), false);
   store.close();
   const sourceBefore = readFileSync(path);
-  await assert.rejects(DurableStore.restoreBackup(path, target), DurableStoreError);
+  await assert.rejects(
+    DurableStore.restoreBackup(path, target, {
+      acknowledgeDeletionHistory: true,
+    }),
+    DurableStoreError,
+  );
   assert.deepEqual(readFileSync(target), targetBefore);
   assert.deepEqual(readFileSync(path), sourceBefore);
   assert.equal(readdirSync(directory).some((name) => /\.lock$|\.tmp$|\.restore$|\.pre-restore-/.test(name)), false);
@@ -227,7 +232,9 @@ test("full validation uses bounded relay pages and valid backups/restores remain
   const backup = join(directory, "backup.sqlite");
   await store.backup(backup);
   const target = join(directory, "restored.sqlite");
-  await DurableStore.restoreBackup(backup, target);
+  await DurableStore.restoreBackup(backup, target, {
+    acknowledgeDeletionHistory: true,
+  });
   const restored = new DurableStore(target);
   try {
     assert.equal(restored.validate(), true);

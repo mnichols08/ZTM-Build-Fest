@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** v0.11.7 implementation candidate; awaiting human review. Rust owns portable commands, canonical codecs, replay and archive framing/import validation. JavaScript owns root rotation, local encryption/unlock, bounded persistence and browser capabilities. Event DB schema 3 and key DB schema 4 persist encrypted protected values. The same-origin identity/relay service uses SQLite server schema v1 for durable authorization and opaque relay state.
+**Status:** v0.12.3 implementation candidate; awaiting human review. Rust owns portable commands, canonical codecs, replay and archive framing/import validation. JavaScript owns root rotation, local encryption/unlock, bounded persistence and browser capabilities. Event DB schema 3 and key DB schema 4 persist encrypted protected values. The same-origin identity/relay service uses SQLite server schema v2 for durable authorization, opaque relay state and household lifecycle tombstones.
 
 ## v0.10 implementation boundary
 
@@ -69,8 +69,9 @@ Offline startup uses the same lock boundary. See [PORTABILITY](PORTABILITY.md)
 and [V0.10.0](V0.10.0.md).
 
 The post-v0.10 roadmap first closes platform gaps: v0.11 makes identity and relay
-state durable and defines deployment/restart behavior; v0.12 defines retention,
-deletion and event lifecycle; v0.13 defines recovery authority and continuity.
+state durable and defines deployment/restart behavior; v0.12 implements
+retention, deletion and event lifecycle; v0.13 is planned to define recovery
+authority and continuity.
 Only then does v0.14 own holistic navigation, visual and interaction refinement.
 Basic accessible lock, unsupported-unlock, recovery, migration and corruption
 states remain required in v0.10. The architecture is not complete if v0.14 must

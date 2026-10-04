@@ -1,6 +1,6 @@
 # Identity and Trusted Devices
 
-**Status:** v0.11.7 implementation candidate; awaiting human review. Server member/passkey/device authorization remains distinct from the local encryption unlock. v0.10 protects successor transport private keys and epoch secrets under the local root while retaining public verification history. The candidate persists server identity and device-token verifiers; raw tokens and sessions remain ephemeral. An encrypted local archive restores local history, not an authenticated server household.
+**Status:** v0.12.3 implementation candidate; awaiting human review. Server member/passkey/device authorization remains distinct from the local encryption unlock. The service persists identity and device-token verifiers; raw tokens and sessions remain ephemeral. Household deletion is a separate lifecycle and an encrypted local archive restores local history, not an authenticated server household.
 
 ## Separate identities
 
@@ -31,6 +31,17 @@ Events carry household, actor/member, and originating device IDs as specified in
 Membership is an explicit relation between a household and a member, not inferred from possession of a device or from event authorship. Conceptual states are invited, active, and removed. Creation, acceptance, and removal must be explicit, attributable events with defined authorization before implementation. Removal blocks future household access but cannot retract data already learned or copied.
 
 The planned first shared household has exactly two active adult-member slots. Removed members remain historically represented but inactive and do not consume a slot, allowing the remaining adult to pair a replacement. Kin does not infer family relationships, rank members, or assign contribution scores. A member may have multiple devices and credentials; removing one device must not silently remove the member.
+
+Household lifecycle is `active → deletion_pending → deleted`, distinct from
+domain archival, member removal and device revocation. Either active adult may
+request deletion after a fresh passkey assertion; both adults are not required.
+The service immediately rejects household writes and invalidates sessions,
+then permits either active adult to cancel for 30 days with a fresh passkey on
+a trusted device. Final deletion purges membership, credential and device
+authorization records and cannot be cancelled or recovered. A minimal server
+tombstone prevents this database from reviving an older household backup.
+Existing local data and exports are not remotely erased. See
+[V0.12.0](V0.12.0.md) for authorization and restoration limits.
 
 ## Passkey direction
 
@@ -72,9 +83,11 @@ The first coded release uses local household, actor, and device placeholders onl
 
 ## Forward platform gates
 
-The v0.11 implementation candidate persists membership, credential,
+The v0.11 implementation candidate persisted membership, credential,
 trusted-device, revocation and coordination state across restart without
-changing the service into a plaintext household authority. The v0.13 line must
+changing the service into a plaintext household authority. v0.12 adds durable
+household deletion, cancellation and final tombstoning without changing the
+client encryption boundary. The v0.13 line must
 define replacement-device and household recovery against current membership,
 deletion and revocation state. It remains planned; see [ROADMAP](ROADMAP.md)
 and the [v0.11](V0.11.0.md)/[v0.13](V0.13.0.md) contracts.

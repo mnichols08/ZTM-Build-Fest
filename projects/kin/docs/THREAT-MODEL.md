@@ -1,6 +1,6 @@
 # Threat Model
 
-**Status:** v0.11.7 implementation candidate; awaiting human review. Local authenticated encryption, credential/recovery root wrappers, locked startup, encrypted archives and signed transport-key migration complement encrypted sync. The candidate adds durable service storage, an exclusive service-process lock, and verified service database backup/restore. Independent security audit, cross-browser certification, and general rollback protection are not provided. v0.12 defines lifecycle/deletion and retention, and v0.13 defines recovery/continuity; neither is implemented or certified by this assessment.
+**Status:** v0.12.3 implementation candidate; awaiting human review. Local authenticated encryption, credential/recovery root wrappers, locked startup, encrypted archives and signed transport-key migration complement encrypted sync. The service has durable identity/relay storage, backup/restore and explicit household lifecycle. Independent security audit, cross-browser certification and general rollback protection are not provided.
 
 ## v0.10 local-at-rest boundary
 
@@ -36,6 +36,29 @@ Encrypted archive plus its independently held recovery secret can recover a lost
 profile's local history. Restore does not reactivate revoked devices or re-create
 server identity; sync stays disabled on the restored household. Losing every
 credential/recovery secret permanently loses the ciphertext.
+
+## v0.12 household deletion and rollback boundary
+
+The server persists `active`, `deletion_pending` and `deleted` state. A fresh
+passkey-authorized request immediately invalidates sessions and rejects sync;
+the 30-day pending interval exists to permit authenticated cancellation.
+Finalization removes server-held ciphertext and authorization state while
+retaining a minimal opaque household-ID tombstone. The state machine does not
+delete browser stores, device-held plaintext/keys, exported archives or backups
+outside the active database.
+
+Kin refuses restore over an existing target containing any `deletion_pending`
+household. The operator must cancel deletion using current valid household
+authority or allow it to finalize first; this prevents stale backup authority
+from enabling cancellation by a removed adult or revoked device during the
+grace period. Existing finalized deletion tombstones are still merged into the
+verified backup and its deleted household rows are purged/non-authoritative.
+Active targets remain restorable. The admin restore command requires explicit acknowledgement.
+If both the current database and the deletion record are lost, Kin cannot infer
+a later deletion from a stale backup; this remains a rollback limitation, not a
+global anti-rollback guarantee. The permanent tombstone is minimal but its
+count grows with deleted households. No physical media sanitization,
+cryptographic erasure of client keys or external backup expiration is claimed.
 
 ## Assets and boundaries
 

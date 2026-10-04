@@ -70,6 +70,11 @@ class KinApp extends HTMLElement {
     this.onCaughtUp = () => this.handleCaughtUp();
     this.onSyncEnabled = (event) => this.startSyncCoordinator(event.detail);
     this.onSyncNow = () => void this.syncCoordinator?.syncNow();
+    this.onSyncStop = (event) => {
+      this.syncCoordinator?.stop();
+      this.syncCoordinator = null;
+      this.setStatus(event.detail?.message ?? "Household sync has stopped.");
+    };
     this.onSyncState = (value) => this.handleSyncState(value);
     this.onSetPulse = (event) => {
       const timestamp = Date.now();
@@ -140,6 +145,7 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:caught-up", this.onCaughtUp);
     this.addEventListener("kin:sync-enabled", this.onSyncEnabled);
     this.addEventListener("kin:sync-now", this.onSyncNow);
+    this.addEventListener("kin:sync-stop", this.onSyncStop);
     this.addEventListener("kin:lock", this.onLockRequest);
     window.addEventListener("pagehide", this.onPageHide);
     for (const action of [
@@ -254,6 +260,7 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:caught-up", this.onCaughtUp);
     this.removeEventListener("kin:sync-enabled", this.onSyncEnabled);
     this.removeEventListener("kin:sync-now", this.onSyncNow);
+    this.removeEventListener("kin:sync-stop", this.onSyncStop);
     for (const action of [
       "create-routine",
       "complete-routine-occurrence",

@@ -13,6 +13,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { acquireDatabaseMaintenanceLock, DurableStore } from "./durable-store.mjs";
 import { createKinServer } from "./server.mjs";
+import { PairingService } from "./pairing-service.mjs";
 import { resolveDurablePath, webRoot } from "./path-safety.mjs";
 
 function admin(databasePath, ...args) {
@@ -49,11 +50,51 @@ test("admin permits verified backup and restore outside the web root", () => {
     assert.ifError(result.error);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(store.health(), true);
-    const restore = admin(restored, "restore", backup);
+    const restore = admin(
+      restored,
+      "restore",
+      backup,
+      "--acknowledge-deletion-history",
+    );
     assert.ifError(restore.error);
     assert.equal(restore.status, 0, restore.stderr);
     const verification = new DurableStore(restored);
     try {
+      assert.equal(verification.validate(), true);
+    } finally {
+      verification.close();
+    }
+  } finally {
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("admin explains why restore over pending deletion is refused", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "kin-admin-pending-"));
+  const databasePath = join(directory, "kin.sqlite");
+  const backupPath = join(directory, "backup.sqlite");
+  const store = new DurableStore(databasePath);
+  try {
+    const service = new PairingService({ store });
+    const identity = service.bootstrap({
+      credential: { id: "pending-admin-passkey", publicKey: "pending-admin-key", algorithm: -7 },
+      deviceLabel: "Pending deletion admin fixture",
+    });
+    await store.backup(backupPath);
+    service.requestHouseholdDeletion(identity.sessionToken, identity.memberId);
+    store.close();
+    const result = admin(databasePath, "restore", backupPath, "--acknowledge-deletion-history");
+    assert.ifError(result.error);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.equal(
+      result.stderr.trim(),
+      "Cannot restore over a household with a pending deletion. Cancel the deletion using current household authority or allow it to finalize first.",
+    );
+    const verification = new DurableStore(databasePath);
+    try {
+      assert.equal(verification.lifecycleInfo(identity.householdId).state, "deletion_pending");
       assert.equal(verification.validate(), true);
     } finally {
       verification.close();
@@ -75,8 +116,12 @@ test("admin and service reject the web root and all descendants before creating 
       join(webRoot, "missing-admin-subdir", "backup.sqlite"),
     ]) {
       rejected(admin(source, "backup", unsafe));
-      rejected(admin(source, "restore", unsafe));
-      rejected(admin(unsafe, "restore", source));
+      rejected(
+        admin(source, "restore", unsafe, "--acknowledge-deletion-history"),
+      );
+      rejected(
+        admin(unsafe, "restore", source, "--acknowledge-deletion-history"),
+      );
       rejected(admin(unsafe, "backup", join(directory, "backup.sqlite")));
       assert.throws(
         () => createKinServer({ databasePath: unsafe }),
@@ -105,8 +150,12 @@ test("admin and service resolve symlinked ancestors even before nested directori
       join(alias, "missing-admin-parent", "child", "backup.sqlite"),
     ]) {
       rejected(admin(source, "backup", unsafe));
-      rejected(admin(source, "restore", unsafe));
-      rejected(admin(unsafe, "restore", source));
+      rejected(
+        admin(source, "restore", unsafe, "--acknowledge-deletion-history"),
+      );
+      rejected(
+        admin(unsafe, "restore", source, "--acknowledge-deletion-history"),
+      );
       assert.throws(
         () => createKinServer({ databasePath: unsafe }),
         /outside the static web root/,
