@@ -1,6 +1,6 @@
 # Release Process
 
-**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. The v0.11.7 Durable Service & Deployment candidate remains a prior human-review baseline. Annotated tag `kin-v0.12.3` marks the Data Lifecycle, Retention & Deletion review candidate; it is not a published release, and human review is pending.
+**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. Current implementation candidate: v0.14.5 UX/UI Consolidation. Earlier v0.11.x–v0.13.x tagged lines remain implementation candidates, not production certification.
 
 ## Release sequence
 
@@ -13,7 +13,7 @@ Service & Deployment gates, the v0.11.6 documentation/comment patch, and the
 v0.11.7 October Roadmap & Startup Diagnostics patch. The tagged v0.12.3 review
 candidate implements lifecycle capability, correctness, stale-device hardening
 and UX/docs; the tag does not indicate publication.
-The remaining sequence follows the [roadmap](ROADMAP.md): v0.13.x through
+The remaining sequence follows the [roadmap](ROADMAP.md): v0.14.x through
 v0.40.x are daily October 4–31 targets, v0.41.x through v0.45.x
 are undated follow-ups, and v1.0.0 depends on readiness. The platform work
 through v0.14 and foundation work through v0.16 occupy their own days.

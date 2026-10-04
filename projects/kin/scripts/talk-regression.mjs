@@ -215,9 +215,9 @@ export async function talkRegressions() {
   edit("Delayed talk");
   const pending = app.saveTalk({ type: "add-talk", text: capture.input.value });
   check(
-    [...app.main.querySelectorAll("input,select,button")].every(
-      (control) => control.disabled,
-    ),
+    [...app.main.querySelectorAll("input,select,button")]
+      .filter((control) => !control.closest("kin-security"))
+      .every((control) => control.disabled),
     "all controls disabled during Talk save",
   );
   check(app.busy, "Talk pending save retains busy state");

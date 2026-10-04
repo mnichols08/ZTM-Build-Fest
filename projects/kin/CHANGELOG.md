@@ -2,7 +2,77 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
-## Unreleased — v0.13.5 Recovery candidate
+## v0.14.0 — App Shell and Visual Foundation
+
+- Replaced the single long page with five stable destinations: Today, Lists,
+  Routines, Handoff, and More. Today and Lists remain views over existing item
+  records; no new domain capability or data model was added.
+- Added semantic design tokens, warm light/dark system themes, shared surfaces,
+  controls, list rows, navigation, and focused responsive layout.
+- Moved household access and privacy/continuity controls into More once
+  unlocked, while keeping the actual lock/unlock gate available before
+  navigation.
+- Preserved existing routines, Handoff, Talk, Pulse, identity, sync, backup,
+  restore, recovery, and deletion behaviors.
+- Deferred shopping, household areas/modes, notes, maintenance, and other
+  prototype-only capabilities.
+
+## v0.14.1 — Information Architecture and Existing Flow Consolidation
+
+- Brought Handoffs and Talk together under Handoff with distinct, keyboard
+  operable tabs. Handoffs retain explicit acknowledge/archive actions; Talk
+  remains lightweight and has no read receipts or presence.
+- Grouped existing household access and privacy/continuity operations in More;
+  no route, domain operation, or security authority was removed.
+
+## v0.14.2 — State Design, Accessibility, Responsive Behavior
+
+- Added a persistent, live-announced offline notice grounded in the browser's
+  connectivity event; it reports local saved state and does not claim remote
+  sync succeeded.
+- Translate server-confirmed untrusted-device and removed-membership sync
+  states into plain language while preserving the local copy explanation.
+- Keep connection errors and local storage errors separate from successful
+  saved state; leave recovery, deletion, and domain authority unchanged.
+
+## Unreleased — v0.14.5 UX/UI Consolidation candidate
+
+### v0.14.5 — Responsive form and More card-flow corrections
+
+- Keep household and security custom elements in block layout so More cards
+  have clear boundaries and do not overlap neighboring content.
+- Keep the routine form to one column on narrow screens, including its Add
+  button, so the entry field remains comfortably usable.
+- Correct the optional visual walkthrough to navigate to each destination
+  before capturing desktop and phone screenshots.
+
+## v0.14.4 — UX/UI Correctness and Accessibility
+
+### v0.14.4 — UX correctness and accessibility corrections
+
+- Keep the persistent sync/security state notice attached across lock/unlock
+  view rebuilds, with browser regression for offline and revoked-device states.
+- Reconcile wide-screen navigation with UX-D4 using a centered primary column
+  and a compact horizontal destination row.
+- Announce primary route changes politely and update the document title.
+
+### v0.14.3 visual correction
+
+- Give Kin a clear forest-green brand header, a contained desktop navigation
+  rail, stronger page typography, and a welcoming Today introduction.
+- Refine the warm-neutral/green palette, card spacing, and capture surface so
+  the visual foundation is visible in the product rather than only in tokens.
+- Keep the same destinations, household data, and accessible responsive shell.
+
+### v0.14.3 — Polish, Prototype Alignment, and Design Feedback Gate
+
+- Consolidated the remaining mobile navigation radius on the shared shape
+  token, kept the persistent state notice with the current page content, and
+  removed remaining one-off shell styling.
+- Added npm ignore rules so a package dry run includes the built WASM runtime
+  and excludes local build/data trees.
+- Recorded the intentional visual differences and deferred prototype
+  capabilities in `docs/V0.14.3-DESIGN-NOTE.md`.
 
 ### v0.13.5 — Cancelled-Deletion Restore Authority Correctness
 

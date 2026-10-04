@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.13.5` — Cancelled-Deletion Restore Authority Correctness.** Kin documents exactly which loss scenarios are recoverable and separates identity, device, content-key, membership, and server-restore authority. Recovery works at the trusted-device limit when its revocations make room. Stale restore preserves newer authority and deletion tombstones, including a newer deletion cancellation, and refuses a backup that predates a currently active household. Epoch keys remain client-provisioned; Kin has no plaintext-key escrow. See [Recovery](docs/RECOVERY.md).
+**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.14.5` — UX/UI Consolidation.** The v0.14.x line brings the existing product into one calm, accessible household shell. Existing identity, recovery, sync, deletion, and domain contracts remain authoritative. This is a tagged implementation candidate, not a claim of production certification or independent security audit.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Archives are intentionally local-only history recovery and do not restore sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
@@ -96,8 +96,8 @@ The month targets a coherent, demoable pre-1.0 build at `v0.40.x`. The `v0.41.x`
 - Earlier candidate: `v0.11.6` — Release Documentation & Code Clarity (includes v0.11.5 durable semantic integrity; not a published release)
 - Earlier candidate: `v0.11.7` — October Roadmap & Startup Diagnostics
 - Candidate: `v0.12.4` — Data Lifecycle, Retention & Deletion with Pending-Deletion Restore Authority Guard
-- Current line: `v0.13.5` — Cancelled-deletion restore authority correctness
-- Planned: `v0.14.x` — UX/UI Consolidation
+- Earlier candidate: `v0.13.5` — Cancelled-deletion restore authority correctness
+- Current line: `v0.14.5` — UX/UI Consolidation: responsive form and More card-flow corrections
 - Planned: `v0.15.x` — Household Areas
 - Planned: `v0.16.x` — Household Notes & Reference Context
 - Planned: `v0.17.x`–`v0.40.x` — Incremental household capabilities, portability, and device migration within the October plan; see the [daily roadmap](docs/ROADMAP.md)
@@ -214,7 +214,7 @@ Kin is nested in the ZTM Build Fest repository. Its community files and template
 - [v0.11 Durable Service & Deployment implementation candidate](docs/V0.11.0.md)
 - [v0.12 Data Lifecycle, Retention & Deletion implementation candidate](docs/V0.12.0.md)
 - [Planned v0.13 Recovery & Household Continuity contract](docs/V0.13.0.md)
-- [Planned v0.14 UX/UI Consolidation contract](docs/V0.14.0.md)
+- [v0.14 UX/UI Consolidation contract](docs/V0.14.0.md)
 - [Planned v0.15 Household Areas contract](docs/releases/V0.15.0.md)
 - [Planned v0.16 Household Notes & Reference Context contract](docs/releases/V0.16.0.md)
 - [Planned release contracts: October through v0.40 and undated v0.41–v0.45 follow-up](docs/releases/)

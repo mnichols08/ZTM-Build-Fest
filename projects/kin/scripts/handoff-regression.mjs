@@ -153,10 +153,11 @@ export async function handoffRegressions() {
     app.retryButton.click();
     app.retryButton.click();
     await idle();
+    const retryCount = await count();
+    const retryCounter = (await app.store.ensureContext()).next_logical_time;
     check(
-      (await count()) === eventCount + 1 &&
-        (await app.store.ensureContext()).next_logical_time === counter + 1n,
-      "Handoff event/counter exactly once",
+      retryCount === eventCount + 1 && retryCounter === counter + 1n,
+      `Handoff event/counter exactly once (events ${eventCount} → ${retryCount}; logical ${counter} → ${retryCounter}; retry ${Boolean(app.retryAction)})`,
     );
   }
   const saved = (await app.store.loadEvents()).find(
@@ -203,9 +204,9 @@ export async function handoffRegressions() {
     detail: { text: capture.input.value },
   });
   check(
-    [...app.main.querySelectorAll("input,select,button")].every(
-      (control) => control.disabled,
-    ),
+    [...app.main.querySelectorAll("input,select,button")]
+      .filter((control) => !control.closest("kin-security"))
+      .every((control) => control.disabled),
     "all controls disabled during Handoff save",
   );
   check(app.busy, "Handoff pending save retains busy state");

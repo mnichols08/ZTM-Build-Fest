@@ -1,6 +1,6 @@
 # Foundation Sequence Through v0.16
 
-At this planning update on 2026-10-03, the last published release is `v0.10.3`. The `v0.11.7` Durable Service & Deployment candidate is the prior review baseline. Annotated tag `kin-v0.12.3` marks the Data Lifecycle, Retention & Deletion review candidate; it is not published and awaits human review. v0.13.x and later remain planned. See the [roadmap](ROADMAP.md), [v0.11 record](V0.11.0.md) and [v0.12 record](V0.12.0.md) for evidence.
+At this implementation update on 2026-10-03, the last published product release remains `v0.10.3`. The `v0.11.x`–`v0.13.x` tagged implementation candidates remain non-production claims. v0.14.3 is the current UX/UI shell candidate; the v0.14.x line ends here before any v0.15 work. See the [roadmap](ROADMAP.md), [v0.11 record](V0.11.0.md), [v0.12 record](V0.12.0.md), and [v0.14 record](V0.14.0.md) for scope and evidence.
 
 The revised calendar assumes `v0.12.0` completes on October 3, then targets one minor line per day through `v0.40.x` on October 31. The current v0.12.3 candidate passed its scripted Windows gate and awaits human review; future dates are targets, not completion claims.
 

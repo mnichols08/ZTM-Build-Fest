@@ -46,6 +46,18 @@ class KinApp extends HTMLElement {
     this.suspendedRetry = null;
     this.retryRefresh = () => this.refreshFromEvents();
     this.onAddItem = (event) => this.handleAddItem(event);
+    this.onOffline = () => {
+      this.stateNotice.textContent =
+        "Offline — saved changes stay on this device. Household sync needs a connection.";
+      this.stateNotice.hidden = false;
+    };
+    this.onOnline = () => {
+      this.stateNotice.hidden = true;
+      if (!this.vault || this.vault.locked || !this.store) return;
+      this.setStatus("Connection available.");
+      if (this.syncCoordinator) void this.syncCoordinator.syncNow();
+      else void this.configureSyncCoordinator();
+    };
     this.onCompleteItem = (event) => this.handleCompleteItem(event);
     this.onReopenItem = (event) => this.handleReopenItem(event);
     this.onArchiveItem = (event) => this.handleArchiveItem(event);
@@ -76,6 +88,31 @@ class KinApp extends HTMLElement {
       this.setStatus(event.detail?.message ?? "Household sync has stopped.");
     };
     this.onSyncState = (value) => this.handleSyncState(value);
+    this.onHashChange = () => this.showPageFromLocation();
+    this.onNavigationClick = (event) => {
+      const link = event.target.closest?.("a[data-page]");
+      if (
+        !link || event.defaultPrevented || event.button !== 0 ||
+        event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
+      ) return;
+      event.preventDefault();
+      history.pushState(null, "", link.hash);
+      this.showPageFromLocation();
+    };
+    this.onHandoffTabClick = (event) => {
+      const tab = event.target.closest?.('[role="tab"][data-panel]');
+      if (tab) this.showHandoffPanel(tab.dataset.panel, true);
+    };
+    this.onHandoffTabKeydown = (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const tabs = [...this.handoffTabs.querySelectorAll('[role="tab"]')];
+      const current = tabs.indexOf(event.target);
+      if (current < 0) return;
+      event.preventDefault();
+      const step = event.key === "ArrowRight" ? 1 : -1;
+      tabs[(current + step + tabs.length) % tabs.length].focus();
+      this.showHandoffPanel(tabs[(current + step + tabs.length) % tabs.length].dataset.panel);
+    };
     this.onSetPulse = (event) => {
       const timestamp = Date.now();
       const hours = event.detail.hours;
@@ -147,6 +184,10 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:sync-now", this.onSyncNow);
     this.addEventListener("kin:sync-stop", this.onSyncStop);
     this.addEventListener("kin:lock", this.onLockRequest);
+    window.addEventListener("hashchange", this.onHashChange);
+    window.addEventListener("popstate", this.onHashChange);
+    window.addEventListener("offline", this.onOffline);
+    window.addEventListener("online", this.onOnline);
     window.addEventListener("pagehide", this.onPageHide);
     for (const action of [
       "create-routine",
@@ -179,15 +220,50 @@ class KinApp extends HTMLElement {
     header.className = "site-header";
     const brand = document.createElement("div");
     brand.className = "brand";
-    const title = document.createElement("h1");
+    const title = document.createElement("span");
     title.textContent = "Kin";
+    title.className = "brand-name";
+    const mark = document.createElement("img");
+    mark.className = "brand-mark";
+    mark.src = "/icon.svg";
+    mark.alt = "";
     const tagline = document.createElement("p");
     tagline.textContent = "A little more in step.";
-    brand.append(title, tagline);
+    const brandCopy = document.createElement("div");
+    brandCopy.className = "brand-copy";
+    brandCopy.append(title, tagline);
+    brand.append(mark, brandCopy);
     header.append(brand);
 
-    this.household = document.createElement("kin-household");
     this.header = header;
+
+    const shell = document.createElement("div");
+    shell.className = "application-shell";
+    this.shell = shell;
+
+    const nav = document.createElement("nav");
+    nav.className = "primary-nav";
+    nav.setAttribute("aria-label", "Household");
+    nav.hidden = true;
+    const destinations = [
+      ["today", "Today", '<path d="M3 10.8 12 3l9 7.8"/><path d="M5.5 9.5V20h13V9.5M9.5 20v-6h5v6"/>'],
+      ["lists", "Lists", '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h5"/>'],
+      ["routines", "Routines", '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.5 9a7 7 0 0 1 12-2L20 12M4 12l2.5 5a7 7 0 0 0 12-2"/>'],
+      ["handoff", "Handoff", '<path d="M8 10h8M8 14h5"/><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-4l-3 3-3-3H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/>'],
+      ["more", "More", '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'],
+    ];
+    this.navLinks = new Map();
+    for (const [id, label, icon] of destinations) {
+      const link = document.createElement("a");
+      link.className = "nav-link";
+      link.href = `#${id}`;
+      link.dataset.page = id;
+      link.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg><span>${label}</span>`;
+      nav.append(link);
+      this.navLinks.set(id, link);
+    }
+    this.nav = nav;
+    nav.addEventListener("click", this.onNavigationClick);
 
     const main = document.createElement("main");
     main.id = "main";
@@ -198,20 +274,14 @@ class KinApp extends HTMLElement {
     this.main = main;
     this.catchUp = document.createElement("kin-catch-up");
     this.today = document.createElement("kin-today");
+    this.needs = document.createElement("kin-today");
     this.compose = document.createElement("kin-compose");
     this.handoffs = document.createElement("kin-handoff-list");
     this.talks = document.createElement("kin-talk-list");
     this.pulse = document.createElement("kin-pulse");
     this.routines = document.createElement("kin-routines");
-    main.append(
-      this.catchUp,
-      this.today,
-      this.compose,
-      this.handoffs,
-      this.talks,
-      this.pulse,
-      this.routines,
-    );
+    this.buildViews(main);
+    shell.append(nav, main);
 
     const feedback = document.createElement("div");
     feedback.className = "app-feedback";
@@ -223,6 +293,17 @@ class KinApp extends HTMLElement {
     this.alert.className = "error-message";
     this.alert.setAttribute("role", "alert");
     this.alert.hidden = true;
+    this.stateNotice = document.createElement("p");
+    this.stateNotice.className = "state-notice";
+    this.stateNotice.setAttribute("role", "status");
+    this.stateNotice.setAttribute("aria-live", "polite");
+    this.stateNotice.hidden = true;
+    main.prepend(this.stateNotice);
+    this.routeAnnouncement = document.createElement("p");
+    this.routeAnnouncement.className = "visually-hidden";
+    this.routeAnnouncement.setAttribute("role", "status");
+    this.routeAnnouncement.setAttribute("aria-live", "polite");
+    this.routeAnnouncement.setAttribute("aria-atomic", "true");
     this.retryButton = document.createElement("button");
     this.retryButton.type = "button";
     this.retryButton.className = "retry-button";
@@ -233,14 +314,133 @@ class KinApp extends HTMLElement {
     this.security = document.createElement("kin-security");
     this.security.onUnlocked = (vault) => this.openUnlockedHousehold(vault);
     this.security.onLockRequested = () => this.lockHousehold();
-    this.replaceChildren(header, this.security, main, feedback);
+    this.replaceChildren(header, this.security, shell, feedback, this.routeAnnouncement);
     this.retryButton.addEventListener("click", () => this.retryAction?.());
+    this.showPageFromLocation();
+  }
+
+  buildViews(main) {
+    const page = (id, title, description) => {
+      const section = document.createElement("section");
+      section.className = "app-view";
+      section.id = id;
+      section.setAttribute("aria-labelledby", `${id}-title`);
+      const intro = document.createElement("header");
+      intro.className = "page-intro";
+      const heading = document.createElement("h1");
+      heading.id = `${id}-title`;
+      heading.textContent = title;
+      intro.append(heading);
+      if (description) {
+        const supporting = document.createElement("p");
+        supporting.textContent = description;
+        intro.append(supporting);
+      }
+      section.append(intro);
+      return section;
+    };
+
+    this.pages = new Map();
+    const today = page("today", "A little less to carry.", "A place for what needs doing, remembering, or a little conversation.");
+    this.catchUp.setAttribute("aria-label", "Catch up since you last looked");
+    this.today.display = "today";
+    today.append(this.catchUp, this.compose, this.today);
+
+    const lists = page("lists", "Lists", "Capture first. Sort later.");
+    this.needs.display = "need";
+    lists.append(this.needs);
+
+    const routines = page("routines", "Routines", "Small household rhythms, without streaks or pressure.");
+    routines.append(this.routines);
+
+    const handoff = page("handoff", "Handoff", "Pass along what will help someone pick things up.");
+    const tablist = document.createElement("div");
+    tablist.className = "section-tabs";
+    tablist.setAttribute("role", "tablist");
+    tablist.setAttribute("aria-label", "Handoff and Talk");
+    this.handoffTabs = tablist;
+    const handoffPanel = document.createElement("section");
+    handoffPanel.id = "handoffs-panel";
+    handoffPanel.setAttribute("role", "tabpanel");
+    handoffPanel.setAttribute("aria-labelledby", "handoffs-tab");
+    const talkPanel = document.createElement("section");
+    talkPanel.id = "talk-panel";
+    talkPanel.setAttribute("role", "tabpanel");
+    talkPanel.setAttribute("aria-labelledby", "talk-tab");
+    for (const [id, label, panel] of [
+      ["handoffs", "Handoffs", handoffPanel],
+      ["talk", "Talk", talkPanel],
+    ]) {
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.id = `${id}-tab`;
+      tab.setAttribute("role", "tab");
+      tab.setAttribute("aria-controls", panel.id);
+      tab.dataset.panel = id;
+      tab.textContent = label;
+      tablist.append(tab);
+    }
+    handoffPanel.append(this.handoffs);
+    talkPanel.append(this.talks);
+    handoff.append(tablist, handoffPanel, talkPanel);
+    tablist.addEventListener("click", this.onHandoffTabClick);
+    tablist.addEventListener("keydown", this.onHandoffTabKeydown);
+
+    const more = page("more", "More", "Household context, people, devices, and continuity.");
+    more.append(this.pulse);
+    this.household = document.createElement("kin-household");
+    this.moreSecurity = document.createElement("section");
+    this.moreSecurity.className = "more-security";
+    const securityHeading = document.createElement("h2");
+    securityHeading.textContent = "Privacy & continuity";
+    this.moreSecurity.append(securityHeading);
+    more.append(this.moreSecurity);
+
+    for (const section of [today, lists, routines, handoff, more]) {
+      this.pages.set(section.id, section);
+      main.append(section);
+    }
+    this.showHandoffPanel("handoffs");
+    this.showPageFromLocation();
+  }
+
+  showPageFromLocation() {
+    if (!this.pages || !this.navLinks) return;
+    const requested = location.hash.slice(1);
+    const active = this.pages.has(requested) ? requested : "today";
+    const labels = { today: "Today", lists: "Lists", routines: "Routines", handoff: "Handoff", more: "More" };
+    const changed = this.activePage !== active;
+    this.activePage = active;
+    document.title = `${labels[active]} — Kin`;
+    if (changed && this.routeAnnouncement) this.routeAnnouncement.textContent = `${labels[active]} view`;
+    for (const [id, section] of this.pages) section.hidden = id !== active;
+    for (const [id, link] of this.navLinks) {
+      if (id === active) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    }
+  }
+
+  showHandoffPanel(id, focus = false) {
+    if (!this.handoffTabs) return;
+    const active = id === "talk" ? "talk" : "handoffs";
+    for (const tab of this.handoffTabs.querySelectorAll('[role="tab"]')) {
+      const selected = tab.dataset.panel === active;
+      tab.setAttribute("aria-selected", String(selected));
+      tab.tabIndex = selected ? 0 : -1;
+      if (focus && selected) tab.focus();
+    }
+    this.pages?.get("handoff")?.querySelector("#handoffs-panel")?.toggleAttribute("hidden", active !== "handoffs");
+    this.pages?.get("handoff")?.querySelector("#talk-panel")?.toggleAttribute("hidden", active !== "talk");
   }
 
   disconnectedCallback() {
     this.lockHousehold(false);
     this.removeEventListener("kin:lock", this.onLockRequest);
     window.removeEventListener("pagehide", this.onPageHide);
+    window.removeEventListener("hashchange", this.onHashChange);
+    window.removeEventListener("popstate", this.onHashChange);
+    window.removeEventListener("offline", this.onOffline);
+    window.removeEventListener("online", this.onOnline);
     this.removeEventListener("kin:add-item", this.onAddItem);
     this.removeEventListener("kin:complete-item", this.onCompleteItem);
     this.removeEventListener("kin:reopen-item", this.onReopenItem);
@@ -361,8 +561,12 @@ class KinApp extends HTMLElement {
       this.applyCatchUpSnapshot(snapshot);
       this.renderState();
       this.main.hidden = false;
-      if (!this.household.isConnected) this.header.append(this.household);
+      this.nav.hidden = false;
+      this.moreSecurity.before(this.household);
+      this.moreSecurity.append(this.security);
+      this.showPageFromLocation();
       this.setStatus("Ready.");
+      if (navigator.onLine === false) this.onOffline();
       this.retryButton.hidden = true;
       void this.configureSyncCoordinator();
     } catch (error) {
@@ -461,6 +665,7 @@ class KinApp extends HTMLElement {
       ) {
         this.handleSyncState({
           state: "paused",
+          code: error.code,
           message: error.message || "Device sync is paused.",
         });
       }
@@ -475,6 +680,19 @@ class KinApp extends HTMLElement {
 
   handleSyncState(value) {
     if (!this.vault || this.vault.locked) return;
+    if (value.state === "paused") {
+      const attention = value.code === "device_not_trusted"
+        ? "This device is no longer trusted for household sync. Its saved information remains on this device."
+        : value.code === "membership_removed"
+          ? "This device no longer has access to household sync. Its saved information remains on this device."
+          : value.message;
+      if (attention) {
+        this.stateNotice.textContent = attention;
+        this.stateNotice.hidden = false;
+      }
+    } else if (["ready", "disabled"].includes(value.state)) {
+      this.stateNotice.hidden = true;
+    }
     if (value.projection) {
       if (this.busy) {
         this.pendingRefresh = true;
@@ -485,7 +703,8 @@ class KinApp extends HTMLElement {
         if (value.snapshotBoundary) this.broadcastEventChange();
       }
     }
-    if (value.message) this.setStatus(value.message);
+    if (value.message && value.state !== "paused")
+      this.setStatus(value.message);
   }
 
   async handleAddItem(event) {
@@ -740,6 +959,8 @@ class KinApp extends HTMLElement {
     }
     const session = this.captureSession();
     const submittedItemId = itemId;
+    const restoreListFocus = this.needs.contains(document.activeElement);
+    if (restoreListFocus) this.needs.rememberFocus();
     this.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
@@ -772,7 +993,7 @@ class KinApp extends HTMLElement {
     } finally {
       if (this.isCurrentSession(session)) {
         this.setBusy(false);
-        if (restoreComposeFocus) {
+        if (restoreComposeFocus && !restoreListFocus) {
           this.compose.focusInput();
         }
         this.flushPeerRefresh();
@@ -1058,6 +1279,7 @@ class KinApp extends HTMLElement {
     this.catchUp.summary = this.state.summary;
     this.catchUp.lastLookedAt = this.catchUpCursor?.lastLookedAt;
     this.today.items = this.state.items;
+    this.needs.items = this.state.items;
     this.handoffs.handoffs = this.state.handoffs;
     this.talks.talks = this.state.talks;
     this.pulse.pulse = this.state.pulses.find(
@@ -1073,12 +1295,15 @@ class KinApp extends HTMLElement {
     this.main.setAttribute("aria-busy", String(isBusy));
     this.compose.disabled = isBusy || !this.store;
     this.today.disabled = isBusy || !this.store;
+    this.needs.disabled = isBusy || !this.store;
     this.handoffs.disabled = isBusy || !this.store;
     this.talks.disabled = isBusy || !this.store;
     this.pulse.disabled = isBusy || !this.store;
     this.catchUp.disabled = isBusy || !this.store;
     this.routines.disabled = isBusy || !this.store;
     this.household.disabled = isBusy || !this.store;
+    for (const tab of this.handoffTabs?.querySelectorAll('[role="tab"]') ?? [])
+      tab.disabled = isBusy;
     this.retryButton.disabled = isBusy;
   }
 
@@ -1166,25 +1391,27 @@ class KinApp extends HTMLElement {
     this.clearAlert();
     clearLegacyDrafts();
     if (this.main) {
+      this.nav.hidden = true;
+      this.shell.before(this.security);
       this.main.hidden = true;
+      this.main.replaceChildren();
       // Replacing every component drops private arrays, drafts and DOM nodes.
       const components = [
         ["catchUp", "kin-catch-up"],
         ["today", "kin-today"],
+        ["needs", "kin-today"],
         ["compose", "kin-compose"],
         ["handoffs", "kin-handoff-list"],
         ["talks", "kin-talk-list"],
         ["pulse", "kin-pulse"],
         ["routines", "kin-routines"],
       ];
-      this.main.replaceChildren(
-        ...components.map(
-          ([field, name]) => (this[field] = document.createElement(name)),
-        ),
-      );
+      for (const [field, name] of components)
+        this[field] = document.createElement(name);
       this.household.syncKeyStore?.close();
       this.household.remove();
-      this.household = document.createElement("kin-household");
+      this.buildViews(this.main);
+      if (!this.stateNotice.isConnected) this.main.prepend(this.stateNotice);
       this.setBusy(false);
       this.setStatus("Household locked.");
       if (!preserveSecurityOperation) this.security.locked();

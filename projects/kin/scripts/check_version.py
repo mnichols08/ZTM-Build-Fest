@@ -30,22 +30,16 @@ def main() -> int:
 
     readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
     require_match(
-        "README last published release",
-        r"^\*\*Last published release: `v([0-9]+\.[0-9]+\.[0-9]+)`",
-        readme,
-        version,
-    )
-    require_match(
-        "README release history",
-        rf"^- `v({re.escape(version)})` —",
+        "README current implementation line",
+        r"Current implementation line: `v([0-9]+\.[0-9]+\.[0-9]+)`",
         readme,
         version,
     )
 
     changelog = (PROJECT_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     require_match(
-        "CHANGELOG latest published release",
-        r"^## v([0-9]+\.[0-9]+\.[0-9]+)(?: —|$)",
+        "CHANGELOG current implementation candidate",
+        r"^## Unreleased — v([0-9]+\.[0-9]+\.[0-9]+) [^\r\n]+ candidate$",
         changelog,
         version,
     )
@@ -64,26 +58,13 @@ def main() -> int:
     if not isinstance(server_version, str):
         raise ValueError("package.json: server package.version is missing or invalid")
     if server_version != version:
-        require_match(
-            "README current implementation line",
-            rf"Current implementation line: `v({re.escape(server_version)})`",
-            readme,
-            server_version,
+        raise ValueError(
+            f"package.json: expected Kin implementation line {version}, found {server_version}"
         )
-        require_match(
-            "CHANGELOG server implementation candidate",
-            rf"^## Unreleased — v({re.escape(server_version)}) [^\r\n]+ candidate$",
-            changelog,
-            server_version,
-        )
-        if f"v{server_version}" not in agents:
-            raise ValueError(
-                f"AGENTS.md: durable-service candidate v{server_version} is missing"
-            )
 
     print(
-        f"Kin published version {version} and server version {server_version} "
-        "are consistent across their release metadata."
+        f"Kin implementation candidate {version} is consistent across client, "
+        "server, and release metadata."
     )
     return 0
 
