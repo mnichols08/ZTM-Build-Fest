@@ -35,7 +35,13 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Keep connection errors and local storage errors separate from successful
   saved state; leave recovery, deletion, and domain authority unchanged.
 
-## Unreleased — v0.15.2 Offline and sync hardening candidate
+## v0.15.3 — Area UX polish and release gate
+
+### v0.15.3 — UX polish and release gate
+
+- Keep More → Areas light and direct, with explicit empty state and keyboard create/rename/archive flows.
+- Verify post-action focus and live status, long names, archived assignment context, 320px reflow, 200% zoom, dark mode, forced colors, labels, and touch targets.
+- Run the full relevant regression gate for Rust, replay/migration, WASM, encrypted sync/offline, archive import, backup/restore, browser/accessibility, continuity, and version consistency.
 
 ### v0.15.2 — Offline, sync, and hostile-state hardening
 

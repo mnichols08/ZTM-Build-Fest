@@ -1,6 +1,6 @@
 # Synchronization Design
 
-**Status:** v0.15.2 implementation candidate. Area events use the existing encrypted envelope and protocol-9 client replay; no relay/server field contains an Area name. The local outbox, sync state, epoch secrets and private device keys are encrypted at rest and unavailable while locked. Signed device-key successors preserve verification history and repair entitled post-join epoch grants. The service stores identity, authorization and opaque relay state in SQLite and acknowledges an event only after commit; it remains a relay, not a household source of truth.
+**Status:** v0.15.3 implementation candidate. Area events use the existing encrypted envelope and protocol-9 client replay; no relay/server field contains an Area name. The local outbox, sync state, epoch secrets and private device keys are encrypted at rest and unavailable while locked. Signed device-key successors preserve verification history and repair entitled post-join epoch grants. The service stores identity, authorization and opaque relay state in SQLite and acknowledges an event only after commit; it remains a relay, not a household source of truth.
 
 ## v0.15.0 Areas
 

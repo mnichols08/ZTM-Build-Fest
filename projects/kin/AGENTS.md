@@ -108,7 +108,7 @@ The v0.14.x UX/UI Consolidation line is complete through `kin-v0.14.5` on
 `kin-development`. The user explicitly authorized the full v0.15.0–v0.15.3
 Household Areas release line. Work one milestone at a time and complete its
 tests, docs, commit, annotated tag, individual tag push, and local/remote
-verification before continuing. Current milestone: v0.15.2. Do not begin
+verification before continuing. Current milestone: v0.15.3. Do not begin
 v0.16.x. Preserve the v0.13.5 recovery authority guarantees and all earlier
 security/domain contracts.
 
@@ -1021,9 +1021,9 @@ v0.9.3 — Encrypted Event Sync Stabilization
 v0.10.x — Portable Core + Local Security
 v0.11.x — Durable Service & Deployment (implementation candidate; awaiting human review)
 v0.12.x — Data Lifecycle, Retention & Deletion (v0.12.3 candidate; release gate pending)
-v0.13.x — Recovery & Household Continuity (planned)
-v0.14.x — UX/UI Consolidation (planned)
-v0.15.x — Household Areas (planned)
+v0.13.x — Recovery & Household Continuity (complete through v0.13.5)
+v0.14.x — UX/UI Consolidation (complete through v0.14.5)
+v0.15.x — Household Areas (authorized through v0.15.3; current release gate)
 v0.16.x — Household Notes & Reference Context (planned)
 v0.17.x–v0.40.x — Incremental household capabilities, portability and device migration (October targets)
 v0.41.x–v0.45.x — Recovery drills, platform validation, performance and release-candidate readiness (undated follow-ups)

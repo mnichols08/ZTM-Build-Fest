@@ -1786,22 +1786,68 @@ try {
   assert.equal(areasResult.assigned, true, `item assignment saves to canonical state: ${JSON.stringify(areasResult)}`);
   assert.equal(areasResult.assignmentFocus, true, "item assignment restores selector focus");
   await visit(first, "more");
-  const areaLifecycle = await first.evaluate(`(async()=>{
+  const areaEnter = async () => {
+    await first.send("Input.dispatchKeyEvent", {
+      type: "keyDown", key: "Enter", code: "Enter", text: "\r", windowsVirtualKeyCode: 13,
+    });
+    await first.send("Input.dispatchKeyEvent", {
+      type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13,
+    });
+  };
+  const areaIdle = async () => first.evaluate(`(async()=>{
     const app=document.querySelector('kin-app');
-    const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh);i++)await new Promise(r=>setTimeout(r,10));};
-    const old=app.state.areas.at(-1);
-    app.areas.querySelector('[aria-label="Rename Kitchen"]').click();
-    const edit=app.areas.querySelector('.area-edit-form');edit.querySelector('input').value='Food prep';edit.requestSubmit();await idle();
-    const renamed=app.state.areas.find(area=>area.areaId===old.areaId)?.name==='Food prep';
-    app.areas.querySelector('[aria-label="Archive Food prep"]').click();
-    const confirm=app.areas.querySelector('button');
-    const dialog=app.areas.querySelector('[role="group"]');
-    app.areas.querySelector('[role="group"] button').click();await idle();
-    const archived=app.state.areas.find(area=>area.areaId===old.areaId)?.archived===true;
-    const retained=app.state.items.some(item=>item.areaId===old.areaId);
-    return {renamed,confirmCopy:dialog.textContent.includes('existing links'),archived,retained,headingFocus:document.activeElement===app.areas.querySelector('h2')};
+    for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh);i++)await new Promise(r=>setTimeout(r,10));
+    if(app.busy||app.refreshing)throw Error('Area action did not settle');
   })()`);
-  assert.deepEqual(areaLifecycle,{renamed:true,confirmCopy:true,archived:true,retained:true,headingFocus:true});
+  await first.evaluate(`document.querySelector('kin-app').areas.querySelector('[aria-label="Rename Kitchen"]').focus()`);
+  await areaEnter();
+  await first.evaluate(`(()=>{const input=document.querySelector('kin-app').areas.querySelector('.area-edit-form input');input.value='Food prep';input.focus()})()`);
+  await areaEnter(); await areaIdle();
+  await first.evaluate(`document.querySelector('kin-app').areas.querySelector('[aria-label="Archive Food prep"]').focus()`);
+  await areaEnter();
+  const archivePrompt = await first.evaluate(`(()=>{const dialog=document.querySelector('kin-app').areas.querySelector('[role="group"]');
+    return {copy:dialog.textContent.includes('existing links'),focused:document.activeElement===dialog.querySelector('button')};})()`);
+  await areaEnter(); await areaIdle();
+  const postArchive = await first.evaluate(`(()=>{const app=document.querySelector('kin-app'),old=app.state.areas.find(area=>area.name==='Food prep');
+    return {archived:old?.archived===true,retained:app.state.items.some(item=>item.areaId===old?.areaId),
+      headingFocus:document.activeElement===app.areas.querySelector('h2')};})()`);
+  await first.evaluate(`(()=>{const input=document.querySelector('kin-app').areas.querySelector('#area-create-name');input.value='L'.repeat(48);
+    document.querySelector('kin-app').areas.querySelector('.area-create-form button').focus();})()`);
+  await areaEnter(); await areaIdle();
+  const areaLifecycle = await first.evaluate(`(()=>{
+    const app=document.querySelector('kin-app'),old=app.state.areas.find(area=>area.name==='Food prep');
+    const longName='L'.repeat(48);
+    const longNameShown=[...app.areas.querySelectorAll('.area-name')].some(node=>node.textContent===longName);
+    const emptyHost=document.createElement('kin-areas');emptyHost.areas=[];
+    const emptyCopy=emptyHost.textContent.includes('No Areas yet. You can add one whenever it helps.');emptyHost.remove();
+    const controls=[...app.areas.querySelectorAll('button,input')].filter(node=>node.getClientRects().length);
+    return {renamed:!!old,archived:old?.archived===true,retained:app.state.items.some(item=>item.areaId===old?.areaId),
+      headingFocus:document.activeElement===app.areas.querySelector('h2'),createFocus:document.activeElement===app.areas.querySelector('#area-create-name'),longNameShown,emptyCopy,
+      status:app.status.getAttribute('aria-live')==='polite'&&!!app.status.textContent,
+      targets:controls.every(node=>node.getBoundingClientRect().height>=48),
+      labels:app.areas.querySelector('#area-create-name').labels.length===1,
+      overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth,
+      zoom:visualViewport.scale===2,forced:matchMedia('(forced-colors: active)').matches};
+  })()`);
+  const areaLifecycleExpected={renamed:true,archived:true,retained:true,headingFocus:false,createFocus:true,longNameShown:true,emptyCopy:true,
+    status:true,targets:true,labels:true,overflow:false,zoom:true,forced:true};
+  assert.deepEqual(archivePrompt,{copy:true,focused:true});
+  assert.deepEqual(postArchive,{archived:true,retained:true,headingFocus:true});
+  assert.deepEqual(areaLifecycle,areaLifecycleExpected);
+  await visit(first, "lists");
+  const archivedAreaContext = await first.evaluate(`(()=>{const select=[...document.querySelectorAll('.item-area-select')]
+    .find(node=>node.dataset.itemId==='${areasResult.itemId}');
+    return {label:select?.getAttribute('aria-label'),selected:select?.selectedOptions[0]?.textContent};})()`);
+  assert.deepEqual(archivedAreaContext,{label:"Area for Wipe counter",selected:"Food prep (archived)"});
+  await visit(first, "more");
+  await first.send("Emulation.setDeviceMetricsOverride", {width:320,height:900,deviceScaleFactor:1,mobile:true});
+  const narrowAreaLayout=await first.evaluate(`(()=>({overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth,
+    width:innerWidth,targets:[...document.querySelectorAll('kin-areas button,kin-areas input,.item-area-select')]
+      .filter(node=>node.getClientRects().length).every(node=>node.getBoundingClientRect().height>=48)}))()`);
+  assert.deepEqual(narrowAreaLayout,{overflow:false,width:320,targets:true});
+  await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"none"},{name:"prefers-reduced-motion",value:"no-preference"},{name:"prefers-color-scheme",value:"dark"}]});
+  assert.equal(await first.evaluate("matchMedia('(prefers-color-scheme: dark)').matches"),true,"Area manager follows dark mode");
+  await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"active"},{name:"prefers-reduced-motion",value:"reduce"}]});
   console.log("PASS Area create, rename, archive, optional item assignment, and focus restoration");
 
   const eventLimitResult = await first.evaluate(`(async()=>{

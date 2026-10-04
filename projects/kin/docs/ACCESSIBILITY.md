@@ -37,7 +37,7 @@ emulation, 48px controls, reduced motion, forced colors, dark mode, and increase
 text spacing. Page-scale emulation is not native desktop zoom. No screen-reader
 certification is claimed.
 
-**Status:** Updated through the v0.15.2 implementation candidate; earlier version sections are historical contracts.
+**Status:** Updated through the v0.15.3 implementation candidate; earlier version sections are historical contracts.
 
 ## v0.15 Household Areas
 
@@ -48,8 +48,9 @@ to the Areas heading. Item assignment uses a visible native “No area” option
 and a programmatic label tied to the Item text. The select is secondary to the
 Item and retains a minimum 48px target. Archived context is textually marked.
 The global polite status announces saved operations; errors use the existing
-alert. Verify empty/long names, 320px reflow, 200% page-scale emulation, dark
-mode and forced colors in the v0.15.3 browser gate. Screen-reader certification
+alert. The v0.15.3 browser gate passed empty/long names, 320px reflow, 200%
+page-scale emulation, dark mode, forced colors and keyboard operations.
+Screen-reader certification
 is not claimed without direct assistive-technology testing.
 
 ## Baseline requirements
