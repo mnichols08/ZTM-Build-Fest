@@ -569,6 +569,137 @@ export class PairingService {
     };
   }
 
+  createReplacementPairing(sessionToken, lostDeviceId) {
+    const { member, household, device: approverDevice } =
+      this.authorize(sessionToken);
+    this.prunePairingCapabilities();
+    const lostDevice = this.devices.get(lostDeviceId);
+    if (
+      !lostDevice ||
+      lostDevice.householdId !== household.id ||
+      lostDevice.memberId !== member.id ||
+      lostDevice.id === approverDevice.id ||
+      lostDevice.revokedAt
+    )
+      throw new PairingError(
+        "replacement_unavailable",
+        "That device cannot be replaced from this trusted device.",
+        404,
+      );
+    for (const pairing of this.pairings.values())
+      if (
+        pairing.householdId === household.id &&
+        ["Pending", "Claimed"].includes(this.state(pairing))
+      )
+        this.revokePairing(sessionToken, pairing.id);
+    let code;
+    let verifier;
+    do {
+      code = codeValue();
+      verifier = this.verifier(code);
+    } while (this.codeIndex.has(verifier));
+    const pairing = {
+      id: id(),
+      purpose: "replacement",
+      householdId: household.id,
+      inviterId: member.id,
+      inviterDeviceId: approverDevice.id,
+      inviterKeyFingerprint: approverDevice.syncKeyFingerprint,
+      memberId: member.id,
+      lostDeviceId,
+      verifier,
+      createdAt: this.now(),
+      expiresAt: this.now() + PAIRING_TTL_MS,
+      state: "Pending",
+      version: 1,
+      attempts: 0,
+      claimant: null,
+      confirmedMemberId: null,
+    };
+    this.pairings.set(pairing.id, pairing);
+    this.codeIndex.set(verifier, pairing.id);
+    this.audit("device_replacement_created", {
+      householdId: household.id,
+      pairingId: pairing.id,
+      memberId: member.id,
+      lostDeviceId,
+      approverDeviceId: approverDevice.id,
+    });
+    return {
+      pairingId: pairing.id,
+      code,
+      purpose: pairing.purpose,
+      state: pairing.state,
+      expiresAt: pairing.expiresAt,
+      version: pairing.version,
+    };
+  }
+
+  createMemberRecoveryPairing(sessionToken, targetMemberId) {
+    const { member: approver, household, device: approverDevice } =
+      this.authorize(sessionToken);
+    this.prunePairingCapabilities();
+    const target = this.members.get(targetMemberId);
+    if (
+      !target ||
+      target.householdId !== household.id ||
+      !target.active ||
+      target.id === approver.id
+    )
+      throw new PairingError(
+        "recovery_unavailable",
+        "That household member cannot use assisted recovery.",
+        404,
+      );
+    for (const pairing of this.pairings.values())
+      if (
+        pairing.householdId === household.id &&
+        ["Pending", "Claimed"].includes(this.state(pairing))
+      )
+        this.revokePairing(sessionToken, pairing.id);
+    let code;
+    let verifier;
+    do {
+      code = codeValue();
+      verifier = this.verifier(code);
+    } while (this.codeIndex.has(verifier));
+    const pairing = {
+      id: id(),
+      purpose: "member-recovery",
+      householdId: household.id,
+      inviterId: approver.id,
+      inviterDeviceId: approverDevice.id,
+      inviterKeyFingerprint: approverDevice.syncKeyFingerprint,
+      memberId: target.id,
+      verifier,
+      createdAt: this.now(),
+      expiresAt: this.now() + PAIRING_TTL_MS,
+      state: "Pending",
+      version: 1,
+      attempts: 0,
+      claimant: null,
+      confirmedMemberId: null,
+    };
+    this.pairings.set(pairing.id, pairing);
+    this.codeIndex.set(verifier, pairing.id);
+    this.audit("member_recovery_created", {
+      householdId: household.id,
+      pairingId: pairing.id,
+      approverMemberId: approver.id,
+      targetMemberId: target.id,
+      approverDeviceId: approverDevice.id,
+    });
+    return {
+      pairingId: pairing.id,
+      code,
+      purpose: pairing.purpose,
+      targetMemberId: target.id,
+      state: pairing.state,
+      expiresAt: pairing.expiresAt,
+      version: pairing.version,
+    };
+  }
+
   state(pairing) {
     if (
       ["Pending", "Claimed"].includes(pairing.state) &&
@@ -736,14 +867,27 @@ export class PairingService {
         "Kin could not verify this device approval.",
         400,
       );
-    if (pairing.purpose === "device") {
-      if (this.activeTrustedDeviceCount(household) >= MAX_TRUSTED_DEVICES)
+    if (["device", "replacement", "member-recovery"].includes(pairing.purpose)) {
+      const existingMember = this.members.get(pairing.memberId);
+      const activeDevices = this.activeTrustedDeviceCount(household);
+      const targetActiveDevices = [...this.devices.values()].filter(
+        (device) =>
+          device.householdId === household.id &&
+          device.memberId === pairing.memberId &&
+          !device.revokedAt,
+      ).length;
+      const postRecoveryDevices =
+        pairing.purpose === "device"
+          ? activeDevices + 1
+          : pairing.purpose === "replacement"
+            ? activeDevices
+            : activeDevices - targetActiveDevices + 1;
+      if (postRecoveryDevices > MAX_TRUSTED_DEVICES)
         throw new PairingError(
           "device_limit",
           "This household reached its trusted-device limit.",
           409,
         );
-      const existingMember = this.members.get(pairing.memberId);
       if (
         !existingMember?.active ||
         existingMember.householdId !== household.id
@@ -754,6 +898,52 @@ export class PairingService {
           403,
         );
       const deviceId = pairing.claimant.deviceId;
+      if (pairing.purpose === "replacement") {
+        const lostDevice = this.devices.get(pairing.lostDeviceId);
+        if (
+          !lostDevice ||
+          lostDevice.householdId !== household.id ||
+          lostDevice.memberId !== existingMember.id ||
+          lostDevice.revokedAt
+        )
+          throw new PairingError(
+            "replacement_stale",
+            "The device replacement changed. Start recovery again.",
+            409,
+          );
+        lostDevice.revokedAt = this.now();
+        if (lostDevice.tokenHash)
+          this.deviceTokens.delete(lostDevice.tokenHash);
+        for (const [sessionHash, activeSession] of this.sessions)
+          if (activeSession.deviceId === lostDevice.id)
+            this.sessions.delete(sessionHash);
+        this.audit("device_revoked", {
+          householdId: household.id,
+          memberId: existingMember.id,
+          deviceId: lostDevice.id,
+          reason: "replacement",
+        });
+      }
+      if (pairing.purpose === "member-recovery") {
+        for (const oldDevice of this.devices.values())
+          if (oldDevice.memberId === existingMember.id && !oldDevice.revokedAt) {
+            oldDevice.revokedAt = this.now();
+            if (oldDevice.tokenHash)
+              this.deviceTokens.delete(oldDevice.tokenHash);
+            this.audit("device_revoked", {
+              householdId: household.id,
+              memberId: existingMember.id,
+              deviceId: oldDevice.id,
+              reason: "member_recovery",
+            });
+          }
+        for (const [sessionHash, activeSession] of this.sessions)
+          if (activeSession.memberId === existingMember.id)
+            this.sessions.delete(sessionHash);
+        for (const credentialId of existingMember.credentials)
+          this.credentials.delete(credentialId);
+        existingMember.credentials.clear();
+      }
       this.addCredential(existingMember.id, pairing.claimant.credential);
       existingMember.credentials.add(pairing.claimant.credential.id);
       this.devices.set(deviceId, {
@@ -792,6 +982,22 @@ export class PairingService {
         memberId: existingMember.id,
         deviceId,
       });
+      if (pairing.purpose === "replacement")
+        this.audit("device_replacement_completed", {
+          householdId: household.id,
+          pairingId,
+          memberId: existingMember.id,
+          lostDeviceId: pairing.lostDeviceId,
+          deviceId,
+        });
+      if (pairing.purpose === "member-recovery")
+        this.audit("member_recovery_completed", {
+          householdId: household.id,
+          pairingId,
+          approverMemberId: pairing.inviterId,
+          memberId: existingMember.id,
+          deviceId,
+        });
       this.persistHousehold(household.id);
       return this.pairingView(pairing);
     }
@@ -1008,6 +1214,7 @@ export class PairingService {
       deviceId: pairing.claimant?.deviceId,
       confirmedMemberId: pairing.confirmedMemberId,
       confirmedDeviceId: pairing.confirmedDeviceId,
+      lostDeviceId: pairing.lostDeviceId,
     };
   }
 

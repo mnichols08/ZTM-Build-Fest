@@ -65,14 +65,14 @@ def main() -> int:
         raise ValueError("package.json: server package.version is missing or invalid")
     if server_version != version:
         require_match(
-            "README data-lifecycle candidate",
-            rf"`v({re.escape(server_version)})` data-lifecycle candidate",
+            "README current implementation line",
+            rf"Current implementation line: `v({re.escape(server_version)})`",
             readme,
             server_version,
         )
         require_match(
             "CHANGELOG server implementation candidate",
-            rf"^## Unreleased — v({re.escape(server_version)}) Data Lifecycle candidate$",
+            rf"^## Unreleased — v({re.escape(server_version)}) [^\r\n]+ candidate$",
             changelog,
             server_version,
         )

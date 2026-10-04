@@ -1,6 +1,20 @@
 # Testing Contracts
 
-**Status:** v0.12.3 data-lifecycle implementation candidate; scripted Windows checks, including PowerShell and POSIX (`run.sh` under Git Bash) launcher smokes, passed. Human review is pending. The WSL HTTP launcher was not run because WSL has no Node executable. Earlier version sections are historical release gates. See [V0.11.0](V0.11.0.md) and [V0.12.0](V0.12.0.md) for the current service and lifecycle contracts.
+**Status:** v0.13.3 recovery release gate passed on Windows x64 with Node 22.12,
+Rust 1.93, and Edge 154. The gate covered 300 Node/real-WASM tests (226 server),
+118 Rust tests, formatting, warnings-denied Clippy, release WASM, all product,
+storage, security UI and virtual-passkey browser runners, version consistency,
+and whitespace. See [V0.13.0](V0.13.0.md) and [RECOVERY](RECOVERY.md).
+
+## v0.13 recovery release gate
+
+Recovery tests cover same-member replacement, member-assisted fresh credential
+establishment, revocation/session invalidation, unrelated/removed/revoked/stale
+authority rejection, single-use activation, and stale-backup preservation of
+newer credentials, devices, revocations and epoch rotation state. The complete
+v0.12 gate remains required so recovery changes cannot regress identity,
+WebAuthn, sync/provisioning, durability, deletion tombstones, browser storage,
+Rust replay, accessibility, or UI security.
 
 ## v0.12 data-lifecycle release gate
 

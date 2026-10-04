@@ -316,7 +316,6 @@ for (const kind of ["missing", "directory", "newer-schema", "empty"]) {
 test("restore preserves the old database and its recoverable WAL/SHM sidecars", async (t) => {
   const { directory, databasePath } = temporaryDatabase(t);
   const sourcePath = join(directory, "source.sqlite");
-  new DurableStore(sourcePath).close();
   const previousStore = new DurableStore(databasePath);
   let previousIdentity;
   let previousFiles;
@@ -325,6 +324,7 @@ test("restore preserves the old database and its recoverable WAL/SHM sidecars", 
       credential: { id: "previous-wal", publicKey: "previous-key", algorithm: -7 },
       deviceLabel: "Preserved WAL test",
     });
+    await previousStore.backup(sourcePath);
     previousFiles = new Map(
       ["", "-wal", "-shm"].map((suffix) => [
         suffix,
@@ -357,7 +357,7 @@ test("restore preserves the old database and its recoverable WAL/SHM sidecars", 
   const restored = new DurableStore(databasePath);
   try {
     assert.equal(restored.validate(), true);
-    assert.equal(restored.loadIdentity().members.size, 0);
+    assert.ok(restored.loadIdentity().members.has(previousIdentity.memberId));
   } finally {
     restored.close();
   }

@@ -252,9 +252,11 @@ class KinHousehold extends HTMLElement {
   renderJoin() {
     if (this.claim?.state === "Claimed") {
       this.message(
-        this.claim.purpose === "device"
-          ? "This device is ready. The same adult must approve it before sync access is added."
-          : "Your identity is ready. The existing adult must approve this device before you can join.",
+        ["device", "replacement"].includes(this.claim.purpose)
+          ? "This device is ready. Your existing trusted device must approve it before access is restored."
+          : this.claim.purpose === "member-recovery"
+            ? "Your fresh passkey and device are ready. The other household adult must authorize recovery before access is restored. Your old devices will stop working."
+            : "Your identity is ready. The existing adult must approve this device before you can join.",
       );
       this.showFingerprint(
         "Compare this device key with the approving adult",
@@ -325,7 +327,7 @@ class KinHousehold extends HTMLElement {
       this.prefilledCode = "";
     }
     this.text(
-      "A code proves you received an invitation. You must create a passkey, and an existing adult must still approve you. No household details are shown before approval.",
+      "A code starts a short-lived invitation or recovery request. You must create a fresh passkey, and an existing trusted adult must still approve this device. No household details or encryption keys are shown before approval.",
     );
     const form = document.createElement("form");
     const codeLabel = document.createElement("label");
@@ -400,9 +402,11 @@ class KinHousehold extends HTMLElement {
       this.pairing.state === "Pending"
         ? "Waiting for the other adult to claim this code."
         : this.pairing.state === "Claimed"
-          ? this.pairing.purpose === "device"
+          ? ["device", "replacement"].includes(this.pairing.purpose)
             ? `${this.pairing.deviceLabel || "This device"} is awaiting approval for your account.`
-            : `${this.pairing.deviceLabel || "The other device"} is awaiting your approval.`
+            : this.pairing.purpose === "member-recovery"
+              ? `${this.pairing.deviceLabel || "The recovery device"} is awaiting authorization. Approval revokes that adult's old credentials and devices.`
+              : `${this.pairing.deviceLabel || "The other device"} is awaiting your approval.`
           : typeof this.pairing.state === "string"
             ? `Pairing ${this.pairing.state.toLowerCase()}.`
             : "Kin could not read the pairing status. Revoke this request or reload before continuing.";
@@ -592,6 +596,38 @@ class KinHousehold extends HTMLElement {
         throw new Error(
           "This device's approved key does not match its local key.",
         );
+      this.render();
+    });
+  }
+
+  async createReplacement(deviceId) {
+    if (
+      !confirm(
+        "Replace this device? The selected device will no longer be trusted as soon as you approve the fresh device. Previously copied information cannot be erased.",
+      )
+    )
+      return;
+    await this.run(async () => {
+      this.pairing = await this.api("/api/devices/replacements", {
+        method: "POST",
+        body: JSON.stringify({ deviceId }),
+      });
+      this.render();
+    });
+  }
+
+  async authorizeRecovery(memberId) {
+    if (
+      !confirm(
+        "Authorize recovery for the other adult? They must create and activate a fresh passkey. Approval will revoke their old credentials, sessions, and devices.",
+      )
+    )
+      return;
+    await this.run(async () => {
+      this.pairing = await this.api("/api/household/recovery", {
+        method: "POST",
+        body: JSON.stringify({ memberId }),
+      });
       this.render();
     });
   }
@@ -864,7 +900,15 @@ class KinHousehold extends HTMLElement {
             item.append(verify);
           }
         }
-        if (!device.revokedAt && device.id !== this.identity.deviceId)
+        if (!device.revokedAt && device.id !== this.identity.deviceId) {
+          if (device.memberId === this.identity.memberId)
+            item.append(
+              this.makeButton(
+                "Replace this device",
+                () => this.createReplacement(device.id),
+                "secondary",
+              ),
+            );
           item.append(
             this.makeButton(
               "Revoke device",
@@ -878,6 +922,7 @@ class KinHousehold extends HTMLElement {
               "danger",
             ),
           );
+        }
         list.append(item);
       }
       this.append(
@@ -904,6 +949,11 @@ class KinHousehold extends HTMLElement {
           : "Other adult — active";
         if (!member.current)
           item.append(
+            this.makeButton(
+              "Authorize recovery",
+              () => this.authorizeRecovery(member.id),
+              "secondary",
+            ),
             this.makeButton(
               "Remove other adult",
               () => this.removeMember(member.id),
