@@ -59,6 +59,7 @@ class KinHousehold extends HTMLElement {
   constructor() {
     super();
     this.identity = null;
+    this.householdLifecycle = null;
     this.pairing = null;
     this.claim = null;
     this.timer = null;
@@ -160,6 +161,7 @@ class KinHousehold extends HTMLElement {
     try {
       const status = await this.api("/api/status");
       this.identity = status.identity;
+      this.householdLifecycle = status.householdLifecycle;
       this.claim = status.claim;
       if (this.identity) {
         try {
@@ -191,6 +193,10 @@ class KinHousehold extends HTMLElement {
     heading.textContent =
       location.pathname === "/pair" ? "Join a household" : "Household";
     this.append(heading);
+    if (this.householdLifecycle?.state === "deletion_pending")
+      return this.renderDeletionPending();
+    if (this.householdLifecycle?.state === "deleted")
+      return this.renderDeleted();
     if (!window.PublicKeyCredential)
       return this.message(
         "Passkeys are unavailable in this browser. Use a current browser with a configured screen lock.",
@@ -209,6 +215,38 @@ class KinHousehold extends HTMLElement {
     );
     this.button("Set up household", () => this.register("bootstrap", {}));
     this.button("Log in with passkey", () => this.login(), "secondary");
+  }
+
+  renderDeletionPending() {
+    const heading = document.createElement("h2");
+    heading.textContent = "Household deletion pending";
+    this.append(heading);
+    const status = this.text(this.householdLifecycle.message);
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    this.text(
+      "All household sync and new device or member changes are blocked now. Deletion becomes final 30 days after it was requested. Either active adult can cancel before then by authenticating with a trusted device passkey. At finalization, Kin removes its household ciphertext and service authorization records.",
+    );
+    this.text(
+      "This does not erase encrypted data already stored in this browser, offline or exported copies, or backups held outside Kin. A device that reconnects while deletion is pending cannot sync.",
+    );
+    this.button("Cancel household deletion with passkey", () =>
+      this.cancelHouseholdDeletion(),
+    );
+  }
+
+  renderDeleted() {
+    const heading = document.createElement("h2");
+    heading.textContent = "Household deleted";
+    this.append(heading);
+    const status = this.text(
+      "This household was deleted and can no longer sync.",
+    );
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    this.text(
+      "Kin cannot recover it after final deletion. This browser, offline devices, exported archives, and external backups may still contain copies.",
+    );
   }
 
   renderJoin() {
@@ -876,9 +914,91 @@ class KinHousehold extends HTMLElement {
       }
       this.append(
         list,
+        this.makeButton(
+          "Delete household",
+          () => this.deleteHousehold(),
+          "danger",
+        ),
         this.makeButton("Leave household", () => this.leave(), "danger"),
         this.makeButton("Back", () => this.render(), "secondary"),
       );
+    });
+  }
+
+  async deleteHousehold() {
+    if (
+      !confirm(
+        "Delete this household from Kin? Sync stops immediately for both adults and all devices. Kin will remove its encrypted relay history and authorization records after 30 days; either adult can cancel with a passkey before then. This does not erase this browser, offline devices, exported archives, or external backups. After final deletion Kin cannot restore the household.",
+      )
+    )
+      return;
+    await this.run(async () => {
+      const started = await this.api("/api/household/deletion/options", {
+        method: "POST",
+        body: "{}",
+      });
+      const credential = await navigator.credentials.get({
+        publicKey: authenticationOptions(started.publicKey),
+        signal: this.connectionAbort.signal,
+      });
+      const result = await this.api("/api/household/deletion/finish", {
+        method: "POST",
+        body: JSON.stringify({
+          flow: started.flow,
+          credential: credentialJson(credential),
+        }),
+      });
+      this.householdLifecycle = {
+        state: result.state,
+        finalizeAt: result.finalizeAt,
+        message: result.message,
+      };
+      this.dispatchEvent(
+        new CustomEvent("kin:sync-stop", {
+          bubbles: true,
+          composed: true,
+          detail: { message: result.message },
+        }),
+      );
+      this.render();
+    });
+  }
+
+  async cancelHouseholdDeletion() {
+    await this.run(async () => {
+      const started = await this.api(
+        "/api/household/deletion/cancel/options",
+        { method: "POST", body: "{}" },
+      );
+      const credential = await navigator.credentials.get({
+        publicKey: authenticationOptions(started.publicKey),
+        signal: this.connectionAbort.signal,
+      });
+      const identity = await this.api(
+        "/api/household/deletion/cancel/finish",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            flow: started.flow,
+            credential: credentialJson(credential),
+          }),
+        },
+      );
+      this.identity = {
+        householdId: identity.householdId,
+        memberId: identity.memberId,
+        deviceId: identity.deviceId,
+      };
+      this.householdLifecycle = null;
+      this.syncStatus = await this.api("/api/sync/status");
+      this.dispatchEvent(
+        new CustomEvent("kin:sync-enabled", {
+          bubbles: true,
+          composed: true,
+          detail: this.identity,
+        }),
+      );
+      this.render();
     });
   }
   async removeMember(memberId) {

@@ -32,6 +32,10 @@ export class EncryptedSyncService {
     this.rateBuckets = new Map();
   }
 
+  forgetHousehold(householdId) {
+    this.households.delete(householdId);
+  }
+
   status(sessionToken) {
     const auth = this.authorize(sessionToken);
     const state = this.state(auth.household.id);

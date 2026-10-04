@@ -1,6 +1,6 @@
 # Roadmap
 
-Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. The `v0.11.7` Durable Service & Deployment implementation candidate (October Roadmap & Startup Diagnostics) is complete and tagged `kin-v0.11.7` for human review; it is not a published release. The October plan below adds future work without changing that release status or completing the remaining prerequisites.
+Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. The `v0.11.7` Durable Service & Deployment candidate is the prior review baseline. Annotated tag `kin-v0.12.3` marks the Data Lifecycle review candidate, which passed scripted Windows checks including PowerShell and POSIX (`run.sh` under Git Bash) launcher smokes. The WSL HTTP launcher itself was not run because WSL has no Node executable. The tag does not indicate publication; human review is pending.
 
 ```text
 v0.9.3 — Encrypted Event Sync Stabilization
@@ -9,7 +9,7 @@ v0.10.x — Portable Core + Local Security
 	↓
 v0.11.x — Durable Service & Deployment
 	↓
-v0.12.x — Data Lifecycle, Retention & Deletion (October 3 target)
+v0.12.x — Data Lifecycle, Retention & Deletion (v0.12.3 candidate)
 	↓
 v0.13.x — Recovery & Household Continuity
 	↓
@@ -28,11 +28,11 @@ v1.0.0 — Stable Kin Platform (readiness-driven, no fixed date)
 
 Kin supports encrypted local storage, recovery/optional PRF unlock, verified migration, Rust commands/codecs, encrypted archives and a static offline shell alongside opt-in encrypted sync. The v0.11 candidate adds durable server identity/relay state and service database backup/restore. Archives recover local history, not server identity. Independent security review and broader browser/authenticator coverage remain outstanding.
 
-The v0.11 candidate follows the v0.10 human review gate and deliberately settles service durability before lifecycle/deletion, recovery authority and holistic UX/UI work. The [v0.11](V0.11.0.md) record contains implementation gates and candidate evidence; [v0.12](V0.12.0.md), [v0.13](V0.13.0.md) and [v0.14](V0.14.0.md) remain planning contracts.
+The v0.11 candidate settled service durability before v0.12 lifecycle/deletion. The [v0.11](V0.11.0.md) and [v0.12](V0.12.0.md) records describe candidate evidence; v0.13 and v0.14 remain planning contracts.
 
 ## October direction
 
-The goal for Build Fest is to add one small, useful household feature each day in October, supported by the existing product and platform foundations. Assuming `v0.12.0` completes on October 3, 2026, the 28 remaining days take the plan through `v0.40.x` on October 31. The [daily plan](#october-daily-feature-plan) therefore covers 29 proposed minor lines over October 3–31, including the remaining platform work on its own days. It does not require finishing v0.12–v0.16 all at once. These are targets, not completion claims; narrow scope or move dates when a release needs more time.
+The goal for Build Fest is to add one small, useful household feature each day in October, supported by the existing product and platform foundations. The `v0.12.3` candidate has passed scripted Windows checks, including both launchers, and remains subject to human review; later daily plans remain targets, not completion claims. The [daily plan](#october-daily-feature-plan) covers the proposed minor lines through `v0.40.x` on October 31.
 
 > Kin should help a household remember, coordinate, hand off, and recover context without requiring everyone to become a project manager.
 
@@ -258,10 +258,11 @@ awaits human review and release authorization. See [V0.11.0](V0.11.0.md).
 
 ### `v0.12.x` — Data Lifecycle, Retention & Deletion
 
-Define what Kin keeps, archives, deletes, compacts and cannot erase. Specify
-household deletion, offline-device tombstones, service-controlled ciphertext,
-backup/log retention and event-history growth without conflating deletion with
-archival, revocation or member removal. See [V0.12.0](V0.12.0.md).
+The implementation defines `active → deletion_pending → deleted`, fresh-passkey
+authorization, a 30-day cancellation window, final server-side purge, permanent
+minimal tombstones, stale-client rejection and explicit backup restore
+acknowledgement. It preserves full encrypted history until final deletion and
+documents local/exported-copy and rollback limitations. See [V0.12.0](V0.12.0.md).
 
 ### `v0.13.x` — Recovery & Household Continuity
 
@@ -286,7 +287,7 @@ Keep the platform work in order: durable service, lifecycle/deletion, recovery a
 | Release | Status | Purpose and contract |
 |---|---|---|
 | `v0.11.x` | `v0.11.7` candidate; review pending | [Durable Service & Deployment](V0.11.0.md) — restart-safe identity/relay acceptance while preserving the encrypted relay boundary. |
-| `v0.12.x` | Planned | [Data Lifecycle, Retention & Deletion](V0.12.0.md) — explicit deletion, retention, archive, revocation, backup expiry and stale-device behavior. |
+| `v0.12.x` | Tagged `v0.12.3` review candidate; scripted Windows checks passed, human review pending | [Data Lifecycle, Retention & Deletion](V0.12.0.md) — explicit deletion, retention, archive, revocation, backup and stale-device behavior. |
 | `v0.13.x` | Planned | [Recovery & Household Continuity](V0.13.0.md) — explicit outcomes for loss of credentials, devices, browser profiles, server data and recovery material. |
 | `v0.14.x` | Planned | [UX/UI Consolidation](V0.14.0.md) — one coherent, accessible presentation of the settled platform and household workflows. |
 | `v0.15.x` | Planned | [Household Areas](releases/V0.15.0.md) — lightweight place/context without project management. |
@@ -387,9 +388,9 @@ Through the October plan, preserve the [product principles](PRINCIPLES.md) and [
 
 ## Scope discipline
 
-Each roadmap item is future work unless explicitly marked as implemented. v0.9.3 supplies authentication, pairing and encrypted sync; v0.10.x adds local security, portable commands/codecs and encrypted recovery archives. v0.11.7 is an implementation candidate awaiting review; v0.12–v0.40 are October targets, v0.41–v0.45 are undated follow-up proposals, and v1.0 remains readiness-driven. The October targets and later proposals remain planned. Releases through `v0.0.12` were documentation-only; v0.1.0 was the first coded release.
+Each roadmap item is future work unless explicitly marked as implemented. v0.9.3 supplies authentication, pairing and encrypted sync; v0.10.x adds local security, portable commands/codecs and encrypted recovery archives. v0.11.7 is a prior review candidate; tagged v0.12.3 has passed scripted Windows checks, including PowerShell and POSIX launchers, and awaits human review; v0.13 onward has not begun. The WSL HTTP launcher was not run because WSL has no Node executable. Later minor lines remain targets and v1.0 readiness-driven. Releases through `v0.0.12` were documentation-only; v0.1.0 was the first coded release.
 
-This roadmap change establishes the foundation for future daily implementation. It does not start v0.12, publish the v0.11 candidate, create release tags or authorize branch merges. Follow the current [agent guidance](../AGENTS.md) and [release process](RELEASES.md) for implementation and publication authority. Once a daily sequence is authorized, its cadence can proceed within that scope without routine feedback stops; a date alone cannot bypass a release gate.
+The v0.12 implementation was explicitly authorized and is represented by tagged review candidate `kin-v0.12.3`. This does not authorize v0.13 or publication as a release. Follow the current [agent guidance](../AGENTS.md) and [release process](RELEASES.md); a date alone cannot bypass a release gate.
 
 ## Feedback gate
 

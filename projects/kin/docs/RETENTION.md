@@ -1,64 +1,74 @@
 # Retention, Archival, and Deletion
 
-**Status:** Current through v0.10.3. Domain Item, Handoff and Talk archival and encrypted user-created archives are implemented. Full household deletion, service/backup retention policy and event-log compaction remain unimplemented and are planned for v0.12. Event/projection rules are in [EVENTS](EVENTS.md) and [STATE](STATE.md); portability is in [PORTABILITY](PORTABILITY.md).
+**Status:** Household deletion and server lifecycle retention are implemented
+through the v0.12.3 review candidate. The service holds opaque ciphertext and
+limited authorization/routing metadata; it does not hold household plaintext or
+content keys. See [V0.12.0](V0.12.0.md) for the user-facing lifecycle contract.
 
 ## Distinct operations
 
-| Operation               | Meaning                                                                                                                                                    | What it does not mean                                                                  |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Archive                 | Hide an item/record from normal active views using an explicit tombstone event such as `ITEM_ARCHIVED`; retain historical events for replay and summaries. | It is not household erasure or immediate physical deletion.                            |
-| Household data deletion | A deliberate request to destroy the household's Kin data from controlled local and service storage, subject to honest backup/export limitations.           | It cannot revoke copies already exported, screenshotted, downloaded, or remembered.    |
-| Device revocation       | Prevent a device from receiving future household data or submitting accepted events; may trigger key rotation.                                             | It cannot erase plaintext/keys already held by that device.                            |
-| Member removal          | Explicitly end a member's authorization to the household and revoke their devices under a reviewed membership protocol.                                    | It is not the same as revoking one device and cannot retrieve previously learned data. |
+| Operation | Meaning | What it does not mean |
+| --- | --- | --- |
+| Archive | Hide a domain item/record from normal views using an explicit tombstone event; retain canonical history for replay. | Household erasure or physical removal. |
+| Member removal | End one member's authorization and revoke their devices under the membership protocol. | Household deletion or retrieval of previously copied data. |
+| Device revocation | Reject future sessions/sync and rotate access for an active household. | Erasure of local plaintext, keys or prior copies. |
+| Household deletion | Block household authority immediately, allow a 30-day cancellation period, then purge service-controlled household data and retain a minimal anti-resurrection tombstone. | Remote erasure of local, exported, offline or externally backed-up copies. |
+| Local reset | Remove data from one reachable browser/profile using its local controls. | Erasure from the service, another device or an export. |
+| Encrypted archive | User-created portable local copy, encrypted under its separate archive/recovery boundary. | Server backup, sync identity or deletion tombstone. |
 
-Archive is routine domain state; deletion is a privacy/destructive operation. Never overload one UI control or event to imply both.
+Archive is routine domain state; deletion is an authenticated service lifecycle.
+Never overload one control or event to imply both.
 
-## Full household deletion responsibilities
+## Service lifecycle retention
 
-Before offering household deletion in a synchronized product, specify and report the outcome for:
+| Data class | Owner and retention |
+| --- | --- |
+| Active household identity and membership | Durable service database until member/household transition; minimum information needed to authenticate and authorize. |
+| Trusted/revoked devices and credentials | Durable while the household is active or deletion is pending. Purged at final deletion. |
+| Pending request metadata | Request time and finalization deadline only; retained for up to 30 days to implement cancellation. Request invalidates every household session immediately. |
+| Household tombstone | One row containing the opaque household ID, version, `deleted` state and deletion timestamp; retained indefinitely because it is the only in-database protection against restoring an older backup over a deletion. It contains no members, credentials, device identifiers, event ciphertext or audit content. |
+| Encrypted events, identity bindings, relay/device cursors and key epochs | Retained while active and throughout the 30-day pending window; all purged at finalization. These are opaque ciphertext and routing/coordination state. |
+| Sessions and ceremony flows | Sessions are in-memory, expire within 12 hours, and are invalidated on deletion request. WebAuthn flows are in-memory with a 2-minute TTL and are cleared for the household. Restart discards both. |
+| Pairing/provisioning | Pairing flows expire and are process-local. Provisioning grants expire after 10 minutes and are pruned during sync operations; finalization purges all remaining grants. |
+| Security audit | Global 10,000-row maximum; oldest rows are discarded when exceeded. Finalization purges the household's audit rows. This count bound is not a time-based promise. |
+| Temporary/rate-limit state | Process-local, bounded and expired/reset; never an authority source after restart. |
+| Backups | No automatic service-managed retention or expiry. Database backup files remain under operator control and may contain the database contents as of backup time. Restore requires an explicit acknowledgement and merges newer tombstones from an existing target. |
+| Local stores, offline devices and user-created exports | Retained outside the server deletion mechanism until each holder removes them. Kin cannot discover, revoke or erase inaccessible copies. |
 
-- **Local IndexedDB:** delete canonical event records, local context, derived caches, and app-owned temporary state on each reachable device.
-- **Derived state/checkpoints:** discard projections and caches; they must not retain content after their source is erased.
-- **Cryptographic keys:** revoke server access, remove keys from reachable authorized devices, and rotate keys for any household that remains active. Removing a key does not prove an offline device has no copy.
-- **Trusted-device registry and credentials:** revoke device authorization and applicable sessions/credentials without conflating member removal with data erasure.
-- **Sync ciphertext:** issue deletion to the relay and define retention windows, replicated stores, and service backups. The server must report what is pending or outside immediate control.
-- **Metadata/logs:** define minimization and retention for routing IDs, IP/security logs, timestamps, and operational backups separately from event content.
-- **User-created exports:** warn that copies saved elsewhere are outside Kin's control; Kin cannot revoke or remotely erase them.
+The tombstone is intentionally the only indefinitely retained household record.
+It prevents this database from accepting an old household state after restore;
+it is not a global registry shared by hosts. Its one-row-per-deleted-household
+cardinality grows with deleted households. There is no safe garbage-collection
+deadline that preserves anti-resurrection for arbitrarily old backups.
 
-The confirmation must describe scope, affected devices, sync state, and irreversibility in plain language. Do not claim global deletion until all controlled copies/backups have met the documented policy. Local-only v0.1.0 has no remote service or household deletion workflow; its local event log has a 10,000-event prototype limit, not a retention policy.
+## Backup and restore guarantee
 
-## Event log growth and optimization
+An in-place restore reads lifecycle rows from the pre-restore target and merges
+them into the verified backup before replacement. `deleted` wins over
+`deletion_pending`, which wins over `active`; data for a deleted ID is purged.
+The command refuses restore unless the operator supplies
+`--acknowledge-deletion-history` and prints a warning.
 
-The v0.1.0 contract caps the local log at 10,000 events and refuses additional writes rather than deleting history. This is a prototype bound, not a long-term scalability solution. Later releases should measure replay time and storage before introducing optimization.
+If both the current database and its later tombstones have been lost, a backup
+from before deletion cannot prove that deletion occurred. Kin cannot safely
+reconcile a deletion it has no record of. The explicit restore warning is not a
+claim of rollback protection. Backups copied elsewhere are not deleted when
+the active database purges a household.
 
-Possible future strategies include:
+## Event history growth
 
-- Derived projection caches that are disposable and rebuilt from events
-- Verified snapshots/checkpoints to reduce replay cost
-- Explicit archival or compaction only after preservation, restore, and multi-device deletion semantics exist
+The service keeps the full canonical encrypted relay history and bindings while
+a household exists. There is no checkpointing, compaction or history pruning.
+The existing per-household event/binding limits reject further writes; they do
+not discard old history and are not a scale or retention guarantee. Final
+deletion purges the service's complete event and cursor history. Existing
+client copies remain. Any future compaction needs separate proof for replay,
+unknown event preservation, offline writers, tombstones and backup restore.
 
-Core invariant:
+## Local and user-controlled data
 
-> Optimization must not change observable household state.
-
-## Snapshot/checkpoint concept
-
-```text
-canonical events 1–N
-        |
-        v
-validated derived snapshot at N
-        |
-        v
-canonical events N+1 onward
-```
-
-A snapshot is derived, never the authoritative history. It should identify the last included sequence/event, projection/schema version, and enough integrity metadata to detect accidental mismatch. A snapshot must be verifiable against its event prefix when created or restored; a digest is not authentication against a malicious actor. Full state must remain reconstructable from preserved source events until a separately approved and tested archival/compaction policy says otherwise.
-
-Do not compact merely because the log is large. Safe compaction must account for offline devices that may later submit old events, exported backups, legal/user deletion expectations, migration rollback, and tombstone resurrection. The final compaction policy is deferred.
-
-The planned v0.12 contract ([V0.12.0](V0.12.0.md)) must settle deletion
-propagation, service-controlled primary/backup/log retention and whether verified
-checkpoints or compaction can preserve state and offline-device semantics. Until
-that work is implemented and verified, the event cap is only a prototype bound
-and there is no promise of household-wide erasure.
+Service deletion cannot reach IndexedDB, keys, application caches, plaintext
+already seen by an authorized adult, screenshots, exported archives, or
+external backup providers. Users must remove local site data on each reachable
+device and manage exports/backups where they are stored. Browser storage
+deletion is not a guarantee of physical-media sanitization.

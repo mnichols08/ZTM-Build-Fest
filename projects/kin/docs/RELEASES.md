@@ -1,6 +1,6 @@
 # Release Process
 
-**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. The v0.11.7 Durable Service & Deployment candidate (October Roadmap & Startup Diagnostics) is committed and tagged `kin-v0.11.7` for human review; it is not a published release. No v0.12 implementation work is in scope.
+**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. The v0.11.7 Durable Service & Deployment candidate remains a prior human-review baseline. Annotated tag `kin-v0.12.3` marks the Data Lifecycle, Retention & Deletion review candidate; it is not a published release, and human review is pending.
 
 ## Release sequence
 
@@ -8,12 +8,13 @@ The completed progression is `kin-v0.9.3` → `kin-v0.10.0` (Portable Core + Loc
 Data Security) → `kin-v0.10.1` (Security Lifecycle & Sync Recovery Correctness) →
 `kin-v0.10.2` (Local Root Rotation & Recovery Lifecycle) →
 `kin-v0.10.3` (Bounded Storage/Archive Hardening & Architecture Closure). The
-current review candidate includes the v0.11.0 through v0.11.5 Durable
+v0.11.7 review baseline includes the v0.11.0 through v0.11.5 Durable
 Service & Deployment gates, the v0.11.6 documentation/comment patch, and the
-v0.11.7 October Roadmap & Startup Diagnostics patch, then stops for human review. Its annotated tag
-identifies the candidate commit and does not represent a published release.
-The remaining planned, unimplemented sequence follows the [roadmap](ROADMAP.md):
-v0.12.x through v0.40.x are daily October 3–31 targets, v0.41.x through v0.45.x
+v0.11.7 October Roadmap & Startup Diagnostics patch. The tagged v0.12.3 review
+candidate implements lifecycle capability, correctness, stale-device hardening
+and UX/docs; the tag does not indicate publication.
+The remaining sequence follows the [roadmap](ROADMAP.md): v0.13.x through
+v0.40.x are daily October 4–31 targets, v0.41.x through v0.45.x
 are undated follow-ups, and v1.0.0 depends on readiness. The platform work
 through v0.14 and foundation work through v0.16 occupy their own days.
 v1.0 requires the readiness properties of every preceding line, not
@@ -107,4 +108,4 @@ Follow [V0.7.0](V0.7.0.md) for capability, correctness, resilience/accessibility
 
 ## v0.8.0 Household Pairing
 
-The v0.7.x line completed at `kin-v0.7.4`, validated commit `a8ded079be6fdbedba8738a64a5f0fb753e7fdd6`, pushed to the fork. The v0.8 record is [V0.8.0](V0.8.0.md); `kin-v0.8.8` corrected active-member slots. The v0.9 record is [V0.9.0](V0.9.0.md). The merged v0.9.3 base and completed v0.10 implementation line are recorded in [V0.10.0](V0.10.0.md). v1.0 remains gated by local security, durable service, lifecycle/deletion, recovery/continuity and UX/UI readiness. v0.11 is an implementation candidate awaiting human review; v0.12–v0.14 remain planned, not implemented.
+The v0.7.x line completed at `kin-v0.7.4`, validated commit `a8ded079be6fdbedba8738a64a5f0fb753e7fdd6`, pushed to the fork. The v0.8 record is [V0.8.0](V0.8.0.md); `kin-v0.8.8` corrected active-member slots. The v0.9 record is [V0.9.0](V0.9.0.md). The merged v0.9.3 base and completed v0.10 implementation line are recorded in [V0.10.0](V0.10.0.md). v1.0 remains gated by local security, durable service, lifecycle/deletion, recovery/continuity and UX/UI readiness. v0.11 is a prior implementation candidate; tagged `kin-v0.12.3` is a review candidate, while v0.13 onward remains planned, not implemented.

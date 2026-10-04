@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import {
   chmodSync,
   closeSync,
+  copyFileSync,
   fsyncSync,
   linkSync,
   mkdirSync,
@@ -31,9 +32,10 @@ import {
   validStoredDevice,
 } from "./durable-identity.mjs";
 
-const SERVER_SCHEMA_VERSION = 1;
+const SERVER_SCHEMA_VERSION = 2;
 const MAX_AUDIT_ROWS = 10_000;
 const BUSY_TIMEOUT_MS = 5_000;
+export const HOUSEHOLD_DELETION_GRACE_MS = 30 * 24 * 60 * 60_000;
 
 export class DurableStoreError extends Error {
   constructor(message, options) {
@@ -193,7 +195,15 @@ export class DurableStore {
     }
   }
 
-  static async restoreBackup(sourcePath, targetPath) {
+  static async restoreBackup(
+    sourcePath,
+    targetPath,
+    { acknowledgeDeletionHistory = false } = {},
+  ) {
+    if (!acknowledgeDeletionHistory)
+      throw new DurableStoreError(
+        "Restoring a backup requires explicit acknowledgement that it may predate household deletions.",
+      );
     const source = resolve(sourcePath);
     const target = resolve(targetPath);
     if (samePath(source, target))
@@ -206,8 +216,11 @@ export class DurableStore {
     );
     let releaseServiceLock;
     const temporary = `${target}.${randomBytes(8).toString("hex")}.restore`;
+    const lifecycleSnapshot = `${target}.${randomBytes(8).toString("hex")}.lifecycle`;
     const previous = `${target}.pre-restore-${Date.now()}-${randomBytes(4).toString("hex")}`;
     let sourceStore;
+    let targetStore;
+    let restoredStore;
     let movedDatabase = false;
     const movedSidecars = [];
     try {
@@ -225,12 +238,33 @@ export class DurableStore {
         readonly: true,
       });
       await sourceStore.backup(temporary, { maintenanceLockHeld: true });
-
+      const currentDeletions = [];
       if (exists(target)) {
         if (!statSync(target).isFile())
           throw new DurableStoreError(
             "The Kin restore target must be a database file.",
           );
+        copyFileSync(target, lifecycleSnapshot);
+        for (const suffix of ["-wal", "-shm"])
+          if (exists(`${target}${suffix}`))
+            copyFileSync(`${target}${suffix}`, `${lifecycleSnapshot}${suffix}`);
+        targetStore = new DurableStore(lifecycleSnapshot, {
+          acquireProcessLock: false,
+          readonly: true,
+        });
+        currentDeletions.push(...targetStore.loadNonActiveHouseholds());
+        targetStore.close();
+        targetStore = undefined;
+      }
+      restoredStore = new DurableStore(temporary, {
+        acquireProcessLock: false,
+      });
+      const preservedDeletionCount =
+        restoredStore.mergeHouseholdLifecycle(currentDeletions);
+      restoredStore.close();
+      restoredStore = undefined;
+
+      if (exists(target)) {
         renameSync(target, previous);
         movedDatabase = true;
       }
@@ -244,6 +278,7 @@ export class DurableStore {
       renameSync(temporary, target);
       return {
         databasePath: target,
+        preservedDeletionCount,
         previousDatabasePath:
           movedDatabase || movedSidecars.length ? previous : null,
       };
@@ -258,15 +293,26 @@ export class DurableStore {
       });
     } finally {
       try {
-        sourceStore?.close();
+        restoredStore?.close();
       } finally {
         try {
-          rmSync(temporary, { force: true });
+          targetStore?.close();
         } finally {
           try {
-            releaseServiceLock?.();
+            sourceStore?.close();
           } finally {
-            releaseMaintenanceLock();
+            try {
+              rmSync(lifecycleSnapshot, { force: true });
+              rmSync(`${lifecycleSnapshot}-wal`, { force: true });
+              rmSync(`${lifecycleSnapshot}-shm`, { force: true });
+              rmSync(temporary, { force: true });
+            } finally {
+              try {
+                releaseServiceLock?.();
+              } finally {
+                releaseMaintenanceLock();
+              }
+            }
           }
         }
       }
@@ -330,7 +376,7 @@ export class DurableStore {
   }
 
   migrate(migrationFault) {
-    const version = this.db.pragma("user_version", { simple: true });
+    let version = this.db.pragma("user_version", { simple: true });
     if (!Number.isSafeInteger(version) || version < 0)
       throw new DurableStoreError("Kin server schema metadata is invalid.");
     if (version > SERVER_SCHEMA_VERSION)
@@ -343,24 +389,25 @@ export class DurableStore {
         .all();
       if (
         migrations.length !== SERVER_SCHEMA_VERSION ||
-        migrations[0]?.version !== SERVER_SCHEMA_VERSION
+        migrations.some((row, index) => row.version !== index + 1)
       )
         throw new DurableStoreError("Kin server migration metadata is invalid.");
       return;
     }
 
-    const existingTables = this.db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-      )
-      .all();
-    if (existingTables.length)
-      throw new DurableStoreError(
-        "The Kin database has unversioned data and cannot be migrated safely.",
-      );
+    if (version === 0) {
+      const existingTables = this.db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+        )
+        .all();
+      if (existingTables.length)
+        throw new DurableStoreError(
+          "The Kin database has unversioned data and cannot be migrated safely.",
+        );
 
-    try {
-      this.db.transaction(() => {
+      try {
+        this.db.transaction(() => {
         this.db.exec(`
           CREATE TABLE server_migrations (
             version INTEGER PRIMARY KEY,
@@ -503,19 +550,90 @@ export class DurableStore {
             ON security_audit(household_id, sequence);
         `);
         migrationFault?.();
-        this.db
+          this.db
           .prepare(
             "INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)",
           )
-          .run(SERVER_SCHEMA_VERSION, Date.now());
-        this.db.pragma(`user_version = ${SERVER_SCHEMA_VERSION}`);
-      })();
-    } catch (error) {
-      if (error instanceof DurableStoreError) throw error;
-      throw new DurableStoreError(
-        "Kin could not complete the server schema migration.",
-        { cause: error },
-      );
+            .run(1, Date.now());
+          this.db.pragma("user_version = 1");
+        })();
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError(
+          "Kin could not complete the server schema migration.",
+          { cause: error },
+        );
+      }
+      version = 1;
+    }
+
+    if (version === 1) {
+      try {
+        this.db.transaction(() => {
+          this.db.exec(`
+            ALTER TABLE households ADD COLUMN lifecycle_state TEXT NOT NULL
+              DEFAULT 'active'
+              CHECK (lifecycle_state IN ('active', 'deletion_pending', 'deleted'));
+            ALTER TABLE households ADD COLUMN deletion_requested_at INTEGER;
+            ALTER TABLE households ADD COLUMN deletion_finalize_at INTEGER;
+            ALTER TABLE households ADD COLUMN deleted_at INTEGER;
+            CREATE TRIGGER members_active_household_insert
+            BEFORE INSERT ON members
+            WHEN (SELECT lifecycle_state FROM households WHERE id = NEW.household_id)
+              <> 'active'
+            BEGIN
+              SELECT RAISE(ABORT, 'household lifecycle is closed');
+            END;
+            CREATE TRIGGER devices_active_household_insert
+            BEFORE INSERT ON devices
+            WHEN (SELECT lifecycle_state FROM households WHERE id = NEW.household_id)
+              <> 'active'
+            BEGIN
+              SELECT RAISE(ABORT, 'household lifecycle is closed');
+            END;
+            CREATE TRIGGER sync_households_active_household_insert
+            BEFORE INSERT ON sync_households
+            WHEN (SELECT lifecycle_state FROM households WHERE id = NEW.household_id)
+              <> 'active'
+            BEGIN
+              SELECT RAISE(ABORT, 'household lifecycle is closed');
+            END;
+            CREATE TRIGGER sync_events_active_household_insert
+            BEFORE INSERT ON sync_events
+            WHEN (SELECT lifecycle_state FROM households WHERE id = NEW.household_id)
+              <> 'active'
+            BEGIN
+              SELECT RAISE(ABORT, 'household lifecycle is closed');
+            END;
+            CREATE TRIGGER sync_bindings_active_household_insert
+            BEFORE INSERT ON sync_bindings
+            WHEN (SELECT lifecycle_state FROM households WHERE id = NEW.household_id)
+              <> 'active'
+            BEGIN
+              SELECT RAISE(ABORT, 'household lifecycle is closed');
+            END;
+            CREATE TRIGGER provisioning_grants_active_household_insert
+            BEFORE INSERT ON provisioning_grants
+            WHEN (SELECT lifecycle_state FROM households WHERE id = NEW.household_id)
+              <> 'active'
+            BEGIN
+              SELECT RAISE(ABORT, 'household lifecycle is closed');
+            END;
+          `);
+          this.db
+            .prepare(
+              "INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)",
+            )
+            .run(2, Date.now());
+          this.db.pragma("user_version = 2");
+        })();
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError(
+          "Kin could not complete the household lifecycle migration.",
+          { cause: error },
+        );
+      }
     }
   }
 
@@ -527,9 +645,12 @@ export class DurableStore {
       .all();
     if (
       migrations.length !== SERVER_SCHEMA_VERSION ||
-      migrations[0]?.version !== SERVER_SCHEMA_VERSION ||
-      !Number.isSafeInteger(migrations[0]?.applied_at) ||
-      migrations[0].applied_at < 0
+      migrations.some(
+        (row, index) =>
+          row.version !== index + 1 ||
+          !Number.isSafeInteger(row.applied_at) ||
+          row.applied_at < 0,
+      )
     )
       throw new DurableStoreError("Kin server migration metadata is invalid.");
     const integrity = this.db.pragma("integrity_check", { simple: true });
@@ -602,13 +723,33 @@ export class DurableStore {
         if (
           !isId(row.id) ||
           !Number.isSafeInteger(row.version) ||
-          row.version < 1
+          row.version < 1 ||
+          !["active", "deletion_pending", "deleted"].includes(
+            row.lifecycle_state,
+          ) ||
+          (row.lifecycle_state === "active" &&
+            (row.deletion_requested_at !== null ||
+              row.deletion_finalize_at !== null ||
+              row.deleted_at !== null)) ||
+          (row.lifecycle_state === "deletion_pending" &&
+            (!isTimestamp(row.deletion_requested_at) ||
+              !isTimestamp(row.deletion_finalize_at) ||
+              row.deletion_finalize_at <= row.deletion_requested_at ||
+              row.deleted_at !== null)) ||
+          (row.lifecycle_state === "deleted" &&
+            (row.deletion_requested_at !== null ||
+              row.deletion_finalize_at !== null ||
+              !isTimestamp(row.deleted_at)))
         )
           throw new DurableStoreError("Kin server household data is invalid.");
         households.set(row.id, {
           id: row.id,
           members: new Set(),
           version: row.version,
+          lifecycleState: row.lifecycle_state,
+          deletionRequestedAt: row.deletion_requested_at,
+          deletionFinalizeAt: row.deletion_finalize_at,
+          deletedAt: row.deleted_at,
         });
       }
       for (const row of this.db.prepare("SELECT * FROM members").all()) {
@@ -689,6 +830,9 @@ export class DurableStore {
             throw new DurableStoreError(
               "Kin server credential data is invalid.",
             );
+      for (const household of households.values())
+        if (household.lifecycleState === "deleted" && household.members.size)
+          throw new DurableStoreError("Kin deleted-household data is invalid.");
       return { households, members, credentials, devices };
     } catch (error) {
       this.failed = true;
@@ -774,6 +918,184 @@ export class DurableStore {
           "DELETE FROM security_audit WHERE sequence <= COALESCE((SELECT MAX(sequence) - ? FROM security_audit), 0)",
         )
         .run(MAX_AUDIT_ROWS);
+    });
+  }
+
+  lifecycleInfo(householdId) {
+    this.assertAvailable();
+    const row = this.statements.getHousehold.get(householdId);
+    if (!row) return null;
+    return {
+      householdId,
+      state: row.lifecycle_state,
+      requestedAt: row.deletion_requested_at,
+      finalizeAt: row.deletion_finalize_at,
+      deletedAt: row.deleted_at,
+    };
+  }
+
+  requestHouseholdDeletion(householdId, requestedAt, finalizeAt) {
+    if (
+      !isId(householdId) ||
+      !isTimestamp(requestedAt) ||
+      !isTimestamp(finalizeAt) ||
+      finalizeAt <= requestedAt
+    )
+      throw new DurableStoreError("Kin household deletion metadata is invalid.");
+    const update = this.db
+      .prepare(
+        `UPDATE households
+         SET lifecycle_state = 'deletion_pending',
+             deletion_requested_at = ?,
+             deletion_finalize_at = ?
+         WHERE id = ? AND lifecycle_state = 'active'`,
+      )
+      .run(requestedAt, finalizeAt, householdId);
+    if (update.changes !== 1)
+      throw new DurableConflictError(
+        "household_lifecycle_conflict",
+        "This household is already being deleted or is no longer available.",
+      );
+    return this.lifecycleInfo(householdId);
+  }
+
+  cancelHouseholdDeletion(householdId, now) {
+    if (!isId(householdId) || !isTimestamp(now))
+      throw new DurableStoreError("Kin household deletion metadata is invalid.");
+    const update = this.db
+      .prepare(
+        `UPDATE households
+         SET lifecycle_state = 'active',
+             deletion_requested_at = NULL,
+             deletion_finalize_at = NULL
+         WHERE id = ? AND lifecycle_state = 'deletion_pending'
+           AND deletion_finalize_at > ?`,
+      )
+      .run(householdId, now);
+    if (update.changes !== 1)
+      throw new DurableConflictError(
+        "household_deletion_final",
+        "The household deletion can no longer be cancelled.",
+      );
+    return this.lifecycleInfo(householdId);
+  }
+
+  finalizeExpiredDeletions(now) {
+    if (!isTimestamp(now))
+      throw new DurableStoreError("Kin household deletion time is invalid.");
+    return this.transaction(() => {
+      const rows = this.db
+        .prepare(
+          `SELECT id FROM households
+           WHERE lifecycle_state = 'deletion_pending'
+             AND deletion_finalize_at <= ?
+           ORDER BY deletion_finalize_at, id`,
+        )
+        .all(now);
+      for (const { id: householdId } of rows) {
+        purgeHouseholdData(this.db, householdId);
+        this.db
+          .prepare(
+            `UPDATE households
+             SET lifecycle_state = 'deleted',
+                 deletion_requested_at = NULL,
+                 deletion_finalize_at = NULL,
+                 deleted_at = ?
+             WHERE id = ? AND lifecycle_state = 'deletion_pending'`,
+          )
+          .run(now, householdId);
+      }
+      return rows.map(({ id }) => id);
+    });
+  }
+
+  loadNonActiveHouseholds() {
+    this.assertAvailable();
+    return this.db
+      .prepare(
+        `SELECT id, version, lifecycle_state AS state,
+                deletion_requested_at AS requestedAt,
+                deletion_finalize_at AS finalizeAt,
+                deleted_at AS deletedAt
+         FROM households WHERE lifecycle_state <> 'active'`,
+      )
+      .all();
+  }
+
+  mergeHouseholdLifecycle(lifecycleRows) {
+    if (!Array.isArray(lifecycleRows))
+      throw new DurableStoreError("Kin household lifecycle backup data is invalid.");
+    return this.transaction(() => {
+      let preserved = 0;
+      for (const marker of lifecycleRows) {
+        if (
+          !isId(marker.id) ||
+          !Number.isSafeInteger(marker.version) ||
+          marker.version < 1 ||
+          !["deletion_pending", "deleted"].includes(marker.state)
+        )
+          throw new DurableStoreError("Kin household lifecycle backup data is invalid.");
+        const current = this.statements.getHousehold.get(marker.id);
+        const useMarker =
+          !current ||
+          (marker.state === "deleted" &&
+            current.lifecycle_state !== "deleted") ||
+          (marker.state === "deletion_pending" &&
+            current.lifecycle_state === "active") ||
+          (marker.state === "deletion_pending" &&
+            current.lifecycle_state === "deletion_pending" &&
+            marker.requestedAt > current.deletion_requested_at);
+        if (!useMarker) continue;
+
+        if (marker.state === "deletion_pending") {
+          if (
+            !isTimestamp(marker.requestedAt) ||
+            !isTimestamp(marker.finalizeAt) ||
+            marker.finalizeAt <= marker.requestedAt
+          )
+            throw new DurableStoreError("Kin household lifecycle backup data is invalid.");
+          this.db
+            .prepare(
+              `INSERT INTO households (
+                 id, version, lifecycle_state, deletion_requested_at,
+                 deletion_finalize_at, deleted_at
+               ) VALUES (?, ?, 'deletion_pending', ?, ?, NULL)
+               ON CONFLICT(id) DO UPDATE SET
+                 lifecycle_state = 'deletion_pending',
+                 deletion_requested_at = excluded.deletion_requested_at,
+                 deletion_finalize_at = excluded.deletion_finalize_at,
+                 deleted_at = NULL`,
+            )
+            .run(
+              marker.id,
+              Math.max(marker.version, current?.version ?? 1),
+              marker.requestedAt,
+              marker.finalizeAt,
+            );
+        } else {
+          if (!isTimestamp(marker.deletedAt))
+            throw new DurableStoreError("Kin household lifecycle backup data is invalid.");
+          this.db
+            .prepare(
+              `INSERT INTO households (
+                 id, version, lifecycle_state, deleted_at
+               ) VALUES (?, ?, 'deleted', ?)
+               ON CONFLICT(id) DO UPDATE SET
+                 lifecycle_state = 'deleted',
+                 deletion_requested_at = NULL,
+                 deletion_finalize_at = NULL,
+                 deleted_at = excluded.deleted_at`,
+            )
+            .run(
+              marker.id,
+              Math.max(marker.version, current?.version ?? 1),
+              marker.deletedAt,
+            );
+          purgeHouseholdData(this.db, marker.id);
+        }
+        preserved += 1;
+      }
+      return preserved;
     });
   }
 
@@ -1118,6 +1440,20 @@ export class DurableStore {
     const identity = this.loadIdentity();
     const currentEpochs = new Map();
     for (const householdId of identity.households.keys()) {
+      if (identity.households.get(householdId).lifecycleState === "deleted") {
+        const retainedRows = this.db
+          .prepare(
+            `SELECT
+               (SELECT COUNT(*) FROM sync_households WHERE household_id = ?) +
+               (SELECT COUNT(*) FROM sync_events WHERE household_id = ?) +
+               (SELECT COUNT(*) FROM sync_bindings WHERE household_id = ?) +
+               (SELECT COUNT(*) FROM security_audit WHERE household_id = ?) AS count`,
+          )
+          .get(householdId, householdId, householdId, householdId).count;
+        if (retainedRows !== 0)
+          throw new DurableStoreError("Kin deleted-household data is invalid.");
+        continue;
+      }
       const state = this.loadSyncState(householdId, identity);
       currentEpochs.set(householdId, state.currentEpoch);
       let cursor = 0;
@@ -1314,6 +1650,40 @@ function validAuditDetails(details) {
 
 function isId(value) {
   return typeof value === "string" && /^[a-f0-9]{32}$/.test(value);
+}
+
+function isTimestamp(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function purgeHouseholdData(database, householdId) {
+  database
+    .prepare("DELETE FROM provisioning_grants WHERE household_id = ?")
+    .run(householdId);
+  database
+    .prepare("DELETE FROM sync_events WHERE household_id = ?")
+    .run(householdId);
+  database
+    .prepare("DELETE FROM sync_bindings WHERE household_id = ?")
+    .run(householdId);
+  database
+    .prepare("DELETE FROM sync_device_sequences WHERE household_id = ?")
+    .run(householdId);
+  database
+    .prepare("DELETE FROM sync_households WHERE household_id = ?")
+    .run(householdId);
+  database
+    .prepare("DELETE FROM devices WHERE household_id = ?")
+    .run(householdId);
+  database
+    .prepare(
+      "DELETE FROM credentials WHERE member_id IN (SELECT id FROM members WHERE household_id = ?)",
+    )
+    .run(householdId);
+  database.prepare("DELETE FROM members WHERE household_id = ?").run(householdId);
+  database
+    .prepare("DELETE FROM security_audit WHERE household_id = ?")
+    .run(householdId);
 }
 
 function encodeCursor(sequence) {

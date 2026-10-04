@@ -49,7 +49,12 @@ test("admin permits verified backup and restore outside the web root", () => {
     assert.ifError(result.error);
     assert.equal(result.status, 0, result.stderr);
     assert.equal(store.health(), true);
-    const restore = admin(restored, "restore", backup);
+    const restore = admin(
+      restored,
+      "restore",
+      backup,
+      "--acknowledge-deletion-history",
+    );
     assert.ifError(restore.error);
     assert.equal(restore.status, 0, restore.stderr);
     const verification = new DurableStore(restored);
@@ -75,8 +80,12 @@ test("admin and service reject the web root and all descendants before creating 
       join(webRoot, "missing-admin-subdir", "backup.sqlite"),
     ]) {
       rejected(admin(source, "backup", unsafe));
-      rejected(admin(source, "restore", unsafe));
-      rejected(admin(unsafe, "restore", source));
+      rejected(
+        admin(source, "restore", unsafe, "--acknowledge-deletion-history"),
+      );
+      rejected(
+        admin(unsafe, "restore", source, "--acknowledge-deletion-history"),
+      );
       rejected(admin(unsafe, "backup", join(directory, "backup.sqlite")));
       assert.throws(
         () => createKinServer({ databasePath: unsafe }),
@@ -105,8 +114,12 @@ test("admin and service resolve symlinked ancestors even before nested directori
       join(alias, "missing-admin-parent", "child", "backup.sqlite"),
     ]) {
       rejected(admin(source, "backup", unsafe));
-      rejected(admin(source, "restore", unsafe));
-      rejected(admin(unsafe, "restore", source));
+      rejected(
+        admin(source, "restore", unsafe, "--acknowledge-deletion-history"),
+      );
+      rejected(
+        admin(unsafe, "restore", source, "--acknowledge-deletion-history"),
+      );
       assert.throws(
         () => createKinServer({ databasePath: unsafe }),
         /outside the static web root/,

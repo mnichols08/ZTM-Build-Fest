@@ -79,12 +79,55 @@ test("failed v0-to-v1 migration rolls back and permits a clean retry", () => {
   }
 });
 
+test("server schema v1 upgrades transactionally to household lifecycle v2", () => {
+  const directory = temporaryDirectory();
+  const databasePath = join(directory, "kin.sqlite");
+  try {
+    new DurableStore(databasePath).close();
+    const legacy = new Database(databasePath);
+    try {
+      legacy.exec(`
+        DROP TRIGGER members_active_household_insert;
+        DROP TRIGGER devices_active_household_insert;
+        DROP TRIGGER sync_households_active_household_insert;
+        DROP TRIGGER sync_events_active_household_insert;
+        DROP TRIGGER sync_bindings_active_household_insert;
+        DROP TRIGGER provisioning_grants_active_household_insert;
+        ALTER TABLE households DROP COLUMN deleted_at;
+        ALTER TABLE households DROP COLUMN deletion_finalize_at;
+        ALTER TABLE households DROP COLUMN deletion_requested_at;
+        ALTER TABLE households DROP COLUMN lifecycle_state;
+        DELETE FROM server_migrations WHERE version = 2;
+      `);
+      legacy.pragma("user_version = 1");
+    } finally {
+      legacy.close();
+    }
+    const migrated = new DurableStore(databasePath);
+    try {
+      assert.equal(migrated.db.pragma("user_version", { simple: true }), 2);
+      assert.deepEqual(
+        migrated.db
+          .prepare("SELECT version FROM server_migrations ORDER BY version")
+          .all()
+          .map(({ version }) => version),
+        [1, 2],
+      );
+      assert.equal(migrated.validate(), true);
+    } finally {
+      migrated.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("a database with a newer schema fails closed without modification", () => {
   const directory = temporaryDirectory();
   const databasePath = join(directory, "kin.sqlite");
   try {
     const database = new Database(databasePath);
-    database.pragma("user_version = 2");
+    database.pragma("user_version = 3");
     database.close();
 
     assert.throws(
@@ -92,7 +135,7 @@ test("a database with a newer schema fails closed without modification", () => {
       /newer server version/,
     );
     const inspection = new Database(databasePath, { readonly: true });
-    assert.equal(inspection.pragma("user_version", { simple: true }), 2);
+    assert.equal(inspection.pragma("user_version", { simple: true }), 3);
     inspection.close();
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -254,7 +297,9 @@ test("verified backup restores identity and opaque relay state offline", async (
     try {
       assert.equal(hasDatabaseProcessLock(targetPath), true);
       await assert.rejects(
-        DurableStore.restoreBackup(backupPath, targetPath),
+        DurableStore.restoreBackup(backupPath, targetPath, {
+          acknowledgeDeletionHistory: true,
+        }),
         /lock already exists/,
       );
     } finally {
@@ -270,11 +315,15 @@ test("verified backup restores identity and opaque relay state offline", async (
       .run("{", sourceState.identity.householdId);
     corruptBackup.close();
     await assert.rejects(
-      DurableStore.restoreBackup(corruptBackupPath, targetPath),
+      DurableStore.restoreBackup(corruptBackupPath, targetPath, {
+        acknowledgeDeletionHistory: true,
+      }),
       /data is malformed/,
     );
 
-    const restored = await DurableStore.restoreBackup(backupPath, targetPath);
+    const restored = await DurableStore.restoreBackup(backupPath, targetPath, {
+      acknowledgeDeletionHistory: true,
+    });
     assert.ok(restored.previousDatabasePath);
     assert.equal(statSync(restored.previousDatabasePath).isFile(), true);
     target = new DurableStore(targetPath);

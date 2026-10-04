@@ -2,7 +2,49 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
-## Unreleased — v0.11.0–v0.11.7 Durable Service & Deployment candidate
+## Unreleased — v0.12.3 Data Lifecycle candidate
+
+The Windows x64 release checks passed with Node 22.12, Rust 1.93 and Edge
+154: 218 server tests, 74 browser-unit tests and 118 Rust tests, plus formatting,
+Clippy, release WASM, version consistency, four browser/security runners and
+both isolated PowerShell and POSIX (`run.sh` under Git Bash) launcher smokes.
+A WSL-built WASM artifact also passed the browser-unit and core browser
+regressions; the WSL HTTP launcher was unavailable because that distribution
+has no Node executable. The annotated `kin-v0.12.3` tag marks this review candidate; it is not a
+published release. Human review is pending and v0.13 work has not started.
+Other operating systems/browsers,
+physical authenticators, independent security review and production
+certification are not claimed.
+
+### v0.12.0 — Household Deletion Lifecycle
+
+Adds an explicit `active → deletion_pending → deleted` server state machine.
+Fresh passkey authorization is required to request deletion; household writes
+stop immediately, and either adult can cancel with a fresh passkey during the
+30-day grace period. Finalization purges server-held household data and leaves
+a minimal tombstone.
+
+### v0.12.1 — Retention, Backup & Authorization Correctness
+
+Adds SQLite schema v2 lifecycle metadata and write guards. Restore requires
+explicit lifecycle acknowledgement and merges newer pending/deleted tombstones
+from an existing target over older backup data.
+
+### v0.12.2 — Stale-Device & Recovery Hardening
+
+Finalizes expired requests after restart and on a bounded maintenance interval.
+Rejects stale sessions/devices and stops retrying when sync discovers a pending
+or deleted household. Documents local-copy, missing-deletion-ledger and backup
+limitations.
+
+### v0.12.3 — Lifecycle UX & Release Gate
+
+Adds explicit deletion consequences, passkey cancellation, accessible terminal
+sync status, retention guidance and lifecycle regression coverage. Scripted
+release gates passed on Windows. The annotated `kin-v0.12.3` tag identifies
+this review candidate; publication remains pending human review.
+
+## Historical v0.11.0–v0.11.7 Durable Service & Deployment candidate
 
 The implementation candidate with durable semantic validation, October planning
 and startup diagnostics is tagged `kin-v0.11.7` for human review. Earlier candidate

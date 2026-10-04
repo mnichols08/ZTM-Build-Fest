@@ -4,7 +4,7 @@
 
 A daily minor is a small coherent capability plus its incubation loop.
 
-The October 3–31, 2026 plan contains 29 daily targets: v0.12.x on October 3 through v0.40.x on October 31, assuming v0.12.0 completes on October 3. The remaining platform and foundation lines are included in those days. v0.41–v0.45 are undated follow-ups, outside the October commitment.
+The October 3–31, 2026 plan contains 29 daily targets: v0.12.x on October 3 through v0.40.x on October 31. The tagged v0.12.3 implementation review candidate passed its scripted Windows gate; human review remains pending. Later targets remain unverified until their own gates pass. The remaining platform and foundation lines are included in those days. v0.41–v0.45 are undated follow-ups, outside the October commitment.
 
 This cadence applies within an authorized implementation sequence. The roadmap itself is planning, and the existing v0.11 candidate review and release gates still apply. Target dates depend on the [bridge prerequisites](BRIDGE-0.11-0.16.md); they do not establish completed releases or grant publication authority.
 
