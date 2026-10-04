@@ -1,6 +1,6 @@
 # Data Migrations
 
-**Status:** v0.15.3 implementation candidate. Existing encrypted local migration and server-schema lifecycle migration remain unchanged; v0.15 adds canonical events without an IndexedDB or server-schema migration. Earlier version sections are historical.
+**Status:** v0.15.4 implementation candidate; v0.15.x is complete through this patch. Existing encrypted local migration and server-schema lifecycle migration remain unchanged; v0.15 adds canonical events without an IndexedDB or server-schema migration. Earlier version sections are historical.
 
 ## v0.15.0 Areas compatibility
 

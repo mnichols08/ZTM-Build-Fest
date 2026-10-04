@@ -2,6 +2,19 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
+## Unreleased — v0.15.4 Area input validation and release documentation cleanup
+
+- Align create and rename input checks with Rust Area-name rules for trimming,
+  control characters, Unicode scalar count, and UTF-8 size; show specific
+  inline guidance and dispatch only normalized valid names.
+- Add browser regressions for the shared create/rename validator across ASCII,
+  multi-byte Unicode, whitespace, control characters, and byte limits.
+- Clarify that the v0.15.x Household Areas implementation line is complete
+  through v0.15.4 while retaining its implementation-candidate status.
+- Keep decoded pre-v9 item objects on their historical shape; expose `areaId`
+  only for v9 results. Update the legacy ABI test adapter for the v9 request
+  header and preserve coverage of the earlier wire layouts.
+
 ## v0.14.0 — App Shell and Visual Foundation
 
 - Replaced the single long page with five stable destinations: Today, Lists,

@@ -1785,6 +1785,37 @@ try {
   assert.equal(areasResult.hasNoArea, true, "No area remains the default assignment");
   assert.equal(areasResult.assigned, true, `item assignment saves to canonical state: ${JSON.stringify(areasResult)}`);
   assert.equal(areasResult.assignmentFocus, true, "item assignment restores selector focus");
+  const areaNameValidation = await first.evaluate(`(()=>{
+    const host=document.createElement('kin-areas');
+    host.areas=[{areaId:'a'.repeat(32),name:'Kitchen',archived:false}];
+    document.body.append(host);
+    const intents=[];host.addEventListener('kin:area-intent',event=>intents.push(event.detail));
+    const submit=form=>form.dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));
+    const create=host.querySelector('.area-create-form'),createInput=create.querySelector('input'),createError=create.querySelector('.area-name-error');
+    createInput.value='A'.repeat(48);submit(create);
+    const ascii48=intents.at(-1)?.name==='A'.repeat(48);
+    const before=intents.length;createInput.value='A'.repeat(49);submit(create);
+    const ascii49Rejected=intents.length===before&&createError.textContent==='Area names can be up to 48 characters.';
+    createInput.value='é'.repeat(48);submit(create);
+    const multibyte48=intents.at(-1)?.name==='é'.repeat(48);
+    const beforeBytes=intents.length;createInput.value='😀'.repeat(32);submit(create);
+    const bytesRejected=intents.length===beforeBytes&&createError.textContent==='This Area name is too long.';
+    createInput.value='\\u0085Pantry\\u0085';submit(create);
+    const trimmed=intents.at(-1)?.name==='Pantry'&&createInput.value==='Pantry';
+    const beforeEmpty=intents.length;createInput.value='  ';submit(create);
+    const emptyRejected=intents.length===beforeEmpty&&createError.textContent==='Enter an Area name.';
+    const beforeControl=intents.length;createInput.value='Bad\\u0001Name';submit(create);
+    const controlRejected=intents.length===beforeControl&&createError.textContent==="Area names can't contain control characters.";
+    const row=document.createElement('li'),area=host.records[0];host.editName(row,area);
+    const rename=row.querySelector('form'),renameInput=rename.querySelector('input'),renameError=rename.querySelector('.area-name-error');
+    renameInput.value='R'.repeat(49);const beforeRename=intents.length;submit(rename);
+    const renameRejected=intents.length===beforeRename&&renameError.textContent==='Area names can be up to 48 characters.';
+    renameInput.value='  Pantry  ';submit(rename);
+    const renameTrimmed=intents.at(-1)?.action==='rename-area'&&intents.at(-1)?.name==='Pantry';
+    host.remove();
+    return {ascii48,ascii49Rejected,multibyte48,bytesRejected,trimmed,emptyRejected,controlRejected,renameRejected,renameTrimmed};
+  })()`);
+  assert.deepEqual(areaNameValidation,{ascii48:true,ascii49Rejected:true,multibyte48:true,bytesRejected:true,trimmed:true,emptyRejected:true,controlRejected:true,renameRejected:true,renameTrimmed:true});
   await visit(first, "more");
   const areaEnter = async () => {
     await first.send("Input.dispatchKeyEvent", {
@@ -1848,7 +1879,7 @@ try {
   await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"none"},{name:"prefers-reduced-motion",value:"no-preference"},{name:"prefers-color-scheme",value:"dark"}]});
   assert.equal(await first.evaluate("matchMedia('(prefers-color-scheme: dark)').matches"),true,"Area manager follows dark mode");
   await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"active"},{name:"prefers-reduced-motion",value:"reduce"}]});
-  console.log("PASS Area create, rename, archive, optional item assignment, and focus restoration");
+  console.log("PASS Area validation for create/rename, Unicode, byte limits, trimming, controls, and lifecycle flows");
 
   const eventLimitResult = await first.evaluate(`(async()=>{
     const app=document.querySelector('kin-app');

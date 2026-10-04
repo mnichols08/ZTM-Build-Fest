@@ -1,6 +1,6 @@
 # Release Process
 
-**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. Current implementation candidate: v0.15.0 Household Areas. v0.11.x–v0.15.x tagged lines remain implementation candidates, not production certification.
+**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. Current implementation candidate: v0.15.4 Area input validation. v0.11.x–v0.15.x tagged lines remain implementation candidates, not production certification.
 
 ## Release sequence
 

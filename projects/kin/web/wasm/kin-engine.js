@@ -912,7 +912,7 @@ function decodeState(bytes) {
       classification:
         protocolVersion === 1 || classificationCode === 0 ? "today" : "need",
       status: ["active", "completed", "archived"][statusCode],
-      areaId: null,
+      ...(protocolVersion >= 9 ? { areaId: null } : {}),
       text,
     });
     offset = recordEnd;

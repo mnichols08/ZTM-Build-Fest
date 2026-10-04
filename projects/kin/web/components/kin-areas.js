@@ -48,17 +48,18 @@ class KinAreas extends HTMLElement {
     input.maxLength = 96;
     input.autocomplete = "off";
     input.required = true;
-    input.setAttribute("aria-describedby", "area-name-help");
+    input.setAttribute("aria-describedby", "area-name-help area-name-error");
     const help = document.createElement("small");
     help.id = "area-name-help";
     help.textContent = "Up to 48 characters.";
+    const error = this.makeNameError();
     const add = document.createElement("button");
     add.type = "submit";
     add.textContent = "Add Area";
-    form.append(label, input, help, add);
+    form.append(label, input, help, error, add);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      this.dispatch("create-area", { name: input.value });
+      this.submitName(input, error, "create-area", {});
     });
     section.append(form);
 
@@ -135,6 +136,7 @@ class KinAreas extends HTMLElement {
     input.value = area.name;
     input.maxLength = 96;
     input.required = true;
+    const error = this.makeNameError();
     const save = document.createElement("button");
     save.type = "submit";
     save.textContent = "Save name";
@@ -142,14 +144,38 @@ class KinAreas extends HTMLElement {
     cancel.type = "button";
     cancel.textContent = "Cancel";
     cancel.addEventListener("click", () => this.render(`rename-${area.areaId}`));
-    form.append(label, input, save, cancel);
+    form.append(label, input, error, save, cancel);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      this.dispatch("rename-area", { areaId: area.areaId, name: input.value });
+      this.submitName(input, error, "rename-area", { areaId: area.areaId });
     });
     row.replaceChildren(form);
     input.focus();
     input.select();
+  }
+
+  makeNameError() {
+    const error = document.createElement("small");
+    error.id = "area-name-error";
+    error.className = "area-name-error";
+    error.setAttribute("role", "alert");
+    error.hidden = true;
+    return error;
+  }
+
+  submitName(input, error, action, detail) {
+    const result = validateAreaName(input.value);
+    if (result.error) {
+      error.textContent = result.error;
+      error.hidden = false;
+      input.setAttribute("aria-invalid", "true");
+      input.setAttribute("aria-describedby", `${input.id ? "area-name-help " : ""}${error.id}`);
+      return;
+    }
+    input.value = result.value;
+    input.removeAttribute("aria-invalid");
+    error.hidden = true;
+    this.dispatch(action, { ...detail, name: result.value });
   }
 
   confirmArchive(row, area) {
@@ -181,6 +207,16 @@ class KinAreas extends HTMLElement {
   }
 
   focus() { this.querySelector("h2")?.focus(); }
+}
+
+function validateAreaName(raw) {
+  const value = raw.replace(/^[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/gu, "");
+  if (!value) return { value, error: "Enter an Area name." };
+  if (/[\u0000-\u001f\u007f-\u009f]/u.test(value))
+    return { value, error: "Area names can't contain control characters." };
+  if (Array.from(value).length > 48) return { value, error: "Area names can be up to 48 characters." };
+  if (new TextEncoder().encode(value).length > 96) return { value, error: "This Area name is too long." };
+  return { value, error: null };
 }
 
 customElements.define("kin-areas", KinAreas);

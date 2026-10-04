@@ -341,7 +341,7 @@ kin-household, kin-security, kin-areas { display: block; min-width: 0; }
 .area-create-form, .area-edit-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-block: 14px; }
 .area-create-form label, .area-edit-form label { flex-basis: 100%; font-size: 13px; font-weight: 650; }
 .area-create-form input, .area-edit-form input { flex: 1 1 170px; min-width: 0; min-height: var(--tap); }
-.area-create-form small { flex-basis: 100%; color: var(--ink-muted); }
+.area-create-form small, .area-edit-form small { flex-basis: 100%; color: var(--ink-muted); }
 .area-list { list-style: none; padding: 0; margin: 0; }
 .area-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; padding: 10px 0; border-top: 1px solid var(--line); }
 .area-name { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }

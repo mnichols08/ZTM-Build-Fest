@@ -105,10 +105,10 @@ v0.13.5 preserves a newer deletion cancellation over an older pending-deletion b
 and bounded same-member replacement-device enrollment. Recovery must restore continuity
 without reviving revoked authority; no server content-key escrow is permitted.
 The v0.14.x UX/UI Consolidation line is complete through `kin-v0.14.5` on
-`kin-development`. The user explicitly authorized the full v0.15.0–v0.15.3
+`kin-development`. The user explicitly authorized the v0.15.0–v0.15.4
 Household Areas release line. Work one milestone at a time and complete its
 tests, docs, commit, annotated tag, individual tag push, and local/remote
-verification before continuing. Current milestone: v0.15.3 complete. Do not begin
+verification before continuing. Current milestone: v0.15.4 release gate. Do not begin
 v0.16.x. Preserve the v0.13.5 recovery authority guarantees and all earlier
 security/domain contracts.
 
@@ -1023,7 +1023,7 @@ v0.11.x — Durable Service & Deployment (implementation candidate; awaiting hum
 v0.12.x — Data Lifecycle, Retention & Deletion (v0.12.3 candidate; release gate pending)
 v0.13.x — Recovery & Household Continuity (complete through v0.13.5)
 v0.14.x — UX/UI Consolidation (complete through v0.14.5)
-v0.15.x — Household Areas (authorized through v0.15.3; current release gate)
+v0.15.x — Household Areas (complete through v0.15.4)
 v0.16.x — Household Notes & Reference Context (planned)
 v0.17.x–v0.40.x — Incremental household capabilities, portability and device migration (October targets)
 v0.41.x–v0.45.x — Recovery drills, platform validation, performance and release-candidate readiness (undated follow-ups)
@@ -1138,6 +1138,7 @@ kin-v0.15.0
 kin-v0.15.1
 kin-v0.15.2
 kin-v0.15.3
+kin-v0.15.4
 kin-v1.0.0
 ```
 

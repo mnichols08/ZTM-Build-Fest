@@ -149,6 +149,7 @@ function emptyV7State() {
     talks: [],
     pulses: [],
     routines: [],
+    areas: [],
     summary: { entries: [], totalCount: 0, throughEventId: null },
   };
 }
@@ -1021,8 +1022,9 @@ function applyLegacy(abi, pointer, length) {
     bytes.byteLength,
   ).getUint16(4, true);
   const headerLength = version === 6 ? 40 : version >= 5 ? 20 : 12;
-  bytes.copyWithin(headerLength, 44);
-  const legacyLength = length - (44 - headerLength);
+  const currentHeaderLength = 64;
+  bytes.copyWithin(headerLength, currentHeaderLength);
+  const legacyLength = length - (currentHeaderLength - headerLength);
   const legacyRequest = bytes.slice(0, legacyLength);
   const legacyPointer = abi.kin_alloc(legacyLength);
   assert.notEqual(legacyPointer, 0);

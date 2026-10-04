@@ -1,14 +1,14 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.15.3. The last published product release remains v0.10.3; tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.15.4; the v0.15.x Household Areas line is in its final corrective release gate. The last published product release remains v0.10.3; tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.15.3 | Governs |
+| Version axis | Last published v0.10.3 / current candidate v0.15.4 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.15.3` | Areas capability; additive event/replay protocol 9 |
+| Application | Last published `0.10.3`; candidate `0.15.4` | Areas capability; additive event/replay protocol 9 |
 | Server database schema | `2` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination and household lifecycle records |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v9; writes v9 for local and synchronized requests | Request context and projection semantics |

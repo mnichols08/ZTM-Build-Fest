@@ -99,12 +99,12 @@ test("v7 result decoder rejects truncation, fields, duplicates and trailing byte
   const run = () => engine.applyEvents(rows, 1234, null, 20261002);
   const valid = run(); const totalLength = actualLength;
   const write32 = (offset, value) => bytes => new DataView(bytes.buffer, bytes.byteOffset).setUint32(offset, value, true);
-  const mutations = [write32(52, 10001), write32(96, 20260229), write32(100, 20261001), write32(100, 0),
-    ...[104, 105, 106].map(offset => bytes => bytes[offset] = 255), bytes => bytes[107] = 1,
-    write32(108, 0), write32(108, 4097), write32(108, 0xffffffff), bytes => bytes[112] = 255,
-    bytes => bytes[105] = 1, bytes => bytes[106] = 0,
-    bytes => { bytes[104] = 1; }, // Friday cannot be a weekly key
-    bytes => new DataView(bytes.buffer, bytes.byteOffset).setBigInt64(88, 8640000000000001n, true),
+  const mutations = [write32(56, 10001), write32(100, 20260229), write32(104, 20261001), write32(104, 0),
+    ...[108, 109, 110].map(offset => bytes => bytes[offset] = 255), bytes => bytes[111] = 1,
+    write32(112, 0), write32(112, 4097), write32(112, 0xffffffff), bytes => bytes[116] = 255,
+    bytes => bytes[109] = 1, bytes => bytes[110] = 0,
+    bytes => { bytes[108] = 1; }, // Friday cannot be a weekly key
+    bytes => new DataView(bytes.buffer, bytes.byteOffset).setBigInt64(92, 8640000000000001n, true),
   ];
   for (mutate of mutations) assert.throws(run, error => error.code === 6);
   mutate = () => {};
@@ -113,8 +113,9 @@ test("v7 result decoder rejects truncation, fields, duplicates and trailing byte
   reportedLength = undefined;
   assert.deepEqual(run(), valid);
   rows.push(encodeRoutineCreatedRecord({ ...identity(2), routineId: id(0x22), text: "Other", cadence: "daily", createdOn: 20261002 }));
-  // Second record starts after 56 + 56 + "Starter" (7).
-  mutate = bytes => bytes.copyWithin(119, 56, 72);
+  // The protocol v9 header adds four bytes to the original v7 result layout.
+  // Second record starts after 60 + 56 + "Starter" (7).
+  mutate = bytes => bytes.copyWithin(123, 60, 76);
   assert.throws(run, error => error.code === 6);
 });
 
