@@ -231,6 +231,11 @@ async function regressions() {
       getComputedStyle(app.nav).flexDirection === "row",
     "wide screens retain a centered primary column without a permanent side rail",
   );
+  check(
+    getComputedStyle(app.household).display === "block" &&
+      getComputedStyle(app.security).display === "block",
+    "household and security custom elements retain block card flow in More",
+  );
   app.nav.querySelector('a[href="#lists"]').click();
   await new Promise((resolve) => setTimeout(resolve, 0));
   check(
@@ -974,6 +979,55 @@ try {
       ),
     );
   }
+  if (process.env.KIN_VISUAL_CHECK === "1") {
+    await until(() => first.evaluate(`(()=>{
+      const app=document.querySelector('kin-app');
+      return app.household?.childElementCount && app.security?.childElementCount;
+    })()`));
+    for (const [mode, width, height, mobile] of [
+      ["desktop", 1440, 960, false], ["mobile", 320, 720, true],
+    ]) {
+      await first.send("Emulation.setDeviceMetricsOverride", {
+        width, height, deviceScaleFactor: 1, mobile,
+      });
+      for (const id of ["today", "lists", "routines", "handoff", "more"]) {
+        await visit(first, id);
+        await first.evaluate("window.scrollTo(0,0)");
+        await delay(80);
+        if (id === "routines" && mode === "mobile")
+          console.log("Routine form layout:", await first.evaluate(`(()=>{
+            const form=document.querySelector('#routines .routine-form');
+            const input=form.querySelector('input');
+            return {viewport:innerWidth,form:form.getBoundingClientRect().width,
+              input:input.getBoundingClientRect().width,
+              columns:getComputedStyle(form).gridTemplateColumns,
+              inputColumn:getComputedStyle(input).gridColumn};
+          })()`));
+        await writeFile(
+          resolve(webRoot, `../target/design-${mode}-${id}.png`),
+          Buffer.from(
+            (await first.send("Page.captureScreenshot", { format: "png" })).data,
+            "base64",
+          ),
+        );
+      }
+      await visit(first, "handoff");
+      await first.evaluate('document.querySelector("#talk-tab").click()');
+      await first.evaluate("window.scrollTo(0,0)");
+      await delay(80);
+      await writeFile(
+        resolve(webRoot, `../target/design-${mode}-talk.png`),
+        Buffer.from(
+          (await first.send("Page.captureScreenshot", { format: "png" })).data,
+          "base64",
+        ),
+      );
+    }
+    await first.send("Emulation.setDeviceMetricsOverride", {
+      width: 1280, height: 720, deviceScaleFactor: 1, mobile: false,
+    });
+    await visit(first, "today");
+  }
   await first.evaluate(`(async()=>{
     const app=document.querySelector('kin-app');
     app.lockHousehold(false);
@@ -1629,6 +1683,7 @@ try {
       const app=document.querySelector('kin-app'),ui=app.routines;ui.cadence.focus();
       return ui.querySelector('h2').textContent==='Routines' && ui.input.labels.length===1 && ui.cadence.labels[0].textContent==='Repeat' &&
         ui.querySelectorAll('ul > li').length>0 && ui.textContent.includes('today') &&
+        ui.input.getBoundingClientRect().width >= ui.querySelector('.routine-form').getBoundingClientRect().width * .7 &&
         getComputedStyle(ui.cadence).outlineWidth==='3px' &&
         [...ui.querySelectorAll('button,select,input')].every(control=>control.getBoundingClientRect().height>=48) &&
         app.status.getAttribute('aria-live')==='polite' && app.alert.getAttribute('role')==='alert';
@@ -1650,43 +1705,6 @@ try {
     false,
     "increased text spacing keeps 320px layout usable",
   );
-  // Keep optional visual evidence under ignored project build output.
-  if (process.env.KIN_VISUAL_CHECK === "1") {
-    await first.send("Emulation.setEmulatedMedia", { features: [] });
-    await first.evaluate(
-      "document.querySelector('kin-app').routines.scrollIntoView({block:'start'})",
-    );
-    await writeFile(
-      resolve(webRoot, "../target/routines-320.png"),
-      Buffer.from(
-        (await first.send("Page.captureScreenshot", { format: "png" })).data,
-        "base64",
-      ),
-    );
-    await first.evaluate(
-      `(async()=>{const a=document.querySelector('kin-app'),timestamp=Date.now();await a.savePulse({type:'set-pulse',value:'need-quiet',timestamp,expiresAt:timestamp+14400000});a.pulse.scrollIntoView({block:'center'});})()`,
-    );
-    await writeFile(
-      resolve(webRoot, "../target/pulse-active-320.png"),
-      Buffer.from(
-        (await first.send("Page.captureScreenshot", { format: "png" })).data,
-        "base64",
-      ),
-    );
-    await first.evaluate(
-      `(()=>{const p=document.querySelector('kin-app').pulse;p.changeButton.click();p.scrollIntoView({block:'end'});})()`,
-    );
-    await writeFile(
-      resolve(webRoot, "../target/pulse-change-320.png"),
-      Buffer.from(
-        (await first.send("Page.captureScreenshot", { format: "png" })).data,
-        "base64",
-      ),
-    );
-    await first.evaluate(
-      `document.querySelector('kin-app').savePulse({type:'clear-pulse'})`,
-    );
-  }
   await first.send("Emulation.setDeviceMetricsOverride", {
     width: 640,
     height: 960,

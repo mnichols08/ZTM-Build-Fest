@@ -35,6 +35,17 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Keep connection errors and local storage errors separate from successful
   saved state; leave recovery, deletion, and domain authority unchanged.
 
+## Unreleased — v0.14.5 UX/UI Consolidation candidate
+
+### v0.14.5 — Responsive form and More card-flow corrections
+
+- Keep household and security custom elements in block layout so More cards
+  have clear boundaries and do not overlap neighboring content.
+- Keep the routine form to one column on narrow screens, including its Add
+  button, so the entry field remains comfortably usable.
+- Correct the optional visual walkthrough to navigate to each destination
+  before capturing desktop and phone screenshots.
+
 ## v0.14.4 — UX/UI Correctness and Accessibility
 
 ### v0.14.4 — UX correctness and accessibility corrections

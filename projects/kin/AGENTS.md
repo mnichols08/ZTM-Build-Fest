@@ -105,10 +105,10 @@ v0.13.5 preserves a newer deletion cancellation over an older pending-deletion b
 and bounded same-member replacement-device enrollment. Recovery must restore continuity
 without reviving revoked authority; no server content-key escrow is permitted.
 The user explicitly authorized the complete v0.14.x UX/UI Consolidation line.
-The current milestone is v0.14.4, polish, prototype alignment, and design
+The current milestone is v0.14.5, polish, prototype alignment, and design
 feedback gate. Preserve the
 v0.13.5 recovery authority guarantees and all earlier security/domain contracts.
-Do not begin v0.15.x until v0.14.4 is complete and the user has had an
+Do not begin v0.15.x until v0.14.5 is complete and the user has had an
 opportunity to critique the design.
 
 Kin's last published release is `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. The v0.11.x durable-service, v0.12.x lifecycle, and v0.13.x recovery lines are implementation candidates with annotated release tags and PR review evidence; they are not represented as production certification. Preserve every published tag exactly. Do not begin v0.15.x or merge branches without explicit authorization. Root replacement follows [ROOT-ROTATION](docs/ROOT-ROTATION.md); archive recovery remains intentionally local-only and KARC v1 remains supported. The [forward roadmap](docs/ROADMAP.md) targets one minor line per day through v0.40, with v0.41–v0.45 as undated follow-ups and v1.0 dependent on readiness. No production certification, mobile readiness or independent audit is claimed. No automatic kin-main or kin-development merge. See [V0.10.0](docs/V0.10.0.md), [V0.11.0](docs/V0.11.0.md), [V0.12.0](docs/V0.12.0.md), and [V0.13.0](docs/V0.13.0.md) for actual evidence and limitations.
@@ -1132,6 +1132,7 @@ kin-v0.14.1
 kin-v0.14.2
 kin-v0.14.3
 kin-v0.14.4
+kin-v0.14.5
 kin-v1.0.0
 ```
 

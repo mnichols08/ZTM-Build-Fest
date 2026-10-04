@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.14.4` — UX/UI Consolidation.** The v0.14.x line brings the existing product into one calm, accessible household shell. Existing identity, recovery, sync, deletion, and domain contracts remain authoritative. This is a tagged implementation candidate, not a claim of production certification or independent security audit.
+**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.14.5` — UX/UI Consolidation.** The v0.14.x line brings the existing product into one calm, accessible household shell. Existing identity, recovery, sync, deletion, and domain contracts remain authoritative. This is a tagged implementation candidate, not a claim of production certification or independent security audit.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Archives are intentionally local-only history recovery and do not restore sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
@@ -97,7 +97,7 @@ The month targets a coherent, demoable pre-1.0 build at `v0.40.x`. The `v0.41.x`
 - Earlier candidate: `v0.11.7` — October Roadmap & Startup Diagnostics
 - Candidate: `v0.12.4` — Data Lifecycle, Retention & Deletion with Pending-Deletion Restore Authority Guard
 - Earlier candidate: `v0.13.5` — Cancelled-deletion restore authority correctness
-- Current line: `v0.14.4` — UX/UI Consolidation: accessibility and layout corrections
+- Current line: `v0.14.5` — UX/UI Consolidation: responsive form and More card-flow corrections
 - Planned: `v0.15.x` — Household Areas
 - Planned: `v0.16.x` — Household Notes & Reference Context
 - Planned: `v0.17.x`–`v0.40.x` — Incremental household capabilities, portability, and device migration within the October plan; see the [daily roadmap](docs/ROADMAP.md)
