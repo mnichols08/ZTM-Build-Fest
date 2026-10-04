@@ -2,7 +2,16 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
-## Unreleased — v0.13.0 Recovery candidate
+## Unreleased — v0.13.1 Recovery candidate
+
+### v0.13.1 — Member-Assisted Recovery Correctness
+
+- Let one active adult authorize a short-lived recovery claim for the other
+  active adult without changing the target member identity.
+- Require the recovering adult to establish and activate a fresh passkey and
+  device; revoke their old credentials, devices, tokens, and sessions.
+- Reject self-targeted, unrelated, removed-member, revoked-device, stale, and
+  replayed recovery attempts, and record attributable recovery audit events.
 
 ### v0.13.0 — Recovery Model and Device Replacement
 

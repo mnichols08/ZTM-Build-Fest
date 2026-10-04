@@ -480,6 +480,17 @@ async function api(request, response, url, context) {
     );
     return;
   }
+  if (
+    request.method === "POST" &&
+    url.pathname === "/api/household/recovery"
+  ) {
+    json(
+      response,
+      201,
+      service.createMemberRecoveryPairing(session, body.memberId),
+    );
+    return;
+  }
   const pairingMatch = url.pathname.match(/^\/api\/pairings\/([a-f0-9]{32})$/);
   if (request.method === "GET" && pairingMatch) {
     json(response, 200, service.pairingForAdult(session, pairingMatch[1]));
@@ -539,7 +550,9 @@ async function api(request, response, url, context) {
       if (device?.syncPublicKeys && device.syncHistoryFromEpoch == null)
         syncService.onDeviceAdded(auth.household.id, device.id, {
           historyFromEpoch:
-            pairing.purpose === "device" || pairing.purpose === "replacement"
+            ["device", "replacement", "member-recovery"].includes(
+              pairing.purpose,
+            )
               ? 1
               : undefined,
         });

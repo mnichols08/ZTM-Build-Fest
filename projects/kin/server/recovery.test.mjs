@@ -116,3 +116,119 @@ test("replacement is same-member, device-bound, single-use, and stale-safe", () 
   );
 });
 
+function addAdult(service, adult, suffix = "b") {
+  const request = service.createPairing(adult.sessionToken);
+  const claim = service.claimPairing({
+    code: request.code,
+    credential: credential(`credential-${suffix}`),
+    deviceLabel: `Adult ${suffix}`,
+  });
+  service.approvePairing(
+    adult.sessionToken,
+    request.pairingId,
+    claim.version,
+  );
+  return service.activateClaim(claim.claimToken);
+}
+
+test("one adult authorizes another adult's fresh identity without impersonation", () => {
+  let now = 5_000;
+  const service = new PairingService({ now: () => now });
+  const adultA = service.bootstrap({ credential: credential("adult-a") });
+  const adultB = addAdult(service, adultA);
+  const oldCredentialIds = [...service.members.get(adultB.memberId).credentials];
+
+  now += 1;
+  const request = service.createMemberRecoveryPairing(
+    adultA.sessionToken,
+    adultB.memberId,
+  );
+  const claim = service.claimPairing({
+    code: request.code,
+    credential: credential("adult-b-recovered"),
+    deviceLabel: "B replacement",
+  });
+  service.approvePairing(
+    adultA.sessionToken,
+    request.pairingId,
+    claim.version,
+  );
+  const recovered = service.activateClaim(claim.claimToken);
+
+  assert.equal(recovered.memberId, adultB.memberId);
+  assert.notEqual(recovered.memberId, adultA.memberId);
+  assert.notEqual(recovered.deviceId, adultB.deviceId);
+  assert.equal(service.devices.get(adultB.deviceId).revokedAt, now);
+  assert.throws(
+    () => service.authorize(adultB.sessionToken),
+    (error) => error.code === "authentication_required",
+  );
+  for (const credentialId of oldCredentialIds)
+    assert.equal(service.credentials.has(credentialId), false);
+  assert.deepEqual(
+    [...service.members.get(adultB.memberId).credentials],
+    ["adult-b-recovered"],
+  );
+  assert.ok(
+    service.events.some(
+      (event) =>
+        event.type === "member_recovery_completed" &&
+        event.approverMemberId === adultA.memberId &&
+        event.memberId === adultB.memberId,
+    ),
+  );
+});
+
+test("unrelated, removed, revoked, stale, and replayed recovery authority fails closed", () => {
+  const service = new PairingService();
+  const adultA = service.bootstrap({ credential: credential("a") });
+  const adultB = addAdult(service, adultA, "target");
+  const outsiderService = new PairingService();
+  const outsider = outsiderService.bootstrap({ credential: credential("x") });
+  assert.throws(
+    () =>
+      service.createMemberRecoveryPairing(
+        adultA.sessionToken,
+        outsider.memberId,
+      ),
+    (error) => error.code === "recovery_unavailable",
+  );
+  assert.throws(
+    () => service.createMemberRecoveryPairing(adultA.sessionToken, adultA.memberId),
+    (error) => error.code === "recovery_unavailable",
+  );
+
+  const request = service.createMemberRecoveryPairing(
+    adultA.sessionToken,
+    adultB.memberId,
+  );
+  const claim = service.claimPairing({
+    code: request.code,
+    credential: credential("fresh-b"),
+    deviceLabel: "Fresh B",
+  });
+  assert.throws(
+    () =>
+      service.approvePairing(
+        adultA.sessionToken,
+        request.pairingId,
+        request.version,
+      ),
+    (error) => error.code === "stale_pairing",
+  );
+  service.removeOtherAdult(adultA.sessionToken, adultB.memberId, adultA.memberId);
+  assert.throws(
+    () =>
+      service.approvePairing(
+        adultA.sessionToken,
+        request.pairingId,
+        claim.version,
+      ),
+    (error) => error.code === "membership_removed",
+  );
+  assert.throws(
+    () => service.createMemberRecoveryPairing(adultB.sessionToken, adultA.memberId),
+    (error) => ["authentication_required", "device_not_trusted"].includes(error.code),
+  );
+});
+
