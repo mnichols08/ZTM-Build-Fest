@@ -163,9 +163,26 @@ kin-app { display: block; min-height: 100vh; }
 }
 .nav-link:hover { background: var(--surface-secondary); color: var(--ink); }
 
-.section-tabs { display: flex; gap: 6px; margin: 4px 0 16px; border-bottom: 1px solid var(--line); }
-.section-tabs [role="tab"] { min-height: 44px; padding: 8px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: var(--r-control) var(--r-control) 0 0; background: transparent; color: var(--ink-muted); }
-.section-tabs [role="tab"][aria-selected="true"] { border-bottom-color: var(--accent); color: var(--accent); font-weight: 650; }
+.section-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 4px 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+.section-tabs [role="tab"] {
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: var(--r-control) var(--r-control) 0 0;
+  background: transparent;
+  color: var(--ink-muted);
+}
+.section-tabs [role="tab"][aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+  font-weight: 650;
+}
 [role="tabpanel"] { min-width: 0; }
 
 main {
@@ -324,7 +341,15 @@ kin-app > .security-panel {
 .status-message, .error-message { font-size: 14px; line-height: 1.5; }
 .status-message { color: var(--ink-muted); }
 .error-message { color: var(--danger); }
-.state-notice { margin: 0 0 10px; padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--warm-soft); color: var(--ink); font-size: 14px; }
+.state-notice {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-row);
+  background: var(--warm-soft);
+  color: var(--ink);
+  font-size: 14px;
+}
 .retry-button { margin-top: 8px; }
 
 @media (max-width: 720px) {
@@ -347,7 +372,7 @@ kin-app > .security-panel {
     border-top: 1px solid var(--line);
     background: var(--surface);
   }
-  .nav-link { display: flex; min-width: 0; min-height: 56px; flex-direction: column; justify-content: center; gap: 1px; padding: 3px 2px; border-radius: 12px; font-size: 11px; line-height: 1.2; }
+  .nav-link { display: flex; min-width: 0; min-height: 56px; flex-direction: column; justify-content: center; gap: 1px; padding: 3px 2px; border-radius: var(--r-row); font-size: 11px; line-height: 1.2; }
   .nav-link svg { width: 20px; height: 20px; }
   main { width: 100%; padding: 22px 16px 112px; }
   .page-intro { margin-bottom: 18px; }

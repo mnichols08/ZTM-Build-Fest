@@ -37,7 +37,7 @@ emulation, 48px controls, reduced motion, forced colors, dark mode, and increase
 text spacing. Page-scale emulation is not native desktop zoom. No screen-reader
 certification is claimed.
 
-**Status:** Updated through v0.14.2; earlier version sections are historical contracts.
+**Status:** Updated through v0.14.3; earlier version sections are historical contracts.
 
 ## Baseline requirements
 

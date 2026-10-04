@@ -25,9 +25,7 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Grouped existing household access and privacy/continuity operations in More;
   no route, domain operation, or security authority was removed.
 
-## Unreleased — v0.14.2 UX/UI Consolidation candidate
-
-### v0.14.2 — State Design, Accessibility, Responsive Behavior
+## v0.14.2 — State Design, Accessibility, Responsive Behavior
 
 - Added a persistent, live-announced offline notice grounded in the browser's
   connectivity event; it reports local saved state and does not claim remote
@@ -36,6 +34,18 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
   states into plain language while preserving the local copy explanation.
 - Keep connection errors and local storage errors separate from successful
   saved state; leave recovery, deletion, and domain authority unchanged.
+
+## Unreleased — v0.14.3 UX/UI Consolidation candidate
+
+### v0.14.3 — Polish, Prototype Alignment, and Design Feedback Gate
+
+- Consolidated the remaining mobile navigation radius on the shared shape
+  token, kept the persistent state notice with the current page content, and
+  removed remaining one-off shell styling.
+- Added npm ignore rules so a package dry run includes the built WASM runtime
+  and excludes local build/data trees.
+- Recorded the intentional visual differences and deferred prototype
+  capabilities in `docs/V0.14.3-DESIGN-NOTE.md`.
 
 ### v0.13.5 — Cancelled-Deletion Restore Authority Correctness
 

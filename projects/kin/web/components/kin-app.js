@@ -298,12 +298,13 @@ class KinApp extends HTMLElement {
     this.stateNotice.setAttribute("role", "status");
     this.stateNotice.setAttribute("aria-live", "polite");
     this.stateNotice.hidden = true;
+    main.prepend(this.stateNotice);
     this.retryButton = document.createElement("button");
     this.retryButton.type = "button";
     this.retryButton.className = "retry-button";
     this.retryButton.textContent = "Try again";
     this.retryButton.hidden = true;
-    feedback.append(this.stateNotice, this.status, this.alert, this.retryButton);
+    feedback.append(this.status, this.alert, this.retryButton);
 
     this.security = document.createElement("kin-security");
     this.security.onUnlocked = (vault) => this.openUnlockedHousehold(vault);
