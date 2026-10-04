@@ -299,6 +299,11 @@ class KinApp extends HTMLElement {
     this.stateNotice.setAttribute("aria-live", "polite");
     this.stateNotice.hidden = true;
     main.prepend(this.stateNotice);
+    this.routeAnnouncement = document.createElement("p");
+    this.routeAnnouncement.className = "visually-hidden";
+    this.routeAnnouncement.setAttribute("role", "status");
+    this.routeAnnouncement.setAttribute("aria-live", "polite");
+    this.routeAnnouncement.setAttribute("aria-atomic", "true");
     this.retryButton = document.createElement("button");
     this.retryButton.type = "button";
     this.retryButton.className = "retry-button";
@@ -309,7 +314,7 @@ class KinApp extends HTMLElement {
     this.security = document.createElement("kin-security");
     this.security.onUnlocked = (vault) => this.openUnlockedHousehold(vault);
     this.security.onLockRequested = () => this.lockHousehold();
-    this.replaceChildren(header, this.security, shell, feedback);
+    this.replaceChildren(header, this.security, shell, feedback, this.routeAnnouncement);
     this.retryButton.addEventListener("click", () => this.retryAction?.());
     this.showPageFromLocation();
   }
@@ -403,6 +408,11 @@ class KinApp extends HTMLElement {
     if (!this.pages || !this.navLinks) return;
     const requested = location.hash.slice(1);
     const active = this.pages.has(requested) ? requested : "today";
+    const labels = { today: "Today", lists: "Lists", routines: "Routines", handoff: "Handoff", more: "More" };
+    const changed = this.activePage !== active;
+    this.activePage = active;
+    document.title = `${labels[active]} — Kin`;
+    if (changed && this.routeAnnouncement) this.routeAnnouncement.textContent = `${labels[active]} view`;
     for (const [id, section] of this.pages) section.hidden = id !== active;
     for (const [id, link] of this.navLinks) {
       if (id === active) link.setAttribute("aria-current", "page");
@@ -1401,6 +1411,7 @@ class KinApp extends HTMLElement {
       this.household.syncKeyStore?.close();
       this.household.remove();
       this.buildViews(this.main);
+      if (!this.stateNotice.isConnected) this.main.prepend(this.stateNotice);
       this.setBusy(false);
       this.setStatus("Household locked.");
       if (!preserveSecurityOperation) this.security.locked();

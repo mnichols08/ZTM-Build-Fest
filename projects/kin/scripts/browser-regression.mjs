@@ -225,12 +225,19 @@ async function regressions() {
       app.nav.querySelector('[aria-current="page"]').dataset.page === "today",
     "the unlocked shell exposes five stable destinations and marks Today as current",
   );
+  check(
+    getComputedStyle(app.shell).display !== "grid" &&
+      app.shell.getBoundingClientRect().width <= 680 &&
+      getComputedStyle(app.nav).flexDirection === "row",
+    "wide screens retain a centered primary column without a permanent side rail",
+  );
   app.nav.querySelector('a[href="#lists"]').click();
   await new Promise((resolve) => setTimeout(resolve, 0));
   check(
     location.hash === "#lists" && !app.pages.get("lists").hidden &&
       app.nav.querySelector('[aria-current="page"]').dataset.page === "lists" &&
-      app.pages.get("today").hidden,
+      app.pages.get("today").hidden && app.routeAnnouncement.textContent === "Lists view" &&
+      document.title === "Lists — Kin",
     "navigation changes the URL, current destination, and visible page together",
   );
   app.nav.querySelector('a[href="#today"]').click();
@@ -967,10 +974,17 @@ try {
       ),
     );
   }
+  await first.evaluate(`(async()=>{
+    const app=document.querySelector('kin-app');
+    app.lockHousehold(false);
+    await app.security.unlockRecovery(${JSON.stringify(recoverySecret)});
+    return true;
+  })()`);
+  await until(() => first.evaluate('Boolean(document.querySelector("kin-app")?.store && !document.querySelector("kin-app").busy)'));
   const stateRegression = await first.evaluate(`(()=>{
     const app=document.querySelector('kin-app');
     window.dispatchEvent(new Event('offline'));
-    const offline=!app.stateNotice.hidden && app.stateNotice.textContent.startsWith('Offline —') &&
+    const offline=app.stateNotice.isConnected && !app.stateNotice.hidden && app.stateNotice.textContent.startsWith('Offline —') &&
       app.stateNotice.getAttribute('role')==='status';
     app.handleSyncState({state:'paused',code:'device_not_trusted',message:'device_not_trusted'});
     const revoked=app.stateNotice.textContent.startsWith('This device is no longer trusted') &&
@@ -983,7 +997,7 @@ try {
     return {offline,revoked,cleared,notice:app.stateNotice.textContent,hidden:app.stateNotice.hidden,unlocked:!!app.vault&&!app.vault.locked};
   })()`);
   assert.equal(stateRegression.offline && stateRegression.revoked && stateRegression.cleared, true,
-    `offline and revoked-device states use announced, truthful, human-readable copy (${JSON.stringify(stateRegression)})`);
+    `state notice stays attached through unlock-lock-unlock and offline/revoked-device states remain announced with truthful, human-readable copy (${JSON.stringify(stateRegression)})`);
   console.log(await first.evaluate(`(${regressions.toString()})()`));
   await first.evaluate(`document.querySelector('kin-app').nav.querySelector('a[href="#routines"]').focus()`);
   await first.send("Input.dispatchKeyEvent", {
@@ -1502,7 +1516,7 @@ try {
   });
   assert.equal(
     await first.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()"),
-    "#191a17",
+    "#171d19",
     "dark appearance follows the operating-system preference",
   );
   await first.send("Emulation.setEmulatedMedia", {
@@ -1510,7 +1524,7 @@ try {
   });
   assert.equal(
     await first.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()"),
-    "#f5f1ea",
+    "#f3f1e9",
     "light appearance follows the operating-system preference",
   );
   await first.evaluate('document.querySelector("input").focus()');

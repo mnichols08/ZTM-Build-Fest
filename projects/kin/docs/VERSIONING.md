@@ -1,6 +1,6 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.14.3. The last published product release remains v0.10.3; tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.14.4. The last published product release remains v0.10.3; tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
@@ -8,7 +8,7 @@ Kin version numbers describe product releases; they do not version every persist
 
 | Version axis | Current published v0.10.3 / v0.14 candidate | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.14.3` | UX/UI presentation; does not bump client or domain formats |
+| Application | Last published `0.10.3`; candidate `0.14.4` | UX/UI presentation; does not bump client or domain formats |
 | Server database schema | `2` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination and household lifecycle records |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v8; writes local v7 / synchronized v8 | Request context and projection semantics |

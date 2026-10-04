@@ -1511,6 +1511,11 @@ Do not ship comparative partner completion bars.
 
 **Adopted for now:** centered primary column.
 
+The wide-screen application keeps the same five primary destinations in a
+compact horizontal navigation row above a centered 600–680px content column.
+It does not use a permanent desktop side rail. Mobile keeps the five-item
+bottom navigation.
+
 Revisit only when real workflows demonstrate that simultaneous panes reduce friction.
 
 ---

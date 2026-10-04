@@ -35,7 +35,23 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Keep connection errors and local storage errors separate from successful
   saved state; leave recovery, deletion, and domain authority unchanged.
 
-## Unreleased — v0.14.3 UX/UI Consolidation candidate
+## v0.14.4 — UX/UI Correctness and Accessibility
+
+### v0.14.4 — UX correctness and accessibility corrections
+
+- Keep the persistent sync/security state notice attached across lock/unlock
+  view rebuilds, with browser regression for offline and revoked-device states.
+- Reconcile wide-screen navigation with UX-D4 using a centered primary column
+  and a compact horizontal destination row.
+- Announce primary route changes politely and update the document title.
+
+### v0.14.3 visual correction
+
+- Give Kin a clear forest-green brand header, a contained desktop navigation
+  rail, stronger page typography, and a welcoming Today introduction.
+- Refine the warm-neutral/green palette, card spacing, and capture surface so
+  the visual foundation is visible in the product rather than only in tokens.
+- Keep the same destinations, household data, and accessible responsive shell.
 
 ### v0.14.3 — Polish, Prototype Alignment, and Design Feedback Gate
 
