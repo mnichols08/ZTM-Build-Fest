@@ -1,6 +1,6 @@
 # Recovery and Household Continuity
 
-**Status:** implemented through v0.13.1. Recovery restores only authority that a
+**Status:** implemented through v0.13.2. Recovery restores only authority that a
 currently active adult and trusted device can legitimately grant. It never
 turns an archive, an old passkey, a stale device, or a server backup into new
 household authority.
@@ -79,4 +79,46 @@ Kin has no hidden server content-key escrow. If every trusted device, every
 usable local archive/recovery secret, and every valid credential/recovery
 authority is gone, encrypted household content is unrecoverable. This is safer
 than silently granting authority from stale server state.
+
+## Stale backups and rollback
+
+When an older backup is restored over a surviving validated database, Kin uses
+the backup for durable relay history but preserves the target's newer active
+authority: member active/removed state, the exact current credential set,
+trusted and revoked devices, device-token verifiers, current epoch/rotation
+state, and live provisioning grants. Final deletion tombstones still override
+the backup, and pending deletion still blocks restore entirely. Thus an older
+device, credential, member record, completed recovery, or pre-rotation state
+cannot silently regain authority through restore.
+
+This is deliberately not generalized history merging. If the active database
+and every later authority/deletion record are both lost, the service cannot
+infer changes made after the chosen backup. Operators must preserve the latest
+database/deletion ledger and choose a known-good backup. The explicit restore
+acknowledgement remains required.
+
+## Stale devices and missing keys
+
+A revoked device cannot reauthenticate, upload, pull, receive provisioning,
+overwrite a newer epoch, or cancel a completed recovery. Recovery claims are
+process-local, bounded, ten/fifteen-minute capabilities; approval versions and
+activation are single-use, restart discards unfinished claims, and terminal
+records are pruned.
+
+If a legitimate device lacks an epoch, sync pauses and identifies the missing
+history instead of skipping undecryptable events. The epoch is recoverable from
+another trusted device that is entitled to it, or the history may be recovered
+locally from an encrypted archive and its separate recovery secret. If neither
+source still holds the epoch key, that history is unrecoverable.
+
+## Server disaster recovery
+
+A verified SQLite backup can restore server membership/routing metadata and
+opaque relay ciphertext. Clients then reauthenticate and reconcile against the
+restored authority. A backup alone never contains passkey private material,
+device private keys, local encryption roots, plaintext household keys, or
+plaintext content. If a surviving current database exists, keep it so restore
+can preserve newer authority and tombstones. With only an old backup, later
+revocations/deletions cannot be reconstructed and global rollback resistance is
+not claimed.
 

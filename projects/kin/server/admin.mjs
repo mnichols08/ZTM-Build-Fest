@@ -39,6 +39,7 @@ export async function runAdminCommand(args) {
           ? `Kin database restored. The previous database and WAL sidecars, if any, were preserved at ${result.previousDatabasePath}.`
           : `Kin database restored at ${result.databasePath}.`,
         `Preserved ${result.preservedDeletionCount} newer household lifecycle tombstone(s) from the existing target.`,
+        `Preserved current authority for ${result.preservedAuthorityCount} active household(s).`,
         "A backup restored without its later deletion ledger may contain older data; this command cannot detect deletions absent from both databases.",
       ].join("\n"),
     );

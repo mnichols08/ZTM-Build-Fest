@@ -2,7 +2,19 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
-## Unreleased — v0.13.1 Recovery candidate
+## Unreleased — v0.13.2 Recovery candidate
+
+### v0.13.2 — Rollback, Stale Backup, and Disaster Hardening
+
+- Preserve a surviving target database's current active membership,
+  credentials, device revocations, device tokens, epoch/rotation state, and
+  pending provisioning authority when restoring older durable data.
+- Keep finalized deletion tombstones authoritative and continue refusing
+  restore over pending deletion.
+- Remove superseded credential rows durably during recovery and checkpoint all
+  merged authority before atomically publishing the restored database.
+- Prove a stale backup cannot revive the recovered adult's old credential or
+  device and cannot clear a required key rotation.
 
 ### v0.13.1 — Member-Assisted Recovery Correctness
 

@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DurableStore } from "./durable-store.mjs";
 import { PairingService } from "./pairing-service.mjs";
+import { EncryptedSyncService } from "./sync-service.mjs";
 
 const credential = (id) => ({ id, publicKey: `key-${id}`, algorithm: -7 });
 
@@ -230,5 +235,78 @@ test("unrelated, removed, revoked, stale, and replayed recovery authority fails 
     () => service.createMemberRecoveryPairing(adultB.sessionToken, adultA.memberId),
     (error) => ["authentication_required", "device_not_trusted"].includes(error.code),
   );
+});
+
+test("stale backup restore preserves newer recovery, revocation, credentials, and key authority", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "kin-recovery-"));
+  const targetPath = join(directory, "kin.sqlite");
+  const backupPath = join(directory, "stale.sqlite");
+  let store = new DurableStore(targetPath, { acquireProcessLock: false });
+  try {
+    const service = new PairingService({ store });
+    const sync = new EncryptedSyncService(service, { store });
+    const adultA = service.bootstrap({ credential: credential("restore-a") });
+    const adultB = addAdult(service, adultA, "restore-b");
+    await store.backup(backupPath);
+
+    const request = service.createMemberRecoveryPairing(
+      adultA.sessionToken,
+      adultB.memberId,
+    );
+    const claim = service.claimPairing({
+      code: request.code,
+      credential: credential("restore-b-fresh"),
+      deviceLabel: "Recovered B",
+    });
+    service.approvePairing(
+      adultA.sessionToken,
+      request.pairingId,
+      claim.version,
+    );
+    const recovered = service.activateClaim(claim.claimToken);
+    sync.onAccessChange(adultA.householdId, [adultB.deviceId]);
+    const before = store.loadIdentity();
+    assert.equal(before.credentials.has("credential-restore-b"), false);
+    assert.equal(before.credentials.has("restore-b-fresh"), true);
+    assert.ok(before.devices.get(adultB.deviceId).revokedAt);
+    assert.equal(sync.status(adultA.sessionToken).rotationPending, true);
+    assert.equal(store.loadActiveAuthority()[0].sync.rotation_pending, 1);
+    store.close();
+    store = null;
+
+    const result = await DurableStore.restoreBackup(backupPath, targetPath, {
+      acknowledgeDeletionHistory: true,
+    });
+    assert.equal(result.preservedAuthorityCount, 1);
+    const restored = new DurableStore(targetPath, {
+      acquireProcessLock: false,
+    });
+    try {
+      const identity = restored.loadIdentity();
+      assert.equal(identity.credentials.has("credential-restore-b"), false);
+      assert.equal(identity.credentials.has("restore-b-fresh"), true);
+      assert.ok(identity.devices.get(adultB.deviceId).revokedAt);
+      assert.equal(identity.devices.get(recovered.deviceId).revokedAt, null);
+      const restoredService = new PairingService({ store: restored });
+      assert.equal(
+        restored.loadSyncState(adultA.householdId, identity).rotationPending,
+        true,
+      );
+      assert.throws(
+        () =>
+          restoredService.reauthenticate(
+            adultB.deviceToken,
+            "credential-restore-b",
+          ),
+        (error) => ["device_not_trusted", "invalid_passkey"].includes(error.code),
+      );
+      assert.equal(restored.validate(), true);
+    } finally {
+      restored.close();
+    }
+  } finally {
+    store?.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 

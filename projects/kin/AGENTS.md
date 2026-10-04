@@ -101,7 +101,7 @@ If an unrelated parent-repository file was modified accidentally, revert that ch
 # Current Development Stage
 
 The user explicitly authorized the full v0.13.x Recovery & Household Continuity
-line. v0.13.1 adds member-assisted recovery to the v0.13.0 capability matrix
+line. v0.13.2 hardens stale backup/rollback behavior after v0.13.1 member-assisted recovery and the v0.13.0 capability matrix
 and bounded same-member replacement-device enrollment. Recovery must restore continuity
 without reviving revoked authority; no server content-key escrow is permitted.
 Do not begin v0.14.x.

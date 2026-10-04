@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.13.1` — Member-Assisted Recovery Correctness.** Kin now documents exactly which loss scenarios are recoverable and separates identity, device, content-key, membership, and server-restore authority. An active adult can replace a lost device, or authorize the other active adult to establish a fresh passkey and device without becoming that person. Recovery revokes the affected old credentials, devices, and sessions. Epoch keys remain client-provisioned and the service has no plaintext-key escrow. See [Recovery](docs/RECOVERY.md).
+**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.13.2` — Rollback and Disaster Hardening.** Kin documents exactly which loss scenarios are recoverable and separates identity, device, content-key, membership, and server-restore authority. Device and member recovery establish fresh authority and revoke old credentials/devices. Restoring a stale backup over a surviving database now preserves its newer active authority, revocations, credential replacements, epoch/rotation state, and deletion tombstones. Epoch keys remain client-provisioned and the service has no plaintext-key escrow. See [Recovery](docs/RECOVERY.md).
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Archives are intentionally local-only history recovery and do not restore sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
@@ -96,7 +96,7 @@ The month targets a coherent, demoable pre-1.0 build at `v0.40.x`. The `v0.41.x`
 - Earlier candidate: `v0.11.6` — Release Documentation & Code Clarity (includes v0.11.5 durable semantic integrity; not a published release)
 - Earlier candidate: `v0.11.7` — October Roadmap & Startup Diagnostics
 - Candidate: `v0.12.4` — Data Lifecycle, Retention & Deletion with Pending-Deletion Restore Authority Guard
-- Current line: `v0.13.1` — Member-assisted recovery and credential/device replacement correctness
+- Current line: `v0.13.2` — Stale backup, rollback, and disaster hardening
 - Planned: `v0.14.x` — UX/UI Consolidation
 - Planned: `v0.15.x` — Household Areas
 - Planned: `v0.16.x` — Household Notes & Reference Context
