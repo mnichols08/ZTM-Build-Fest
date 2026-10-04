@@ -20,3 +20,6 @@ mod routine_tests;
 
 #[cfg(test)]
 mod command_tests;
+
+#[cfg(test)]
+mod area_tests;

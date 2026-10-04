@@ -1,6 +1,6 @@
 # Portable Household Data
 
-**Status:** v0.10.3 implements encrypted `.kin` backup and restore for local household history. Rust owns `KARC` v1 framing, 64 MiB bounds, version validation and complete import planning. Browser crypto/files own authenticated encryption, file selection/download and explicit restore confirmation. Corrupt/unsupported archives never partially import. v0.11 separately adds SQLite service-database backup/restore; these two backup types protect different state. Earlier conceptual sections below are design history.
+**Status:** v0.10.3 implements encrypted `.kin` backup and restore for local household history. v0.15.0 extends the validated household event corpus additively; KARC v1 framing and archive metadata remain unchanged. Rust owns framing, 64 MiB bounds, version validation and complete import planning. Browser crypto/files own authenticated encryption, file selection/download and explicit restore confirmation. Corrupt/unsupported archives never partially import. v0.11 separately adds SQLite service-database backup/restore; these two backup types protect different state. Earlier conceptual sections below are design history.
 
 ## Implemented archive boundary
 

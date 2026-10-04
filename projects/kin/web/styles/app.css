@@ -312,6 +312,9 @@ p { margin: 7px 0; }
   padding: 9px 0;
 }
 .item-text { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 16px; line-height: 1.4; }
+.item-details { display: grid; gap: 5px; min-width: 0; }
+.item-area-label { display: block; color: var(--ink-muted); font-size: 12px; }
+.item-area-select { min-height: var(--tap); max-width: 100%; padding: 5px 9px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink); font: inherit; }
 .item-completed .item-text { color: var(--ink-muted); text-decoration: line-through; text-decoration-thickness: 1px; }
 .item-action { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 7px; min-width: 0; }
 .reopen-button, .archive-button { min-height: var(--tap); padding-inline: 11px; background: var(--surface); }
@@ -325,7 +328,7 @@ p { margin: 7px 0; }
 .routine-row { align-items: start; }
 .routine-row > div:first-child { min-width: 0; }
 kin-routines, kin-today, kin-compose, kin-catch-up, kin-handoff-list, kin-talk-list, kin-pulse,
-kin-household, kin-security { display: block; min-width: 0; }
+kin-household, kin-security, kin-areas { display: block; min-width: 0; }
 .handoff-form, .talk-form { grid-template-columns: minmax(0, 1fr) auto; margin-top: 12px; }
 .handoff-row, .talk-row { grid-template-columns: minmax(0, 1fr); }
 .handoff-row .item-action, .talk-row .item-action { justify-content: flex-start; }
@@ -334,6 +337,18 @@ kin-household, kin-security { display: block; min-width: 0; }
 .pulse-form { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
 .pulse-form label { display: grid; flex: 1 1 140px; gap: 5px; min-width: 0; font-size: 13px; }
 .pulse-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.area-section { margin-block: 12px; }
+.area-create-form, .area-edit-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-block: 14px; }
+.area-create-form label, .area-edit-form label { flex-basis: 100%; font-size: 13px; font-weight: 650; }
+.area-create-form input, .area-edit-form input { flex: 1 1 170px; min-width: 0; min-height: var(--tap); }
+.area-create-form small { flex-basis: 100%; color: var(--ink-muted); }
+.area-list { list-style: none; padding: 0; margin: 0; }
+.area-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; padding: 10px 0; border-top: 1px solid var(--line); }
+.area-name { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; font-weight: 600; }
+.area-row button { min-height: var(--tap); }
+.area-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.area-confirm span { flex: 1 1 100%; }
+.area-archived-label { color: var(--ink-muted); font-size: 13px; }
 
 .household-panel { max-width: none; margin: 0 0 14px; }
 .household-panel h2 { margin-top: 0; }

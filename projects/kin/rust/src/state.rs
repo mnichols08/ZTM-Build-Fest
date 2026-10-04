@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::KinError;
 use crate::event::{
-    valid_timestamp, ActorId, DeviceId, EventEnvelope, EventId, EventKind, HandoffId, HouseholdId,
-    ItemClassification, ItemId, PulseValue, RoutineId, TalkId,
+    valid_timestamp, ActorId, AreaId, DeviceId, EventEnvelope, EventId, EventKind, HandoffId,
+    HouseholdId, ItemClassification, ItemId, PulseValue, RoutineId, TalkId,
 };
 use crate::recurrence::{Cadence, CivilDate};
 
@@ -35,6 +35,30 @@ pub struct ItemState {
     pub created_at: i64,
     pub classification: ItemClassification,
     pub status: ItemStatus,
+    pub area_id: Option<AreaId>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AreaState {
+    pub area_id: AreaId,
+    pub name: String,
+    pub archived: bool,
+}
+
+pub const MAX_AREAS: usize = 32;
+pub const MAX_AREA_NAME_BYTES: usize = 96;
+pub const MAX_AREA_NAME_CHARS: usize = 48;
+
+pub fn normalize_area_name(name: &str) -> Result<String, KinError> {
+    let normalized = name.trim();
+    if normalized.is_empty()
+        || normalized.len() > MAX_AREA_NAME_BYTES
+        || normalized.chars().count() > MAX_AREA_NAME_CHARS
+        || normalized.chars().any(char::is_control)
+    {
+        return Err(KinError::InvalidEvent);
+    }
+    Ok(normalized.to_owned())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -92,6 +116,7 @@ pub struct HouseholdState {
     pub talks: Vec<TalkState>,
     pub pulses: Vec<PulseState>,
     pub routines: Vec<RoutineState>,
+    pub areas: Vec<AreaState>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -189,15 +214,17 @@ fn rebuild_with_context(
     let mut routine_archives = BTreeMap::new();
     let mut completed_periods = BTreeSet::new();
     let mut household_id = None;
-    let mut items = Vec::new();
+    let mut items: Vec<ItemState> = Vec::new();
     let mut handoffs = Vec::new();
     let mut talks = Vec::new();
     let mut talk_positions = BTreeMap::new();
     let mut talk_archives = BTreeMap::new();
     let mut handoff_positions = BTreeMap::new();
     let mut handoff_archives = BTreeMap::new();
-    let mut item_positions = BTreeMap::new();
+    let mut item_positions: BTreeMap<crate::event::ItemId, usize> = BTreeMap::new();
     let mut item_archives = BTreeMap::new();
+    let mut areas: Vec<AreaState> = Vec::new();
+    let mut area_positions = BTreeMap::new();
     let mut event_bytes = BTreeMap::<EventId, Vec<u8>>::new();
     // Completions are retained by occurrence key, then projected onto the requested date below.
     let mut last_logical_time = 0;
@@ -225,6 +252,56 @@ fn rebuild_with_context(
         }
 
         match &event.kind {
+            EventKind::AreaCreated { area_id, name } => {
+                let name = normalize_area_name(name)?;
+                if !valid_timestamp(event.timestamp)
+                    || area_id.0 == [0; 16]
+                    || area_positions.contains_key(area_id)
+                    || areas.len() >= MAX_AREAS
+                {
+                    return Err(KinError::InvalidEvent);
+                }
+                area_positions.insert(*area_id, areas.len());
+                areas.push(AreaState {
+                    area_id: *area_id,
+                    name,
+                    archived: false,
+                });
+            }
+            EventKind::AreaRenamed { area_id, name } => {
+                let name = normalize_area_name(name)?;
+                if !valid_timestamp(event.timestamp) {
+                    return Err(KinError::MalformedProtocol);
+                }
+                let position = area_positions
+                    .get(area_id)
+                    .copied()
+                    .ok_or(KinError::InvalidEvent)?;
+                areas[position].name = name;
+            }
+            EventKind::AreaArchived { area_id } => {
+                if !valid_timestamp(event.timestamp) {
+                    return Err(KinError::MalformedProtocol);
+                }
+                let position = area_positions
+                    .get(area_id)
+                    .copied()
+                    .ok_or(KinError::InvalidEvent)?;
+                areas[position].archived = true;
+            }
+            EventKind::ItemAreaChanged { item_id, area_id } => {
+                if !valid_timestamp(event.timestamp) {
+                    return Err(KinError::MalformedProtocol);
+                }
+                let position = item_positions
+                    .get(item_id)
+                    .copied()
+                    .ok_or(KinError::InvalidEvent)?;
+                if area_id.is_some_and(|id| !area_positions.contains_key(&id)) {
+                    return Err(KinError::InvalidEvent);
+                }
+                items[position].area_id = *area_id;
+            }
             EventKind::RoutineCreated {
                 routine_id,
                 text,
@@ -420,6 +497,7 @@ fn rebuild_with_context(
                     created_at: event.timestamp,
                     classification: *classification,
                     status: ItemStatus::Active,
+                    area_id: None,
                 });
             }
             EventKind::ItemCompleted { item_id } => {
@@ -499,6 +577,7 @@ fn rebuild_with_context(
         talks,
         pulses: pulses.into_values().collect(),
         routines,
+        areas,
     })
 }
 
@@ -684,7 +763,12 @@ pub(crate) fn summarize_validated(
                     None,
                 )
             }),
-            EventKind::PulseSet { .. } | EventKind::PulseCleared => None,
+            EventKind::PulseSet { .. }
+            | EventKind::PulseCleared
+            | EventKind::AreaCreated { .. }
+            | EventKind::AreaRenamed { .. }
+            | EventKind::AreaArchived { .. }
+            | EventKind::ItemAreaChanged { .. } => None,
         };
 
         if let Some((kind, entity_kind, text, classification)) = summary {
@@ -758,6 +842,12 @@ mod tests {
             | EventKind::ItemReopened { item_id }
             | EventKind::ItemArchived { item_id } => {
                 canonical_bytes.extend_from_slice(&item_id.0);
+            }
+            EventKind::AreaCreated { .. }
+            | EventKind::AreaRenamed { .. }
+            | EventKind::AreaArchived { .. }
+            | EventKind::ItemAreaChanged { .. } => {
+                panic!("Area tests use independent wire fixtures")
             }
         }
         EventEnvelope {

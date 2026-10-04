@@ -1,5 +1,5 @@
-const PROTOCOL_VERSION = 7;
-const REQUEST_HEADER_BYTES = 44;
+const PROTOCOL_VERSION = 9;
+const REQUEST_HEADER_BYTES = 64;
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 const PULSE_VALUES = ["good", "okay", "drained", "rough-day", "need-quiet"];
 const RESULT_HEADER_BYTES = 12;
@@ -271,6 +271,10 @@ const COMMAND_TYPES = [
   "complete-routine-occurrence",
   "reopen-routine-occurrence",
   "archive-routine",
+  "create-area",
+  "rename-area",
+  "archive-area",
+  "change-item-area",
 ];
 const EVENT_KINDS = [
   null,
@@ -291,6 +295,10 @@ const EVENT_KINDS = [
   "ROUTINE_OCCURRENCE_COMPLETED",
   "ROUTINE_OCCURRENCE_REOPENED",
   "ROUTINE_ARCHIVED",
+  "AREA_CREATED",
+  "AREA_RENAMED",
+  "AREA_ARCHIVED",
+  "ITEM_AREA_CHANGED",
 ];
 
 function encodeIntent(type, value) {
@@ -305,22 +313,22 @@ function encodeIntentPacket(command, identity) {
   const kind = COMMAND_TYPES.indexOf(command.type);
   if (kind < 1)
     throw new KinEngineError(2, "Kin received an invalid household action.");
-  const hasText = [1, 5, 8, 14].includes(kind);
-  const text = hasText ? command.text : "";
+  const hasText = [1, 5, 8, 14, 18, 19].includes(kind);
+  const text = hasText ? (command.name ?? command.text) : "";
   const textBytes = textEncoder.encode(text);
   if (
     hasText &&
     (typeof text !== "string" ||
       strictTextDecoder.decode(textBytes) !== text ||
       textBytes.length < 1 ||
-      textBytes.length > MAX_ITEM_TEXT_BYTES)
+      textBytes.length > ([18, 19].includes(kind) ? 96 : MAX_ITEM_TEXT_BYTES))
   ) {
     throw new KinEngineError(
       2,
       "Text must be valid Unicode and no more than 4096 UTF-8 bytes.",
     );
   }
-  const packet = new Uint8Array(128 + textBytes.length);
+  const packet = new Uint8Array(128 + (kind === 21 ? 16 : textBytes.length));
   packet.set([75, 67, 77, 68, 1, 0, 0, 0]);
   const view = new DataView(packet.buffer);
   view.setUint16(8, kind, true);
@@ -349,6 +357,8 @@ function encodeIntentPacket(command, identity) {
       command.handoffId ??
       command.talkId ??
       command.routineId ??
+      command.areaId ??
+      command.id ??
       identity.entityId;
     packet.set(
       typeof entity === "string" ? idFromHex(entity) : assertId(entity),
@@ -375,8 +385,13 @@ function encodeIntentPacket(command, identity) {
     if (code < 0) throw new KinEngineError(2, "Choose a valid cadence.");
     packet[112] = code;
   }
-  view.setUint32(124, textBytes.length, true);
-  packet.set(textBytes, 128);
+  if (kind === 21) {
+    packet.set(command.areaId ? idFromHex(command.areaId) : new Uint8Array(16), 128);
+    view.setUint32(124, 16, true);
+  } else {
+    view.setUint32(124, textBytes.length, true);
+    packet.set(textBytes, 128);
+  }
   return packet;
 }
 
@@ -675,9 +690,7 @@ function encodeRequest(records, asOf, cursorEventId, civilDate, syncIdentity) {
   ) {
     throw new KinEngineError(2, "Kin received invalid sync identity context.");
   }
-  const headerBytes = syncIdentity
-    ? 64 + identityBindings.length * 96
-    : REQUEST_HEADER_BYTES;
+  const headerBytes = REQUEST_HEADER_BYTES + identityBindings.length * 96;
   let length = headerBytes;
   for (const record of records) {
     length += asBytes(record).length;
@@ -689,7 +702,7 @@ function encodeRequest(records, asOf, cursorEventId, civilDate, syncIdentity) {
   const bytes = new Uint8Array(length);
   bytes.set([0x4b, 0x49, 0x4e, 0x45]);
   const view = new DataView(bytes.buffer);
-  view.setUint16(4, syncIdentity ? 8 : PROTOCOL_VERSION, true);
+  view.setUint16(4, PROTOCOL_VERSION, true);
   view.setUint16(6, 0, true);
   view.setUint32(8, records.length, true);
   view.setBigInt64(12, BigInt(asOf), true);
@@ -779,13 +792,15 @@ function decodeState(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const protocolVersion = view.getUint16(4, true);
   if (
-    ![1, 2, 3, 4, 5, 6, 7, 8].includes(protocolVersion) ||
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(protocolVersion) ||
     view.getUint16(6, true) !== 0
   ) {
     throw new KinEngineError(6, "Kin received an unsupported state format.");
   }
   const resultHeaderBytes =
-    protocolVersion >= 7
+    protocolVersion >= 9
+      ? 60
+      : protocolVersion >= 7
       ? 56
       : protocolVersion >= 6
         ? 52
@@ -804,6 +819,7 @@ function decodeState(bytes) {
   const pulseCount = protocolVersion >= 5 ? view.getUint32(20, true) : 0;
   const itemCount = view.getUint32(8, true);
   const routineCount = protocolVersion >= 7 ? view.getUint32(52, true) : 0;
+  const areaCount = protocolVersion >= 9 ? view.getUint32(56, true) : 0;
   const summaryCount = protocolVersion >= 6 ? view.getUint32(24, true) : 0;
   const summaryTotalCount = protocolVersion >= 6 ? view.getUint32(28, true) : 0;
   const summaryThroughPresent = protocolVersion >= 6 ? view.getUint8(32) : 0;
@@ -828,7 +844,7 @@ function decodeState(bytes) {
     throw new KinEngineError(6, "Kin received invalid summary metadata.");
   }
   if (
-    itemCount + handoffCount + talkCount + pulseCount + routineCount >
+    areaCount > 32 || itemCount + handoffCount + talkCount + pulseCount + routineCount >
     MAX_EVENT_COUNT
   ) {
     throw new KinEngineError(
@@ -896,6 +912,7 @@ function decodeState(bytes) {
       classification:
         protocolVersion === 1 || classificationCode === 0 ? "today" : "need",
       status: ["active", "completed", "archived"][statusCode],
+      areaId: null,
       text,
     });
     offset = recordEnd;
@@ -1001,6 +1018,15 @@ function decodeState(bytes) {
     previousActor = actorId;
     offset += 40;
   }
+  if (protocolVersion >= 9) {
+    for (const item of items) {
+      if (offset + 16 > bytes.length)
+        throw new KinEngineError(6, "Kin received truncated Area assignments.");
+      const id = bytes.subarray(offset, offset + 16);
+      item.areaId = id.every((byte) => byte === 0) ? null : idToHex(id);
+      offset += 16;
+    }
+  }
   const routines = [];
   const routineIds = new Set();
   for (let index = 0; index < routineCount; index += 1) {
@@ -1070,6 +1096,28 @@ function decodeState(bytes) {
     });
     offset = end;
   }
+  const areas = [];
+  const areaIds = new Set();
+  for (let index = 0; index < areaCount; index += 1) {
+    const headerEnd = offset + 24;
+    if (headerEnd > bytes.length) throw new KinEngineError(6, "Kin received a truncated Area.");
+    const areaId = idToHex(bytes.subarray(offset, offset + 16));
+    const archived = bytes[offset + 16];
+    const length = view.getUint32(offset + 20, true);
+    const end = headerEnd + length;
+    if (archived > 1 || bytes.subarray(offset + 17, offset + 20).some((byte) => byte !== 0) || length < 1 || length > 96 || end > bytes.length || areaIds.has(areaId))
+      throw new KinEngineError(6, "Kin received an invalid Area.");
+    let name;
+    try { name = strictTextDecoder.decode(bytes.subarray(headerEnd, end)); }
+    catch { throw new KinEngineError(6, "Kin received invalid Area text."); }
+    if (name.trim() !== name || [...name].length > 48 || /[\u0000-\u001f\u007f]/u.test(name))
+      throw new KinEngineError(6, "Kin received invalid Area text.");
+    areaIds.add(areaId);
+    areas.push({ areaId, name, archived: archived === 1 });
+    offset = end;
+  }
+  if (items.some((item) => item.areaId && !areaIds.has(item.areaId)))
+    throw new KinEngineError(6, "Kin received an unknown Area assignment.");
   const summaryEntries = [];
   const entityNames = ["", "item", "handoff", "talk", "routine"];
   for (let index = 0; index < summaryCount; index += 1) {
@@ -1139,6 +1187,7 @@ function decodeState(bytes) {
       talks,
       pulses,
       ...(protocolVersion >= 7 ? { routines } : {}),
+      ...(protocolVersion >= 9 ? { areas } : {}),
       summary: {
         entries: summaryEntries,
         totalCount: summaryTotalCount,

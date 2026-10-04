@@ -1,6 +1,16 @@
 # Synchronization Design
 
-**Status:** v0.11.7 implementation candidate; awaiting human review. Existing encrypted envelopes and v8 canonical replay remain compatible. The local outbox, sync state, epoch secrets and private device keys are encrypted at rest and unavailable while locked. Signed device-key successors preserve verification history and repair entitled post-join epoch grants. The candidate stores identity, authorization and opaque relay state in SQLite and acknowledges an event only after commit; the service remains a relay, not a household source of truth.
+**Status:** v0.15.0 implementation candidate. Area events use the existing encrypted envelope and protocol-9 client replay; no relay/server field contains an Area name. The local outbox, sync state, epoch secrets and private device keys are encrypted at rest and unavailable while locked. Signed device-key successors preserve verification history and repair entitled post-join epoch grants. The service stores identity, authorization and opaque relay state in SQLite and acknowledges an event only after commit; it remains a relay, not a household source of truth.
+
+## v0.15.0 Areas
+
+Area names, IDs, archive state, and Item assignments are ordinary canonical
+household event payloads. They are encrypted with the same household content
+key before entering the relay. Relay routing sees only the existing opaque
+envelope metadata, never plaintext Area names. Offline create, rename, archive,
+and assignment follow the existing retry/idempotency and deterministic replay
+path. Revocation and epoch rotation continue to govern access to the entire
+household event stream; Areas add no authority or server-side interpretation.
 
 ## Intended direction
 

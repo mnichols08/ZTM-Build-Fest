@@ -2,6 +2,7 @@ class KinToday extends HTMLElement {
   constructor() {
     super();
     this.records = [];
+    this.areaRecords = [];
     this.isDisabled = false;
     this.display = "all";
   }
@@ -12,6 +13,11 @@ class KinToday extends HTMLElement {
 
   set items(value) {
     this.records = Array.isArray(value) ? value : [];
+    this.render();
+  }
+
+  set areas(value) {
+    this.areaRecords = Array.isArray(value) ? value : [];
     this.render();
   }
 
@@ -73,13 +79,16 @@ class KinToday extends HTMLElement {
   }
 
   captureFocus() {
-    const control = document.activeElement;
+    const control = this.contains(document.activeElement)
+      ? document.activeElement
+      : this.deferredFocus?.isConnected ? this.deferredFocus : null;
     if (!this.contains(control)) return null;
     const row = control.closest("kin-item");
     return {
       control,
       itemId: control.dataset.itemId,
       action: control.dataset.itemAction,
+      isAreaSelect: control.matches?.(".item-area-select") ?? false,
       index: row ? [...this.querySelectorAll("kin-item")].indexOf(row) : -1,
     };
   }
@@ -93,6 +102,14 @@ class KinToday extends HTMLElement {
     if (focus.control.isConnected) {
       focus.control.focus();
       return;
+    }
+    if (focus.isAreaSelect) {
+      const select = [...this.querySelectorAll(".item-area-select")].find((node) => node.dataset.itemId === focus.itemId);
+      if (select) {
+        if (select.disabled) this.deferredFocus = select;
+        else select.focus();
+        return;
+      }
     }
     const buttons = [...this.querySelectorAll("kin-item button[data-item-id]")];
     const sameItem = buttons.filter((button) => button.dataset.itemId === focus.itemId);
@@ -111,6 +128,7 @@ class KinToday extends HTMLElement {
       const listItem = document.createElement("li");
       const item = document.createElement("kin-item");
       item.item = record;
+      item.areaOptions = this.areaRecords;
       item.disabled = this.isDisabled;
       listItem.append(item);
       list.append(listItem);

@@ -41,6 +41,9 @@ The envelope is a domain contract, not the JS/WASM byte encoding. The field mean
 - **Talk:** A topic that matters but may be better discussed later.
 - **Pulse:** Time-bounded context about current capacity.
 - **Routine:** A recurring household need, not a general calendar entry.
+- **Area:** Optional, flat place/context for supported household content. Areas
+  have stable IDs and archived state; they are not folders, projects, workspaces,
+  or permission boundaries.
 - **Agreement:** A deliberately recorded household understanding, never inferred.
 - **Event:** An immutable identified fact from which current state is reconstructed.
 
@@ -67,3 +70,12 @@ PulseState has actor_id, fixed enum value, set_at, expires_at and active/expired
 ## v0.7.0 Routines
 
 Routine occurrence identity is `(routine_id, civil period start date)`, not a random occurrence ID. Current state is derived; only definitions and human lifecycle actions persist. Civil dates use validated YYYYMMDD u32, Monday-start weeks. No time-zone preference is persisted in v0.7. See [V0.7.0](V0.7.0.md).
+
+## v0.15.0 Areas
+
+`AreaState { area_id, name, archived }` is derived from canonical Area events.
+Items carry `area_id: Option<AreaId>`; other entity classes are not assigned in
+this line. No Area is a valid state. Archived associations remain intact and
+visible as historical context. Households can create at most 32 Areas over
+their lifetime, including archived Areas. There are no nested Areas or hard
+deletion. See [Household Events](EVENTS.md) and [v0.15.0](releases/V0.15.0.md).

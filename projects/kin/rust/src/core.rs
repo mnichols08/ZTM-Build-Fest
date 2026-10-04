@@ -1,10 +1,10 @@
 //! Portable application operations shared by the native library and manual ABI.
 use crate::error::KinError;
-use crate::protocol::{self, DecodedRequest, PROTOCOL_V6, PROTOCOL_V7, PROTOCOL_V8};
+use crate::protocol::{self, DecodedRequest, PROTOCOL_V6, PROTOCOL_V7, PROTOCOL_V8, PROTOCOL_V9};
 use crate::state::{self, HouseholdState};
 
 pub fn project(request: &DecodedRequest) -> Result<HouseholdState, KinError> {
-    if request.protocol_version == PROTOCOL_V8 {
+    if request.protocol_version >= PROTOCOL_V8 {
         state::rebuild_distributed_on(
             &request.events,
             request.as_of.ok_or(KinError::MalformedProtocol)?,
@@ -32,6 +32,7 @@ pub fn encode_projection(
             state::summarize_validated(&request.events, request.summary_cursor, household)?;
         match request.protocol_version {
             PROTOCOL_V8 => protocol::encode_state_v8(household, &summary),
+            PROTOCOL_V9 => protocol::encode_state_v9(household, &summary),
             PROTOCOL_V7 => protocol::encode_state_v7(household, &summary),
             _ => protocol::encode_state_v6(household, &summary),
         }

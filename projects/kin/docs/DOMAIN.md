@@ -84,3 +84,10 @@ The summary is a derived household projection over existing Item, Handoff and Ta
 ## v0.7.0 Routines
 
 Routines are immutable Daily/Weekly definitions with derived occurrences. Monday starts a week. Complete/reopen applies to the current occurrence; archive ends the definition. Editing means archive and create anew. No reminders, missed counts, assignments or history UI. See [V0.7.0](V0.7.0.md).
+
+## v0.15.0 Areas
+
+An Area is optional, flat place/context for supported household content. It has
+a stable ID, user-controlled display name, and archived flag. Item assignment
+is optional; there are no Area permissions, nested Areas, projects, or hard
+deletion. See [v0.15.0](releases/V0.15.0.md).

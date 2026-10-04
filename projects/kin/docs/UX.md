@@ -1640,3 +1640,23 @@ not:
 > **software for managing the people you live with.**
 
 That distinction is the design boundary.
+
+# 22. v0.15.x Household Areas implementation notes
+
+Areas answer “Where or what part of household life does this belong?” They are
+optional context for supported household content. Use household language such
+as “Areas help keep household things together.” Do not present Areas as
+projects, folders, permissions, workspaces, or a required taxonomy.
+
+Quick capture remains title/text → add. Area choice is never part of the
+capture form. Area management is reached from More and offers a short create
+form plus direct rename/archive actions. Existing assignment context stays
+visible when its Area is archived; archived Areas are not offered for new
+assignments. “No area” remains an ordinary choice, and an assignment can be
+cleared without changing the Item.
+
+The initial contextual assignment control appears beneath Item text as a
+secondary native select. Keep it labeled “Area for [item text]”, keyboard
+operable, at least 48px tall, and reflowing at 320px and 200% zoom. Names are
+plain text. Conflicting offline duplicate names remain separate stable Areas
+and receive a short ID suffix in selection/management labels until renamed.

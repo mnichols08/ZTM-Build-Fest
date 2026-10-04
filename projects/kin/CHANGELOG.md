@@ -35,7 +35,17 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Keep connection errors and local storage errors separate from successful
   saved state; leave recovery, deletion, and domain authority unchanged.
 
-## Unreleased — v0.14.5 UX/UI Consolidation candidate
+## Unreleased — v0.15.0 Household Areas candidate
+
+### v0.15.0 — Areas foundation
+
+- Add stable-ID Areas with Rust-owned create, rename, archive, and Item assignment events.
+- Add optional Item Area selection and the Area manager under More; quick capture remains Area-free.
+- Keep archived associations, reject new assignment to an archived Area when the client knows its state, and preserve pre-Area histories without synthetic records.
+- Introduce replay protocol 9 additively; relay metadata remains opaque and Area names stay inside encrypted event payloads.
+- Bound households to 32 lifetime Areas; trim Unicode whitespace and limit names to 48 Unicode scalar values and 96 UTF-8 bytes.
+
+## v0.14.5 UX/UI Consolidation candidate
 
 ### v0.14.5 — Responsive form and More card-flow corrections
 

@@ -22,6 +22,10 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::RoutineOccurrenceCompleted { .. } => 15,
         EventKind::RoutineOccurrenceReopened { .. } => 16,
         EventKind::RoutineArchived { .. } => 17,
+        EventKind::AreaCreated { .. } => 18,
+        EventKind::AreaRenamed { .. } => 19,
+        EventKind::AreaArchived { .. } => 20,
+        EventKind::ItemAreaChanged { .. } => 21,
     }
 }
 
@@ -95,6 +99,15 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             payload.extend_from_slice(&key.encoded().to_le_bytes());
         }
         EventKind::RoutineArchived { routine_id } => payload.extend_from_slice(&routine_id.0),
+        EventKind::AreaCreated { area_id, name } | EventKind::AreaRenamed { area_id, name } => {
+            payload.extend_from_slice(&area_id.0);
+            push_text(&mut payload, name)?;
+        }
+        EventKind::AreaArchived { area_id } => payload.extend_from_slice(&area_id.0),
+        EventKind::ItemAreaChanged { item_id, area_id } => {
+            payload.extend_from_slice(&item_id.0);
+            payload.extend_from_slice(&area_id.map_or([0; 16], |id| id.0));
+        }
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());
     bytes.extend_from_slice(&event.event_version.to_le_bytes());

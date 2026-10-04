@@ -25,6 +25,7 @@ id_type!(ItemId);
 id_type!(HandoffId);
 id_type!(TalkId);
 id_type!(RoutineId);
+id_type!(AreaId);
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct IdentityBinding {
@@ -118,6 +119,21 @@ pub enum EventKind {
     },
     ItemArchived {
         item_id: ItemId,
+    },
+    AreaCreated {
+        area_id: AreaId,
+        name: String,
+    },
+    AreaRenamed {
+        area_id: AreaId,
+        name: String,
+    },
+    AreaArchived {
+        area_id: AreaId,
+    },
+    ItemAreaChanged {
+        item_id: ItemId,
+        area_id: Option<AreaId>,
     },
 }
 

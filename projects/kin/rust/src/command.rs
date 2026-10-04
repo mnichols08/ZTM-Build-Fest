@@ -9,7 +9,7 @@ use crate::protocol::{
     MAX_ITEM_TEXT_BYTES, MAX_PROTOCOL_BYTES, PROTOCOL_VERSION,
 };
 use crate::recurrence::{Cadence, CivilDate};
-use crate::state::HouseholdState;
+use crate::state::{normalize_area_name, HouseholdState, ItemStatus};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HouseholdCommand {
@@ -54,6 +54,19 @@ pub enum HouseholdCommand {
         key: CivilDate,
     },
     ArchiveRoutine(RoutineId),
+    CreateArea {
+        id: AreaId,
+        name: String,
+    },
+    RenameArea {
+        id: AreaId,
+        name: String,
+    },
+    ArchiveArea(AreaId),
+    ChangeItemArea {
+        item_id: ItemId,
+        area_id: Option<AreaId>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -122,6 +135,19 @@ pub fn create_event(
             key: *key,
         },
         ArchiveRoutine(id) => EventKind::RoutineArchived { routine_id: *id },
+        CreateArea { id, name } => EventKind::AreaCreated {
+            area_id: *id,
+            name: normalize_area_name(name)?,
+        },
+        RenameArea { id, name } => EventKind::AreaRenamed {
+            area_id: *id,
+            name: normalize_area_name(name)?,
+        },
+        ArchiveArea(id) => EventKind::AreaArchived { area_id: *id },
+        ChangeItemArea { item_id, area_id } => EventKind::ItemAreaChanged {
+            item_id: *item_id,
+            area_id: *area_id,
+        },
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -141,6 +167,7 @@ pub fn create_event(
     decode_event(&encode_event(&event)?, PROTOCOL_VERSION)
 }
 
+#[derive(Debug)]
 pub struct CommandResult {
     pub event: EventEnvelope,
     pub projection: HouseholdState,
@@ -191,6 +218,53 @@ pub fn execute(
             return Err(KinError::InvalidEvent);
         }
     }
+    match command {
+        HouseholdCommand::CreateArea { id, name } | HouseholdCommand::RenameArea { id, name } => {
+            let normalized = normalize_area_name(name)?;
+            if current.areas.iter().any(|area| {
+                area.area_id != *id && area.name.to_lowercase() == normalized.to_lowercase()
+            }) {
+                return Err(KinError::InvalidEvent);
+            }
+            if matches!(command, HouseholdCommand::RenameArea { .. })
+                && !current
+                    .areas
+                    .iter()
+                    .any(|area| area.area_id == *id && !area.archived)
+            {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::ArchiveArea(id)
+            if current
+                .areas
+                .iter()
+                .any(|area| area.area_id == *id && area.archived) =>
+        {
+            return Err(KinError::InvalidEvent)
+        }
+        HouseholdCommand::ArchiveArea(id)
+            if !current.areas.iter().any(|area| area.area_id == *id) =>
+        {
+            return Err(KinError::InvalidEvent)
+        }
+        HouseholdCommand::ChangeItemArea { item_id, area_id } => {
+            current
+                .items
+                .iter()
+                .find(|item| item.item_id == *item_id && item.status != ItemStatus::Archived)
+                .ok_or(KinError::InvalidEvent)?;
+            if area_id.is_some_and(|id| {
+                !current
+                    .areas
+                    .iter()
+                    .any(|area| area.area_id == id && !area.archived)
+            }) {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        _ => {}
+    }
     if let HouseholdCommand::CreateRoutine { created_on, .. } = command {
         if request.civil_date != Some(*created_on) {
             return Err(KinError::InvalidEvent);
@@ -235,14 +309,21 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
     if bytes.len() != 128 + text_length {
         return Err(KinError::MalformedProtocol);
     }
-    let text = std::str::from_utf8(&bytes[128..])
-        .map_err(|_| KinError::MalformedProtocol)?
-        .to_owned();
-    if !matches!(kind, 1 | 5 | 8 | 14) && !text.is_empty()
+    let text = if kind == 21 {
+        String::new()
+    } else {
+        std::str::from_utf8(&bytes[128..])
+            .map_err(|_| KinError::MalformedProtocol)?
+            .to_owned()
+    };
+    let accepts_payload =
+        matches!(kind, 1 | 5 | 8 | 14 | 18 | 19) || kind == 21 && text_length == 16;
+    if !text.is_empty() && !accepts_payload
         || !matches!(kind, 14..=16) && date != 0
         || !matches!(kind, 1 | 12 | 14) && option != 0
         || kind != 12 && expires != 0
         || matches!(kind, 12 | 13) && id != [0; 16]
+        || kind == 21 && text_length != 16
     {
         return Err(KinError::MalformedProtocol);
     }
@@ -300,6 +381,24 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             key: CivilDate::from_encoded(date)?,
         },
         17 => ArchiveRoutine(RoutineId(id)),
+        18 => CreateArea {
+            id: AreaId(id),
+            name: text,
+        },
+        19 => RenameArea {
+            id: AreaId(id),
+            name: text,
+        },
+        20 => ArchiveArea(AreaId(id)),
+        21 if text_length == 16 => {
+            let area: [u8; 16] = bytes[128..144]
+                .try_into()
+                .map_err(|_| KinError::MalformedProtocol)?;
+            ChangeItemArea {
+                item_id: ItemId(id),
+                area_id: (area != [0; 16]).then_some(AreaId(area)),
+            }
+        }
         _ => return Err(KinError::UnsupportedVersion),
     };
     let context = CommandContext {

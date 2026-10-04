@@ -1,6 +1,6 @@
 # Household Events
 
-**Status:** Current through v0.10.0. Rust owns canonical command encoding and decoding; existing schemas/kinds and immutable bytes remain unchanged. Protocol v8 supplies verified identity context and deterministic distributed replay. Local encryption wraps those bytes without rewriting them. Earlier version sections remain historical contracts.
+**Status:** Current through v0.15.0 implementation candidate. Rust owns canonical command encoding and decoding; existing schemas/kinds and immutable bytes remain unchanged. Protocol v9 extends the catalogue with Areas; local encryption wraps canonical bytes without rewriting them. Earlier version sections remain historical contracts.
 
 ## Canonical record
 
@@ -56,6 +56,10 @@ Use uppercase entity/action-past-tense names consistently. The milestone column 
 | `ROUTINE_OCCURRENCE_COMPLETED` | v0.7.0            | Complete a routine occurrence.                               |
 | `ROUTINE_OCCURRENCE_REOPENED`  | v0.7.0            | Reopen a routine occurrence.                                 |
 | `ROUTINE_ARCHIVED`             | v0.7.0            | Archive a routine definition.                                |
+| `AREA_CREATED`                  | v0.15.0           | Create a stable-ID household Area with a display name.       |
+| `AREA_RENAMED`                  | v0.15.0           | Change an Area's display name without changing its identity. |
+| `AREA_ARCHIVED`                 | v0.15.0           | Retain the Area and its assignments as historical context.   |
+| `ITEM_AREA_CHANGED`             | v0.15.0           | Set or clear an Item's optional Area assignment.              |
 | `HOUSEHOLD_CREATED`            | v0.8.0            | Establish a household identity when pairing is introduced.   |
 | `MEMBER_INVITED`               | v0.8.0            | Record a member invitation.                                  |
 | `MEMBER_JOINED`                | v0.8.0            | Record accepted household membership.                        |
@@ -120,6 +124,25 @@ No domain event kinds are added. Codes 1–13 and their persisted bytes remain u
 ## v0.7.0 Routines
 
 Schema-1 codes 14 ROUTINE_CREATED, 15 ROUTINE_OCCURRENCE_COMPLETED, 16 ROUTINE_OCCURRENCE_REOPENED, 17 ROUTINE_ARCHIVED. Creation persists text/cadence/creation civil date; occurrence actions persist a deterministic date key. No reset or automatically created occurrence event. Archive is terminal. The earlier conceptual ROUTINE_COMPLETED name never had a persisted wire code and is replaced by occurrence-specific naming. See [V0.7.0](V0.7.0.md).
+
+## v0.15.0 Areas
+
+Area kinds 18–21 use event schema 1 and require replay protocol 9. Area IDs are
+stable 128-bit identifiers. Names are trimmed at Unicode whitespace; empty,
+control-bearing, over-96-byte, or over-48-Unicode-scalar names are invalid.
+Commands reject case-insensitive duplicate names after trimming, including
+archived names. Concurrent offline create/rename facts with matching display
+names remain separate IDs during replay; the reducer never silently merges
+them. The UI suffixes their labels with a short stable-ID fragment until a
+member renames one.
+
+`AREA_ARCHIVED` changes availability, not history. Existing `ITEM_AREA_CHANGED`
+associations remain. A current command rejects a known archived Area, while a
+stale offline assignment authored before observing the archive remains
+replayable after sync. Protocol 9 deterministic ordering gives both devices
+the same projection. Clearing an assignment is `ITEM_AREA_CHANGED` with the
+reserved all-zero optional Area ID; zero is not a valid Area identity. There is
+no Area deletion event.
 
 ## v0.9.x Distributed Canonical Events
 

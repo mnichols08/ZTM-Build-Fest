@@ -233,8 +233,9 @@ async function regressions() {
   );
   check(
     getComputedStyle(app.household).display === "block" &&
+      getComputedStyle(app.areas).display === "block" &&
       getComputedStyle(app.security).display === "block",
-    "household and security custom elements retain block card flow in More",
+    "Areas, household, and security custom elements retain block card flow in More",
   );
   app.nav.querySelector('a[href="#lists"]').click();
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1757,6 +1758,52 @@ try {
   console.log(
     "PASS malformed row and metadata preservation, canonical-byte integrity, refresh recovery",
   );
+  await visit(first, "more");
+  const areasResult = await first.evaluate(`(async()=>{
+    const app=document.querySelector('kin-app');
+    const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh);i++)await new Promise(r=>setTimeout(r,10));if(app.busy||app.refreshing)throw Error('Area action did not settle');};
+    const form=app.areas.querySelector('.area-create-form');
+    const input=form.querySelector('input');
+    input.value='Kitchen';input.focus();form.requestSubmit();await idle();
+    const area=app.state.areas.at(-1);
+    const createdFocused=document.activeElement===app.areas.querySelector('#area-create-name');
+    app.nav.querySelector('a[href="#today"]').click();
+    await new Promise(r=>setTimeout(r,0));
+    const added=await app.store.append({type:'add',text:'Wipe counter',classification:'need'},app.engine);
+    app.state=added.state;app.renderState();
+    let item=app.state.items.at(-1);
+    app.nav.querySelector('a[href="#lists"]').click();
+    let select=[...app.querySelectorAll('.item-area-select')].find(node=>node.dataset.itemId===item.itemId);
+    const hasNoArea=select?.options[0]?.textContent==='No area';
+    select.focus();select.value=area.areaId;select.dispatchEvent(new Event('change',{bubbles:true}));await idle();
+    item=app.state.items.find(row=>row.itemId===item.itemId);
+    const assigned=item.areaId===area.areaId;
+    const assignmentFocus=document.activeElement?.classList.contains('item-area-select');
+    return {areaId:area.areaId,createdFocused,hasNoArea,assigned,assignmentFocus,status:app.status.textContent,alert:app.alert.textContent,selected:select.value,itemId:item.itemId};
+  })()`);
+  assert.equal(areasResult.createdFocused, true, "Area create returns focus to capture");
+  assert.equal(areasResult.hasNoArea, true, "No area remains the default assignment");
+  assert.equal(areasResult.assigned, true, `item assignment saves to canonical state: ${JSON.stringify(areasResult)}`);
+  assert.equal(areasResult.assignmentFocus, true, "item assignment restores selector focus");
+  await visit(first, "more");
+  const areaLifecycle = await first.evaluate(`(async()=>{
+    const app=document.querySelector('kin-app');
+    const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh);i++)await new Promise(r=>setTimeout(r,10));};
+    const old=app.state.areas.at(-1);
+    app.areas.querySelector('[aria-label="Rename Kitchen"]').click();
+    const edit=app.areas.querySelector('.area-edit-form');edit.querySelector('input').value='Food prep';edit.requestSubmit();await idle();
+    const renamed=app.state.areas.find(area=>area.areaId===old.areaId)?.name==='Food prep';
+    app.areas.querySelector('[aria-label="Archive Food prep"]').click();
+    const confirm=app.areas.querySelector('button');
+    const dialog=app.areas.querySelector('[role="group"]');
+    app.areas.querySelector('[role="group"] button').click();await idle();
+    const archived=app.state.areas.find(area=>area.areaId===old.areaId)?.archived===true;
+    const retained=app.state.items.some(item=>item.areaId===old.areaId);
+    return {renamed,confirmCopy:dialog.textContent.includes('existing links'),archived,retained,headingFocus:document.activeElement===app.areas.querySelector('h2')};
+  })()`);
+  assert.deepEqual(areaLifecycle,{renamed:true,confirmCopy:true,archived:true,retained:true,headingFocus:true});
+  console.log("PASS Area create, rename, archive, optional item assignment, and focus restoration");
+
   const eventLimitResult = await first.evaluate(`(async()=>{
     const app=document.querySelector('kin-app');
     const context=await app.store.ensureContext();

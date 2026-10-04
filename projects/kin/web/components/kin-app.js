@@ -1,5 +1,6 @@
 import { projectionContext } from "../browser-time.js";
 import "./kin-routines.js";
+import "./kin-areas.js";
 import { loadKinEngine } from "../wasm/kin-engine.js";
 import { EventStore } from "../storage/event-store.js";
 import { SyncCoordinator } from "../sync/sync-coordinator.js";
@@ -76,6 +77,8 @@ class KinApp extends HTMLElement {
       this.saveTalk({ type: "archive-talk", talkId: event.detail.talkId });
     this.onRoutineIntent = (event) =>
       this.saveRoutine({ ...event.detail, type: event.type.slice(4) });
+    this.onAreaIntent = (event) => this.saveArea(event.detail);
+    this.onItemAreaChange = (event) => this.saveArea({ ...event.detail, action: "assign-item-area" });
     this.pulseTimer = null;
     this.catchUpCursor = null;
     this.snapshotBoundary = null;
@@ -170,6 +173,8 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:complete-item", this.onCompleteItem);
     this.addEventListener("kin:reopen-item", this.onReopenItem);
     this.addEventListener("kin:archive-item", this.onArchiveItem);
+    this.addEventListener("kin:change-item-area", this.onItemAreaChange);
+    this.addEventListener("kin:area-intent", this.onAreaIntent);
     this.addEventListener("kin:add-handoff", this.onAddHandoff);
     this.addEventListener("kin:acknowledge-handoff", this.onAcknowledgeHandoff);
     this.addEventListener("kin:archive-handoff", this.onArchiveHandoff);
@@ -280,6 +285,7 @@ class KinApp extends HTMLElement {
     this.talks = document.createElement("kin-talk-list");
     this.pulse = document.createElement("kin-pulse");
     this.routines = document.createElement("kin-routines");
+    this.areas = document.createElement("kin-areas");
     this.buildViews(main);
     shell.append(nav, main);
 
@@ -395,6 +401,7 @@ class KinApp extends HTMLElement {
     securityHeading.textContent = "Privacy & continuity";
     this.moreSecurity.append(securityHeading);
     more.append(this.moreSecurity);
+    more.insertBefore(this.areas, this.moreSecurity);
 
     for (const section of [today, lists, routines, handoff, more]) {
       this.pages.set(section.id, section);
@@ -445,6 +452,8 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:complete-item", this.onCompleteItem);
     this.removeEventListener("kin:reopen-item", this.onReopenItem);
     this.removeEventListener("kin:archive-item", this.onArchiveItem);
+    this.removeEventListener("kin:change-item-area", this.onItemAreaChange);
+    this.removeEventListener("kin:area-intent", this.onAreaIntent);
     this.removeEventListener("kin:add-handoff", this.onAddHandoff);
     this.removeEventListener(
       "kin:acknowledge-handoff",
@@ -915,6 +924,53 @@ class KinApp extends HTMLElement {
     }
   }
 
+  async saveArea(detail) {
+    if (this.busy || !this.store || !this.engine) return;
+    const session = this.captureSession();
+    const action = detail.action;
+    const types = {
+      "create-area": "create-area",
+      "rename-area": "rename-area",
+      "archive-area": "archive-area",
+      "assign-item-area": "change-item-area",
+    };
+    const type = types[action];
+    if (!type) return;
+    this.setBusy(true);
+    this.clearAlert();
+    this.setStatus("Saving…");
+    try {
+      await this.appendCommand({
+        type,
+        name: detail.name,
+        areaId: detail.areaId,
+        itemId: detail.itemId,
+      });
+      this.assertCurrentSession(session);
+      this.renderState();
+      this.broadcastEventChange();
+      this.setStatus(action === "create-area" ? "Area added."
+        : action === "rename-area" ? "Area renamed."
+        : action === "archive-area" ? "Area archived. Existing links are kept."
+        : detail.areaId ? "Area updated." : "Area cleared.");
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      this.showAlert(error.userMessage ?? SAVE_ERROR);
+      this.setStatus("");
+    } finally {
+      if (this.isCurrentSession(session)) {
+        this.setBusy(false);
+        if (action === "archive-area") this.areas.focus();
+        if (action === "assign-item-area") {
+          [...this.querySelectorAll(".item-area-select")]
+            .find((select) => select.dataset.itemId === detail.itemId)
+            ?.focus();
+        }
+        this.flushPeerRefresh();
+      }
+    }
+  }
+
   schedulePulseRefresh() {
     clearTimeout(this.pulseTimer);
     if (
@@ -1279,13 +1335,16 @@ class KinApp extends HTMLElement {
     this.catchUp.summary = this.state.summary;
     this.catchUp.lastLookedAt = this.catchUpCursor?.lastLookedAt;
     this.today.items = this.state.items;
+    this.today.areas = this.state.areas ?? [];
     this.needs.items = this.state.items;
+    this.needs.areas = this.state.areas ?? [];
     this.handoffs.handoffs = this.state.handoffs;
     this.talks.talks = this.state.talks;
     this.pulse.pulse = this.state.pulses.find(
       (pulse) => pulse.actorId === this.store?.actorId,
     );
     this.routines.routines = this.state.routines ?? [];
+    this.areas.areas = this.state.areas ?? [];
     this.schedulePulseRefresh();
   }
 
@@ -1301,6 +1360,7 @@ class KinApp extends HTMLElement {
     this.pulse.disabled = isBusy || !this.store;
     this.catchUp.disabled = isBusy || !this.store;
     this.routines.disabled = isBusy || !this.store;
+    this.areas.disabled = isBusy || !this.store;
     this.household.disabled = isBusy || !this.store;
     for (const tab of this.handoffTabs?.querySelectorAll('[role="tab"]') ?? [])
       tab.disabled = isBusy;

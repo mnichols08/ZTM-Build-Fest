@@ -1,6 +1,18 @@
 # Data Migrations
 
-**Status:** v0.12.3 implementation candidate adds the transactional household-lifecycle service-schema migration alongside the existing recoverable local-encryption migration, root replacement and bounded verification. v0.9.3's additive local schema 1→2 migration remains supported as input; canonical bytes are not rewritten. Earlier version sections are historical.
+**Status:** v0.15.0 implementation candidate. Existing encrypted local migration and server-schema lifecycle migration remain unchanged; v0.15 adds canonical events without an IndexedDB or server-schema migration. Earlier version sections are historical.
+
+## v0.15.0 Areas compatibility
+
+Areas require no IndexedDB or server-schema migration. Pre-Area event streams
+remain valid and replay to an empty Area collection; migration creates no
+General, Default, or Uncategorized Area. Event DB schema 3 continues to hold
+the same opaque encrypted event rows. The canonical event catalogue extends
+additively with schema-1 kinds 18–21 and replay protocol 9. Existing event
+bytes are retained exactly. Updated imports replay both old and Area-bearing
+histories before publishing. An older client that does not understand protocol
+9 fails closed on an Area-bearing history; it must not skip or rewrite those
+events. See [v0.15.0](releases/V0.15.0.md).
 
 ## v0.11 server database migration
 

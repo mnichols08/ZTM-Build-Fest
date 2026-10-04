@@ -127,11 +127,26 @@ fn codec_preserves_legacy_schema_one_and_rejects_lossy_schema() {
     let bytes = encode_event(&event).unwrap();
     assert_eq!(&bytes[..4], &[1, 0, 1, 0]);
     assert_eq!(bytes.len(), 108 + "Milk 🥛".len());
-    for protocol in 1..=8 {
+    for protocol in 1..=9 {
         let decoded = decode_event(&bytes, protocol).unwrap();
         assert_eq!(encode_event(&decoded).unwrap(), bytes);
     }
-    assert!(decode_event(&bytes, 9).is_err());
+    let area = create_event(
+        &C::CreateArea {
+            id: crate::event::AreaId([7; 16]),
+            name: "Kitchen".into(),
+        },
+        context(2),
+    )
+    .unwrap();
+    assert_eq!(
+        decode_event(&area.canonical_bytes, 9).unwrap().kind,
+        EventKind::AreaCreated {
+            area_id: crate::event::AreaId([7; 16]),
+            name: "Kitchen".into(),
+        }
+    );
+    assert!(decode_event(&area.canonical_bytes, 8).is_err());
 }
 
 #[test]

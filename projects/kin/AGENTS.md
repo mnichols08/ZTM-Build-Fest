@@ -104,14 +104,15 @@ The preceding implementation candidate is v0.13.x Recovery & Household Continuit
 v0.13.5 preserves a newer deletion cancellation over an older pending-deletion backup; v0.13.4 corrects capacity and predating-backup review findings after the v0.13.3 recovery UX/documentation gate, v0.13.2 stale-backup hardening, v0.13.1 member-assisted recovery, and the v0.13.0 capability matrix
 and bounded same-member replacement-device enrollment. Recovery must restore continuity
 without reviving revoked authority; no server content-key escrow is permitted.
-The user explicitly authorized the complete v0.14.x UX/UI Consolidation line.
-The current milestone is v0.14.5, polish, prototype alignment, and design
-feedback gate. Preserve the
-v0.13.5 recovery authority guarantees and all earlier security/domain contracts.
-Do not begin v0.15.x until v0.14.5 is complete and the user has had an
-opportunity to critique the design.
+The v0.14.x UX/UI Consolidation line is complete through `kin-v0.14.5` on
+`kin-development`. The user explicitly authorized the full v0.15.0–v0.15.3
+Household Areas release line. Work one milestone at a time and complete its
+tests, docs, commit, annotated tag, individual tag push, and local/remote
+verification before continuing. Current milestone: v0.15.0. Do not begin
+v0.16.x. Preserve the v0.13.5 recovery authority guarantees and all earlier
+security/domain contracts.
 
-Kin's last published release is `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. The v0.11.x durable-service, v0.12.x lifecycle, and v0.13.x recovery lines are implementation candidates with annotated release tags and PR review evidence; they are not represented as production certification. Preserve every published tag exactly. Do not begin v0.15.x or merge branches without explicit authorization. Root replacement follows [ROOT-ROTATION](docs/ROOT-ROTATION.md); archive recovery remains intentionally local-only and KARC v1 remains supported. The [forward roadmap](docs/ROADMAP.md) targets one minor line per day through v0.40, with v0.41–v0.45 as undated follow-ups and v1.0 dependent on readiness. No production certification, mobile readiness or independent audit is claimed. No automatic kin-main or kin-development merge. See [V0.10.0](docs/V0.10.0.md), [V0.11.0](docs/V0.11.0.md), [V0.12.0](docs/V0.12.0.md), and [V0.13.0](docs/V0.13.0.md) for actual evidence and limitations.
+Kin's last published release is `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. The v0.11.x–v0.15.x lines are tagged or in-progress implementation candidates, not production certification. Preserve every existing tag exactly. Root replacement follows [ROOT-ROTATION](docs/ROOT-ROTATION.md); archive recovery remains intentionally local-only and KARC v1 remains supported. The [forward roadmap](docs/ROADMAP.md) targets one minor line per day through v0.40, with v0.41–v0.45 as undated follow-ups and v1.0 dependent on readiness. No production certification, mobile readiness or independent audit is claimed. Do not automatically merge to kin-main. See the release records for actual evidence and limitations.
 
 The pre-implementation releases are:
 
@@ -1133,6 +1134,10 @@ kin-v0.14.2
 kin-v0.14.3
 kin-v0.14.4
 kin-v0.14.5
+kin-v0.15.0
+kin-v0.15.1
+kin-v0.15.2
+kin-v0.15.3
 kin-v1.0.0
 ```
 

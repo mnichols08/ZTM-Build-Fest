@@ -17,7 +17,8 @@ pub const PROTOCOL_V5: u16 = 5;
 pub const PROTOCOL_V6: u16 = 6;
 pub const PROTOCOL_V7: u16 = 7;
 pub const PROTOCOL_V8: u16 = 8;
-pub const PROTOCOL_VERSION: u16 = PROTOCOL_V8;
+pub const PROTOCOL_V9: u16 = 9;
+pub const PROTOCOL_VERSION: u16 = PROTOCOL_V9;
 pub const ERROR_PROTOCOL_VERSION: u16 = PROTOCOL_V1;
 pub const MAX_EVENT_COUNT: usize = 10_000;
 pub const MAX_PROTOCOL_BYTES: usize = 64 * 1024 * 1024;
@@ -68,6 +69,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
             | PROTOCOL_V6
             | PROTOCOL_V7
             | PROTOCOL_V8
+            | PROTOCOL_V9
     ) {
         return Err(KinError::UnsupportedVersion);
     }
@@ -111,8 +113,13 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
     } else {
         None
     };
-    let (target_household_id, identity_bindings) = if version == PROTOCOL_V8 {
-        let target = HouseholdId(read_id(bytes, 44)?);
+    let (target_household_id, identity_bindings) = if version >= PROTOCOL_V8 {
+        let target_bytes = read_id(bytes, 44)?;
+        let target = if version == PROTOCOL_V9 && target_bytes == [0; 16] {
+            None
+        } else {
+            Some(HouseholdId(target_bytes))
+        };
         let binding_count = read_u16(bytes, 60)? as usize;
         if binding_count > MAX_IDENTITY_BINDINGS || read_u16(bytes, 62)? != 0 {
             return Err(if binding_count > MAX_IDENTITY_BINDINGS {
@@ -144,13 +151,13 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
                 binding.legacy_actor_id,
                 binding.legacy_device_id,
             );
-            if binding.household_id != target || !seen.insert(key) {
+            if Some(binding.household_id) != target || !seen.insert(key) {
                 return Err(KinError::InvalidEvent);
             }
             bindings.push(binding);
             offset += V8_BINDING_BYTES;
         }
-        (Some(target), bindings)
+        (target, bindings)
     } else {
         (None, Vec::new())
     };
@@ -159,7 +166,9 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
         .try_reserve_exact(event_count)
         .map_err(|_| KinError::SizeLimit)?;
     let mut offset = match version {
-        PROTOCOL_V8 => V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES,
+        PROTOCOL_V8 | PROTOCOL_V9 => {
+            V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES
+        }
         PROTOCOL_V7 => 44,
         PROTOCOL_V6 => V6_REQUEST_HEADER_BYTES,
         PROTOCOL_V5 => 20,
@@ -212,7 +221,10 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
 }
 
 pub fn encode_state(state: &HouseholdState, protocol_version: u16) -> Result<Vec<u8>, KinError> {
-    if !state.routines.is_empty() {
+    if !state.routines.is_empty()
+        || !state.areas.is_empty()
+        || state.items.iter().any(|item| item.area_id.is_some())
+    {
         return Err(KinError::UnsupportedVersion);
     }
     encode_legacy_entities(state, protocol_version)
@@ -407,6 +419,13 @@ pub fn encode_state_v8(
     encode_state_with_summary(state, summary, PROTOCOL_V8)
 }
 
+pub fn encode_state_v9(
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<Vec<u8>, KinError> {
+    encode_state_with_summary(state, summary, PROTOCOL_V9)
+}
+
 fn encode_state_with_summary(
     state: &HouseholdState,
     summary: &CatchUpSummary,
@@ -504,6 +523,20 @@ fn encode_state_with_summary(
     }
 
     let entity_bytes = previous.len().checked_sub(24).ok_or(KinError::Internal)?;
+    let mut area_bytes = Vec::new();
+    if version >= PROTOCOL_V9 {
+        if state.areas.len() > crate::state::MAX_AREAS {
+            return Err(KinError::SizeLimit);
+        }
+        for area in &state.areas {
+            let name = crate::state::normalize_area_name(&area.name)?;
+            area_bytes.extend_from_slice(&area.area_id.0);
+            area_bytes.push(u8::from(area.archived));
+            area_bytes.extend_from_slice(&[0; 3]);
+            push_u32(&mut area_bytes, name.len() as u32);
+            area_bytes.extend_from_slice(name.as_bytes());
+        }
+    }
     let result_length = V6_RESULT_HEADER_BYTES
         .checked_add(entity_bytes)
         .and_then(|length| {
@@ -514,6 +547,13 @@ fn encode_state_with_summary(
             })
         })
         .and_then(|length| length.checked_add(summary_bytes))
+        .and_then(|length| {
+            length.checked_add(if version >= PROTOCOL_V9 {
+                4 + 16 * state.items.len() + area_bytes.len()
+            } else {
+                0
+            })
+        })
         .ok_or(KinError::SizeLimit)?;
     if result_length > MAX_PROTOCOL_BYTES {
         return Err(KinError::SizeLimit);
@@ -544,8 +584,19 @@ fn encode_state_with_summary(
     if version >= PROTOCOL_V7 {
         push_u32(&mut result, state.routines.len() as u32);
     }
+    if version >= PROTOCOL_V9 {
+        push_u32(&mut result, state.areas.len() as u32);
+    }
     result.extend_from_slice(&previous[24..]);
+    if version >= PROTOCOL_V9 {
+        for item in &state.items {
+            result.extend_from_slice(&item.area_id.map_or([0; 16], |id| id.0));
+        }
+    }
     result.extend_from_slice(&routine_bytes);
+    if version >= PROTOCOL_V9 {
+        result.extend_from_slice(&area_bytes);
+    }
 
     for entry in &summary.entries {
         result.extend_from_slice(&entry.event_id.0);
@@ -564,7 +615,7 @@ fn encode_state_with_summary(
 }
 
 pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelope, KinError> {
-    if !(PROTOCOL_V1..=PROTOCOL_V8).contains(&protocol_version) {
+    if !(PROTOCOL_V1..=PROTOCOL_V9).contains(&protocol_version) {
         return Err(KinError::UnsupportedVersion);
     }
     if record.len() > MAX_PROTOCOL_BYTES {
@@ -608,6 +659,49 @@ pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelop
                     .to_owned(),
             }
         }
+        (1, 18..=21) if protocol_version >= PROTOCOL_V9 => match event_kind {
+            18 | 19 => {
+                if payload.len() < 20 {
+                    return Err(KinError::MalformedProtocol);
+                }
+                let length = read_u32(payload, 16)? as usize;
+                if !(1..=96).contains(&length) || payload.len() != 20 + length {
+                    return Err(KinError::MalformedProtocol);
+                }
+                let name = std::str::from_utf8(&payload[20..])
+                    .map_err(|_| KinError::MalformedProtocol)?
+                    .to_owned();
+                if event_kind == 18 {
+                    EventKind::AreaCreated {
+                        area_id: crate::event::AreaId(read_id(payload, 0)?),
+                        name,
+                    }
+                } else {
+                    EventKind::AreaRenamed {
+                        area_id: crate::event::AreaId(read_id(payload, 0)?),
+                        name,
+                    }
+                }
+            }
+            20 => {
+                if payload.len() != 16 {
+                    return Err(KinError::MalformedProtocol);
+                }
+                EventKind::AreaArchived {
+                    area_id: crate::event::AreaId(read_id(payload, 0)?),
+                }
+            }
+            _ => {
+                if payload.len() != 32 {
+                    return Err(KinError::MalformedProtocol);
+                }
+                let id = read_id(payload, 16)?;
+                EventKind::ItemAreaChanged {
+                    item_id: ItemId(read_id(payload, 0)?),
+                    area_id: (id != [0; 16]).then_some(crate::event::AreaId(id)),
+                }
+            }
+        },
         (1, 15..=17) if protocol_version >= PROTOCOL_V7 => {
             if payload.len() != if event_kind == 17 { 16 } else { 20 }
                 || !valid_timestamp(read_i64(record, 68)?)

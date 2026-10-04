@@ -12,7 +12,7 @@ body:
     attributes:
       label: Kin version or commit
       description: Identify the exact release/tag or commit tested.
-      placeholder: kin-v0.14.5
+        placeholder: kin-v0.15.0
     validations:
       required: true
   - type: input

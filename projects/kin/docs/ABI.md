@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** v0.11.7 implementation candidate; awaiting human review. v0.10 added portable commands, metadata and archive operations. Canonical event schemas and replay protocols v1-v8 remain byte-compatible. Earlier version sections are historical contracts.
+**Status:** v0.15.0 implementation candidate. v0.10 added portable commands, metadata and archive operations. Protocol 9 adds Areas without changing earlier event bytes or protocol layouts. Earlier version sections are historical contracts.
 
 ## Target and exports
 
@@ -312,6 +312,28 @@ owns authentication and encrypted-body interpretation; successful framing parse
 alone is not an integrity/authenticity claim. The archive adapter must authenticate
 or compare all consequential public metadata before import.
 
+## Protocol version 9 — Areas
+
+Protocol 9 is additive; v1–v8 bytes and event meanings remain unchanged. Local
+and synchronized browser calls use a 64-byte KINE header, followed by the
+existing 96-byte identity bindings for synchronized requests. A zero target
+household ID means local replay without a v8-style verified target; synchronized
+requests provide the stable target and validated bindings. Request event rows
+remain exact canonical bytes. Area kinds 18–21 are event schema 1 and are
+rejected by protocols 1–8.
+
+The v9 KINS header is 60 bytes: the v8 56-byte header followed by
+`area_count:u32` (maximum 32). After the existing Item/Handoff/Talk/Pulse entity
+records, the result carries one optional Area ID (16 bytes; all-zero means none)
+per Item, the unchanged Routine records, then each Area as ID[16],
+archived:u8, reserved[3]=0, name-length:u32, UTF-8 name. Existing summary
+records follow. Area names are bounded to 96 UTF-8 bytes and 48 Unicode scalar
+values. Rust validates references and flags before the browser projects state.
+
+KCMD v1 adds intent numbers 18–21: create Area, rename Area, archive Area, and
+change Item Area. The last intent's 16-byte payload is the optional Area ID;
+all-zero clears the assignment. Existing intents and KERR remain unchanged.
+
 After authenticating/decrypting the archive, `kin_plan_import` validates the
 entire event history using the existing KINE contract. Duplicate event IDs
 (including exact duplicates), conflicting identities, invalid state, unsupported
@@ -322,6 +344,6 @@ no writes. The browser requires explicit restore approval and applies the
 verified replacement atomically; a plan does not authorize restoring device trust.
 
 Validation: native command/codec/archive tests, all historical protocol fixtures,
-and `web/wasm/portable-core.test.mjs` exercise all 17 command variants, full
+and `web/wasm/portable-core.test.mjs` exercise command variants, full
 canonical metadata decoding, stale Routine rejection, archive/import corruption,
 and disposed-engine capability rejection through the real release WASM.
