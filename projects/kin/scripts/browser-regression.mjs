@@ -1806,16 +1806,27 @@ try {
     const emptyRejected=intents.length===beforeEmpty&&createError.textContent==='Enter an Area name.';
     const beforeControl=intents.length;createInput.value='Bad\\u0001Name';submit(create);
     const controlRejected=intents.length===beforeControl&&createError.textContent==="Area names can't contain control characters.";
-    const row=document.createElement('li'),area=host.records[0];host.editName(row,area);
+    const row=host.querySelector('.area-row'),area=host.records[0];host.editName(row,area);
     const rename=row.querySelector('form'),renameInput=rename.querySelector('input'),renameError=rename.querySelector('.area-name-error');
+    const ids=[...host.querySelectorAll('[id]')].map(node=>node.id);
+    const uniqueIds=new Set(ids).size===ids.length;
+    const describedTargets=[createInput,renameInput].map(input=>({input:input.id,ids:input.getAttribute('aria-describedby').split(' ')}));
+    const allDescriptionsResolve=describedTargets.every(input=>input.ids.every(id=>ids.includes(id)));
+    const renameLabel=rename.querySelector('label[for="'+renameInput.id+'"]');
+    const labeledRename=!!renameInput.id&&!!renameLabel&&renameLabel.textContent==='Rename '+area.name;
     renameInput.value='R'.repeat(49);const beforeRename=intents.length;submit(rename);
     const renameRejected=intents.length===beforeRename&&renameError.textContent==='Area names can be up to 48 characters.';
+    const renameDescribed=renameInput.getAttribute('aria-describedby').split(' ');
+    const ownRenameError=renameDescribed.includes(renameError.id)&&renameDescribed.every(id=>id!==create.querySelector('.area-name-error').id);
+    createInput.value='  ';submit(create);
+    const createDescribed=createInput.getAttribute('aria-describedby').split(' ');
+    const ownCreateError=createDescribed.includes(create.querySelector('.area-name-error').id)&&createDescribed.every(id=>id!==renameError.id);
     renameInput.value='  Pantry  ';submit(rename);
     const renameTrimmed=intents.at(-1)?.action==='rename-area'&&intents.at(-1)?.name==='Pantry';
     host.remove();
-    return {ascii48,ascii49Rejected,multibyte48,bytesRejected,trimmed,emptyRejected,controlRejected,renameRejected,renameTrimmed};
+    return {ascii48,ascii49Rejected,multibyte48,bytesRejected,trimmed,emptyRejected,controlRejected,uniqueIds,allDescriptionsResolve,labeledRename,ownRenameError,ownCreateError,renameRejected,renameTrimmed};
   })()`);
-  assert.deepEqual(areaNameValidation,{ascii48:true,ascii49Rejected:true,multibyte48:true,bytesRejected:true,trimmed:true,emptyRejected:true,controlRejected:true,renameRejected:true,renameTrimmed:true});
+  assert.deepEqual(areaNameValidation,{ascii48:true,ascii49Rejected:true,multibyte48:true,bytesRejected:true,trimmed:true,emptyRejected:true,controlRejected:true,uniqueIds:true,allDescriptionsResolve:true,labeledRename:true,ownRenameError:true,ownCreateError:true,renameRejected:true,renameTrimmed:true});
   await visit(first, "more");
   const areaEnter = async () => {
     await first.send("Input.dispatchKeyEvent", {

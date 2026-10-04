@@ -2,7 +2,17 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
-## Unreleased — v0.15.4 Area input validation and release documentation cleanup
+## Unreleased — v0.15.5 Area form accessibility and release-state reconciliation
+
+- Verified `kin-v0.15.4` is already an ancestor of `kin-development`, both point
+  to the same release commit, and the version metadata/content are aligned; no
+  history or tag repair was needed.
+- Give the Area create and rename inputs distinct IDs, labels, help text, and
+  validation errors, with each field describing only its own help and error.
+- Add browser regressions for duplicate IDs, the rename label, isolated create
+  and rename errors, and preserve shared Unicode/UTF-8 validation coverage.
+
+## v0.15.4 Area input validation and release documentation cleanup
 
 - Align create and rename input checks with Rust Area-name rules for trimming,
   control characters, Unicode scalar count, and UTF-8 size; show specific
