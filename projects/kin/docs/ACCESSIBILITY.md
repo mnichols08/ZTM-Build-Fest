@@ -22,7 +22,22 @@ are visible, controls retain 48-pixel targets, and flex actions wrap on narrow
 screens. Expired recovery returns to the code-entry flow without silently
 continuing.
 
-**Status:** Updated through v0.14.1; earlier version sections are historical contracts.
+## v0.14.2 state and responsive checks
+
+Offline feedback uses the browser's offline/online events, is text based, and
+uses a polite status announcement. It distinguishes local saved changes from
+household sync. The UI reports a device as untrusted only after the sync
+service returns that authorization state; successful sync clears the notice.
+Storage-limit, local-store, security, deletion, and recovery messages continue
+to come from their existing error and lifecycle sources.
+
+The Chrome browser gate exercises keyboard operation, visible focus, dynamic
+focus restoration, screen-reader roles/live regions, 320 CSS px, 200% page-scale
+emulation, 48px controls, reduced motion, forced colors, dark mode, and increased
+text spacing. Page-scale emulation is not native desktop zoom. No screen-reader
+certification is claimed.
+
+**Status:** Updated through v0.14.2; earlier version sections are historical contracts.
 
 ## Baseline requirements
 

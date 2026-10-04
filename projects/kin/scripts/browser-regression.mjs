@@ -967,6 +967,23 @@ try {
       ),
     );
   }
+  const stateRegression = await first.evaluate(`(()=>{
+    const app=document.querySelector('kin-app');
+    window.dispatchEvent(new Event('offline'));
+    const offline=!app.stateNotice.hidden && app.stateNotice.textContent.startsWith('Offline —') &&
+      app.stateNotice.getAttribute('role')==='status';
+    app.handleSyncState({state:'paused',code:'device_not_trusted',message:'device_not_trusted'});
+    const revoked=app.stateNotice.textContent.startsWith('This device is no longer trusted') &&
+      !app.stateNotice.textContent.includes('device_not_trusted');
+    const status=app.status.textContent;
+    app.handleSyncState({state:'ready',message:'Device sync is up to date.'});
+    const cleared=app.stateNotice.hidden;
+    app.setStatus(status);
+    const store=app.store; app.store=null; app.onOnline(); app.store=store;
+    return {offline,revoked,cleared,notice:app.stateNotice.textContent,hidden:app.stateNotice.hidden,unlocked:!!app.vault&&!app.vault.locked};
+  })()`);
+  assert.equal(stateRegression.offline && stateRegression.revoked && stateRegression.cleared, true,
+    `offline and revoked-device states use announced, truthful, human-readable copy (${JSON.stringify(stateRegression)})`);
   console.log(await first.evaluate(`(${regressions.toString()})()`));
   await first.evaluate(`document.querySelector('kin-app').nav.querySelector('a[href="#routines"]').focus()`);
   await first.send("Input.dispatchKeyEvent", {

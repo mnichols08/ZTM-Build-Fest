@@ -73,6 +73,12 @@ export class SyncCoordinator {
       .catch(async (error) => {
         if (this.stopped) return;
         let message = error.message || "Device sync is paused.";
+        let code = error.code;
+        if (code === "connection_unavailable") {
+          message = navigator.onLine === false
+            ? "Offline — saved changes stay on this device. Kin will try to sync when a connection is available."
+            : "Kin cannot reach household sync right now. Saved information remains on this device.";
+        }
         let lifecycle = null;
         if (
           ["household_deleted", "household_deletion_pending"].includes(
@@ -118,6 +124,7 @@ export class SyncCoordinator {
         }
         this.onState({
           state: "paused",
+          code,
           message,
         });
       })
@@ -811,10 +818,17 @@ function sameLegacyTuple(binding, identity) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers ?? {}) },
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers: { "Content-Type": "application/json", ...(options.headers ?? {}) },
+    });
+  } catch (cause) {
+    const error = new Error("Household sync could not be reached.", { cause });
+    error.code = "connection_unavailable";
+    throw error;
+  }
   const value = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(

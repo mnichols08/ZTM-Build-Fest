@@ -17,15 +17,25 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Deferred shopping, household areas/modes, notes, maintenance, and other
   prototype-only capabilities.
 
-## Unreleased — v0.14.1 UX/UI Consolidation candidate
-
-### v0.14.1 — Information Architecture and Existing Flow Consolidation
+## v0.14.1 — Information Architecture and Existing Flow Consolidation
 
 - Brought Handoffs and Talk together under Handoff with distinct, keyboard
   operable tabs. Handoffs retain explicit acknowledge/archive actions; Talk
   remains lightweight and has no read receipts or presence.
 - Grouped existing household access and privacy/continuity operations in More;
   no route, domain operation, or security authority was removed.
+
+## Unreleased — v0.14.2 UX/UI Consolidation candidate
+
+### v0.14.2 — State Design, Accessibility, Responsive Behavior
+
+- Added a persistent, live-announced offline notice grounded in the browser's
+  connectivity event; it reports local saved state and does not claim remote
+  sync succeeded.
+- Translate server-confirmed untrusted-device and removed-membership sync
+  states into plain language while preserving the local copy explanation.
+- Keep connection errors and local storage errors separate from successful
+  saved state; leave recovery, deletion, and domain authority unchanged.
 
 ### v0.13.5 — Cancelled-Deletion Restore Authority Correctness
 

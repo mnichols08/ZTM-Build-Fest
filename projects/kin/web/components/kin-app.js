@@ -46,6 +46,18 @@ class KinApp extends HTMLElement {
     this.suspendedRetry = null;
     this.retryRefresh = () => this.refreshFromEvents();
     this.onAddItem = (event) => this.handleAddItem(event);
+    this.onOffline = () => {
+      this.stateNotice.textContent =
+        "Offline — saved changes stay on this device. Household sync needs a connection.";
+      this.stateNotice.hidden = false;
+    };
+    this.onOnline = () => {
+      this.stateNotice.hidden = true;
+      if (!this.vault || this.vault.locked || !this.store) return;
+      this.setStatus("Connection available.");
+      if (this.syncCoordinator) void this.syncCoordinator.syncNow();
+      else void this.configureSyncCoordinator();
+    };
     this.onCompleteItem = (event) => this.handleCompleteItem(event);
     this.onReopenItem = (event) => this.handleReopenItem(event);
     this.onArchiveItem = (event) => this.handleArchiveItem(event);
@@ -174,6 +186,8 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:lock", this.onLockRequest);
     window.addEventListener("hashchange", this.onHashChange);
     window.addEventListener("popstate", this.onHashChange);
+    window.addEventListener("offline", this.onOffline);
+    window.addEventListener("online", this.onOnline);
     window.addEventListener("pagehide", this.onPageHide);
     for (const action of [
       "create-routine",
@@ -279,12 +293,17 @@ class KinApp extends HTMLElement {
     this.alert.className = "error-message";
     this.alert.setAttribute("role", "alert");
     this.alert.hidden = true;
+    this.stateNotice = document.createElement("p");
+    this.stateNotice.className = "state-notice";
+    this.stateNotice.setAttribute("role", "status");
+    this.stateNotice.setAttribute("aria-live", "polite");
+    this.stateNotice.hidden = true;
     this.retryButton = document.createElement("button");
     this.retryButton.type = "button";
     this.retryButton.className = "retry-button";
     this.retryButton.textContent = "Try again";
     this.retryButton.hidden = true;
-    feedback.append(this.status, this.alert, this.retryButton);
+    feedback.append(this.stateNotice, this.status, this.alert, this.retryButton);
 
     this.security = document.createElement("kin-security");
     this.security.onUnlocked = (vault) => this.openUnlockedHousehold(vault);
@@ -409,6 +428,8 @@ class KinApp extends HTMLElement {
     window.removeEventListener("pagehide", this.onPageHide);
     window.removeEventListener("hashchange", this.onHashChange);
     window.removeEventListener("popstate", this.onHashChange);
+    window.removeEventListener("offline", this.onOffline);
+    window.removeEventListener("online", this.onOnline);
     this.removeEventListener("kin:add-item", this.onAddItem);
     this.removeEventListener("kin:complete-item", this.onCompleteItem);
     this.removeEventListener("kin:reopen-item", this.onReopenItem);
@@ -534,6 +555,7 @@ class KinApp extends HTMLElement {
       this.moreSecurity.append(this.security);
       this.showPageFromLocation();
       this.setStatus("Ready.");
+      if (navigator.onLine === false) this.onOffline();
       this.retryButton.hidden = true;
       void this.configureSyncCoordinator();
     } catch (error) {
@@ -632,6 +654,7 @@ class KinApp extends HTMLElement {
       ) {
         this.handleSyncState({
           state: "paused",
+          code: error.code,
           message: error.message || "Device sync is paused.",
         });
       }
@@ -646,6 +669,19 @@ class KinApp extends HTMLElement {
 
   handleSyncState(value) {
     if (!this.vault || this.vault.locked) return;
+    if (value.state === "paused") {
+      const attention = value.code === "device_not_trusted"
+        ? "This device is no longer trusted for household sync. Its saved information remains on this device."
+        : value.code === "membership_removed"
+          ? "This device no longer has access to household sync. Its saved information remains on this device."
+          : value.message;
+      if (attention) {
+        this.stateNotice.textContent = attention;
+        this.stateNotice.hidden = false;
+      }
+    } else if (["ready", "disabled"].includes(value.state)) {
+      this.stateNotice.hidden = true;
+    }
     if (value.projection) {
       if (this.busy) {
         this.pendingRefresh = true;
@@ -656,7 +692,8 @@ class KinApp extends HTMLElement {
         if (value.snapshotBoundary) this.broadcastEventChange();
       }
     }
-    if (value.message) this.setStatus(value.message);
+    if (value.message && value.state !== "paused")
+      this.setStatus(value.message);
   }
 
   async handleAddItem(event) {

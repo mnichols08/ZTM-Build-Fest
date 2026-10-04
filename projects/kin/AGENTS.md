@@ -105,8 +105,8 @@ v0.13.5 preserves a newer deletion cancellation over an older pending-deletion b
 and bounded same-member replacement-device enrollment. Recovery must restore continuity
 without reviving revoked authority; no server content-key escrow is permitted.
 The user explicitly authorized the complete v0.14.x UX/UI Consolidation line.
-The current milestone is v0.14.1, information architecture and existing flow
-consolidation. Preserve the
+The current milestone is v0.14.2, state design, accessibility, and responsive
+behavior. Preserve the
 v0.13.5 recovery authority guarantees and all earlier security/domain contracts.
 Do not begin v0.15.x until v0.14.3 is complete and the user has had an
 opportunity to critique the design.
@@ -1129,6 +1129,7 @@ kin-v0.12.0
 kin-v0.13.0
 kin-v0.14.0
 kin-v0.14.1
+kin-v0.14.2
 kin-v1.0.0
 ```
 
