@@ -1,6 +1,6 @@
 # Household Events
 
-**Status:** Current through v0.15.4 implementation candidate. Rust owns canonical command encoding and decoding; existing schemas/kinds and immutable bytes remain unchanged. Protocol v9 extends the catalogue with Areas; local encryption wraps canonical bytes without rewriting them. Earlier version sections remain historical contracts.
+**Status:** Current through v0.15.5 implementation candidate. Rust owns canonical command encoding and decoding; existing schemas/kinds and immutable bytes remain unchanged. Protocol v9 extends the catalogue with Areas; local encryption wraps canonical bytes without rewriting them. Earlier version sections remain historical contracts.
 
 ## Canonical record
 

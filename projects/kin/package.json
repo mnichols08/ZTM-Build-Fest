@@ -1,7 +1,7 @@
 {
   "name": "kin-server",
   "private": true,
-  "version": "0.15.4",
+  "version": "0.15.5",
   "type": "module",
   "engines": {
     "node": ">=22"

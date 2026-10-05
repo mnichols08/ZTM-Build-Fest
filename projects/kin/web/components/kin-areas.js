@@ -48,18 +48,18 @@ class KinAreas extends HTMLElement {
     input.maxLength = 96;
     input.autocomplete = "off";
     input.required = true;
-    input.setAttribute("aria-describedby", "area-name-help area-name-error");
+    input.setAttribute("aria-describedby", "area-create-name-help area-create-name-error");
     const help = document.createElement("small");
-    help.id = "area-name-help";
+    help.id = "area-create-name-help";
     help.textContent = "Up to 48 characters.";
-    const error = this.makeNameError();
+    const error = this.makeNameError("area-create-name-error");
     const add = document.createElement("button");
     add.type = "submit";
     add.textContent = "Add Area";
     form.append(label, input, help, error, add);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      this.submitName(input, error, "create-area", {});
+      this.submitName(input, error, "create-area", {}, help);
     });
     section.append(form);
 
@@ -131,12 +131,23 @@ class KinAreas extends HTMLElement {
     const form = document.createElement("form");
     form.className = "area-edit-form";
     const label = document.createElement("label");
+    const inputId = `area-rename-name-${area.areaId}`;
+    const helpId = `area-rename-name-help-${area.areaId}`;
+    const errorId = `area-rename-name-error-${area.areaId}`;
+    label.htmlFor = inputId;
     label.textContent = `Rename ${area.name}`;
     const input = document.createElement("input");
+    input.id = inputId;
+    input.dataset.focusId = `rename-input-${area.areaId}`;
+    input.name = "name";
     input.value = area.name;
     input.maxLength = 96;
     input.required = true;
-    const error = this.makeNameError();
+    input.setAttribute("aria-describedby", `${helpId} ${errorId}`);
+    const help = document.createElement("small");
+    help.id = helpId;
+    help.textContent = "Up to 48 characters.";
+    const error = this.makeNameError(errorId);
     const save = document.createElement("button");
     save.type = "submit";
     save.textContent = "Save name";
@@ -144,32 +155,32 @@ class KinAreas extends HTMLElement {
     cancel.type = "button";
     cancel.textContent = "Cancel";
     cancel.addEventListener("click", () => this.render(`rename-${area.areaId}`));
-    form.append(label, input, error, save, cancel);
+    form.append(label, input, help, error, save, cancel);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      this.submitName(input, error, "rename-area", { areaId: area.areaId });
+      this.submitName(input, error, "rename-area", { areaId: area.areaId }, help);
     });
     row.replaceChildren(form);
     input.focus();
     input.select();
   }
 
-  makeNameError() {
+  makeNameError(id) {
     const error = document.createElement("small");
-    error.id = "area-name-error";
+    error.id = id;
     error.className = "area-name-error";
     error.setAttribute("role", "alert");
     error.hidden = true;
     return error;
   }
 
-  submitName(input, error, action, detail) {
+  submitName(input, error, action, detail, help) {
     const result = validateAreaName(input.value);
     if (result.error) {
       error.textContent = result.error;
       error.hidden = false;
       input.setAttribute("aria-invalid", "true");
-      input.setAttribute("aria-describedby", `${input.id ? "area-name-help " : ""}${error.id}`);
+      input.setAttribute("aria-describedby", `${help.id} ${error.id}`);
       return;
     }
     input.value = result.value;
