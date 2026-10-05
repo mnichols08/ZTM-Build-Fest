@@ -16,7 +16,13 @@ An optional Area points to the stable existing Area ID. New assignments require
 a known active Area. Existing association remains visible after that Area is
 renamed or archived; replay preserves stale events authored before archival.
 
-**Status:** Current through the v0.16.0 Notes capability; earlier version sections are historical contracts.
+Concurrent equal-logical-time `NOTE_UPDATED` and `NOTE_ARCHIVED` events from
+different devices resolve to the terminal archive. The update is ignored in
+either device ordering, so the projected archived title/body remain the same
+regardless of the replay input order. A later non-concurrent update after
+archive remains invalid.
+
+**Status:** Current through the v0.16.1 Notes correctness gate; earlier version sections are historical contracts.
 
 ## Scope and relationships
 

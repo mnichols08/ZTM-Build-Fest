@@ -1,14 +1,14 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.16.0; v0.15.5 is merged and complete. The last published product release remains v0.10.3; tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.16.1; v0.15.5 is merged and complete. `kin-v0.16.0` is the Notes capability candidate and remains immutable. The last published product release remains v0.10.3; tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.16.0 | Governs |
+| Version axis | Last published v0.10.3 / current candidate v0.16.1 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.16.0` | Notes capability; additive event/replay protocol 10 |
+| Application | Last published `0.10.3`; candidate `0.16.1` | Notes correctness; protocol 10 unchanged |
 | Server database schema | `2` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination and household lifecycle records |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v10; writes v10 for local and synchronized requests | Request context and projection semantics |
@@ -97,6 +97,16 @@ historical request and result bytes and reject Note history rather than omit it.
 Pre-Note histories replay to an empty Notes collection without migration.
 IndexedDB, event schema, KARC framing, and encrypted sync envelope stay
 unchanged.
+
+## v0.16.1 Notes correctness
+
+Protocol 10 and all persistent formats remain unchanged. Distributed replay
+pre-scans Note archive events and ignores a same-logical-time update from a
+different device regardless of deterministic device-ID ordering; the terminal
+archive wins and projection converges. Browser preflight matches Rust's
+Unicode scalar, UTF-8 byte, and control-character limits. The service worker
+cache version advances to invalidate its static shell and includes the Notes
+component.
 
 ## v0.9.x Encrypted Sync
 

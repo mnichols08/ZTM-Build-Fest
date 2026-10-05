@@ -2,7 +2,17 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
-## Unreleased — v0.16.0 Household Notes & Reference Context
+## Unreleased — v0.16.1 Notes correctness
+
+- Make an equal-logical-time cross-device Note update lose to a concurrent
+  terminal archive in either deterministic device ordering.
+- Match browser Note title/body preflight checks to Rust Unicode-scalar,
+  UTF-8-byte, and control-character constraints without UTF-16 maxlength caps.
+- Wait for the requested persisted keyboard state in Handoff/Talk browser
+  regressions instead of mistaking an idle pre-action state for completion.
+- Cache the Notes component in the service worker's versioned static shell.
+
+## v0.16.0 Household Notes & Reference Context
 
 - Add stable Note identities and canonical create, update, and terminal archive
   events with plain-text title/body validation and optional existing Area links.

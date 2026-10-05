@@ -970,6 +970,9 @@ try {
     })()`);
     await until(() => client.evaluate('Boolean(document.querySelector("kin-app")?.store && !document.querySelector("kin-app").busy)'));
   }
+  async function householdState(client, predicate) {
+    await until(() => client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&(${predicate})})()`));
+  }
   const first = await tab();
   async function visit(client, id) {
     const hash = `#${id}`;
@@ -1177,7 +1180,7 @@ try {
       windowsVirtualKeyCode: 13,
       ...(type === "keyDown" ? { text: "\r" } : {}),
     });
-  await ready(first);
+  await householdState(first, `app.state.handoffs.some(row=>row.text==='Newer handoff draft')&&document.querySelector('#handoff-text').value===''`);
   assert.equal(
     await first.evaluate('document.querySelector("#handoff-text").value'),
     "",
@@ -1193,7 +1196,7 @@ try {
       windowsVirtualKeyCode: 13,
       ...(type === "keyDown" ? { text: "\r" } : {}),
     });
-  await ready(first);
+  await householdState(first, `app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status==='acknowledged'`);
   assert.equal(
     await first.evaluate(
       'document.activeElement === document.querySelector("#handoff-text")',
@@ -1220,7 +1223,7 @@ try {
       windowsVirtualKeyCode: 13,
       ...(type === "keyDown" ? { text: "\r" } : {}),
     });
-  await ready(first);
+  await householdState(first, `app.state.talks.some(row=>row.text==='Newer talk draft')&&document.querySelector('#talk-text').value===''`);
   assert.equal(
     await first.evaluate('document.querySelector("#talk-text").value'),
     "",
@@ -1236,7 +1239,7 @@ try {
       windowsVirtualKeyCode: 13,
       ...(type === "keyDown" ? { text: "\r" } : {}),
     });
-  await ready(first);
+  await householdState(first, `app.state.talks.find(row=>row.text==='Newer talk draft')?.status==='resolved'`);
   assert.equal(
     await first.evaluate(
       'document.activeElement === document.querySelector("#talk-text")',
@@ -1267,7 +1270,8 @@ try {
         windowsVirtualKeyCode: 13,
         ...(type === "keyDown" ? { text: "\r" } : {}),
       });
-    await ready(first);
+    const expectedStatus = label === "Reopen" ? "open" : label === "Resolve" ? "resolved" : "archived";
+    await householdState(first, `app.state.talks.find(row=>row.text==='Newer talk draft')?.status===${JSON.stringify(expectedStatus)}`);
     assert.equal(
       await first.evaluate(
         'document.activeElement===document.querySelector("#talk-text")',
@@ -1781,12 +1785,28 @@ try {
   assert.equal(areasResult.hasNoArea, true, "No area remains the default assignment");
   assert.equal(areasResult.assigned, true, `item assignment saves to canonical state: ${JSON.stringify(areasResult)}`);
   assert.equal(areasResult.assignmentFocus, true, "item assignment restores selector focus");
+  const noteValidation = await first.evaluate(`(()=>{
+    const validate=customElements.get('kin-notes').validateText;
+    return {
+      scalarBoundary:validate('A'.repeat(80),'').error===null,
+      scalarOverflow:validate('A'.repeat(81),'').field==='title',
+      unicodeByteBoundary:validate('😀'.repeat(64),'').error===null,
+      unicodeByteOverflow:validate('😀'.repeat(65),'').field==='title',
+      bodyByteBoundary:validate('Title','é'.repeat(2048)).error===null,
+      bodyByteOverflow:validate('Title','é'.repeat(2049)).field==='body',
+      titleControls:validate('Bad\\u0001 title','').field==='title',
+      bodyControls:validate('Title','Bad\\u0000 body').field==='body',
+      bodyWhitespace:validate('Title','line\\nline\\tindented').error===null,
+    };
+  })()`);
+  assert.deepEqual(noteValidation, {scalarBoundary:true,scalarOverflow:true,unicodeByteBoundary:true,unicodeByteOverflow:true,bodyByteBoundary:true,bodyByteOverflow:true,titleControls:true,bodyControls:true,bodyWhitespace:true}, 'browser Note validation matches Rust scalar, byte, and control-character rules');
   const notesResult = await first.evaluate(`(async()=>{
     const app=document.querySelector('kin-app');
     app.nav.querySelector('a[href="#more"]').click();
     const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh);i++)await new Promise(r=>setTimeout(r,10));if(app.busy||app.refreshing)throw Error('Note action did not settle');};
     const form=app.notes.querySelector('form');
     const [title,body]=form.querySelectorAll('input,textarea');const area=app.state.areas.find(row=>row.name==='Kitchen');const areaSelect=form.querySelector('select');areaSelect.value=area.areaId;
+    const beforeInvalid=app.state.notes.length;title.value='A'.repeat(81);body.value='';form.requestSubmit();const invalidNoAppend=app.state.notes.length===beforeInvalid&&title.getAttribute('aria-invalid')==='true'&&!form.querySelector('#note-title-error').hidden;
     title.value='Wi-Fi details';body.value='<img src=x onerror=alert(1)>'+String.fromCharCode(10)+'Router location';form.requestSubmit();await idle();
     let note=app.state.notes.at(-1);const stableId=note.noteId;
     const safeText=app.notes.querySelector('.note-body').textContent===body.value&&!app.notes.querySelector('.note-body img');
@@ -1794,13 +1814,14 @@ try {
     note=app.state.notes.find(row=>row.noteId===stableId);const updated=note.title==='Home Wi-Fi'&&note.body==='Router location';
     app.notes.querySelector('.note-row button:last-child').click();await idle();
     note=app.state.notes.find(row=>row.noteId===stableId);
-    return {created:!!note,stableId,areaLinked:note.areaId===area.areaId,updated,archived:note.archived,safeText,status:app.status.textContent,alert:app.alert.textContent};
+    return {created:!!note,stableId,areaLinked:note.areaId===area.areaId,updated,archived:note.archived,safeText,invalidNoAppend,status:app.status.textContent,alert:app.alert.textContent};
   })()`);
   assert.equal(notesResult.created, true, `Note create persists: ${JSON.stringify(notesResult)}`);
   assert.equal(notesResult.updated, true, "Note edit updates the same stable identity");
   assert.equal(notesResult.areaLinked, true, "Note may use an existing household Area");
   assert.equal(notesResult.archived, true, "Note archive is terminal state");
   assert.equal(notesResult.safeText, true, "Note body displays as plain text without creating markup");
+  assert.equal(notesResult.invalidNoAppend, true, "invalid Note text is explained in the browser and appends no event");
   assert.equal(notesResult.alert, "", "Note lifecycle completes without an app error");
   const areaNameValidation = await first.evaluate(`(()=>{
     const host=document.createElement('kin-areas');

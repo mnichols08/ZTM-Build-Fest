@@ -85,6 +85,50 @@ fn note_validation_and_unknown_or_archived_lifecycle_fail_closed() {
 }
 
 #[test]
+fn concurrent_note_update_and_archive_converge_with_archive_winning_in_both_device_orders() {
+    fn replay(update_device: u8, archive_device: u8) -> state::HouseholdState {
+        let note_id = NoteId(id(8));
+        let mut created = event(
+            1,
+            EventKind::NoteCreated {
+                note_id,
+                title: "Original".into(),
+                body: "Original body".into(),
+                area_id: None,
+            },
+        );
+        created.device_id = DeviceId(id(1));
+        let mut updated = event(
+            2,
+            EventKind::NoteUpdated {
+                note_id,
+                title: "Concurrent edit".into(),
+                body: "Must not replace the archived reference".into(),
+                area_id: None,
+            },
+        );
+        updated.logical_time = 2;
+        updated.device_id = DeviceId(id(update_device));
+        let mut archived = event(3, EventKind::NoteArchived { note_id });
+        archived.logical_time = 2;
+        archived.device_id = DeviceId(id(archive_device));
+        state::rebuild_distributed_on(
+            &[created, updated, archived],
+            0,
+            crate::recurrence::CivilDate::from_encoded(20261005).unwrap(),
+        )
+        .unwrap()
+    }
+
+    let update_first = replay(10, 20);
+    let archive_first = replay(20, 10);
+    assert_eq!(update_first, archive_first);
+    assert_eq!(update_first.notes[0].title, "Original");
+    assert_eq!(update_first.notes[0].body, "Original body");
+    assert_eq!(update_first.notes[0].status, NoteStatus::Archived);
+}
+
+#[test]
 fn note_event_roundtrip_is_additive_to_protocol_ten() {
     let source = event(
         1,

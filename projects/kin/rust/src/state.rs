@@ -270,6 +270,15 @@ fn rebuild_with_context(
     let mut area_positions = BTreeMap::new();
     let mut notes: Vec<NoteState> = Vec::new();
     let mut note_positions = BTreeMap::new();
+    let mut note_archive_events = BTreeMap::<NoteId, BTreeSet<(u64, DeviceId)>>::new();
+    for event in events {
+        if let EventKind::NoteArchived { note_id } = &event.kind {
+            note_archive_events
+                .entry(*note_id)
+                .or_default()
+                .insert((event.logical_time, event.device_id));
+        }
+    }
     let mut event_bytes = BTreeMap::<EventId, Vec<u8>>::new();
     // Completions are retained by occurrence key, then projected onto the requested date below.
     let mut last_logical_time = 0;
@@ -399,14 +408,22 @@ fn rebuild_with_context(
                 {
                     return Err(KinError::InvalidEvent);
                 }
-                if notes[position].status == NoteStatus::Archived {
+                let concurrent_archive = allow_equal_logical_time
+                    && note_archive_events.get(note_id).is_some_and(|archives| {
+                        archives.iter().any(|(logical_time, device_id)| {
+                            *logical_time == event.logical_time && *device_id != event.device_id
+                        })
+                    });
+                if notes[position].status == NoteStatus::Archived && !concurrent_archive {
                     return Err(KinError::InvalidEvent);
                 }
-                notes[position].title = title;
-                notes[position].body = body;
-                notes[position].area_id = *area_id;
-                notes[position].updated_by = event.actor_id;
-                notes[position].updated_at = event.timestamp;
+                if !concurrent_archive {
+                    notes[position].title = title;
+                    notes[position].body = body;
+                    notes[position].area_id = *area_id;
+                    notes[position].updated_by = event.actor_id;
+                    notes[position].updated_at = event.timestamp;
+                }
             }
             EventKind::NoteArchived { note_id } => {
                 if !valid_timestamp(event.timestamp) {
