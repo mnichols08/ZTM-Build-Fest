@@ -1,6 +1,6 @@
 # Household Events
 
-**Status:** Current through v0.15.5 implementation candidate. Rust owns canonical command encoding and decoding; existing schemas/kinds and immutable bytes remain unchanged. Protocol v9 extends the catalogue with Areas; local encryption wraps canonical bytes without rewriting them. Earlier version sections remain historical contracts.
+**Status:** Current through authorized v0.16.0 capability. Rust owns canonical command encoding and decoding; existing schemas/kinds and immutable bytes remain unchanged. Protocol 10 adds `NOTE_CREATED`, `NOTE_UPDATED`, and terminal `NOTE_ARCHIVED` with schema 1; protocols 1–9 retain their wire layouts and reject Note events. Local encryption wraps canonical bytes without rewriting them.
 
 ## Canonical record
 

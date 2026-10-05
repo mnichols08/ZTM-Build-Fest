@@ -1200,12 +1200,8 @@ try {
     ),
     true,
   );
-  assert.equal(
-    await first.evaluate(
-      'document.querySelector("kin-app").state.handoffs.find(row=>row.text==="Newer handoff draft").status',
-    ),
-    "acknowledged",
-  );
+  const keyboardHandoffState = await first.evaluate(`(()=>{const app=document.querySelector('kin-app');return {status:app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status,alert:app.alert.textContent,notice:app.status.textContent,button:!!app.querySelector('[aria-label="Acknowledge Newer handoff draft"]'),focus:document.activeElement?.outerHTML?.slice(0,120)}})()`);
+  assert.equal(keyboardHandoffState.status, "acknowledged", JSON.stringify(keyboardHandoffState));
   console.log(
     "PASS Handoff draft disposal, keyboard capture/acknowledgement, focus restoration",
   );
@@ -1785,6 +1781,27 @@ try {
   assert.equal(areasResult.hasNoArea, true, "No area remains the default assignment");
   assert.equal(areasResult.assigned, true, `item assignment saves to canonical state: ${JSON.stringify(areasResult)}`);
   assert.equal(areasResult.assignmentFocus, true, "item assignment restores selector focus");
+  const notesResult = await first.evaluate(`(async()=>{
+    const app=document.querySelector('kin-app');
+    app.nav.querySelector('a[href="#more"]').click();
+    const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh);i++)await new Promise(r=>setTimeout(r,10));if(app.busy||app.refreshing)throw Error('Note action did not settle');};
+    const form=app.notes.querySelector('form');
+    const [title,body]=form.querySelectorAll('input,textarea');const area=app.state.areas.find(row=>row.name==='Kitchen');const areaSelect=form.querySelector('select');areaSelect.value=area.areaId;
+    title.value='Wi-Fi details';body.value='<img src=x onerror=alert(1)>'+String.fromCharCode(10)+'Router location';form.requestSubmit();await idle();
+    let note=app.state.notes.at(-1);const stableId=note.noteId;
+    const safeText=app.notes.querySelector('.note-body').textContent===body.value&&!app.notes.querySelector('.note-body img');
+    app.notes.querySelector('.note-row button').click();const editForm=app.notes.querySelector('form');const editTitle=editForm.querySelector('input'),editBody=editForm.querySelector('textarea');editTitle.value='Home Wi-Fi';editBody.value='Router location';editForm.requestSubmit();await idle();
+    note=app.state.notes.find(row=>row.noteId===stableId);const updated=note.title==='Home Wi-Fi'&&note.body==='Router location';
+    app.notes.querySelector('.note-row button:last-child').click();await idle();
+    note=app.state.notes.find(row=>row.noteId===stableId);
+    return {created:!!note,stableId,areaLinked:note.areaId===area.areaId,updated,archived:note.archived,safeText,status:app.status.textContent,alert:app.alert.textContent};
+  })()`);
+  assert.equal(notesResult.created, true, `Note create persists: ${JSON.stringify(notesResult)}`);
+  assert.equal(notesResult.updated, true, "Note edit updates the same stable identity");
+  assert.equal(notesResult.areaLinked, true, "Note may use an existing household Area");
+  assert.equal(notesResult.archived, true, "Note archive is terminal state");
+  assert.equal(notesResult.safeText, true, "Note body displays as plain text without creating markup");
+  assert.equal(notesResult.alert, "", "Note lifecycle completes without an app error");
   const areaNameValidation = await first.evaluate(`(()=>{
     const host=document.createElement('kin-areas');
     host.areas=[{areaId:'a'.repeat(32),name:'Kitchen',archived:false}];

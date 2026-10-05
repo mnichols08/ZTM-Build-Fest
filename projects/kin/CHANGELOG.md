@@ -2,7 +2,17 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
-## Unreleased — v0.15.5 Area form accessibility and release-state reconciliation
+## Unreleased — v0.16.0 Household Notes & Reference Context
+
+- Add stable Note identities and canonical create, update, and terminal archive
+  events with plain-text title/body validation and optional existing Area links.
+- Project Notes through additive replay protocol 10; pre-Note history projects
+  an empty Notes collection without synthetic events or storage migration.
+- Add Notes under More with create, view, edit, archive, and safe text display.
+- Keep Note content inside canonical encrypted events; do not add server-visible
+  Note metadata or a plaintext relay index.
+
+## v0.15.5 Area form accessibility and release-state reconciliation
 
 - Verified `kin-v0.15.4` is already an ancestor of `kin-development`, both point
   to the same release commit, and the version metadata/content are aligned; no

@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.15.5` — Area form accessibility and release-state reconciliation (PR candidate).** Areas add optional place/context to household Items while preserving fast capture, encrypted sync, and the existing event history. The v0.11.x–v0.15.x lines are implementation candidates, not published releases or claims of production certification or independent security audit.
+**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.16.0` — Household Notes & Reference Context (candidate).** Notes keep short plain-text household reference information handy, optionally linked to an existing Area. The v0.11.x–v0.16.x lines are implementation candidates, not published releases or claims of production certification or independent security audit.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Archives are intentionally local-only history recovery and do not restore sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
@@ -16,7 +16,7 @@ Kin aims to make useful household context easier to share and find. It is not a 
 
 Kin is intended as a private, lightweight shared household operating layer. Today and Needs views, lightweight classification, capture, completion, reopening, and archival are implemented locally. Handoff capture, acknowledgement, and recent context are implemented locally. Talk captures short topics for later, with Open/Resolved lists, resolve, reopen, and archive. Resolved is workflow state only, not agreement or an objective solution. Pulse adds fixed current capacity, set/replace/clear and explicit expiry, introduced in Rust protocol v5. Since You Last Looked shows at most eight recent meaningful household changes with an omitted-change count; Pulse is excluded. The user explicitly marks the displayed snapshot caught up. Values are context only, never scores or diagnoses. Routines support Daily/Weekly coordination without reminders, streaks, assignments or calendar UI.
 
-The intended technical direction is Rust compiled to WebAssembly, native Web Components, vanilla JavaScript, and browser APIs, with a local-first start and no external framework unless a demonstrated requirement justifies one.
+The intended technical direction is Rust compiled to WebAssembly, native Web Components, vanilla JavaScript, and browser APIs, with a local-first start and no external framework unless a demonstrated requirement justifies one. Notes use canonical Rust events, local replay, plain-text rendering, and the existing encrypted sync envelope.
 
 ## October Build Fest plan
 
@@ -97,8 +97,8 @@ The month targets a coherent, demoable pre-1.0 build at `v0.40.x`. The `v0.41.x`
 - Earlier candidate: `v0.11.7` — October Roadmap & Startup Diagnostics
 - Candidate: `v0.12.4` — Data Lifecycle, Retention & Deletion with Pending-Deletion Restore Authority Guard
 - Earlier candidate: `v0.13.5` — Cancelled-deletion restore authority correctness
-- Current PR candidate: `v0.15.5` — Area form accessibility and release-state reconciliation
-- Planned: `v0.16.x` — Household Notes & Reference Context
+- Complete: `v0.15.5` — Area form accessibility, merged into `kin-development`
+- Current gate: `v0.16.0` — Household Notes & Reference Context on `kin-v0.16.x-notes`; do not begin v0.16.1 until this milestone is complete, validated, committed, tagged, pushed, and verified.
 - Planned: `v0.17.x`–`v0.40.x` — Incremental household capabilities, portability, and device migration within the October plan; see the [daily roadmap](docs/ROADMAP.md)
 - Planned after October, undated: `v0.41.x`–`v0.45.x` — Recovery drills, broader platform validation, performance, and release-candidate readiness
 - Planned: `v1.0.0` — Stable Kin Platform, when readiness and human feedback support it
@@ -215,7 +215,7 @@ Kin is nested in the ZTM Build Fest repository. Its community files and template
 - [Planned v0.13 Recovery & Household Continuity contract](docs/V0.13.0.md)
 - [v0.14 UX/UI Consolidation contract](docs/V0.14.0.md)
 - [Planned v0.15 Household Areas contract](docs/releases/V0.15.0.md)
-- [Planned v0.16 Household Notes & Reference Context contract](docs/releases/V0.16.0.md)
+- [v0.16 Household Notes & Reference Context contract](docs/releases/V0.16.0.md)
 - [Planned release contracts: October through v0.40 and undated v0.41–v0.45 follow-up](docs/releases/)
 - [v0.1.0 implementation specification](docs/V0.1.0.md)
 - [Handoff release contract and final validation](docs/V0.3.0.md)

@@ -1,6 +1,22 @@
 # Household Domain
 
-**Status:** Current through v0.7.0 Routines; earlier version sections are historical contracts. See v0.7.0 below.
+## v0.16.0 Notes
+
+A Note is durable plain-text reference context with a stable `NoteId`, trimmed
+required title, body, optional `AreaId`, terminal archived state, and event
+provenance (`created_by/at`, `updated_by/at`). Notes are not tasks, chat,
+comments, documents, reminders, or rich text. There are no folders, tags, or
+second taxonomy. The lifetime household cap is 128 Notes; titles allow 1–80
+Unicode scalar values and at most 256 UTF-8 bytes; bodies allow 0–4096 UTF-8
+bytes. The bounds keep one canonical event below the existing 8 KiB encrypted
+sync envelope after framing and base64 expansion. Titles reject controls; bodies
+reject controls other than tab and line breaks. Archive is terminal.
+
+An optional Area points to the stable existing Area ID. New assignments require
+a known active Area. Existing association remains visible after that Area is
+renamed or archived; replay preserves stale events authored before archival.
+
+**Status:** Current through the v0.16.0 Notes capability; earlier version sections are historical contracts.
 
 ## Scope and relationships
 

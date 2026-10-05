@@ -1,6 +1,6 @@
 # Foundation Sequence Through v0.16
 
-At this implementation update on 2026-10-03, the last published product release remains `v0.10.3`. The `v0.11.x`–`v0.13.x` tagged implementation candidates remain non-production claims. v0.14.3 is the current UX/UI shell candidate; the v0.14.x line ends here before any v0.15 work. See the [roadmap](ROADMAP.md), [v0.11 record](V0.11.0.md), [v0.12 record](V0.12.0.md), and [v0.14 record](V0.14.0.md) for scope and evidence.
+The last published product release remains `v0.10.3`. v0.15.5 is merged into `kin-development` and complete. v0.16.0 is explicitly authorized on `kin-v0.16.x-notes`; later milestones remain gated on the v0.16.0 checkpoint. Tagged implementation candidates remain non-production claims.
 
 The revised calendar assumes `v0.12.0` completes on October 3, then targets one minor line per day through `v0.40.x` on October 31. The current v0.12.3 candidate passed its scripted Windows gate and awaits human review; future dates are targets, not completion claims.
 
@@ -12,8 +12,8 @@ The dates remain targets. Follow the current review and release gates; the calen
 - `v0.12.x` Data Lifecycle, Retention & Deletion — October 3 target; v0.12.3 implementation candidate
 - `v0.13.x` Recovery & Household Continuity — October 4 target
 - `v0.14.x` UX/UI Consolidation — October 5 target
-- `v0.15.x` Household Areas — October 6 target
-- `v0.16.x` Household Notes & Reference Context — October 7 target
+- `v0.15.x` Household Areas — complete through v0.15.5
+- `v0.16.x` Household Notes & Reference Context — current gate v0.16.0
 
 If a line takes longer than its target day, choose one:
 

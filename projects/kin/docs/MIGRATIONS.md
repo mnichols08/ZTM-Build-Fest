@@ -1,6 +1,15 @@
 # Data Migrations
 
-**Status:** v0.15.0–v0.15.4 are complete; v0.15.5 is the current PR candidate. Existing encrypted local migration and server-schema lifecycle migration remain unchanged; v0.15 adds canonical events without an IndexedDB or server-schema migration. Earlier version sections are historical.
+**Status:** v0.15.5 is merged and complete; v0.16.0 adds canonical Note events without an IndexedDB, archive-container, or server-schema migration. Earlier version sections are historical.
+
+## v0.16.0 Notes compatibility
+
+Existing histories replay with `notes = []` until Note events are appended. No synthetic Note event or destructive migration is performed. The existing event log and KARC v1 carry Note canonical bytes inside their already encrypted local/sync/archive boundaries.
+
+Protocol 10 appends Notes after the protocol-9 Areas result section. Protocols
+1–9 retain their original request/result layouts and fail closed on Note
+history; old canonical event bytes are neither rewritten nor omitted. No
+IndexedDB schema change is required.
 
 ## v0.15.0 Areas compatibility
 

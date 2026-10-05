@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::KinError;
 use crate::event::{
     valid_timestamp, ActorId, AreaId, DeviceId, EventEnvelope, EventId, EventKind, HandoffId,
-    HouseholdId, ItemClassification, ItemId, PulseValue, RoutineId, TalkId,
+    HouseholdId, ItemClassification, ItemId, NoteId, PulseValue, RoutineId, TalkId,
 };
 use crate::recurrence::{Cadence, CivilDate};
 
@@ -48,6 +48,48 @@ pub struct AreaState {
 pub const MAX_AREAS: usize = 32;
 pub const MAX_AREA_NAME_BYTES: usize = 96;
 pub const MAX_AREA_NAME_CHARS: usize = 48;
+pub const MAX_NOTES: usize = 128;
+pub const MAX_NOTE_TITLE_BYTES: usize = 256;
+pub const MAX_NOTE_TITLE_CHARS: usize = 80;
+pub const MAX_NOTE_BODY_BYTES: usize = 4 * 1024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NoteStatus {
+    Active,
+    Archived,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NoteState {
+    pub note_id: NoteId,
+    pub title: String,
+    pub body: String,
+    pub area_id: Option<AreaId>,
+    pub created_by: ActorId,
+    pub created_at: i64,
+    pub updated_by: ActorId,
+    pub updated_at: i64,
+    pub status: NoteStatus,
+}
+
+pub fn normalize_note(title: &str, body: &str) -> Result<(String, String), KinError> {
+    let title = title.trim();
+    if title.is_empty()
+        || title.len() > MAX_NOTE_TITLE_BYTES
+        || title.chars().count() > MAX_NOTE_TITLE_CHARS
+        || title.chars().any(char::is_control)
+    {
+        return Err(KinError::InvalidEvent);
+    }
+    if body.len() > MAX_NOTE_BODY_BYTES
+        || body
+            .chars()
+            .any(|ch| ch.is_control() && ch != '\n' && ch != '\r' && ch != '\t')
+    {
+        return Err(KinError::InvalidEvent);
+    }
+    Ok((title.to_owned(), body.to_owned()))
+}
 
 pub fn normalize_area_name(name: &str) -> Result<String, KinError> {
     let normalized = name.trim();
@@ -117,6 +159,7 @@ pub struct HouseholdState {
     pub pulses: Vec<PulseState>,
     pub routines: Vec<RoutineState>,
     pub areas: Vec<AreaState>,
+    pub notes: Vec<NoteState>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -225,6 +268,8 @@ fn rebuild_with_context(
     let mut item_archives = BTreeMap::new();
     let mut areas: Vec<AreaState> = Vec::new();
     let mut area_positions = BTreeMap::new();
+    let mut notes: Vec<NoteState> = Vec::new();
+    let mut note_positions = BTreeMap::new();
     let mut event_bytes = BTreeMap::<EventId, Vec<u8>>::new();
     // Completions are retained by occurrence key, then projected onto the requested date below.
     let mut last_logical_time = 0;
@@ -301,6 +346,80 @@ fn rebuild_with_context(
                     return Err(KinError::InvalidEvent);
                 }
                 items[position].area_id = *area_id;
+            }
+            EventKind::NoteCreated {
+                note_id,
+                title,
+                body,
+                area_id,
+            } => {
+                let (title, body) = normalize_note(title, body)?;
+                if !valid_timestamp(event.timestamp)
+                    || note_id.0 == [0; 16]
+                    || note_positions.contains_key(note_id)
+                    || notes.len() >= MAX_NOTES
+                    || area_id.is_some_and(|id| {
+                        area_positions
+                            .get(&id)
+                            .is_none_or(|position| areas[*position].archived)
+                    })
+                {
+                    return Err(KinError::InvalidEvent);
+                }
+                note_positions.insert(*note_id, notes.len());
+                notes.push(NoteState {
+                    note_id: *note_id,
+                    title,
+                    body,
+                    area_id: *area_id,
+                    created_by: event.actor_id,
+                    created_at: event.timestamp,
+                    updated_by: event.actor_id,
+                    updated_at: event.timestamp,
+                    status: NoteStatus::Active,
+                });
+            }
+            EventKind::NoteUpdated {
+                note_id,
+                title,
+                body,
+                area_id,
+            } => {
+                let (title, body) = normalize_note(title, body)?;
+                let position = note_positions
+                    .get(note_id)
+                    .copied()
+                    .ok_or(KinError::InvalidEvent)?;
+                if !valid_timestamp(event.timestamp)
+                    || area_id.is_some_and(|id| {
+                        area_positions.get(&id).is_none_or(|area_position| {
+                            areas[*area_position].archived && notes[position].area_id != Some(id)
+                        })
+                    })
+                {
+                    return Err(KinError::InvalidEvent);
+                }
+                if notes[position].status == NoteStatus::Archived {
+                    return Err(KinError::InvalidEvent);
+                }
+                notes[position].title = title;
+                notes[position].body = body;
+                notes[position].area_id = *area_id;
+                notes[position].updated_by = event.actor_id;
+                notes[position].updated_at = event.timestamp;
+            }
+            EventKind::NoteArchived { note_id } => {
+                if !valid_timestamp(event.timestamp) {
+                    return Err(KinError::MalformedProtocol);
+                }
+                let position = note_positions
+                    .get(note_id)
+                    .copied()
+                    .ok_or(KinError::InvalidEvent)?;
+                if notes[position].status == NoteStatus::Archived {
+                    return Err(KinError::InvalidEvent);
+                }
+                notes[position].status = NoteStatus::Archived;
             }
             EventKind::RoutineCreated {
                 routine_id,
@@ -578,6 +697,7 @@ fn rebuild_with_context(
         pulses: pulses.into_values().collect(),
         routines,
         areas,
+        notes,
     })
 }
 
@@ -768,7 +888,10 @@ pub(crate) fn summarize_validated(
             | EventKind::AreaCreated { .. }
             | EventKind::AreaRenamed { .. }
             | EventKind::AreaArchived { .. }
-            | EventKind::ItemAreaChanged { .. } => None,
+            | EventKind::ItemAreaChanged { .. }
+            | EventKind::NoteCreated { .. }
+            | EventKind::NoteUpdated { .. }
+            | EventKind::NoteArchived { .. } => None,
         };
 
         if let Some((kind, entity_kind, text, classification)) = summary {
@@ -846,7 +969,10 @@ mod tests {
             EventKind::AreaCreated { .. }
             | EventKind::AreaRenamed { .. }
             | EventKind::AreaArchived { .. }
-            | EventKind::ItemAreaChanged { .. } => {
+            | EventKind::ItemAreaChanged { .. }
+            | EventKind::NoteCreated { .. }
+            | EventKind::NoteUpdated { .. }
+            | EventKind::NoteArchived { .. } => {
                 panic!("Area tests use independent wire fixtures")
             }
         }

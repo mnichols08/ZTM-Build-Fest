@@ -1,6 +1,6 @@
 # Derived Household State
 
-**Status:** v0.15.0–v0.15.4 are complete; v0.15.5 is the current PR candidate. Rust owns deterministic commands and projection/replay; protocol 9 adds Area state while preserving canonical event bytes and deterministic distributed ordering. Browser startup obtains authorized local unlock before decrypting and replaying; locked state holds no household projection.
+**Status:** v0.15.5 is merged and complete; v0.16.0 is the current gate. Rust protocol 10 adds Note projection while retaining earlier result layouts exactly. Pre-Note histories project `notes = []`; browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
 
 ## Projection pipeline
 

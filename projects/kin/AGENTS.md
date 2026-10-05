@@ -105,12 +105,12 @@ v0.13.5 preserves a newer deletion cancellation over an older pending-deletion b
 and bounded same-member replacement-device enrollment. Recovery must restore continuity
 without reviving revoked authority; no server content-key escrow is permitted.
 The v0.14.x UX/UI Consolidation line is complete through `kin-v0.14.5` on
-`kin-development`. The user authorized the v0.15.0–v0.15.4 Household Areas release line and now requests the
-v0.15.5 accessibility correction on a PR branch. Work one milestone at a time and complete its
-tests, docs, and focused commit before review. For v0.15.5, use the feature-branch PR workflow and defer
-`kin-v0.15.5` until after human review and merge; the regular tagged-release cadence resumes after that.
-Current milestone: v0.15.5 Area accessibility PR. Do not begin
-v0.16.x. Preserve the v0.13.5 recovery authority guarantees and all earlier
+`kin-development`. v0.15.5 is merged into `kin-development`; annotated
+`kin-v0.15.5` is complete at `12da21288252a9559da5b3acb8eb3efb81aaeec3`.
+The user explicitly authorized v0.16.0 on branch `kin-v0.16.x-notes`.
+Current gate: v0.16.0 Household Notes & Reference Context. Do not begin
+v0.16.1 until v0.16.0 is complete, validated, committed, tagged, pushed, and
+verified. Preserve the v0.13.5 recovery authority guarantees and all earlier
 security/domain contracts.
 
 Kin's last published release is `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. The v0.11.x–v0.15.x lines are tagged or in-progress implementation candidates, not production certification. Preserve every existing tag exactly. Root replacement follows [ROOT-ROTATION](docs/ROOT-ROTATION.md); archive recovery remains intentionally local-only and KARC v1 remains supported. The [forward roadmap](docs/ROADMAP.md) targets one minor line per day through v0.40, with v0.41–v0.45 as undated follow-ups and v1.0 dependent on readiness. No production certification, mobile readiness or independent audit is claimed. Do not automatically merge to kin-main. See the release records for actual evidence and limitations.
@@ -1024,8 +1024,8 @@ v0.11.x — Durable Service & Deployment (implementation candidate; awaiting hum
 v0.12.x — Data Lifecycle, Retention & Deletion (v0.12.3 candidate; release gate pending)
 v0.13.x — Recovery & Household Continuity (complete through v0.13.5)
 v0.14.x — UX/UI Consolidation (complete through v0.14.5)
-v0.15.x — Household Areas (PR candidate v0.15.5)
-v0.16.x — Household Notes & Reference Context (planned)
+v0.15.x — Household Areas (complete through v0.15.5)
+v0.16.x — Household Notes & Reference Context (v0.16.0 authorized; branch kin-v0.16.x-notes)
 v0.17.x–v0.40.x — Incremental household capabilities, portability and device migration (October targets)
 v0.41.x–v0.45.x — Recovery drills, platform validation, performance and release-candidate readiness (undated follow-ups)
 v1.0.0 — Stable Kin Platform (planned, readiness-driven)
@@ -1140,6 +1140,8 @@ kin-v0.15.1
 kin-v0.15.2
 kin-v0.15.3
 kin-v0.15.4
+kin-v0.15.5
+kin-v0.16.0
 kin-v1.0.0
 ```
 

@@ -1,6 +1,6 @@
 # Release Process
 
-**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. Current implementation candidate: v0.15.5 Area form accessibility and release-state reconciliation (PR candidate). v0.11.x–v0.15.x tagged lines remain implementation candidates, not production certification.
+**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. v0.15.5 is merged into `kin-development` and complete. Current authorized gate: v0.16.0 Household Notes & Reference Context on `kin-v0.16.x-notes`. v0.11.x–v0.16.x tagged lines remain implementation candidates, not production certification.
 
 ## Release sequence
 
