@@ -14,6 +14,8 @@ export async function rootRotationUiChecks(oldRecovery) {
     }
     throw Error("Root rotation UI did not settle");
   };
+  app.nav.querySelector('a[href="#more"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
   if (!app.vault) await app.security.run(() => app.security.unlockRecovery(oldRecovery));
   const before = await EventStore.securityStatus();
   const originalBytes = (await app.store.loadEvents()).map((row) => Array.from(row.encoded_event));

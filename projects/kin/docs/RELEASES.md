@@ -1,6 +1,6 @@
 # Release Process
 
-**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. v0.15.5 is merged into `kin-development` and complete. `kin-v0.16.0` and `kin-v0.16.1` are the tagged Notes capability/correctness candidates; PR #26 is the active v0.16.2 resilience/accessibility gate on `kin-v0.16.x-notes`. v0.11.x–v0.16.x tagged lines remain implementation candidates, not production certification.
+**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. PR #26 is merged into `kin-development`; v0.16.x is complete through v0.16.2 and v0.17.0 Checklist Steps is complete on `kin-v0.17.x-checklist-steps`. All existing annotated tags remain immutable. v0.11.x–v0.17.x tagged lines/candidates are not production certification.
 
 ## Release sequence
 

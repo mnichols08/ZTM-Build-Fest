@@ -808,6 +808,100 @@ async function regressions() {
     "archive remains an appended event",
   );
   check(document.activeElement === compose.input, "archive focus destination");
+  const checklistInitialCount = await count();
+  edit("Checklist item", "today");
+  await submit();
+  let checklistItem = [...app.querySelectorAll("kin-item")].find(
+    (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
+  );
+  check(checklistItem, "checklist parent Item is created");
+  checklistItem.querySelector(".step-toggle-button").click();
+  checklistItem = [...app.querySelectorAll("kin-item")].find(
+    (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
+  );
+  const addStep = async (text) => {
+    const form = checklistItem.querySelector(".step-compose");
+    const input = form.querySelector("input");
+    input.value = text;
+    input.focus();
+    form.requestSubmit();
+    await idle();
+    checklistItem = [...app.querySelectorAll("kin-item")].find(
+      (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
+    );
+  };
+  await addStep("Clear counters");
+  await addStep("Wipe stove");
+  let checklist = app.state.items.find((item) => item.text === "Checklist item");
+  check(
+    checklist.status === "active" &&
+      checklist.steps.map((step) => step.text).join(",") === "Clear counters,Wipe stove" &&
+      checklistItem.querySelector(".step-summary").textContent === "0 of 2 steps" &&
+      document.activeElement === checklistItem.querySelector(".step-compose input"),
+    "steps append in stable order without changing or losing the parent Item",
+  );
+  const stepCheckbox = (index) =>
+    checklistItem.querySelectorAll('.step-row input[type="checkbox"]')[index];
+  stepCheckbox(0).click();
+  await idle();
+  checklistItem = [...app.querySelectorAll("kin-item")].find(
+    (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
+  );
+  stepCheckbox(1).click();
+  await idle();
+  checklist = app.state.items.find((item) => item.text === "Checklist item");
+  checklistItem = [...app.querySelectorAll("kin-item")].find(
+    (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
+  );
+  check(
+    checklist.status === "active" &&
+      checklist.steps.every((step) => step.completed) &&
+      checklistItem.querySelector(".step-summary").textContent === "2 of 2 steps",
+    "completing every Step does not complete the parent Item",
+  );
+  stepCheckbox(0).click();
+  await idle();
+  checklistItem = [...app.querySelectorAll("kin-item")].find(
+    (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
+  );
+  checklistItem.querySelector(".step-archive-button").click();
+  await idle();
+  checklist = app.state.items.find((item) => item.text === "Checklist item");
+  checklistItem = [...app.querySelectorAll("kin-item")].find(
+    (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
+  );
+  check(
+    checklist.status === "active" &&
+      checklist.steps[0].archived &&
+      checklist.steps[1].completed &&
+      checklistItem.querySelectorAll(".step-row").length === 1 &&
+      checklistItem.querySelector(".step-summary").textContent === "1 of 1 steps",
+    "reopen and terminal Step archive preserve history and update the visible summary",
+  );
+  checklistItem.querySelector(".complete-button").click();
+  await idle();
+  checklistItem = [...app.querySelectorAll("kin-item")].find(
+    (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
+  );
+  check(
+    checklistItem.querySelector('.step-row input[type="checkbox"]').disabled &&
+      checklistItem.querySelector(".step-compose input").disabled,
+    "completed parent Items disable Step mutations",
+  );
+  checklistItem.querySelector(".reopen-button").click();
+  await idle();
+  checklistItem = [...app.querySelectorAll("kin-item")].find(
+    (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
+  );
+  check(
+    !checklistItem.querySelector('.step-row input[type="checkbox"]').disabled &&
+      !checklistItem.querySelector(".step-compose input").disabled &&
+      (await count()) === checklistInitialCount + 9,
+    "reopening the parent restores Step controls",
+  );
+  passed.push(
+    "checklist Step add/order/complete/reopen/archive, parent independence, lifecycle gating and focus",
+  );
   const todayItem = [...app.querySelectorAll("kin-item")].find(
     (item) => item.querySelector(".item-text")?.textContent === legacyText,
   );

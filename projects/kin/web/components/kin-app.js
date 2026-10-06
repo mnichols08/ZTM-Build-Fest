@@ -2,7 +2,7 @@ import { projectionContext } from "../browser-time.js";
 import "./kin-routines.js";
 import "./kin-areas.js";
 import "./kin-notes.js";
-import { loadKinEngine } from "../wasm/kin-engine.js";
+import { loadKinEngine, randomId } from "../wasm/kin-engine.js";
 import { EventStore } from "../storage/event-store.js";
 import { SyncCoordinator } from "../sync/sync-coordinator.js";
 import "./kin-compose.js";
@@ -63,6 +63,10 @@ class KinApp extends HTMLElement {
     this.onCompleteItem = (event) => this.handleCompleteItem(event);
     this.onReopenItem = (event) => this.handleReopenItem(event);
     this.onArchiveItem = (event) => this.handleArchiveItem(event);
+    this.onAddItemStep = (event) => this.handleItemStep("add-item-step", event.detail);
+    this.onCompleteItemStep = (event) => this.handleItemStep("complete-item-step", event.detail);
+    this.onReopenItemStep = (event) => this.handleItemStep("reopen-item-step", event.detail);
+    this.onArchiveItemStep = (event) => this.handleItemStep("archive-item-step", event.detail);
     this.onAddHandoff = (event) => this.handleAddHandoff(event);
     this.onAcknowledgeHandoff = (event) =>
       this.handleHandoffAction("acknowledge-handoff", event.detail.handoffId);
@@ -175,6 +179,10 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:complete-item", this.onCompleteItem);
     this.addEventListener("kin:reopen-item", this.onReopenItem);
     this.addEventListener("kin:archive-item", this.onArchiveItem);
+    this.addEventListener("kin:add-item-step", this.onAddItemStep);
+    this.addEventListener("kin:complete-item-step", this.onCompleteItemStep);
+    this.addEventListener("kin:reopen-item-step", this.onReopenItemStep);
+    this.addEventListener("kin:archive-item-step", this.onArchiveItemStep);
     this.addEventListener("kin:change-item-area", this.onItemAreaChange);
     this.addEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.addEventListener(`kin:${action}`, this.onNoteIntent);
@@ -457,6 +465,10 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:complete-item", this.onCompleteItem);
     this.removeEventListener("kin:reopen-item", this.onReopenItem);
     this.removeEventListener("kin:archive-item", this.onArchiveItem);
+    this.removeEventListener("kin:add-item-step", this.onAddItemStep);
+    this.removeEventListener("kin:complete-item-step", this.onCompleteItemStep);
+    this.removeEventListener("kin:reopen-item-step", this.onReopenItemStep);
+    this.removeEventListener("kin:archive-item-step", this.onArchiveItemStep);
     this.removeEventListener("kin:change-item-area", this.onItemAreaChange);
     this.removeEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.removeEventListener(`kin:${action}`, this.onNoteIntent);
@@ -1090,6 +1102,57 @@ class KinApp extends HTMLElement {
         if (restoreComposeFocus && !restoreListFocus) {
           this.compose.focusInput();
         }
+        this.flushPeerRefresh();
+      }
+    }
+  }
+
+  async handleItemStep(type, detail) {
+    if (this.busy || !this.store || !this.engine) return;
+    const list = this.today.contains(document.activeElement)
+      ? this.today
+      : this.needs.contains(document.activeElement)
+        ? this.needs
+        : null;
+    if (list) list.rememberFocus();
+    const session = this.captureSession();
+    const command = Object.freeze({
+      type,
+      itemId: detail.itemId,
+      ...(type === "add-item-step"
+        ? { stepId: detail.stepId ?? randomId(), text: detail.text }
+        : { stepId: detail.stepId }),
+    });
+    this.setBusy(true);
+    this.clearAlert();
+    this.setStatus("Saving…");
+    try {
+      await this.appendCommand(command);
+      this.assertCurrentSession(session);
+      this.renderState();
+      this.setStatus(
+        type === "add-item-step"
+          ? "Step added."
+          : type === "complete-item-step"
+            ? "Step completed."
+            : type === "reopen-item-step"
+              ? "Step reopened."
+              : "Step archived.",
+      );
+      this.broadcastEventChange();
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === 4) this.pendingRefresh = true;
+      this.renderState();
+      this.showAlert(
+        error.userMessage ?? SAVE_ERROR,
+        () => this.handleItemStep(type, command),
+        command,
+      );
+      this.setStatus("");
+    } finally {
+      if (this.isCurrentSession(session)) {
+        this.setBusy(false);
         this.flushPeerRefresh();
       }
     }

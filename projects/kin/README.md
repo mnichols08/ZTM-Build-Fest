@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.16.2` — Notes resilience & accessibility (candidate).** Notes keep short plain-text household reference information handy, optionally linked to an existing Area. The v0.11.x–v0.16.x lines are implementation candidates, not published releases or claims of production certification or independent security audit.
+**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.17.0` — Checklist Steps (complete candidate on `kin-v0.17.x-checklist-steps`).** Notes keep short plain-text household reference information handy, optionally linked to an existing Area. Items support ordered, optional plain-text checklist Steps; Step completion does not complete the parent Item. The v0.11.x–v0.17.x lines are implementation candidates, not published releases or claims of production certification or independent security audit.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Archives are intentionally local-only history recovery and do not restore sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
@@ -99,7 +99,7 @@ The month targets a coherent, demoable pre-1.0 build at `v0.40.x`. The `v0.41.x`
 - Earlier candidate: `v0.13.5` — Cancelled-deletion restore authority correctness
 - Complete: `v0.15.5` — Area form accessibility, merged into `kin-development`
 - Complete: `v0.16.0` — Household Notes & Reference Context (`kin-v0.16.0`, review candidate).
-- Current gate: `v0.16.2` — Notes offline/reload resilience, stale-command handling, protected lock behavior, accessible validation/focus, on `kin-v0.16.x-notes`.
+- Complete candidate: `v0.17.0` — Checklist Steps on `kin-v0.17.x-checklist-steps`; v0.16.x is complete through v0.16.2, with PR #26 merged into `kin-development`.
 - Planned: `v0.17.x`–`v0.40.x` — Incremental household capabilities, portability, and device migration within the October plan; see the [daily roadmap](docs/ROADMAP.md)
 - Planned after October, undated: `v0.41.x`–`v0.45.x` — Recovery drills, broader platform validation, performance, and release-candidate readiness
 - Planned: `v1.0.0` — Stable Kin Platform, when readiness and human feedback support it

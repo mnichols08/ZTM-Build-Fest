@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** v0.15.5 is merged and complete; v0.16.2 is the current Notes resilience/accessibility gate. Rust owns Note validation, canonical events, replay and projection through additive protocol 10. JavaScript mirrors the title/body constraints for early form feedback while Rust remains authoritative. Equal-time cross-device update/archive conflicts converge to the terminal archive. No IndexedDB or server schema change is required.
+**Status:** v0.17.0 Checklist Steps adds Rust-owned validation, canonical events, replay, and ordered Item projection through additive protocol 11. Browser code presents native checklist controls and mirrors the label bounds for early feedback; Rust remains authoritative. Equal-time cross-device Step archive/mutation conflicts converge to the terminal archive. No IndexedDB, server, sync-envelope, or archive-container schema change is required.
 
 ## v0.10 implementation boundary
 

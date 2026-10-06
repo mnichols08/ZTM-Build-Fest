@@ -1,6 +1,16 @@
 # Data Migrations
 
-**Status:** v0.15.5 is merged and complete; v0.16.0 adds canonical Note events without an IndexedDB, archive-container, or server-schema migration. Earlier version sections are historical.
+**Status:** v0.17.0 adds canonical Item Step events without an IndexedDB, archive-container, or server-schema migration. Earlier version sections are historical.
+
+## v0.17.0 Checklist Steps compatibility
+
+Existing histories replay with no Steps on each Item until Step events are
+appended. No synthetic event or destructive migration is performed. Protocol
+11 appends Step records after the protocol-10 Notes section; protocols 1–10
+retain their historical request/result layouts and fail closed on Step history.
+Canonical source bytes remain unchanged. IndexedDB, KARC v1 framing, server
+schema, and encrypted sync envelope do not change; export/import and sync use
+the existing canonical event adapters.
 
 ## v0.16.0 Notes compatibility
 

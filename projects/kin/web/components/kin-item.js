@@ -3,6 +3,7 @@ class KinItem extends HTMLElement {
     super();
     this.record = null;
     this.isDisabled = false;
+    this.showSteps = false;
   }
 
   set item(value) {
@@ -15,12 +16,16 @@ class KinItem extends HTMLElement {
     this.render();
   }
 
+  set checklistExpanded(value) {
+    this.showSteps = Boolean(value);
+    this.render();
+  }
+
   set disabled(value) {
     this.isDisabled = Boolean(value);
-    for (const control of this.querySelectorAll("button")) {
-      control.disabled = this.isDisabled;
+    for (const control of this.querySelectorAll("button, input, select")) {
+      control.disabled = this.isDisabled || control.dataset.domainDisabled === "true";
     }
-    for (const control of this.querySelectorAll("select")) control.disabled = this.isDisabled;
   }
 
   render() {
@@ -72,6 +77,33 @@ class KinItem extends HTMLElement {
     }
     const action = document.createElement("div");
     action.className = "item-action";
+    const steps = Array.isArray(this.record.steps) ? this.record.steps : [];
+    const activeSteps = steps.filter((step) => !step.archived);
+    const completedSteps = activeSteps.filter((step) => step.completed).length;
+    const stepSummary = document.createElement("span");
+    stepSummary.className = "step-summary";
+    stepSummary.textContent = `${completedSteps} of ${activeSteps.length} steps`;
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "step-toggle-button";
+    toggle.textContent = this.showSteps ? "Hide steps" : "Checklist";
+    toggle.setAttribute("aria-expanded", String(this.showSteps));
+    toggle.setAttribute("aria-controls", `checklist-${this.record.itemId}`);
+    toggle.setAttribute(
+      "aria-label",
+      `${this.showSteps ? "Hide" : "Show"} checklist for ${this.record.text}, ${completedSteps} of ${activeSteps.length} steps`,
+    );
+    toggle.dataset.itemId = this.record.itemId;
+    toggle.dataset.itemAction = "toggle-steps";
+    toggle.disabled = this.isDisabled;
+    toggle.addEventListener("click", () => {
+      this.dispatchEvent(new CustomEvent("kin:toggle-item-steps", {
+        detail: { itemId: this.record.itemId },
+        bubbles: true,
+        composed: true,
+      }));
+    });
+    action.append(stepSummary, toggle);
 
     if (this.record.status === "active") {
       action.append(
@@ -87,7 +119,125 @@ class KinItem extends HTMLElement {
     action.append(this.createAction("Archive", "archive", "archive-button"));
 
     row.append(details, action);
+    if (this.showSteps) {
+      row.append(this.createChecklist(steps));
+    }
     this.replaceChildren(row);
+  }
+
+  createChecklist(steps) {
+    const panel = document.createElement("section");
+    panel.className = "item-checklist";
+    panel.id = `checklist-${this.record.itemId}`;
+    const list = document.createElement("ul");
+    list.className = "step-list";
+    for (const step of steps.filter((entry) => !entry.archived)) {
+      const entry = document.createElement("li");
+      entry.className = "step-row";
+      const label = document.createElement("label");
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = step.completed;
+      checkbox.id = `step-${this.record.itemId}-${step.stepId}`;
+      checkbox.dataset.itemId = this.record.itemId;
+      checkbox.dataset.stepId = step.stepId;
+      checkbox.dataset.itemAction = "toggle-step";
+      checkbox.dataset.domainDisabled = String(this.record.status !== "active");
+      checkbox.disabled = this.isDisabled || this.record.status !== "active";
+      checkbox.addEventListener("change", () => {
+        this.dispatchEvent(new CustomEvent(
+          `kin:${checkbox.checked ? "complete" : "reopen"}-item-step`,
+          {
+            detail: {
+              itemId: this.record.itemId,
+              stepId: step.stepId,
+            },
+            bubbles: true,
+            composed: true,
+          },
+        ));
+      });
+      const text = document.createElement("span");
+      text.textContent = step.text;
+      label.htmlFor = checkbox.id;
+      label.append(checkbox, text);
+      entry.append(label);
+      entry.append(this.createStepAction("Archive step", "archive-item-step", step.stepId));
+      list.append(entry);
+    }
+    panel.append(list);
+    if (this.record.status !== "active") {
+      const hint = document.createElement("p");
+      hint.className = "step-parent-hint";
+      hint.textContent = "Reopen this item before changing its steps.";
+      panel.append(hint);
+    }
+    const form = document.createElement("form");
+    form.className = "step-compose";
+    const inputId = `add-step-${this.record.itemId}`;
+    const label = document.createElement("label");
+    label.htmlFor = inputId;
+    label.textContent = "Add a step";
+    const input = document.createElement("input");
+    input.type = "text";
+    input.id = inputId;
+    input.required = true;
+    input.autocomplete = "off";
+    input.dataset.itemId = this.record.itemId;
+    input.dataset.itemAction = "add-step";
+    input.dataset.domainDisabled = String(
+      this.record.status !== "active" || steps.length >= 16,
+    );
+    input.disabled = this.isDisabled || input.dataset.domainDisabled === "true";
+    const submit = document.createElement("button");
+    submit.type = "submit";
+    submit.textContent = "Add step";
+    submit.disabled = input.disabled;
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const textValue = input.value.trim();
+      const textLength = [...textValue].length;
+      const bytesLength = new TextEncoder().encode(textValue).length;
+      const invalid =
+        !textValue ||
+        textLength > 80 ||
+        bytesLength > 256 ||
+        [...textValue].some((character) => /\p{Cc}/u.test(character));
+      input.setCustomValidity(invalid ? "Use 1–80 characters and no more than 256 UTF-8 bytes; control characters are not allowed." : "");
+      if (invalid) {
+        input.reportValidity();
+        return;
+      }
+      this.dispatchEvent(new CustomEvent("kin:add-item-step", {
+        detail: { itemId: this.record.itemId, text: textValue },
+        bubbles: true,
+        composed: true,
+      }));
+    });
+    form.append(label, input, submit);
+    panel.append(form);
+    return panel;
+  }
+
+  createStepAction(label, action, stepId) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "step-archive-button";
+    button.textContent = label;
+    button.setAttribute("aria-label", `${label} ${this.record.text}`);
+    button.dataset.itemId = this.record.itemId;
+    button.dataset.stepId = stepId;
+    button.dataset.itemAction = action;
+    button.dataset.domainDisabled = String(this.record.status !== "active");
+    button.disabled = this.isDisabled || this.record.status !== "active";
+    button.addEventListener("click", () => {
+      this.dispatchEvent(new CustomEvent(`kin:${action}`, {
+        detail: { itemId: this.record.itemId, stepId },
+        bubbles: true,
+        composed: true,
+      }));
+    });
+    return button;
   }
 
   createAction(label, action, className) {

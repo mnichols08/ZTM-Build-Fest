@@ -27,6 +27,7 @@ id_type!(TalkId);
 id_type!(RoutineId);
 id_type!(AreaId);
 id_type!(NoteId);
+id_type!(StepId);
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct IdentityBinding {
@@ -150,6 +151,23 @@ pub enum EventKind {
     },
     NoteArchived {
         note_id: NoteId,
+    },
+    ItemStepAdded {
+        item_id: ItemId,
+        step_id: StepId,
+        text: String,
+    },
+    ItemStepCompleted {
+        item_id: ItemId,
+        step_id: StepId,
+    },
+    ItemStepReopened {
+        item_id: ItemId,
+        step_id: StepId,
+    },
+    ItemStepArchived {
+        item_id: ItemId,
+        step_id: StepId,
     },
 }
 

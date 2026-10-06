@@ -19,7 +19,8 @@ pub const PROTOCOL_V7: u16 = 7;
 pub const PROTOCOL_V8: u16 = 8;
 pub const PROTOCOL_V9: u16 = 9;
 pub const PROTOCOL_V10: u16 = 10;
-pub const PROTOCOL_VERSION: u16 = PROTOCOL_V10;
+pub const PROTOCOL_V11: u16 = 11;
+pub const PROTOCOL_VERSION: u16 = PROTOCOL_V11;
 pub const ERROR_PROTOCOL_VERSION: u16 = PROTOCOL_V1;
 pub const MAX_EVENT_COUNT: usize = 10_000;
 pub const MAX_PROTOCOL_BYTES: usize = 64 * 1024 * 1024;
@@ -72,6 +73,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
             | PROTOCOL_V8
             | PROTOCOL_V9
             | PROTOCOL_V10
+            | PROTOCOL_V11
     ) {
         return Err(KinError::UnsupportedVersion);
     }
@@ -168,7 +170,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
         .try_reserve_exact(event_count)
         .map_err(|_| KinError::SizeLimit)?;
     let mut offset = match version {
-        PROTOCOL_V8 | PROTOCOL_V9 | PROTOCOL_V10 => {
+        PROTOCOL_V8 | PROTOCOL_V9 | PROTOCOL_V10 | PROTOCOL_V11 => {
             V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES
         }
         PROTOCOL_V7 => 44,
@@ -227,6 +229,7 @@ pub fn encode_state(state: &HouseholdState, protocol_version: u16) -> Result<Vec
         || !state.areas.is_empty()
         || !state.notes.is_empty()
         || state.items.iter().any(|item| item.area_id.is_some())
+        || state.items.iter().any(|item| !item.steps.is_empty())
     {
         return Err(KinError::UnsupportedVersion);
     }
@@ -436,6 +439,13 @@ pub fn encode_state_v10(
     encode_state_with_summary(state, summary, PROTOCOL_V10)
 }
 
+pub fn encode_state_v11(
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<Vec<u8>, KinError> {
+    encode_state_with_summary(state, summary, PROTOCOL_V11)
+}
+
 fn encode_state_with_summary(
     state: &HouseholdState,
     summary: &CatchUpSummary,
@@ -447,6 +457,9 @@ fn encode_state_with_summary(
         return Err(KinError::UnsupportedVersion);
     }
     if version < PROTOCOL_V10 && !state.notes.is_empty() {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if version < PROTOCOL_V11 && state.items.iter().any(|item| !item.steps.is_empty()) {
         return Err(KinError::UnsupportedVersion);
     }
     if version == PROTOCOL_V6
@@ -556,6 +569,8 @@ fn encode_state_with_summary(
         }
     }
     let mut note_bytes = Vec::new();
+    let mut step_bytes = Vec::new();
+    let mut step_count = 0usize;
     if version >= PROTOCOL_V10 {
         if state.notes.len() > crate::state::MAX_NOTES {
             return Err(KinError::SizeLimit);
@@ -574,6 +589,27 @@ fn encode_state_with_summary(
             push_u32(&mut note_bytes, body.len() as u32);
             note_bytes.extend_from_slice(title.as_bytes());
             note_bytes.extend_from_slice(body.as_bytes());
+        }
+    }
+    if version >= PROTOCOL_V11 {
+        for item in &state.items {
+            if item.steps.len() > crate::state::MAX_STEPS_PER_ITEM {
+                return Err(KinError::SizeLimit);
+            }
+            for step in &item.steps {
+                let text = crate::state::normalize_step_text(&step.text)?;
+                step_count = step_count.checked_add(1).ok_or(KinError::SizeLimit)?;
+                step_bytes
+                    .try_reserve(40 + text.len())
+                    .map_err(|_| KinError::SizeLimit)?;
+                step_bytes.extend_from_slice(&item.item_id.0);
+                step_bytes.extend_from_slice(&step.step_id.0);
+                step_bytes.push(u8::from(step.completed));
+                step_bytes.push(u8::from(step.archived));
+                step_bytes.extend_from_slice(&[0; 2]);
+                push_u32(&mut step_bytes, text.len() as u32);
+                step_bytes.extend_from_slice(text.as_bytes());
+            }
         }
     }
     let result_length = V6_RESULT_HEADER_BYTES
@@ -596,6 +632,13 @@ fn encode_state_with_summary(
         .and_then(|length| {
             length.checked_add(if version >= PROTOCOL_V10 {
                 4 + note_bytes.len()
+            } else {
+                0
+            })
+        })
+        .and_then(|length| {
+            length.checked_add(if version >= PROTOCOL_V11 {
+                4 + step_bytes.len()
             } else {
                 0
             })
@@ -636,6 +679,9 @@ fn encode_state_with_summary(
     if version >= PROTOCOL_V10 {
         push_u32(&mut result, state.notes.len() as u32);
     }
+    if version >= PROTOCOL_V11 {
+        push_u32(&mut result, step_count as u32);
+    }
     result.extend_from_slice(&previous[24..]);
     if version >= PROTOCOL_V9 {
         for item in &state.items {
@@ -648,6 +694,9 @@ fn encode_state_with_summary(
     }
     if version >= PROTOCOL_V10 {
         result.extend_from_slice(&note_bytes);
+    }
+    if version >= PROTOCOL_V11 {
+        result.extend_from_slice(&step_bytes);
     }
 
     for entry in &summary.entries {
@@ -667,7 +716,7 @@ fn encode_state_with_summary(
 }
 
 pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelope, KinError> {
-    if !(PROTOCOL_V1..=PROTOCOL_V10).contains(&protocol_version) {
+    if !(PROTOCOL_V1..=PROTOCOL_V11).contains(&protocol_version) {
         return Err(KinError::UnsupportedVersion);
     }
     if record.len() > MAX_PROTOCOL_BYTES {
@@ -789,6 +838,33 @@ pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelop
                         body,
                         area_id,
                     }
+                }
+            }
+            _ => return Err(KinError::MalformedProtocol),
+        },
+        (1, 25..=28) if protocol_version >= PROTOCOL_V11 => match event_kind {
+            25 if payload.len() >= 37 => {
+                let text_length = read_u32(payload, 32)? as usize;
+                if !(1..=crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
+                    || payload.len() != 36 + text_length
+                {
+                    return Err(KinError::MalformedProtocol);
+                }
+                EventKind::ItemStepAdded {
+                    item_id: ItemId(read_id(payload, 0)?),
+                    step_id: crate::event::StepId(read_id(payload, 16)?),
+                    text: std::str::from_utf8(&payload[36..])
+                        .map_err(|_| KinError::MalformedProtocol)?
+                        .to_owned(),
+                }
+            }
+            26..=28 if payload.len() == 32 => {
+                let item_id = ItemId(read_id(payload, 0)?);
+                let step_id = crate::event::StepId(read_id(payload, 16)?);
+                match event_kind {
+                    26 => EventKind::ItemStepCompleted { item_id, step_id },
+                    27 => EventKind::ItemStepReopened { item_id, step_id },
+                    _ => EventKind::ItemStepArchived { item_id, step_id },
                 }
             }
             _ => return Err(KinError::MalformedProtocol),
