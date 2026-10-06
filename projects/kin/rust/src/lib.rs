@@ -23,3 +23,6 @@ mod command_tests;
 
 #[cfg(test)]
 mod area_tests;
+
+#[cfg(test)]
+mod note_tests;

@@ -1,13 +1,13 @@
 // Only source-controlled static shell assets are eligible for this cache.
 // API, archives, projections, drafts and keys never pass through Cache.put.
-const CACHE = "kin-static-v0.15.5";
+const CACHE = "kin-static-v0.16.2";
 const SHELL = [
   "/", "/index.html", "/styles/app.css", "/manifest.webmanifest", "/icon.svg",
   "/browser-time.js", "/wasm/kin-engine.js", "/wasm/kin_engine.wasm",
   "/storage/event-store.js", "/storage/encrypted-idb.js", "/storage/root-rotation.js",
   "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js",
   "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js",
-  ...["app", "security", "household", "compose", "item", "today", "handoff-list", "talk-list", "pulse", "catch-up", "routines", "areas"].map((name) => `/components/kin-${name}.js`),
+  ...["app", "security", "household", "compose", "item", "today", "handoff-list", "talk-list", "pulse", "catch-up", "routines", "areas", "notes"].map((name) => `/components/kin-${name}.js`),
 ];
 const ALLOWED = new Set(SHELL);
 

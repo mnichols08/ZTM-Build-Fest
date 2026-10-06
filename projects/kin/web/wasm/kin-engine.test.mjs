@@ -13,6 +13,9 @@ import {
   encodeHandoffAddedRecord,
   encodeHandoffAcknowledgedRecord,
   encodeHandoffArchivedRecord,
+  encodeNoteCreatedRecord,
+  encodeNoteUpdatedRecord,
+  encodeNoteArchivedRecord,
   loadKinEngine as loadCurrentEngine,
 } from "./kin-engine.js";
 
@@ -92,6 +95,22 @@ test("invalid classification is rejected", () => {
   );
 });
 
+test("protocol 10 real WASM replays stable Note create update and terminal archive", async () => {
+  const engine = await loadKinEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const bytes = (value) => new Uint8Array(16).fill(value);
+  const identity = (sequence) => ({ eventId: bytes(sequence), householdId: bytes(200), actorId: bytes(sequence), deviceId: bytes(201), timestamp: 1_760_000_000_000 + sequence, logicalTime: sequence, noteId: bytes(9) });
+  const created = encodeNoteCreatedRecord({ ...identity(1), title: " Wi-Fi ", body: "Router details\nGuest network" });
+  const updated = encodeNoteUpdatedRecord({ ...identity(2), title: "Wi-Fi", body: "Router details" });
+  const archived = encodeNoteArchivedRecord(identity(3));
+  const state = engine.applyEvents([created, updated, archived], 1_760_000_000_010, null, 20261005);
+  assert.equal(state.notes.length, 1);
+  assert.equal(state.notes[0].noteId, "09".repeat(16));
+  assert.equal(state.notes[0].title, "Wi-Fi");
+  assert.equal(state.notes[0].body, "Router details");
+  assert.equal(state.notes[0].archived, true);
+  assert.deepEqual(engine.applyEvents([], 1_760_000_000_010, null, 20261005).notes, []);
+});
+
 // Independent v0.1 wire fixtures: do not use the current event writer to
 // define the historical record layout that these compatibility tests protect.
 function legacyRecord(kind, sequence) {
@@ -150,6 +169,7 @@ function emptyV7State() {
     pulses: [],
     routines: [],
     areas: [],
+    notes: [],
     summary: { entries: [], totalCount: 0, throughEventId: null },
   };
 }

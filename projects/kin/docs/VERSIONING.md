@@ -1,23 +1,23 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.15.5; the v0.15.x Household Areas line is in its final accessibility and release-state correction. The last published product release remains v0.10.3; tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.16.2; v0.15.5 is merged and complete. `kin-v0.16.0` and `kin-v0.16.1` are Notes capability/correctness candidates and remain immutable. The last published product release remains v0.10.3; tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.15.5 | Governs |
+| Version axis | Last published v0.10.3 / current candidate v0.16.2 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.15.5` | Areas capability; additive event/replay protocol 9 |
+| Application | Last published `0.10.3`; candidate `0.16.2` | Notes resilience/accessibility; protocol 10 unchanged |
 | Server database schema | `2` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination and household lifecycle records |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
-| Replay protocol | Reads v1–v9; writes v9 for local and synchronized requests | Request context and projection semantics |
+| Replay protocol | Reads v1–v10; writes v10 for local and synchronized requests | Request context and projection semantics |
 | Manual WASM ABI | Existing exports plus additive command/metadata/archive/import APIs | Host ownership and calls; new command packet v1 |
 | IndexedDB schema | Event DB 2→3; key DB 3→4 | Journalled upgrade to encrypted records |
 | Local envelope | v1 for original roots; v2 for rotated roots | v2 authenticates rootVersion in addition to purpose/routing |
 | Security manifest / rotation journal | Manifest v1/root 1; v2/root 2+; journal v1 | Monotonic root replacement, CAS and exact restart |
 | Portable archive | KARC v1; metadata/body version 1 | Bounded encrypted archive and complete import planning |
-| Sync envelope | v1 unchanged | Relay encryption/signature/provisioning contracts |
+| Sync envelope | v1 unchanged | Relay encryption/signature/provisioning contracts; Note plaintext remains only in encrypted event content |
 | Device-key successor | v1 with monotonic generation, maximum 16 transitions | Signed replacement of legacy transport capabilities |
 
 These numbers evolve independently. An application release may keep the same event, protocol, storage, or export version; a contract may change between application versions. Never infer compatibility from equal version numbers or silently bump one axis as a proxy for another.
@@ -86,6 +86,27 @@ Supported protocols 1–6; current writer v6. Protocol v6 preserves explicit v5 
 ## v0.7.0 Routines
 
 Supported protocols 1–7; current writer v7. New Routine kinds 14–17 use event schema 1. Old event kinds/schemas and bytes are unchanged; old protocols fail closed for Routine history. IndexedDB stays schema 1. See [V0.7.0](V0.7.0.md).
+
+## v0.16.0 Notes
+
+Protocol 10 is additive and uses the unchanged 64-byte request header and 88-byte
+event envelope. New schema-1 event kinds 22–24 represent Note create, update,
+and terminal archive. The protocol-10 result appends a Note count and bounded
+Note records after the protocol-9 Areas section. Protocols 1–9 retain their
+historical request and result bytes and reject Note history rather than omit it.
+Pre-Note histories replay to an empty Notes collection without migration.
+IndexedDB, event schema, KARC framing, and encrypted sync envelope stay
+unchanged.
+
+## v0.16.1 Notes correctness
+
+Protocol 10 and all persistent formats remain unchanged. Distributed replay
+pre-scans Note archive events and ignores a same-logical-time update from a
+different device regardless of deterministic device-ID ordering; the terminal
+archive wins and projection converges. Browser preflight matches Rust's
+Unicode scalar, UTF-8 byte, and control-character limits. The service worker
+cache version advances to invalidate its static shell and includes the Notes
+component.
 
 ## v0.9.x Encrypted Sync
 

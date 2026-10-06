@@ -136,8 +136,8 @@ async function connect(url) {
       return new Promise((resolve, reject) => {
         const number = ++id;
         const timeout = setTimeout(
-          () => reject(new Error(`CDP timeout: ${method}`)),
-          120000,
+          () => reject(new Error(`CDP timeout: ${method}${params.expression ? ` (${params.expression.slice(0, 160)})` : ""}`)),
+          30000,
         );
         pending.set(number, {
           resolve: (value) => {
@@ -970,6 +970,14 @@ try {
     })()`);
     await until(() => client.evaluate('Boolean(document.querySelector("kin-app")?.store && !document.querySelector("kin-app").busy)'));
   }
+  async function householdState(client, predicate) {
+    try {
+      await until(() => client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&(${predicate})})()`));
+    } catch (error) {
+      const state = await client.evaluate(`(()=>{const app=document.querySelector('kin-app');return {busy:app?.busy,refreshing:app?.refreshing,pendingRefresh:app?.pendingRefresh,status:app?.status?.textContent,alert:app?.alert?.textContent,focus:document.activeElement?.outerHTML?.slice(0,160),handoffs:app?.state?.handoffs?.map(row=>({text:row.text,status:row.status}))}})()`);
+      throw new Error(`${error.message}; household state: ${JSON.stringify(state)}`);
+    }
+  }
   const first = await tab();
   async function visit(client, id) {
     const hash = `#${id}`;
@@ -1177,14 +1185,21 @@ try {
       windowsVirtualKeyCode: 13,
       ...(type === "keyDown" ? { text: "\r" } : {}),
     });
-  await ready(first);
+  await householdState(first, `app.state.handoffs.some(row=>row.text==='Newer handoff draft')&&document.querySelector('#handoff-text').value===''`);
   assert.equal(
     await first.evaluate('document.querySelector("#handoff-text").value'),
     "",
   );
-  await first.evaluate(
-    'document.querySelector("kin-handoff-list [aria-label=\\\"Acknowledge Newer handoff draft\\\"]").focus()',
-  );
+  await until(() => first.evaluate(`(()=>{
+    const app=document.querySelector('kin-app');
+    const target=app.querySelector('kin-handoff-list [aria-label="Acknowledge Newer handoff draft"]');
+    return !app.busy && !app.refreshing && !app.pendingRefresh && target && !target.disabled;
+  })()`));
+  const handoffFocus = await first.evaluate(`(()=>{
+    const target=document.querySelector('kin-handoff-list [aria-label="Acknowledge Newer handoff draft"]');
+    target.focus();return {focused:document.activeElement===target,target:target.outerHTML,active:document.activeElement?.outerHTML};
+  })()`);
+  assert.equal(handoffFocus.focused,true,JSON.stringify(handoffFocus));
   for (const type of ["keyDown", "keyUp"])
     await first.send("Input.dispatchKeyEvent", {
       type,
@@ -1193,19 +1208,15 @@ try {
       windowsVirtualKeyCode: 13,
       ...(type === "keyDown" ? { text: "\r" } : {}),
     });
-  await ready(first);
+  await householdState(first, `app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status==='acknowledged'`);
   assert.equal(
     await first.evaluate(
       'document.activeElement === document.querySelector("#handoff-text")',
     ),
     true,
   );
-  assert.equal(
-    await first.evaluate(
-      'document.querySelector("kin-app").state.handoffs.find(row=>row.text==="Newer handoff draft").status',
-    ),
-    "acknowledged",
-  );
+  const keyboardHandoffState = await first.evaluate(`(()=>{const app=document.querySelector('kin-app');return {status:app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status,alert:app.alert.textContent,notice:app.status.textContent,button:!!app.querySelector('[aria-label="Acknowledge Newer handoff draft"]'),focus:document.activeElement?.outerHTML?.slice(0,120)}})()`);
+  assert.equal(keyboardHandoffState.status, "acknowledged", JSON.stringify(keyboardHandoffState));
   console.log(
     "PASS Handoff draft disposal, keyboard capture/acknowledgement, focus restoration",
   );
@@ -1224,7 +1235,7 @@ try {
       windowsVirtualKeyCode: 13,
       ...(type === "keyDown" ? { text: "\r" } : {}),
     });
-  await ready(first);
+  await householdState(first, `app.state.talks.some(row=>row.text==='Newer talk draft')&&document.querySelector('#talk-text').value===''`);
   assert.equal(
     await first.evaluate('document.querySelector("#talk-text").value'),
     "",
@@ -1240,7 +1251,7 @@ try {
       windowsVirtualKeyCode: 13,
       ...(type === "keyDown" ? { text: "\r" } : {}),
     });
-  await ready(first);
+  await householdState(first, `app.state.talks.find(row=>row.text==='Newer talk draft')?.status==='resolved'`);
   assert.equal(
     await first.evaluate(
       'document.activeElement === document.querySelector("#talk-text")',
@@ -1271,7 +1282,8 @@ try {
         windowsVirtualKeyCode: 13,
         ...(type === "keyDown" ? { text: "\r" } : {}),
       });
-    await ready(first);
+    const expectedStatus = label === "Reopen" ? "open" : label === "Resolve" ? "resolved" : "archived";
+    await householdState(first, `app.state.talks.find(row=>row.text==='Newer talk draft')?.status===${JSON.stringify(expectedStatus)}`);
     assert.equal(
       await first.evaluate(
         'document.activeElement===document.querySelector("#talk-text")',
@@ -1785,6 +1797,90 @@ try {
   assert.equal(areasResult.hasNoArea, true, "No area remains the default assignment");
   assert.equal(areasResult.assigned, true, `item assignment saves to canonical state: ${JSON.stringify(areasResult)}`);
   assert.equal(areasResult.assignmentFocus, true, "item assignment restores selector focus");
+  const noteValidation = await first.evaluate(`(()=>{
+    const validate=customElements.get('kin-notes').validateText;
+    return {
+      scalarBoundary:validate('A'.repeat(80),'').error===null,
+      scalarOverflow:validate('A'.repeat(81),'').field==='title',
+      unicodeByteBoundary:validate('😀'.repeat(64),'').error===null,
+      unicodeByteOverflow:validate('😀'.repeat(65),'').field==='title',
+      bodyByteBoundary:validate('Title','é'.repeat(2048)).error===null,
+      bodyByteOverflow:validate('Title','é'.repeat(2049)).field==='body',
+      titleControls:validate('Bad\\u0001 title','').field==='title',
+      bodyControls:validate('Title','Bad\\u0000 body').field==='body',
+      bodyWhitespace:validate('Title','line\\nline\\tindented').error===null,
+    };
+  })()`);
+  assert.deepEqual(noteValidation, {scalarBoundary:true,scalarOverflow:true,unicodeByteBoundary:true,unicodeByteOverflow:true,bodyByteBoundary:true,bodyByteOverflow:true,titleControls:true,bodyControls:true,bodyWhitespace:true}, 'browser Note validation matches Rust scalar, byte, and control-character rules');
+  const notesResult = await first.evaluate(`(async()=>{
+    const app=document.querySelector('kin-app');
+    app.nav.querySelector('a[href="#more"]').click();
+    const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh);i++)await new Promise(r=>setTimeout(r,10));if(app.busy||app.refreshing)throw Error('Note action did not settle');};
+    const form=app.notes.querySelector('form');
+    const [title,body]=form.querySelectorAll('input,textarea');const area=app.state.areas.find(row=>row.name==='Kitchen');const areaSelect=form.querySelector('select');areaSelect.value=area.areaId;
+    const beforeInvalid=app.state.notes.length;title.value='A'.repeat(81);body.value='';form.requestSubmit();const invalidNoAppend=app.state.notes.length===beforeInvalid&&title.getAttribute('aria-invalid')==='true'&&!form.querySelector('[id$="title-error"]').hidden;
+    title.value='Wi-Fi details';body.value='<img src=x onerror=alert(1)>'+String.fromCharCode(10)+'Router location';form.requestSubmit();await idle();
+    let note=app.state.notes.at(-1);const stableId=note.noteId;
+    const safeText=app.notes.querySelector('.note-body').textContent===body.value&&!app.notes.querySelector('.note-body img');
+    app.notes.querySelector('.note-row button').click();const editForm=app.notes.querySelector('form');const editTitle=editForm.querySelector('input'),editBody=editForm.querySelector('textarea');editTitle.value='Home Wi-Fi';editBody.value='Router location';editForm.requestSubmit();await idle();
+    note=app.state.notes.find(row=>row.noteId===stableId);const updated=note.title==='Home Wi-Fi'&&note.body==='Router location';
+    app.notes.querySelector('.note-row button:last-child').click();await idle();
+    note=app.state.notes.find(row=>row.noteId===stableId);
+    return {created:!!note,stableId,areaLinked:note.areaId===area.areaId,updated,archived:note.archived,safeText,invalidNoAppend,status:app.status.textContent,alert:app.alert.textContent};
+  })()`);
+  assert.equal(notesResult.created, true, `Note create persists: ${JSON.stringify(notesResult)}`);
+  assert.equal(notesResult.updated, true, "Note edit updates the same stable identity");
+  assert.equal(notesResult.areaLinked, true, "Note may use an existing household Area");
+  assert.equal(notesResult.archived, true, "Note archive is terminal state");
+  assert.equal(notesResult.safeText, true, "Note body displays as plain text without creating markup");
+  assert.equal(notesResult.invalidNoAppend, true, "invalid Note text is explained in the browser and appends no event");
+  assert.equal(notesResult.alert, "", "Note lifecycle completes without an app error");
+  await first.send("Network.emulateNetworkConditions",{offline:true,latency:0,downloadThroughput:0,uploadThroughput:0});
+  const noteSemantics = await first.evaluate(`(()=>{
+    const app=document.querySelector('kin-app');
+    app.notes.clearEditor();app.notes.render();
+    const form=app.notes.querySelector('form'),[title,body]=form.querySelectorAll('input,textarea'),area=form.querySelector('select');
+    const ids=[...app.notes.querySelectorAll('[id]')].map(node=>node.id);
+    const labels=[title,body,area].every(control=>control.id&&[...control.labels].length===1);
+    const uniqueIds=new Set(ids).size===ids.length;
+    const descriptionsResolve=[title,body].every(control=>control.getAttribute('aria-describedby').split(' ').every(id=>ids.includes(id)));
+    title.value='T'.repeat(81);body.value='';form.requestSubmit();
+    const titleOnly=title.getAttribute('aria-invalid')==='true'&&!body.hasAttribute('aria-invalid')&&!form.querySelector('[id$="title-error"]').hidden;
+    title.value='Resilience note';body.value='bad\u0000body';form.requestSubmit();
+    const bodyOnly=!title.hasAttribute('aria-invalid')&&body.getAttribute('aria-invalid')==='true'&&!form.querySelector('[id$="body-error"]').hidden;
+    return {labels,uniqueIds,descriptionsResolve,titleOnly,bodyOnly};
+  })()`);
+  await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app'),form=app.notes.querySelector('form');if(app.busy||app.refreshing||app.pendingRefresh||form.querySelector('button').disabled)return false;form.querySelector('input').value='Resilience note';form.querySelector('textarea').value='offline body';form.requestSubmit();return app.busy})()`));
+  const resilienceId = await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app'),note=app.state?.notes?.find(item=>item.title==='Resilience note');return note&&!note.archived?note.noteId:false})()`));
+  const localCreate = await first.evaluate(`(()=>{const app=document.querySelector('kin-app');return app.notes.querySelector('[data-focus-id="title"]')===document.activeElement&&app.status.textContent.includes('saved on this device')})()`);
+  await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh)return false;const edit=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='edit-${resilienceId}');if(!edit||edit.disabled)return false;edit.click();const form=app.notes.querySelector('form');if(form.querySelector('button').disabled)return false;form.querySelector('input').value='Resilience note updated';form.querySelector('textarea').value='edited offline';form.requestSubmit();return app.busy})()`));
+  await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app'),note=app.state?.notes?.find(item=>item.noteId==='${resilienceId}');return note?.title==='Resilience note updated'&&!app.busy})()`));
+  const localUpdate = await first.evaluate(`(()=>document.querySelector('kin-app').state.notes.find(item=>item.noteId==='${resilienceId}')?.body==='edited offline')()`);
+  await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return !app.busy&&!app.refreshing&&!app.pendingRefresh})()`));
+  await first.evaluate(`(async()=>{const app=document.querySelector('kin-app'),result=await app.store.append({type:'archive-note',noteId:'${resilienceId}'},app.engine);app.state=result.state})()`);
+  await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return !app.busy&&!app.refreshing&&!app.pendingRefresh})()`));
+  await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh)return false;app.notes.notes=[{...app.state.notes.find(item=>item.noteId==='${resilienceId}'),archived:false}];const edit=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='edit-${resilienceId}');if(!edit||edit.disabled)return false;edit.click();const form=app.notes.querySelector('form');if(form.querySelector('button').disabled)return false;form.querySelector('input').value='Must not revive';form.querySelector('textarea').value='stale';form.requestSubmit();return app.busy})()`));
+  try {
+    await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return app.alert.textContent.length>0&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&app.state.notes.find(item=>item.noteId==='${resilienceId}')?.archived===true})()`));
+  } catch (error) {
+    const detail = await first.evaluate(`(()=>{const app=document.querySelector('kin-app'),note=app.state.notes.find(item=>item.noteId==='${resilienceId}'),form=app.notes.querySelector('form');return {busy:app.busy,refreshing:app.refreshing,pendingRefresh:app.pendingRefresh,alert:app.alert.textContent,note:note&&{title:note.title,archived:note.archived},formNoteId:form.dataset.noteId,saveDisabled:form.querySelector('button').disabled,componentDisabled:app.notes.disabledState,retry:app.retryButton.hidden}})()`);
+    throw new Error(`${error.message}; stale Note result: ${JSON.stringify(detail)}`);
+  }
+  const staleRejected = true;
+  await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh)return false;app.notes.clearEditor();app.notes.render();const form=app.notes.querySelector('form');form.querySelector('input').value='Offline archive';form.querySelector('textarea').value='saved offline';form.requestSubmit();return app.busy})()`));
+  const offlineId = await until(() => first.evaluate(`(()=>{const note=document.querySelector('kin-app').state?.notes?.find(item=>item.title==='Offline archive');return note&&!note.archived?note.noteId:false})()`));
+  await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh)return false;const edit=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='edit-${offlineId}');if(!edit||edit.disabled)return false;edit.click();const form=app.notes.querySelector('form');if(form.querySelector('button').disabled)return false;form.querySelector('input').value='Offline archive updated';form.querySelector('textarea').value='updated offline';form.requestSubmit();return app.busy})()`));
+  await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app'),note=app.state?.notes?.find(item=>item.noteId==='${offlineId}');return note?.title==='Offline archive updated'&&!app.busy})()`));
+  const offlineUpdate = await first.evaluate(`(()=>document.querySelector('kin-app').state.notes.find(item=>item.noteId==='${offlineId}')?.body==='updated offline')()`);
+  await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');if(app.busy||app.refreshing||app.pendingRefresh)return false;const button=[...app.notes.querySelectorAll('[data-focus-id]')].find(node=>node.dataset.focusId==='archive-${offlineId}');if(!button||button.disabled)return false;button.click();return app.busy})()`));
+  await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');return app.state?.notes?.find(item=>item.noteId==='${offlineId}')?.archived===true&&!app.busy})()`));
+  const offlineNote = {noteId:offlineId,created:true,updated:offlineUpdate,archived:true};
+  await first.send("Network.emulateNetworkConditions",{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1});
+  await first.send("Page.reload");
+  await ready(first);
+  const noteReloaded = await until(async()=>first.evaluate(`(()=>{const app=document.querySelector('kin-app'),note=app?.state?.notes?.find(item=>item.noteId==='${offlineNote.noteId}');return note?.archived===true})()`));
+  assert.deepEqual({ ...noteSemantics, localCreate,localUpdate,staleRejected,noteId:resilienceId,offlineCreate:offlineNote.created,offlineUpdate:offlineNote.updated,offlineArchive:offlineNote.archived,reloadedArchived:noteReloaded },{labels:true,uniqueIds:true,descriptionsResolve:true,titleOnly:true,bodyOnly:true,localCreate:true,localUpdate:true,staleRejected:true,noteId:resilienceId,offlineCreate:true,offlineUpdate:true,offlineArchive:true,reloadedArchived:true},'Notes fields, offline lifecycle, stale canonical replay, and reload resilience');
+  console.log("PASS Notes labels, field errors, offline lifecycle, stale replay rejection and archived reload");
   const areaNameValidation = await first.evaluate(`(()=>{
     const host=document.createElement('kin-areas');
     host.areas=[{areaId:'a'.repeat(32),name:'Kitchen',archived:false}];
@@ -1966,6 +2062,7 @@ try {
     "PASS CSP/console and same-origin requests (favicon 404 excluded)",
   );
   await syncStorageRegressions(first);
+  console.log("PASS final encrypted sync storage regression");
 } finally {
   if (browserClient) await browserClient.send("Browser.close").catch(() => {});
   for (const client of clients) client.close();

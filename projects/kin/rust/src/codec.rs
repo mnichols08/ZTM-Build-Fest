@@ -26,6 +26,9 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::AreaRenamed { .. } => 19,
         EventKind::AreaArchived { .. } => 20,
         EventKind::ItemAreaChanged { .. } => 21,
+        EventKind::NoteCreated { .. } => 22,
+        EventKind::NoteUpdated { .. } => 23,
+        EventKind::NoteArchived { .. } => 24,
     }
 }
 
@@ -108,6 +111,27 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             payload.extend_from_slice(&item_id.0);
             payload.extend_from_slice(&area_id.map_or([0; 16], |id| id.0));
         }
+        EventKind::NoteCreated {
+            note_id,
+            title,
+            body,
+            area_id,
+        }
+        | EventKind::NoteUpdated {
+            note_id,
+            title,
+            body,
+            area_id,
+        } => {
+            let (title, body) = crate::state::normalize_note(title, body)?;
+            payload.extend_from_slice(&note_id.0);
+            payload.extend_from_slice(&area_id.map_or([0; 16], |id| id.0));
+            payload.extend_from_slice(&(title.len() as u32).to_le_bytes());
+            payload.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            payload.extend_from_slice(title.as_bytes());
+            payload.extend_from_slice(body.as_bytes());
+        }
+        EventKind::NoteArchived { note_id } => payload.extend_from_slice(&note_id.0),
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());
     bytes.extend_from_slice(&event.event_version.to_le_bytes());

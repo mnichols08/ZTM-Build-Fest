@@ -328,7 +328,14 @@ p { margin: 7px 0; }
 .routine-row { align-items: start; }
 .routine-row > div:first-child { min-width: 0; }
 kin-routines, kin-today, kin-compose, kin-catch-up, kin-handoff-list, kin-talk-list, kin-pulse,
-kin-household, kin-security, kin-areas { display: block; min-width: 0; }
+kin-household, kin-security, kin-areas, kin-notes { display: block; min-width: 0; width: 100%; }
+.notes-section { min-width: 0; margin-block: 12px; }
+.notes-section form { display: grid; gap: 12px; min-width: 0; margin-block: 14px; }
+.notes-section label { display: grid; gap: 5px; min-width: 0; font-size: 13px; font-weight: 650; }
+.notes-section input, .notes-section textarea, .notes-section select { width: 100%; min-width: 0; max-width: 100%; min-height: var(--tap); }
+.notes-section textarea { min-height: 120px; resize: vertical; }
+.note-row { min-width: 0; overflow-wrap: anywhere; }
+.note-row button { margin-inline-end: 8px; }
 .handoff-form, .talk-form { grid-template-columns: minmax(0, 1fr) auto; margin-top: 12px; }
 .handoff-row, .talk-row { grid-template-columns: minmax(0, 1fr); }
 .handoff-row .item-action, .talk-row .item-action { justify-content: flex-start; }
@@ -454,3 +461,4 @@ kin-app > .security-panel {
   button:focus-visible, input:focus-visible, select:focus-visible,
   a:focus-visible, main:focus-visible { outline: 3px solid Highlight; }
 }
+.note-body { white-space: pre-wrap; overflow-wrap: anywhere; }

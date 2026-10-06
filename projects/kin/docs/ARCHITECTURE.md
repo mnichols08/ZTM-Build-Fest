@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** v0.15.0–v0.15.4 are complete; v0.15.5 is the current PR candidate. Rust owns portable commands, canonical codecs, replay and archive framing/import validation. JavaScript owns root rotation, local encryption/unlock, bounded persistence and browser capabilities. Event DB schema 3 and key DB schema 4 persist encrypted protected values. The same-origin identity/relay service uses SQLite server schema v2 for durable authorization, opaque relay state and household lifecycle tombstones. Areas extend canonical events/replay protocol 9; no browser-only Area state or server plaintext is introduced.
+**Status:** v0.15.5 is merged and complete; v0.16.2 is the current Notes resilience/accessibility gate. Rust owns Note validation, canonical events, replay and projection through additive protocol 10. JavaScript mirrors the title/body constraints for early form feedback while Rust remains authoritative. Equal-time cross-device update/archive conflicts converge to the terminal archive. No IndexedDB or server schema change is required.
 
 ## v0.10 implementation boundary
 

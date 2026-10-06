@@ -1,4 +1,4 @@
-const PROTOCOL_VERSION = 9;
+const PROTOCOL_VERSION = 10;
 const REQUEST_HEADER_BYTES = 64;
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 const PULSE_VALUES = ["good", "okay", "drained", "rough-day", "need-quiet"];
@@ -247,6 +247,9 @@ export const encodeRoutineActionRecord = (value) =>
     }[value.action],
     value,
   );
+export const encodeNoteCreatedRecord = (value) => encodeIntent("create-note", value);
+export const encodeNoteUpdatedRecord = (value) => encodeIntent("update-note", value);
+export const encodeNoteArchivedRecord = (value) => encodeIntent("archive-note", value);
 export const eventMetadata = (bytes) =>
   decodeMetadata(callCore(sharedCodec, "kin_event_metadata", asBytes(bytes)));
 export const eventMetadataBatch = (records) =>
@@ -275,6 +278,9 @@ const COMMAND_TYPES = [
   "rename-area",
   "archive-area",
   "change-item-area",
+  "create-note",
+  "update-note",
+  "archive-note",
 ];
 const EVENT_KINDS = [
   null,
@@ -299,6 +305,9 @@ const EVENT_KINDS = [
   "AREA_RENAMED",
   "AREA_ARCHIVED",
   "ITEM_AREA_CHANGED",
+  "NOTE_CREATED",
+  "NOTE_UPDATED",
+  "NOTE_ARCHIVED",
 ];
 
 function encodeIntent(type, value) {
@@ -315,6 +324,10 @@ function encodeIntentPacket(command, identity) {
     throw new KinEngineError(2, "Kin received an invalid household action.");
   const hasText = [1, 5, 8, 14, 18, 19].includes(kind);
   const text = hasText ? (command.name ?? command.text) : "";
+  const noteTitle = kind === 22 || kind === 23 ? textEncoder.encode(command.title ?? "") : null;
+  const noteBody = kind === 22 || kind === 23 ? textEncoder.encode(command.body ?? "") : null;
+  if ((kind === 22 || kind === 23) && (typeof command.title !== "string" || typeof command.body !== "string" || strictTextDecoder.decode(noteTitle) !== command.title || strictTextDecoder.decode(noteBody) !== command.body || noteTitle.length > 256 || noteBody.length > 4096))
+    throw new KinEngineError(2, "Note text must be valid Unicode and within its supported size.");
   const textBytes = textEncoder.encode(text);
   if (
     hasText &&
@@ -328,7 +341,7 @@ function encodeIntentPacket(command, identity) {
       "Text must be valid Unicode and no more than 4096 UTF-8 bytes.",
     );
   }
-  const packet = new Uint8Array(128 + (kind === 21 ? 16 : textBytes.length));
+  const packet = new Uint8Array(128 + (kind === 21 ? 16 : kind === 22 || kind === 23 ? 24 + noteTitle.length + noteBody.length : textBytes.length));
   packet.set([75, 67, 77, 68, 1, 0, 0, 0]);
   const view = new DataView(packet.buffer);
   view.setUint16(8, kind, true);
@@ -358,6 +371,7 @@ function encodeIntentPacket(command, identity) {
       command.talkId ??
       command.routineId ??
       command.areaId ??
+      command.noteId ??
       command.id ??
       identity.entityId;
     packet.set(
@@ -385,7 +399,12 @@ function encodeIntentPacket(command, identity) {
     if (code < 0) throw new KinEngineError(2, "Choose a valid cadence.");
     packet[112] = code;
   }
-  if (kind === 21) {
+  if (kind === 22 || kind === 23) {
+    packet.set(command.areaId ? idFromHex(command.areaId) : new Uint8Array(16), 128);
+    view.setUint32(144, noteTitle.length, true); view.setUint32(148, noteBody.length, true);
+    packet.set(noteTitle, 152); packet.set(noteBody, 152 + noteTitle.length);
+    view.setUint32(124, 24 + noteTitle.length + noteBody.length, true);
+  } else if (kind === 21) {
     packet.set(command.areaId ? idFromHex(command.areaId) : new Uint8Array(16), 128);
     view.setUint32(124, 16, true);
   } else {
@@ -792,13 +811,13 @@ function decodeState(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const protocolVersion = view.getUint16(4, true);
   if (
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9].includes(protocolVersion) ||
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(protocolVersion) ||
     view.getUint16(6, true) !== 0
   ) {
     throw new KinEngineError(6, "Kin received an unsupported state format.");
   }
   const resultHeaderBytes =
-    protocolVersion >= 9
+    protocolVersion >= 10 ? 64 : protocolVersion >= 9
       ? 60
       : protocolVersion >= 7
       ? 56
@@ -820,6 +839,7 @@ function decodeState(bytes) {
   const itemCount = view.getUint32(8, true);
   const routineCount = protocolVersion >= 7 ? view.getUint32(52, true) : 0;
   const areaCount = protocolVersion >= 9 ? view.getUint32(56, true) : 0;
+  const noteCount = protocolVersion >= 10 ? view.getUint32(60, true) : 0;
   const summaryCount = protocolVersion >= 6 ? view.getUint32(24, true) : 0;
   const summaryTotalCount = protocolVersion >= 6 ? view.getUint32(28, true) : 0;
   const summaryThroughPresent = protocolVersion >= 6 ? view.getUint8(32) : 0;
@@ -844,7 +864,7 @@ function decodeState(bytes) {
     throw new KinEngineError(6, "Kin received invalid summary metadata.");
   }
   if (
-    areaCount > 32 || itemCount + handoffCount + talkCount + pulseCount + routineCount >
+    areaCount > 32 || noteCount > 128 || itemCount + handoffCount + talkCount + pulseCount + routineCount + noteCount >
     MAX_EVENT_COUNT
   ) {
     throw new KinEngineError(
@@ -1118,6 +1138,24 @@ function decodeState(bytes) {
   }
   if (items.some((item) => item.areaId && !areaIds.has(item.areaId)))
     throw new KinEngineError(6, "Kin received an unknown Area assignment.");
+  const notes = [];
+  const noteIds = new Set();
+  for (let index = 0; index < noteCount; index += 1) {
+    const headerEnd = offset + 92;
+    if (headerEnd > bytes.length) throw new KinEngineError(6, "Kin received a truncated Note.");
+    const titleLength = view.getUint32(offset + 84, true), bodyLength = view.getUint32(offset + 88, true), end = headerEnd + titleLength + bodyLength;
+    const noteId = idToHex(bytes.subarray(offset, offset + 16)), area = bytes.subarray(offset + 64, offset + 80), archived = bytes[offset + 80];
+    if (titleLength < 1 || titleLength > 256 || bodyLength > 4096 || end > bytes.length || archived > 1 || bytes.subarray(offset + 81, offset + 84).some(Boolean) || noteIds.has(noteId)) throw new KinEngineError(6, "Kin received an invalid Note.");
+    let title, body;
+    try { title = strictTextDecoder.decode(bytes.subarray(headerEnd, headerEnd + titleLength)); body = strictTextDecoder.decode(bytes.subarray(headerEnd + titleLength, end)); }
+    catch { throw new KinEngineError(6, "Kin received invalid Note text."); }
+    if (noteId === "00".repeat(16) || !title.trim() || title.trim() !== title || [...title].length > 80 || [...title].some((character) => /\p{Cc}/u.test(character)) || [...body].some((character) => /\p{Cc}/u.test(character) && !["\n", "\r", "\t"].includes(character))) throw new KinEngineError(6, "Kin received invalid Note text.");
+    notes.push({ noteId, title, body, areaId: area.every((byte) => byte === 0) ? null : idToHex(area), archived: archived === 1,
+      createdBy: idToHex(bytes.subarray(offset + 16, offset + 32)), updatedBy: idToHex(bytes.subarray(offset + 32, offset + 48)),
+      createdAt: Number(view.getBigInt64(offset + 48, true)), updatedAt: Number(view.getBigInt64(offset + 56, true)) });
+    noteIds.add(noteId); offset = end;
+  }
+  if (notes.some((note) => note.areaId && !areaIds.has(note.areaId))) throw new KinEngineError(6, "Kin received a Note with an unknown Area.");
   const summaryEntries = [];
   const entityNames = ["", "item", "handoff", "talk", "routine"];
   for (let index = 0; index < summaryCount; index += 1) {
@@ -1188,6 +1226,7 @@ function decodeState(bytes) {
       pulses,
       ...(protocolVersion >= 7 ? { routines } : {}),
       ...(protocolVersion >= 9 ? { areas } : {}),
+      ...(protocolVersion >= 10 ? { notes } : {}),
       summary: {
         entries: summaryEntries,
         totalCount: summaryTotalCount,

@@ -1,6 +1,16 @@
 # Testing Contracts
 
-**Status:** v0.13.3 recovery release gate passed on Windows x64 with Node 22.12,
+The v0.16.0 gate adds Note lifecycle, validation, protocol-10 compatibility,
+prior-history, real-WASM, and browser create/edit/archive coverage to the
+existing Rust, encrypted-sync, storage, server, and browser regression suites.
+The v0.16.1 correctness gate covered concurrent Note update/archive events with
+both device-ID orderings, browser parity for Unicode scalar/UTF-8/control
+limits, invalid-submit non-append behavior, and persisted-state waits in
+keyboard regressions to avoid accepting a pre-action idle state. The v0.16.2
+gate adds offline Notes lifecycle/reload, stale canonical command rejection,
+Notes labels/errors/focus, and three consecutive full browser runs.
+
+**Status:** The historical v0.13.3 recovery release gate passed on Windows x64 with Node 22.12,
 Rust 1.93, and Edge 154. The gate covered 300 Node/real-WASM tests (226 server),
 118 Rust tests, formatting, warnings-denied Clippy, release WASM, all product,
 storage, security UI and virtual-passkey browser runners, version consistency,

@@ -569,6 +569,9 @@ export async function catchUpPeerRegressions(first, second, until) {
   await first.evaluate(
     `document.querySelector('kin-app').catchUp.button.focus()`,
   );
+  await until(() => first.evaluate(
+    `document.activeElement===document.querySelector('kin-app').catchUp.button`,
+  ));
   for (const type of ["keyDown", "keyUp"]) {
     await first.send("Input.dispatchKeyEvent", {
       type,
@@ -584,6 +587,10 @@ export async function catchUpPeerRegressions(first, second, until) {
     return app.state.summary.totalCount===0 && app.catchUpCursor.localSequence===app.snapshotBoundary?.localSequence;
   })()`),
   );
+  await until(() => first.evaluate(`(()=>{
+    const app=document.querySelector('kin-app');
+    return !app.busy && !app.refreshing && document.activeElement===app.catchUp.heading;
+  })()`));
   assert.deepEqual(
     await second.evaluate("window.catchUpMessages"),
     [{ type: "view-state-changed" }],

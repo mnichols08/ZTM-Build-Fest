@@ -26,6 +26,7 @@ id_type!(HandoffId);
 id_type!(TalkId);
 id_type!(RoutineId);
 id_type!(AreaId);
+id_type!(NoteId);
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct IdentityBinding {
@@ -134,6 +135,21 @@ pub enum EventKind {
     ItemAreaChanged {
         item_id: ItemId,
         area_id: Option<AreaId>,
+    },
+    NoteCreated {
+        note_id: NoteId,
+        title: String,
+        body: String,
+        area_id: Option<AreaId>,
+    },
+    NoteUpdated {
+        note_id: NoteId,
+        title: String,
+        body: String,
+        area_id: Option<AreaId>,
+    },
+    NoteArchived {
+        note_id: NoteId,
     },
 }
 

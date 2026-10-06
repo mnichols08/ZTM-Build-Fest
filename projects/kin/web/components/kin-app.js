@@ -1,6 +1,7 @@
 import { projectionContext } from "../browser-time.js";
 import "./kin-routines.js";
 import "./kin-areas.js";
+import "./kin-notes.js";
 import { loadKinEngine } from "../wasm/kin-engine.js";
 import { EventStore } from "../storage/event-store.js";
 import { SyncCoordinator } from "../sync/sync-coordinator.js";
@@ -78,6 +79,7 @@ class KinApp extends HTMLElement {
     this.onRoutineIntent = (event) =>
       this.saveRoutine({ ...event.detail, type: event.type.slice(4) });
     this.onAreaIntent = (event) => this.saveArea(event.detail);
+    this.onNoteIntent = (event) => this.saveNote(event.type.slice(4), event.detail);
     this.onItemAreaChange = (event) => this.saveArea({ ...event.detail, action: "assign-item-area" });
     this.pulseTimer = null;
     this.catchUpCursor = null;
@@ -175,6 +177,7 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:archive-item", this.onArchiveItem);
     this.addEventListener("kin:change-item-area", this.onItemAreaChange);
     this.addEventListener("kin:area-intent", this.onAreaIntent);
+    for (const action of ["create-note", "update-note", "archive-note"]) this.addEventListener(`kin:${action}`, this.onNoteIntent);
     this.addEventListener("kin:add-handoff", this.onAddHandoff);
     this.addEventListener("kin:acknowledge-handoff", this.onAcknowledgeHandoff);
     this.addEventListener("kin:archive-handoff", this.onArchiveHandoff);
@@ -402,6 +405,8 @@ class KinApp extends HTMLElement {
     this.moreSecurity.append(securityHeading);
     more.append(this.moreSecurity);
     more.insertBefore(this.areas, this.moreSecurity);
+    this.notes = document.createElement("kin-notes");
+    more.insertBefore(this.notes, this.moreSecurity);
 
     for (const section of [today, lists, routines, handoff, more]) {
       this.pages.set(section.id, section);
@@ -454,6 +459,7 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:archive-item", this.onArchiveItem);
     this.removeEventListener("kin:change-item-area", this.onItemAreaChange);
     this.removeEventListener("kin:area-intent", this.onAreaIntent);
+    for (const action of ["create-note", "update-note", "archive-note"]) this.removeEventListener(`kin:${action}`, this.onNoteIntent);
     this.removeEventListener("kin:add-handoff", this.onAddHandoff);
     this.removeEventListener(
       "kin:acknowledge-handoff",
@@ -971,6 +977,38 @@ class KinApp extends HTMLElement {
     }
   }
 
+  async saveNote(action, detail) {
+    if (this.busy || !this.store || !this.engine) return;
+    const session = this.captureSession();
+    const type = { "create-note": "create-note", "update-note": "update-note", "archive-note": "archive-note" }[action];
+    if (!type) return;
+    const noteId = detail.noteId ?? crypto.randomUUID().replaceAll("-", "");
+    this.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
+    try {
+      await this.appendCommand({ type, ...detail, noteId, id: noteId });
+      this.assertCurrentSession(session);
+      this.notes.clearEditor();
+      this.notes.pendingFocus = action === "archive-note" ? this.notes.pendingFocus : "title";
+      this.renderState();
+      this.broadcastEventChange();
+      this.setStatus(action === "archive-note"
+        ? "Note archived on this device."
+        : navigator.onLine
+          ? "Note saved on this device."
+          : "Note saved on this device. Sync is unavailable while offline.");
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      this.showAlert(error.userMessage ?? SAVE_ERROR);
+      this.setStatus("");
+      this.notes.pendingFocus = "title";
+    } finally {
+      if (this.isCurrentSession(session)) {
+        this.setBusy(false);
+        this.flushPeerRefresh();
+      }
+    }
+  }
+
   schedulePulseRefresh() {
     clearTimeout(this.pulseTimer);
     if (
@@ -1345,6 +1383,8 @@ class KinApp extends HTMLElement {
     );
     this.routines.routines = this.state.routines ?? [];
     this.areas.areas = this.state.areas ?? [];
+    this.notes.notes = this.state.notes ?? [];
+    this.notes.areas = this.state.areas ?? [];
     this.schedulePulseRefresh();
   }
 
@@ -1361,6 +1401,7 @@ class KinApp extends HTMLElement {
     this.catchUp.disabled = isBusy || !this.store;
     this.routines.disabled = isBusy || !this.store;
     this.areas.disabled = isBusy || !this.store;
+    this.notes.disabled = isBusy || !this.store;
     this.household.disabled = isBusy || !this.store;
     for (const tab of this.handoffTabs?.querySelectorAll('[role="tab"]') ?? [])
       tab.disabled = isBusy;

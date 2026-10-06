@@ -5,8 +5,8 @@ use crate::core::{encode_projection, project};
 use crate::error::KinError;
 use crate::event::*;
 use crate::protocol::{
-    decode_event, decode_request_with_summary, DecodedRequest, MAX_EVENT_COUNT,
-    MAX_ITEM_TEXT_BYTES, MAX_PROTOCOL_BYTES, PROTOCOL_VERSION,
+    decode_event, decode_request_with_summary, DecodedRequest, MAX_EVENT_COUNT, MAX_PROTOCOL_BYTES,
+    PROTOCOL_VERSION,
 };
 use crate::recurrence::{Cadence, CivilDate};
 use crate::state::{normalize_area_name, HouseholdState, ItemStatus};
@@ -67,6 +67,19 @@ pub enum HouseholdCommand {
         item_id: ItemId,
         area_id: Option<AreaId>,
     },
+    CreateNote {
+        id: NoteId,
+        title: String,
+        body: String,
+        area_id: Option<AreaId>,
+    },
+    UpdateNote {
+        id: NoteId,
+        title: String,
+        body: String,
+        area_id: Option<AreaId>,
+    },
+    ArchiveNote(NoteId),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -148,6 +161,35 @@ pub fn create_event(
             item_id: *item_id,
             area_id: *area_id,
         },
+        CreateNote {
+            id,
+            title,
+            body,
+            area_id,
+        } => {
+            let (title, body) = crate::state::normalize_note(title, body)?;
+            EventKind::NoteCreated {
+                note_id: *id,
+                title,
+                body,
+                area_id: *area_id,
+            }
+        }
+        UpdateNote {
+            id,
+            title,
+            body,
+            area_id,
+        } => {
+            let (title, body) = crate::state::normalize_note(title, body)?;
+            EventKind::NoteUpdated {
+                note_id: *id,
+                title,
+                body,
+                area_id: *area_id,
+            }
+        }
+        ArchiveNote(id) => EventKind::NoteArchived { note_id: *id },
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -263,6 +305,58 @@ pub fn execute(
                 return Err(KinError::InvalidEvent);
             }
         }
+        HouseholdCommand::CreateNote {
+            id,
+            title,
+            body,
+            area_id,
+        } => {
+            crate::state::normalize_note(title, body)?;
+            if id.0 == [0; 16]
+                || current.notes.len() >= crate::state::MAX_NOTES
+                || current.notes.iter().any(|note| note.note_id == *id)
+                || area_id.is_some_and(|area_id| {
+                    !current
+                        .areas
+                        .iter()
+                        .any(|area| area.area_id == area_id && !area.archived)
+                })
+            {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::UpdateNote {
+            id,
+            title,
+            body,
+            area_id,
+        } => {
+            crate::state::normalize_note(title, body)?;
+            if !current
+                .notes
+                .iter()
+                .any(|note| note.note_id == *id && note.status == crate::state::NoteStatus::Active)
+                || area_id.is_some_and(|area_id| {
+                    !current
+                        .areas
+                        .iter()
+                        .any(|area| area.area_id == area_id && !area.archived)
+                        && !current
+                            .notes
+                            .iter()
+                            .any(|note| note.note_id == *id && note.area_id == Some(area_id))
+                })
+            {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::ArchiveNote(id)
+            if !current.notes.iter().any(|note| {
+                note.note_id == *id && note.status == crate::state::NoteStatus::Active
+            }) =>
+        {
+            return Err(KinError::InvalidEvent)
+        }
         _ => {}
     }
     if let HouseholdCommand::CreateRoutine { created_on, .. } = command {
@@ -291,7 +385,11 @@ fn field<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N], KinErro
 
 /// KCMD v1 is an intent transport, independent of immutable event schemas.
 pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext), KinError> {
-    if bytes.len() < 128 || bytes.len() > 128 + MAX_ITEM_TEXT_BYTES || &bytes[..4] != b"KCMD" {
+    if bytes.len() < 128
+        || bytes.len()
+            > 128 + 24 + crate::state::MAX_NOTE_TITLE_BYTES + crate::state::MAX_NOTE_BODY_BYTES
+        || &bytes[..4] != b"KCMD"
+    {
         return Err(KinError::MalformedProtocol);
     }
     if u16::from_le_bytes(field(bytes, 4)?) != 1 {
@@ -309,21 +407,23 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
     if bytes.len() != 128 + text_length {
         return Err(KinError::MalformedProtocol);
     }
-    let text = if kind == 21 {
+    let text = if matches!(kind, 21..=24) {
         String::new()
     } else {
         std::str::from_utf8(&bytes[128..])
             .map_err(|_| KinError::MalformedProtocol)?
             .to_owned()
     };
-    let accepts_payload =
-        matches!(kind, 1 | 5 | 8 | 14 | 18 | 19) || kind == 21 && text_length == 16;
+    let accepts_payload = matches!(kind, 1 | 5 | 8 | 14 | 18 | 19)
+        || kind == 21 && text_length == 16
+        || matches!(kind, 22 | 23) && text_length >= 24;
     if !text.is_empty() && !accepts_payload
         || !matches!(kind, 14..=16) && date != 0
         || !matches!(kind, 1 | 12 | 14) && option != 0
         || kind != 12 && expires != 0
         || matches!(kind, 12 | 13) && id != [0; 16]
         || kind == 21 && text_length != 16
+        || kind == 24 && text_length != 0
     {
         return Err(KinError::MalformedProtocol);
     }
@@ -399,6 +499,41 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
                 area_id: (area != [0; 16]).then_some(AreaId(area)),
             }
         }
+        22 | 23 if text_length >= 24 => {
+            let title_len = u32::from_le_bytes(field(bytes, 128 + 16)?) as usize;
+            let body_len = u32::from_le_bytes(field(bytes, 128 + 20)?) as usize;
+            if 24usize
+                .checked_add(title_len)
+                .and_then(|v| v.checked_add(body_len))
+                != Some(text_length)
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            let title = std::str::from_utf8(&bytes[152..152 + title_len])
+                .map_err(|_| KinError::MalformedProtocol)?
+                .to_owned();
+            let body = std::str::from_utf8(&bytes[152 + title_len..])
+                .map_err(|_| KinError::MalformedProtocol)?
+                .to_owned();
+            let area: [u8; 16] = field(bytes, 128)?;
+            let area_id = (area != [0; 16]).then_some(AreaId(area));
+            if kind == 22 {
+                CreateNote {
+                    id: NoteId(id),
+                    title,
+                    body,
+                    area_id,
+                }
+            } else {
+                UpdateNote {
+                    id: NoteId(id),
+                    title,
+                    body,
+                    area_id,
+                }
+            }
+        }
+        24 if text_length == 0 => ArchiveNote(NoteId(id)),
         _ => return Err(KinError::UnsupportedVersion),
     };
     let context = CommandContext {

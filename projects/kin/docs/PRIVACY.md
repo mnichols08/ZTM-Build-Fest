@@ -1,5 +1,11 @@
 # Privacy
 
+v0.16.0 Notes add no Note-specific server interpretation or metadata. Note
+titles, bodies, Area associations, and event semantics remain inside canonical
+events protected by the existing encrypted sync envelope. Rendering uses text
+nodes/textContent; household Note text is not treated as HTML or sent to an AI
+service.
+
 **Status:** v0.12.3 implementation candidate; awaiting human review. Local protected content is encrypted after verified migration. Sync is optional and uploads client-encrypted canonical event envelopes. The durable service receives no plaintext household event payloads or content keys, but it sees and persists routing and traffic metadata; no anonymity or zero-knowledge claim is made.
 
 v0.10 encrypts local canonical events, duplicated outbox content, protected metadata

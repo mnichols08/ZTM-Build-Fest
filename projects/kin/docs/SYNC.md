@@ -1,6 +1,6 @@
 # Synchronization Design
 
-**Status:** v0.15.0–v0.15.4 are complete; v0.15.5 is the current PR candidate. Area events use the existing encrypted envelope and protocol-9 client replay; no relay/server field contains an Area name. The local outbox, sync state, epoch secrets and private device keys are encrypted at rest and unavailable while locked. Signed device-key successors preserve verification history and repair entitled post-join epoch grants. The service stores identity, authorization and opaque relay state in SQLite and acknowledges an event only after commit; it remains a relay, not a household source of truth.
+**Status:** v0.15.5 is merged and complete; v0.16.2 preserves the protocol-10 Note sync boundary. Equal-logical-time cross-device update/archive events converge with archive winning. Note title, body, Area name, and semantic Note kind remain inside encrypted event payloads; no plaintext Note server metadata is added. Existing authority, outbox, and opaque relay behavior is unchanged.
 
 ## v0.15.0 Areas
 
