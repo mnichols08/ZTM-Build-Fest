@@ -1,6 +1,6 @@
 # Derived Household State
 
-**Status:** v0.15.5 is merged and complete; v0.16.1 is the current Notes correctness gate. Rust protocol 10 adds Note projection while retaining earlier result layouts exactly. Equal-time cross-device Note update/archive conflicts deterministically resolve to the terminal archive. Pre-Note histories project `notes = []`; browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
+**Status:** v0.15.5 is merged and complete; v0.16.2 is the current Notes resilience/accessibility gate. Rust protocol 10 adds Note projection while retaining earlier result layouts exactly. Equal-time cross-device Note update/archive conflicts deterministically resolve to the terminal archive. Pre-Note histories project `notes = []`; browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
 
 ## Projection pipeline
 

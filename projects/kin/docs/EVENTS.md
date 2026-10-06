@@ -1,6 +1,6 @@
 # Household Events
 
-**Status:** Current through the v0.16.1 Notes correctness gate. Rust owns canonical command encoding and decoding; existing schemas/kinds and immutable bytes remain unchanged. Protocol 10 adds `NOTE_CREATED`, `NOTE_UPDATED`, and terminal `NOTE_ARCHIVED` with schema 1; protocols 1–9 retain their wire layouts and reject Note events. Equal-time cross-device Note update/archive conflicts preserve the terminal archive without changing event bytes. Local encryption wraps canonical bytes without rewriting them.
+**Status:** Current through the v0.16.2 Notes resilience/accessibility gate. Rust owns canonical command encoding and decoding; existing schemas/kinds and immutable bytes remain unchanged. Protocol 10 adds `NOTE_CREATED`, `NOTE_UPDATED`, and terminal `NOTE_ARCHIVED` with schema 1; protocols 1–9 retain their wire layouts and reject Note events. Equal-time cross-device Note update/archive conflicts preserve the terminal archive without changing event bytes. Local encryption wraps canonical bytes without rewriting them.
 
 ## Canonical record
 

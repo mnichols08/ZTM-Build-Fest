@@ -107,10 +107,11 @@ without reviving revoked authority; no server content-key escrow is permitted.
 The v0.14.x UX/UI Consolidation line is complete through `kin-v0.14.5` on
 `kin-development`. v0.15.5 is merged into `kin-development`; annotated
 `kin-v0.15.5` is complete at `12da21288252a9559da5b3acb8eb3efb81aaeec3`.
-The user reviewed PR #26 and authorized the v0.16.1 Notes correctness fixes
-on branch `kin-v0.16.x-notes`; preserve the existing annotated `kin-v0.16.0`
-tag unchanged. Current gate: v0.16.1. Do not begin v0.16.2 until v0.16.1 is
-complete, validated, committed, tagged, pushed, and verified. Preserve the
+The user reviewed PR #26 and authorized the v0.16.2 Notes resilience and
+accessibility fixes on branch `kin-v0.16.x-notes`; preserve the existing
+annotated `kin-v0.16.0` and `kin-v0.16.1` tags unchanged. Current gate: v0.16.2.
+Do not begin v0.16.3 until v0.16.2 is complete, validated, committed, tagged,
+pushed, and verified. Preserve the
 v0.13.5 recovery authority guarantees and all earlier
 security/domain contracts.
 
@@ -1026,7 +1027,7 @@ v0.12.x — Data Lifecycle, Retention & Deletion (v0.12.3 candidate; release gat
 v0.13.x — Recovery & Household Continuity (complete through v0.13.5)
 v0.14.x — UX/UI Consolidation (complete through v0.14.5)
 v0.15.x — Household Areas (complete through v0.15.5)
-v0.16.x — Household Notes & Reference Context (v0.16.1 correctness gate; branch kin-v0.16.x-notes)
+v0.16.x — Household Notes & Reference Context (v0.16.2 resilience/accessibility gate; branch kin-v0.16.x-notes)
 v0.17.x–v0.40.x — Incremental household capabilities, portability and device migration (October targets)
 v0.41.x–v0.45.x — Recovery drills, platform validation, performance and release-candidate readiness (undated follow-ups)
 v1.0.0 — Stable Kin Platform (planned, readiness-driven)
@@ -1144,6 +1145,7 @@ kin-v0.15.4
 kin-v0.15.5
 kin-v0.16.0
 kin-v0.16.1
+kin-v0.16.2
 kin-v1.0.0
 ```
 

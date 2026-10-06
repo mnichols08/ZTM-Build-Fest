@@ -22,7 +22,7 @@ either device ordering, so the projected archived title/body remain the same
 regardless of the replay input order. A later non-concurrent update after
 archive remains invalid.
 
-**Status:** Current through the v0.16.1 Notes correctness gate; earlier version sections are historical contracts.
+**Status:** Current through the v0.16.2 Notes resilience/accessibility gate; earlier version sections are historical contracts.
 
 ## Scope and relationships
 

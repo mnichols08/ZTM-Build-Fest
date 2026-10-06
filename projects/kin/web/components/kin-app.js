@@ -987,9 +987,26 @@ class KinApp extends HTMLElement {
     try {
       await this.appendCommand({ type, ...detail, noteId, id: noteId });
       this.assertCurrentSession(session);
-      this.renderState(); this.broadcastEventChange(); this.setStatus(action === "archive-note" ? "Note archived." : "Note saved.");
-    } catch (error) { if (error.code === "locked" || !this.isCurrentSession(session)) return; this.showAlert(error.userMessage ?? SAVE_ERROR); this.setStatus(""); }
-    finally { if (this.isCurrentSession(session)) { this.setBusy(false); this.flushPeerRefresh(); } }
+      this.notes.clearEditor();
+      this.notes.pendingFocus = action === "archive-note" ? this.notes.pendingFocus : "title";
+      this.renderState();
+      this.broadcastEventChange();
+      this.setStatus(action === "archive-note"
+        ? "Note archived on this device."
+        : navigator.onLine
+          ? "Note saved on this device."
+          : "Note saved on this device. Sync is unavailable while offline.");
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      this.showAlert(error.userMessage ?? SAVE_ERROR);
+      this.setStatus("");
+      this.notes.pendingFocus = "title";
+    } finally {
+      if (this.isCurrentSession(session)) {
+        this.setBusy(false);
+        this.flushPeerRefresh();
+      }
+    }
   }
 
   schedulePulseRefresh() {

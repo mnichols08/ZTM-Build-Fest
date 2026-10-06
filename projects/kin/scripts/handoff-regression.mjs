@@ -84,9 +84,11 @@ export async function handoffRegressions() {
   } finally {
     IDBObjectStore.prototype.add = originalAdd;
   }
+  for (let i = 0; i < 500 && (app.busy || app.retryButton.hidden || capture.input.value !== "Original handoff"); i++)
+    await new Promise((resolve) => setTimeout(resolve, 10));
   check(
     !app.retryButton.hidden && capture.input.value === "Original handoff",
-    "failed add retains draft/retry",
+    `failed add retains draft/retry (${JSON.stringify({ hidden: app.retryButton.hidden, value: capture.input.value, busy: app.busy, alert: app.alert.textContent, retryAction: !!app.retryAction })})`,
   );
   edit("Newer handoff draft");
   const originalRetry = app.retryAction;
@@ -106,10 +108,12 @@ export async function handoffRegressions() {
     app.store.getCatchUpState = getCatchUpState;
   }
   await app.retryAction();
+  for (let i = 0; i < 500 && (app.busy || app.refreshing || app.pendingRefresh || app.retryAction !== originalRetry || app.alert.textContent !== originalMessage); i++)
+    await new Promise((resolve) => setTimeout(resolve, 10));
   check(
     app.retryAction === originalRetry &&
       app.alert.textContent === originalMessage,
-    "recovered refresh restores original failed Handoff command",
+    `recovered refresh restores original failed Handoff command (${JSON.stringify({ retryRestored: app.retryAction === originalRetry, alert: app.alert.textContent, originalMessage, suspended: !!app.suspendedRetry, busy: app.busy, stateCount: app.state.handoffs.length })})`,
   );
   check(
     (await count()) === before + 3,
@@ -150,9 +154,12 @@ export async function handoffRegressions() {
         (await app.store.ensureContext()).next_logical_time === counter,
       "Handoff event/counter rollback",
     );
+    for (let i = 0; i < 500 && (app.busy || app.retryButton.hidden || app.retryAction === app.retryRefresh); i++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
     app.retryButton.click();
     app.retryButton.click();
-    await idle();
+    for (let i = 0; i < 500 && (app.busy || !app.state.handoffs.some((row) => row.text === "Atomic handoff " + mode)); i++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
     const retryCount = await count();
     const retryCounter = (await app.store.ensureContext()).next_logical_time;
     check(

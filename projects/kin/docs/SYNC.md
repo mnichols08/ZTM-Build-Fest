@@ -1,6 +1,6 @@
 # Synchronization Design
 
-**Status:** v0.15.5 is merged and complete; v0.16.1 preserves the protocol-10 Note sync boundary. Equal-logical-time cross-device update/archive events converge with archive winning. Note title, body, Area name, and semantic Note kind remain inside encrypted event payloads; no plaintext Note server metadata is added. Existing authority, outbox, and opaque relay behavior is unchanged.
+**Status:** v0.15.5 is merged and complete; v0.16.2 preserves the protocol-10 Note sync boundary. Equal-logical-time cross-device update/archive events converge with archive winning. Note title, body, Area name, and semantic Note kind remain inside encrypted event payloads; no plaintext Note server metadata is added. Existing authority, outbox, and opaque relay behavior is unchanged.
 
 ## v0.15.0 Areas
 

@@ -2,7 +2,16 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
-## Unreleased — v0.16.1 Notes correctness
+## Unreleased — v0.16.2 Notes resilience & accessibility
+
+- Preserve unsaved Note form state and action focus across canonical rerenders;
+  clear in-memory drafts after save and discard them with the protected UI on lock.
+- Add unique explicit field labels and field-specific validation associations;
+  report local persistence separately from offline synchronization.
+- Preserve deterministic stale-command rejection through canonical transaction
+  replay and keep Note content within the existing encrypted event pipeline.
+
+## v0.16.1 Notes correctness
 
 - Make an equal-logical-time cross-device Note update lose to a concurrent
   terminal archive in either deterministic device ordering.
