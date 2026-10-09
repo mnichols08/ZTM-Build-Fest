@@ -189,7 +189,12 @@ class KinItem extends HTMLElement {
       label.htmlFor = checkbox.id;
       label.append(checkbox, text);
       entry.append(label);
-      entry.append(this.createStepAction("Archive step", "archive-item-step", step.stepId));
+      entry.append(this.createStepAction(
+        "Archive step",
+        "archive-item-step",
+        step.stepId,
+        step.text,
+      ));
       list.append(entry);
     }
     panel.append(list);
@@ -246,12 +251,12 @@ class KinItem extends HTMLElement {
     return panel;
   }
 
-  createStepAction(label, action, stepId) {
+  createStepAction(label, action, stepId, stepText) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "step-archive-button";
     button.textContent = label;
-    button.setAttribute("aria-label", `${label} ${this.record.text}`);
+    button.setAttribute("aria-label", `${label} ${stepText}`);
     button.dataset.itemId = this.record.itemId;
     button.dataset.stepId = stepId;
     button.dataset.itemAction = action;

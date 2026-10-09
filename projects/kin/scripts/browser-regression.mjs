@@ -841,6 +841,15 @@ async function regressions() {
       document.activeElement === checklistItem.querySelector(".step-compose input"),
     "steps append in stable order without changing or losing the parent Item",
   );
+  const stepArchiveNames = [
+    ...checklistItem.querySelectorAll(".step-archive-button"),
+  ].map((button) => button.getAttribute("aria-label"));
+  check(
+    stepArchiveNames.join("|") ===
+      "Archive step Clear counters|Archive step Wipe stove" &&
+      new Set(stepArchiveNames).size === 2,
+    "each Step archive control has a distinct accessible name",
+  );
   const stepCheckbox = (index) =>
     checklistItem.querySelectorAll('.step-row input[type="checkbox"]')[index];
   stepCheckbox(0).click();
