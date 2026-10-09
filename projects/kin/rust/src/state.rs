@@ -433,7 +433,13 @@ fn rebuild_with_context(
                     .get(note_id)
                     .copied()
                     .ok_or(KinError::InvalidEvent)?;
-                if notes[position].status == NoteStatus::Archived {
+                let concurrent_archive = allow_equal_logical_time
+                    && note_archive_events.get(note_id).is_some_and(|archives| {
+                        archives.iter().any(|(logical_time, device_id)| {
+                            *logical_time == event.logical_time && *device_id != event.device_id
+                        })
+                    });
+                if notes[position].status == NoteStatus::Archived && !concurrent_archive {
                     return Err(KinError::InvalidEvent);
                 }
                 notes[position].status = NoteStatus::Archived;

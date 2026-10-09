@@ -129,6 +129,83 @@ fn concurrent_note_update_and_archive_converge_with_archive_winning_in_both_devi
 }
 
 #[test]
+fn concurrent_note_archives_converge_but_sequential_rearchives_are_rejected() {
+    fn replay(first_device: u8, second_device: u8, reverse_input: bool) -> state::HouseholdState {
+        let note_id = NoteId(id(8));
+        let mut created = event(
+            1,
+            EventKind::NoteCreated {
+                note_id,
+                title: "Reference".into(),
+                body: "Keep this detail".into(),
+                area_id: None,
+            },
+        );
+        created.device_id = DeviceId(id(1));
+
+        let mut first_archive = event(2, EventKind::NoteArchived { note_id });
+        first_archive.logical_time = 2;
+        first_archive.device_id = DeviceId(id(first_device));
+        let mut second_archive = event(3, EventKind::NoteArchived { note_id });
+        second_archive.logical_time = 2;
+        second_archive.device_id = DeviceId(id(second_device));
+
+        let history = if reverse_input {
+            vec![created, second_archive, first_archive]
+        } else {
+            vec![created, first_archive, second_archive]
+        };
+        state::rebuild_distributed_on(
+            &history,
+            0,
+            crate::recurrence::CivilDate::from_encoded(20261005).unwrap(),
+        )
+        .unwrap()
+    }
+
+    let forward = replay(10, 20, false);
+    let reverse = replay(20, 10, true);
+    assert_eq!(forward, reverse);
+    assert_eq!(forward.notes[0].status, NoteStatus::Archived);
+    assert_eq!(forward.notes[0].body, "Keep this detail");
+
+    let note_id = NoteId(id(8));
+    let mut created = event(
+        1,
+        EventKind::NoteCreated {
+            note_id,
+            title: "Reference".into(),
+            body: String::new(),
+            area_id: None,
+        },
+    );
+    created.device_id = DeviceId(id(1));
+    let mut archived = event(2, EventKind::NoteArchived { note_id });
+    archived.logical_time = 2;
+    archived.device_id = DeviceId(id(10));
+    let mut later_archive = event(3, EventKind::NoteArchived { note_id });
+    later_archive.logical_time = 3;
+    later_archive.device_id = DeviceId(id(20));
+    assert!(state::rebuild_distributed_on(
+        &[created.clone(), archived.clone(), later_archive],
+        0,
+        crate::recurrence::CivilDate::from_encoded(20261005).unwrap(),
+    )
+    .is_err());
+
+    archived.device_id = DeviceId(id(10));
+    let mut same_device_archive = event(3, EventKind::NoteArchived { note_id });
+    same_device_archive.logical_time = 2;
+    same_device_archive.device_id = DeviceId(id(10));
+    assert!(state::rebuild_distributed_on(
+        &[created, archived, same_device_archive],
+        0,
+        crate::recurrence::CivilDate::from_encoded(20261005).unwrap(),
+    )
+    .is_err());
+}
+
+#[test]
 fn note_event_roundtrip_is_additive_to_protocol_ten() {
     let source = event(
         1,

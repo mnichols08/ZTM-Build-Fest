@@ -1,6 +1,6 @@
 # Roadmap
 
-Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. v0.15.5 is merged into `kin-development` and complete. `kin-v0.16.0` and `kin-v0.16.1` are tagged Notes capability/correctness candidates; PR #26 is the active v0.16.2 resilience/accessibility gate on `kin-v0.16.x-notes`. Tagged candidates are not production certification.
+Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. v0.15.5 and the v0.16.2 baseline are in `kin-development`. The authorized fast-track covers v0.16.3 Notes hardening through v0.20.x Staples & Replenishment. These implementation candidates are not production certification; existing tags remain unchanged and no tags are created on the batch branch.
 
 ```text
 v0.9.3 — Encrypted Event Sync Stabilization
@@ -291,7 +291,7 @@ Keep the platform work in order: durable service, lifecycle/deletion, recovery a
 | `v0.13.x` | Tagged candidate through `v0.13.5` | [Recovery & Household Continuity](V0.13.0.md) — explicit outcomes for loss of credentials, devices, browser profiles, server data and recovery material. |
 | `v0.14.x` | Complete through `v0.14.5` | [UX/UI Consolidation](V0.14.0.md) — one coherent, accessible presentation of the settled platform and household workflows. |
 | `v0.15.x` | Complete through v0.15.5 | [Household Areas](releases/V0.15.0.md) — optional, bounded place/context without project management. |
-| `v0.16.x` | Current gate: v0.16.2 resilience/accessibility on `kin-v0.16.x-notes`; v0.16.0/.1 tagged candidates | [Household Notes & Reference Context](releases/V0.16.0.md), [v0.16.1](releases/V0.16.1.md), and [v0.16.2](releases/V0.16.2.md) — do not begin v0.16.3 until this gate is complete and verified. |
+| `v0.16.x` | v0.16.3 Notes hardening candidate | [Household Notes & Reference Context](releases/V0.16.0.md), [v0.16.1](releases/V0.16.1.md), [v0.16.2](releases/V0.16.2.md), and [v0.16.3](releases/V0.16.3.md) — concurrent cross-device archives converge; stale rearchives remain rejected. |
 
 The [bridge plan](BRIDGE-0.11-0.16.md) records the dependency order. v0.12–v0.16 occupy October 3–7 in the daily schedule, followed by v0.17 on October 8. Each line requires the preceding gate; only v0.11 must be settled before the first daily target. A release contract is a plan, not evidence of completion.
 
@@ -388,9 +388,9 @@ Through the October plan, preserve the [product principles](PRINCIPLES.md) and [
 
 ## Scope discipline
 
-Each roadmap item is future work unless explicitly marked as implemented. v0.9.3 supplies authentication, pairing and encrypted sync; v0.10.x adds local security, portable commands/codecs and encrypted recovery archives. v0.13.x and v0.14.x are complete through their `.5` patches; v0.15.x is complete through v0.15.5. v0.16.0/.1 are tagged Notes capability/correctness candidates; v0.16.2 is the active resilience/accessibility gate. Do not begin v0.16.3 until it is complete, validated, committed, tagged, pushed, and verified. Later minor lines remain targets and v1.0 readiness-driven. Releases through `v0.0.12` were documentation-only; v0.1.0 was the first coded release.
+Each roadmap item is future work unless explicitly marked as implemented. v0.9.3 supplies authentication, pairing and encrypted sync; v0.10.x adds local security, portable commands/codecs and encrypted recovery archives. v0.13.x and v0.14.x are complete through their `.5` patches; v0.15.x is complete through v0.15.5. v0.16.3 through v0.20.x are authorized implementation candidates on `kin-fast-track-v0.16.3-v0.20.x`. Do not create tags on that batch branch; human review and merge precede any tag action. Later minor lines remain outside this fast-track, and v1.0 remains readiness-driven. Releases through `v0.0.12` were documentation-only; v0.1.0 was the first coded release.
 
-The v0.15.x line is complete through v0.15.5. The current gate is v0.16.2 on `kin-v0.16.x-notes`; v0.16.0/.1 tags remain immutable. Follow the current [agent guidance](../AGENTS.md) and [release process](RELEASES.md); a date alone cannot bypass a release gate.
+The v0.15.x line is complete through v0.15.5. The current fast-track candidate is v0.16.3 on `kin-fast-track-v0.16.3-v0.20.x`; preserve existing tags. Follow the current [agent guidance](../AGENTS.md) and [release process](RELEASES.md); a date alone cannot bypass a release gate.
 
 ## Feedback gate
 

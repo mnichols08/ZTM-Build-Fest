@@ -107,11 +107,12 @@ without reviving revoked authority; no server content-key escrow is permitted.
 The v0.14.x UX/UI Consolidation line is complete through `kin-v0.14.5` on
 `kin-development`. v0.15.5 is merged into `kin-development`; annotated
 `kin-v0.15.5` is complete at `12da21288252a9559da5b3acb8eb3efb81aaeec3`.
-The user reviewed PR #26 and authorized the v0.16.2 Notes resilience and
-accessibility fixes on branch `kin-v0.16.x-notes`; preserve the existing
-annotated `kin-v0.16.0` and `kin-v0.16.1` tags unchanged. Current gate: v0.16.2.
-Do not begin v0.16.3 until v0.16.2 is complete, validated, committed, tagged,
-pushed, and verified. Preserve the
+The user authorized the v0.16.3-v0.20.x fast-track on
+`kin-fast-track-v0.16.3-v0.20.x`. Current candidate: `kin-v0.16.3` Notes
+hardening, which makes concurrent cross-device Note archives converge while
+rejecting stale rearchives. Preserve all existing annotated tags unchanged;
+do not create tags on this batch branch. After human review and merge, tags may
+be attached to the preserved milestone commits. Preserve the
 v0.13.5 recovery authority guarantees and all earlier
 security/domain contracts.
 

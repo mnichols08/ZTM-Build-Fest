@@ -2,7 +2,13 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
-## Unreleased — v0.16.2 Notes resilience & accessibility
+## Unreleased — v0.16.3 Notes hardening
+
+- Treat same-logical-time Note archives from different devices as one
+  deterministic terminal action; reject later or same-device duplicate
+  archives as stale commands.
+
+## v0.16.2 Notes resilience & accessibility
 
 - Preserve unsaved Note form state and action focus across canonical rerenders;
   clear in-memory drafts after save and discard them with the protected UI on lock.
