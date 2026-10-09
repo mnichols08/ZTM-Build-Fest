@@ -126,8 +126,10 @@ adds reusable Staples under protocol 14 with user-triggered transfer to
 Shopping. The v0.21.0 Household Modes (`kin-v0.21.0` candidate) adds protocol 15 and
 pauses routine occurrences in non-Normal modes. The v0.22.0 Lightweight
 Planning Dates (`kin-v0.22.0` candidate) adds protocol 16 and an optional,
-fixed civil date to Items. The user-authorized fast-track continues
-through v0.25.x on this branch. Preserve the five separate minor milestone
+fixed civil date to Items. The v0.23.0 Calendar Interoperability candidate
+(`kin-v0.23.0` candidate) exports active dated Items as local all-day iCalendar
+files, without a new domain or storage contract. The user-authorized fast-track continues through
+v0.25.x on this branch. Preserve the five separate minor milestone
 commits; do not create tags or merge the branch. These are implementation
 candidates, not production certification. Preserve the v0.13.5 recovery
 authority guarantees and all earlier security/domain contracts.

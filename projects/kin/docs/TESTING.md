@@ -391,6 +391,16 @@ input, local Today/Tomorrow resolution, clear behavior, event persistence,
 replay, accessibility naming, and focus restoration.
 See [V0.7.0](V0.7.0.md) for the full matrix and actual release evidence.
 
+## v0.23.0 Calendar Interoperability
+
+Run `npm run test:calendar` for RFC text escaping, UTF-8 line folding, all-day
+date encoding, deterministic ordering, stable UIDs, exclusion of completed,
+archived, and undated Items, invalid civil dates, and 10,000-event/16 MiB
+bounds. The full Edge regression verifies the accessible Lists action,
+unencrypted-download disclosure, MIME type, filename, local iCalendar payload,
+and that clearing the last active planning date disables export. No event,
+IndexedDB row, or network request is produced by download.
+
 ## v0.18.0 Richer Routine Scheduling
 
 Run the same Rust, WASM, and browser routine suites after rebuilding

@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** v0.22.0 adds optional Item planning dates through additive protocol 16. Canonical Rust events and deterministic Rust/WASM replay remain authoritative; browser code provides date-only editing and resolves Today/Tomorrow against the local civil date only at selection time. Existing encrypted local persistence, sync, and archive adapters carry date changes without an IndexedDB, server, sync-envelope, or archive-container schema change. v0.21.0 Household Modes remains part of the current implementation.
+**Status:** v0.23.0 adds a browser-only iCalendar export of existing active, dated Items. It introduces no domain event, replay protocol, storage schema, sync-envelope, server, or archive-container change. v0.22.0 planning dates remain fixed civil dates in protocol 16; canonical Rust events and deterministic Rust/WASM replay remain authoritative. Calendar export is explicit, local, plaintext, bounded, and read-only.
 
 ## v0.10 implementation boundary
 

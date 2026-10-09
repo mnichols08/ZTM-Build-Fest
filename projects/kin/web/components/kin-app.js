@@ -1,4 +1,5 @@
 import { projectionContext } from "../browser-time.js";
+import { createCalendarExport } from "../calendar-export.js";
 import "./kin-routines.js";
 import "./kin-areas.js";
 import "./kin-notes.js";
@@ -394,6 +395,23 @@ class KinApp extends HTMLElement {
     today.append(this.catchUp, this.compose, this.today);
 
     const lists = page("lists", "Lists", "Capture first. Sort later.");
+    this.calendarExportButton = document.createElement("button");
+    this.calendarExportButton.type = "button";
+    this.calendarExportButton.className = "calendar-export-button";
+    this.calendarExportButton.textContent = "Download calendar (.ics)";
+    this.calendarExportButton.setAttribute(
+      "aria-label",
+      "Download active planned Items as an all-day calendar",
+    );
+    this.calendarExportButton.disabled = true;
+    this.calendarExportButton.addEventListener("click", () => this.downloadCalendar());
+    const calendarExportNote = document.createElement("p");
+    calendarExportNote.textContent =
+      "The downloaded .ics file is unencrypted and contains planned Item text.";
+    lists.querySelector(".page-intro").append(
+      this.calendarExportButton,
+      calendarExportNote,
+    );
     this.needs.display = "need";
     this.shopping.display = "shopping";
     this.staples.display = "staple";
@@ -1125,6 +1143,33 @@ class KinApp extends HTMLElement {
     }
   }
 
+  downloadCalendar() {
+    if (this.busy || !this.store || !this.state) return;
+    const planned = this.state.items.filter(
+      (item) => item.status === "active" && item.planningDate != null,
+    );
+    if (planned.length === 0) return;
+
+    let url;
+    try {
+      const contents = createCalendarExport(planned);
+      url = URL.createObjectURL(new Blob([contents], {
+        type: "text/calendar;charset=utf-8",
+      }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "kin-planned-items.ics";
+      link.click();
+      this.setStatus("Calendar file prepared for download.");
+    } catch (error) {
+      if (url) URL.revokeObjectURL(url);
+      this.showAlert(error.message || "Kin could not prepare the calendar file.");
+      this.setStatus("");
+      return;
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   async saveNote(action, detail) {
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
@@ -1596,12 +1641,21 @@ class KinApp extends HTMLElement {
     this.areas.areas = this.state.areas ?? [];
     this.notes.notes = this.state.notes ?? [];
     this.notes.areas = this.state.areas ?? [];
+    this.updateCalendarExportButton();
     this.schedulePulseRefresh();
+  }
+
+  updateCalendarExportButton() {
+    if (!this.calendarExportButton) return;
+    this.calendarExportButton.disabled = this.busy || !this.state?.items?.some(
+      (item) => item.status === "active" && item.planningDate != null,
+    );
   }
 
   setBusy(isBusy) {
     this.busy = isBusy;
     if (!this.isConnected) return;
+    this.updateCalendarExportButton();
     this.main.setAttribute("aria-busy", String(isBusy));
     this.compose.disabled = isBusy || !this.store;
     this.today.disabled = isBusy || !this.store;

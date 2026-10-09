@@ -1,14 +1,14 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.22.0; the last published product release remains v0.10.3. Tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.23.0; the last published product release remains v0.10.3. Calendar export adds no persistent or replay contract. Tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.22.0 | Governs |
+| Version axis | Last published v0.10.3 / current candidate v0.23.0 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.22.0` | Lightweight Planning Dates; additive protocol 16 |
+| Application | Last published `0.10.3`; candidate `0.23.0` | Calendar Interoperability using existing iCalendar 2.0 output |
 | Server database schema | `2` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination and household lifecycle records |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v16; writes v16 for local and synchronized requests | Request context and projection semantics |
@@ -22,7 +22,7 @@ Kin version numbers describe product releases; they do not version every persist
 
 These numbers evolve independently. An application release may keep the same event, protocol, storage, or export version; a contract may change between application versions. Never infer compatibility from equal version numbers or silently bump one axis as a proxy for another.
 
-The v0.2.0 implementation reads event schema 1 for all supported kinds and schema 2 for `ITEM_ADDED`; new instances write add schema 2 and other Item event schema 1. v0.3.0 additionally reads Handoff schema 1, supports protocols 1/2/3, and writes protocol 3. IndexedDB schema remains 1. Export format version 1 is a future design baseline only.
+The v0.2.0 implementation reads event schema 1 for all supported kinds and schema 2 for `ITEM_ADDED`; new instances write add schema 2 and other Item event schema 1. v0.3.0 additionally reads Handoff schema 1, supports protocols 1/2/3, and writes protocol 3. IndexedDB schema remains 1. The v0.23.0 `.ics` output uses iCalendar 2.0 independently of Kin's encrypted KARC archive format; it does not change either persistent contract.
 
 ## Compatibility policy
 

@@ -54,6 +54,36 @@ export async function planningDateRegressions() {
       app.state.items.find((entry) => entry.itemId === item.itemId).planningDate === 20261007,
       "native date editing persists the selected day",
     );
+    check(!app.calendarExportButton.disabled, "dated active Items enable calendar export");
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const originalAnchorClick = HTMLAnchorElement.prototype.click;
+    let calendarBlob;
+    let download;
+    URL.createObjectURL = (blob) => {
+      calendarBlob = blob;
+      return "blob:calendar-export-regression";
+    };
+    URL.revokeObjectURL = () => {};
+    HTMLAnchorElement.prototype.click = function () {
+      download = { href: this.href, filename: this.download };
+    };
+    try {
+      app.calendarExportButton.click();
+      const contents = await calendarBlob.text();
+      check(
+        download?.filename === "kin-planned-items.ics" &&
+          download.href === "blob:calendar-export-regression" &&
+          calendarBlob.type === "text/calendar;charset=utf-8" &&
+          contents.includes("DTSTART;VALUE=DATE:20261007") &&
+          contents.includes(`SUMMARY:${text}`),
+        "calendar export downloads a local all-day iCalendar file",
+      );
+    } finally {
+      URL.createObjectURL = originalCreateObjectURL;
+      URL.revokeObjectURL = originalRevokeObjectURL;
+      HTMLAnchorElement.prototype.click = originalAnchorClick;
+    }
     shortcuts().find((button) => button.textContent === "Clear").click();
     await idle();
     await app.refreshFromEvents();
@@ -61,10 +91,11 @@ export async function planningDateRegressions() {
       app.state.items.find((entry) => entry.itemId === item.itemId).planningDate === null,
       "clearing and replay retain an unset date",
     );
+    check(app.calendarExportButton.disabled, "clearing the last date disables calendar export");
   } finally {
     Date.now = originalNow;
     await app.refreshFromEvents();
     app.navLinks.get(originalPage)?.click();
   }
-  return "PASS planning-date capture, native editor, local Today/Tomorrow, clear, persistence and focus";
+  return "PASS planning dates, native editor, local shortcuts, persistence, focus and iCalendar download";
 }

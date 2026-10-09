@@ -1,6 +1,6 @@
 # Web Component Contract
 
-**Status:** Current through v0.22.0 Lightweight Planning Dates; earlier version sections are historical contracts.
+**Status:** Current through v0.23.0 Calendar Interoperability; earlier version sections are historical contracts.
 
 ## Component responsibilities
 
@@ -101,3 +101,12 @@ fixed local civil dates and dispatches `kin:set-item-planning-date`; `<kin-app>`
 persists that intent through the same event-store transaction as other Item
 changes. Archived Items are read-only. See
 [V0.22.0](releases/V0.22.0.md).
+
+## v0.23.0 Calendar Interoperability
+
+`<kin-app>` enables a Lists-page download only when an active dated Item
+exists. It serializes the existing Rust-derived Item projection into a
+bounded, local iCalendar all-day export, then uses a browser Blob download.
+No event is appended and no calendar service is contacted. The UI discloses
+that the downloaded file contains plaintext Item text. See
+[V0.23.0](releases/V0.23.0.md).

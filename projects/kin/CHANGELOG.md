@@ -2,6 +2,13 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
+## v0.23.0 — Calendar Interoperability
+
+- Download active Items with planning dates as UTF-8 iCalendar (`.ics`)
+  all-day events, sorted by date with stable Item-based UIDs.
+- Keep export local and read-only; omit completed/archived and undated Items,
+  Routines, household metadata, and reminders. No storage migration is needed.
+
 ## v0.22.0 — Lightweight Planning Dates
 
 - Add an optional Gregorian civil planning date to existing Items, with a
