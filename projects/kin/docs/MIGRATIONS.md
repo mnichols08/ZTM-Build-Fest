@@ -1,6 +1,15 @@
 # Data Migrations
 
-**Status:** v0.17.0 adds canonical Item Step events without an IndexedDB, archive-container, or server-schema migration. Earlier version sections are historical.
+**Status:** v0.18.0 adds two Routine cadence values behind replay protocol 12 without an IndexedDB, archive-container, or server-schema migration. Earlier version sections are historical.
+
+## v0.18.0 Richer Routine Scheduling compatibility
+
+The `ROUTINE_CREATED` payload and event schema remain unchanged; only cadence
+values 2 and 3 are new. Protocol 12 reads old and new Routine history, while
+protocols 1–11 reject a history containing either richer cadence before
+returning a projection. Existing Daily/Weekly event bytes replay unchanged.
+No synthetic events, persistent-state migration, IndexedDB change, KARC change,
+server-schema change, or encrypted sync-envelope change is required.
 
 ## v0.17.0 Checklist Steps compatibility
 

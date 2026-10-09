@@ -292,6 +292,16 @@ pub fn execute(
     {
         return Err(KinError::UnsupportedVersion);
     }
+    if matches!(
+        command,
+        HouseholdCommand::CreateRoutine {
+            cadence: Cadence::Biweekly | Cadence::Monthly,
+            ..
+        }
+    ) && request.protocol_version < crate::protocol::PROTOCOL_V12
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
     let routine_intent = match command {
         HouseholdCommand::CompleteOccurrence { id, key } => Some((id, key, false)),
         HouseholdCommand::ReopenOccurrence { id, key } => Some((id, key, true)),

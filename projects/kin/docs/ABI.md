@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** v0.17.0 Checklist Steps adds protocol 11 while preserving protocols 1–10 layouts and canonical event bytes. v0.10 added portable commands, metadata and archive operations. Protocol 9 adds Areas and protocol 10 adds Notes; earlier version sections are historical contracts.
+**Status:** v0.18.0 adds protocol 12 as an additive cadence compatibility gate while preserving protocols 1–11 layouts and existing canonical event bytes. Protocol 11 adds Checklist Steps; protocol 10 adds Notes and protocol 9 adds Areas. Earlier version sections are historical contracts.
 
 ## Target and exports
 
@@ -253,6 +253,17 @@ creation order within each parent. Count and total protocol bounds are
 validated; Step records are not included in the existing entity-count header.
 An old history emits zero Steps. Attempting to encode a projection containing
 Steps with a protocol before 11 fails closed.
+
+## Protocol 12 — Richer Routine Scheduling
+
+Protocol 12 preserves the protocol-11 64-byte `KINE` request header,
+88-byte canonical event envelope, 68-byte `KINS` result header, and all
+existing result sections. It adds no event kinds and changes no canonical
+event payload bytes. `ROUTINE_CREATED` cadence values 0 (Daily) and 1
+(Monday-start Weekly) retain their meaning; values 2 (creation-date-anchored
+every two weeks) and 3 (calendar Monthly) are supported only by protocol 12.
+Protocols 1–11 reject those newer cadence values instead of projecting
+misleading state. Protocol 12 reads existing histories without migration.
 
 ### KCMD v1 intent transport
 

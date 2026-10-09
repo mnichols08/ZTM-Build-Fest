@@ -1,6 +1,6 @@
 # Data Model
 
-**Status:** Current through v0.7.0 Routines; earlier version sections are historical contracts. See v0.7.0 below.
+**Status:** Current through v0.18.0 Richer Routine Scheduling; earlier version sections are historical contracts. See v0.7.0 and v0.18.0 below.
 
 ## Event-oriented source of truth
 
@@ -70,6 +70,16 @@ PulseState has actor_id, fixed enum value, set_at, expires_at and active/expired
 ## v0.7.0 Routines
 
 Routine occurrence identity is `(routine_id, civil period start date)`, not a random occurrence ID. Current state is derived; only definitions and human lifecycle actions persist. Civil dates use validated YYYYMMDD u32, Monday-start weeks. No time-zone preference is persisted in v0.7. See [V0.7.0](V0.7.0.md).
+
+## v0.18.0 Richer Routine Scheduling
+
+Routine cadence retains Daily and Monday-start Weekly and adds every-two-weeks
+anchored to `created_on`, plus calendar-month periods keyed by day one.
+Completion remains keyed by `(routine_id, period start date)` and never
+automatically resets or creates events. The source `created_on` anchors every
+device's biweekly schedule; the supplied civil date selects the current period.
+No reminder, assignment, streak, or calendar entity is introduced. See
+[V0.18.0](releases/V0.18.0.md).
 
 ## v0.15.0 Areas
 

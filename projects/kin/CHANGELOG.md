@@ -2,6 +2,21 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
+## v0.18.0 — Richer Routine Scheduling
+
+- Add bounded every-two-weeks routines anchored to their creation civil date
+  and monthly routines keyed to calendar-month starts; preserve Daily/Weekly
+  keys and canonical schema-1 event bytes.
+- Add additive replay protocol 12 to make the new cadence values explicit;
+  protocols 1–11 reject histories they cannot represent, while prior
+  histories replay unchanged under protocol 12.
+- Add accessible cadence choices, accurate current-period wording, and Rust,
+  WASM, Node, and browser regressions for leap/month/year boundaries and
+  protocol compatibility.
+- Pass 144 Rust tests, 309 Node tests, formatting, warnings-denied Clippy,
+  release WASM build, version consistency, and three consecutive full Edge
+  browser regression runs.
+
 ## v0.17.0 — Checklist Steps
 
 - Add ordered, bounded checklist Steps to Items with independent completion,

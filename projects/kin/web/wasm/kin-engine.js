@@ -1,4 +1,4 @@
-const PROTOCOL_VERSION = 11;
+const PROTOCOL_VERSION = 12;
 const REQUEST_HEADER_BYTES = 64;
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 const PULSE_VALUES = ["good", "okay", "drained", "rough-day", "need-quiet"];
@@ -199,6 +199,24 @@ function assertCivilDate(value) {
   ) {
     throw new KinEngineError(2, "Kin requires a valid civil date.");
   }
+}
+
+function civilOrdinal(value) {
+  const year = Math.floor(value / 10000);
+  const month = Math.floor(value / 100) % 100;
+  const previousYear = year - 1;
+  let days =
+    365 * previousYear +
+    Math.floor(previousYear / 4) -
+    Math.floor(previousYear / 100) +
+    Math.floor(previousYear / 400);
+  const monthLengths = [
+    31,
+    year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28,
+    31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+  ];
+  for (let index = 0; index < month - 1; index += 1) days += monthLengths[index];
+  return days + (value % 100) - 1;
 }
 
 export function idFromHex(value) {
@@ -430,7 +448,7 @@ function encodeIntentPacket(command, identity) {
     assertTimestamp(command.expiresAt);
     view.setBigInt64(116, BigInt(command.expiresAt), true);
   } else if (kind === 14) {
-    const code = ["daily", "weekly"].indexOf(command.cadence);
+    const code = ["daily", "weekly", "biweekly", "monthly"].indexOf(command.cadence);
     if (code < 0) throw new KinEngineError(2, "Choose a valid cadence.");
     packet[112] = code;
   }
@@ -853,7 +871,7 @@ function decodeState(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const protocolVersion = view.getUint16(4, true);
   if (
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].includes(protocolVersion) ||
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].includes(protocolVersion) ||
     view.getUint16(6, true) !== 0
   ) {
     throw new KinEngineError(6, "Kin received an unsupported state format.");
@@ -1114,7 +1132,8 @@ function decodeState(bytes) {
       length < 1 ||
       length > 4096 ||
       end > bytes.length ||
-      cadence > 1 ||
+      cadence > 3 ||
+      (protocolVersion < 12 && cadence > 1) ||
       status > 1 ||
       occurrence > 2 ||
       bytes[offset + 51] !== 0 ||
@@ -1146,6 +1165,16 @@ function decodeState(bytes) {
           d.getUTCDate();
         if (endKey < createdOn) throw new Error();
       }
+      if (
+        key &&
+        cadence === 2 &&
+        (key < createdOn || (civilOrdinal(key) - civilOrdinal(createdOn)) % 14 !== 0)
+      ) throw new Error();
+      if (
+        key &&
+        cadence === 3 &&
+        (key % 100 !== 1 || key < Math.floor(createdOn / 100) * 100 + 1)
+      ) throw new Error();
       text = strictTextDecoder.decode(bytes.subarray(headerEnd, end));
     } catch {
       throw new KinEngineError(6, "Kin received invalid routine fields.");
@@ -1156,7 +1185,7 @@ function decodeState(bytes) {
       createdBy: idToHex(bytes.subarray(offset + 16, offset + 32)),
       createdAt,
       createdOn,
-      cadence: ["daily", "weekly"][cadence],
+      cadence: ["daily", "weekly", "biweekly", "monthly"][cadence],
       status: ["active", "archived"][status],
       occurrenceKey: key || null,
       occurrenceStatus: ["unavailable", "open", "completed"][occurrence],

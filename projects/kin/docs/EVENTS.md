@@ -1,6 +1,6 @@
 # Household Events
 
-**Status:** Current through the v0.17.0 Checklist Steps capability. Rust owns canonical command encoding and decoding; existing schemas/kinds and immutable bytes remain unchanged. Protocol 10 adds `NOTE_CREATED`, `NOTE_UPDATED`, and terminal `NOTE_ARCHIVED` with schema 1; protocol 11 adds the four schema-1 Item Step events. Protocols 1–10 retain their wire layouts and reject Step events. Equal-time cross-device Note and Step archive conflicts preserve the terminal archive without changing event bytes. Local encryption wraps canonical bytes without rewriting them.
+**Status:** Current through v0.18.0 Richer Routine Scheduling. Rust owns canonical command encoding and decoding; event schemas, kinds, and existing immutable bytes remain unchanged. Protocol 10 adds Notes, protocol 11 adds Item Steps, and protocol 12 enables two additional Routine cadence values without changing event payload shape. Protocols 1–11 reject those values. Equal-time cross-device Note and Step archive conflicts preserve the terminal archive without changing event bytes. Local encryption wraps canonical bytes without rewriting them.
 
 ## Canonical record
 
@@ -133,7 +133,7 @@ No domain event kinds are added. Codes 1–13 and their persisted bytes remain u
 
 ## v0.7.0 Routines
 
-Schema-1 codes 14 ROUTINE_CREATED, 15 ROUTINE_OCCURRENCE_COMPLETED, 16 ROUTINE_OCCURRENCE_REOPENED, 17 ROUTINE_ARCHIVED. Creation persists text/cadence/creation civil date; occurrence actions persist a deterministic date key. No reset or automatically created occurrence event. Archive is terminal. The earlier conceptual ROUTINE_COMPLETED name never had a persisted wire code and is replaced by occurrence-specific naming. See [V0.7.0](V0.7.0.md).
+Schema-1 codes 14 ROUTINE_CREATED, 15 ROUTINE_OCCURRENCE_COMPLETED, 16 ROUTINE_OCCURRENCE_REOPENED, 17 ROUTINE_ARCHIVED. Creation persists text/cadence/creation civil date; occurrence actions persist a deterministic date key. Cadence values 0/1 are Daily/Monday-start Weekly; protocol 12 additionally supports 2 (every two weeks anchored to creation date) and 3 (calendar month start). No reset or automatically created occurrence event. Archive is terminal. The earlier conceptual ROUTINE_COMPLETED name never had a persisted wire code and is replaced by occurrence-specific naming. See [V0.7.0](V0.7.0.md) and [V0.18.0](releases/V0.18.0.md).
 
 ## v0.15.0 Areas
 

@@ -1,6 +1,6 @@
 # Derived Household State
 
-**Status:** v0.17.0 adds an ordered Step projection to Items through additive protocol 11. Protocols 1–10 retain their result layouts; earlier Item histories project an empty Step collection only in protocol 11. Equal-time cross-device Step archive/mutation conflicts deterministically resolve to the terminal archive; parent Item archival remains authoritative. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
+**Status:** v0.18.0 adds biweekly and monthly Routine periods through protocol 12, preserving the protocol-11 result layout. Biweekly periods are anchored to the Routine creation date; monthly periods begin on calendar-month day one. Daily/Weekly histories and prior result layouts remain unchanged. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
 
 ## Projection pipeline
 
@@ -124,3 +124,13 @@ measured across the Step history, including archived entries. In distributed
 replay, a same-logical-time archive from another device dominates Step
 completion/reopening; a same-time parent Item archive suppresses Step mutation.
 Older event histories remain valid and contain no Steps.
+
+## v0.18.0 Richer Routine Scheduling
+
+Rust derives Daily, Monday-start Weekly, creation-date-anchored every-two-weeks,
+and calendar-month periods from validated explicit civil dates, alongside
+as_of for Pulse. JS obtains local year/month/day from one browser clock sample;
+timers only request replay. Inside occurrence append transactions, JS compares
+the frozen intent key with Rust’s fresh canonical current key before candidate
+replay. This is identity checking, not a browser recurrence reducer. See
+[V0.7.0](V0.7.0.md) and [V0.18.0](releases/V0.18.0.md).

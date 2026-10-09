@@ -1,17 +1,17 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.17.0; the v0.16.x Notes line is complete through v0.16.2. The last published product release remains v0.10.3; tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.18.0; the last published product release remains v0.10.3. Tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.17.0 | Governs |
+| Version axis | Last published v0.10.3 / current candidate v0.18.0 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.17.0` | Checklist Steps; additive protocol 11 |
+| Application | Last published `0.10.3`; candidate `0.18.0` | Richer Routine Scheduling; additive protocol 12 |
 | Server database schema | `2` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination and household lifecycle records |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
-| Replay protocol | Reads v1–v11; writes v11 for local and synchronized requests | Request context and projection semantics |
+| Replay protocol | Reads v1–v12; writes v12 for local and synchronized requests | Request context and projection semantics |
 | Manual WASM ABI | Existing exports plus additive command/metadata/archive/import APIs | Host ownership and calls; new command packet v1 |
 | IndexedDB schema | Event DB 2→3; key DB 3→4 | Journalled upgrade to encrypted records |
 | Local envelope | v1 for original roots; v2 for rotated roots | v2 authenticates rootVersion in addition to purpose/routing |
@@ -117,6 +117,15 @@ request/result layouts and reject Step events. Existing histories project no
 Steps without migration; IndexedDB, server schema, KARC v1, and sync-envelope
 versions remain unchanged. The service-worker static cache version advances
 for the new client release; `item` was already in the component shell.
+
+## v0.18.0 Richer Routine Scheduling
+
+Protocol 12 is additive. It preserves the protocol-11 request and result
+layouts and canonical event payloads. Routine cadence values 2 and 3 represent
+creation-date-anchored every-two-weeks and calendar-month periods; protocols
+1–11 reject these values and cannot encode state containing them. Protocol 12
+replays existing Daily/Weekly histories unchanged. No event schema, IndexedDB,
+server, KARC, or sync-envelope migration is required.
 
 ## v0.9.x Encrypted Sync
 

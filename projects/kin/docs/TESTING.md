@@ -16,6 +16,12 @@ bounds, equal-time terminal-archive convergence, parent Item independence and
 gating, browser add/complete/reopen/archive flows, local persistence, and the
 existing encrypted-sync regression.
 
+The v0.18.0 Richer Routine Scheduling gate adds protocol-12 cadence decoding,
+biweekly creation-date anchoring, monthly calendar keys, leap/month/year
+boundaries, prior-protocol fail-closed behavior, stale occurrence checks, and
+accessible UI wording through real WASM and browser regressions. Daily/Weekly
+keys and protocol-11 result layouts remain covered as compatibility fixtures.
+
 **Status:** The historical v0.13.3 recovery release gate passed on Windows x64 with Node 22.12,
 Rust 1.93, and Edge 154. The gate covered 300 Node/real-WASM tests (226 server),
 118 Rust tests, formatting, warnings-denied Clippy, release WASM, all product,
@@ -354,6 +360,16 @@ Run every truncated v6 result boundary and malformed summary count, kind, entity
 ## v0.7.0 Routines
 
 Run `cargo test`, `node web/wasm/kin-engine.test.mjs`, `node web/wasm/routines.test.mjs`, and the complete browser runner after a release Wasm build. `rust/src/routine_tests.rs` holds independent v7 wire fixtures; `recurrence.rs` covers Gregorian calendar primitives. `scripts/routine-regression.mjs` exercises real IndexedDB/Wasm lifecycle, boundaries, stale keys, quota/abort/retry, cross-tab races and keyboard focus. Existing suites retain explicit legacy protocol fixtures. See [V0.7.0](V0.7.0.md) for the full matrix and actual release evidence.
+
+## v0.18.0 Richer Routine Scheduling
+
+Run the same Rust, WASM, and browser routine suites after rebuilding
+`web/wasm/kin_engine.wasm`. `rust/src/recurrence.rs` covers creation-anchored
+14-day intervals, monthly starts, Gregorian boundaries, and invalid keys;
+`rust/src/routine_tests.rs` and `web/wasm/routines.test.mjs` verify protocol
+12 and older-protocol rejection; `scripts/routine-regression.mjs` covers the
+accessible cadence selector, current period labels, completion reset, and
+real IndexedDB persistence. No storage migration is expected.
 
 ## v0.9.3 Encrypted Sync Gate
 

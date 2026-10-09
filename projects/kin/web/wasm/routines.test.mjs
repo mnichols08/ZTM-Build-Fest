@@ -31,7 +31,7 @@ test("v7 Routine writers have exact field offsets and reject invalid input", asy
   for (const value of [10101, 20000229, 99991231]) assert.doesNotThrow(() => create("daily", "x", value));
   for (const text of ["", "x".repeat(4097), "\ud800"]) assert.throws(() => create("daily", text));
   assert.equal(create("daily", "🥛".repeat(1024)).length, 88 + 28 + 4096);
-  assert.throws(() => create("monthly"));
+  assert.throws(() => create("yearly"));
 });
 
 test("v7 real Wasm daily/weekly lifecycle, rollback and summary", async () => {
@@ -61,6 +61,24 @@ test("v7 real Wasm daily/weekly lifecycle, rollback and summary", async () => {
     assert.throws(() => project([...rows, action(5, "complete", key)], 20261002), e => e.code === 4);
     assert.deepEqual(project([...rows, rows[3]], 20261002), archived);
   }
+});
+
+test("v12 real Wasm biweekly and monthly cadence boundaries", async () => {
+  const engine = await loadKinEngine(url);
+  const biweekly = [create("biweekly", "Fortnight", 20240228)];
+  assert.equal(engine.applyEvents(biweekly, 1234, null, 20240227).routines[0].occurrenceKey, null);
+  assert.equal(engine.applyEvents(biweekly, 1234, null, 20240229).routines[0].occurrenceKey, 20240228);
+  biweekly.push(action(2, "complete", 20240228));
+  assert.equal(engine.applyEvents(biweekly, 1234, null, 20240312).routines[0].occurrenceStatus, "completed");
+  const nextBiweekly = engine.applyEvents(biweekly, 1234, null, 20240313).routines[0];
+  assert.equal(nextBiweekly.occurrenceKey, 20240313);
+  assert.equal(nextBiweekly.occurrenceStatus, "open");
+
+  const monthly = [create("monthly", "Filter", 20240131)];
+  assert.equal(engine.applyEvents(monthly, 1234, null, 20240131).routines[0].occurrenceKey, 20240101);
+  monthly.push(action(2, "complete", 20240101));
+  assert.equal(engine.applyEvents(monthly, 1234, null, 20240229).routines[0].occurrenceKey, 20240201);
+  assert.equal(engine.applyEvents(monthly, 1234, null, 20240229).routines[0].occurrenceStatus, "open");
 });
 
 test("v7 projection requires matching explicit timestamp/date context and handles DST-shaped civil days", async () => {
@@ -103,6 +121,7 @@ test("current result decoder rejects truncation, fields, duplicates and trailing
     bytes => bytes[112] = 0, ...[113, 114].map(offset => bytes => bytes[offset] = 255), bytes => bytes[115] = 0,
     write32(120, 0), write32(120, 4097), write32(120, 0xffffffff), bytes => bytes[124] = 255,
     bytes => bytes[113] = 1, bytes => bytes[114] = 0,
+    bytes => bytes[116] = 4,
     write32(112, 20261002), // Friday cannot be a weekly key
     bytes => new DataView(bytes.buffer, bytes.byteOffset).setBigInt64(100, 8640000000000001n, true),
   ];
@@ -116,7 +135,7 @@ test("current result decoder rejects truncation, fields, duplicates and trailing
   reportedLength = undefined;
   assert.deepEqual(run(), valid);
   rows.push(encodeRoutineCreatedRecord({ ...identity(2), routineId: id(0x22), text: "Other", cadence: "daily", createdOn: 20261002 }));
-  // Protocol 11 adds the Step count after the protocol 10 Note count.
+  // Protocol 12 preserves the protocol-11 Step count after the protocol-10 Note count.
   // Second record starts after 68 + 56 + "Starter" (7).
   mutate = bytes => bytes.copyWithin(131, 68, 84);
   assert.throws(run, error => error.code === 6);

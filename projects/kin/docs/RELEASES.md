@@ -1,6 +1,6 @@
 # Release Process
 
-**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. PR #26 is merged into `kin-development`; v0.16.3 Notes hardening is on the authorized fast-track branch, and the existing tagged v0.17.0 Checklist Steps candidate is preserved unchanged. The fast-track continues through v0.20.x; these candidates are not production certification. No new tags are created on the batch branch.
+**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. PR #26 is merged into `kin-development`; v0.16.3 and the existing tagged v0.17.0 candidate are preserved on the authorized fast-track branch. v0.18.0 Richer Routine Scheduling is the current candidate; the fast-track continues through v0.20.x. These candidates are not production certification. No new tags are created on the batch branch.
 
 ## Release sequence
 

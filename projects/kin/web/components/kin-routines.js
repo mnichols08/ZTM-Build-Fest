@@ -13,7 +13,7 @@ class KinRoutines extends HTMLElement {
     const heading = document.createElement("h2");
     heading.textContent = "Routines";
     const hint = document.createElement("p");
-    hint.textContent = "Once today, or once this week. Weeks start Monday.";
+    hint.textContent = "Daily, weekly (Monday-start), every two weeks from creation, or by calendar month.";
     const form = document.createElement("form");
     form.className = "compose-form routine-form";
     const label = document.createElement("label");
@@ -29,7 +29,12 @@ class KinRoutines extends HTMLElement {
     cadenceLabel.textContent = "Repeat";
     this.cadence = document.createElement("select");
     this.cadence.id = "routine-cadence";
-    for (const [value, text] of [["daily", "Daily"], ["weekly", "Weekly"]]) {
+    for (const [value, text] of [
+      ["daily", "Daily"],
+      ["weekly", "Weekly"],
+      ["biweekly", "Every two weeks"],
+      ["monthly", "Monthly"],
+    ]) {
       const option = document.createElement("option");
       option.value = value;
       option.textContent = text;
@@ -111,8 +116,14 @@ class KinRoutines extends HTMLElement {
       text.textContent = record.text;
       const status = document.createElement("p");
       status.className = "routine-status";
-      const period = record.cadence === "daily" ? "today" : "this week";
-      status.textContent = `${record.cadence === "daily" ? "Daily" : "Weekly"} · ${record.occurrenceStatus === "unavailable" ? "Not available for the current date" : record.occurrenceStatus === "completed" ? `Done ${period}` : `Open ${period}`}`;
+      const labels = {
+        daily: ["Daily", "today"],
+        weekly: ["Weekly", "this week"],
+        biweekly: ["Every two weeks", "this two-week period"],
+        monthly: ["Monthly", "this month"],
+      };
+      const [cadenceLabel, period] = labels[record.cadence];
+      status.textContent = `${cadenceLabel} · ${record.occurrenceStatus === "unavailable" ? "Not available for the current date" : record.occurrenceStatus === "completed" ? `Done ${period}` : `Open ${period}`}`;
       content.append(text, status);
       const actions = document.createElement("div");
       actions.className = "item-action";

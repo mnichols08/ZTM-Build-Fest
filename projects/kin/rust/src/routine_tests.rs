@@ -1,6 +1,7 @@
 use crate::error::KinError;
 use crate::protocol::{
-    decode_request_with_summary, encode_state, encode_state_v6, encode_state_v7,
+    decode_request_with_summary, encode_state, encode_state_v11, encode_state_v12, encode_state_v6,
+    encode_state_v7, PROTOCOL_V11,
 };
 use crate::recurrence::CivilDate;
 use crate::state::{rebuild_at, rebuild_on, summarize_validated, HouseholdState};
@@ -48,6 +49,24 @@ fn request(records: &[Vec<u8>], day: u32) -> Vec<u8> {
 
 fn project(records: &[Vec<u8>], day: u32) -> Result<HouseholdState, KinError> {
     let req = decode_request_with_summary(&request(records, day))?;
+    rebuild_on(&req.events, req.as_of.unwrap(), req.civil_date.unwrap())
+}
+
+fn request_v12(records: &[Vec<u8>], day: u32) -> Vec<u8> {
+    let mut bytes = vec![0; 64];
+    bytes[..4].copy_from_slice(b"KINE");
+    bytes[4..6].copy_from_slice(&12u16.to_le_bytes());
+    bytes[8..12].copy_from_slice(&(records.len() as u32).to_le_bytes());
+    bytes[12..20].copy_from_slice(&1234i64.to_le_bytes());
+    bytes[40..44].copy_from_slice(&day.to_le_bytes());
+    for record in records {
+        bytes.extend_from_slice(record);
+    }
+    bytes
+}
+
+fn project_v12(records: &[Vec<u8>], day: u32) -> Result<HouseholdState, KinError> {
+    let req = decode_request_with_summary(&request_v12(records, day))?;
     rebuild_on(&req.events, req.as_of.unwrap(), req.civil_date.unwrap())
 }
 
@@ -296,6 +315,46 @@ fn all_routine_kinds_fail_closed_in_earlier_protocols() {
 }
 
 #[test]
+fn richer_routine_cadences_are_protocol_v12_only_and_roundtrip() {
+    for (cadence, created_on, today, key) in [
+        (2, 20240228, 20240313, 20240313),
+        (3, 20240229, 20240229, 20240201),
+    ] {
+        let rows = [record(1, 14, cadence, created_on, b"Schedule")];
+        let state = project_v12(&rows, today).unwrap();
+        assert_eq!(state.routines[0].occurrence_key.unwrap().encoded(), key);
+        let decoded = decode_request_with_summary(&request_v12(&rows, today)).unwrap();
+        let summary = summarize_validated(&decoded.events, None, &state).unwrap();
+        assert_eq!(
+            encode_state(&state, PROTOCOL_V11),
+            Err(KinError::UnsupportedVersion)
+        );
+        let result = encode_state_v12(&state, &summary).unwrap();
+        assert_eq!(&result[..4], b"KINS");
+        assert_eq!(u16::from_le_bytes([result[4], result[5]]), 12);
+        assert_eq!(result[116], cadence);
+    }
+    let daily_rows = [record(1, 14, 0, 20240228, b"Daily")];
+    let daily_state = project(&daily_rows, 20240228).unwrap();
+    let daily_request = decode_request_with_summary(&request(&daily_rows, 20240228)).unwrap();
+    let daily_summary = summarize_validated(&daily_request.events, None, &daily_state).unwrap();
+    assert!(encode_state_v11(&daily_state, &daily_summary).is_ok());
+
+    let rich = record(1, 14, 2, 20240228, b"Biweekly");
+    let mut old_request = request_v12(std::slice::from_ref(&rich), 20240313);
+    old_request[4..6].copy_from_slice(&11u16.to_le_bytes());
+    assert_eq!(
+        decode_request_with_summary(&old_request),
+        Err(KinError::UnsupportedVersion)
+    );
+    let malformed = record(1, 14, 4, 20240228, b"Unknown");
+    assert_eq!(
+        decode_request_with_summary(&request_v12(&[malformed], 20240313)),
+        Err(KinError::MalformedProtocol)
+    );
+}
+
+#[test]
 fn v7_all_request_truncations_and_fixed_payload_lengths() {
     for kind in 14..=17 {
         let row = record(1, kind, 0, 20261002, b"x");
@@ -343,7 +402,13 @@ fn v7_invalid_header_date_cadence_reserved_schema_text_and_extreme_lengths() {
             Err(KinError::MalformedProtocol)
         );
     }
-    for cadence in 2..=255 {
+    for cadence in 2..=3 {
+        assert_eq!(
+            project(&[record(1, 14, cadence, 20261002, b"x")], 20261002),
+            Err(KinError::UnsupportedVersion)
+        );
+    }
+    for cadence in 4..=255 {
         assert_eq!(
             project(&[record(1, 14, cadence, 20261002, b"x")], 20261002),
             Err(KinError::MalformedProtocol)

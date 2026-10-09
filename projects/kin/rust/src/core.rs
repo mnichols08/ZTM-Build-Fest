@@ -1,8 +1,8 @@
 //! Portable application operations shared by the native library and manual ABI.
 use crate::error::KinError;
 use crate::protocol::{
-    self, DecodedRequest, PROTOCOL_V10, PROTOCOL_V11, PROTOCOL_V6, PROTOCOL_V7, PROTOCOL_V8,
-    PROTOCOL_V9,
+    self, DecodedRequest, PROTOCOL_V10, PROTOCOL_V11, PROTOCOL_V12, PROTOCOL_V6, PROTOCOL_V7,
+    PROTOCOL_V8, PROTOCOL_V9,
 };
 use crate::state::{self, HouseholdState};
 
@@ -38,6 +38,7 @@ pub fn encode_projection(
             PROTOCOL_V9 => protocol::encode_state_v9(household, &summary),
             PROTOCOL_V10 => protocol::encode_state_v10(household, &summary),
             PROTOCOL_V11 => protocol::encode_state_v11(household, &summary),
+            PROTOCOL_V12 => protocol::encode_state_v12(household, &summary),
             PROTOCOL_V7 => protocol::encode_state_v7(household, &summary),
             _ => protocol::encode_state_v6(household, &summary),
         }

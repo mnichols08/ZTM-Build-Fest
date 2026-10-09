@@ -20,7 +20,8 @@ pub const PROTOCOL_V8: u16 = 8;
 pub const PROTOCOL_V9: u16 = 9;
 pub const PROTOCOL_V10: u16 = 10;
 pub const PROTOCOL_V11: u16 = 11;
-pub const PROTOCOL_VERSION: u16 = PROTOCOL_V11;
+pub const PROTOCOL_V12: u16 = 12;
+pub const PROTOCOL_VERSION: u16 = PROTOCOL_V12;
 pub const ERROR_PROTOCOL_VERSION: u16 = PROTOCOL_V1;
 pub const MAX_EVENT_COUNT: usize = 10_000;
 pub const MAX_PROTOCOL_BYTES: usize = 64 * 1024 * 1024;
@@ -74,6 +75,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
             | PROTOCOL_V9
             | PROTOCOL_V10
             | PROTOCOL_V11
+            | PROTOCOL_V12
     ) {
         return Err(KinError::UnsupportedVersion);
     }
@@ -170,7 +172,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
         .try_reserve_exact(event_count)
         .map_err(|_| KinError::SizeLimit)?;
     let mut offset = match version {
-        PROTOCOL_V8 | PROTOCOL_V9 | PROTOCOL_V10 | PROTOCOL_V11 => {
+        PROTOCOL_V8 | PROTOCOL_V9 | PROTOCOL_V10 | PROTOCOL_V11 | PROTOCOL_V12 => {
             V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES
         }
         PROTOCOL_V7 => 44,
@@ -446,6 +448,13 @@ pub fn encode_state_v11(
     encode_state_with_summary(state, summary, PROTOCOL_V11)
 }
 
+pub fn encode_state_v12(
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<Vec<u8>, KinError> {
+    encode_state_with_summary(state, summary, PROTOCOL_V12)
+}
+
 fn encode_state_with_summary(
     state: &HouseholdState,
     summary: &CatchUpSummary,
@@ -460,6 +469,14 @@ fn encode_state_with_summary(
         return Err(KinError::UnsupportedVersion);
     }
     if version < PROTOCOL_V11 && state.items.iter().any(|item| !item.steps.is_empty()) {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if version < PROTOCOL_V12
+        && state
+            .routines
+            .iter()
+            .any(|routine| matches!(routine.cadence, Cadence::Biweekly | Cadence::Monthly))
+    {
         return Err(KinError::UnsupportedVersion);
     }
     if version == PROTOCOL_V6
@@ -716,7 +733,7 @@ fn encode_state_with_summary(
 }
 
 pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelope, KinError> {
-    if !(PROTOCOL_V1..=PROTOCOL_V11).contains(&protocol_version) {
+    if !(PROTOCOL_V1..=PROTOCOL_V12).contains(&protocol_version) {
         return Err(KinError::UnsupportedVersion);
     }
     if record.len() > MAX_PROTOCOL_BYTES {
@@ -751,9 +768,15 @@ pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelop
             if !(1..=MAX_ITEM_TEXT_BYTES).contains(&length) || payload.len() != 28 + length {
                 return Err(KinError::MalformedProtocol);
             }
+            let cadence = Cadence::try_from(payload[16])?;
+            if matches!(cadence, Cadence::Biweekly | Cadence::Monthly)
+                && protocol_version < PROTOCOL_V12
+            {
+                return Err(KinError::UnsupportedVersion);
+            }
             EventKind::RoutineCreated {
                 routine_id: RoutineId(read_id(payload, 0)?),
-                cadence: Cadence::try_from(payload[16])?,
+                cadence,
                 created_on: CivilDate::from_encoded(read_u32(payload, 20)?)?,
                 text: std::str::from_utf8(&payload[28..])
                     .map_err(|_| KinError::MalformedProtocol)?

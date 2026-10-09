@@ -20,6 +20,12 @@ export async function routineRegressions() {
   let now = new Date(2026, 9, 2, 12).getTime();
   Date.now = () => now;
   try {
+    check(
+      ["biweekly", "monthly"].every(value =>
+        ui.cadence.querySelector(`option[value="${value}"]`),
+      ),
+      "richer cadence choices are keyboard-selectable",
+    );
     ui.input.value = "<b>Starter 🥛</b>";
     ui.cadence.value = "daily";
     ui.input.focus();
@@ -167,6 +173,61 @@ export async function routineRegressions() {
         .occurrenceStatus === "completed",
       "clock rollback replays original period",
     );
+
+    await app.saveRoutine({
+      type: "create-routine",
+      text: "Change sheets",
+      cadence: "biweekly",
+    });
+    const biweekly = app.state.routines.at(-1);
+    check(
+      biweekly.occurrenceKey === 20261003 &&
+        ui.textContent.includes("Every two weeks · Open this two-week period"),
+      "biweekly creation-date anchor and truthful status",
+    );
+    await app.saveRoutine({
+      type: "complete-routine-occurrence",
+      routineId: biweekly.routineId,
+      occurrenceKey: 20261003,
+    });
+    now = new Date(2026, 9, 17, 12).getTime();
+    await app.refreshFromEvents();
+    check(
+      app.state.routines.find(r => r.routineId === biweekly.routineId)
+        .occurrenceKey === 20261017 &&
+        app.state.routines.find(r => r.routineId === biweekly.routineId)
+          .occurrenceStatus === "open",
+      "biweekly completion resets at the next anchored period",
+    );
+
+    now = new Date(2024, 0, 31, 12).getTime();
+    await app.saveRoutine({
+      type: "create-routine",
+      text: "Replace filter",
+      cadence: "monthly",
+    });
+    const monthly = app.state.routines.at(-1);
+    check(
+      monthly.occurrenceKey === 20240101 &&
+        ui.textContent.includes("Monthly · Open this month"),
+      "monthly cadence uses calendar month occurrence keys",
+    );
+    await app.saveRoutine({
+      type: "complete-routine-occurrence",
+      routineId: monthly.routineId,
+      occurrenceKey: 20240101,
+    });
+    now = new Date(2024, 1, 29, 12).getTime();
+    await app.refreshFromEvents();
+    check(
+      app.state.routines.find(r => r.routineId === monthly.routineId)
+        .occurrenceKey === 20240201 &&
+        app.state.routines.find(r => r.routineId === monthly.routineId)
+          .occurrenceStatus === "open",
+      "monthly completion resets on leap-day month boundary",
+    );
+    now = new Date(2026, 9, 3, 12).getTime();
+    await app.refreshFromEvents();
 
     const originalAdd = IDBObjectStore.prototype.add;
     const target = {
