@@ -123,9 +123,10 @@ creation-anchored biweekly/calendar-month cadence. v0.19.0 Shared Shopping
 Lists (`kin-v0.19.0` candidate) adds Shopping classification under protocol
 13. The current v0.20.0 Staples & Replenishment (`kin-v0.20.0` candidate)
 adds reusable Staples under protocol 14 with user-triggered transfer to
-Shopping. The v0.21.0 Household Modes (`kin-v0.21.0` candidate) is on
-`kin-fast-track-v0.21-v0.25`; it adds protocol 15 and pauses routine
-occurrences in non-Normal modes. The user-authorized fast-track continues
+Shopping. The v0.21.0 Household Modes (`kin-v0.21.0` candidate) adds protocol 15 and
+pauses routine occurrences in non-Normal modes. The v0.22.0 Lightweight
+Planning Dates (`kin-v0.22.0` candidate) adds protocol 16 and an optional,
+fixed civil date to Items. The user-authorized fast-track continues
 through v0.25.x on this branch. Preserve the five separate minor milestone
 commits; do not create tags or merge the branch. These are implementation
 candidates, not production certification. Preserve the v0.13.5 recovery

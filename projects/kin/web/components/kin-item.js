@@ -1,3 +1,5 @@
+import { localCivilDateOffset } from "../browser-time.js";
+
 class KinItem extends HTMLElement {
   constructor() {
     super();
@@ -74,6 +76,14 @@ class KinItem extends HTMLElement {
         context.textContent = `Area: ${area.name}${area.archived ? " (archived)" : ""}`;
         details.append(context);
       }
+    }
+    if (this.record.status !== "archived") {
+      details.append(this.createPlanningDateEditor());
+    } else if (this.record.planningDate) {
+      const planned = document.createElement("span");
+      planned.className = "item-planning-date-label";
+      planned.textContent = `Planned for ${formatPlanningDate(this.record.planningDate)}`;
+      details.append(planned);
     }
     const action = document.createElement("div");
     action.className = "item-action";
@@ -293,6 +303,69 @@ class KinItem extends HTMLElement {
     });
     return button;
   }
+
+  createPlanningDateEditor() {
+    const editor = document.createElement("div");
+    editor.className = "item-planning-date";
+    const label = document.createElement("label");
+    label.className = "item-planning-date-field";
+    label.textContent = "Planned date";
+    const input = document.createElement("input");
+    input.type = "date";
+    input.className = "item-planning-date-input";
+    input.setAttribute("aria-label", `Planned date for ${this.record.text}`);
+    input.dataset.itemId = this.record.itemId;
+    input.value = this.record.planningDate
+      ? formatPlanningDate(this.record.planningDate)
+      : "";
+    input.disabled = this.isDisabled;
+    input.addEventListener("change", () => this.dispatchPlanningDate(
+      input.value ? Number(input.value.replaceAll("-", "")) : null,
+    ));
+    label.append(input);
+    editor.append(label);
+    for (const [labelText, offset] of [["Today", 0], ["Tomorrow", 1]]) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "item-planning-date-shortcut";
+      button.textContent = labelText;
+      button.setAttribute("aria-label", `Plan ${this.record.text} for ${labelText.toLowerCase()}`);
+      button.dataset.itemId = this.record.itemId;
+      button.disabled = this.isDisabled;
+      button.addEventListener("click", () => {
+        this.dispatchPlanningDate(localCivilDateOffset(offset));
+      });
+      editor.append(button);
+    }
+    if (this.record.planningDate) {
+      const clear = document.createElement("button");
+      clear.type = "button";
+      clear.className = "item-planning-date-shortcut";
+      clear.textContent = "Clear";
+      clear.setAttribute("aria-label", `Clear planned date for ${this.record.text}`);
+      clear.dataset.itemId = this.record.itemId;
+      clear.disabled = this.isDisabled;
+      clear.addEventListener("click", () => this.dispatchPlanningDate(null));
+      editor.append(clear);
+    }
+    return editor;
+  }
+
+  dispatchPlanningDate(planningDate) {
+    if (this.record.planningDate === planningDate) return;
+    this.dispatchEvent(new CustomEvent("kin:set-item-planning-date", {
+      detail: { itemId: this.record.itemId, planningDate },
+      bubbles: true,
+      composed: true,
+    }));
+  }
+}
+
+function formatPlanningDate(value) {
+  const year = Math.floor(value / 10000).toString().padStart(4, "0");
+  const month = (Math.floor(value / 100) % 100).toString().padStart(2, "0");
+  const day = (value % 100).toString().padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 customElements.define("kin-item", KinItem);

@@ -2,6 +2,15 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
+## v0.22.0 — Lightweight Planning Dates
+
+- Add an optional Gregorian civil planning date to existing Items, with a
+  native date control, Today/Tomorrow shortcuts, and an explicit clear action.
+- Add schema-1 event kind 30 and replay protocol 16. Dates are fixed values,
+  never reminders or values that roll with the local clock.
+- Preserve offline, encrypted sync, and archive behavior without a storage
+  migration; older replay protocols fail closed on dated histories.
+
 ## v0.21.0 — Household Modes
 
 - Add Normal, Vacation, Guests, and Rest as explicit canonical household

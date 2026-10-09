@@ -86,6 +86,8 @@ class KinApp extends HTMLElement {
     this.onAreaIntent = (event) => this.saveArea(event.detail);
     this.onNoteIntent = (event) => this.saveNote(event.type.slice(4), event.detail);
     this.onItemAreaChange = (event) => this.saveArea({ ...event.detail, action: "assign-item-area" });
+    this.onItemPlanningDateChange = (event) =>
+      this.saveItemPlanningDate(event.detail, event.target.closest("kin-today"));
     this.onModeChange = () => this.saveMode(this.modeSelect.value);
     this.pulseTimer = null;
     this.catchUpCursor = null;
@@ -187,6 +189,7 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:reopen-item-step", this.onReopenItemStep);
     this.addEventListener("kin:archive-item-step", this.onArchiveItemStep);
     this.addEventListener("kin:change-item-area", this.onItemAreaChange);
+    this.addEventListener("kin:set-item-planning-date", this.onItemPlanningDateChange);
     this.addEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.addEventListener(`kin:${action}`, this.onNoteIntent);
     this.addEventListener("kin:add-handoff", this.onAddHandoff);
@@ -525,6 +528,7 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:reopen-item-step", this.onReopenItemStep);
     this.removeEventListener("kin:archive-item-step", this.onArchiveItemStep);
     this.removeEventListener("kin:change-item-area", this.onItemAreaChange);
+    this.removeEventListener("kin:set-item-planning-date", this.onItemPlanningDateChange);
     this.removeEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.removeEventListener(`kin:${action}`, this.onNoteIntent);
     this.removeEventListener("kin:add-handoff", this.onAddHandoff);
@@ -1083,6 +1087,39 @@ class KinApp extends HTMLElement {
             .find((select) => select.dataset.itemId === detail.itemId)
             ?.focus();
         }
+        this.flushPeerRefresh();
+      }
+    }
+  }
+
+  async saveItemPlanningDate(detail, sourceList) {
+    if (this.busy || !this.store || !this.engine) return;
+    const session = this.captureSession();
+    this.setBusy(true);
+    this.clearAlert();
+    this.setStatus("Saving…");
+    try {
+      await this.appendCommand({
+        type: "set-item-planning-date",
+        itemId: detail.itemId,
+        planningDate: detail.planningDate,
+      });
+      this.assertCurrentSession(session);
+      this.renderState();
+      this.broadcastEventChange();
+      this.setStatus(detail.planningDate ? "Planned date saved." : "Planned date cleared.");
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === 4) this.pendingRefresh = true;
+      this.renderState();
+      this.showAlert(error.userMessage ?? SAVE_ERROR);
+      this.setStatus("");
+    } finally {
+      if (this.isCurrentSession(session)) {
+        this.setBusy(false);
+        sourceList?.querySelector(
+          `.item-planning-date-input[data-item-id="${detail.itemId}"]`,
+        )?.focus();
         this.flushPeerRefresh();
       }
     }

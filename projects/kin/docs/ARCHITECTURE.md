@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** v0.21.0 adds explicit household modes through additive protocol 15. Canonical Rust events and deterministic Rust/WASM replay remain authoritative; browser code supplies the More-page selector and pauses routine occurrence controls in non-Normal modes. The existing encrypted local persistence, sync, and archive adapters carry mode changes without an IndexedDB, server, sync-envelope, or archive-container schema change.
+**Status:** v0.22.0 adds optional Item planning dates through additive protocol 16. Canonical Rust events and deterministic Rust/WASM replay remain authoritative; browser code provides date-only editing and resolves Today/Tomorrow against the local civil date only at selection time. Existing encrypted local persistence, sync, and archive adapters carry date changes without an IndexedDB, server, sync-envelope, or archive-container schema change. v0.21.0 Household Modes remains part of the current implementation.
 
 ## v0.10 implementation boundary
 

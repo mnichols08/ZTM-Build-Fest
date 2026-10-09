@@ -378,8 +378,17 @@ Wasm build. `rust/src/routine_tests.rs` holds independent v7 wire fixtures;
 `recurrence.rs` covers Gregorian calendar primitives.
 `scripts/routine-regression.mjs` exercises real IndexedDB/Wasm lifecycle,
 boundaries, stale keys, quota/abort/retry, cross-tab races and keyboard focus.
-`scripts/browser-regression.mjs` also verifies mode persistence and paused
-routine actions. Existing suites retain explicit legacy protocol fixtures.
+`scripts/browser-regression.mjs` also verifies mode persistence, paused
+routine actions, and planning-date capture/edit/clear/persistence with local
+Today/Tomorrow shortcuts. Existing suites retain explicit legacy protocol
+fixtures.
+
+## v0.22.0 Lightweight Planning Dates
+
+Run Rust command/replay tests and `web/wasm/kin-engine.test.mjs` after
+rebuilding the release WASM. The browser regression exercises the native date
+input, local Today/Tomorrow resolution, clear behavior, event persistence,
+replay, accessibility naming, and focus restoration.
 See [V0.7.0](V0.7.0.md) for the full matrix and actual release evidence.
 
 ## v0.18.0 Richer Routine Scheduling

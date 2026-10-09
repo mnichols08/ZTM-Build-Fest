@@ -69,6 +69,61 @@ test("unpaired surrogate input is rejected instead of silently replaced", () => 
   assert.throws(() => encodeText("\uD800"), /valid Unicode/);
 });
 
+test("planning dates roundtrip as civil dates and can be cleared", async () => {
+  const wasm = await readFile(new URL("./kin_engine.wasm", import.meta.url));
+  const engine = await loadCurrentEngine(
+    `data:application/wasm;base64,${wasm.toString("base64")}`,
+  );
+  const hex = (value) =>
+    [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const context = (sequence) => ({
+    eventId: new Uint8Array(16).fill(sequence),
+    householdId: new Uint8Array(16).fill(0xaa),
+    actorId: new Uint8Array(16).fill(0xbb),
+    deviceId: new Uint8Array(16).fill(0xcc),
+    timestamp: 1_791_475_200_000 + sequence,
+    logicalTime: BigInt(sequence),
+  });
+  const itemId = new Uint8Array(16).fill(0x42);
+  const asOf = 1_791_475_200_000;
+  const civilDate = 20261003;
+  const records = [
+    encodeAddedRecord({
+      ...context(1),
+      itemId,
+      text: "Schedule dinner",
+      classification: "need",
+    }),
+  ];
+  const plan = (planningDate, sequence) => engine.executeCommand(
+    {
+      type: "set-item-planning-date",
+      itemId: hex(itemId),
+      planningDate,
+    },
+    context(sequence),
+    records,
+    asOf,
+    null,
+    civilDate,
+  );
+
+  const planned = plan(20261004, 2);
+  assert.equal(planned.state.items[0].planningDate, 20261004);
+  assert.equal(new DataView(planned.encodedEvent.buffer).getUint16(2, true), 30);
+  records.push(planned.encodedEvent);
+
+  const cleared = plan(null, 3);
+  assert.equal(cleared.state.items[0].planningDate, null);
+  records.push(cleared.encodedEvent);
+  assert.equal(engine.applyEvents(records, asOf, null, civilDate).items[0].planningDate, null);
+
+  assert.throws(
+    () => plan(20261301, 4),
+    (error) => error.code === 2,
+  );
+});
+
 test("item text is bounded by UTF-8 bytes rather than character count", () => {
   const maximum = "🥛".repeat(1024);
   const record = encodeText(maximum);

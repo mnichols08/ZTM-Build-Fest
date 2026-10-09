@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** v0.21.0 adds protocol 15 for household modes while preserving earlier layouts and canonical event bytes. Protocol 14 gates Staples, protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
+**Status:** v0.22.0 adds protocol 16 for Item planning dates while preserving earlier layouts and canonical event bytes. Protocol 15 adds household modes; protocol 14 gates Staples, protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
 
 ## Target and exports
 
@@ -127,7 +127,7 @@ Items remain serialized in original add-event order, including archived tombston
 - Rust owns result/error buffers. `kin_result_ptr/len` refer to the most recent successful result; `kin_error_ptr/len` refer to the most recent failed call. The inactive pair returns `(0, 0)`.
 - Result/error bytes stay valid until the next `kin_apply_events` call or module teardown. JavaScript must copy them into host-owned memory before another call. The bridge must not retain a view that may become stale if WASM memory grows.
 - Each call clears the previous result and error before processing. Repeated calls are independent full replays; the module has no hidden household state between calls.
-- A valid empty household response is a non-empty protocol result containing zero entity counts (12 bytes for v1/v2, 16 for v3, 20 for v4; protocol 15 has a 72-byte header). A zero-length error/result accessor means that no buffer is available, not a successful empty state.
+- A valid empty household response is a non-empty protocol result containing zero entity counts (12 bytes for v1/v2, 16 for v3, 20 for v4; protocols 15 and 16 have a 72-byte header). A zero-length error/result accessor means that no buffer is available, not a successful empty state.
 - Output allocation is released by Rust on the next apply call/module teardown; JavaScript must not call `kin_free` on result/error pointers.
 
 ## Call behavior
@@ -326,7 +326,7 @@ constructs canonical payloads and validates command semantics.
 | 76     | 8     | Explicit timestamp:i64                                              |
 | 84     | 8     | Explicit logical time:u64                                           |
 | 92     | 16    | Entity ID; zero for Pulse                                           |
-| 108    | 4     | Routine creation date/occurrence key; zero otherwise                |
+| 108    | 4     | Routine date key or Item planning date; zero otherwise              |
 | 112    | 1     | Item classification, Pulse value, Routine cadence or mode; zero otherwise |
 | 113    | 3     | Reserved zero                                                       |
 | 116    | 8     | Pulse expiration:i64; zero otherwise                                |
@@ -338,6 +338,9 @@ Shopping, or 3 for Staples. Code 2 requires protocol 13 or later; code 3
 requires protocol 14 or later. Older protocol requests fail closed.
 Household mode values are 0–3 and require protocol 15 or later; the mode
 command has a zero entity ID and no action payload.
+Planning-date intent 30 uses the entity-ID field for the Item ID and the
+four-byte date field at offset 108; zero clears the date and nonzero values
+require protocol 16 or later.
 
 IDs and time are explicit browser capabilities. Capture commands use a supplied
 random entity ID. Noncapture commands use the referenced entity ID. Step
@@ -439,3 +442,15 @@ Validation: native command/codec/archive tests, all historical protocol fixtures
 and `web/wasm/portable-core.test.mjs` exercise command variants, full
 canonical metadata decoding, stale Routine rejection, archive/import corruption,
 and disposed-engine capability rejection through the real release WASM.
+
+## Protocol version 16 — Item planning dates
+
+Request framing and the 88-byte event envelope remain unchanged. Schema-1
+event kind 30 has a fixed 20-byte payload containing the 16-byte Item ID and
+little-endian `u32` civil date. `00000000` clears the optional date;
+nonzero values must be Gregorian `YYYYMMDD` dates in years 1–9999.
+
+The result header remains 72 bytes. After the existing protocol-11 Step
+records, protocol 16 appends one little-endian `u32` per Item in Item order.
+Zero represents no date. Protocols 1–15 retain their exact layouts and reject
+date-bearing history/state instead of silently omitting the field.

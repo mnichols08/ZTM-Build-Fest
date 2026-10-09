@@ -1,6 +1,15 @@
 # Synchronization Design
 
-**Status:** v0.21.0 preserves the existing encrypted-sync boundary for household-mode events. Mode values remain inside encrypted canonical event payloads; no plaintext metadata, server interpretation, or new authority is added.
+**Status:** v0.22.0 preserves the existing encrypted-sync boundary for Item planning-date events. Date values remain inside encrypted canonical event payloads; no plaintext metadata, server interpretation, or new authority is added.
+
+## v0.22.0 Lightweight Planning Dates
+
+Planning dates are schema-1 canonical Item events carried by the existing
+encrypted local event store, outbox, retry, relay, revocation, and archive
+paths. They are not duplicated into plaintext sync metadata. Concurrent
+updates resolve by protocol 16's existing
+`(logical_time, device_id, event_id)` order. Older protocols fail closed on
+date-bearing history rather than dropping the field.
 
 ## v0.21.0 Household Modes
 

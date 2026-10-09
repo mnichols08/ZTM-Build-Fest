@@ -1,6 +1,17 @@
 # Data Migrations
 
-**Status:** v0.21.0 adds household modes behind replay protocol 15 without an IndexedDB, archive-container, or server-schema migration. Earlier version sections are historical.
+**Status:** v0.22.0 adds Item planning dates behind replay protocol 16 without an IndexedDB, archive-container, sync-envelope, or server-schema migration. Earlier version sections are historical.
+
+## v0.22.0 Lightweight Planning Dates compatibility
+
+Protocol 16 introduces schema-1 event kind 30 and appends one little-endian
+`u32` planning-date value per Item to the projection after existing protocol
+extensions. Zero means no date. Protocols 1–15 continue to replay histories
+that contain no planning-date events and reject event kind 30; their original
+state layouts remain unchanged. No stored rows are rewritten: the local
+encrypted event store, sync relay/outbox, and KARC v1 archive already carry
+canonical event bytes. Upgrading Kin is the migration for devices that share
+a history containing planning dates.
 
 ## v0.21.0 Household Modes compatibility
 

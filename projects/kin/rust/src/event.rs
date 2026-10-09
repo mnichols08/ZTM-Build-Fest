@@ -124,6 +124,10 @@ pub enum EventKind {
         text: String,
         classification: ItemClassification,
     },
+    ItemPlanningDateChanged {
+        item_id: ItemId,
+        planning_date: Option<CivilDate>,
+    },
     ItemCompleted {
         item_id: ItemId,
     },

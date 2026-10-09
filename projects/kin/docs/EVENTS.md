@@ -1,6 +1,6 @@
 # Household Events
 
-**Status:** Current through v0.21.0 Household Modes. Rust owns canonical command encoding and decoding. Protocols 10–14 add Notes, Steps, richer Routine cadence, Shopping, and Staples; protocol 15 adds schema-1 household-mode event kind 29. Protocols 1–14 reject mode events and non-Normal projections rather than omit them. Equal-time distributed replay remains deterministic; local encryption wraps canonical bytes without rewriting them.
+**Status:** Current through v0.22.0 Lightweight Planning Dates. Rust owns canonical command encoding and decoding. Protocols 10–14 add Notes, Steps, richer Routine cadence, Shopping, and Staples; protocol 15 adds household-mode event kind 29, and protocol 16 adds Item planning-date event kind 30. Protocols 1–15 fail closed on date-bearing history rather than omit the field. Equal-time distributed replay remains deterministic; local encryption wraps canonical bytes without rewriting them.
 
 ## Canonical record
 
@@ -65,6 +65,7 @@ Use uppercase entity/action-past-tense names consistently. The milestone column 
 | `ITEM_STEP_REOPENED`            | v0.17.0           | Reopen a completed Step.                                     |
 | `ITEM_STEP_ARCHIVED`            | v0.17.0           | Terminally archive a Step while retaining its history.        |
 | `HOUSEHOLD_MODE_CHANGED`        | v0.21.0           | Set the explicit household-wide mode.                         |
+| `ITEM_PLANNING_DATE_CHANGED`    | v0.22.0           | Set or clear an Item's optional fixed civil planning date.     |
 | `HOUSEHOLD_CREATED`            | v0.8.0            | Establish a household identity when pairing is introduced.   |
 | `MEMBER_INVITED`               | v0.8.0            | Record a member invitation.                                  |
 | `MEMBER_JOINED`                | v0.8.0            | Record accepted household membership.                        |
@@ -171,3 +172,12 @@ projects Normal. Distinct concurrent changes are retained and resolve by the
 existing protocol-15 distributed ordering tuple; exact duplicate event
 delivery is idempotent. The event has no entity ID, schedule, duration, or
 automatic actor.
+
+## v0.22.0 Lightweight Planning Dates
+
+`ITEM_PLANNING_DATE_CHANGED` is schema 1, event kind 30, with a 20-byte
+payload: 16-byte Item ID and a little-endian `u32` civil date. Values 00010101
+through 99991231 must represent valid Gregorian dates; zero clears the date.
+The event has no timestamp semantics beyond the ordinary envelope and stores
+no time zone or reminder. Event updates remain replayable after archival when
+authored offline; UI command validation rejects new changes to archived Items.

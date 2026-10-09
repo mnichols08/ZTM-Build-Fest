@@ -14,8 +14,9 @@ Read:
 
 For the current user-authorized fast-track, complete `v0.21.0` through
 `v0.25.0` one minor at a time on `kin-fast-track-v0.21-v0.25`, preserving
-one milestone commit per minor. v0.21.0 Household Modes is implemented;
-v0.22–v0.25 are the remaining scoped work. Do not tag or merge the batch
+one milestone commit per minor. v0.21.0 Household Modes and v0.22.0
+Lightweight Planning Dates are implemented; v0.23–v0.25 are the remaining
+scoped work. Do not tag or merge the batch
 branch, and do not start v0.26.x. The broader October roadmap still targets
 v0.40.x, with v0.41–v0.45 as undated proposals for reassessment after
 October feedback.

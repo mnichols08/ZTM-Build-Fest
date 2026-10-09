@@ -24,7 +24,8 @@ pub const PROTOCOL_V12: u16 = 12;
 pub const PROTOCOL_V13: u16 = 13;
 pub const PROTOCOL_V14: u16 = 14;
 pub const PROTOCOL_V15: u16 = 15;
-pub const PROTOCOL_VERSION: u16 = PROTOCOL_V15;
+pub const PROTOCOL_V16: u16 = 16;
+pub const PROTOCOL_VERSION: u16 = PROTOCOL_V16;
 pub const ERROR_PROTOCOL_VERSION: u16 = PROTOCOL_V1;
 pub const MAX_EVENT_COUNT: usize = 10_000;
 pub const MAX_PROTOCOL_BYTES: usize = 64 * 1024 * 1024;
@@ -82,6 +83,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
             | PROTOCOL_V13
             | PROTOCOL_V14
             | PROTOCOL_V15
+            | PROTOCOL_V16
     ) {
         return Err(KinError::UnsupportedVersion);
     }
@@ -179,7 +181,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
         .map_err(|_| KinError::SizeLimit)?;
     let mut offset = match version {
         PROTOCOL_V8 | PROTOCOL_V9 | PROTOCOL_V10 | PROTOCOL_V11 | PROTOCOL_V12 | PROTOCOL_V13
-        | PROTOCOL_V14 | PROTOCOL_V15 => {
+        | PROTOCOL_V14 | PROTOCOL_V15 | PROTOCOL_V16 => {
             V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES
         }
         PROTOCOL_V7 => 44,
@@ -246,6 +248,7 @@ pub fn encode_state(state: &HouseholdState, protocol_version: u16) -> Result<Vec
         })
         || state.items.iter().any(|item| item.area_id.is_some())
         || state.items.iter().any(|item| !item.steps.is_empty())
+        || state.items.iter().any(|item| item.planning_date.is_some())
     {
         return Err(KinError::UnsupportedVersion);
     }
@@ -492,12 +495,22 @@ pub fn encode_state_v15(
     encode_state_with_summary(state, summary, PROTOCOL_V15)
 }
 
+pub fn encode_state_v16(
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<Vec<u8>, KinError> {
+    encode_state_with_summary(state, summary, PROTOCOL_V16)
+}
+
 fn encode_state_with_summary(
     state: &HouseholdState,
     summary: &CatchUpSummary,
     version: u16,
 ) -> Result<Vec<u8>, KinError> {
     if version < PROTOCOL_V15 && state.mode != HouseholdMode::Normal {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if version < PROTOCOL_V16 && state.items.iter().any(|item| item.planning_date.is_some()) {
         return Err(KinError::UnsupportedVersion);
     }
     if version < PROTOCOL_V9
@@ -725,6 +738,13 @@ fn encode_state_with_summary(
             })
         })
         .and_then(|length| length.checked_add(if version >= PROTOCOL_V15 { 4 } else { 0 }))
+        .and_then(|length| {
+            length.checked_add(if version >= PROTOCOL_V16 {
+                state.items.len().checked_mul(4)?
+            } else {
+                0
+            })
+        })
         .ok_or(KinError::SizeLimit)?;
     if result_length > MAX_PROTOCOL_BYTES {
         return Err(KinError::SizeLimit);
@@ -784,6 +804,14 @@ fn encode_state_with_summary(
     if version >= PROTOCOL_V11 {
         result.extend_from_slice(&step_bytes);
     }
+    if version >= PROTOCOL_V16 {
+        for item in &state.items {
+            push_u32(
+                &mut result,
+                item.planning_date.map_or(0, CivilDate::encoded),
+            );
+        }
+    }
 
     for entry in &summary.entries {
         result.extend_from_slice(&entry.event_id.0);
@@ -804,7 +832,7 @@ fn encode_state_with_summary(
 }
 
 pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelope, KinError> {
-    if !(PROTOCOL_V1..=PROTOCOL_V15).contains(&protocol_version) {
+    if !(PROTOCOL_V1..=PROTOCOL_V16).contains(&protocol_version) {
         return Err(KinError::UnsupportedVersion);
     }
     if record.len() > MAX_PROTOCOL_BYTES {
@@ -975,6 +1003,18 @@ pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelop
                     3 => HouseholdMode::Rest,
                     _ => return Err(KinError::MalformedProtocol),
                 },
+            }
+        }
+        (1, 30) if protocol_version >= PROTOCOL_V16 => {
+            if payload.len() != 20 {
+                return Err(KinError::MalformedProtocol);
+            }
+            let encoded_date = read_u32(payload, 16)?;
+            EventKind::ItemPlanningDateChanged {
+                item_id: ItemId(read_id(payload, 0)?),
+                planning_date: (encoded_date != 0)
+                    .then(|| CivilDate::from_encoded(encoded_date))
+                    .transpose()?,
             }
         }
         (1, 15..=17) if protocol_version >= PROTOCOL_V7 => {

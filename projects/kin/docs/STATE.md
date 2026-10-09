@@ -1,6 +1,6 @@
 # Derived Household State
 
-**Status:** v0.21.0 adds household mode through protocol 15, preserving prior result layouts. Modes and Item categories are derived from canonical events; protocols 1–14 reject mode-bearing state. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
+**Status:** v0.22.0 adds optional Item planning dates through protocol 16 while preserving prior result layouts. Modes, Item categories, and planning dates are derived from canonical events; protocols 1–15 fail closed on date-bearing history. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
 
 ## Projection pipeline
 
@@ -161,3 +161,12 @@ Guests, and Rest suppress routine occurrence completion/reopen actions but do
 not alter Routine definitions or their prior occurrence history. The browser
 keeps definitions visible and displays the pause explanation. Rust validates
 the command independently of the browser.
+
+## v0.22.0 Lightweight Planning Dates
+
+`ItemState.planning_date` is projected from ordered date-change events. A
+date event can update or clear an existing Item without relying on the
+projection clock; replay does not recalculate a saved Today/Tomorrow choice.
+Distributed updates use the established deterministic event order. A stale
+offline date event after Item archival remains valid history, while new UI
+commands cannot target archived Items.

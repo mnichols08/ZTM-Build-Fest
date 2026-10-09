@@ -14,6 +14,7 @@ import {
   routineKeyboardRegressions,
 } from "./routine-regression.mjs";
 import { shoppingRegressions } from "./shopping-regression.mjs";
+import { planningDateRegressions } from "./planning-date-regression.mjs";
 import {
   handoffRegressions,
   handoffPeerRegressions,
@@ -1199,6 +1200,8 @@ try {
   console.log(await first.evaluate(`(${catchUpRegressions.toString()})()`));
   await visit(first, "lists");
   console.log(await first.evaluate(`(${shoppingRegressions.toString()})()`));
+  await visit(first, "today");
+  console.log(await first.evaluate(`(${planningDateRegressions.toString()})()`));
   await visit(first, "routines");
   console.log(await first.evaluate(`(${routineRegressions.toString()})()`));
   await visit(first, "today");
@@ -2201,8 +2204,11 @@ try {
   assert.deepEqual(problems, [], "Uncaught errors or CSP/console errors");
   assert.ok(
     requests.length > 0 &&
-      requests.every((url) => url.startsWith(origin + "/")),
-    `All page requests stay same-origin: ${requests.filter((url) => !url.startsWith(origin + "/")).join(", ")}`,
+      requests.every((url) =>
+        url.startsWith(origin + "/") ||
+        url.startsWith("data:image/svg+xml;base64,")
+      ),
+    `All page requests stay same-origin or use browser-native SVG data: ${requests.filter((url) => !url.startsWith(origin + "/") && !url.startsWith("data:image/svg+xml;base64,")).join(", ")}`,
   );
   console.log(
     "PASS CSP/console and same-origin requests (favicon 404 excluded)",

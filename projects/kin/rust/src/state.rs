@@ -35,6 +35,7 @@ pub struct ItemState {
     pub created_by: ActorId,
     pub created_at: i64,
     pub classification: ItemClassification,
+    pub planning_date: Option<CivilDate>,
     pub status: ItemStatus,
     pub area_id: Option<AreaId>,
     pub steps: Vec<ItemStepState>,
@@ -401,6 +402,19 @@ fn rebuild_with_context(
                 }
                 items[position].area_id = *area_id;
             }
+            EventKind::ItemPlanningDateChanged {
+                item_id,
+                planning_date,
+            } => {
+                if !valid_timestamp(event.timestamp) {
+                    return Err(KinError::MalformedProtocol);
+                }
+                let position = item_positions
+                    .get(item_id)
+                    .copied()
+                    .ok_or(KinError::InvalidEvent)?;
+                items[position].planning_date = *planning_date;
+            }
             EventKind::NoteCreated {
                 note_id,
                 title,
@@ -683,6 +697,7 @@ fn rebuild_with_context(
                     created_by: event.actor_id,
                     created_at: event.timestamp,
                     classification: *classification,
+                    planning_date: None,
                     status: ItemStatus::Active,
                     area_id: None,
                     steps: Vec::new(),
@@ -1075,7 +1090,8 @@ pub(crate) fn summarize_validated(
             | EventKind::ItemStepCompleted { .. }
             | EventKind::ItemStepReopened { .. }
             | EventKind::ItemStepArchived { .. }
-            | EventKind::HouseholdModeChanged { .. } => None,
+            | EventKind::HouseholdModeChanged { .. }
+            | EventKind::ItemPlanningDateChanged { .. } => None,
         };
 
         if let Some((kind, entity_kind, text, classification)) = summary {
@@ -1168,6 +1184,14 @@ mod tests {
             EventKind::HouseholdModeChanged { mode } => {
                 canonical_bytes.push(*mode as u8);
             }
+            EventKind::ItemPlanningDateChanged {
+                item_id,
+                planning_date,
+            } => {
+                canonical_bytes.extend_from_slice(&item_id.0);
+                canonical_bytes
+                    .extend_from_slice(&planning_date.map_or(0, CivilDate::encoded).to_le_bytes());
+            }
             EventKind::AreaCreated { .. }
             | EventKind::AreaRenamed { .. }
             | EventKind::AreaArchived { .. }
@@ -1221,6 +1245,47 @@ mod tests {
         assert_eq!(state.items.len(), 2);
         assert_eq!(state.items[0].text, "Buy milk");
         assert_eq!(state.items[1].text, "Restock wipes");
+    }
+
+    #[test]
+    fn planning_date_replay_is_deterministic_and_keeps_stale_offline_updates_valid() {
+        let first_date = CivilDate::from_encoded(20261004).unwrap();
+        let second_date = CivilDate::from_encoded(20261005).unwrap();
+        let item_id = ItemId(id(0x11));
+        let events = [
+            added(1, 1, 0x11, "Buy milk"),
+            event(
+                2,
+                2,
+                EventKind::ItemPlanningDateChanged {
+                    item_id,
+                    planning_date: Some(first_date),
+                },
+            ),
+            event(
+                3,
+                2,
+                EventKind::ItemPlanningDateChanged {
+                    item_id,
+                    planning_date: Some(second_date),
+                },
+            ),
+            event(4, 3, EventKind::ItemArchived { item_id }),
+            event(
+                5,
+                4,
+                EventKind::ItemPlanningDateChanged {
+                    item_id,
+                    planning_date: Some(first_date),
+                },
+            ),
+        ];
+        let forward = rebuild_distributed_on(&events, 0, first_date).unwrap();
+        let reverse_events = events.into_iter().rev().collect::<Vec<_>>();
+        let reverse = rebuild_distributed_on(&reverse_events, 0, first_date).unwrap();
+        assert_eq!(forward, reverse);
+        assert_eq!(forward.items[0].status, ItemStatus::Archived);
+        assert_eq!(forward.items[0].planning_date, Some(first_date));
     }
 
     #[test]

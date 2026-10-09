@@ -1,6 +1,6 @@
 # Web Component Contract
 
-**Status:** Current through v0.21.0 Household Modes; earlier version sections are historical contracts.
+**Status:** Current through v0.22.0 Lightweight Planning Dates; earlier version sections are historical contracts.
 
 ## Component responsibilities
 
@@ -92,3 +92,12 @@ dispatches `kin:replenish-staple` with only the staple Item ID; the app reads
 the canonical staple text and appends a separate Shopping Item, preserving
 list focus and leaving the staple active. Archiving the staple does not affect
 the Shopping Item. See [V0.20.0](releases/V0.20.0.md).
+
+## v0.22.0 Lightweight Planning Dates
+
+`<kin-item>` exposes a native, accessible date input and Today/Tomorrow/Clear
+controls for existing non-archived Items. The browser resolves shortcuts to
+fixed local civil dates and dispatches `kin:set-item-planning-date`; `<kin-app>`
+persists that intent through the same event-store transaction as other Item
+changes. Archived Items are read-only. See
+[V0.22.0](releases/V0.22.0.md).

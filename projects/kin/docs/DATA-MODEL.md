@@ -1,6 +1,6 @@
 # Data Model
 
-**Status:** Current through v0.21.0 Household Modes; earlier version sections are historical contracts. See v0.7.0 and v0.18.0–v0.21.0 below.
+**Status:** Current through v0.22.0 Lightweight Planning Dates; earlier version sections are historical contracts. See v0.7.0 and v0.18.0–v0.22.0 below.
 
 ## Event-oriented source of truth
 
@@ -109,6 +109,17 @@ a mode event default to `normal`. A non-Normal mode pauses routine occurrences
 but does not mutate routine definitions or create per-occurrence records.
 Mode is household-wide context, not a member/device preference or a schedule.
 See [V0.21.0](releases/V0.21.0.md).
+
+## v0.22.0 Lightweight Planning Dates
+
+`ItemState.planning_date` is `Option<CivilDate>`, derived from schema-1
+`ITEM_PLANNING_DATE_CHANGED` events. The date is Gregorian `YYYYMMDD` in the
+supported year range 0001–9999; zero in the event payload means clear. It has
+no time, time zone, reminder, or automatic rollover. A new Item has no
+planning date; the user edits it afterward as a separate canonical event.
+Archived Items remain hidden from ordinary lists and read-only in the UI, but
+a previously authored stale offline date event still replays so it cannot
+invalidate shared history. See [V0.22.0](releases/V0.22.0.md).
 
 ## v0.15.0 Areas
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. PR #26 is merged into `kin-development` at `25e854eaa41a569650f89ea41db70a6f2bcb5c92`. The user-authorized fast-track is v0.21.0–v0.25.0 on `kin-fast-track-v0.21-v0.25`: v0.21.0 Household Modes is implemented and validated, and the remaining four scoped milestones are in progress. Earlier candidate history through v0.20.x remains documented. These candidates are not production certification; do not create tags or merge the batch branch.
+Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. PR #26 is merged into `kin-development` at `25e854eaa41a569650f89ea41db70a6f2bcb5c92`. The user-authorized fast-track is v0.21.0–v0.25.0 on `kin-fast-track-v0.21-v0.25`: v0.21.0 Household Modes and v0.22.0 Lightweight Planning Dates are implemented candidates, with v0.23.0–v0.25.0 still in scope. Earlier candidate history through v0.20.x remains documented. These candidates are not production certification; do not create tags or merge the batch branch.
 
 ```text
 v0.9.3 — Encrypted Event Sync Stabilization
@@ -29,7 +29,9 @@ v0.20.x — Staples & Replenishment (prior fast-track candidate)
 	↓
 v0.21.0 — Household Modes (implemented candidate)
 	↓
-v0.22.x–v0.25.x — Authorized fast-track (Planning Dates, Calendar Export, History, Search)
+v0.22.0 — Lightweight Planning Dates (implemented candidate)
+	↓
+v0.23.x–v0.25.x — Authorized fast-track (Calendar Export, History, Search)
 	↓
 v0.26.x–v0.40.x — Remaining October daily features (October 17–31 targets)
 	↓
@@ -40,11 +42,11 @@ v1.0.0 — Stable Kin Platform (readiness-driven, no fixed date)
 
 Kin supports encrypted local storage, recovery/optional PRF unlock, verified migration, Rust commands/codecs, encrypted archives and a static offline shell alongside opt-in encrypted sync. The v0.11 candidate adds durable server identity/relay state and service database backup/restore. Archives recover local history, not server identity. Independent security review and broader browser/authenticator coverage remain outstanding.
 
-The v0.11 candidate settled service durability before v0.12 lifecycle/deletion. The [v0.11](V0.11.0.md) and [v0.12](V0.12.0.md) records describe candidate evidence; v0.13 Recovery & Household Continuity and v0.14 UX/UI Consolidation are implemented through their `.5` patches. v0.15 Household Areas is complete through v0.15.5; v0.16 Notes is complete through v0.16.2 with a v0.16.3 hardening candidate; v0.17 Checklist Steps is preserved as the existing tagged candidate. v0.18 Richer Routine Scheduling, v0.19 Shared Shopping Lists, and v0.20 Staples & Replenishment were implemented on the prior fast-track. v0.21 Household Modes is the current validated candidate; v0.22–v0.25 are authorized next.
+The v0.11 candidate settled service durability before v0.12 lifecycle/deletion. The [v0.11](V0.11.0.md) and [v0.12](V0.12.0.md) records describe candidate evidence; v0.13 Recovery & Household Continuity and v0.14 UX/UI Consolidation are implemented through their `.5` patches. v0.15 Household Areas is complete through v0.15.5; v0.16 Notes is complete through v0.16.2 with a v0.16.3 hardening candidate; v0.17 Checklist Steps is preserved as the existing tagged candidate. v0.18 Richer Routine Scheduling, v0.19 Shared Shopping Lists, and v0.20 Staples & Replenishment were implemented on the prior fast-track. v0.21 Household Modes and v0.22 Lightweight Planning Dates are validated candidates; v0.23–v0.25 remain authorized next.
 
 ## October direction
 
-The goal for Build Fest is to add one small, useful household feature each day in October, supported by the existing product and platform foundations. v0.12.3 passed scripted Windows checks, including both launchers; v0.13–v0.20 are implemented through the noted candidates, v0.17.0 is preserved as the existing tagged candidate, and v0.21.0 passed its implementation gate on the current fast-track. v0.22–v0.25 remain in progress; later daily plans are targets, not completion claims. The [daily plan](#october-daily-feature-plan) covers the proposed minor lines through `v0.40.x` on October 31.
+The goal for Build Fest is to add one small, useful household feature each day in October, supported by the existing product and platform foundations. v0.12.3 passed scripted Windows checks, including both launchers; v0.13–v0.20 are implemented through the noted candidates, v0.17.0 is preserved as the existing tagged candidate, and v0.21.0–v0.22.0 passed their implementation gates on the current fast-track. v0.23–v0.25 remain in progress; later daily plans are targets, not completion claims. The [daily plan](#october-daily-feature-plan) covers the proposed minor lines through `v0.40.x` on October 31.
 
 > Kin should help a household remember, coordinate, hand off, and recover context without requiring everyone to become a project manager.
 
@@ -329,7 +331,7 @@ The [Build Fest cadence](BUILD-FEST-CADENCE.md) covers the daily loop; the [rele
 | 2026-10-10 | [`v0.19.x`](releases/V0.19.0.md) | **Shared Shopping Lists** — Make common shopping capture and completion fast, shared, and offline-friendly. |
 | 2026-10-11 | [`v0.20.x`](releases/V0.20.0.md) | **Staples & Replenishment** — Support recurring household supplies without becoming inventory management. |
 | 2026-10-12 | [`v0.21.x`](releases/V0.21.0.md) | **Household Modes (implemented candidate)** — Pause routine occurrences in temporary household modes without rewriting routine definitions. |
-| 2026-10-13 | [`v0.22.x`](releases/V0.22.0.md) | **Lightweight Planning Dates** — Add optional date windows to household work without turning Kin into a calendar clone. |
+| 2026-10-13 | [`v0.22.x`](releases/V0.22.0.md) | **Lightweight Planning Dates (implemented candidate)** — Add optional fixed civil dates to Items without reminders or calendar behavior. |
 | 2026-10-14 | [`v0.23.x`](releases/V0.23.0.md) | **Calendar Interoperability** — Let Kin exchange intentional dated household context with calendars using open formats. |
 | 2026-10-15 | [`v0.24.x`](releases/V0.24.0.md) | **Useful Household History** — Answer 'when did we last do/change this?' without creating surveillance. |
 | 2026-10-16 | [`v0.25.x`](releases/V0.25.0.md) | **Search & Filters** — Make accumulated household context findable locally and privately. |

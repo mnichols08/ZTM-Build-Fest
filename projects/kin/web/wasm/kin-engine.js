@@ -1,4 +1,4 @@
-const PROTOCOL_VERSION = 15;
+const PROTOCOL_VERSION = 16;
 const REQUEST_HEADER_BYTES = 64;
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 const PULSE_VALUES = ["good", "okay", "drained", "rough-day", "need-quiet"];
@@ -184,21 +184,25 @@ export function randomId() {
 
 // Wire validation only. Rust owns recurrence and current-period selection.
 function assertCivilDate(value) {
+  if (!isCivilDate(value)) {
+    throw new KinEngineError(2, "Kin requires a valid civil date.");
+  }
+}
+
+function isCivilDate(value) {
   const year = Math.floor(value / 10000);
   const month = Math.floor(value / 100) % 100;
   const day = value % 100;
   const date = new Date(0);
   date.setUTCFullYear(year, month - 1, day);
-  if (
+  return !(
     !Number.isInteger(value) ||
     year < 1 ||
     year > 9999 ||
     date.getUTCFullYear() !== year ||
     date.getUTCMonth() !== month - 1 ||
     date.getUTCDate() !== day
-  ) {
-    throw new KinEngineError(2, "Kin requires a valid civil date.");
-  }
+  );
 }
 
 function civilOrdinal(value) {
@@ -273,6 +277,8 @@ export const encodeNoteUpdatedRecord = (value) => encodeIntent("update-note", va
 export const encodeNoteArchivedRecord = (value) => encodeIntent("archive-note", value);
 export const encodeHouseholdModeRecord = (value) =>
   encodeIntent("set-household-mode", value);
+export const encodeItemPlanningDateRecord = (value) =>
+  encodeIntent("set-item-planning-date", value);
 export const eventMetadata = (bytes) =>
   decodeMetadata(callCore(sharedCodec, "kin_event_metadata", asBytes(bytes)));
 export const eventMetadataBatch = (records) =>
@@ -309,6 +315,7 @@ const COMMAND_TYPES = [
   "reopen-item-step",
   "archive-item-step",
   "set-household-mode",
+  "set-item-planning-date",
 ];
 const EVENT_KINDS = [
   null,
@@ -341,6 +348,7 @@ const EVENT_KINDS = [
   "ITEM_STEP_REOPENED",
   "ITEM_STEP_ARCHIVED",
   "HOUSEHOLD_MODE_CHANGED",
+  "ITEM_PLANNING_DATE_CHANGED",
 ];
 
 function encodeIntent(type, value) {
@@ -436,10 +444,18 @@ function encodeIntentPacket(command, identity) {
       92,
     );
   }
-  if ([14, 15, 16].includes(kind)) {
-    const date = kind === 14 ? command.createdOn : command.occurrenceKey;
-    assertCivilDate(date);
-    view.setUint32(108, date, true);
+  if ([14, 15, 16, 30].includes(kind)) {
+    const date = kind === 14
+      ? command.createdOn
+      : kind === 30
+        ? command.planningDate
+        : command.occurrenceKey;
+    if (kind === 30 && date === null) {
+      view.setUint32(108, 0, true);
+    } else {
+      assertCivilDate(date);
+      view.setUint32(108, date, true);
+    }
   }
   if (kind === 1) {
     const code = ["today", "need", "shopping", "staple"].indexOf(command.classification ?? "need");
@@ -879,7 +895,7 @@ function decodeState(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const protocolVersion = view.getUint16(4, true);
   if (
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].includes(protocolVersion) ||
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].includes(protocolVersion) ||
     view.getUint16(6, true) !== 0
   ) {
     throw new KinEngineError(6, "Kin received an unsupported state format.");
@@ -1016,6 +1032,7 @@ function decodeState(bytes) {
       status: ["active", "completed", "archived"][statusCode],
       ...(protocolVersion >= 9 ? { areaId: null } : {}),
       ...(protocolVersion >= 11 ? { steps: [] } : {}),
+      ...(protocolVersion >= 16 ? { planningDate: null } : {}),
       text,
     });
     offset = recordEnd;
@@ -1294,6 +1311,19 @@ function decodeState(bytes) {
       stepIds.add(stepId);
       item.steps.push({ stepId, text, completed: completed === 1, archived: archived === 1 });
       offset = end;
+    }
+  }
+  if (protocolVersion >= 16) {
+    for (const item of items) {
+      if (offset + 4 > bytes.length) {
+        throw new KinEngineError(6, "Kin received a truncated planning date.");
+      }
+      const planningDate = view.getUint32(offset, true);
+      if (planningDate !== 0 && !isCivilDate(planningDate)) {
+        throw new KinEngineError(6, "Kin received an invalid planning date.");
+      }
+      item.planningDate = planningDate === 0 ? null : planningDate;
+      offset += 4;
     }
   }
   const summaryEntries = [];

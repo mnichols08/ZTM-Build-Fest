@@ -34,6 +34,7 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::ItemStepReopened { .. } => 27,
         EventKind::ItemStepArchived { .. } => 28,
         EventKind::HouseholdModeChanged { .. } => 29,
+        EventKind::ItemPlanningDateChanged { .. } => 30,
     }
 }
 
@@ -77,6 +78,17 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
         EventKind::ItemCompleted { item_id }
         | EventKind::ItemReopened { item_id }
         | EventKind::ItemArchived { item_id } => payload.extend_from_slice(&item_id.0),
+        EventKind::ItemPlanningDateChanged {
+            item_id,
+            planning_date,
+        } => {
+            payload.extend_from_slice(&item_id.0);
+            payload.extend_from_slice(
+                &planning_date
+                    .map_or(0, crate::recurrence::CivilDate::encoded)
+                    .to_le_bytes(),
+            );
+        }
         EventKind::HandoffAdded { handoff_id, text } => {
             payload.extend_from_slice(&handoff_id.0);
             push_text(&mut payload, text)?;
