@@ -123,14 +123,15 @@ creation-anchored biweekly/calendar-month cadence. v0.19.0 Shared Shopping
 Lists (`kin-v0.19.0` candidate) adds Shopping classification under protocol
 13. The current v0.20.0 Staples & Replenishment (`kin-v0.20.0` candidate)
 adds reusable Staples under protocol 14 with user-triggered transfer to
-Shopping.
-Continue the authorized sequence through v0.20.x; do not start v0.21.x. Do not
-create tags on the batch branch. After human review and
-merge, tags may be attached to the preserved milestone commits. These are
-implementation candidates, not production certification. Preserve the v0.13.5
-recovery authority guarantees and all earlier security/domain contracts.
+Shopping. The v0.21.0 Household Modes (`kin-v0.21.0` candidate) is on
+`kin-fast-track-v0.21-v0.25`; it adds protocol 15 and pauses routine
+occurrences in non-Normal modes. The user-authorized fast-track continues
+through v0.25.x on this branch. Preserve the five separate minor milestone
+commits; do not create tags or merge the branch. These are implementation
+candidates, not production certification. Preserve the v0.13.5 recovery
+authority guarantees and all earlier security/domain contracts.
 
-Kin's last published release is `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. The v0.11.x–v0.15.x lines are tagged or in-progress implementation candidates, not production certification. Preserve every existing tag exactly. Root replacement follows [ROOT-ROTATION](docs/ROOT-ROTATION.md); archive recovery remains intentionally local-only and KARC v1 remains supported. The [forward roadmap](docs/ROADMAP.md) targets one minor line per day through v0.40, with v0.41–v0.45 as undated follow-ups and v1.0 dependent on readiness. No production certification, mobile readiness or independent audit is claimed. Do not automatically merge to kin-main. See the release records for actual evidence and limitations.
+Kin's last published release is `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Complete only the authorized v0.21.x–v0.25.x scope on `kin-fast-track-v0.21-v0.25`; do not start v0.26.x. Preserve every existing tag exactly. Root replacement follows [ROOT-ROTATION](docs/ROOT-ROTATION.md); archive recovery remains intentionally local-only and KARC v1 remains supported. The [forward roadmap](docs/ROADMAP.md) targets one minor line per day through v0.40, with v0.41–v0.45 as undated follow-ups and v1.0 dependent on readiness. No production certification, mobile readiness or independent audit is claimed. Do not automatically merge to kin-main. See the release records for actual evidence and limitations.
 
 The pre-implementation releases are:
 

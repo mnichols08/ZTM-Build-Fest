@@ -1631,6 +1631,46 @@ try {
   await visit(second, "routines");
   await routinePeerRegressions(first, second, until);
   await routineKeyboardRegressions(first, until);
+  await visit(first, "more");
+  await first.evaluate(`(()=>{
+    const app=document.querySelector('kin-app');
+    app.modeSelect.value='vacation';
+    app.modeSelect.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+  await until(() =>
+    first.evaluate(`(()=>{
+      const app=document.querySelector('kin-app');
+      return !app.busy&&app.state.mode==='vacation';
+    })()`),
+  );
+  const modeResult = await first.evaluate(`(async()=>{
+      const app=document.querySelector('kin-app');
+      const events=await app.store.loadEvents();
+      return {
+        mode:app.modeSelect.value,
+        record:events.at(-1).kind,
+        routineCount:app.state.routines.length,
+        completionActions:app.routines.querySelectorAll('[data-action="complete-routine-occurrence"]').length,
+        paused:app.routines.textContent.includes('paused during Vacation'),
+      };
+    })()`);
+  assert.equal(modeResult.mode, "vacation");
+  assert.equal(modeResult.record, "HOUSEHOLD_MODE_CHANGED");
+  assert.ok(modeResult.routineCount > 0, "routine definitions remain intact");
+  assert.equal(modeResult.completionActions, 0);
+  assert.equal(modeResult.paused, true, "routine occurrences are paused");
+  await first.evaluate(`(()=>{
+    const app=document.querySelector('kin-app');
+    app.modeSelect.value='normal';
+    app.modeSelect.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+  await until(() =>
+    first.evaluate(`(()=>{
+      const app=document.querySelector('kin-app');
+      return !app.busy&&(app.state.mode??'normal')==='normal';
+    })()`),
+  );
+  console.log("PASS household mode replay, local persistence, and routine pause");
   await visit(first, "today");
   await visit(second, "today");
   await visit(first, "lists");

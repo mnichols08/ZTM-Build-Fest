@@ -33,6 +33,7 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::ItemStepCompleted { .. } => 26,
         EventKind::ItemStepReopened { .. } => 27,
         EventKind::ItemStepArchived { .. } => 28,
+        EventKind::HouseholdModeChanged { .. } => 29,
     }
 }
 
@@ -157,6 +158,7 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             payload.extend_from_slice(&item_id.0);
             payload.extend_from_slice(&step_id.0);
         }
+        EventKind::HouseholdModeChanged { mode } => payload.push(*mode as u8),
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());
     bytes.extend_from_slice(&event.event_version.to_le_bytes());

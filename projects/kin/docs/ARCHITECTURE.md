@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** v0.20.0 adds reusable Staples as an Item classification through additive protocol 14. Manual replenishment creates an ordinary Shopping Item. Canonical Item events, deterministic Rust/WASM replay, encrypted local persistence, encrypted sync, and archive adapters remain authoritative; browser code supplies the lists and user-triggered action. No IndexedDB, server, sync-envelope, event-shape, or archive-container schema change is required.
+**Status:** v0.21.0 adds explicit household modes through additive protocol 15. Canonical Rust events and deterministic Rust/WASM replay remain authoritative; browser code supplies the More-page selector and pauses routine occurrence controls in non-Normal modes. The existing encrypted local persistence, sync, and archive adapters carry mode changes without an IndexedDB, server, sync-envelope, or archive-container schema change.
 
 ## v0.10 implementation boundary
 

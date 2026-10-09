@@ -1,14 +1,14 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.20.0; the last published product release remains v0.10.3. Tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.21.0; the last published product release remains v0.10.3. Tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.20.0 | Governs |
+| Version axis | Last published v0.10.3 / current candidate v0.21.0 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.20.0` | Staples & Replenishment; additive protocol 14 |
+| Application | Last published `0.10.3`; candidate `0.21.0` | Household Modes; additive protocol 15 |
 | Server database schema | `2` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination and household lifecycle records |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v14; writes v14 for local and synchronized requests | Request context and projection semantics |
@@ -147,6 +147,16 @@ Staple-bearing events, summaries, or projections; protocol 13 continues to
 support Shopping. IndexedDB, server schema, KARC v1, and encrypted sync
 envelope remain unchanged. Replenishment is a user-triggered append of an
 independent Shopping Item and requires no data migration.
+
+## v0.21.0 Household Modes
+
+Protocol 15 adds schema-1 canonical event kind 29, with a one-byte closed
+mode value, and appends a four-byte mode/reserved field to the result header.
+Protocols 1–14 reject mode events and non-Normal projections. Histories
+without a mode event default to Normal without rewriting canonical bytes.
+IndexedDB, server schema, KARC v1, and encrypted sync envelope remain
+unchanged; older protocol serialization fails closed rather than dropping
+mode state.
 
 ## v0.9.x Encrypted Sync
 

@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::KinError;
 use crate::event::{
     valid_timestamp, ActorId, AreaId, DeviceId, EventEnvelope, EventId, EventKind, HandoffId,
-    HouseholdId, ItemClassification, ItemId, NoteId, PulseValue, RoutineId, StepId, TalkId,
+    HouseholdId, HouseholdMode, ItemClassification, ItemId, NoteId, PulseValue, RoutineId, StepId,
+    TalkId,
 };
 use crate::recurrence::{Cadence, CivilDate};
 
@@ -177,6 +178,7 @@ pub struct PulseState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HouseholdState {
     pub household_id: Option<HouseholdId>,
+    pub mode: HouseholdMode,
     pub items: Vec<ItemState>,
     pub handoffs: Vec<HandoffState>,
     pub talks: Vec<TalkState>,
@@ -281,6 +283,7 @@ fn rebuild_with_context(
     let mut routine_archives = BTreeMap::new();
     let mut completed_periods = BTreeSet::new();
     let mut household_id = None;
+    let mut mode = HouseholdMode::Normal;
     let mut items: Vec<ItemState> = Vec::new();
     let mut handoffs = Vec::new();
     let mut talks = Vec::new();
@@ -685,6 +688,12 @@ fn rebuild_with_context(
                     steps: Vec::new(),
                 });
             }
+            EventKind::HouseholdModeChanged { mode: next_mode } => {
+                if !valid_timestamp(event.timestamp) {
+                    return Err(KinError::MalformedProtocol);
+                }
+                mode = *next_mode;
+            }
             EventKind::ItemStepAdded {
                 item_id,
                 step_id,
@@ -847,6 +856,7 @@ fn rebuild_with_context(
     }
     Ok(HouseholdState {
         household_id,
+        mode,
         items,
         handoffs,
         talks,
@@ -1064,7 +1074,8 @@ pub(crate) fn summarize_validated(
             | EventKind::ItemStepAdded { .. }
             | EventKind::ItemStepCompleted { .. }
             | EventKind::ItemStepReopened { .. }
-            | EventKind::ItemStepArchived { .. } => None,
+            | EventKind::ItemStepArchived { .. }
+            | EventKind::HouseholdModeChanged { .. } => None,
         };
 
         if let Some((kind, entity_kind, text, classification)) = summary {
@@ -1153,6 +1164,9 @@ mod tests {
             | EventKind::ItemStepArchived { item_id, step_id } => {
                 canonical_bytes.extend_from_slice(&item_id.0);
                 canonical_bytes.extend_from_slice(&step_id.0);
+            }
+            EventKind::HouseholdModeChanged { mode } => {
+                canonical_bytes.push(*mode as u8);
             }
             EventKind::AreaCreated { .. }
             | EventKind::AreaRenamed { .. }

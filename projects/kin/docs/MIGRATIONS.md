@@ -1,6 +1,15 @@
 # Data Migrations
 
-**Status:** v0.20.0 adds reusable Staples as an Item classification behind replay protocol 14 without an IndexedDB, archive-container, or server-schema migration. Earlier version sections are historical.
+**Status:** v0.21.0 adds household modes behind replay protocol 15 without an IndexedDB, archive-container, or server-schema migration. Earlier version sections are historical.
+
+## v0.21.0 Household Modes compatibility
+
+Protocol 15 adds canonical event kind 29 and appends a bounded mode field to
+its projection header. Protocols 1–14 fail closed when they encounter the new
+event or a non-Normal state. A history with no mode event defaults to Normal;
+its source bytes are unchanged. The existing encrypted local store, relay,
+and archive carry the canonical event without a storage or envelope
+migration.
 
 ## v0.20.0 Staples & Replenishment compatibility
 

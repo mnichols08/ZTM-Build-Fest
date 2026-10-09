@@ -2,6 +2,19 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
+## v0.21.0 — Household Modes
+
+- Add Normal, Vacation, Guests, and Rest as explicit canonical household
+  modes; old histories default to Normal.
+- Pause routine occurrence actions without changing or hiding routine
+  definitions; routine archival remains available.
+- Add additive replay protocol 15 and event kind 29; older protocol writers
+  fail closed on mode-bearing state. Existing encrypted storage, sync, and
+  archive boundaries need no migration.
+- Pass 151 Rust tests, 230 server tests, focused real-WASM tests, formatting,
+  warnings-denied Clippy, release WASM build, version consistency, and the full
+  Edge browser regression.
+
 ## v0.20.0 — Staples & Replenishment
 
 - Add a reusable Staples list using Item classification code 3; “Add to

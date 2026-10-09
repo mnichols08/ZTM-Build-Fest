@@ -117,13 +117,13 @@ test("current result decoder rejects truncation, fields, duplicates and trailing
   const run = () => engine.applyEvents(rows, 1234, null, 20261002);
   const valid = run(); const totalLength = actualLength;
   const write32 = (offset, value) => bytes => new DataView(bytes.buffer, bytes.byteOffset).setUint32(offset, value, true);
-  const mutations = [write32(56, 10001), write32(104, 20260229), write32(112, 20261001), write32(108, 0),
-    bytes => bytes[112] = 0, ...[113, 114].map(offset => bytes => bytes[offset] = 255), bytes => bytes[115] = 0,
-    write32(120, 0), write32(120, 4097), write32(120, 0xffffffff), bytes => bytes[124] = 255,
-    bytes => bytes[113] = 1, bytes => bytes[114] = 0,
-    bytes => bytes[116] = 4,
-    write32(112, 20261002), // Friday cannot be a weekly key
-    bytes => new DataView(bytes.buffer, bytes.byteOffset).setBigInt64(100, 8640000000000001n, true),
+  const mutations = [write32(56, 10001), write32(108, 20260229), write32(116, 20261001), write32(112, 0),
+    bytes => bytes[116] = 0, ...[117, 118].map(offset => bytes => bytes[offset] = 255), bytes => bytes[119] = 0,
+    write32(124, 0), write32(124, 4097), write32(124, 0xffffffff), bytes => bytes[128] = 255,
+    bytes => bytes[117] = 1, bytes => bytes[118] = 0,
+    bytes => bytes[120] = 4,
+    write32(116, 20261002), // Friday cannot be a weekly key
+    bytes => new DataView(bytes.buffer, bytes.byteOffset).setBigInt64(104, 8640000000000001n, true),
   ];
   for (const [index, mutation] of mutations.entries()) {
     mutate = mutation;
@@ -136,8 +136,8 @@ test("current result decoder rejects truncation, fields, duplicates and trailing
   assert.deepEqual(run(), valid);
   rows.push(encodeRoutineCreatedRecord({ ...identity(2), routineId: id(0x22), text: "Other", cadence: "daily", createdOn: 20261002 }));
   // Protocol 12 preserves the protocol-11 Step count after the protocol-10 Note count.
-  // Second record starts after 68 + 56 + "Starter" (7).
-  mutate = bytes => bytes.copyWithin(131, 68, 84);
+  // Second record starts after 72 + 56 + "Starter" (7).
+  mutate = bytes => bytes.copyWithin(135, 72, 88);
   assert.throws(run, error => error.code === 6);
 });
 

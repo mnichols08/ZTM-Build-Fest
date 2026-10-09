@@ -1,12 +1,16 @@
 # Web Component Contract
 
-**Status:** Current through v0.20.0 Staples & Replenishment; earlier version sections are historical contracts.
+**Status:** Current through v0.21.0 Household Modes; earlier version sections are historical contracts.
 
 ## Component responsibilities
 
 ### `<kin-app>`
 
 Own application initialization, WASM loading, IndexedDB opening/loading, orchestration of the storage and Rust bridge, global loading/error states, and passing Rust-derived state to presentation components. It is the only owner of the command-to-event-to-persist flow. It must not duplicate Rust's validation or reducer.
+
+The More page exposes the native household-mode selector and submits explicit
+mode-change commands through the same command, replay, and persistence path.
+It restores the selected value if local persistence fails.
 
 ### `<kin-today>`
 
@@ -19,6 +23,13 @@ Provide a labeled, short item-entry form that defaults classification to Needs. 
 ### `<kin-item>`
 
 Render one item and expose semantic complete, reopen, and archive controls as appropriate. Dispatch the corresponding command with the item ID. It does not decide or persist transitions.
+
+### `<kin-routines>`
+
+Keep routine definitions visible during Vacation, Guests, or Rest and explain
+that occurrences are paused. Hide occurrence complete/reopen actions while
+paused; the Rust command validator independently rejects those mutations.
+Routine archival remains available.
 
 Only create the components needed for these responsibilities; do not componentize for its own sake. A simpler `<kin-app>`-owned view is acceptable if it avoids needless indirection while preserving these boundaries.
 

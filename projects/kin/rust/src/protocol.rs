@@ -1,7 +1,7 @@
 use crate::error::KinError;
 use crate::event::{
     valid_timestamp, ActorId, DeviceId, EventEnvelope, EventId, EventKind, HandoffId, HouseholdId,
-    IdentityBinding, ItemClassification, ItemId, PulseValue, RoutineId, TalkId,
+    HouseholdMode, IdentityBinding, ItemClassification, ItemId, PulseValue, RoutineId, TalkId,
 };
 use crate::recurrence::{Cadence, CivilDate};
 use crate::state::{
@@ -23,7 +23,8 @@ pub const PROTOCOL_V11: u16 = 11;
 pub const PROTOCOL_V12: u16 = 12;
 pub const PROTOCOL_V13: u16 = 13;
 pub const PROTOCOL_V14: u16 = 14;
-pub const PROTOCOL_VERSION: u16 = PROTOCOL_V14;
+pub const PROTOCOL_V15: u16 = 15;
+pub const PROTOCOL_VERSION: u16 = PROTOCOL_V15;
 pub const ERROR_PROTOCOL_VERSION: u16 = PROTOCOL_V1;
 pub const MAX_EVENT_COUNT: usize = 10_000;
 pub const MAX_PROTOCOL_BYTES: usize = 64 * 1024 * 1024;
@@ -80,6 +81,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
             | PROTOCOL_V12
             | PROTOCOL_V13
             | PROTOCOL_V14
+            | PROTOCOL_V15
     ) {
         return Err(KinError::UnsupportedVersion);
     }
@@ -177,7 +179,9 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
         .map_err(|_| KinError::SizeLimit)?;
     let mut offset = match version {
         PROTOCOL_V8 | PROTOCOL_V9 | PROTOCOL_V10 | PROTOCOL_V11 | PROTOCOL_V12 | PROTOCOL_V13
-        | PROTOCOL_V14 => V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES,
+        | PROTOCOL_V14 | PROTOCOL_V15 => {
+            V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES
+        }
         PROTOCOL_V7 => 44,
         PROTOCOL_V6 => V6_REQUEST_HEADER_BYTES,
         PROTOCOL_V5 => 20,
@@ -230,7 +234,8 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
 }
 
 pub fn encode_state(state: &HouseholdState, protocol_version: u16) -> Result<Vec<u8>, KinError> {
-    if !state.routines.is_empty()
+    if state.mode != HouseholdMode::Normal
+        || !state.routines.is_empty()
         || !state.areas.is_empty()
         || !state.notes.is_empty()
         || state.items.iter().any(|item| {
@@ -480,11 +485,21 @@ pub fn encode_state_v14(
     encode_state_with_summary(state, summary, PROTOCOL_V14)
 }
 
+pub fn encode_state_v15(
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<Vec<u8>, KinError> {
+    encode_state_with_summary(state, summary, PROTOCOL_V15)
+}
+
 fn encode_state_with_summary(
     state: &HouseholdState,
     summary: &CatchUpSummary,
     version: u16,
 ) -> Result<Vec<u8>, KinError> {
+    if version < PROTOCOL_V15 && state.mode != HouseholdMode::Normal {
+        return Err(KinError::UnsupportedVersion);
+    }
     if version < PROTOCOL_V9
         && (!state.areas.is_empty() || state.items.iter().any(|item| item.area_id.is_some()))
     {
@@ -709,6 +724,7 @@ fn encode_state_with_summary(
                 0
             })
         })
+        .and_then(|length| length.checked_add(if version >= PROTOCOL_V15 { 4 } else { 0 }))
         .ok_or(KinError::SizeLimit)?;
     if result_length > MAX_PROTOCOL_BYTES {
         return Err(KinError::SizeLimit);
@@ -748,6 +764,10 @@ fn encode_state_with_summary(
     if version >= PROTOCOL_V11 {
         push_u32(&mut result, step_count as u32);
     }
+    if version >= PROTOCOL_V15 {
+        result.push(state.mode as u8);
+        result.extend_from_slice(&[0; 3]);
+    }
     result.extend_from_slice(&previous[24..]);
     if version >= PROTOCOL_V9 {
         for item in &state.items {
@@ -784,7 +804,7 @@ fn encode_state_with_summary(
 }
 
 pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelope, KinError> {
-    if !(PROTOCOL_V1..=PROTOCOL_V14).contains(&protocol_version) {
+    if !(PROTOCOL_V1..=PROTOCOL_V15).contains(&protocol_version) {
         return Err(KinError::UnsupportedVersion);
     }
     if record.len() > MAX_PROTOCOL_BYTES {
@@ -943,6 +963,20 @@ pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelop
             }
             _ => return Err(KinError::MalformedProtocol),
         },
+        (1, 29) if protocol_version >= PROTOCOL_V15 => {
+            if payload.len() != 1 {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::HouseholdModeChanged {
+                mode: match payload[0] {
+                    0 => HouseholdMode::Normal,
+                    1 => HouseholdMode::Vacation,
+                    2 => HouseholdMode::Guests,
+                    3 => HouseholdMode::Rest,
+                    _ => return Err(KinError::MalformedProtocol),
+                },
+            }
+        }
         (1, 15..=17) if protocol_version >= PROTOCOL_V7 => {
             if payload.len() != if event_kind == 17 { 16 } else { 20 }
                 || !valid_timestamp(read_i64(record, 68)?)

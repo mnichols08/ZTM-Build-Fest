@@ -1,6 +1,6 @@
 # Derived Household State
 
-**Status:** v0.20.0 adds Staples classification through protocol 14, preserving prior result layouts. Shopping and Staples are classifications on existing Items, with no additional reducer entities. Protocols 1–12 reject Shopping-bearing projections; protocols 1–13 reject Staple-bearing projections. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
+**Status:** v0.21.0 adds household mode through protocol 15, preserving prior result layouts. Modes and Item categories are derived from canonical events; protocols 1–14 reject mode-bearing state. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
 
 ## Projection pipeline
 
@@ -28,6 +28,7 @@ Keep the first projection small:
 ```text
 HouseholdState
 ├── household_id: Option<HouseholdId>
+├── mode: normal | vacation | guests | rest
 ├── items: Vec<ItemState> in original add-event order
 ├── handoffs: Vec<HandoffState> in original add-event order
 ├── talks: Vec<TalkState> in original add-event order
@@ -38,7 +39,7 @@ ItemState
 ├── text
 ├── created_by
 ├── created_at
-├── classification: today | need | shopping
+├── classification: today | need | shopping | staple
 ├── status: active | completed | archived
 └── steps: Vec<ItemStepState> in Step creation order
 
@@ -151,3 +152,12 @@ user-triggered replenish action appends a new Shopping Item with copied text;
 the staple remains active and the two Item lifecycles are independent. Older
 protocols fail closed rather than omit or remap Staples. No reducer entity or
 storage migration is added. See [V0.20.0](releases/V0.20.0.md).
+
+## v0.21.0 Household Modes
+
+`HouseholdState.mode` is Normal when the history contains no mode event;
+otherwise it is the last mode under deterministic event replay. Vacation,
+Guests, and Rest suppress routine occurrence completion/reopen actions but do
+not alter Routine definitions or their prior occurrence history. The browser
+keeps definitions visible and displays the pause explanation. Rust validates
+the command independently of the browser.

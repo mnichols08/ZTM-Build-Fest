@@ -1,6 +1,6 @@
 # Data Model
 
-**Status:** Current through v0.20.0 Staples & Replenishment; earlier version sections are historical contracts. See v0.7.0, v0.18.0, v0.19.0, and v0.20.0 below.
+**Status:** Current through v0.21.0 Household Modes; earlier version sections are historical contracts. See v0.7.0 and v0.18.0–v0.21.0 below.
 
 ## Event-oriented source of truth
 
@@ -100,6 +100,15 @@ independent Shopping Item; the source staple remains active. Both records use
 canonical Item events and share encrypted persistence, sync, and archive
 behavior. Protocol 14 adds Staples while protocols 1–13 reject Staple-bearing
 history or projections. See [V0.20.0](releases/V0.20.0.md).
+
+## v0.21.0 Household Modes
+
+Household mode is a closed four-value projection (`normal`, `vacation`,
+`guests`, `rest`) derived from canonical mode-change events. Histories without
+a mode event default to `normal`. A non-Normal mode pauses routine occurrences
+but does not mutate routine definitions or create per-occurrence records.
+Mode is household-wide context, not a member/device preference or a schedule.
+See [V0.21.0](releases/V0.21.0.md).
 
 ## v0.15.0 Areas
 

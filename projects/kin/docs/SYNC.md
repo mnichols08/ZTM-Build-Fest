@@ -1,6 +1,15 @@
 # Synchronization Design
 
-**Status:** v0.20.0 preserves the existing encrypted-sync boundary for reusable Staples and manual Shopping replenishment, while v0.17.0 Step events retain their established behavior. Staple names and Item semantics remain inside encrypted canonical event payloads; no plaintext metadata, inventory state, or new authority is added.
+**Status:** v0.21.0 preserves the existing encrypted-sync boundary for household-mode events. Mode values remain inside encrypted canonical event payloads; no plaintext metadata, server interpretation, or new authority is added.
+
+## v0.21.0 Household Modes
+
+Explicit mode changes are canonical events and use the existing encrypted
+offline store, retry, relay, revocation, and archive paths. Devices that sync
+distinct concurrent changes converge through protocol 15's deterministic
+`(logical_time, device_id, event_id)` replay ordering. Protocols 1–14 fail
+closed on mode-bearing history or non-Normal projections. Sync adds no
+plaintext mode metadata or server-side mode behavior.
 
 ## v0.20.0 Staples & Replenishment
 

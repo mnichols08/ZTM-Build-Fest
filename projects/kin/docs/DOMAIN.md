@@ -109,6 +109,13 @@ or timing, and the staple remains active. The resulting Shopping Item is
 independent and follows the regular Shopping lifecycle. See
 [V0.20.0](releases/V0.20.0.md).
 
+## v0.21.0 Household Modes
+
+Household mode is Normal, Vacation, Guests, or Rest. Normal is the default.
+Explicit changes are shared canonical events; non-Normal modes pause routine
+occurrences while leaving routine definitions and archival intact. Modes do
+not infer location, presence, schedules, or member activity.
+
 ## Handoff
 
 A Handoff is a short context transfer one household member wants another to know. Its conceptual lifecycle is created, unacknowledged, acknowledged, and archived. Acknowledgement means receipt, not agreement, approval, or evaluation. Handoffs are implemented in v0.3.0 as a separate typed entity; see [V0.3.0](V0.3.0.md). Repeated acknowledgement is a valid no-op. Creator and acknowledger may be the same local actor; no verified identity is inferred.

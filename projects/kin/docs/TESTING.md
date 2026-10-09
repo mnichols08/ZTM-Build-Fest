@@ -372,7 +372,15 @@ Run every truncated v6 result boundary and malformed summary count, kind, entity
 
 ## v0.7.0 Routines
 
-Run `cargo test`, `node web/wasm/kin-engine.test.mjs`, `node web/wasm/routines.test.mjs`, and the complete browser runner after a release Wasm build. `rust/src/routine_tests.rs` holds independent v7 wire fixtures; `recurrence.rs` covers Gregorian calendar primitives. `scripts/routine-regression.mjs` exercises real IndexedDB/Wasm lifecycle, boundaries, stale keys, quota/abort/retry, cross-tab races and keyboard focus. Existing suites retain explicit legacy protocol fixtures. See [V0.7.0](V0.7.0.md) for the full matrix and actual release evidence.
+Run `cargo test`, the `web/wasm/kin-engine.test.mjs`, `routines.test.mjs`,
+and `modes.test.mjs` suites, and the complete browser runner after a release
+Wasm build. `rust/src/routine_tests.rs` holds independent v7 wire fixtures;
+`recurrence.rs` covers Gregorian calendar primitives.
+`scripts/routine-regression.mjs` exercises real IndexedDB/Wasm lifecycle,
+boundaries, stale keys, quota/abort/retry, cross-tab races and keyboard focus.
+`scripts/browser-regression.mjs` also verifies mode persistence and paused
+routine actions. Existing suites retain explicit legacy protocol fixtures.
+See [V0.7.0](V0.7.0.md) for the full matrix and actual release evidence.
 
 ## v0.18.0 Richer Routine Scheduling
 
@@ -392,7 +400,7 @@ Run from the repository root after the release WASM build:
 cargo test --manifest-path projects/kin/Cargo.toml
 node --test projects/kin/web/sync/crypto.test.mjs
 node --test projects/kin/server/pairing-service.test.mjs projects/kin/server/pairing-sync-keys.test.mjs projects/kin/server/sync-service.test.mjs projects/kin/server/sync-http.test.mjs projects/kin/server/sync-e2e.test.mjs
-node --test projects/kin/web/wasm/kin-engine.test.mjs projects/kin/web/wasm/routines.test.mjs
+node --test projects/kin/web/wasm/kin-engine.test.mjs projects/kin/web/wasm/routines.test.mjs projects/kin/web/wasm/modes.test.mjs
 node projects/kin/scripts/browser-regression.mjs 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
 ```
 

@@ -86,6 +86,7 @@ class KinApp extends HTMLElement {
     this.onAreaIntent = (event) => this.saveArea(event.detail);
     this.onNoteIntent = (event) => this.saveNote(event.type.slice(4), event.detail);
     this.onItemAreaChange = (event) => this.saveArea({ ...event.detail, action: "assign-item-area" });
+    this.onModeChange = () => this.saveMode(this.modeSelect.value);
     this.pulseTimer = null;
     this.catchUpCursor = null;
     this.snapshotBoundary = null;
@@ -432,6 +433,31 @@ class KinApp extends HTMLElement {
     tablist.addEventListener("keydown", this.onHandoffTabKeydown);
 
     const more = page("more", "More", "Household context, people, devices, and continuity.");
+    const modeSection = document.createElement("section");
+    modeSection.className = "today-section household-mode";
+    const modeHeading = document.createElement("h2");
+    modeHeading.textContent = "Household mode";
+    const modeLabel = document.createElement("label");
+    modeLabel.htmlFor = "household-mode";
+    modeLabel.textContent = "Current mode";
+    this.modeSelect = document.createElement("select");
+    this.modeSelect.id = "household-mode";
+    for (const [value, label] of [
+      ["normal", "Normal"],
+      ["vacation", "Vacation"],
+      ["guests", "Guests"],
+      ["rest", "Rest"],
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      this.modeSelect.append(option);
+    }
+    this.modeSelect.addEventListener("change", this.onModeChange);
+    const modeHint = document.createElement("p");
+    modeHint.textContent = "Routine occurrences pause outside Normal; routine definitions stay unchanged.";
+    modeSection.append(modeHeading, modeLabel, this.modeSelect, modeHint);
+    more.append(modeSection);
     more.append(this.pulse);
     this.household = document.createElement("kin-household");
     this.moreSecurity = document.createElement("section");
@@ -933,6 +959,32 @@ class KinApp extends HTMLElement {
       if (this.isCurrentSession(session)) {
         this.setBusy(false);
         this.pulse.focusInput();
+        this.flushPeerRefresh();
+      }
+    }
+  }
+
+  async saveMode(mode) {
+    if (this.busy || !this.store || !this.engine) return;
+    const session = this.captureSession();
+    const command = Object.freeze({ type: "set-household-mode", mode });
+    this.setBusy(true);
+    this.clearAlert();
+    this.setStatus("Saving…");
+    try {
+      await this.appendCommand(command);
+      this.assertCurrentSession(session);
+      this.renderState();
+      this.setStatus("Household mode updated.");
+      this.broadcastEventChange();
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      this.modeSelect.value = this.state?.mode ?? "normal";
+      this.showAlert(error.userMessage ?? SAVE_ERROR, () => this.saveMode(mode));
+      this.setStatus("");
+    } finally {
+      if (this.isCurrentSession(session)) {
+        this.setBusy(false);
         this.flushPeerRefresh();
       }
     }
@@ -1485,6 +1537,9 @@ class KinApp extends HTMLElement {
 
   renderState() {
     if (!this.vault || this.vault.locked || !this.state) return;
+    const mode = this.state.mode ?? "normal";
+    this.modeSelect.value = mode;
+    this.routines.householdMode = mode;
     this.catchUp.summary = this.state.summary;
     this.catchUp.lastLookedAt = this.catchUpCursor?.lastLookedAt;
     this.today.items = this.state.items;
@@ -1523,6 +1578,7 @@ class KinApp extends HTMLElement {
     this.routines.disabled = isBusy || !this.store;
     this.areas.disabled = isBusy || !this.store;
     this.notes.disabled = isBusy || !this.store;
+    if (this.modeSelect) this.modeSelect.disabled = isBusy || !this.store;
     this.household.disabled = isBusy || !this.store;
     for (const tab of this.handoffTabs?.querySelectorAll('[role="tab"]') ?? [])
       tab.disabled = isBusy;

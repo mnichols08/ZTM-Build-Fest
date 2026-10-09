@@ -29,6 +29,15 @@ id_type!(AreaId);
 id_type!(NoteId);
 id_type!(StepId);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum HouseholdMode {
+    Normal = 0,
+    Vacation = 1,
+    Guests = 2,
+    Rest = 3,
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct IdentityBinding {
     pub legacy_household_id: HouseholdId,
@@ -170,6 +179,9 @@ pub enum EventKind {
     ItemStepArchived {
         item_id: ItemId,
         step_id: StepId,
+    },
+    HouseholdModeChanged {
+        mode: HouseholdMode,
     },
 }
 

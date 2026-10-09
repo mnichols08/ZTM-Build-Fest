@@ -1,4 +1,4 @@
-const PROTOCOL_VERSION = 14;
+const PROTOCOL_VERSION = 15;
 const REQUEST_HEADER_BYTES = 64;
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 const PULSE_VALUES = ["good", "okay", "drained", "rough-day", "need-quiet"];
@@ -271,6 +271,8 @@ export const encodeRoutineActionRecord = (value) =>
 export const encodeNoteCreatedRecord = (value) => encodeIntent("create-note", value);
 export const encodeNoteUpdatedRecord = (value) => encodeIntent("update-note", value);
 export const encodeNoteArchivedRecord = (value) => encodeIntent("archive-note", value);
+export const encodeHouseholdModeRecord = (value) =>
+  encodeIntent("set-household-mode", value);
 export const eventMetadata = (bytes) =>
   decodeMetadata(callCore(sharedCodec, "kin_event_metadata", asBytes(bytes)));
 export const eventMetadataBatch = (records) =>
@@ -306,6 +308,7 @@ const COMMAND_TYPES = [
   "complete-item-step",
   "reopen-item-step",
   "archive-item-step",
+  "set-household-mode",
 ];
 const EVENT_KINDS = [
   null,
@@ -337,6 +340,7 @@ const EVENT_KINDS = [
   "ITEM_STEP_COMPLETED",
   "ITEM_STEP_REOPENED",
   "ITEM_STEP_ARCHIVED",
+  "HOUSEHOLD_MODE_CHANGED",
 ];
 
 function encodeIntent(type, value) {
@@ -416,7 +420,7 @@ function encodeIntentPacket(command, identity) {
   if (logicalTime < 0n || logicalTime > 0xffffffffffffffffn)
     throw new KinEngineError(2, "Kin received an invalid event order.");
   view.setBigUint64(84, logicalTime, true);
-  if (![12, 13].includes(kind)) {
+  if (![12, 13, 29].includes(kind)) {
     const entity =
       command.stepId ??
       command.itemId ??
@@ -450,6 +454,10 @@ function encodeIntentPacket(command, identity) {
   } else if (kind === 14) {
     const code = ["daily", "weekly", "biweekly", "monthly"].indexOf(command.cadence);
     if (code < 0) throw new KinEngineError(2, "Choose a valid cadence.");
+    packet[112] = code;
+  } else if (kind === 29) {
+    const code = ["normal", "vacation", "guests", "rest"].indexOf(command.mode);
+    if (code < 0) throw new KinEngineError(2, "Choose a valid household mode.");
     packet[112] = code;
   }
   if (kind === 22 || kind === 23) {
@@ -871,13 +879,13 @@ function decodeState(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const protocolVersion = view.getUint16(4, true);
   if (
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].includes(protocolVersion) ||
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].includes(protocolVersion) ||
     view.getUint16(6, true) !== 0
   ) {
     throw new KinEngineError(6, "Kin received an unsupported state format.");
   }
   const resultHeaderBytes =
-    protocolVersion >= 11 ? 68 : protocolVersion >= 10 ? 64 : protocolVersion >= 9
+    protocolVersion >= 15 ? 72 : protocolVersion >= 11 ? 68 : protocolVersion >= 10 ? 64 : protocolVersion >= 9
       ? 60
       : protocolVersion >= 7
       ? 56
@@ -901,6 +909,13 @@ function decodeState(bytes) {
   const areaCount = protocolVersion >= 9 ? view.getUint32(56, true) : 0;
   const noteCount = protocolVersion >= 10 ? view.getUint32(60, true) : 0;
   const stepCount = protocolVersion >= 11 ? view.getUint32(64, true) : 0;
+  const modeCode = protocolVersion >= 15 ? view.getUint8(68) : 0;
+  if (
+    protocolVersion >= 15 &&
+    (modeCode > 3 || bytes.subarray(69, 72).some((byte) => byte !== 0))
+  ) {
+    throw new KinEngineError(6, "Kin received an invalid household mode.");
+  }
   const summaryCount = protocolVersion >= 6 ? view.getUint32(24, true) : 0;
   const summaryTotalCount = protocolVersion >= 6 ? view.getUint32(28, true) : 0;
   const summaryThroughPresent = protocolVersion >= 6 ? view.getUint8(32) : 0;
@@ -1358,6 +1373,9 @@ function decodeState(bytes) {
       ...(protocolVersion >= 7 ? { routines } : {}),
       ...(protocolVersion >= 9 ? { areas } : {}),
       ...(protocolVersion >= 10 ? { notes } : {}),
+      ...(modeCode === 0
+        ? {}
+        : { mode: ["normal", "vacation", "guests", "rest"][modeCode] }),
       summary: {
         entries: summaryEntries,
         totalCount: summaryTotalCount,
