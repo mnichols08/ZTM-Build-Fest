@@ -58,7 +58,11 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             payload.extend_from_slice(&item_id.0);
             if event.event_version == 2 {
                 payload.extend_from_slice(&[
-                    u8::from(*classification == ItemClassification::Need),
+                    match classification {
+                        ItemClassification::Today => 0,
+                        ItemClassification::Need => 1,
+                        ItemClassification::Shopping => 2,
+                    },
                     0,
                     0,
                     0,

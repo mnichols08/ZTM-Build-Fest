@@ -13,6 +13,7 @@ import {
   routinePeerRegressions,
   routineKeyboardRegressions,
 } from "./routine-regression.mjs";
+import { shoppingRegressions } from "./shopping-regression.mjs";
 import {
   handoffRegressions,
   handoffPeerRegressions,
@@ -1187,6 +1188,8 @@ try {
   );
   await visit(first, "today");
   console.log(await first.evaluate(`(${catchUpRegressions.toString()})()`));
+  await visit(first, "lists");
+  console.log(await first.evaluate(`(${shoppingRegressions.toString()})()`));
   await visit(first, "routines");
   console.log(await first.evaluate(`(${routineRegressions.toString()})()`));
   await visit(first, "today");

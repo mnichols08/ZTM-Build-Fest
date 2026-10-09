@@ -1,6 +1,6 @@
 # Derived Household State
 
-**Status:** v0.18.0 adds biweekly and monthly Routine periods through protocol 12, preserving the protocol-11 result layout. Biweekly periods are anchored to the Routine creation date; monthly periods begin on calendar-month day one. Daily/Weekly histories and prior result layouts remain unchanged. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
+**Status:** v0.19.0 adds Shopping classification through protocol 13, preserving the prior result layouts for Today/Needs state. Shopping is a classification on existing Items, with no additional reducer entity. Protocols 1–12 reject Shopping-bearing projections rather than omitting or remapping them. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
 
 ## Projection pipeline
 
@@ -38,7 +38,7 @@ ItemState
 ├── text
 ├── created_by
 ├── created_at
-├── classification: today | need
+├── classification: today | need | shopping
 ├── status: active | completed | archived
 └── steps: Vec<ItemStepState> in Step creation order
 
@@ -134,3 +134,12 @@ timers only request replay. Inside occurrence append transactions, JS compares
 the frozen intent key with Rust’s fresh canonical current key before candidate
 replay. This is identity checking, not a browser recurrence reducer. See
 [V0.7.0](V0.7.0.md) and [V0.18.0](releases/V0.18.0.md).
+
+## v0.19.0 Shared Shopping Lists
+
+Shopping is a third Item classification, encoded as code 2 under protocol 13.
+It shares Item identity, status transitions, deterministic replay, encrypted
+local persistence, and household synchronization. Protocols 1–12 fail closed
+on Shopping-bearing history; existing Today/Needs projections remain
+compatible. No new state entity or storage migration is introduced. See
+[V0.19.0](releases/V0.19.0.md).

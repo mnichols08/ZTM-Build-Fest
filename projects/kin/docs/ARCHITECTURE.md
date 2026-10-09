@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** v0.18.0 adds Rust-owned every-two-weeks and calendar-month Routine scheduling through additive protocol 12. The event shape, replay reducer, encrypted sync, and archive adapters remain authoritative; browser code provides native cadence selection and truthful period labels. No IndexedDB, server, sync-envelope, or archive-container schema change is required.
+**Status:** v0.19.0 adds Shopping as an Item classification and a dedicated list through additive protocol 13. Canonical Item events, deterministic Rust/WASM replay, encrypted local persistence, encrypted sync, and archive adapters remain authoritative; browser code supplies the list and capture UI. No IndexedDB, server, sync-envelope, event-shape, or archive-container schema change is required.
 
 ## v0.10 implementation boundary
 

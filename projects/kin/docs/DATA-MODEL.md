@@ -1,6 +1,6 @@
 # Data Model
 
-**Status:** Current through v0.18.0 Richer Routine Scheduling; earlier version sections are historical contracts. See v0.7.0 and v0.18.0 below.
+**Status:** Current through v0.19.0 Shared Shopping Lists; earlier version sections are historical contracts. See v0.7.0, v0.18.0, and v0.19.0 below.
 
 ## Event-oriented source of truth
 
@@ -36,7 +36,8 @@ The envelope is a domain contract, not the JS/WASM byte encoding. The field mean
 - **Member:** A person with identity distinct from their devices and credentials.
 - **Device:** A browser installation that may later be authorized, trusted, and revoked.
 - **Credential:** An authenticator associated with a member; not itself a member or household key.
-- **Item:** A lightweight household need/reminder.
+- **Item:** A lightweight household reminder classified for Today, Needs, or
+  Shopping.
 - **Handoff:** Context one member wants another to know.
 - **Talk:** A topic that matters but may be better discussed later.
 - **Pulse:** Time-bounded context about current capacity.
@@ -80,6 +81,16 @@ automatically resets or creates events. The source `created_on` anchors every
 device's biweekly schedule; the supplied civil date selects the current period.
 No reminder, assignment, streak, or calendar entity is introduced. See
 [V0.18.0](releases/V0.18.0.md).
+
+## v0.19.0 Shared Shopping Lists
+
+Shopping is a third Item classification, not a separate entity or event
+family. Shopping Items use the existing canonical add, completion, reopening,
+and archive events, and therefore inherit local-first persistence, encrypted
+sync, and archive import/export behavior. Protocol 13 adds classification code
+2; protocols 1–12 reject Shopping-bearing state rather than silently projecting
+it into Today or Needs. No persistent storage migration is required. See
+[V0.19.0](releases/V0.19.0.md).
 
 ## v0.15.0 Areas
 

@@ -94,6 +94,13 @@ Items are not project-management tasks. The initial model deliberately avoids pr
 
 v0.2.0 includes adding an item as Today or Need, completion, reopening, and archival. A legacy v0.1.x add has no classification and normalizes to Today without changing its stored bytes. Archive is a terminal state/tombstone, not physical deletion of historical events. Priority, labels, assignment, and project metadata are not part of the Item model.
 
+## v0.19.0 Shared Shopping Lists
+
+Shopping is a third classification of the existing Item entity. It uses the
+same identity, completion, reopening, and archival lifecycle as Today and
+Needs Items; it does not add quantity, price, purchase assignment, or
+inventory state. See [V0.19.0](releases/V0.19.0.md).
+
 ## Handoff
 
 A Handoff is a short context transfer one household member wants another to know. Its conceptual lifecycle is created, unacknowledged, acknowledged, and archived. Acknowledgement means receipt, not agreement, approval, or evaluation. Handoffs are implemented in v0.3.0 as a separate typed entity; see [V0.3.0](V0.3.0.md). Repeated acknowledgement is a valid no-op. Creator and acknowledger may be the same local actor; no verified identity is inferred.

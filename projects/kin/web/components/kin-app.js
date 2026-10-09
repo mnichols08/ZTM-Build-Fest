@@ -291,6 +291,7 @@ class KinApp extends HTMLElement {
     this.catchUp = document.createElement("kin-catch-up");
     this.today = document.createElement("kin-today");
     this.needs = document.createElement("kin-today");
+    this.shopping = document.createElement("kin-today");
     this.compose = document.createElement("kin-compose");
     this.handoffs = document.createElement("kin-handoff-list");
     this.talks = document.createElement("kin-talk-list");
@@ -365,7 +366,8 @@ class KinApp extends HTMLElement {
 
     const lists = page("lists", "Lists", "Capture first. Sort later.");
     this.needs.display = "need";
-    lists.append(this.needs);
+    this.shopping.display = "shopping";
+    lists.append(this.needs, this.shopping);
 
     const routines = page("routines", "Routines", "Small household rhythms, without streaks or pressure.");
     routines.append(this.routines);
@@ -1065,8 +1067,11 @@ class KinApp extends HTMLElement {
     }
     const session = this.captureSession();
     const submittedItemId = itemId;
-    const restoreListFocus = this.needs.contains(document.activeElement);
-    if (restoreListFocus) this.needs.rememberFocus();
+    const activeList = [this.needs, this.shopping].find((list) =>
+      list.contains(document.activeElement),
+    );
+    const restoreListFocus = Boolean(activeList);
+    activeList?.rememberFocus();
     this.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
@@ -1113,7 +1118,9 @@ class KinApp extends HTMLElement {
       ? this.today
       : this.needs.contains(document.activeElement)
         ? this.needs
-        : null;
+        : this.shopping.contains(document.activeElement)
+          ? this.shopping
+          : null;
     if (list) list.rememberFocus();
     const session = this.captureSession();
     const command = Object.freeze({
@@ -1439,6 +1446,8 @@ class KinApp extends HTMLElement {
     this.today.areas = this.state.areas ?? [];
     this.needs.items = this.state.items;
     this.needs.areas = this.state.areas ?? [];
+    this.shopping.items = this.state.items;
+    this.shopping.areas = this.state.areas ?? [];
     this.handoffs.handoffs = this.state.handoffs;
     this.talks.talks = this.state.talks;
     this.pulse.pulse = this.state.pulses.find(
@@ -1458,6 +1467,7 @@ class KinApp extends HTMLElement {
     this.compose.disabled = isBusy || !this.store;
     this.today.disabled = isBusy || !this.store;
     this.needs.disabled = isBusy || !this.store;
+    this.shopping.disabled = isBusy || !this.store;
     this.handoffs.disabled = isBusy || !this.store;
     this.talks.disabled = isBusy || !this.store;
     this.pulse.disabled = isBusy || !this.store;
@@ -1564,6 +1574,7 @@ class KinApp extends HTMLElement {
         ["catchUp", "kin-catch-up"],
         ["today", "kin-today"],
         ["needs", "kin-today"],
+        ["shopping", "kin-today"],
         ["compose", "kin-compose"],
         ["handoffs", "kin-handoff-list"],
         ["talks", "kin-talk-list"],

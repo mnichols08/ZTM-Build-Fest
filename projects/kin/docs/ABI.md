@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** v0.18.0 adds protocol 12 as an additive cadence compatibility gate while preserving protocols 1–11 layouts and existing canonical event bytes. Protocol 11 adds Checklist Steps; protocol 10 adds Notes and protocol 9 adds Areas. Earlier version sections are historical contracts.
+**Status:** v0.19.0 adds protocol 13 as an additive Shopping-classification compatibility gate while preserving earlier layouts and canonical event bytes. Protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
 
 ## Target and exports
 
@@ -116,7 +116,7 @@ size  field
 N     text bytes
 ```
 
-Items remain serialized in original add-event order, including archived tombstones so the caller can make a filtered view without becoming a reducer. The browser hides archived items from ordinary lists. Protocol v7 is the current browser writer; see the additive contracts below. `KERR` retains the v1 header/version and stable numeric error codes across all supported request protocol versions.
+Items remain serialized in original add-event order, including archived tombstones so the caller can make a filtered view without becoming a reducer. The browser hides archived items from ordinary lists. Protocol 13 is the current browser writer; see the additive contracts below. `KERR` retains the v1 header/version and stable numeric error codes across all supported request protocol versions.
 
 ## Ownership and lifetime
 
@@ -265,6 +265,18 @@ every two weeks) and 3 (calendar Monthly) are supported only by protocol 12.
 Protocols 1–11 reject those newer cadence values instead of projecting
 misleading state. Protocol 12 reads existing histories without migration.
 
+## Protocol 13 — Shared Shopping Lists
+
+Protocol 13 preserves the protocol-12 request and result headers, sections,
+and canonical event envelope. Schema-v2 `ITEM_ADDED` retains its classification
+byte and payload size; code 2 now identifies Shopping (codes 0/1 remain Today
+and Needs). The Item result and catch-up summary classification fields use the
+same code. Protocols 1–12 reject code 2 in events and reject projections or
+summaries containing Shopping rather than returning incomplete state.
+Protocols 1–12 retain their prior behavior for Today/Needs-only history.
+No event kind, storage, archive, or encrypted sync-envelope migration is
+introduced.
+
 ### KCMD v1 intent transport
 
 This is an independent command transport, not the canonical event layout. JS
@@ -291,6 +303,10 @@ constructs canonical payloads and validates command semantics.
 | 116    | 8     | Pulse expiration:i64; zero otherwise                                |
 | 124    | 4     | Payload length; zero for no-payload actions                         |
 | 128    | N     | Action payload                                                      |
+
+For `AddItem`, the byte at offset 112 is 0 for Today, 1 for Needs, or 2 for
+Shopping. Code 2 is accepted only when the accompanying household request uses
+protocol 13 or later; older protocol requests fail closed.
 
 IDs and time are explicit browser capabilities. Capture commands use a supplied
 random entity ID. Noncapture commands use the referenced entity ID. Step

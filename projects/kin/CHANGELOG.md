@@ -2,6 +2,17 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
+## v0.19.0 — Shared Shopping Lists
+
+- Add Shopping as a third Item classification and a dedicated list, reusing
+  canonical Item lifecycle events, encrypted local persistence, and household
+  sync without a new entity or storage migration.
+- Add protocol 13 as the compatibility gate for Shopping classification;
+  protocols 1–12 fail closed on Shopping-bearing history and retain their
+  existing layouts for Today/Needs data.
+- Add Rust, real-WASM, and browser regressions for Shopping capture, list
+  isolation, lifecycle, persistence, and focus restoration.
+
 ## v0.18.0 — Richer Routine Scheduling
 
 - Add bounded every-two-weeks routines anchored to their creation civil date

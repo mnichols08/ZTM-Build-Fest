@@ -1,6 +1,6 @@
 # Household Events
 
-**Status:** Current through v0.18.0 Richer Routine Scheduling. Rust owns canonical command encoding and decoding; event schemas, kinds, and existing immutable bytes remain unchanged. Protocol 10 adds Notes, protocol 11 adds Item Steps, and protocol 12 enables two additional Routine cadence values without changing event payload shape. Protocols 1–11 reject those values. Equal-time cross-device Note and Step archive conflicts preserve the terminal archive without changing event bytes. Local encryption wraps canonical bytes without rewriting them.
+**Status:** Current through v0.19.0 Shared Shopping Lists. Rust owns canonical command encoding and decoding; event schemas and kinds remain unchanged. Protocol 10 adds Notes, protocol 11 adds Item Steps, protocol 12 enables two additional Routine cadence values, and protocol 13 enables Shopping classification code 2 within the existing Item-add schema. Protocols 1–12 reject Shopping-bearing history. Equal-time cross-device Note and Step archive conflicts preserve the terminal archive without changing event bytes. Local encryption wraps canonical bytes without rewriting them.
 
 ## Canonical record
 
@@ -74,7 +74,7 @@ Use uppercase entity/action-past-tense names consistently. The milestone column 
 | `AGREEMENT_REVISED`            | Unscheduled       | Record a deliberate revision.                                |
 | `AGREEMENT_ARCHIVED`           | Unscheduled       | Archive an agreement.                                        |
 
-“Since You Last Looked” is a derived view of events, not a new event kind. v0.4.x supports Item kinds 1–4, Handoff kinds 5–7 and Talk kinds 8–11. Handoff/Talk kinds use schema 1; later kinds are deferred. Existing event kind codes remain unchanged. Event schema v1 `ITEM_ADDED` contains no classification and normalizes to Today. Schema v2 `ITEM_ADDED` adds a fixed classification byte (`0 = Today`, `1 = Need`) and three zero reserved bytes before the text length. New instances write schema v2 for adds and schema v1 for the other Item events. Protocol and event version compatibility is specified in [ABI](ABI.md) and [VERSIONING](VERSIONING.md). The unscheduled agreement events are not a release commitment.
+“Since You Last Looked” is a derived view of events, not a new event kind. v0.4.x supports Item kinds 1–4, Handoff kinds 5–7 and Talk kinds 8–11. Handoff/Talk kinds use schema 1; later kinds are deferred. Existing event kind codes remain unchanged. Event schema v1 `ITEM_ADDED` contains no classification and normalizes to Today. Schema v2 `ITEM_ADDED` adds a fixed classification byte (`0 = Today`, `1 = Need`); protocol 13 assigns code 2 to Shopping. The three reserved bytes and text-length field remain unchanged. New instances write schema v2 for adds and schema v1 for the other Item events. Protocol and event version compatibility is specified in [ABI](ABI.md) and [VERSIONING](VERSIONING.md). The unscheduled agreement events are not a release commitment.
 
 Step event kinds use the additive schema-1 codes 25–28. An add contains both
 the parent Item ID and stable Step ID plus bounded plain text; the other three

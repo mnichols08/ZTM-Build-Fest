@@ -1,6 +1,18 @@
 # Data Migrations
 
-**Status:** v0.18.0 adds two Routine cadence values behind replay protocol 12 without an IndexedDB, archive-container, or server-schema migration. Earlier version sections are historical.
+**Status:** v0.19.0 adds the Shopping Item classification behind replay protocol 13 without an IndexedDB, archive-container, or server-schema migration. Earlier version sections are historical.
+
+## v0.19.0 Shared Shopping Lists compatibility
+
+Shopping Items reuse schema-v2 `ITEM_ADDED` and the existing Item lifecycle
+events; there is no new event kind, table, sync envelope, KARC format, or
+synthetic migration event. Protocol 13 reads prior history and Shopping
+classification code 2. Protocols 1–12 continue to read Today/Needs data but
+reject Shopping-bearing events or projections before returning incomplete
+state. Devices that encounter Shopping data need a protocol-13-capable Kin
+before replaying that shared history. Offline capture persists through the
+existing encrypted local event store; the existing sync and archive adapters
+carry the same canonical event bytes.
 
 ## v0.18.0 Richer Routine Scheduling compatibility
 

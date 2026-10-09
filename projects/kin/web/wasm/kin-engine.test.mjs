@@ -95,6 +95,30 @@ test("invalid classification is rejected", () => {
   );
 });
 
+test("protocol 13 real WASM replays Shopping classification and summary", async () => {
+  const engine = await loadCurrentEngine(
+    `data:application/wasm;base64,${initialWasm.toString("base64")}`,
+  );
+  const record = encodeAddedRecord({
+    eventId: zeroId,
+    householdId: new Uint8Array(16).fill(1),
+    actorId: new Uint8Array(16).fill(2),
+    deviceId: new Uint8Array(16).fill(3),
+    timestamp: 1,
+    logicalTime: 1,
+    itemId: new Uint8Array(16).fill(4),
+    text: "Buy wipes",
+    classification: "shopping",
+  });
+  assert.equal(record[104], 2);
+  const state = engine.applyEvents([record], 1234, null, 20261003);
+  assert.equal(state.items[0].classification, "shopping");
+  assert.deepEqual(
+    state.summary.entries.map((entry) => entry.classification),
+    ["shopping"],
+  );
+});
+
 test("protocol 10 real WASM replays stable Note create update and terminal archive", async () => {
   const engine = await loadKinEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
   const bytes = (value) => new Uint8Array(16).fill(value);

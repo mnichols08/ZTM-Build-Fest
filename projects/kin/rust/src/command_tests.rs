@@ -138,6 +138,29 @@ fn richer_routine_creation_requires_protocol_v12() {
 }
 
 #[test]
+fn shopping_items_require_protocol_v13() {
+    let command = C::AddItem {
+        id: ItemId([9; 16]),
+        text: "Buy wipes".into(),
+        classification: ItemClassification::Shopping,
+    };
+    assert_eq!(
+        execute(&command, context(1), request(vec![])).unwrap_err(),
+        KinError::UnsupportedVersion
+    );
+
+    let mut compatible = request(vec![]);
+    compatible.protocol_version = 13;
+    let result = execute(&command, context(1), compatible).unwrap();
+    assert_eq!(
+        result.projection.items[0].classification,
+        ItemClassification::Shopping
+    );
+    assert_eq!(&result.encoded_projection[..4], b"KINS");
+    assert_eq!(&result.encoded_projection[4..6], &[13, 0]);
+}
+
+#[test]
 fn codec_preserves_legacy_schema_one_and_rejects_lossy_schema() {
     let mut event = create_event(&add(), context(1)).unwrap();
     event.event_version = 1;

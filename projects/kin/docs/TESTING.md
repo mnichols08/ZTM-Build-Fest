@@ -22,6 +22,12 @@ boundaries, prior-protocol fail-closed behavior, stale occurrence checks, and
 accessible UI wording through real WASM and browser regressions. Daily/Weekly
 keys and protocol-11 result layouts remain covered as compatibility fixtures.
 
+The v0.19.0 Shared Shopping Lists gate adds protocol-13 classification
+decoding/encoding, protocol 1–12 fail-closed checks, real-WASM event and
+summary projection, browser capture/list isolation and the complete existing
+Item lifecycle with list-focus restoration. Local encrypted persistence and
+the existing sync/archive adapters remain the only storage path.
+
 **Status:** The historical v0.13.3 recovery release gate passed on Windows x64 with Node 22.12,
 Rust 1.93, and Edge 154. The gate covered 300 Node/real-WASM tests (226 server),
 118 Rust tests, formatting, warnings-denied Clippy, release WASM, all product,

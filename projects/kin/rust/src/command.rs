@@ -302,6 +302,16 @@ pub fn execute(
     {
         return Err(KinError::UnsupportedVersion);
     }
+    if matches!(
+        command,
+        HouseholdCommand::AddItem {
+            classification: ItemClassification::Shopping,
+            ..
+        }
+    ) && request.protocol_version < crate::protocol::PROTOCOL_V13
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
     let routine_intent = match command {
         HouseholdCommand::CompleteOccurrence { id, key } => Some((id, key, false)),
         HouseholdCommand::ReopenOccurrence { id, key } => Some((id, key, true)),
@@ -546,6 +556,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             classification: match option {
                 0 => ItemClassification::Today,
                 1 => ItemClassification::Need,
+                2 => ItemClassification::Shopping,
                 _ => return Err(KinError::MalformedProtocol),
             },
         },

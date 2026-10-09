@@ -1,6 +1,6 @@
 # Web Component Contract
 
-**Status:** Current through v0.7.0 Routines; earlier version sections are historical contracts. See v0.7.0 below.
+**Status:** Current through v0.19.0 Shared Shopping Lists; earlier version sections are historical contracts.
 
 ## Component responsibilities
 
@@ -10,7 +10,7 @@ Own application initialization, WASM loading, IndexedDB opening/loading, orchest
 
 ### `<kin-today>`
 
-Display Today and Needs items using the projection supplied by `<kin-app>`. Group active/completed items and omit archived tombstones. Do not rank people or add calendar-like features.
+Display the selected Today, Needs, or Shopping classification using the projection supplied by `<kin-app>`. Group active/completed items and omit archived tombstones. Do not rank people or add calendar-like features.
 
 ### `<kin-compose>`
 
@@ -26,7 +26,7 @@ Only create the components needed for these responsibilities; do not componentiz
 
 | Event               | Dispatching component | `detail`                                 | `bubbles` | `composed` | `cancelable` |
 | ------------------- | --------------------- | ---------------------------------------- | --------- | ---------- | ------------ | ------- |
-| `kin:add-item`      | `<kin-compose>`       | `{ text: string, classification: "today" | "need" }` | `true`     | `true`       | `false` |
+| `kin:add-item`      | `<kin-compose>`       | `{ text: string, classification: "today" | "need" | "shopping" }` | `true`     | `true`       | `false` |
 | `kin:complete-item` | `<kin-item>`          | `{ itemId: string }`                     | `true`    | `true`     | `false`      |
 | `kin:reopen-item`   | `<kin-item>`          | `{ itemId: string }`                     | `true`    | `true`     | `false`      |
 | `kin:archive-item`  | `<kin-item>`          | `{ itemId: string }`                     | `true`    | `true`     | `false`      |
@@ -62,3 +62,12 @@ kin-pulse provides native Current capacity/For selects and Set pulse/Change/Clea
 ## v0.7.0 Routines
 
 `<kin-routines>` receives canonical `routines` and `disabled` properties. It dispatches bubbling/composed `kin:create-routine`, `kin:complete-routine-occurrence`, `kin:reopen-routine-occurrence`, and `kin:archive-routine` intents. Occurrence intents carry the rendered key. KinApp owns storage, retries, status and lifecycle refresh. The component uses native form/list/button semantics and restores row focus after updates. See [V0.7.0](V0.7.0.md).
+
+## v0.19.0 Shared Shopping Lists
+
+`<kin-compose>` offers Shopping through the same labeled native
+classification selector and `kin:add-item` intent. `<kin-app>` constructs a
+Shopping-filtered `<kin-today>` on the Lists page and passes the same
+Rust-derived Item/Area projection used by Today and Needs. Existing Item
+commands and lifecycle focus restoration apply without a new component or
+event family. See [V0.19.0](releases/V0.19.0.md).

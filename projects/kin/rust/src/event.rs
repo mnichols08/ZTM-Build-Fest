@@ -43,6 +43,7 @@ pub struct IdentityBinding {
 pub enum ItemClassification {
     Today,
     Need,
+    Shopping,
 }
 
 // Protocol identifiers, never scores or severity levels.

@@ -117,10 +117,13 @@ v0.16.3-v0.20.x fast-track on
 `kin-fast-track-v0.16.3-v0.20.x`. The v0.16.3 Notes hardening commit is
 `6a59070`; it makes concurrent cross-device Note archives converge while
 rejecting stale rearchives. The existing v0.17.0 Checklist Steps commit/tag is
-preserved unchanged. v0.18.0 Richer Routine Scheduling (`kin-v0.18.0` candidate) is implemented
-and validated on the fast-track branch with protocol 12 and bounded
-creation-anchored biweekly/calendar-month cadence. Continue the authorized sequence through
-v0.20.x; do not start v0.21.x. Do not create tags on the batch branch. After human review and
+preserved unchanged. v0.18.0 Richer Routine Scheduling is implemented and
+validated on the fast-track branch with protocol 12 and bounded
+creation-anchored biweekly/calendar-month cadence. The current v0.19.0 Shared
+Shopping Lists (`kin-v0.19.0` candidate) adds Shopping classification under
+protocol 13.
+Continue the authorized sequence through v0.20.x; do not start v0.21.x. Do not
+create tags on the batch branch. After human review and
 merge, tags may be attached to the preserved milestone commits. These are
 implementation candidates, not production certification. Preserve the v0.13.5
 recovery authority guarantees and all earlier security/domain contracts.
