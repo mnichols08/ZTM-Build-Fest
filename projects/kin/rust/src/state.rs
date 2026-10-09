@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::KinError;
 use crate::event::{
     valid_timestamp, ActorId, AreaId, DeviceId, EventEnvelope, EventId, EventKind, HandoffId,
-    HouseholdId, ItemClassification, ItemId, NoteId, PulseValue, RoutineId, TalkId,
+    HouseholdId, ItemClassification, ItemId, NoteId, PulseValue, RoutineId, StepId, TalkId,
 };
 use crate::recurrence::{Cadence, CivilDate};
 
@@ -36,6 +36,15 @@ pub struct ItemState {
     pub classification: ItemClassification,
     pub status: ItemStatus,
     pub area_id: Option<AreaId>,
+    pub steps: Vec<ItemStepState>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ItemStepState {
+    pub step_id: StepId,
+    pub text: String,
+    pub completed: bool,
+    pub archived: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,6 +61,21 @@ pub const MAX_NOTES: usize = 128;
 pub const MAX_NOTE_TITLE_BYTES: usize = 256;
 pub const MAX_NOTE_TITLE_CHARS: usize = 80;
 pub const MAX_NOTE_BODY_BYTES: usize = 4 * 1024;
+pub const MAX_STEPS_PER_ITEM: usize = 16;
+pub const MAX_STEP_TEXT_BYTES: usize = 256;
+pub const MAX_STEP_TEXT_CHARS: usize = 80;
+
+pub fn normalize_step_text(text: &str) -> Result<String, KinError> {
+    let normalized = text.trim();
+    if normalized.is_empty()
+        || normalized.len() > MAX_STEP_TEXT_BYTES
+        || normalized.chars().count() > MAX_STEP_TEXT_CHARS
+        || normalized.chars().any(char::is_control)
+    {
+        return Err(KinError::InvalidEvent);
+    }
+    Ok(normalized.to_owned())
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NoteStatus {
@@ -266,17 +290,35 @@ fn rebuild_with_context(
     let mut handoff_archives = BTreeMap::new();
     let mut item_positions: BTreeMap<crate::event::ItemId, usize> = BTreeMap::new();
     let mut item_archives = BTreeMap::new();
+    let mut item_archive_events = BTreeMap::<ItemId, BTreeSet<(u64, DeviceId)>>::new();
+    let mut step_archive_events = BTreeMap::<StepId, BTreeSet<(u64, DeviceId)>>::new();
+    let mut seen_step_ids = BTreeSet::new();
     let mut areas: Vec<AreaState> = Vec::new();
     let mut area_positions = BTreeMap::new();
     let mut notes: Vec<NoteState> = Vec::new();
     let mut note_positions = BTreeMap::new();
     let mut note_archive_events = BTreeMap::<NoteId, BTreeSet<(u64, DeviceId)>>::new();
     for event in events {
-        if let EventKind::NoteArchived { note_id } = &event.kind {
-            note_archive_events
-                .entry(*note_id)
-                .or_default()
-                .insert((event.logical_time, event.device_id));
+        match &event.kind {
+            EventKind::NoteArchived { note_id } => {
+                note_archive_events
+                    .entry(*note_id)
+                    .or_default()
+                    .insert((event.logical_time, event.device_id));
+            }
+            EventKind::ItemArchived { item_id } => {
+                item_archive_events
+                    .entry(*item_id)
+                    .or_default()
+                    .insert((event.logical_time, event.device_id));
+            }
+            EventKind::ItemStepArchived { step_id, .. } => {
+                step_archive_events
+                    .entry(*step_id)
+                    .or_default()
+                    .insert((event.logical_time, event.device_id));
+            }
+            _ => {}
         }
     }
     let mut event_bytes = BTreeMap::<EventId, Vec<u8>>::new();
@@ -640,7 +682,98 @@ fn rebuild_with_context(
                     classification: *classification,
                     status: ItemStatus::Active,
                     area_id: None,
+                    steps: Vec::new(),
                 });
+            }
+            EventKind::ItemStepAdded {
+                item_id,
+                step_id,
+                text,
+            } => {
+                let text = normalize_step_text(text)?;
+                if !valid_timestamp(event.timestamp)
+                    || step_id.0 == [0; 16]
+                    || !seen_step_ids.insert(*step_id)
+                {
+                    return Err(KinError::InvalidEvent);
+                }
+                let position = item_positions
+                    .get(item_id)
+                    .copied()
+                    .ok_or(KinError::InvalidEvent)?;
+                if has_concurrent_archive(
+                    allow_equal_logical_time,
+                    item_archive_events.get(item_id),
+                    event,
+                ) {
+                    // A same-time parent archive is terminal regardless of replay order.
+                } else if items[position].status != ItemStatus::Active
+                    || items[position].steps.len() >= MAX_STEPS_PER_ITEM
+                {
+                    return Err(KinError::InvalidEvent);
+                } else {
+                    items[position].steps.push(ItemStepState {
+                        step_id: *step_id,
+                        text,
+                        completed: false,
+                        archived: false,
+                    });
+                }
+            }
+            EventKind::ItemStepCompleted { item_id, step_id }
+            | EventKind::ItemStepReopened { item_id, step_id }
+            | EventKind::ItemStepArchived { item_id, step_id } => {
+                if !valid_timestamp(event.timestamp) {
+                    return Err(KinError::MalformedProtocol);
+                }
+                let position = item_positions
+                    .get(item_id)
+                    .copied()
+                    .ok_or(KinError::InvalidEvent)?;
+                if has_concurrent_archive(
+                    allow_equal_logical_time,
+                    item_archive_events.get(item_id),
+                    event,
+                ) {
+                    // A same-time parent archive is terminal regardless of replay order.
+                    last_logical_time = event.logical_time;
+                    event_bytes.insert(event.event_id, event.canonical_bytes.clone());
+                    continue;
+                }
+                let concurrent_step_archive = has_concurrent_archive(
+                    allow_equal_logical_time,
+                    step_archive_events.get(step_id),
+                    event,
+                );
+                if concurrent_step_archive
+                    && !matches!(event.kind, EventKind::ItemStepArchived { .. })
+                {
+                    last_logical_time = event.logical_time;
+                    event_bytes.insert(event.event_id, event.canonical_bytes.clone());
+                    continue;
+                }
+                if items[position].status != ItemStatus::Active {
+                    return Err(KinError::InvalidEvent);
+                }
+                let step = items[position]
+                    .steps
+                    .iter_mut()
+                    .find(|step| step.step_id == *step_id)
+                    .ok_or(KinError::InvalidEvent)?;
+                if step.archived {
+                    if concurrent_step_archive {
+                        last_logical_time = event.logical_time;
+                        event_bytes.insert(event.event_id, event.canonical_bytes.clone());
+                        continue;
+                    }
+                    return Err(KinError::InvalidEvent);
+                }
+                match event.kind {
+                    EventKind::ItemStepCompleted { .. } => step.completed = true,
+                    EventKind::ItemStepReopened { .. } => step.completed = false,
+                    EventKind::ItemStepArchived { .. } => step.archived = true,
+                    _ => unreachable!(),
+                }
             }
             EventKind::ItemCompleted { item_id } => {
                 let position = item_positions
@@ -722,6 +855,19 @@ fn rebuild_with_context(
         areas,
         notes,
     })
+}
+
+fn has_concurrent_archive(
+    allow_equal_logical_time: bool,
+    archives: Option<&BTreeSet<(u64, DeviceId)>>,
+    event: &EventEnvelope,
+) -> bool {
+    allow_equal_logical_time
+        && archives.is_some_and(|archives| {
+            archives.iter().any(|(logical_time, device_id)| {
+                *logical_time == event.logical_time && *device_id != event.device_id
+            })
+        })
 }
 
 fn is_concurrent_terminal_conflict(
@@ -914,7 +1060,11 @@ pub(crate) fn summarize_validated(
             | EventKind::ItemAreaChanged { .. }
             | EventKind::NoteCreated { .. }
             | EventKind::NoteUpdated { .. }
-            | EventKind::NoteArchived { .. } => None,
+            | EventKind::NoteArchived { .. }
+            | EventKind::ItemStepAdded { .. }
+            | EventKind::ItemStepCompleted { .. }
+            | EventKind::ItemStepReopened { .. }
+            | EventKind::ItemStepArchived { .. } => None,
         };
 
         if let Some((kind, entity_kind, text, classification)) = summary {
@@ -988,6 +1138,21 @@ mod tests {
             | EventKind::ItemReopened { item_id }
             | EventKind::ItemArchived { item_id } => {
                 canonical_bytes.extend_from_slice(&item_id.0);
+            }
+            EventKind::ItemStepAdded {
+                item_id,
+                step_id,
+                text,
+            } => {
+                canonical_bytes.extend_from_slice(&item_id.0);
+                canonical_bytes.extend_from_slice(&step_id.0);
+                canonical_bytes.extend_from_slice(text.as_bytes());
+            }
+            EventKind::ItemStepCompleted { item_id, step_id }
+            | EventKind::ItemStepReopened { item_id, step_id }
+            | EventKind::ItemStepArchived { item_id, step_id } => {
+                canonical_bytes.extend_from_slice(&item_id.0);
+                canonical_bytes.extend_from_slice(&step_id.0);
             }
             EventKind::AreaCreated { .. }
             | EventKind::AreaRenamed { .. }

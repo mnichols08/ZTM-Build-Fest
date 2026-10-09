@@ -111,6 +111,93 @@ test("protocol 10 real WASM replays stable Note create update and terminal archi
   assert.deepEqual(engine.applyEvents([], 1_760_000_000_010, null, 20261005).notes, []);
 });
 
+test("protocol 11 real WASM keeps ordered Step lifecycle separate from its Item", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const bytes = (value) => new Uint8Array(16).fill(value);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const context = (sequence) => ({
+    eventId: bytes(sequence),
+    householdId: bytes(200),
+    actorId: bytes(2),
+    deviceId: bytes(201),
+    timestamp: 1_791_475_200_000 + sequence,
+    logicalTime: BigInt(sequence),
+  });
+  const itemId = bytes(10);
+  const firstStepId = bytes(20);
+  const secondStepId = bytes(21);
+  const item = encodeAddedRecord({
+    ...context(1),
+    itemId,
+    text: "Clean kitchen",
+    classification: "need",
+  });
+  const records = [item];
+  const run = (type, sequence, stepId, text) =>
+    engine.executeCommand(
+      {
+        type,
+        itemId: hex(itemId),
+        stepId: hex(stepId),
+        ...(text === undefined ? {} : { text }),
+      },
+      context(sequence),
+      records,
+      1_791_475_200_000,
+      null,
+      20261008,
+    );
+
+  for (const [sequence, stepId, text] of [
+    [2, firstStepId, "Clear counters"],
+    [3, secondStepId, "Wipe stove"],
+  ]) {
+    const result = run("add-item-step", sequence, stepId, text);
+    records.push(result.encodedEvent);
+  }
+  const completedFirst = run("complete-item-step", 4, firstStepId);
+  records.push(completedFirst.encodedEvent);
+  let state = completedFirst.state;
+  assert.equal(state.items[0].status, "active");
+  assert.deepEqual(
+    state.items[0].steps.map((step) => [step.stepId, step.text, step.completed]),
+    [
+      [hex(firstStepId), "Clear counters", true],
+      [hex(secondStepId), "Wipe stove", false],
+    ],
+  );
+  const completedSecond = run("complete-item-step", 5, secondStepId);
+  records.push(completedSecond.encodedEvent);
+  state = completedSecond.state;
+  assert.equal(state.items[0].status, "active");
+  assert.equal(state.items[0].steps.filter((step) => step.completed).length, 2);
+
+  const reopened = run("reopen-item-step", 6, firstStepId);
+  records.push(reopened.encodedEvent);
+  const archived = engine.executeCommand(
+    { type: "archive-item-step", itemId: hex(itemId), stepId: hex(firstStepId) },
+    context(7),
+    records,
+    1_791_475_200_000,
+    null,
+    20261008,
+  );
+  records.push(archived.encodedEvent);
+  assert.equal(archived.state.items[0].status, "active");
+  assert.deepEqual(
+    archived.state.items[0].steps.map((step) => [step.stepId, step.completed, step.archived]),
+    [
+      [hex(firstStepId), false, true],
+      [hex(secondStepId), true, false],
+    ],
+  );
+  assert.deepEqual(engine.applyEvents([], 1_791_475_200_000, null, 20261008).items, []);
+  assert.throws(
+    () => run("complete-item-step", 8, firstStepId),
+    (error) => error.code === 4,
+  );
+});
+
 // Independent v0.1 wire fixtures: do not use the current event writer to
 // define the historical record layout that these compatibility tests protect.
 function legacyRecord(kind, sequence) {

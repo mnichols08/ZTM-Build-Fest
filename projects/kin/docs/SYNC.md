@@ -1,6 +1,16 @@
 # Synchronization Design
 
-**Status:** v0.15.5 is merged and complete; v0.16.2 preserves the protocol-10 Note sync boundary. Equal-logical-time cross-device update/archive events converge with archive winning. Note title, body, Area name, and semantic Note kind remain inside encrypted event payloads; no plaintext Note server metadata is added. Existing authority, outbox, and opaque relay behavior is unchanged.
+**Status:** v0.17.0 preserves the existing encrypted-sync boundary for Step events. Step text, IDs, parent association, and event semantics remain inside encrypted canonical event payloads; equal-logical-time cross-device Step archive/mutation conflicts converge with archive winning. No plaintext Step metadata or new authority is added; offline append, retry, and replay use the existing event/outbox/relay path.
+
+## v0.17.0 Checklist Steps
+
+Step events use the existing encrypted canonical-event envelope and can be
+created offline. Local append and retry preserve the generated Step ID; after
+sync, deterministic Rust replay uses the parent Item ID and stable Step ID.
+Equal-logical-time archive versus completion/reopen from distinct devices
+converges to archived. A same-time parent Item archive suppresses Step
+mutations. Revocation and epoch rotation continue to govern access to the
+complete event stream; Steps add no server interpretation or authority.
 
 ## v0.15.0 Areas
 

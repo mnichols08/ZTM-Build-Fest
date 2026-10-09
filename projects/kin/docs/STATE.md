@@ -1,6 +1,6 @@
 # Derived Household State
 
-**Status:** v0.15.5 is merged and complete; v0.16.2 is the current Notes resilience/accessibility gate. Rust protocol 10 adds Note projection while retaining earlier result layouts exactly. Equal-time cross-device Note update/archive conflicts deterministically resolve to the terminal archive. Pre-Note histories project `notes = []`; browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
+**Status:** v0.17.0 adds an ordered Step projection to Items through additive protocol 11. Protocols 1–10 retain their result layouts; earlier Item histories project an empty Step collection only in protocol 11. Equal-time cross-device Step archive/mutation conflicts deterministically resolve to the terminal archive; parent Item archival remains authoritative. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
 
 ## Projection pipeline
 
@@ -39,8 +39,21 @@ ItemState
 ├── created_by
 ├── created_at
 ├── classification: today | need
-└── status: active | completed | archived
+├── status: active | completed | archived
+└── steps: Vec<ItemStepState> in Step creation order
+
+ItemStepState
+├── step_id
+├── text
+├── completed
+└── archived
 ```
+
+Steps are scoped to one Item, household-unique by ID, and limited to 16
+lifetime additions per Item, including archived Steps. Their text is trimmed
+plain text (1–80 Unicode scalar values, at most 256 UTF-8 bytes, no controls).
+Step completion never changes Item status. Mutations require an active Item;
+archive retains projection history but hides the Step from active lists.
 
 Items are identified by stable item ID, never display text. Pre-sync actor, household, and device IDs remain immutable local placeholders and are resolved only through the verified v8 identity-binding context. Schema-v1 `ITEM_ADDED` events normalize to `today`; schema-v2 events carry explicit classification. HandoffState contains handoff_id, text, created_by, created_at, and status (unacknowledged, acknowledged, archived). Acknowledgement actor/time remain in its source envelope. TalkState contains talk_id, text, created_by, created_at and open/resolved/archived status. Routines are implemented. Agreement remains unscheduled; authentication and trusted-device authorization stay service-owned rather than becoming household content projections.
 
@@ -101,3 +114,13 @@ Protocol v6 derives a structured summary after an optional stable event-ID curso
 ## v0.7.0 Routines
 
 HouseholdState adds Routine definitions/tombstones and their current occurrence key/status. Rust replay retains historical completion by Routine ID and period key in transient memory, then projects the supplied civil date. Same events, as_of, civil_date and cursor yield identical results. Dates before creation have no occurrence; old completion never carries over. See [V0.7.0](V0.7.0.md).
+
+## v0.17.0 Checklist Steps
+
+Rust replay appends each valid `ITEM_STEP_ADDED` to its parent Item and applies
+completion, reopening, and terminal archive transitions without changing the
+parent Item's status. Stable ordering follows event replay order. Capacity is
+measured across the Step history, including archived entries. In distributed
+replay, a same-logical-time archive from another device dominates Step
+completion/reopening; a same-time parent Item archive suppresses Step mutation.
+Older event histories remain valid and contain no Steps.

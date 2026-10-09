@@ -37,7 +37,18 @@ emulation, 48px controls, reduced motion, forced colors, dark mode, and increase
 text spacing. Page-scale emulation is not native desktop zoom. No screen-reader
 certification is claimed.
 
-**Status:** v0.16.2 Notes UI structurally audited for explicit labels, field-specific errors, keyboard focus restoration, and plain-text Area context. No direct screen-reader certification is claimed; actual assistive-technology testing remains unverified.
+**Status:** v0.17.0 Checklist Steps uses native labeled checkboxes and a labeled short-text form, with an accessible expand/collapse name and progress summary. The browser gate covers keyboard operation, focus restoration, parent-lifecycle disabling, and validation. No direct screen-reader certification is claimed; actual assistive-technology testing remains unverified.
+
+## v0.17.0 Checklist Steps
+
+Each Step is a native checkbox with its text as the associated label. The
+checklist disclosure is a native button exposing `aria-expanded` and a
+per-Item `aria-controls` target; its accessible name includes the visible
+completion count. The add form uses a visible label, native required input,
+bounded plain-text validation, and a submit button. Focus returns to the
+corresponding add input after a successful append. Completed or archived parent
+Items disable Step mutations; state is conveyed by native checked/disabled
+semantics and visible status text, not color alone.
 
 ## v0.15 Household Areas
 

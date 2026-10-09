@@ -1,5 +1,28 @@
 # Household Domain
 
+## v0.17.0 Checklist Steps
+
+An Item may contain up to 16 ordered Steps over its lifetime, including
+archived Steps. Each Step has a stable household-unique `StepId`, trimmed
+plain-text label, completion state, and terminal archive state. Labels contain
+1–80 Unicode scalar values, at most 256 UTF-8 bytes, and no control characters.
+Step order is creation/replay order; reordering, nesting, assignment, due dates,
+and independent Step scheduling are not part of this capability.
+
+Step completion is independent from parent Item completion. Completing every
+Step never completes the Item. Step mutations require an active parent Item;
+reopen a completed Item before changing its Steps. Archiving an Item preserves
+its Step history. Archiving a Step hides it from the active checklist but does
+not release its lifetime capacity or erase its events.
+
+Concurrent equal-logical-time Step archive and Step completion/reopen events
+from different devices resolve to the terminal archive. A same-time parent
+Item archive suppresses Step mutations regardless of replay order. Later
+non-concurrent mutation after either terminal archive is invalid.
+
+**Status:** v0.17.0 Checklist Steps is implemented and validated; this section
+records the delivered contract.
+
 ## v0.16.0 Notes
 
 A Note is durable plain-text reference context with a stable `NoteId`, trimmed
@@ -22,7 +45,7 @@ either device ordering, so the projected archived title/body remain the same
 regardless of the replay input order. A later non-concurrent update after
 archive remains invalid.
 
-**Status:** Current through the v0.16.2 Notes resilience/accessibility gate; earlier version sections are historical contracts.
+**Status:** Current through the v0.17.0 Checklist Steps capability; earlier version sections are historical contracts.
 
 ## Scope and relationships
 

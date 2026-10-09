@@ -1,6 +1,6 @@
 # Release Process
 
-**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. v0.15.5 and the v0.16.2 baseline are in `kin-development`. The authorized fast-track begins with the v0.16.3 Notes hardening candidate and proceeds through v0.20.x; these are review candidates, not production certification. Existing tags remain unchanged, and no tags are created on the batch branch.
+**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. PR #26 is merged into `kin-development`; v0.16.3 Notes hardening is on the authorized fast-track branch, and the existing tagged v0.17.0 Checklist Steps candidate is preserved unchanged. The fast-track continues through v0.20.x; these candidates are not production certification. No new tags are created on the batch branch.
 
 ## Release sequence
 

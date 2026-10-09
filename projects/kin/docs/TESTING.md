@@ -10,6 +10,12 @@ keyboard regressions to avoid accepting a pre-action idle state. The v0.16.2
 gate adds offline Notes lifecycle/reload, stale canonical command rejection,
 Notes labels/errors/focus, and three consecutive full browser runs.
 
+The v0.17.0 Checklist Steps gate adds ordered Step lifecycle through real
+WASM, protocol-11 layout and prior-protocol compatibility, capacity and text
+bounds, equal-time terminal-archive convergence, parent Item independence and
+gating, browser add/complete/reopen/archive flows, local persistence, and the
+existing encrypted-sync regression.
+
 **Status:** The historical v0.13.3 recovery release gate passed on Windows x64 with Node 22.12,
 Rust 1.93, and Edge 154. The gate covered 300 Node/real-WASM tests (226 server),
 118 Rust tests, formatting, warnings-denied Clippy, release WASM, all product,
