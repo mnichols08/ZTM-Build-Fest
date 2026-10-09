@@ -101,6 +101,28 @@ async function offlineReloadChecks(recovery) {
   );
   const elapsed = performance.now() - started;
   const oldEngine = app.engine;
+  const oldShoppingList = app.shopping;
+  const oldStaplesList = app.staples;
+  app.shopping.items = [{
+    itemId: "11".repeat(16),
+    createdBy: "22".repeat(16),
+    createdAt: 1,
+    classification: "shopping",
+    status: "active",
+    areaId: null,
+    steps: [],
+    text: "Synthetic Shopping lock sentinel",
+  }];
+  app.staples.items = [{
+    itemId: "33".repeat(16),
+    createdBy: "22".repeat(16),
+    createdAt: 1,
+    classification: "staple",
+    status: "active",
+    areaId: null,
+    steps: [],
+    text: "Synthetic Staples lock sentinel",
+  }];
   app.lockHousehold();
   let denied = false;
   try {
@@ -111,8 +133,14 @@ async function offlineReloadChecks(recovery) {
   check(
     denied &&
       app.state === null &&
-      !document.body.textContent.includes("Synthetic protected"),
-    "offline lock clears projection and revokes old engine",
+      app.shopping !== oldShoppingList &&
+      app.staples !== oldStaplesList &&
+      app.shopping.records.length === 0 &&
+      app.staples.records.length === 0 &&
+      !document.body.textContent.includes("Synthetic protected") &&
+      !document.body.textContent.includes("Synthetic Shopping lock sentinel") &&
+      !document.body.textContent.includes("Synthetic Staples lock sentinel"),
+    "offline lock clears Shopping and Staples plaintext and revokes old engine",
   );
   return { checks, timings: { offlineUnlockAndReplayMs: elapsed } };
 }

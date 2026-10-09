@@ -210,7 +210,7 @@ fn v5_headers_trailing_bytes_versions_and_combined_counts() {
     let mut trailing = valid.clone();
     trailing.push(0);
     assert_eq!(decode_request(&trailing), Err(KinError::MalformedProtocol));
-    for version in [0u16, 11, u16::MAX] {
+    for version in [0u16, 15, u16::MAX] {
         let mut bad = valid.clone();
         bad[4..6].copy_from_slice(&version.to_le_bytes());
         assert_eq!(decode_request(&bad), Err(KinError::UnsupportedVersion));
@@ -235,6 +235,7 @@ fn v5_headers_trailing_bytes_versions_and_combined_counts() {
         classification: crate::event::ItemClassification::Today,
         status: crate::state::ItemStatus::Active,
         area_id: None,
+        steps: Vec::new(),
     });
     assert_eq!(encode_state(&state, 5), Err(KinError::SizeLimit));
 }

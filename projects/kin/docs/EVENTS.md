@@ -1,6 +1,6 @@
 # Household Events
 
-**Status:** Current through the v0.16.2 Notes resilience/accessibility gate. Rust owns canonical command encoding and decoding; existing schemas/kinds and immutable bytes remain unchanged. Protocol 10 adds `NOTE_CREATED`, `NOTE_UPDATED`, and terminal `NOTE_ARCHIVED` with schema 1; protocols 1–9 retain their wire layouts and reject Note events. Equal-time cross-device Note update/archive conflicts preserve the terminal archive without changing event bytes. Local encryption wraps canonical bytes without rewriting them.
+**Status:** Current through v0.20.0 Staples & Replenishment. Rust owns canonical command encoding and decoding; event schemas and kinds remain unchanged. Protocol 10 adds Notes, protocol 11 adds Item Steps, protocol 12 enables two additional Routine cadence values, protocol 13 enables Shopping classification code 2, and protocol 14 enables Staples code 3 within the existing Item-add schema. Protocols 1–12 reject Shopping and Staples; protocol 13 rejects Staples. Equal-time cross-device Note and Step archive conflicts preserve the terminal archive without changing event bytes. Local encryption wraps canonical bytes without rewriting them.
 
 ## Canonical record
 
@@ -60,6 +60,10 @@ Use uppercase entity/action-past-tense names consistently. The milestone column 
 | `AREA_RENAMED`                  | v0.15.0           | Change an Area's display name without changing its identity. |
 | `AREA_ARCHIVED`                 | v0.15.0           | Retain the Area and its assignments as historical context.   |
 | `ITEM_AREA_CHANGED`             | v0.15.0           | Set or clear an Item's optional Area assignment.              |
+| `ITEM_STEP_ADDED`               | v0.17.0           | Append a bounded ordered Step to an active Item.              |
+| `ITEM_STEP_COMPLETED`           | v0.17.0           | Complete an active Step without completing its Item.         |
+| `ITEM_STEP_REOPENED`            | v0.17.0           | Reopen a completed Step.                                     |
+| `ITEM_STEP_ARCHIVED`            | v0.17.0           | Terminally archive a Step while retaining its history.        |
 | `HOUSEHOLD_CREATED`            | v0.8.0            | Establish a household identity when pairing is introduced.   |
 | `MEMBER_INVITED`               | v0.8.0            | Record a member invitation.                                  |
 | `MEMBER_JOINED`                | v0.8.0            | Record accepted household membership.                        |
@@ -70,7 +74,13 @@ Use uppercase entity/action-past-tense names consistently. The milestone column 
 | `AGREEMENT_REVISED`            | Unscheduled       | Record a deliberate revision.                                |
 | `AGREEMENT_ARCHIVED`           | Unscheduled       | Archive an agreement.                                        |
 
-“Since You Last Looked” is a derived view of events, not a new event kind. v0.4.x supports Item kinds 1–4, Handoff kinds 5–7 and Talk kinds 8–11. Handoff/Talk kinds use schema 1; later kinds are deferred. Existing event kind codes remain unchanged. Event schema v1 `ITEM_ADDED` contains no classification and normalizes to Today. Schema v2 `ITEM_ADDED` adds a fixed classification byte (`0 = Today`, `1 = Need`) and three zero reserved bytes before the text length. New instances write schema v2 for adds and schema v1 for the other Item events. Protocol and event version compatibility is specified in [ABI](ABI.md) and [VERSIONING](VERSIONING.md). The unscheduled agreement events are not a release commitment.
+“Since You Last Looked” is a derived view of events, not a new event kind. v0.4.x supports Item kinds 1–4, Handoff kinds 5–7 and Talk kinds 8–11. Handoff/Talk kinds use schema 1; later kinds are deferred. Existing event kind codes remain unchanged. Event schema v1 `ITEM_ADDED` contains no classification and normalizes to Today. Schema v2 `ITEM_ADDED` adds a fixed classification byte (`0 = Today`, `1 = Need`, `2 = Shopping`, `3 = Staple`); protocol 13 enables code 2 and protocol 14 enables code 3. The three reserved bytes and text-length field remain unchanged. New instances write schema v2 for adds and schema v1 for the other Item events. Protocol and event version compatibility is specified in [ABI](ABI.md) and [VERSIONING](VERSIONING.md). The unscheduled agreement events are not a release commitment.
+
+Step event kinds use the additive schema-1 codes 25–28. An add contains both
+the parent Item ID and stable Step ID plus bounded plain text; the other three
+events contain both IDs. Protocol 11 carries Steps in the derived result and
+canonical event records through the existing encrypted event path. Older
+protocols reject these kinds instead of skipping them.
 
 ## Immutability and corrections
 
@@ -123,7 +133,7 @@ No domain event kinds are added. Codes 1–13 and their persisted bytes remain u
 
 ## v0.7.0 Routines
 
-Schema-1 codes 14 ROUTINE_CREATED, 15 ROUTINE_OCCURRENCE_COMPLETED, 16 ROUTINE_OCCURRENCE_REOPENED, 17 ROUTINE_ARCHIVED. Creation persists text/cadence/creation civil date; occurrence actions persist a deterministic date key. No reset or automatically created occurrence event. Archive is terminal. The earlier conceptual ROUTINE_COMPLETED name never had a persisted wire code and is replaced by occurrence-specific naming. See [V0.7.0](V0.7.0.md).
+Schema-1 codes 14 ROUTINE_CREATED, 15 ROUTINE_OCCURRENCE_COMPLETED, 16 ROUTINE_OCCURRENCE_REOPENED, 17 ROUTINE_ARCHIVED. Creation persists text/cadence/creation civil date; occurrence actions persist a deterministic date key. Cadence values 0/1 are Daily/Monday-start Weekly; protocol 12 additionally supports 2 (every two weeks anchored to creation date) and 3 (calendar month start). No reset or automatically created occurrence event. Archive is terminal. The earlier conceptual ROUTINE_COMPLETED name never had a persisted wire code and is replaced by occurrence-specific naming. See [V0.7.0](V0.7.0.md) and [V0.18.0](releases/V0.18.0.md).
 
 ## v0.15.0 Areas
 

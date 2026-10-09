@@ -9,7 +9,9 @@ use crate::protocol::{
     PROTOCOL_VERSION,
 };
 use crate::recurrence::{Cadence, CivilDate};
-use crate::state::{normalize_area_name, HouseholdState, ItemStatus};
+use crate::state::{
+    normalize_area_name, normalize_step_text, HouseholdState, ItemStatus, MAX_STEPS_PER_ITEM,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HouseholdCommand {
@@ -21,6 +23,23 @@ pub enum HouseholdCommand {
     CompleteItem(ItemId),
     ReopenItem(ItemId),
     ArchiveItem(ItemId),
+    AddItemStep {
+        item_id: ItemId,
+        step_id: StepId,
+        text: String,
+    },
+    CompleteItemStep {
+        item_id: ItemId,
+        step_id: StepId,
+    },
+    ReopenItemStep {
+        item_id: ItemId,
+        step_id: StepId,
+    },
+    ArchiveItemStep {
+        item_id: ItemId,
+        step_id: StepId,
+    },
     CaptureHandoff {
         id: HandoffId,
         text: String,
@@ -110,6 +129,27 @@ pub fn create_event(
         CompleteItem(id) => EventKind::ItemCompleted { item_id: *id },
         ReopenItem(id) => EventKind::ItemReopened { item_id: *id },
         ArchiveItem(id) => EventKind::ItemArchived { item_id: *id },
+        AddItemStep {
+            item_id,
+            step_id,
+            text,
+        } => EventKind::ItemStepAdded {
+            item_id: *item_id,
+            step_id: *step_id,
+            text: normalize_step_text(text)?,
+        },
+        CompleteItemStep { item_id, step_id } => EventKind::ItemStepCompleted {
+            item_id: *item_id,
+            step_id: *step_id,
+        },
+        ReopenItemStep { item_id, step_id } => EventKind::ItemStepReopened {
+            item_id: *item_id,
+            step_id: *step_id,
+        },
+        ArchiveItemStep { item_id, step_id } => EventKind::ItemStepArchived {
+            item_id: *item_id,
+            step_id: *step_id,
+        },
         CaptureHandoff { id, text } => EventKind::HandoffAdded {
             handoff_id: *id,
             text: text.clone(),
@@ -242,6 +282,46 @@ pub fn execute(
         return Err(KinError::InvalidEvent);
     }
     let current = project(&request)?;
+    if matches!(
+        command,
+        HouseholdCommand::AddItemStep { .. }
+            | HouseholdCommand::CompleteItemStep { .. }
+            | HouseholdCommand::ReopenItemStep { .. }
+            | HouseholdCommand::ArchiveItemStep { .. }
+    ) && request.protocol_version < crate::protocol::PROTOCOL_V11
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if matches!(
+        command,
+        HouseholdCommand::CreateRoutine {
+            cadence: Cadence::Biweekly | Cadence::Monthly,
+            ..
+        }
+    ) && request.protocol_version < crate::protocol::PROTOCOL_V12
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if matches!(
+        command,
+        HouseholdCommand::AddItem {
+            classification: ItemClassification::Staple,
+            ..
+        }
+    ) && request.protocol_version < crate::protocol::PROTOCOL_V14
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if matches!(
+        command,
+        HouseholdCommand::AddItem {
+            classification: ItemClassification::Shopping,
+            ..
+        }
+    ) && request.protocol_version < crate::protocol::PROTOCOL_V13
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
     let routine_intent = match command {
         HouseholdCommand::CompleteOccurrence { id, key } => Some((id, key, false)),
         HouseholdCommand::ReopenOccurrence { id, key } => Some((id, key, true)),
@@ -261,6 +341,51 @@ pub fn execute(
         }
     }
     match command {
+        HouseholdCommand::AddItemStep {
+            item_id,
+            step_id,
+            text,
+        } => {
+            normalize_step_text(text)?;
+            let item = current
+                .items
+                .iter()
+                .find(|item| item.item_id == *item_id)
+                .ok_or(KinError::InvalidEvent)?;
+            if item.status != ItemStatus::Active
+                || item.steps.len() >= MAX_STEPS_PER_ITEM
+                || step_id.0 == [0; 16]
+                || current
+                    .items
+                    .iter()
+                    .any(|item| item.steps.iter().any(|step| step.step_id == *step_id))
+            {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::CompleteItemStep { item_id, step_id }
+        | HouseholdCommand::ReopenItemStep { item_id, step_id }
+        | HouseholdCommand::ArchiveItemStep { item_id, step_id } => {
+            let item = current
+                .items
+                .iter()
+                .find(|item| item.item_id == *item_id && item.status == ItemStatus::Active)
+                .ok_or(KinError::InvalidEvent)?;
+            let step = item
+                .steps
+                .iter()
+                .find(|step| step.step_id == *step_id && !step.archived)
+                .ok_or(KinError::InvalidEvent)?;
+            let valid_action = match command {
+                HouseholdCommand::CompleteItemStep { .. } => !step.completed,
+                HouseholdCommand::ReopenItemStep { .. } => step.completed,
+                HouseholdCommand::ArchiveItemStep { .. } => true,
+                _ => false,
+            };
+            if !valid_action {
+                return Err(KinError::InvalidEvent);
+            }
+        }
         HouseholdCommand::CreateArea { id, name } | HouseholdCommand::RenameArea { id, name } => {
             let normalized = normalize_area_name(name)?;
             if current.areas.iter().any(|area| {
@@ -387,7 +512,10 @@ fn field<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N], KinErro
 pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext), KinError> {
     if bytes.len() < 128
         || bytes.len()
-            > 128 + 24 + crate::state::MAX_NOTE_TITLE_BYTES + crate::state::MAX_NOTE_BODY_BYTES
+            > 128
+                + 24
+                + crate::state::MAX_NOTE_TITLE_BYTES
+                + crate::state::MAX_NOTE_BODY_BYTES.max(16 + crate::state::MAX_STEP_TEXT_BYTES)
         || &bytes[..4] != b"KCMD"
     {
         return Err(KinError::MalformedProtocol);
@@ -407,7 +535,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
     if bytes.len() != 128 + text_length {
         return Err(KinError::MalformedProtocol);
     }
-    let text = if matches!(kind, 21..=24) {
+    let text = if matches!(kind, 21..=28) {
         String::new()
     } else {
         std::str::from_utf8(&bytes[128..])
@@ -416,7 +544,8 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
     };
     let accepts_payload = matches!(kind, 1 | 5 | 8 | 14 | 18 | 19)
         || kind == 21 && text_length == 16
-        || matches!(kind, 22 | 23) && text_length >= 24;
+        || matches!(kind, 22 | 23) && text_length >= 24
+        || kind == 25 && (17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length);
     if !text.is_empty() && !accepts_payload
         || !matches!(kind, 14..=16) && date != 0
         || !matches!(kind, 1 | 12 | 14) && option != 0
@@ -424,6 +553,8 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || matches!(kind, 12 | 13) && id != [0; 16]
         || kind == 21 && text_length != 16
         || kind == 24 && text_length != 0
+        || kind == 25 && !(17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
+        || matches!(kind, 26..=28) && text_length != 16
     {
         return Err(KinError::MalformedProtocol);
     }
@@ -435,12 +566,42 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             classification: match option {
                 0 => ItemClassification::Today,
                 1 => ItemClassification::Need,
+                2 => ItemClassification::Shopping,
+                3 => ItemClassification::Staple,
                 _ => return Err(KinError::MalformedProtocol),
             },
         },
         2 => CompleteItem(ItemId(id)),
         3 => ReopenItem(ItemId(id)),
         4 => ArchiveItem(ItemId(id)),
+        25 if text_length >= 17 => {
+            let item_id = ItemId(field(bytes, 128)?);
+            let text = std::str::from_utf8(&bytes[144..])
+                .map_err(|_| KinError::MalformedProtocol)?
+                .to_owned();
+            AddItemStep {
+                item_id,
+                step_id: StepId(id),
+                text,
+            }
+        }
+        26..=28 if text_length == 16 => {
+            let item_id = ItemId(field(bytes, 128)?);
+            match kind {
+                26 => CompleteItemStep {
+                    item_id,
+                    step_id: StepId(id),
+                },
+                27 => ReopenItemStep {
+                    item_id,
+                    step_id: StepId(id),
+                },
+                _ => ArchiveItemStep {
+                    item_id,
+                    step_id: StepId(id),
+                },
+            }
+        }
         5 => CaptureHandoff {
             id: HandoffId(id),
             text,

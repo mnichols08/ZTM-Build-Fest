@@ -1,6 +1,6 @@
 # Data Model
 
-**Status:** Current through v0.7.0 Routines; earlier version sections are historical contracts. See v0.7.0 below.
+**Status:** Current through v0.20.0 Staples & Replenishment; earlier version sections are historical contracts. See v0.7.0, v0.18.0, v0.19.0, and v0.20.0 below.
 
 ## Event-oriented source of truth
 
@@ -36,7 +36,8 @@ The envelope is a domain contract, not the JS/WASM byte encoding. The field mean
 - **Member:** A person with identity distinct from their devices and credentials.
 - **Device:** A browser installation that may later be authorized, trusted, and revoked.
 - **Credential:** An authenticator associated with a member; not itself a member or household key.
-- **Item:** A lightweight household need/reminder.
+- **Item:** A lightweight household reminder classified for Today, Needs,
+  Shopping, or Staples.
 - **Handoff:** Context one member wants another to know.
 - **Talk:** A topic that matters but may be better discussed later.
 - **Pulse:** Time-bounded context about current capacity.
@@ -70,6 +71,35 @@ PulseState has actor_id, fixed enum value, set_at, expires_at and active/expired
 ## v0.7.0 Routines
 
 Routine occurrence identity is `(routine_id, civil period start date)`, not a random occurrence ID. Current state is derived; only definitions and human lifecycle actions persist. Civil dates use validated YYYYMMDD u32, Monday-start weeks. No time-zone preference is persisted in v0.7. See [V0.7.0](V0.7.0.md).
+
+## v0.18.0 Richer Routine Scheduling
+
+Routine cadence retains Daily and Monday-start Weekly and adds every-two-weeks
+anchored to `created_on`, plus calendar-month periods keyed by day one.
+Completion remains keyed by `(routine_id, period start date)` and never
+automatically resets or creates events. The source `created_on` anchors every
+device's biweekly schedule; the supplied civil date selects the current period.
+No reminder, assignment, streak, or calendar entity is introduced. See
+[V0.18.0](releases/V0.18.0.md).
+
+## v0.19.0 Shared Shopping Lists
+
+Shopping is a third Item classification, not a separate entity or event
+family. Shopping Items use the existing canonical add, completion, reopening,
+and archive events, and therefore inherit local-first persistence, encrypted
+sync, and archive import/export behavior. Protocol 13 adds classification code
+2; protocols 1–12 reject Shopping-bearing state rather than silently projecting
+it into Today or Needs. No persistent storage migration is required. See
+[V0.19.0](releases/V0.19.0.md).
+
+## v0.20.0 Staples & Replenishment
+
+Staples are reusable Items with classification code 3, not a separate entity
+or inventory model. A member can manually add the staple's text as a new,
+independent Shopping Item; the source staple remains active. Both records use
+canonical Item events and share encrypted persistence, sync, and archive
+behavior. Protocol 14 adds Staples while protocols 1–13 reject Staple-bearing
+history or projections. See [V0.20.0](releases/V0.20.0.md).
 
 ## v0.15.0 Areas
 

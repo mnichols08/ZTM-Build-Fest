@@ -2,7 +2,62 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
-## Unreleased — v0.16.2 Notes resilience & accessibility
+## v0.20.0 — Staples & Replenishment
+
+- Add a reusable Staples list using Item classification code 3; “Add to
+  Shopping” creates an ordinary Shopping Item while leaving the staple active.
+- Add replay protocol 14 as the compatibility gate for Staples; protocols 1–13
+  continue to support their existing data and reject Staples-bearing state.
+- Reuse canonical Item events, encrypted local persistence, sync, and archive
+  import/export without inventory, quantity, or schedule automation.
+- Pass 148 Rust tests, 311 Node tests, formatting, warnings-denied Clippy,
+  release WASM build, version consistency, and browser/security regressions.
+
+## v0.19.0 — Shared Shopping Lists
+
+- Add Shopping as a third Item classification and a dedicated list, reusing
+  canonical Item lifecycle events, encrypted local persistence, and household
+  sync without a new entity or storage migration.
+- Add protocol 13 as the compatibility gate for Shopping classification;
+  protocols 1–12 fail closed on Shopping-bearing history and retain their
+  existing layouts for Today/Needs data.
+- Add Rust, real-WASM, and browser regressions for Shopping capture, list
+  isolation, lifecycle, persistence, and focus restoration.
+
+## v0.18.0 — Richer Routine Scheduling
+
+- Add bounded every-two-weeks routines anchored to their creation civil date
+  and monthly routines keyed to calendar-month starts; preserve Daily/Weekly
+  keys and canonical schema-1 event bytes.
+- Add additive replay protocol 12 to make the new cadence values explicit;
+  protocols 1–11 reject histories they cannot represent, while prior
+  histories replay unchanged under protocol 12.
+- Add accessible cadence choices, accurate current-period wording, and Rust,
+  WASM, Node, and browser regressions for leap/month/year boundaries and
+  protocol compatibility.
+- Pass 144 Rust tests, 309 Node tests, formatting, warnings-denied Clippy,
+  release WASM build, version consistency, and three consecutive full Edge
+  browser regression runs.
+
+## v0.17.0 — Checklist Steps
+
+- Add ordered, bounded checklist Steps to Items with independent completion,
+  terminal Step archival, and parent Item lifecycle gating.
+- Extend canonical event and replay protocol 11 additively; keep older result
+  layouts and persistent schemas unchanged.
+- Add native checklist controls, accessible progress, and Step lifecycle
+  validation through Rust/WASM and browser regressions.
+- Complete the Windows release gate: 139 Rust tests, 308 Node tests, three
+  consecutive full Edge browser regressions, targeted security/storage/passkey
+  browser suites, version consistency, formatting, and warnings-denied Clippy.
+
+### v0.16.3 Notes hardening — fast-track candidate
+
+- Treat same-logical-time Note archives from different devices as one
+  deterministic terminal action; reject later or same-device duplicate
+  archives as stale commands.
+
+## v0.16.2 — Notes Resilience & Accessibility
 
 - Preserve unsaved Note form state and action focus across canonical rerenders;
   clear in-memory drafts after save and discard them with the protected UI on lock.

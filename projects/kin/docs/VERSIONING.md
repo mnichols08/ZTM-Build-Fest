@@ -1,17 +1,17 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.16.2; v0.15.5 is merged and complete. `kin-v0.16.0` and `kin-v0.16.1` are Notes capability/correctness candidates and remain immutable. The last published product release remains v0.10.3; tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.20.0; the last published product release remains v0.10.3. Tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.16.2 | Governs |
+| Version axis | Last published v0.10.3 / current candidate v0.20.0 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.16.2` | Notes resilience/accessibility; protocol 10 unchanged |
+| Application | Last published `0.10.3`; candidate `0.20.0` | Staples & Replenishment; additive protocol 14 |
 | Server database schema | `2` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination and household lifecycle records |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
-| Replay protocol | Reads v1–v10; writes v10 for local and synchronized requests | Request context and projection semantics |
+| Replay protocol | Reads v1–v14; writes v14 for local and synchronized requests | Request context and projection semantics |
 | Manual WASM ABI | Existing exports plus additive command/metadata/archive/import APIs | Host ownership and calls; new command packet v1 |
 | IndexedDB schema | Event DB 2→3; key DB 3→4 | Journalled upgrade to encrypted records |
 | Local envelope | v1 for original roots; v2 for rotated roots | v2 authenticates rootVersion in addition to purpose/routing |
@@ -107,6 +107,46 @@ archive wins and projection converges. Browser preflight matches Rust's
 Unicode scalar, UTF-8 byte, and control-character limits. The service worker
 cache version advances to invalidate its static shell and includes the Notes
 component.
+
+## v0.17.0 Checklist Steps
+
+Protocol 11 is additive. It preserves the 64-byte request header and 88-byte
+event envelope, adds schema-1 event kinds 25–28, and appends a Step count and
+bounded Step records after Notes in the result. Protocols 1–10 retain their
+request/result layouts and reject Step events. Existing histories project no
+Steps without migration; IndexedDB, server schema, KARC v1, and sync-envelope
+versions remain unchanged. The service-worker static cache version advances
+for the new client release; `item` was already in the component shell.
+
+## v0.18.0 Richer Routine Scheduling
+
+Protocol 12 is additive. It preserves the protocol-11 request and result
+layouts and canonical event payloads. Routine cadence values 2 and 3 represent
+creation-date-anchored every-two-weeks and calendar-month periods; protocols
+1–11 reject these values and cannot encode state containing them. Protocol 12
+replays existing Daily/Weekly histories unchanged. No event schema, IndexedDB,
+server, KARC, or sync-envelope migration is required.
+
+## v0.19.0 Shared Shopping Lists
+
+Protocol 13 extends the existing schema-v2 `ITEM_ADDED` classification byte
+with code 2 for Shopping; it adds no event kind and changes no payload layout.
+Protocol 13 reads prior histories and writes its compatible result layout.
+Protocols 1–12 reject Shopping-bearing events, summaries, or projections,
+while their Today/Needs-only behavior and bytes remain unchanged. IndexedDB,
+server schema, KARC v1, and encrypted sync envelope remain unchanged. Existing
+canonical events carry Shopping through local persistence, sync, and
+archive/import without a data migration.
+
+## v0.20.0 Staples & Replenishment
+
+Protocol 14 extends the existing schema-v2 `ITEM_ADDED` classification byte
+with code 3 for reusable Staples; codes 0–2 retain Today, Needs, and Shopping.
+It adds no event kind and changes no payload layout. Protocols 1–13 reject
+Staple-bearing events, summaries, or projections; protocol 13 continues to
+support Shopping. IndexedDB, server schema, KARC v1, and encrypted sync
+envelope remain unchanged. Replenishment is a user-triggered append of an
+independent Shopping Item and requires no data migration.
 
 ## v0.9.x Encrypted Sync
 

@@ -39,6 +39,32 @@ impl CivilDate {
         days + self.0 % 100 - 1
     }
 
+    fn from_ordinal(ordinal: u32) -> Self {
+        let mut low = 1;
+        let mut high = 10_000;
+        while low + 1 < high {
+            let middle = (low + high) / 2;
+            let previous_year = middle - 1;
+            let days_before_year =
+                365 * previous_year + previous_year / 4 - previous_year / 100 + previous_year / 400;
+            if days_before_year <= ordinal {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        let previous_year = low - 1;
+        let days_before_year =
+            365 * previous_year + previous_year / 4 - previous_year / 100 + previous_year / 400;
+        let mut day_of_year = ordinal - days_before_year;
+        let mut month = 1;
+        while day_of_year >= days_in_month(low, month) {
+            day_of_year -= days_in_month(low, month);
+            month += 1;
+        }
+        Self(low * 10_000 + month * 100 + day_of_year + 1)
+    }
+
     pub fn monday(self) -> Self {
         let mut year = self.0 / 10_000;
         let mut month = self.0 / 100 % 100;
@@ -78,6 +104,8 @@ fn days_in_month(year: u32, month: u32) -> u32 {
 pub enum Cadence {
     Daily = 0,
     Weekly = 1,
+    Biweekly = 2,
+    Monthly = 3,
 }
 
 impl TryFrom<u8> for Cadence {
@@ -87,29 +115,40 @@ impl TryFrom<u8> for Cadence {
         match value {
             0 => Ok(Self::Daily),
             1 => Ok(Self::Weekly),
+            2 => Ok(Self::Biweekly),
+            3 => Ok(Self::Monthly),
             _ => Err(KinError::MalformedProtocol),
         }
     }
 }
 
 impl Cadence {
-    pub fn period_key(self, date: CivilDate) -> CivilDate {
+    pub fn period_key(self, created_on: CivilDate, date: CivilDate) -> CivilDate {
         match self {
             Self::Daily => date,
             Self::Weekly => date.monday(),
+            Self::Biweekly => {
+                if date < created_on {
+                    return date;
+                }
+                let elapsed = date.ordinal() - created_on.ordinal();
+                CivilDate::from_ordinal(date.ordinal() - elapsed % 14)
+            }
+            Self::Monthly => CivilDate(date.0 / 100 * 100 + 1),
         }
     }
 
     /// A definition has no current occurrence before its creation civil date.
     /// Archival and completion belong to replay, not calendar arithmetic.
     pub fn current_key(self, created_on: CivilDate, today: CivilDate) -> Option<CivilDate> {
-        (today >= created_on).then(|| self.period_key(today))
+        (today >= created_on).then(|| self.period_key(created_on, today))
     }
 
     /// Historical key validity is independent of the current projection date.
     /// Otherwise clock rollback could invalidate an already saved event stream.
     pub fn validate_key(self, created_on: CivilDate, key: CivilDate) -> Result<(), KinError> {
-        if self.period_key(key) != key || key < self.period_key(created_on) {
+        if key < self.period_key(created_on, created_on) || self.period_key(created_on, key) != key
+        {
             return Err(KinError::InvalidEvent);
         }
         Ok(())
@@ -158,9 +197,13 @@ mod tests {
     fn cadence_codes_are_explicit_and_unknown_values_fail() {
         assert_eq!(Cadence::try_from(0), Ok(Cadence::Daily));
         assert_eq!(Cadence::try_from(1), Ok(Cadence::Weekly));
+        assert_eq!(Cadence::try_from(2), Ok(Cadence::Biweekly));
+        assert_eq!(Cadence::try_from(3), Ok(Cadence::Monthly));
         assert_eq!(Cadence::Daily as u8, 0);
         assert_eq!(Cadence::Weekly as u8, 1);
-        for value in 2..=u8::MAX {
+        assert_eq!(Cadence::Biweekly as u8, 2);
+        assert_eq!(Cadence::Monthly as u8, 3);
+        for value in 4..=u8::MAX {
             assert_eq!(Cadence::try_from(value), Err(KinError::MalformedProtocol));
         }
     }
@@ -172,7 +215,75 @@ mod tests {
         for value in [20240228, 20240229, 20240301, 20241231, 20250101, 99991231] {
             let today = date(value);
             assert_eq!(Cadence::Daily.current_key(created, today), Some(today));
-            assert_eq!(Cadence::Daily.period_key(today), today);
+            assert_eq!(Cadence::Daily.period_key(created, today), today);
+        }
+    }
+
+    #[test]
+    fn biweekly_periods_are_anchored_to_creation_and_span_calendar_boundaries() {
+        let created = date(20240228);
+        assert_eq!(Cadence::Biweekly.current_key(created, date(20240227)), None);
+        for (today, expected) in [
+            (20240228, 20240228),
+            (20240229, 20240228),
+            (20240312, 20240228),
+            (20240313, 20240313),
+            (20241231, 20241218),
+            (20250101, 20250101),
+        ] {
+            assert_eq!(
+                Cadence::Biweekly.current_key(created, date(today)),
+                Some(date(expected)),
+                "{today}"
+            );
+        }
+        assert_eq!(
+            Cadence::Biweekly.validate_key(created, date(20240313)),
+            Ok(())
+        );
+        for invalid in [20240227, 20240312, 20240314] {
+            assert_eq!(
+                Cadence::Biweekly.validate_key(created, date(invalid)),
+                Err(KinError::InvalidEvent)
+            );
+        }
+        assert_eq!(
+            Cadence::Biweekly.current_key(date(99991220), date(99991231)),
+            Some(date(99991220))
+        );
+    }
+
+    #[test]
+    fn monthly_periods_use_calendar_months_and_leap_years() {
+        let created = date(20240131);
+        assert_eq!(Cadence::Monthly.current_key(created, date(20240130)), None);
+        for (today, expected) in [
+            (20240131, 20240101),
+            (20240201, 20240201),
+            (20240229, 20240201),
+            (20240301, 20240301),
+            (20241231, 20241201),
+            (20250101, 20250101),
+        ] {
+            assert_eq!(
+                Cadence::Monthly.current_key(created, date(today)),
+                Some(date(expected)),
+                "{today}"
+            );
+        }
+        assert_eq!(
+            Cadence::Monthly.validate_key(created, date(20240101)),
+            Ok(())
+        );
+        assert_eq!(
+            Cadence::Monthly.validate_key(created, date(20240201)),
+            Ok(())
+        );
+        for invalid in [20231201, 20240202, 20240229] {
+            assert_eq!(
+                Cadence::Monthly.validate_key(created, date(invalid)),
+                Err(KinError::InvalidEvent)
+            );
         }
     }
 

@@ -37,7 +37,18 @@ emulation, 48px controls, reduced motion, forced colors, dark mode, and increase
 text spacing. Page-scale emulation is not native desktop zoom. No screen-reader
 certification is claimed.
 
-**Status:** v0.16.2 Notes UI structurally audited for explicit labels, field-specific errors, keyboard focus restoration, and plain-text Area context. No direct screen-reader certification is claimed; actual assistive-technology testing remains unverified.
+**Status:** v0.17.0 Checklist Steps uses native labeled checkboxes and a labeled short-text form, with an accessible expand/collapse name and progress summary. The browser gate covers keyboard operation, focus restoration, parent-lifecycle disabling, and validation. No direct screen-reader certification is claimed; actual assistive-technology testing remains unverified.
+
+## v0.17.0 Checklist Steps
+
+Each Step is a native checkbox with its text as the associated label. The
+checklist disclosure is a native button exposing `aria-expanded` and a
+per-Item `aria-controls` target; its accessible name includes the visible
+completion count. The add form uses a visible label, native required input,
+bounded plain-text validation, and a submit button. Focus returns to the
+corresponding add input after a successful append. Completed or archived parent
+Items disable Step mutations; state is conveyed by native checked/disabled
+semantics and visible status text, not color alone.
 
 ## v0.15 Household Areas
 
@@ -78,11 +89,12 @@ is not claimed without direct assistive-technology testing.
 Kin should remain usable one-handed on a phone and during interruptions:
 
 - Keep item capture to a short text entry and one clear submit action.
-- Default classification to Needs and expose Today through one labeled native control.
+- Default classification to Needs and expose Today, Shopping, and Staples through one labeled native control.
 - Keep classification label, visible focus, and touch target clear under forced colors and increased text spacing.
 - Minimize typing and avoid mandatory metadata.
 - Keep primary controls stable and easy to reach.
 - Provide accessible names for icon-only controls; prefer a visible text label for unfamiliar actions.
+- Give manual Staples replenishment a visible “Add to Shopping” label and restore focus to that action after persistence.
 - Preserve draft text and communicate failures if an interaction is interrupted where practical.
 - Restore a typed draft after same-tab reload when session storage is available; clear it only after a successful append.
 - Avoid dense administration, tiny hit targets, and layouts that require precise gestures.
@@ -90,7 +102,7 @@ Kin should remain usable one-handed on a phone and during interruptions:
 
 ## v0.1.0 acceptance
 
-Today/Needs capture and complete/reopen/archive controls work with keyboard alone, restore focus after asynchronous updates, announce result/error state, expose a busy state, and remain understandable without color. Release-specific browser evidence and unverified platforms are recorded in the changelog. Mobile usability and accessibility checks are release requirements, not optional polish.
+Today/Needs/Shopping/Staples capture, replenishment, and applicable lifecycle controls work with keyboard alone, restore focus after asynchronous updates, announce result/error state, expose a busy state, and remain understandable without color. Release-specific browser evidence and unverified platforms are recorded in the changelog. Mobile usability and accessibility checks are release requirements, not optional polish.
 
 ## Handoff
 

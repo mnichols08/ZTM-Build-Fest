@@ -1,6 +1,6 @@
 # Roadmap
 
-Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. v0.15.5 is merged into `kin-development` and complete. `kin-v0.16.0` and `kin-v0.16.1` are tagged Notes capability/correctness candidates; PR #26 is the active v0.16.2 resilience/accessibility gate on `kin-v0.16.x-notes`. Tagged candidates are not production certification.
+Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. PR #26 is merged into `kin-development` at `25e854eaa41a569650f89ea41db70a6f2bcb5c92`. The authorized fast-track covers v0.16.3 Notes hardening through v0.20.x Staples & Replenishment; v0.17.0 remains the existing tagged candidate, v0.18.0 Richer Routine Scheduling and v0.19.0 Shared Shopping Lists are implemented candidates, and v0.20.0 Staples & Replenishment is the current candidate. These candidates are not production certification, and no new tags are created on the batch branch.
 
 ```text
 v0.9.3 — Encrypted Event Sync Stabilization
@@ -17,9 +17,17 @@ v0.14.x — UX/UI Consolidation
 	↓
 v0.15.x — Household Areas
 	↓
-v0.16.x — Household Notes & Reference Context
+v0.16.x — Household Notes & Reference Context (v0.16.3 hardening candidate)
 	↓
-v0.17.x–v0.40.x — Remaining October daily features (October 8–31 targets)
+v0.17.0 — Checklist Steps (existing tagged candidate)
+	↓
+v0.18.0 — Richer Routine Scheduling (implementation candidate)
+	↓
+v0.19.x — Shared Shopping Lists (authorized fast-track)
+	↓
+v0.20.x — Staples & Replenishment (authorized fast-track)
+	↓
+v0.21.x–v0.40.x — Remaining October daily features (October 12–31 targets)
 	↓
 v0.41.x–v0.45.x — Undated follow-up proposals
 	↓
@@ -28,11 +36,11 @@ v1.0.0 — Stable Kin Platform (readiness-driven, no fixed date)
 
 Kin supports encrypted local storage, recovery/optional PRF unlock, verified migration, Rust commands/codecs, encrypted archives and a static offline shell alongside opt-in encrypted sync. The v0.11 candidate adds durable server identity/relay state and service database backup/restore. Archives recover local history, not server identity. Independent security review and broader browser/authenticator coverage remain outstanding.
 
-The v0.11 candidate settled service durability before v0.12 lifecycle/deletion. The [v0.11](V0.11.0.md) and [v0.12](V0.12.0.md) records describe candidate evidence; v0.13 Recovery & Household Continuity and v0.14 UX/UI Consolidation are implemented through their `.5` patches. The current authorized line is v0.15 Household Areas.
+The v0.11 candidate settled service durability before v0.12 lifecycle/deletion. The [v0.11](V0.11.0.md) and [v0.12](V0.12.0.md) records describe candidate evidence; v0.13 Recovery & Household Continuity and v0.14 UX/UI Consolidation are implemented through their `.5` patches. v0.15 Household Areas is complete through v0.15.5; v0.16 Notes is complete through v0.16.2 with a v0.16.3 hardening candidate; v0.17 Checklist Steps is preserved as the existing tagged candidate. v0.18 Richer Routine Scheduling and v0.19 Shared Shopping Lists are implemented; v0.20 Staples & Replenishment is the current fast-track candidate.
 
 ## October direction
 
-The goal for Build Fest is to add one small, useful household feature each day in October, supported by the existing product and platform foundations. v0.12.3 passed scripted Windows checks, including both launchers; v0.13 and v0.14 are implemented, v0.15 is in progress, and later daily plans remain targets rather than completion claims. The [daily plan](#october-daily-feature-plan) covers the proposed minor lines through `v0.40.x` on October 31.
+The goal for Build Fest is to add one small, useful household feature each day in October, supported by the existing product and platform foundations. v0.12.3 passed scripted Windows checks, including both launchers; v0.13–v0.16 are implemented through the noted stabilization candidates, v0.17.0 is preserved as the existing tagged candidate, v0.18.0 and v0.19.0 are implemented candidates, and v0.20.0 is the current fast-track candidate. Later daily plans remain targets rather than completion claims. The [daily plan](#october-daily-feature-plan) covers the proposed minor lines through `v0.40.x` on October 31.
 
 > Kin should help a household remember, coordinate, hand off, and recover context without requiring everyone to become a project manager.
 
@@ -291,7 +299,11 @@ Keep the platform work in order: durable service, lifecycle/deletion, recovery a
 | `v0.13.x` | Tagged candidate through `v0.13.5` | [Recovery & Household Continuity](V0.13.0.md) — explicit outcomes for loss of credentials, devices, browser profiles, server data and recovery material. |
 | `v0.14.x` | Complete through `v0.14.5` | [UX/UI Consolidation](V0.14.0.md) — one coherent, accessible presentation of the settled platform and household workflows. |
 | `v0.15.x` | Complete through v0.15.5 | [Household Areas](releases/V0.15.0.md) — optional, bounded place/context without project management. |
-| `v0.16.x` | Current gate: v0.16.2 resilience/accessibility on `kin-v0.16.x-notes`; v0.16.0/.1 tagged candidates | [Household Notes & Reference Context](releases/V0.16.0.md), [v0.16.1](releases/V0.16.1.md), and [v0.16.2](releases/V0.16.2.md) — do not begin v0.16.3 until this gate is complete and verified. |
+| `v0.16.x` | v0.16.3 Notes hardening candidate | [Household Notes & Reference Context](releases/V0.16.0.md), [v0.16.1](releases/V0.16.1.md), [v0.16.2](releases/V0.16.2.md), and [v0.16.3](releases/V0.16.3.md) — concurrent cross-device archives converge; stale rearchives remain rejected. |
+| `v0.17.x` | Complete through the existing v0.17.0 Checklist Steps candidate; preserve its tag | [Checklist Steps](releases/V0.17.0.md). |
+| `v0.18.x` | Authorized fast-track | [Richer Routine Scheduling](releases/V0.18.0.md). |
+| `v0.19.x` | Authorized fast-track | [Shared Shopping Lists](releases/V0.19.0.md). |
+| `v0.20.x` | Authorized fast-track | [Staples & Replenishment](releases/V0.20.0.md). |
 
 The [bridge plan](BRIDGE-0.11-0.16.md) records the dependency order. v0.12–v0.16 occupy October 3–7 in the daily schedule, followed by v0.17 on October 8. Each line requires the preceding gate; only v0.11 must be settled before the first daily target. A release contract is a plan, not evidence of completion.
 
@@ -388,9 +400,9 @@ Through the October plan, preserve the [product principles](PRINCIPLES.md) and [
 
 ## Scope discipline
 
-Each roadmap item is future work unless explicitly marked as implemented. v0.9.3 supplies authentication, pairing and encrypted sync; v0.10.x adds local security, portable commands/codecs and encrypted recovery archives. v0.13.x and v0.14.x are complete through their `.5` patches; v0.15.x is complete through v0.15.5. v0.16.0/.1 are tagged Notes capability/correctness candidates; v0.16.2 is the active resilience/accessibility gate. Do not begin v0.16.3 until it is complete, validated, committed, tagged, pushed, and verified. Later minor lines remain targets and v1.0 readiness-driven. Releases through `v0.0.12` were documentation-only; v0.1.0 was the first coded release.
+Each roadmap item is future work unless explicitly marked as implemented. v0.9.3 supplies authentication, pairing and encrypted sync; v0.10.x adds local security, portable commands/codecs and encrypted recovery archives. v0.13.x and v0.14.x are complete through their `.5` patches; v0.15.x is complete through v0.15.5; the existing v0.17.0 Checklist Steps candidate is preserved. The user authorized v0.16.3 through v0.20.x on `kin-fast-track-v0.16.3-v0.20.x`. Do not create tags on that branch or begin v0.21.x. Later minor lines remain outside this fast-track, and v1.0 remains readiness-driven. Releases through `v0.0.12` were documentation-only; v0.1.0 was the first coded release.
 
-The v0.15.x line is complete through v0.15.5. The current gate is v0.16.2 on `kin-v0.16.x-notes`; v0.16.0/.1 tags remain immutable. Follow the current [agent guidance](../AGENTS.md) and [release process](RELEASES.md); a date alone cannot bypass a release gate.
+Preserve every existing tag. The current batch candidate follows the release gates described in [agent guidance](../AGENTS.md) and the [release process](RELEASES.md); a date alone cannot bypass a release gate.
 
 ## Feedback gate
 

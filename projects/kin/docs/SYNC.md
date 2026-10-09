@@ -1,6 +1,26 @@
 # Synchronization Design
 
-**Status:** v0.15.5 is merged and complete; v0.16.2 preserves the protocol-10 Note sync boundary. Equal-logical-time cross-device update/archive events converge with archive winning. Note title, body, Area name, and semantic Note kind remain inside encrypted event payloads; no plaintext Note server metadata is added. Existing authority, outbox, and opaque relay behavior is unchanged.
+**Status:** v0.20.0 preserves the existing encrypted-sync boundary for reusable Staples and manual Shopping replenishment, while v0.17.0 Step events retain their established behavior. Staple names and Item semantics remain inside encrypted canonical event payloads; no plaintext metadata, inventory state, or new authority is added.
+
+## v0.20.0 Staples & Replenishment
+
+Staple definitions and ordinary Shopping Items are canonical Item events and
+remain inside the existing encrypted local/sync/archive boundaries. Manual
+replenishment appends a separate Shopping Item with copied text; it does not
+create inventory state, a source relationship, or a server-side operation.
+Offline capture, retry, synchronization, and archive import/export continue
+through the existing event adapters. Protocol 14 is required to replay
+Staples; protocol 13 remains compatible with Shopping-only history.
+
+## v0.17.0 Checklist Steps
+
+Step events use the existing encrypted canonical-event envelope and can be
+created offline. Local append and retry preserve the generated Step ID; after
+sync, deterministic Rust replay uses the parent Item ID and stable Step ID.
+Equal-logical-time archive versus completion/reopen from distinct devices
+converges to archived. A same-time parent Item archive suppresses Step
+mutations. Revocation and epoch rotation continue to govern access to the
+complete event stream; Steps add no server interpretation or authority.
 
 ## v0.15.0 Areas
 

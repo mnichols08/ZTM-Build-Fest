@@ -117,6 +117,75 @@ fn every_command_has_a_lossless_canonical_roundtrip() {
 }
 
 #[test]
+fn richer_routine_creation_requires_protocol_v12() {
+    let command = C::CreateRoutine {
+        id: RoutineId([9; 16]),
+        text: "Replace water filter".into(),
+        cadence: Cadence::Monthly,
+        created_on: CivilDate::from_encoded(20261003).unwrap(),
+    };
+    assert_eq!(
+        execute(&command, context(1), request(vec![])).unwrap_err(),
+        KinError::UnsupportedVersion
+    );
+
+    let mut compatible = request(vec![]);
+    compatible.protocol_version = 12;
+    let result = execute(&command, context(1), compatible).unwrap();
+    assert_eq!(result.projection.routines[0].cadence, Cadence::Monthly);
+    assert_eq!(&result.encoded_projection[..4], b"KINS");
+    assert_eq!(&result.encoded_projection[4..6], &[12, 0]);
+}
+
+#[test]
+fn shopping_items_require_protocol_v13() {
+    let command = C::AddItem {
+        id: ItemId([9; 16]),
+        text: "Buy wipes".into(),
+        classification: ItemClassification::Shopping,
+    };
+    assert_eq!(
+        execute(&command, context(1), request(vec![])).unwrap_err(),
+        KinError::UnsupportedVersion
+    );
+
+    let mut compatible = request(vec![]);
+    compatible.protocol_version = 13;
+    let result = execute(&command, context(1), compatible).unwrap();
+    assert_eq!(
+        result.projection.items[0].classification,
+        ItemClassification::Shopping
+    );
+    assert_eq!(&result.encoded_projection[..4], b"KINS");
+    assert_eq!(&result.encoded_projection[4..6], &[13, 0]);
+}
+
+#[test]
+fn staple_items_require_protocol_v14() {
+    let command = C::AddItem {
+        id: ItemId([10; 16]),
+        text: "Laundry detergent".into(),
+        classification: ItemClassification::Staple,
+    };
+    let mut older = request(vec![]);
+    older.protocol_version = 13;
+    assert_eq!(
+        execute(&command, context(1), older).unwrap_err(),
+        KinError::UnsupportedVersion
+    );
+
+    let mut compatible = request(vec![]);
+    compatible.protocol_version = 14;
+    let result = execute(&command, context(1), compatible).unwrap();
+    assert_eq!(
+        result.projection.items[0].classification,
+        ItemClassification::Staple
+    );
+    assert_eq!(&result.encoded_projection[..4], b"KINS");
+    assert_eq!(&result.encoded_projection[4..6], &[14, 0]);
+}
+
+#[test]
 fn codec_preserves_legacy_schema_one_and_rejects_lossy_schema() {
     let mut event = create_event(&add(), context(1)).unwrap();
     event.event_version = 1;

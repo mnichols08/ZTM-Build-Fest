@@ -5,10 +5,23 @@ class KinToday extends HTMLElement {
     this.areaRecords = [];
     this.isDisabled = false;
     this.display = "all";
+    this.expandedSteps = new Set();
+    this.onToggleSteps = (event) => {
+      const { itemId } = event.detail;
+      if (this.expandedSteps.has(itemId)) this.expandedSteps.delete(itemId);
+      else this.expandedSteps.add(itemId);
+      this.pendingFocus = this.captureFocus();
+      this.render();
+    };
   }
 
   connectedCallback() {
+    this.addEventListener("kin:toggle-item-steps", this.onToggleSteps);
     this.render();
+  }
+
+  disconnectedCallback() {
+    this.removeEventListener("kin:toggle-item-steps", this.onToggleSteps);
   }
 
   set items(value) {
@@ -26,6 +39,9 @@ class KinToday extends HTMLElement {
     for (const item of this.querySelectorAll("kin-item")) {
       item.disabled = this.isDisabled;
     }
+    for (const control of this.querySelectorAll("button, input, select")) {
+      control.disabled = this.isDisabled || control.dataset.domainDisabled === "true";
+    }
     if (!this.isDisabled && this.deferredFocus?.isConnected) {
       const target = this.deferredFocus;
       this.deferredFocus = null;
@@ -39,6 +55,8 @@ class KinToday extends HTMLElement {
     const sections = [
       ["today", "Today"],
       ["need", "Needs"],
+      ["shopping", "Shopping"],
+      ["staple", "Staples"],
     ].filter(([classification]) => this.display === "all" || classification === this.display)
       .map(([classification, title]) => {
       const section = document.createElement("section");
@@ -111,11 +129,20 @@ class KinToday extends HTMLElement {
         return;
       }
     }
-    const buttons = [...this.querySelectorAll("kin-item button[data-item-id]")];
-    const sameItem = buttons.filter((button) => button.dataset.itemId === focus.itemId);
-    const target = sameItem.find((button) => button.dataset.itemAction === focus.action)
+    const controls = [...this.querySelectorAll("kin-item [data-item-id]")];
+    const sameItem = controls.filter((control) => control.dataset.itemId === focus.itemId);
+    const replacementAction = {
+      complete: "reopen",
+      reopen: "complete",
+      "archive-item-step": "toggle-step",
+    }[focus.action];
+    const target = sameItem.find((control) => control.dataset.itemAction === focus.action)
+      ?? (replacementAction
+        ? sameItem.find((control) => control.dataset.itemAction === replacementAction)
+        : null)
+      ?? sameItem.find((control) => control.dataset.itemAction === "add-step")
       ?? sameItem[0]
-      ?? buttons[Math.min(Math.max(0, focus.index), buttons.length - 1)];
+      ?? controls[Math.min(Math.max(0, focus.index), controls.length - 1)];
     const next = target ?? this.querySelector(".today-section h2");
     if (next?.disabled) this.deferredFocus = next;
     else next?.focus();
@@ -129,6 +156,7 @@ class KinToday extends HTMLElement {
       const item = document.createElement("kin-item");
       item.item = record;
       item.areaOptions = this.areaRecords;
+      item.checklistExpanded = this.expandedSteps.has(record.itemId);
       item.disabled = this.isDisabled;
       listItem.append(item);
       list.append(listItem);

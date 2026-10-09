@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** v0.15.5 is merged and complete; v0.16.2 is the current Notes resilience/accessibility gate. Rust owns Note validation, canonical events, replay and projection through additive protocol 10. JavaScript mirrors the title/body constraints for early form feedback while Rust remains authoritative. Equal-time cross-device update/archive conflicts converge to the terminal archive. No IndexedDB or server schema change is required.
+**Status:** v0.20.0 adds reusable Staples as an Item classification through additive protocol 14. Manual replenishment creates an ordinary Shopping Item. Canonical Item events, deterministic Rust/WASM replay, encrypted local persistence, encrypted sync, and archive adapters remain authoritative; browser code supplies the lists and user-triggered action. No IndexedDB, server, sync-envelope, event-shape, or archive-container schema change is required.
 
 ## v0.10 implementation boundary
 
@@ -120,7 +120,7 @@ Rust owns deterministic domain behavior:
 
 - Household event model and event validation
 - State transitions and reconstruction by replay
-- Implemented Daily/Weekly recurrence with explicit civil-date context
+- Implemented Daily/Weekly/biweekly/monthly recurrence with explicit civil-date context
 - Diffing and useful search/indexing where justified
 - Distributed v8 event ordering and deterministic domain replay
 
@@ -205,6 +205,12 @@ Pulse adds Rust rebuild_at(events, as_of). Timers request canonical reprojection
 
 Rust protocol v6 derives structured summary entries and the exact through-event boundary from the ordered canonical stream plus an optional stable event-ID cursor. IndexedDB local_sequence remains browser-only. Browser local_context holds the installation cursor; no summary view or acknowledgement is a household event. See [V0.6.0](V0.6.0.md).
 
-## v0.7.0 Routines
+## v0.7.0 Routines and v0.18.0 Richer Scheduling
 
-Rust derives Daily/Weekly periods from validated explicit civil dates, alongside as_of for Pulse. JS obtains local year/month/day from one browser clock sample; timers only request replay. Inside occurrence append transactions, JS compares the frozen intent key with Rust’s fresh canonical current key before candidate replay. This is identity checking, not a browser recurrence reducer. See [V0.7.0](V0.7.0.md).
+Rust derives Daily, Monday-start Weekly, creation-date-anchored every-two-weeks,
+and calendar-month periods from validated explicit civil dates, alongside
+as_of for Pulse. JS obtains local year/month/day from one browser clock sample;
+timers only request replay. Inside occurrence append transactions, JS compares
+the frozen intent key with Rust’s fresh canonical current key before candidate
+replay. This is identity checking, not a browser recurrence reducer. See
+[V0.7.0](V0.7.0.md) and [V0.18.0](releases/V0.18.0.md).

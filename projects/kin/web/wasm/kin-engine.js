@@ -1,4 +1,4 @@
-const PROTOCOL_VERSION = 10;
+const PROTOCOL_VERSION = 14;
 const REQUEST_HEADER_BYTES = 64;
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 const PULSE_VALUES = ["good", "okay", "drained", "rough-day", "need-quiet"];
@@ -7,6 +7,9 @@ const ITEM_HEADER_BYTES = 48;
 const MAX_EVENT_COUNT = 10_000;
 const MAX_PROTOCOL_BYTES = 64 * 1024 * 1024;
 const MAX_ITEM_TEXT_BYTES = 4096;
+const MAX_STEP_TEXT_BYTES = 256;
+const MAX_STEP_TEXT_CHARS = 80;
+const MAX_STEPS_PER_ITEM = 16;
 const MAX_SUMMARY_ENTRIES = 8;
 const SUMMARY_KINDS = [
   "",
@@ -198,6 +201,24 @@ function assertCivilDate(value) {
   }
 }
 
+function civilOrdinal(value) {
+  const year = Math.floor(value / 10000);
+  const month = Math.floor(value / 100) % 100;
+  const previousYear = year - 1;
+  let days =
+    365 * previousYear +
+    Math.floor(previousYear / 4) -
+    Math.floor(previousYear / 100) +
+    Math.floor(previousYear / 400);
+  const monthLengths = [
+    31,
+    year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28,
+    31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+  ];
+  for (let index = 0; index < month - 1; index += 1) days += monthLengths[index];
+  return days + (value % 100) - 1;
+}
+
 export function idFromHex(value) {
   if (typeof value !== "string" || !/^[0-9a-fA-F]{32}$/.test(value)) {
     throw new KinEngineError(4, "Kin received an invalid household reference.");
@@ -281,6 +302,10 @@ const COMMAND_TYPES = [
   "create-note",
   "update-note",
   "archive-note",
+  "add-item-step",
+  "complete-item-step",
+  "reopen-item-step",
+  "archive-item-step",
 ];
 const EVENT_KINDS = [
   null,
@@ -308,6 +333,10 @@ const EVENT_KINDS = [
   "NOTE_CREATED",
   "NOTE_UPDATED",
   "NOTE_ARCHIVED",
+  "ITEM_STEP_ADDED",
+  "ITEM_STEP_COMPLETED",
+  "ITEM_STEP_REOPENED",
+  "ITEM_STEP_ARCHIVED",
 ];
 
 function encodeIntent(type, value) {
@@ -324,6 +353,19 @@ function encodeIntentPacket(command, identity) {
     throw new KinEngineError(2, "Kin received an invalid household action.");
   const hasText = [1, 5, 8, 14, 18, 19].includes(kind);
   const text = hasText ? (command.name ?? command.text) : "";
+  const stepText = kind === 25 ? textEncoder.encode(command.text ?? "") : null;
+  if (
+    kind === 25 &&
+    (typeof command.text !== "string" ||
+      strictTextDecoder.decode(stepText) !== command.text ||
+      command.text.trim() !== command.text ||
+      [...command.text].length < 1 ||
+      [...command.text].length > MAX_STEP_TEXT_CHARS ||
+      stepText.length > MAX_STEP_TEXT_BYTES ||
+      [...command.text].some((character) => /\p{Cc}/u.test(character)))
+  ) {
+    throw new KinEngineError(2, "Step text must be short plain text.");
+  }
   const noteTitle = kind === 22 || kind === 23 ? textEncoder.encode(command.title ?? "") : null;
   const noteBody = kind === 22 || kind === 23 ? textEncoder.encode(command.body ?? "") : null;
   if ((kind === 22 || kind === 23) && (typeof command.title !== "string" || typeof command.body !== "string" || strictTextDecoder.decode(noteTitle) !== command.title || strictTextDecoder.decode(noteBody) !== command.body || noteTitle.length > 256 || noteBody.length > 4096))
@@ -341,7 +383,17 @@ function encodeIntentPacket(command, identity) {
       "Text must be valid Unicode and no more than 4096 UTF-8 bytes.",
     );
   }
-  const packet = new Uint8Array(128 + (kind === 21 ? 16 : kind === 22 || kind === 23 ? 24 + noteTitle.length + noteBody.length : textBytes.length));
+  const stepAction = kind >= 25 && kind <= 28;
+  const packet = new Uint8Array(
+    128 +
+      (kind === 21 || (stepAction && kind !== 25)
+        ? 16
+        : kind === 25
+          ? 16 + stepText.length
+          : kind === 22 || kind === 23
+            ? 24 + noteTitle.length + noteBody.length
+            : textBytes.length),
+  );
   packet.set([75, 67, 77, 68, 1, 0, 0, 0]);
   const view = new DataView(packet.buffer);
   view.setUint16(8, kind, true);
@@ -366,6 +418,7 @@ function encodeIntentPacket(command, identity) {
   view.setBigUint64(84, logicalTime, true);
   if (![12, 13].includes(kind)) {
     const entity =
+      command.stepId ??
       command.itemId ??
       command.handoffId ??
       command.talkId ??
@@ -385,7 +438,7 @@ function encodeIntentPacket(command, identity) {
     view.setUint32(108, date, true);
   }
   if (kind === 1) {
-    const code = ["today", "need"].indexOf(command.classification ?? "need");
+    const code = ["today", "need", "shopping", "staple"].indexOf(command.classification ?? "need");
     if (code < 0) throw new KinEngineError(2, "Choose a valid list.");
     packet[112] = code;
   } else if (kind === 12) {
@@ -395,7 +448,7 @@ function encodeIntentPacket(command, identity) {
     assertTimestamp(command.expiresAt);
     view.setBigInt64(116, BigInt(command.expiresAt), true);
   } else if (kind === 14) {
-    const code = ["daily", "weekly"].indexOf(command.cadence);
+    const code = ["daily", "weekly", "biweekly", "monthly"].indexOf(command.cadence);
     if (code < 0) throw new KinEngineError(2, "Choose a valid cadence.");
     packet[112] = code;
   }
@@ -406,6 +459,13 @@ function encodeIntentPacket(command, identity) {
     view.setUint32(124, 24 + noteTitle.length + noteBody.length, true);
   } else if (kind === 21) {
     packet.set(command.areaId ? idFromHex(command.areaId) : new Uint8Array(16), 128);
+    view.setUint32(124, 16, true);
+  } else if (kind === 25) {
+    packet.set(idFromHex(command.itemId), 128);
+    packet.set(stepText, 144);
+    view.setUint32(124, 16 + stepText.length, true);
+  } else if (stepAction) {
+    packet.set(idFromHex(command.itemId), 128);
     view.setUint32(124, 16, true);
   } else {
     view.setUint32(124, textBytes.length, true);
@@ -811,13 +871,13 @@ function decodeState(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const protocolVersion = view.getUint16(4, true);
   if (
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10].includes(protocolVersion) ||
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].includes(protocolVersion) ||
     view.getUint16(6, true) !== 0
   ) {
     throw new KinEngineError(6, "Kin received an unsupported state format.");
   }
   const resultHeaderBytes =
-    protocolVersion >= 10 ? 64 : protocolVersion >= 9
+    protocolVersion >= 11 ? 68 : protocolVersion >= 10 ? 64 : protocolVersion >= 9
       ? 60
       : protocolVersion >= 7
       ? 56
@@ -840,6 +900,7 @@ function decodeState(bytes) {
   const routineCount = protocolVersion >= 7 ? view.getUint32(52, true) : 0;
   const areaCount = protocolVersion >= 9 ? view.getUint32(56, true) : 0;
   const noteCount = protocolVersion >= 10 ? view.getUint32(60, true) : 0;
+  const stepCount = protocolVersion >= 11 ? view.getUint32(64, true) : 0;
   const summaryCount = protocolVersion >= 6 ? view.getUint32(24, true) : 0;
   const summaryTotalCount = protocolVersion >= 6 ? view.getUint32(28, true) : 0;
   const summaryThroughPresent = protocolVersion >= 6 ? view.getUint8(32) : 0;
@@ -864,8 +925,12 @@ function decodeState(bytes) {
     throw new KinEngineError(6, "Kin received invalid summary metadata.");
   }
   if (
-    areaCount > 32 || noteCount > 128 || itemCount + handoffCount + talkCount + pulseCount + routineCount + noteCount >
-    MAX_EVENT_COUNT
+    areaCount > 32 ||
+    noteCount > 128 ||
+    stepCount > MAX_EVENT_COUNT ||
+    stepCount > itemCount * MAX_STEPS_PER_ITEM ||
+    itemCount + handoffCount + talkCount + pulseCount + routineCount + noteCount >
+      MAX_EVENT_COUNT
   ) {
     throw new KinEngineError(
       6,
@@ -893,7 +958,7 @@ function decodeState(bytes) {
           view.getUint8(offset + 41) === 0 &&
           view.getUint8(offset + 42) === 0 &&
           view.getUint8(offset + 43) === 0
-        : classificationCode <= 1 &&
+        : classificationCode <= (protocolVersion >= 14 ? 3 : protocolVersion >= 13 ? 2 : 1) &&
           statusCode <= 2 &&
           view.getUint8(offset + 42) === 0 &&
           view.getUint8(offset + 43) === 0;
@@ -930,9 +995,12 @@ function decodeState(bytes) {
       createdBy: idToHex(bytes.subarray(offset + 16, offset + 32)),
       createdAt: createdAtNumber,
       classification:
-        protocolVersion === 1 || classificationCode === 0 ? "today" : "need",
+        protocolVersion === 1
+          ? "today"
+          : ["today", "need", "shopping", "staple"][classificationCode],
       status: ["active", "completed", "archived"][statusCode],
       ...(protocolVersion >= 9 ? { areaId: null } : {}),
+      ...(protocolVersion >= 11 ? { steps: [] } : {}),
       text,
     });
     offset = recordEnd;
@@ -1066,7 +1134,8 @@ function decodeState(bytes) {
       length < 1 ||
       length > 4096 ||
       end > bytes.length ||
-      cadence > 1 ||
+      cadence > 3 ||
+      (protocolVersion < 12 && cadence > 1) ||
       status > 1 ||
       occurrence > 2 ||
       bytes[offset + 51] !== 0 ||
@@ -1098,6 +1167,16 @@ function decodeState(bytes) {
           d.getUTCDate();
         if (endKey < createdOn) throw new Error();
       }
+      if (
+        key &&
+        cadence === 2 &&
+        (key < createdOn || (civilOrdinal(key) - civilOrdinal(createdOn)) % 14 !== 0)
+      ) throw new Error();
+      if (
+        key &&
+        cadence === 3 &&
+        (key % 100 !== 1 || key < Math.floor(createdOn / 100) * 100 + 1)
+      ) throw new Error();
       text = strictTextDecoder.decode(bytes.subarray(headerEnd, end));
     } catch {
       throw new KinEngineError(6, "Kin received invalid routine fields.");
@@ -1108,7 +1187,7 @@ function decodeState(bytes) {
       createdBy: idToHex(bytes.subarray(offset + 16, offset + 32)),
       createdAt,
       createdOn,
-      cadence: ["daily", "weekly"][cadence],
+      cadence: ["daily", "weekly", "biweekly", "monthly"][cadence],
       status: ["active", "archived"][status],
       occurrenceKey: key || null,
       occurrenceStatus: ["unavailable", "open", "completed"][occurrence],
@@ -1156,6 +1235,52 @@ function decodeState(bytes) {
     noteIds.add(noteId); offset = end;
   }
   if (notes.some((note) => note.areaId && !areaIds.has(note.areaId))) throw new KinEngineError(6, "Kin received a Note with an unknown Area.");
+  if (protocolVersion >= 11) {
+    const itemById = new Map(items.map((item) => [item.itemId, item]));
+    const stepIds = new Set();
+    for (let index = 0; index < stepCount; index += 1) {
+      const headerEnd = offset + 40;
+      if (headerEnd > bytes.length)
+        throw new KinEngineError(6, "Kin received a truncated Step.");
+      const itemId = idToHex(bytes.subarray(offset, offset + 16));
+      const stepId = idToHex(bytes.subarray(offset + 16, offset + 32));
+      const completed = bytes[offset + 32];
+      const archived = bytes[offset + 33];
+      const textLength = view.getUint32(offset + 36, true);
+      const end = headerEnd + textLength;
+      const item = itemById.get(itemId);
+      if (
+        !item ||
+        stepId === "00".repeat(16) ||
+        stepIds.has(stepId) ||
+        item.steps.length >= MAX_STEPS_PER_ITEM ||
+        completed > 1 ||
+        archived > 1 ||
+        bytes.subarray(offset + 34, offset + 36).some(Boolean) ||
+        textLength < 1 ||
+        textLength > MAX_STEP_TEXT_BYTES ||
+        end > bytes.length
+      ) {
+        throw new KinEngineError(6, "Kin received an invalid Step.");
+      }
+      let text;
+      try {
+        text = strictTextDecoder.decode(bytes.subarray(headerEnd, end));
+      } catch {
+        throw new KinEngineError(6, "Kin received invalid Step text.");
+      }
+      if (
+        text.trim() !== text ||
+        [...text].length > MAX_STEP_TEXT_CHARS ||
+        [...text].some((character) => /\p{Cc}/u.test(character))
+      ) {
+        throw new KinEngineError(6, "Kin received invalid Step text.");
+      }
+      stepIds.add(stepId);
+      item.steps.push({ stepId, text, completed: completed === 1, archived: archived === 1 });
+      offset = end;
+    }
+  }
   const summaryEntries = [];
   const entityNames = ["", "item", "handoff", "talk", "routine"];
   for (let index = 0; index < summaryCount; index += 1) {
@@ -1179,7 +1304,9 @@ function decodeState(bytes) {
               ? 4
               : 0;
     const validClassification =
-      kindCode === 1 ? classificationCode <= 1 : classificationCode === 255;
+      kindCode === 1
+        ? classificationCode <= (protocolVersion >= 14 ? 3 : protocolVersion >= 13 ? 2 : 1)
+        : classificationCode === 255;
     if (
       end > bytes.length ||
       kindCode === 0 ||
@@ -1208,7 +1335,11 @@ function decodeState(bytes) {
           ? null
           : classificationCode === 0
             ? "today"
-            : "need",
+            : classificationCode === 1
+              ? "need"
+              : classificationCode === 2
+                ? "shopping"
+                : "staple",
     });
     offset = end;
   }

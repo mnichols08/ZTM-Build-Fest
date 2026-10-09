@@ -107,13 +107,28 @@ without reviving revoked authority; no server content-key escrow is permitted.
 The v0.14.x UX/UI Consolidation line is complete through `kin-v0.14.5` on
 `kin-development`. v0.15.5 is merged into `kin-development`; annotated
 `kin-v0.15.5` is complete at `12da21288252a9559da5b3acb8eb3efb81aaeec3`.
-The user reviewed PR #26 and authorized the v0.16.2 Notes resilience and
-accessibility fixes on branch `kin-v0.16.x-notes`; preserve the existing
-annotated `kin-v0.16.0` and `kin-v0.16.1` tags unchanged. Current gate: v0.16.2.
-Do not begin v0.16.3 until v0.16.2 is complete, validated, committed, tagged,
-pushed, and verified. Preserve the
-v0.13.5 recovery authority guarantees and all earlier
-security/domain contracts.
+PR #26 is merged into `kin-development` at
+`25e854eaa41a569650f89ea41db70a6f2bcb5c92`. Preserve the immutable annotated
+`kin-v0.16.0`, `kin-v0.16.1`, and `kin-v0.16.2` tags. The user explicitly
+authorized `v0.17.0 — Checklist Steps`; implementation and validation are
+complete on `kin-v0.17.x-checklist-steps`, with its existing tag preserved.
+This candidate is not production certification. The user authorized the
+v0.16.3-v0.20.x fast-track on
+`kin-fast-track-v0.16.3-v0.20.x`. The v0.16.3 Notes hardening commit is
+`6a59070`; it makes concurrent cross-device Note archives converge while
+rejecting stale rearchives. The existing v0.17.0 Checklist Steps commit/tag is
+preserved unchanged. v0.18.0 Richer Routine Scheduling is implemented and
+validated on the fast-track branch with protocol 12 and bounded
+creation-anchored biweekly/calendar-month cadence. v0.19.0 Shared Shopping
+Lists (`kin-v0.19.0` candidate) adds Shopping classification under protocol
+13. The current v0.20.0 Staples & Replenishment (`kin-v0.20.0` candidate)
+adds reusable Staples under protocol 14 with user-triggered transfer to
+Shopping.
+Continue the authorized sequence through v0.20.x; do not start v0.21.x. Do not
+create tags on the batch branch. After human review and
+merge, tags may be attached to the preserved milestone commits. These are
+implementation candidates, not production certification. Preserve the v0.13.5
+recovery authority guarantees and all earlier security/domain contracts.
 
 Kin's last published release is `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. The v0.11.x–v0.15.x lines are tagged or in-progress implementation candidates, not production certification. Preserve every existing tag exactly. Root replacement follows [ROOT-ROTATION](docs/ROOT-ROTATION.md); archive recovery remains intentionally local-only and KARC v1 remains supported. The [forward roadmap](docs/ROADMAP.md) targets one minor line per day through v0.40, with v0.41–v0.45 as undated follow-ups and v1.0 dependent on readiness. No production certification, mobile readiness or independent audit is claimed. Do not automatically merge to kin-main. See the release records for actual evidence and limitations.
 
@@ -1027,8 +1042,12 @@ v0.12.x — Data Lifecycle, Retention & Deletion (v0.12.3 candidate; release gat
 v0.13.x — Recovery & Household Continuity (complete through v0.13.5)
 v0.14.x — UX/UI Consolidation (complete through v0.14.5)
 v0.15.x — Household Areas (complete through v0.15.5)
-v0.16.x — Household Notes & Reference Context (v0.16.2 resilience/accessibility gate; branch kin-v0.16.x-notes)
-v0.17.x–v0.40.x — Incremental household capabilities, portability and device migration (October targets)
+v0.16.x — Household Notes & Reference Context (v0.16.3 hardening candidate)
+v0.17.0 — Checklist Steps (existing tagged candidate)
+v0.18.x — Richer Routine Scheduling (authorized fast-track)
+v0.19.x — Shared Shopping Lists (authorized fast-track)
+v0.20.x — Staples & Replenishment (authorized fast-track)
+v0.21.x–v0.40.x — Incremental household capabilities, portability and device migration (October targets)
 v0.41.x–v0.45.x — Recovery drills, platform validation, performance and release-candidate readiness (undated follow-ups)
 v1.0.0 — Stable Kin Platform (planned, readiness-driven)
 ```
@@ -1146,6 +1165,7 @@ kin-v0.15.5
 kin-v0.16.0
 kin-v0.16.1
 kin-v0.16.2
+kin-v0.17.0
 kin-v1.0.0
 ```
 

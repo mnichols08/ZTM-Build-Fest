@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** v0.15.0–v0.15.4 are complete; v0.15.5 is the current PR candidate. v0.10 added portable commands, metadata and archive operations. Protocol 9 adds Areas without changing earlier event bytes or protocol layouts. Earlier version sections are historical contracts.
+**Status:** v0.20.0 adds protocol 14 as an additive Staples-classification compatibility gate while preserving earlier layouts and canonical event bytes. Protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
 
 ## Target and exports
 
@@ -116,7 +116,7 @@ size  field
 N     text bytes
 ```
 
-Items remain serialized in original add-event order, including archived tombstones so the caller can make a filtered view without becoming a reducer. The browser hides archived items from ordinary lists. Protocol v7 is the current browser writer; see the additive contracts below. `KERR` retains the v1 header/version and stable numeric error codes across all supported request protocol versions.
+Items remain serialized in original add-event order, including archived tombstones so the caller can make a filtered view without becoming a reducer. The browser hides archived items from ordinary lists. Protocol 13 is the current browser writer; see the additive contracts below. `KERR` retains the v1 header/version and stable numeric error codes across all supported request protocol versions.
 
 ## Ownership and lifetime
 
@@ -225,6 +225,70 @@ codec capability when owned by that engine, and drops the instance reference.
 A disposed engine rejects replay and commands. Startup/lock ordering belongs to
 the security shell; Rust does not manufacture authentication from a boolean.
 
+## Protocol 11 — Checklist Steps
+
+Protocol 11 preserves the protocol-10 64-byte `KINE` request header and
+88-byte canonical event envelope. It adds schema-1 event kinds 25–28:
+`ITEM_STEP_ADDED`, `ITEM_STEP_COMPLETED`, `ITEM_STEP_REOPENED`, and
+`ITEM_STEP_ARCHIVED`. Protocols 1–10 retain their request/result layouts and
+reject these events.
+
+The protocol-11 `KINS` header is 68 bytes, adding `step_count:u32` at offset
+64 after the Notes count. After the existing Item/Handoff/Talk/Pulse,
+summary, per-Item Area IDs, Routines, Areas, and Notes sections, each Step is
+serialized as a 40-byte fixed header followed by strict UTF-8 text:
+
+```text
+16  parent Item ID
+16  Step ID
+1   completed (0 or 1)
+1   archived (0 or 1)
+2   reserved = 0
+4   text length in bytes
+N   text bytes (1–80 Unicode scalar values, <=256 UTF-8 bytes)
+```
+
+Records are grouped by parent Item in Item creation order and retain Step
+creation order within each parent. Count and total protocol bounds are
+validated; Step records are not included in the existing entity-count header.
+An old history emits zero Steps. Attempting to encode a projection containing
+Steps with a protocol before 11 fails closed.
+
+## Protocol 12 — Richer Routine Scheduling
+
+Protocol 12 preserves the protocol-11 64-byte `KINE` request header,
+88-byte canonical event envelope, 68-byte `KINS` result header, and all
+existing result sections. It adds no event kinds and changes no canonical
+event payload bytes. `ROUTINE_CREATED` cadence values 0 (Daily) and 1
+(Monday-start Weekly) retain their meaning; values 2 (creation-date-anchored
+every two weeks) and 3 (calendar Monthly) are supported only by protocol 12.
+Protocols 1–11 reject those newer cadence values instead of projecting
+misleading state. Protocol 12 reads existing histories without migration.
+
+## Protocol 13 — Shared Shopping Lists
+
+Protocol 13 preserves the protocol-12 request and result headers, sections,
+and canonical event envelope. Schema-v2 `ITEM_ADDED` retains its classification
+byte and payload size; code 2 now identifies Shopping (codes 0/1 remain Today
+and Needs). The Item result and catch-up summary classification fields use the
+same code. Protocols 1–12 reject code 2 in events and reject projections or
+summaries containing Shopping rather than returning incomplete state.
+Protocols 1–12 retain their prior behavior for Today/Needs-only history.
+No event kind, storage, archive, or encrypted sync-envelope migration is
+introduced.
+
+## Protocol 14 — Staples & Replenishment
+
+Protocol 14 preserves the protocol-13 request and result headers, sections,
+and canonical event envelope. Schema-v2 `ITEM_ADDED` retains its classification
+byte and payload size; code 3 identifies a reusable Staple (codes 0–2 remain
+Today, Needs, and Shopping). Item result and catch-up summary classification
+fields use the same code. Protocols 1–13 reject code 3 in events and reject
+Staple-bearing projections or summaries rather than returning incomplete
+state. Protocol 13 continues to carry Shopping; older supported data retains
+its prior layout and behavior. No event kind, storage, archive, or encrypted
+sync-envelope migration is introduced.
+
 ### KCMD v1 intent transport
 
 This is an independent command transport, not the canonical event layout. JS
@@ -236,7 +300,7 @@ constructs canonical payloads and validates command semantics.
 | 0      | 4     | `KCMD`                                                              |
 | 4      | 2     | Command transport version = 1                                       |
 | 6      | 2     | Reserved zero                                                       |
-| 8      | 2     | Action code (1�17, corresponding to the documented domain actions)  |
+| 8      | 2     | Action code (domain action code)                                   |
 | 10     | 2     | Reserved zero                                                       |
 | 12     | 16    | Supplied event ID                                                   |
 | 28     | 16    | Authorized household ID                                             |
@@ -249,11 +313,20 @@ constructs canonical payloads and validates command semantics.
 | 112    | 1     | Item classification, Pulse value or Routine cadence; zero otherwise |
 | 113    | 3     | Reserved zero                                                       |
 | 116    | 8     | Pulse expiration:i64; zero otherwise                                |
-| 124    | 4     | UTF-8 text length; zero for noncapture actions                      |
-| 128    | N     | Text, only for Item/Handoff/Talk/Routine creation                   |
+| 124    | 4     | Payload length; zero for no-payload actions                         |
+| 128    | N     | Action payload                                                      |
+
+For `AddItem`, the byte at offset 112 is 0 for Today, 1 for Needs, 2 for
+Shopping, or 3 for Staples. Code 2 requires protocol 13 or later; code 3
+requires protocol 14 or later. Older protocol requests fail closed.
 
 IDs and time are explicit browser capabilities. Capture commands use a supplied
-random entity ID. Noncapture commands use the referenced entity ID. All unused
+random entity ID. Noncapture commands use the referenced entity ID. Step
+commands reuse the entity-ID field for `StepId`; their payload begins with the
+parent `ItemId` (16 bytes), followed for add by the UTF-8 Step text. Add payload
+length is `16 + text_bytes`; complete/reopen/archive payload length is exactly
+16. This keeps command transport distinct from the canonical event payload.
+All unused
 fields, reserved bytes, schema/enum/date/length values and strict UTF-8 are
 validated. The native `HouseholdCommand` separates household intent from browser
 identity/pairing operations. `execute` validates the existing corpus first,

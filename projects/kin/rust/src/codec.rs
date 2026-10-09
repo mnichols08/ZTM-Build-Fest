@@ -29,6 +29,10 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::NoteCreated { .. } => 22,
         EventKind::NoteUpdated { .. } => 23,
         EventKind::NoteArchived { .. } => 24,
+        EventKind::ItemStepAdded { .. } => 25,
+        EventKind::ItemStepCompleted { .. } => 26,
+        EventKind::ItemStepReopened { .. } => 27,
+        EventKind::ItemStepArchived { .. } => 28,
     }
 }
 
@@ -54,7 +58,12 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             payload.extend_from_slice(&item_id.0);
             if event.event_version == 2 {
                 payload.extend_from_slice(&[
-                    u8::from(*classification == ItemClassification::Need),
+                    match classification {
+                        ItemClassification::Today => 0,
+                        ItemClassification::Need => 1,
+                        ItemClassification::Shopping => 2,
+                        ItemClassification::Staple => 3,
+                    },
                     0,
                     0,
                     0,
@@ -132,6 +141,22 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             payload.extend_from_slice(body.as_bytes());
         }
         EventKind::NoteArchived { note_id } => payload.extend_from_slice(&note_id.0),
+        EventKind::ItemStepAdded {
+            item_id,
+            step_id,
+            text,
+        } => {
+            let text = crate::state::normalize_step_text(text)?;
+            payload.extend_from_slice(&item_id.0);
+            payload.extend_from_slice(&step_id.0);
+            push_text(&mut payload, &text)?;
+        }
+        EventKind::ItemStepCompleted { item_id, step_id }
+        | EventKind::ItemStepReopened { item_id, step_id }
+        | EventKind::ItemStepArchived { item_id, step_id } => {
+            payload.extend_from_slice(&item_id.0);
+            payload.extend_from_slice(&step_id.0);
+        }
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());
     bytes.extend_from_slice(&event.event_version.to_le_bytes());

@@ -1,6 +1,49 @@
 # Data Migrations
 
-**Status:** v0.15.5 is merged and complete; v0.16.0 adds canonical Note events without an IndexedDB, archive-container, or server-schema migration. Earlier version sections are historical.
+**Status:** v0.20.0 adds reusable Staples as an Item classification behind replay protocol 14 without an IndexedDB, archive-container, or server-schema migration. Earlier version sections are historical.
+
+## v0.20.0 Staples & Replenishment compatibility
+
+Staples reuse schema-v2 `ITEM_ADDED` and the existing Item archive event.
+Manual replenishment appends a separate ordinary Shopping Item; no source
+link, inventory quantity, or synthetic event is stored. Protocol 14 reads
+prior histories and classification code 3. Protocols 1–13 continue to read
+their supported histories but reject Staple-bearing events, summaries, or
+projections before returning incomplete state. Protocol 13 continues to carry
+Shopping. Existing encrypted local storage, sync, and KARC adapters carry the
+canonical Item events without an IndexedDB, server-schema, archive-container,
+or sync-envelope migration.
+
+## v0.19.0 Shared Shopping Lists compatibility
+
+Shopping Items reuse schema-v2 `ITEM_ADDED` and the existing Item lifecycle
+events; there is no new event kind, table, sync envelope, KARC format, or
+synthetic migration event. Protocol 13 reads prior history and Shopping
+classification code 2. Protocols 1–12 continue to read Today/Needs data but
+reject Shopping-bearing events or projections before returning incomplete
+state. Devices that encounter Shopping data need a protocol-13-capable Kin
+before replaying that shared history. Offline capture persists through the
+existing encrypted local event store; the existing sync and archive adapters
+carry the same canonical event bytes.
+
+## v0.18.0 Richer Routine Scheduling compatibility
+
+The `ROUTINE_CREATED` payload and event schema remain unchanged; only cadence
+values 2 and 3 are new. Protocol 12 reads old and new Routine history, while
+protocols 1–11 reject a history containing either richer cadence before
+returning a projection. Existing Daily/Weekly event bytes replay unchanged.
+No synthetic events, persistent-state migration, IndexedDB change, KARC change,
+server-schema change, or encrypted sync-envelope change is required.
+
+## v0.17.0 Checklist Steps compatibility
+
+Existing histories replay with no Steps on each Item until Step events are
+appended. No synthetic event or destructive migration is performed. Protocol
+11 appends Step records after the protocol-10 Notes section; protocols 1–10
+retain their historical request/result layouts and fail closed on Step history.
+Canonical source bytes remain unchanged. IndexedDB, KARC v1 framing, server
+schema, and encrypted sync envelope do not change; export/import and sync use
+the existing canonical event adapters.
 
 ## v0.16.0 Notes compatibility
 

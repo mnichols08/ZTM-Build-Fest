@@ -31,7 +31,7 @@ test("v7 Routine writers have exact field offsets and reject invalid input", asy
   for (const value of [10101, 20000229, 99991231]) assert.doesNotThrow(() => create("daily", "x", value));
   for (const text of ["", "x".repeat(4097), "\ud800"]) assert.throws(() => create("daily", text));
   assert.equal(create("daily", "🥛".repeat(1024)).length, 88 + 28 + 4096);
-  assert.throws(() => create("monthly"));
+  assert.throws(() => create("yearly"));
 });
 
 test("v7 real Wasm daily/weekly lifecycle, rollback and summary", async () => {
@@ -63,6 +63,24 @@ test("v7 real Wasm daily/weekly lifecycle, rollback and summary", async () => {
   }
 });
 
+test("v12 real Wasm biweekly and monthly cadence boundaries", async () => {
+  const engine = await loadKinEngine(url);
+  const biweekly = [create("biweekly", "Fortnight", 20240228)];
+  assert.equal(engine.applyEvents(biweekly, 1234, null, 20240227).routines[0].occurrenceKey, null);
+  assert.equal(engine.applyEvents(biweekly, 1234, null, 20240229).routines[0].occurrenceKey, 20240228);
+  biweekly.push(action(2, "complete", 20240228));
+  assert.equal(engine.applyEvents(biweekly, 1234, null, 20240312).routines[0].occurrenceStatus, "completed");
+  const nextBiweekly = engine.applyEvents(biweekly, 1234, null, 20240313).routines[0];
+  assert.equal(nextBiweekly.occurrenceKey, 20240313);
+  assert.equal(nextBiweekly.occurrenceStatus, "open");
+
+  const monthly = [create("monthly", "Filter", 20240131)];
+  assert.equal(engine.applyEvents(monthly, 1234, null, 20240131).routines[0].occurrenceKey, 20240101);
+  monthly.push(action(2, "complete", 20240101));
+  assert.equal(engine.applyEvents(monthly, 1234, null, 20240229).routines[0].occurrenceKey, 20240201);
+  assert.equal(engine.applyEvents(monthly, 1234, null, 20240229).routines[0].occurrenceStatus, "open");
+});
+
 test("v7 projection requires matching explicit timestamp/date context and handles DST-shaped civil days", async () => {
   const engine = await loadKinEngine(url);
   const daily = [create("daily", "DST", 20260301)];
@@ -80,7 +98,7 @@ test("v7 projection requires matching explicit timestamp/date context and handle
   assert.throws(() => engine.applyEvents([], 8640000000000001, null, 20260308), error => error.code === 2);
 });
 
-test("v7 result decoder rejects truncation, fields, duplicates and trailing bytes", async context => {
+test("current result decoder rejects truncation, fields, duplicates and trailing bytes", async context => {
   const instantiate = WebAssembly.instantiate;
   let mutate = () => {}, reportedLength, actualLength;
   context.mock.method(WebAssembly, "instantiate", async (...args) => {
@@ -95,27 +113,31 @@ test("v7 result decoder rejects truncation, fields, duplicates and trailing byte
     } } };
   });
   const engine = await loadKinEngine(url);
-  const rows = [create()];
+  const rows = [create("weekly")];
   const run = () => engine.applyEvents(rows, 1234, null, 20261002);
   const valid = run(); const totalLength = actualLength;
   const write32 = (offset, value) => bytes => new DataView(bytes.buffer, bytes.byteOffset).setUint32(offset, value, true);
-  const mutations = [write32(56, 10001), write32(104, 20260229), write32(108, 20261001), write32(108, 0),
-    ...[112, 113, 114].map(offset => bytes => bytes[offset] = 255), bytes => bytes[115] = 1,
-    write32(116, 0), write32(116, 4097), write32(116, 0xffffffff), bytes => bytes[120] = 255,
+  const mutations = [write32(56, 10001), write32(104, 20260229), write32(112, 20261001), write32(108, 0),
+    bytes => bytes[112] = 0, ...[113, 114].map(offset => bytes => bytes[offset] = 255), bytes => bytes[115] = 0,
+    write32(120, 0), write32(120, 4097), write32(120, 0xffffffff), bytes => bytes[124] = 255,
     bytes => bytes[113] = 1, bytes => bytes[114] = 0,
-    bytes => { bytes[108] = 1; }, // Friday cannot be a weekly key
-    bytes => new DataView(bytes.buffer, bytes.byteOffset).setBigInt64(96, 8640000000000001n, true),
+    bytes => bytes[116] = 4,
+    write32(112, 20261002), // Friday cannot be a weekly key
+    bytes => new DataView(bytes.buffer, bytes.byteOffset).setBigInt64(100, 8640000000000001n, true),
   ];
-  for (mutate of mutations) assert.throws(run, error => error.code === 6);
+  for (const [index, mutation] of mutations.entries()) {
+    mutate = mutation;
+    assert.throws(run, error => error.code === 6, `malformed result mutation ${index}`);
+  }
   mutate = () => {};
   for (reportedLength = 0; reportedLength < totalLength; reportedLength++) assert.throws(run, error => error.code === 6);
   reportedLength = totalLength + 1; assert.throws(run, error => error.code === 6);
   reportedLength = undefined;
   assert.deepEqual(run(), valid);
   rows.push(encodeRoutineCreatedRecord({ ...identity(2), routineId: id(0x22), text: "Other", cadence: "daily", createdOn: 20261002 }));
-  // The protocol 10 header adds the Note count after the protocol 9 Area count.
-  // Second record starts after 64 + 56 + "Starter" (7).
-  mutate = bytes => bytes.copyWithin(127, 64, 80);
+  // Protocol 12 preserves the protocol-11 Step count after the protocol-10 Note count.
+  // Second record starts after 68 + 56 + "Starter" (7).
+  mutate = bytes => bytes.copyWithin(131, 68, 84);
   assert.throws(run, error => error.code === 6);
 });
 
