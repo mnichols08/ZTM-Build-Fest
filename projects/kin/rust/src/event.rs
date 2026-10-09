@@ -44,6 +44,7 @@ pub enum ItemClassification {
     Today,
     Need,
     Shopping,
+    Staple,
 }
 
 // Protocol identifiers, never scores or severity levels.

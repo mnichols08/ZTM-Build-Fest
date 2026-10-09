@@ -36,6 +36,7 @@ class KinCompose extends HTMLElement {
       ["need", "Needs"],
       ["today", "Today"],
       ["shopping", "Shopping"],
+      ["staple", "Staples"],
     ]) {
       const option = document.createElement("option");
       option.value = value;

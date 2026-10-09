@@ -48,6 +48,7 @@ class KinApp extends HTMLElement {
     this.suspendedRetry = null;
     this.retryRefresh = () => this.refreshFromEvents();
     this.onAddItem = (event) => this.handleAddItem(event);
+    this.onReplenishStaple = (event) => this.handleReplenishStaple(event);
     this.onOffline = () => {
       this.stateNotice.textContent =
         "Offline — saved changes stay on this device. Household sync needs a connection.";
@@ -176,6 +177,7 @@ class KinApp extends HTMLElement {
       this.initialized = true;
     }
     this.addEventListener("kin:add-item", this.onAddItem);
+    this.addEventListener("kin:replenish-staple", this.onReplenishStaple);
     this.addEventListener("kin:complete-item", this.onCompleteItem);
     this.addEventListener("kin:reopen-item", this.onReopenItem);
     this.addEventListener("kin:archive-item", this.onArchiveItem);
@@ -228,6 +230,28 @@ class KinApp extends HTMLElement {
     } else {
       this.initialize();
     }
+  }
+
+  async handleReplenishStaple(event) {
+    const staple = this.state?.items.find(
+      (item) =>
+        item.itemId === event.detail.itemId &&
+        item.classification === "staple" &&
+        item.status === "active",
+    );
+    if (!staple) {
+      this.pendingRefresh = true;
+      this.flushPeerRefresh();
+      this.setStatus("That staple is no longer available. Updating the list.");
+      return;
+    }
+    return this.handleAddItem({
+      detail: {
+        text: staple.text,
+        classification: "shopping",
+        sourceStapleId: staple.itemId,
+      },
+    });
   }
 
   initializeElements() {
@@ -292,6 +316,7 @@ class KinApp extends HTMLElement {
     this.today = document.createElement("kin-today");
     this.needs = document.createElement("kin-today");
     this.shopping = document.createElement("kin-today");
+    this.staples = document.createElement("kin-today");
     this.compose = document.createElement("kin-compose");
     this.handoffs = document.createElement("kin-handoff-list");
     this.talks = document.createElement("kin-talk-list");
@@ -367,7 +392,8 @@ class KinApp extends HTMLElement {
     const lists = page("lists", "Lists", "Capture first. Sort later.");
     this.needs.display = "need";
     this.shopping.display = "shopping";
-    lists.append(this.needs, this.shopping);
+    this.staples.display = "staple";
+    lists.append(this.needs, this.shopping, this.staples);
 
     const routines = page("routines", "Routines", "Small household rhythms, without streaks or pressure.");
     routines.append(this.routines);
@@ -464,6 +490,7 @@ class KinApp extends HTMLElement {
     window.removeEventListener("offline", this.onOffline);
     window.removeEventListener("online", this.onOnline);
     this.removeEventListener("kin:add-item", this.onAddItem);
+    this.removeEventListener("kin:replenish-staple", this.onReplenishStaple);
     this.removeEventListener("kin:complete-item", this.onCompleteItem);
     this.removeEventListener("kin:reopen-item", this.onReopenItem);
     this.removeEventListener("kin:archive-item", this.onArchiveItem);
@@ -744,30 +771,48 @@ class KinApp extends HTMLElement {
     const submittedDraft = Object.freeze({
       text: event.detail.text,
       classification: event.detail.classification,
+      ...(event.detail.sourceStapleId
+        ? {
+            sourceStapleId: event.detail.sourceStapleId,
+            id: event.detail.id ?? randomId(),
+          }
+        : {}),
     });
+    const sourceList = submittedDraft.sourceStapleId ? this.staples : null;
     this.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     let restoreComposeFocus = false;
     try {
-      await this.appendCommand({ type: "add", ...submittedDraft });
+      const command = {
+        type: "add",
+        text: submittedDraft.text,
+        classification: submittedDraft.classification,
+        ...(submittedDraft.id ? { id: submittedDraft.id } : {}),
+      };
+      await this.appendCommand(command);
       this.assertCurrentSession(session);
       this.renderState();
-      this.compose.clearIfMatches(submittedDraft);
-      this.setStatus("Added.");
+      if (!sourceList) this.compose.clearIfMatches(submittedDraft);
+      this.setStatus(sourceList ? "Added to Shopping." : "Added.");
       this.broadcastEventChange();
-      restoreComposeFocus = true;
+      restoreComposeFocus = !sourceList;
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
       this.showAlert(error.userMessage ?? SAVE_ERROR, () =>
         this.handleAddItem({ detail: submittedDraft }),
       );
       this.setStatus("");
-      restoreComposeFocus = true;
+      restoreComposeFocus = !sourceList;
     } finally {
       if (this.isCurrentSession(session)) {
         this.setBusy(false);
-        if (restoreComposeFocus) {
+        if (sourceList) {
+          const focusTarget = sourceList.querySelector(
+            `[data-item-id="${submittedDraft.sourceStapleId}"][data-item-action="replenish"]`,
+          );
+          (focusTarget ?? sourceList.querySelector(".today-section h2"))?.focus();
+        } else if (restoreComposeFocus) {
           this.compose.focusInput();
         }
         this.flushPeerRefresh();
@@ -1067,7 +1112,7 @@ class KinApp extends HTMLElement {
     }
     const session = this.captureSession();
     const submittedItemId = itemId;
-    const activeList = [this.needs, this.shopping].find((list) =>
+    const activeList = [this.needs, this.shopping, this.staples].find((list) =>
       list.contains(document.activeElement),
     );
     const restoreListFocus = Boolean(activeList);
@@ -1448,6 +1493,8 @@ class KinApp extends HTMLElement {
     this.needs.areas = this.state.areas ?? [];
     this.shopping.items = this.state.items;
     this.shopping.areas = this.state.areas ?? [];
+    this.staples.items = this.state.items;
+    this.staples.areas = this.state.areas ?? [];
     this.handoffs.handoffs = this.state.handoffs;
     this.talks.talks = this.state.talks;
     this.pulse.pulse = this.state.pulses.find(
@@ -1468,6 +1515,7 @@ class KinApp extends HTMLElement {
     this.today.disabled = isBusy || !this.store;
     this.needs.disabled = isBusy || !this.store;
     this.shopping.disabled = isBusy || !this.store;
+    this.staples.disabled = isBusy || !this.store;
     this.handoffs.disabled = isBusy || !this.store;
     this.talks.disabled = isBusy || !this.store;
     this.pulse.disabled = isBusy || !this.store;
@@ -1575,6 +1623,7 @@ class KinApp extends HTMLElement {
         ["today", "kin-today"],
         ["needs", "kin-today"],
         ["shopping", "kin-today"],
+        ["staples", "kin-today"],
         ["compose", "kin-compose"],
         ["handoffs", "kin-handoff-list"],
         ["talks", "kin-talk-list"],

@@ -28,6 +28,13 @@ summary projection, browser capture/list isolation and the complete existing
 Item lifecycle with list-focus restoration. Local encrypted persistence and
 the existing sync/archive adapters remain the only storage path.
 
+The v0.20.0 Staples & Replenishment gate adds protocol-14 classification
+decoding/encoding, protocol-13 fail-closed checks, real-WASM event and summary
+projection, reusable Staples capture, one-click manual replenishment into an
+independent Shopping Item, failed-append retry with stable item identity,
+source-list focus restoration, archiving behavior, and protected-UI plaintext
+disposal on lock.
+
 **Status:** The historical v0.13.3 recovery release gate passed on Windows x64 with Node 22.12,
 Rust 1.93, and Edge 154. The gate covered 300 Node/real-WASM tests (226 server),
 118 Rust tests, formatting, warnings-denied Clippy, release WASM, all product,

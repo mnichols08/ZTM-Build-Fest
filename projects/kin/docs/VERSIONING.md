@@ -1,17 +1,17 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.19.0; the last published product release remains v0.10.3. Tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.20.0; the last published product release remains v0.10.3. Tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.19.0 | Governs |
+| Version axis | Last published v0.10.3 / current candidate v0.20.0 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.19.0` | Shared Shopping Lists; additive protocol 13 |
+| Application | Last published `0.10.3`; candidate `0.20.0` | Staples & Replenishment; additive protocol 14 |
 | Server database schema | `2` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination and household lifecycle records |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
-| Replay protocol | Reads v1–v13; writes v13 for local and synchronized requests | Request context and projection semantics |
+| Replay protocol | Reads v1–v14; writes v14 for local and synchronized requests | Request context and projection semantics |
 | Manual WASM ABI | Existing exports plus additive command/metadata/archive/import APIs | Host ownership and calls; new command packet v1 |
 | IndexedDB schema | Event DB 2→3; key DB 3→4 | Journalled upgrade to encrypted records |
 | Local envelope | v1 for original roots; v2 for rotated roots | v2 authenticates rootVersion in addition to purpose/routing |
@@ -137,6 +137,16 @@ while their Today/Needs-only behavior and bytes remain unchanged. IndexedDB,
 server schema, KARC v1, and encrypted sync envelope remain unchanged. Existing
 canonical events carry Shopping through local persistence, sync, and
 archive/import without a data migration.
+
+## v0.20.0 Staples & Replenishment
+
+Protocol 14 extends the existing schema-v2 `ITEM_ADDED` classification byte
+with code 3 for reusable Staples; codes 0–2 retain Today, Needs, and Shopping.
+It adds no event kind and changes no payload layout. Protocols 1–13 reject
+Staple-bearing events, summaries, or projections; protocol 13 continues to
+support Shopping. IndexedDB, server schema, KARC v1, and encrypted sync
+envelope remain unchanged. Replenishment is a user-triggered append of an
+independent Shopping Item and requires no data migration.
 
 ## v0.9.x Encrypted Sync
 

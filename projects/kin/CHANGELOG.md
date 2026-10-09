@@ -2,6 +2,17 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
+## v0.20.0 — Staples & Replenishment
+
+- Add a reusable Staples list using Item classification code 3; “Add to
+  Shopping” creates an ordinary Shopping Item while leaving the staple active.
+- Add replay protocol 14 as the compatibility gate for Staples; protocols 1–13
+  continue to support their existing data and reject Staples-bearing state.
+- Reuse canonical Item events, encrypted local persistence, sync, and archive
+  import/export without inventory, quantity, or schedule automation.
+- Pass 148 Rust tests, 311 Node tests, formatting, warnings-denied Clippy,
+  release WASM build, version consistency, and browser/security regressions.
+
 ## v0.19.0 — Shared Shopping Lists
 
 - Add Shopping as a third Item classification and a dedicated list, reusing

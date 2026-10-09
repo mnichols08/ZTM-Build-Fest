@@ -62,6 +62,7 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
                         ItemClassification::Today => 0,
                         ItemClassification::Need => 1,
                         ItemClassification::Shopping => 2,
+                        ItemClassification::Staple => 3,
                     },
                     0,
                     0,

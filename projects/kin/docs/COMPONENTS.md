@@ -1,6 +1,6 @@
 # Web Component Contract
 
-**Status:** Current through v0.19.0 Shared Shopping Lists; earlier version sections are historical contracts.
+**Status:** Current through v0.20.0 Staples & Replenishment; earlier version sections are historical contracts.
 
 ## Component responsibilities
 
@@ -10,7 +10,7 @@ Own application initialization, WASM loading, IndexedDB opening/loading, orchest
 
 ### `<kin-today>`
 
-Display the selected Today, Needs, or Shopping classification using the projection supplied by `<kin-app>`. Group active/completed items and omit archived tombstones. Do not rank people or add calendar-like features.
+Display the selected Today, Needs, Shopping, or Staples classification using the projection supplied by `<kin-app>`. Group active/completed items and omit archived tombstones. Staples remain active reusable entries and expose a manual add-to-Shopping action instead of completion. Do not rank people or add calendar-like features.
 
 ### `<kin-compose>`
 
@@ -26,7 +26,8 @@ Only create the components needed for these responsibilities; do not componentiz
 
 | Event               | Dispatching component | `detail`                                 | `bubbles` | `composed` | `cancelable` |
 | ------------------- | --------------------- | ---------------------------------------- | --------- | ---------- | ------------ | ------- |
-| `kin:add-item`      | `<kin-compose>`       | `{ text: string, classification: "today" | "need" | "shopping" }` | `true`     | `true`       | `false` |
+| `kin:add-item`      | `<kin-compose>`       | `{ text: string, classification: "today" | "need" | "shopping" | "staple" }` | `true`     | `true`       | `false` |
+| `kin:replenish-staple` | `<kin-item>`       | `{ itemId: string }`                     | `true`    | `true`     | `false`      |
 | `kin:complete-item` | `<kin-item>`          | `{ itemId: string }`                     | `true`    | `true`     | `false`      |
 | `kin:reopen-item`   | `<kin-item>`          | `{ itemId: string }`                     | `true`    | `true`     | `false`      |
 | `kin:archive-item`  | `<kin-item>`          | `{ itemId: string }`                     | `true`    | `true`     | `false`      |
@@ -71,3 +72,12 @@ Shopping-filtered `<kin-today>` on the Lists page and passes the same
 Rust-derived Item/Area projection used by Today and Needs. Existing Item
 commands and lifecycle focus restoration apply without a new component or
 event family. See [V0.19.0](releases/V0.19.0.md).
+
+## v0.20.0 Staples & Replenishment
+
+`<kin-compose>` adds Staples through the same classification selector.
+`<kin-app>` renders a Staples-filtered `<kin-today>` on Lists. `<kin-item>`
+dispatches `kin:replenish-staple` with only the staple Item ID; the app reads
+the canonical staple text and appends a separate Shopping Item, preserving
+list focus and leaving the staple active. Archiving the staple does not affect
+the Shopping Item. See [V0.20.0](releases/V0.20.0.md).

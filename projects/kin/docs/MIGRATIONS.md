@@ -1,6 +1,18 @@
 # Data Migrations
 
-**Status:** v0.19.0 adds the Shopping Item classification behind replay protocol 13 without an IndexedDB, archive-container, or server-schema migration. Earlier version sections are historical.
+**Status:** v0.20.0 adds reusable Staples as an Item classification behind replay protocol 14 without an IndexedDB, archive-container, or server-schema migration. Earlier version sections are historical.
+
+## v0.20.0 Staples & Replenishment compatibility
+
+Staples reuse schema-v2 `ITEM_ADDED` and the existing Item archive event.
+Manual replenishment appends a separate ordinary Shopping Item; no source
+link, inventory quantity, or synthetic event is stored. Protocol 14 reads
+prior histories and classification code 3. Protocols 1–13 continue to read
+their supported histories but reject Staple-bearing events, summaries, or
+projections before returning incomplete state. Protocol 13 continues to carry
+Shopping. Existing encrypted local storage, sync, and KARC adapters carry the
+canonical Item events without an IndexedDB, server-schema, archive-container,
+or sync-envelope migration.
 
 ## v0.19.0 Shared Shopping Lists compatibility
 

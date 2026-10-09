@@ -1,4 +1,4 @@
-const PROTOCOL_VERSION = 13;
+const PROTOCOL_VERSION = 14;
 const REQUEST_HEADER_BYTES = 64;
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 const PULSE_VALUES = ["good", "okay", "drained", "rough-day", "need-quiet"];
@@ -438,7 +438,7 @@ function encodeIntentPacket(command, identity) {
     view.setUint32(108, date, true);
   }
   if (kind === 1) {
-    const code = ["today", "need", "shopping"].indexOf(command.classification ?? "need");
+    const code = ["today", "need", "shopping", "staple"].indexOf(command.classification ?? "need");
     if (code < 0) throw new KinEngineError(2, "Choose a valid list.");
     packet[112] = code;
   } else if (kind === 12) {
@@ -871,7 +871,7 @@ function decodeState(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const protocolVersion = view.getUint16(4, true);
   if (
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13].includes(protocolVersion) ||
+    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].includes(protocolVersion) ||
     view.getUint16(6, true) !== 0
   ) {
     throw new KinEngineError(6, "Kin received an unsupported state format.");
@@ -958,7 +958,7 @@ function decodeState(bytes) {
           view.getUint8(offset + 41) === 0 &&
           view.getUint8(offset + 42) === 0 &&
           view.getUint8(offset + 43) === 0
-        : classificationCode <= (protocolVersion >= 13 ? 2 : 1) &&
+        : classificationCode <= (protocolVersion >= 14 ? 3 : protocolVersion >= 13 ? 2 : 1) &&
           statusCode <= 2 &&
           view.getUint8(offset + 42) === 0 &&
           view.getUint8(offset + 43) === 0;
@@ -997,7 +997,7 @@ function decodeState(bytes) {
       classification:
         protocolVersion === 1
           ? "today"
-          : ["today", "need", "shopping"][classificationCode],
+          : ["today", "need", "shopping", "staple"][classificationCode],
       status: ["active", "completed", "archived"][statusCode],
       ...(protocolVersion >= 9 ? { areaId: null } : {}),
       ...(protocolVersion >= 11 ? { steps: [] } : {}),
@@ -1305,7 +1305,7 @@ function decodeState(bytes) {
               : 0;
     const validClassification =
       kindCode === 1
-        ? classificationCode <= (protocolVersion >= 13 ? 2 : 1)
+        ? classificationCode <= (protocolVersion >= 14 ? 3 : protocolVersion >= 13 ? 2 : 1)
         : classificationCode === 255;
     if (
       end > bytes.length ||
@@ -1337,7 +1337,9 @@ function decodeState(bytes) {
             ? "today"
             : classificationCode === 1
               ? "need"
-              : "shopping",
+              : classificationCode === 2
+                ? "shopping"
+                : "staple",
     });
     offset = end;
   }

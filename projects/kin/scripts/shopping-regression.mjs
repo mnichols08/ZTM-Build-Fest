@@ -17,6 +17,10 @@ export async function shoppingRegressions() {
     app.compose.classification.querySelector('option[value="shopping"]'),
     "Shopping is an available capture destination",
   );
+  check(
+    app.compose.classification.querySelector('option[value="staple"]'),
+    "Staples is an available capture destination",
+  );
   app.compose.input.value = "Shopping regression item";
   app.compose.classification.value = "shopping";
   app.compose.input.focus();
@@ -65,5 +69,90 @@ export async function shoppingRegressions() {
       !app.shopping.querySelector("kin-item"),
     "Archived Shopping item is retained but hidden",
   );
-  return "PASS shared Shopping capture, list isolation, lifecycle, and focus";
+
+  app.compose.input.value = "Laundry detergent";
+  app.compose.classification.value = "staple";
+  app.compose.form.requestSubmit();
+  await idle();
+  let staple = app.state.items.find(
+    (record) => record.text === "Laundry detergent",
+  );
+  check(
+    staple?.classification === "staple" &&
+      app.staples.querySelector("kin-item .item-text")?.textContent ===
+        staple.text &&
+      !app.shopping.querySelector("kin-item .item-text")?.textContent?.includes(
+        staple.text,
+      ),
+    "Staples appear only in the reusable Staples list",
+  );
+  check(
+    !app.staples.querySelector("kin-item .complete-button") &&
+      app.staples.querySelector("kin-item .replenish-button"),
+    "Staples offer replenishment rather than completion",
+  );
+
+  const replenish = app.staples.querySelector("kin-item .replenish-button");
+  replenish.focus();
+  const append = app.store.append;
+  let firstAttempt = true;
+  let originalCommand;
+  let retryCommand;
+  app.store.append = async function (...args) {
+    if (firstAttempt) {
+      firstAttempt = false;
+      originalCommand = args[0];
+      const error = new Error("Synthetic replenishment storage failure");
+      error.code = 5;
+      throw error;
+    }
+    retryCommand = args[0];
+    return append.apply(this, args);
+  };
+  try {
+    replenish.click();
+    await idle();
+    check(
+      !app.state.items.some(
+        (record) =>
+          record.text === staple.text && record.classification === "shopping",
+      ) && !app.retryButton.hidden,
+      "Failed replenishment is reported without appending a Shopping Item",
+    );
+    app.retryButton.click();
+    await idle();
+  } finally {
+    app.store.append = append;
+  }
+  const shoppingCopies = app.state.items.filter(
+    (record) =>
+      record.text === staple.text && record.classification === "shopping",
+  );
+  const shoppingCopy = shoppingCopies[0];
+  check(
+    originalCommand?.id === retryCommand?.id &&
+      shoppingCopies.length === 1 &&
+      staple.status === "active" &&
+      shoppingCopy?.status === "active" &&
+      app.shopping.querySelector("kin-item .item-text")?.textContent ===
+        staple.text,
+    "Retry appends exactly one Shopping Item with the same identity and keeps the staple",
+  );
+  check(
+    app.staples.querySelector("kin-item .replenish-button") ===
+      document.activeElement,
+    "Staples focus returns to Add to Shopping after persistence",
+  );
+
+  app.staples.querySelector("kin-item .archive-button").click();
+  await idle();
+  staple = app.state.items.find((record) => record.itemId === staple.itemId);
+  check(
+    staple.status === "archived" &&
+      app.staples.querySelector("kin-item") === null &&
+      app.shopping.querySelector("kin-item .item-text")?.textContent ===
+        shoppingCopy.text,
+    "Archiving a staple does not remove its Shopping copy",
+  );
+  return "PASS Shopping lifecycle and Staples replenishment, isolation, and focus";
 }

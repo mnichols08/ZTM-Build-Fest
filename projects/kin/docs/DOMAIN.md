@@ -101,6 +101,14 @@ same identity, completion, reopening, and archival lifecycle as Today and
 Needs Items; it does not add quantity, price, purchase assignment, or
 inventory state. See [V0.19.0](releases/V0.19.0.md).
 
+## v0.20.0 Staples & Replenishment
+
+Staples are reusable Items on a dedicated list. A household member explicitly
+adds a staple to Shopping when needed; the app does not infer stock, quantity,
+or timing, and the staple remains active. The resulting Shopping Item is
+independent and follows the regular Shopping lifecycle. See
+[V0.20.0](releases/V0.20.0.md).
+
 ## Handoff
 
 A Handoff is a short context transfer one household member wants another to know. Its conceptual lifecycle is created, unacknowledged, acknowledged, and archived. Acknowledgement means receipt, not agreement, approval, or evaluation. Handoffs are implemented in v0.3.0 as a separate typed entity; see [V0.3.0](V0.3.0.md). Repeated acknowledgement is a valid no-op. Creator and acknowledger may be the same local actor; no verified identity is inferred.

@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** v0.19.0 adds protocol 13 as an additive Shopping-classification compatibility gate while preserving earlier layouts and canonical event bytes. Protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
+**Status:** v0.20.0 adds protocol 14 as an additive Staples-classification compatibility gate while preserving earlier layouts and canonical event bytes. Protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
 
 ## Target and exports
 
@@ -277,6 +277,18 @@ Protocols 1–12 retain their prior behavior for Today/Needs-only history.
 No event kind, storage, archive, or encrypted sync-envelope migration is
 introduced.
 
+## Protocol 14 — Staples & Replenishment
+
+Protocol 14 preserves the protocol-13 request and result headers, sections,
+and canonical event envelope. Schema-v2 `ITEM_ADDED` retains its classification
+byte and payload size; code 3 identifies a reusable Staple (codes 0–2 remain
+Today, Needs, and Shopping). Item result and catch-up summary classification
+fields use the same code. Protocols 1–13 reject code 3 in events and reject
+Staple-bearing projections or summaries rather than returning incomplete
+state. Protocol 13 continues to carry Shopping; older supported data retains
+its prior layout and behavior. No event kind, storage, archive, or encrypted
+sync-envelope migration is introduced.
+
 ### KCMD v1 intent transport
 
 This is an independent command transport, not the canonical event layout. JS
@@ -304,9 +316,9 @@ constructs canonical payloads and validates command semantics.
 | 124    | 4     | Payload length; zero for no-payload actions                         |
 | 128    | N     | Action payload                                                      |
 
-For `AddItem`, the byte at offset 112 is 0 for Today, 1 for Needs, or 2 for
-Shopping. Code 2 is accepted only when the accompanying household request uses
-protocol 13 or later; older protocol requests fail closed.
+For `AddItem`, the byte at offset 112 is 0 for Today, 1 for Needs, 2 for
+Shopping, or 3 for Staples. Code 2 requires protocol 13 or later; code 3
+requires protocol 14 or later. Older protocol requests fail closed.
 
 IDs and time are explicit browser capabilities. Capture commands use a supplied
 random entity ID. Noncapture commands use the referenced entity ID. Step

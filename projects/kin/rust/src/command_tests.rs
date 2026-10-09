@@ -161,6 +161,31 @@ fn shopping_items_require_protocol_v13() {
 }
 
 #[test]
+fn staple_items_require_protocol_v14() {
+    let command = C::AddItem {
+        id: ItemId([10; 16]),
+        text: "Laundry detergent".into(),
+        classification: ItemClassification::Staple,
+    };
+    let mut older = request(vec![]);
+    older.protocol_version = 13;
+    assert_eq!(
+        execute(&command, context(1), older).unwrap_err(),
+        KinError::UnsupportedVersion
+    );
+
+    let mut compatible = request(vec![]);
+    compatible.protocol_version = 14;
+    let result = execute(&command, context(1), compatible).unwrap();
+    assert_eq!(
+        result.projection.items[0].classification,
+        ItemClassification::Staple
+    );
+    assert_eq!(&result.encoded_projection[..4], b"KINS");
+    assert_eq!(&result.encoded_projection[4..6], &[14, 0]);
+}
+
+#[test]
 fn codec_preserves_legacy_schema_one_and_rejects_lossy_schema() {
     let mut event = create_event(&add(), context(1)).unwrap();
     event.event_version = 1;

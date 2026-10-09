@@ -1,6 +1,16 @@
 # Synchronization Design
 
-**Status:** v0.17.0 preserves the existing encrypted-sync boundary for Step events. Step text, IDs, parent association, and event semantics remain inside encrypted canonical event payloads; equal-logical-time cross-device Step archive/mutation conflicts converge with archive winning. No plaintext Step metadata or new authority is added; offline append, retry, and replay use the existing event/outbox/relay path.
+**Status:** v0.20.0 preserves the existing encrypted-sync boundary for reusable Staples and manual Shopping replenishment, while v0.17.0 Step events retain their established behavior. Staple names and Item semantics remain inside encrypted canonical event payloads; no plaintext metadata, inventory state, or new authority is added.
+
+## v0.20.0 Staples & Replenishment
+
+Staple definitions and ordinary Shopping Items are canonical Item events and
+remain inside the existing encrypted local/sync/archive boundaries. Manual
+replenishment appends a separate Shopping Item with copied text; it does not
+create inventory state, a source relationship, or a server-side operation.
+Offline capture, retry, synchronization, and archive import/export continue
+through the existing event adapters. Protocol 14 is required to replay
+Staples; protocol 13 remains compatible with Shopping-only history.
 
 ## v0.17.0 Checklist Steps
 

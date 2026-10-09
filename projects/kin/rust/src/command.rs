@@ -305,6 +305,16 @@ pub fn execute(
     if matches!(
         command,
         HouseholdCommand::AddItem {
+            classification: ItemClassification::Staple,
+            ..
+        }
+    ) && request.protocol_version < crate::protocol::PROTOCOL_V14
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if matches!(
+        command,
+        HouseholdCommand::AddItem {
             classification: ItemClassification::Shopping,
             ..
         }
@@ -557,6 +567,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
                 0 => ItemClassification::Today,
                 1 => ItemClassification::Need,
                 2 => ItemClassification::Shopping,
+                3 => ItemClassification::Staple,
                 _ => return Err(KinError::MalformedProtocol),
             },
         },

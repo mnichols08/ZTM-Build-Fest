@@ -89,11 +89,12 @@ is not claimed without direct assistive-technology testing.
 Kin should remain usable one-handed on a phone and during interruptions:
 
 - Keep item capture to a short text entry and one clear submit action.
-- Default classification to Needs and expose Today and Shopping through one labeled native control.
+- Default classification to Needs and expose Today, Shopping, and Staples through one labeled native control.
 - Keep classification label, visible focus, and touch target clear under forced colors and increased text spacing.
 - Minimize typing and avoid mandatory metadata.
 - Keep primary controls stable and easy to reach.
 - Provide accessible names for icon-only controls; prefer a visible text label for unfamiliar actions.
+- Give manual Staples replenishment a visible “Add to Shopping” label and restore focus to that action after persistence.
 - Preserve draft text and communicate failures if an interaction is interrupted where practical.
 - Restore a typed draft after same-tab reload when session storage is available; clear it only after a successful append.
 - Avoid dense administration, tiny hit targets, and layouts that require precise gestures.
@@ -101,7 +102,7 @@ Kin should remain usable one-handed on a phone and during interruptions:
 
 ## v0.1.0 acceptance
 
-Today/Needs/Shopping capture and complete/reopen/archive controls work with keyboard alone, restore focus after asynchronous updates, announce result/error state, expose a busy state, and remain understandable without color. Release-specific browser evidence and unverified platforms are recorded in the changelog. Mobile usability and accessibility checks are release requirements, not optional polish.
+Today/Needs/Shopping/Staples capture, replenishment, and applicable lifecycle controls work with keyboard alone, restore focus after asynchronous updates, announce result/error state, expose a busy state, and remain understandable without color. Release-specific browser evidence and unverified platforms are recorded in the changelog. Mobile usability and accessibility checks are release requirements, not optional polish.
 
 ## Handoff
 

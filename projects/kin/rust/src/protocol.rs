@@ -22,7 +22,8 @@ pub const PROTOCOL_V10: u16 = 10;
 pub const PROTOCOL_V11: u16 = 11;
 pub const PROTOCOL_V12: u16 = 12;
 pub const PROTOCOL_V13: u16 = 13;
-pub const PROTOCOL_VERSION: u16 = PROTOCOL_V13;
+pub const PROTOCOL_V14: u16 = 14;
+pub const PROTOCOL_VERSION: u16 = PROTOCOL_V14;
 pub const ERROR_PROTOCOL_VERSION: u16 = PROTOCOL_V1;
 pub const MAX_EVENT_COUNT: usize = 10_000;
 pub const MAX_PROTOCOL_BYTES: usize = 64 * 1024 * 1024;
@@ -78,6 +79,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
             | PROTOCOL_V11
             | PROTOCOL_V12
             | PROTOCOL_V13
+            | PROTOCOL_V14
     ) {
         return Err(KinError::UnsupportedVersion);
     }
@@ -174,9 +176,8 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
         .try_reserve_exact(event_count)
         .map_err(|_| KinError::SizeLimit)?;
     let mut offset = match version {
-        PROTOCOL_V8 | PROTOCOL_V9 | PROTOCOL_V10 | PROTOCOL_V11 | PROTOCOL_V12 | PROTOCOL_V13 => {
-            V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES
-        }
+        PROTOCOL_V8 | PROTOCOL_V9 | PROTOCOL_V10 | PROTOCOL_V11 | PROTOCOL_V12 | PROTOCOL_V13
+        | PROTOCOL_V14 => V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES,
         PROTOCOL_V7 => 44,
         PROTOCOL_V6 => V6_REQUEST_HEADER_BYTES,
         PROTOCOL_V5 => 20,
@@ -232,10 +233,12 @@ pub fn encode_state(state: &HouseholdState, protocol_version: u16) -> Result<Vec
     if !state.routines.is_empty()
         || !state.areas.is_empty()
         || !state.notes.is_empty()
-        || state
-            .items
-            .iter()
-            .any(|item| item.classification == ItemClassification::Shopping)
+        || state.items.iter().any(|item| {
+            matches!(
+                item.classification,
+                ItemClassification::Shopping | ItemClassification::Staple
+            )
+        })
         || state.items.iter().any(|item| item.area_id.is_some())
         || state.items.iter().any(|item| !item.steps.is_empty())
     {
@@ -328,6 +331,7 @@ fn encode_legacy_entities(
                 ItemClassification::Today => 0,
                 ItemClassification::Need => 1,
                 ItemClassification::Shopping => 2,
+                ItemClassification::Staple => 3,
             });
             result.push(match item.status {
                 ItemStatus::Active => 0,
@@ -469,6 +473,13 @@ pub fn encode_state_v13(
     encode_state_with_summary(state, summary, PROTOCOL_V13)
 }
 
+pub fn encode_state_v14(
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<Vec<u8>, KinError> {
+    encode_state_with_summary(state, summary, PROTOCOL_V14)
+}
+
 fn encode_state_with_summary(
     state: &HouseholdState,
     summary: &CatchUpSummary,
@@ -502,6 +513,18 @@ fn encode_state_with_summary(
                 .entries
                 .iter()
                 .any(|entry| entry.classification == Some(ItemClassification::Shopping)))
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if version < PROTOCOL_V14
+        && (state
+            .items
+            .iter()
+            .any(|item| item.classification == ItemClassification::Staple)
+            || summary
+                .entries
+                .iter()
+                .any(|entry| entry.classification == Some(ItemClassification::Staple)))
     {
         return Err(KinError::UnsupportedVersion);
     }
@@ -750,6 +773,7 @@ fn encode_state_with_summary(
             Some(ItemClassification::Today) => 0,
             Some(ItemClassification::Need) => 1,
             Some(ItemClassification::Shopping) => 2,
+            Some(ItemClassification::Staple) => 3,
             None => u8::MAX,
         });
         result.push(0);
@@ -760,7 +784,7 @@ fn encode_state_with_summary(
 }
 
 pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelope, KinError> {
-    if !(PROTOCOL_V1..=PROTOCOL_V13).contains(&protocol_version) {
+    if !(PROTOCOL_V1..=PROTOCOL_V14).contains(&protocol_version) {
         return Err(KinError::UnsupportedVersion);
     }
     if record.len() > MAX_PROTOCOL_BYTES {
@@ -995,6 +1019,8 @@ pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelop
                 1 => ItemClassification::Need,
                 2 if protocol_version >= PROTOCOL_V13 => ItemClassification::Shopping,
                 2 => return Err(KinError::UnsupportedVersion),
+                3 if protocol_version >= PROTOCOL_V14 => ItemClassification::Staple,
+                3 if protocol_version >= PROTOCOL_V13 => return Err(KinError::UnsupportedVersion),
                 _ => return Err(KinError::MalformedProtocol),
             };
             if payload[17..20] != [0; 3] {
@@ -1661,6 +1687,57 @@ mod tests {
         );
         assert_eq!(
             decode_request(&request_with_current(&shopping_record, PROTOCOL_V12, 1,)),
+            Err(KinError::UnsupportedVersion)
+        );
+    }
+
+    #[test]
+    fn protocol_v14_carries_staples_and_v13_rejects_them() {
+        let staple_record = added_record_v2(1, 0x23, b"Laundry detergent", 3);
+        let request = request_with_current(&staple_record, PROTOCOL_V14, 1);
+        let (version, events, _) = decode_request(&request).unwrap();
+        assert_eq!(version, PROTOCOL_V14);
+        assert!(matches!(
+            events[0].kind,
+            EventKind::ItemAdded {
+                classification: ItemClassification::Staple,
+                ..
+            }
+        ));
+        let state = rebuild(&events).unwrap();
+        let summary = crate::state::CatchUpSummary {
+            entries: Vec::new(),
+            total_count: 0,
+            through_event_id: None,
+        };
+        let result = encode_state_v14(&state, &summary).unwrap();
+        assert_eq!(read_u16(&result, 4), Ok(PROTOCOL_V14));
+        assert_eq!(result[68 + 40], 3);
+        assert_eq!(
+            encode_state_v13(&state, &summary),
+            Err(KinError::UnsupportedVersion)
+        );
+        assert_eq!(
+            decode_request(&request_with_current(&staple_record, PROTOCOL_V13, 1,)),
+            Err(KinError::UnsupportedVersion)
+        );
+
+        let empty_state = rebuild(&[]).unwrap();
+        let summary = CatchUpSummary {
+            entries: vec![crate::state::SummaryEntry {
+                event_id: EventId([0x24; 16]),
+                kind: SummaryKind::ItemAdded,
+                entity_kind: SummaryEntityKind::Item,
+                text: "Laundry detergent".into(),
+                classification: Some(ItemClassification::Staple),
+            }],
+            total_count: 1,
+            through_event_id: Some(EventId([0x24; 16])),
+        };
+        let result = encode_state_v14(&empty_state, &summary).unwrap();
+        assert_eq!(result[68 + 18], 3);
+        assert_eq!(
+            encode_state_v13(&empty_state, &summary),
             Err(KinError::UnsupportedVersion)
         );
     }

@@ -1,6 +1,6 @@
 # Derived Household State
 
-**Status:** v0.19.0 adds Shopping classification through protocol 13, preserving the prior result layouts for Today/Needs state. Shopping is a classification on existing Items, with no additional reducer entity. Protocols 1–12 reject Shopping-bearing projections rather than omitting or remapping them. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
+**Status:** v0.20.0 adds Staples classification through protocol 14, preserving prior result layouts. Shopping and Staples are classifications on existing Items, with no additional reducer entities. Protocols 1–12 reject Shopping-bearing projections; protocols 1–13 reject Staple-bearing projections. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
 
 ## Projection pipeline
 
@@ -143,3 +143,11 @@ local persistence, and household synchronization. Protocols 1–12 fail closed
 on Shopping-bearing history; existing Today/Needs projections remain
 compatible. No new state entity or storage migration is introduced. See
 [V0.19.0](releases/V0.19.0.md).
+
+## v0.20.0 Staples & Replenishment
+
+Staples are active Items classified with code 3 under protocol 14. A
+user-triggered replenish action appends a new Shopping Item with copied text;
+the staple remains active and the two Item lifecycles are independent. Older
+protocols fail closed rather than omit or remap Staples. No reducer entity or
+storage migration is added. See [V0.20.0](releases/V0.20.0.md).

@@ -119,9 +119,11 @@ v0.16.3-v0.20.x fast-track on
 rejecting stale rearchives. The existing v0.17.0 Checklist Steps commit/tag is
 preserved unchanged. v0.18.0 Richer Routine Scheduling is implemented and
 validated on the fast-track branch with protocol 12 and bounded
-creation-anchored biweekly/calendar-month cadence. The current v0.19.0 Shared
-Shopping Lists (`kin-v0.19.0` candidate) adds Shopping classification under
-protocol 13.
+creation-anchored biweekly/calendar-month cadence. v0.19.0 Shared Shopping
+Lists (`kin-v0.19.0` candidate) adds Shopping classification under protocol
+13. The current v0.20.0 Staples & Replenishment (`kin-v0.20.0` candidate)
+adds reusable Staples under protocol 14 with user-triggered transfer to
+Shopping.
 Continue the authorized sequence through v0.20.x; do not start v0.21.x. Do not
 create tags on the batch branch. After human review and
 merge, tags may be attached to the preserved milestone commits. These are

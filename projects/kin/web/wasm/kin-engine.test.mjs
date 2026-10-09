@@ -95,7 +95,7 @@ test("invalid classification is rejected", () => {
   );
 });
 
-test("protocol 13 real WASM replays Shopping classification and summary", async () => {
+test("current real WASM replays Shopping classification and summary", async () => {
   const engine = await loadCurrentEngine(
     `data:application/wasm;base64,${initialWasm.toString("base64")}`,
   );
@@ -116,6 +116,30 @@ test("protocol 13 real WASM replays Shopping classification and summary", async 
   assert.deepEqual(
     state.summary.entries.map((entry) => entry.classification),
     ["shopping"],
+  );
+});
+
+test("protocol 14 real WASM replays Staples classification and summary", async () => {
+  const engine = await loadCurrentEngine(
+    `data:application/wasm;base64,${initialWasm.toString("base64")}`,
+  );
+  const record = encodeAddedRecord({
+    eventId: zeroId,
+    householdId: new Uint8Array(16).fill(1),
+    actorId: new Uint8Array(16).fill(2),
+    deviceId: new Uint8Array(16).fill(3),
+    timestamp: 1,
+    logicalTime: 1,
+    itemId: new Uint8Array(16).fill(5),
+    text: "Laundry detergent",
+    classification: "staple",
+  });
+  assert.equal(record[104], 3);
+  const state = engine.applyEvents([record], 1234, null, 20261003);
+  assert.equal(state.items[0].classification, "staple");
+  assert.deepEqual(
+    state.summary.entries.map((entry) => entry.classification),
+    ["staple"],
   );
 });
 

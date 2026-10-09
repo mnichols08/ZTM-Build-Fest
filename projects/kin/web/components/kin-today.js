@@ -56,6 +56,7 @@ class KinToday extends HTMLElement {
       ["today", "Today"],
       ["need", "Needs"],
       ["shopping", "Shopping"],
+      ["staple", "Staples"],
     ].filter(([classification]) => this.display === "all" || classification === this.display)
       .map(([classification, title]) => {
       const section = document.createElement("section");

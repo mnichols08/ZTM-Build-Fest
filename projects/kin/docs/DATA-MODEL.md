@@ -1,6 +1,6 @@
 # Data Model
 
-**Status:** Current through v0.19.0 Shared Shopping Lists; earlier version sections are historical contracts. See v0.7.0, v0.18.0, and v0.19.0 below.
+**Status:** Current through v0.20.0 Staples & Replenishment; earlier version sections are historical contracts. See v0.7.0, v0.18.0, v0.19.0, and v0.20.0 below.
 
 ## Event-oriented source of truth
 
@@ -36,8 +36,8 @@ The envelope is a domain contract, not the JS/WASM byte encoding. The field mean
 - **Member:** A person with identity distinct from their devices and credentials.
 - **Device:** A browser installation that may later be authorized, trusted, and revoked.
 - **Credential:** An authenticator associated with a member; not itself a member or household key.
-- **Item:** A lightweight household reminder classified for Today, Needs, or
-  Shopping.
+- **Item:** A lightweight household reminder classified for Today, Needs,
+  Shopping, or Staples.
 - **Handoff:** Context one member wants another to know.
 - **Talk:** A topic that matters but may be better discussed later.
 - **Pulse:** Time-bounded context about current capacity.
@@ -91,6 +91,15 @@ sync, and archive import/export behavior. Protocol 13 adds classification code
 2; protocols 1–12 reject Shopping-bearing state rather than silently projecting
 it into Today or Needs. No persistent storage migration is required. See
 [V0.19.0](releases/V0.19.0.md).
+
+## v0.20.0 Staples & Replenishment
+
+Staples are reusable Items with classification code 3, not a separate entity
+or inventory model. A member can manually add the staple's text as a new,
+independent Shopping Item; the source staple remains active. Both records use
+canonical Item events and share encrypted persistence, sync, and archive
+behavior. Protocol 14 adds Staples while protocols 1–13 reject Staple-bearing
+history or projections. See [V0.20.0](releases/V0.20.0.md).
 
 ## v0.15.0 Areas
 

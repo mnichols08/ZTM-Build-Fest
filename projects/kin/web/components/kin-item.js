@@ -77,35 +77,62 @@ class KinItem extends HTMLElement {
     }
     const action = document.createElement("div");
     action.className = "item-action";
+    const isStaple = this.record.classification === "staple";
     const steps = Array.isArray(this.record.steps) ? this.record.steps : [];
     const activeSteps = steps.filter((step) => !step.archived);
     const completedSteps = activeSteps.filter((step) => step.completed).length;
-    const stepSummary = document.createElement("span");
-    stepSummary.className = "step-summary";
-    stepSummary.textContent = `${completedSteps} of ${activeSteps.length} steps`;
-    const toggle = document.createElement("button");
-    toggle.type = "button";
-    toggle.className = "step-toggle-button";
-    toggle.textContent = this.showSteps ? "Hide steps" : "Checklist";
-    toggle.setAttribute("aria-expanded", String(this.showSteps));
-    toggle.setAttribute("aria-controls", `checklist-${this.record.itemId}`);
-    toggle.setAttribute(
-      "aria-label",
-      `${this.showSteps ? "Hide" : "Show"} checklist for ${this.record.text}, ${completedSteps} of ${activeSteps.length} steps`,
-    );
-    toggle.dataset.itemId = this.record.itemId;
-    toggle.dataset.itemAction = "toggle-steps";
-    toggle.disabled = this.isDisabled;
-    toggle.addEventListener("click", () => {
-      this.dispatchEvent(new CustomEvent("kin:toggle-item-steps", {
-        detail: { itemId: this.record.itemId },
-        bubbles: true,
-        composed: true,
-      }));
-    });
-    action.append(stepSummary, toggle);
+    if (isStaple) {
+      const replenish = document.createElement("button");
+      replenish.type = "button";
+      replenish.className = "replenish-button";
+      replenish.textContent = "Add to Shopping";
+      replenish.setAttribute("aria-label", `Add ${this.record.text} to Shopping`);
+      replenish.dataset.itemId = this.record.itemId;
+      replenish.dataset.itemAction = "replenish";
+      replenish.disabled = this.isDisabled || this.record.status !== "active";
+      replenish.addEventListener("click", () => {
+        this.dispatchEvent(new CustomEvent("kin:replenish-staple", {
+          detail: { itemId: this.record.itemId },
+          bubbles: true,
+          composed: true,
+        }));
+      });
+      action.append(replenish);
+    } else {
+      const stepSummary = document.createElement("span");
+      stepSummary.className = "step-summary";
+      stepSummary.textContent = `${completedSteps} of ${activeSteps.length} steps`;
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "step-toggle-button";
+      toggle.textContent = this.showSteps ? "Hide steps" : "Checklist";
+      toggle.setAttribute("aria-expanded", String(this.showSteps));
+      toggle.setAttribute("aria-controls", `checklist-${this.record.itemId}`);
+      toggle.setAttribute(
+        "aria-label",
+        `${this.showSteps ? "Hide" : "Show"} checklist for ${this.record.text}, ${completedSteps} of ${activeSteps.length} steps`,
+      );
+      toggle.dataset.itemId = this.record.itemId;
+      toggle.dataset.itemAction = "toggle-steps";
+      toggle.disabled = this.isDisabled;
+      toggle.addEventListener("click", () => {
+        this.dispatchEvent(new CustomEvent("kin:toggle-item-steps", {
+          detail: { itemId: this.record.itemId },
+          bubbles: true,
+          composed: true,
+        }));
+      });
+      action.append(stepSummary, toggle);
+    }
 
-    if (this.record.status === "active") {
+    if (isStaple) {
+      if (this.record.status !== "active") {
+        const unavailable = document.createElement("span");
+        unavailable.className = "completed-label";
+        unavailable.textContent = "Unavailable";
+        action.append(unavailable);
+      }
+    } else if (this.record.status === "active") {
       action.append(
         this.createAction("Complete", "complete", "complete-button"),
       );
@@ -119,7 +146,7 @@ class KinItem extends HTMLElement {
     action.append(this.createAction("Archive", "archive", "archive-button"));
 
     row.append(details, action);
-    if (this.showSteps) {
+    if (!isStaple && this.showSteps) {
       row.append(this.createChecklist(steps));
     }
     this.replaceChildren(row);
