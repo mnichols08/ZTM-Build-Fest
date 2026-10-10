@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.35.1 — Fresh Passkey Self-Removal (candidate)
+
+- Self-removal now requires fresh passkey authentication before membership/device revocation and access-change rotation.
+- Reuse the existing action-bound adult-removal WebAuthn ceremony; reject session-only leave.
+- Preserve transactional membership/device/session revocation, invitation-author revocation,
+  last-active-adult protection, legacy two-adult compatibility, and pending epoch rotation.
+- Clear session/device cookies and lock local authority only after server success.
+- Add server and browser/component regressions for fresh proof, cancellation, invalid
+  assertions, revocation, sync denial, and durable failure rollback.
+
 ## v0.35.0 — More Adult Members (candidate)
 
 - Bound households at four active adults using the existing approved pairing ceremony.

@@ -149,6 +149,9 @@ Members v0.35.0 on `kin-v0.35-more-adults`; keep its trust-model changes isolate
 security and human review. Preserve separate milestone commits; do not tag or
 merge this branch. These are implementation candidates, not production certification.
 The release label `kin-v0.35.0` is reserved for a separately approved release commit.
+The user-authorized corrective candidate `kin-v0.35.1` requires fresh passkey
+authentication for self-removal using the existing member-removal ceremony.
+It remains on `kin-v0.35-more-adults`; do not merge, tag, or begin v0.36.x.
 Preserve the v0.13.5
 recovery authority guarantees and all earlier security/domain contracts.
 

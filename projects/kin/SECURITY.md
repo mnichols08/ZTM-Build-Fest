@@ -4,6 +4,13 @@
 
 ## Supported versions
 
+The v0.35.1 corrective candidate requires fresh passkey authentication for
+self-removal as well as removing another adult. Self-removal now requires fresh
+passkey authentication before membership/device revocation and access-change
+rotation. Session cookies alone cannot authorize leave. See the
+[v0.35.1 security/release contract](docs/releases/V0.35.1.md); this is not
+production certification.
+
 Kin is a prototype and has no staffed security-support commitment or guaranteed response time. Follow the private reporting guidance below and include only synthetic data.
 
 ## Reporting a vulnerability

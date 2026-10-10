@@ -1305,8 +1305,14 @@ export class PairingService {
     };
   }
 
-  leaveHousehold(sessionToken) {
+  leaveHousehold(sessionToken, reauthenticatedMemberId) {
     const { member, household } = this.authorize(sessionToken);
+    if (reauthenticatedMemberId !== member.id)
+      throw new PairingError(
+        "fresh_auth_required",
+        "Authenticate with your passkey again before leaving the household.",
+        401,
+      );
     const remaining = [...household.members].filter(
       (memberId) =>
         memberId !== member.id && this.members.get(memberId)?.active,
@@ -1320,9 +1326,9 @@ export class PairingService {
     return this.removeMembership(household, member.id, member.id);
   }
 
-  removalContext(sessionToken, memberId) {
+  removalContext(sessionToken, memberId, { allowSelf = false } = {}) {
     const { member, household, device } = this.authorize(sessionToken);
-    if (memberId === member.id)
+    if (memberId === member.id && !allowSelf)
       throw new PairingError(
         "use_leave",
         "Use Leave household to remove your own membership.",

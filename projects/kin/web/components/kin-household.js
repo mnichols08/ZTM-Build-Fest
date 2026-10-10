@@ -1061,24 +1061,25 @@ class KinHousehold extends HTMLElement {
       )
     )
       return;
-    await this.run(async () => {
-      const started = await this.api("/api/household/membership/remove/options", {
-        method: "POST",
-        body: JSON.stringify({ memberId }),
-      });
-      const credential = await navigator.credentials.get({
-        publicKey: authenticationOptions(started.publicKey),
-        signal: this.connectionAbort.signal,
-      });
-      await this.api("/api/household/membership/remove/finish", {
-        method: "POST",
-        body: JSON.stringify({
-          flow: started.flow,
-          credential: credentialJson(credential),
-        }),
-      });
-    });
+    await this.run(() => this.authenticateRemoval(memberId));
     await this.showHousehold();
+  }
+  async authenticateRemoval(memberId) {
+    const started = await this.api("/api/household/membership/remove/options", {
+      method: "POST",
+      body: JSON.stringify({ memberId }),
+    });
+    const credential = await navigator.credentials.get({
+      publicKey: authenticationOptions(started.publicKey),
+      signal: this.connectionAbort.signal,
+    });
+    await this.api("/api/household/membership/remove/finish", {
+      method: "POST",
+      body: JSON.stringify({
+        flow: started.flow,
+        credential: credentialJson(credential),
+      }),
+    });
   }
   async leave() {
     if (
@@ -1088,7 +1089,10 @@ class KinHousehold extends HTMLElement {
     )
       return;
     await this.run(async () => {
-      await this.api("/api/household/membership", { method: "DELETE", body: "{}" });
+      this.message("Confirm with your passkey to leave the household.");
+      await this.authenticateRemoval(this.identity.memberId);
+      this.identity = null;
+      this.dispatchEvent(new CustomEvent("kin:lock", { bubbles: true, composed: true }));
       location.href = "/";
     });
   }

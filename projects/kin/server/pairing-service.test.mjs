@@ -587,6 +587,155 @@ test("HTTP member removal requires fresh action-bound passkey proof", async () =
   }
 });
 
+for (const adultCount of [2, 4]) {
+  test(`HTTP fresh-passkey self-leave preserves revocation and epoch semantics with ${adultCount} adults`, async () => {
+    const { service, adult, advance } = setup();
+    const add = (request, suffix, actor = adult) => {
+      const claim = service.claimPairing({
+        code: request.code,
+        credential: credential(suffix),
+        deviceLabel: suffix,
+        rateKey: suffix,
+      });
+      service.approvePairing(actor.sessionToken, request.pairingId, claim.version);
+      return service.activateClaim(claim.claimToken);
+    };
+    const departing = add(service.createPairing(adult.sessionToken), "departing");
+    for (let index = 2; index < adultCount; index++)
+      add(service.createPairing(adult.sessionToken), `adult-${index}`);
+    const extraDevice = add(service.createDevicePairing(departing.sessionToken), "extra-device", departing);
+    const extraSession = service.reauthenticate(departing.deviceToken, "credential-departing");
+    const invitation = adultCount === 2
+      ? service.createPairing(departing.sessionToken)
+      : service.createDevicePairing(departing.sessionToken);
+    service.claimPairing({
+      code: invitation.code, credential: credential("pending"), deviceLabel: "Pending",
+    });
+    const server = await startTestServer({ service, now: () => service.now() });
+    const cookie = `kin_session=${departing.sessionToken}; kin_device=${departing.deviceToken}`;
+    const options = async (memberId = departing.memberId, sessionCookie = cookie) => {
+      const response = await apiRequest(server, "/api/household/membership/remove/options", {
+        method: "POST", cookie: sessionCookie, body: { memberId },
+      });
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+    const finish = (flow, assertion = { id: "credential-departing", flow }, sessionCookie = cookie) =>
+      apiRequest(server, "/api/household/membership/remove/finish", {
+        method: "POST", cookie: sessionCookie, body: { flow, credential: assertion },
+      });
+    const unchanged = () => {
+      assert.equal(service.members.get(departing.memberId).active, true);
+      assert.equal(service.devices.get(departing.deviceId).revokedAt, null);
+      assert.equal(service.devices.get(extraDevice.deviceId).revokedAt, null);
+      assert.equal(service.authorize(departing.sessionToken).member.id, departing.memberId);
+      assert.equal(service.pairings.get(invitation.pairingId).state, "Claimed");
+      assert.equal(server.syncService.status(adult.sessionToken).rotationPending, false);
+    };
+    try {
+      server.syncService.enable(adult.sessionToken);
+      const denied = await apiRequest(server, "/api/household/membership", {
+        method: "DELETE", cookie, body: {},
+      });
+      assert.equal(denied.status, 401);
+      assert.equal((await denied.json()).error, "fresh_auth_required");
+      assert.deepEqual(responseCookies(denied), []);
+      unchanged();
+
+      const cancelled = await options();
+      assert.equal(server.flows.get(cancelled.flow).targetMemberId, departing.memberId);
+      unchanged(); // No finish request is made when the authenticator is cancelled.
+      const bad = await options();
+      assert.equal((await finish(bad.flow, { id: "credential-departing", flow: "wrong-challenge" })).status, 401);
+      assert.equal((await finish(bad.flow)).status, 410);
+      unchanged();
+      const wrongMember = await options();
+      assert.equal((await finish(wrongMember.flow, { id: "credential-a", flow: wrongMember.flow })).status, 401);
+      unchanged();
+      const wrongDevice = await options();
+      assert.equal((await finish(wrongDevice.flow, undefined, `kin_session=${extraDevice.sessionToken}`)).status, 400);
+      unchanged();
+      const wrongAction = await options();
+      server.flows.get(wrongAction.flow).purpose = "login";
+      assert.equal((await finish(wrongAction.flow)).status, 400);
+      unchanged();
+      const expired = await options();
+      advance(120_001);
+      assert.equal((await finish(expired.flow)).status, 410);
+      unchanged();
+
+      const valid = await options();
+      const removed = await finish(valid.flow);
+      assert.equal(removed.status, 200);
+      assert.deepEqual(await removed.json(), { memberId: departing.memberId, removed: true });
+      assert.deepEqual(responseCookies(removed), ["kin_session=", "kin_device="]);
+      assert.equal(service.members.get(departing.memberId).active, false);
+      assert.equal(service.activeMemberCount(service.households.get(adult.householdId)), adultCount - 1);
+      for (const deviceId of [departing.deviceId, extraDevice.deviceId]) {
+        assert.ok(service.devices.get(deviceId).revokedAt);
+        assert.ok(server.store.loadIdentity().devices.get(deviceId).revokedAt);
+      }
+      for (const token of [departing.sessionToken, extraDevice.sessionToken, extraSession.sessionToken]) {
+        assert.throws(() => service.authorize(token), error => error.code === "authentication_required");
+        for (const path of ["/api/sync/status", "/api/sync/events?cursor=&limit=1"])
+          assert.equal((await apiRequest(server, path, { cookie: `kin_session=${token}` })).status, 401);
+        assert.equal((await apiRequest(server, "/api/sync/events", {
+          method: "POST", cookie: `kin_session=${token}`, body: { events: [] },
+        })).status, 401);
+      }
+      assert.equal([...service.sessions.values()].some(session => session.memberId === departing.memberId), false);
+      assert.equal(service.pairings.get(invitation.pairingId).state, "Revoked");
+      assert.equal(server.store.loadIdentity().members.get(departing.memberId).active, false);
+      assert.equal(server.syncService.status(adult.sessionToken).pendingEpoch, 2);
+      assert.equal(server.store.loadSyncState(adult.householdId).rotationPending, true);
+      assert.equal(server.store.validate(), true);
+
+      if (adultCount === 2) {
+        const last = await options(adult.memberId, `kin_session=${adult.sessionToken}`);
+        const protectedResult = await finish(last.flow, { id: "credential-a", flow: last.flow }, `kin_session=${adult.sessionToken}`);
+        assert.equal(protectedResult.status, 409);
+        assert.equal((await protectedResult.json()).error, "last_adult");
+        assert.equal(service.members.get(adult.memberId).active, true);
+        assert.equal(service.devices.get(adult.deviceId).revokedAt, null);
+        assert.equal(service.authorize(adult.sessionToken).member.id, adult.memberId);
+      }
+    } finally {
+      await server.close();
+    }
+  });
+}
+
+test("HTTP self-leave rolls back durable revocation if access-change persistence fails", async () => {
+  const { service, adult } = setup();
+  const request = service.createPairing(adult.sessionToken);
+  const claim = service.claimPairing({ code: request.code, credential: credential("b"), deviceLabel: "B" });
+  service.approvePairing(adult.sessionToken, request.pairingId, claim.version);
+  const departing = service.activateClaim(claim.claimToken);
+  const server = await startTestServer({ service });
+  try {
+    server.syncService.enable(adult.sessionToken);
+    const cookie = `kin_session=${departing.sessionToken}`;
+    const started = await (await apiRequest(server, "/api/household/membership/remove/options", {
+      method: "POST", cookie, body: { memberId: departing.memberId },
+    })).json();
+    server.store.db.exec(`CREATE TRIGGER fail_leave_rotation BEFORE UPDATE ON sync_households
+      BEGIN SELECT RAISE(ABORT, 'injected rotation persistence failure'); END`);
+    const response = await apiRequest(server, "/api/household/membership/remove/finish", {
+      method: "POST", cookie,
+      body: { flow: started.flow, credential: { id: "credential-b", flow: started.flow } },
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(responseCookies(response), []);
+    assert.equal(server.store.failed, true);
+    assert.equal(server.store.db.prepare("SELECT active FROM members WHERE id = ?").get(departing.memberId).active, 1);
+    assert.equal(server.store.db.prepare("SELECT revoked_at FROM devices WHERE id = ?").get(departing.deviceId).revoked_at, null);
+    assert.equal(server.store.db.prepare("SELECT rotation_pending FROM sync_households WHERE household_id = ?").get(adult.householdId).rotation_pending, 0);
+    assert.equal((await apiRequest(server, "/api/sync/status", { cookie })).status, 503);
+  } finally {
+    await server.close();
+  }
+});
+
 test("HTTP pairing approval binds the assertion credential to the signed-in adult", async () => {
   const { service, adult } = setup();
   const other = service.bootstrap({
@@ -1568,7 +1717,7 @@ test("an adult who leaves remains historical while a replacement joins", () => {
   );
   const joined = service.activateClaim(claim.claimToken);
 
-  service.leaveHousehold(joined.sessionToken);
+  service.leaveHousehold(joined.sessionToken, joined.memberId);
   const household = service.households.get(adult.householdId);
   assert.equal(household.members.has(joined.memberId), true);
   assert.equal(service.members.get(joined.memberId).active, false);
@@ -1647,7 +1796,7 @@ test("approval rejects a newly full household without partial mutation", () => {
 test("the last adult cannot leave, while a joined adult can leave without removing the household", () => {
   const { service, adult } = setup();
   assert.throws(
-    () => service.leaveHousehold(adult.sessionToken),
+    () => service.leaveHousehold(adult.sessionToken, adult.memberId),
     (error) => error.code === "last_adult",
   );
   const invitation = service.createPairing(adult.sessionToken);
@@ -1662,7 +1811,15 @@ test("the last adult cannot leave, while a joined adult can leave without removi
     claim.version,
   );
   const joined = service.activateClaim(claim.claimToken);
-  assert.equal(service.leaveHousehold(joined.sessionToken).removed, true);
+  assert.throws(
+    () => service.leaveHousehold(joined.sessionToken),
+    (error) => error.code === "fresh_auth_required",
+  );
+  assert.throws(
+    () => service.leaveHousehold(joined.sessionToken, adult.memberId),
+    (error) => error.code === "fresh_auth_required",
+  );
+  assert.equal(service.leaveHousehold(joined.sessionToken, joined.memberId).removed, true);
   assert.equal(service.authorize(adult.sessionToken).member.id, adult.memberId);
 });
 
