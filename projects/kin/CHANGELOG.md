@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.38.0 — Modes & Member Context Polish (shipped on this branch)
+
+- Household settings present Adults, Limited Members, and Temporary Access as compact sections. Active Temporary access shows its absolute end time; ended access remains identifiable.
+- Adult-only controls stay out of Limited and Temporary views. Removal/revocation actions name the member target; Temporary revocation uses the existing passkey-protected access-change flow.
+- Responsibility selectors use active Adult/Limited/Temporary participants and exclude removed or expired members. Historical assignment records remain entity-centric.
+- Household Modes continue to affect routine presentation/availability only. UI states that Guest mode does not grant Temporary access; Vacation and Rest do not change authority.
+- Handoff remains a shared, multi-device household list without a two-person assumption. Reminders remain explicit and browser-local.
+- No presence, activity tracking, read receipts, location, scores, contribution analytics, or behavior-monitoring notifications were added.
+- Full release gate: 372 Node tests, 170 Rust tests, Edge browser/accessibility regressions, 32 virtual-authenticator assertions, formatting, lint, WASM build, and version consistency pass. WASM-target test execution is unverified on Windows because the generated test binary is not executable there.
+
 ## v0.37.0 — Guest & Caregiver Access (shipped on this branch)
 
 - Adults can invite Temporary Members through the existing pairing flow with a required local date/time expiry held by the server.
@@ -18,7 +28,7 @@
 - Persist member kind in server identity storage with a schema v5 migration; historical rows migrate to Adult.
 - Keep Temporary admissions bounded by a required server-held future expiry. Expiry reconciliation revokes devices and sessions and marks key rotation pending.
 - Local content archives remain event-history archives; durable server identity backups preserve member kind and expiry.
-- Pairing security (48), durable identity (40), durable store/identity round-trip (8), and sync service security (16) pass under Node 24.21.0. Full batch verification remains in progress.
+- Pairing security (50), durable identity (40), durable store/identity round-trip (8), and sync service security (16) pass under Node 24.21.0. The full v0.36–v0.38 gate is recorded under v0.38.0.
 
 ## v0.35.1 — Fresh Passkey Self-Removal (candidate)
 

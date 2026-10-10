@@ -584,7 +584,7 @@ class KinApp extends HTMLElement {
     }
     this.modeSelect.addEventListener("change", this.onModeChange);
     const modeHint = document.createElement("p");
-    modeHint.textContent = "Routine occurrences pause outside Normal; routine definitions stay unchanged.";
+    modeHint.textContent = "Routine occurrences pause outside Normal; routine definitions stay unchanged. Modes do not grant or end access. Guest mode does not add a Temporary Member.";
     modeSection.append(modeHeading, modeLabel, this.modeSelect, modeHint);
     more.append(modeSection);
     more.append(this.pulse);

@@ -149,11 +149,10 @@ Members v0.35.0 on `kin-v0.35-more-adults`; keep its trust-model changes isolate
 security and human review. Preserve separate milestone commits; do not tag or
 merge this branch. These are implementation candidates, not production certification.
 The release label `kin-v0.35.0` is reserved for a separately approved release commit.
-The user-authorized corrective candidate `kin-v0.35.1` requires fresh passkey
-authentication for self-removal using the existing member-removal ceremony.
-It remains on `kin-v0.35-more-adults`; do not merge, tag, or begin v0.36.x.
-Preserve the v0.13.5
-recovery authority guarantees and all earlier security/domain contracts.
+The user-authorized `kin-fast-track-v0.36-v0.38` batch ships the v0.36.0,
+v0.37.0, and v0.38.0 implementation candidates in separate milestone commits.
+Preserve the v0.13.5 recovery authority guarantees and all earlier
+security/domain contracts. Do not merge or tag this candidate branch.
 
 Kin's last published release is `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. The v0.31.0–v0.34.0 batch is complete; v0.35.0 More Adult Members is authorized on `kin-v0.35-more-adults`. Preserve every existing tag exactly. Root replacement follows [ROOT-ROTATION](docs/ROOT-ROTATION.md); archive recovery remains intentionally local-only and KARC v1 remains supported. No production certification, mobile readiness or independent audit is claimed. Do not merge the batch. See the release records for actual evidence and limitations.
 
@@ -1490,3 +1489,5 @@ If an explicit task intentionally changes an architectural decision, update the 
 Kin should make family life require **less remembering, less repeating, and less unnecessary friction**.
 
 If a proposed feature makes Kin harder to use than simply sending a text message, reconsider it.
+
+The candidate release name is `kin-v0.38.0`; no tag has been created.
