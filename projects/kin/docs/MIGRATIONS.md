@@ -1,6 +1,6 @@
 # Data Migrations
 
-**Status:** v0.28.0 Local Reminders adds ephemeral browser-local UI state only. There is no IndexedDB, archive-container, sync-envelope, or server-schema migration. v0.27.0 added Playbooks through protocol 19. Earlier version sections are historical.
+**Status:** v0.29.0 changes only the static application shell cache and manifest. It introduces no household-state, IndexedDB, archive-container, sync-envelope, or server-schema migration. v0.28.0 reminders remain ephemeral browser-local state. v0.27.0 added Playbooks through protocol 19. Earlier version sections are historical.
 
 ## v0.27.0 Household Playbooks compatibility
 

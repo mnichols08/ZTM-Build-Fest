@@ -2,6 +2,12 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
+## v0.29.0 — PWA & Offline Install Polish
+
+- Complete-shell service-worker staging keeps the prior known-good cache on failure; intentional activation cleans obsolete caches.
+- Add calm, user-controlled update-ready messaging and local manifest metadata.
+- Browser installation/offline launch validation remains environment-unverified.
+
 ## v0.28.0 — Local Reminders
 
 - Add explicit, browser-local reminders for active Items and Routines.

@@ -37,6 +37,7 @@ class KinApp extends HTMLElement {
     this.syncCoordinator = null;
     this.state = null;
     this.localReminders = new LocalReminders();
+    this.deferredInstallPrompt = null;
     this.vault = null;
     this.securityGeneration = 0;
     this.busy = false;
@@ -178,11 +179,34 @@ class KinApp extends HTMLElement {
     this.onPeerMessage = (event) => this.handlePeerMessage(event);
     this.onLockRequest = () => this.lockHousehold();
     this.onPageHide = () => this.lockHousehold(false);
+    this.updateRegistration = null;
+    this.updateRequested = false;
+    this.onServiceWorkerMessage = (event) => {
+      if (event.data?.type === "KIN_UPDATE_READY") this.showUpdateNotice();
+    };
+    this.onControllerChange = () => {
+      if (this.updateRequested) window.location.reload();
+    };
+    this.onBeforeInstallPrompt = (event) => { event.preventDefault(); this.deferredInstallPrompt = event; if (this.installButton) this.installButton.hidden = false; };
+    this.onAppInstalled = () => { this.deferredInstallPrompt = null; if (this.installButton) this.installButton.hidden = true; };
   }
 
   connectedCallback() {
+    window.addEventListener("beforeinstallprompt", this.onBeforeInstallPrompt);
+    window.addEventListener("appinstalled", this.onAppInstalled);
     if ("serviceWorker" in navigator) {
-      void navigator.serviceWorker.register("/service-worker.js").catch(() => {
+      navigator.serviceWorker.addEventListener("message", this.onServiceWorkerMessage);
+      navigator.serviceWorker.addEventListener("controllerchange", this.onControllerChange);
+      void navigator.serviceWorker.register("/service-worker.js").then((registration) => {
+        this.updateRegistration = registration;
+        if (registration.waiting && navigator.serviceWorker.controller) this.showUpdateNotice();
+        registration.addEventListener("updatefound", () => {
+          const worker = registration.installing;
+          worker?.addEventListener("statechange", () => {
+            if (worker.state === "installed" && navigator.serviceWorker.controller) this.showUpdateNotice();
+          });
+        });
+      }).catch(() => {
         // Online use still follows the same security boundary without offline cache.
       });
     }
@@ -379,8 +403,38 @@ class KinApp extends HTMLElement {
     this.security.onUnlocked = (vault) => this.openUnlockedHousehold(vault);
     this.security.onLockRequested = () => this.lockHousehold();
     this.replaceChildren(header, this.security, shell, feedback, this.routeAnnouncement);
+    this.updateNotice = document.createElement("section");
+    this.updateNotice.className = "update-notice";
+    this.updateNotice.setAttribute("aria-label", "Application update");
+    this.updateNotice.setAttribute("role", "status");
+    const updateMessage = document.createElement("span");
+    updateMessage.textContent = "A new Kin version is ready.";
+    const updateNow = document.createElement("button");
+    updateNow.type = "button";
+    updateNow.textContent = "Update now";
+    updateNow.addEventListener("click", () => {
+      const focusedEditor = document.activeElement?.matches?.("input, textarea, select, [contenteditable='true']");
+      const hasDraft = this.compose?.input?.value.trim() || this.routines?.input?.value.trim() || this.routines?.playbookTitle?.value.trim() || this.routines?.playbookEntries?.value.trim() || this.notes?.editor?.title.trim() || this.notes?.editor?.body.trim();
+      if (this.busy || focusedEditor || hasDraft) {
+        this.setStatus("Finish or save your current edit before updating Kin.");
+        return;
+      }
+      this.updateRequested = true;
+      this.updateRegistration?.waiting?.postMessage({ type: "KIN_SKIP_WAITING" });
+    });
+    const updateLater = document.createElement("button");
+    updateLater.type = "button";
+    updateLater.textContent = "Later";
+    updateLater.addEventListener("click", () => { this.updateNotice.hidden = true; });
+    this.updateNotice.append(updateMessage, updateNow, updateLater);
+    this.updateNotice.hidden = true;
+    this.prepend(this.updateNotice);
     this.retryButton.addEventListener("click", () => this.retryAction?.());
     this.showPageFromLocation();
+  }
+
+  showUpdateNotice() {
+    if (this.updateNotice) this.updateNotice.hidden = false;
   }
 
   buildViews(main) {
@@ -473,6 +527,20 @@ class KinApp extends HTMLElement {
     tablist.addEventListener("keydown", this.onHandoffTabKeydown);
 
     const more = page("more", "More", "Household context, people, devices, and continuity.");
+    this.installButton = document.createElement("button");
+    this.installButton.type = "button";
+    this.installButton.textContent = "Install Kin";
+    this.installButton.hidden = true;
+    this.installButton.addEventListener("click", async () => {
+      const prompt = this.deferredInstallPrompt;
+      if (!prompt) return;
+      this.deferredInstallPrompt = null;
+      this.installButton.hidden = true;
+      await prompt.prompt();
+      await prompt.userChoice;
+    });
+    if (this.deferredInstallPrompt) this.installButton.hidden = false;
+    more.append(this.installButton);
     const searchLink = document.createElement("a");
     searchLink.className = "more-search-link";
     searchLink.href = "#search";
@@ -555,6 +623,10 @@ class KinApp extends HTMLElement {
 
   disconnectedCallback() {
     this.lockHousehold(false);
+    window.removeEventListener("beforeinstallprompt", this.onBeforeInstallPrompt);
+    window.removeEventListener("appinstalled", this.onAppInstalled);
+    navigator.serviceWorker?.removeEventListener("message", this.onServiceWorkerMessage);
+    navigator.serviceWorker?.removeEventListener("controllerchange", this.onControllerChange);
     this.removeEventListener("kin:lock", this.onLockRequest);
     window.removeEventListener("pagehide", this.onPageHide);
     window.removeEventListener("hashchange", this.onHashChange);

@@ -1,6 +1,6 @@
 # Household Events
 
-**Status:** Current through v0.28.0 Local Reminders. Reminders are ephemeral browser-local UI state and do not change the canonical protocol. Rust owns canonical command encoding and decoding. Protocol 19 adds ordered Playbook save/archive events 33–34 and a bounded projection. Protocols 1–18 fail closed on Playbook-bearing histories rather than omit them. Protocols 10–18 add Notes, Steps, richer Routine cadence, Shopping, Staples, household modes, planning dates, history timestamps, and Pins. Equal-time distributed replay remains deterministic; local encryption wraps canonical bytes without rewriting them.
+**Status:** Current through v0.29.0 PWA & Offline Install Polish. The service worker caches only static shell assets; reminders remain ephemeral browser-local state. No protocol change. Rust owns canonical command encoding and decoding. Protocol 19 adds ordered Playbook save/archive events 33–34 and a bounded projection. Protocols 1–18 fail closed on Playbook-bearing histories rather than omit them. Protocols 10–18 add Notes, Steps, richer Routine cadence, Shopping, Staples, household modes, planning dates, history timestamps, and Pins. Equal-time distributed replay remains deterministic; local encryption wraps canonical bytes without rewriting them.
 
 ## Canonical record
 

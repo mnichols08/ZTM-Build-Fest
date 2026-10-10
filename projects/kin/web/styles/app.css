@@ -112,6 +112,23 @@ a:focus-visible, main:focus-visible, [tabindex="-1"]:focus-visible {
 
 kin-app { display: block; min-height: 100vh; }
 
+.update-notice {
+  position: sticky;
+  z-index: 20;
+  top: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px 14px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--ink);
+}
+.update-notice[hidden] { display: none; }
+.update-notice button { min-height: var(--tap); padding-inline: 12px; }
+
 .site-header {
   min-height: 82px;
   padding: 14px 24px;
