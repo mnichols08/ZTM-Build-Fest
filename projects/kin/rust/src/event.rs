@@ -31,6 +31,15 @@ id_type!(StepId);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
+pub enum PinTargetKind {
+    Item = 1,
+    Note = 2,
+    Routine = 3,
+    Area = 4,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
 pub enum HouseholdMode {
     Normal = 0,
     Vacation = 1,
@@ -186,6 +195,14 @@ pub enum EventKind {
     },
     HouseholdModeChanged {
         mode: HouseholdMode,
+    },
+    PinAdded {
+        target_kind: PinTargetKind,
+        target_id: [u8; 16],
+    },
+    PinRemoved {
+        target_kind: PinTargetKind,
+        target_id: [u8; 16],
     },
 }
 

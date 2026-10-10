@@ -90,6 +90,8 @@ class KinApp extends HTMLElement {
     this.onItemAreaChange = (event) => this.saveArea({ ...event.detail, action: "assign-item-area" });
     this.onItemPlanningDateChange = (event) =>
       this.saveItemPlanningDate(event.detail, event.target.closest("kin-today"));
+    this.onPinIntent = (event) => this.savePin(event.detail);
+    this.onOpenPin = (event) => this.openPinnedItem(event.detail.itemId);
     this.onModeChange = () => this.saveMode(this.modeSelect.value);
     this.pulseTimer = null;
     this.catchUpCursor = null;
@@ -192,6 +194,8 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:archive-item-step", this.onArchiveItemStep);
     this.addEventListener("kin:change-item-area", this.onItemAreaChange);
     this.addEventListener("kin:set-item-planning-date", this.onItemPlanningDateChange);
+    this.addEventListener("kin:pin-intent", this.onPinIntent);
+    this.addEventListener("kin:open-pin", this.onOpenPin);
     this.addEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.addEventListener(`kin:${action}`, this.onNoteIntent);
     this.addEventListener("kin:add-handoff", this.onAddHandoff);
@@ -558,6 +562,8 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:archive-item-step", this.onArchiveItemStep);
     this.removeEventListener("kin:change-item-area", this.onItemAreaChange);
     this.removeEventListener("kin:set-item-planning-date", this.onItemPlanningDateChange);
+    this.removeEventListener("kin:pin-intent", this.onPinIntent);
+    this.removeEventListener("kin:open-pin", this.onOpenPin);
     this.removeEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.removeEventListener(`kin:${action}`, this.onNoteIntent);
     this.removeEventListener("kin:add-handoff", this.onAddHandoff);
@@ -1243,6 +1249,48 @@ class KinApp extends HTMLElement {
     return this.handleItemAction("complete", event.detail.itemId);
   }
 
+  async savePin(detail) {
+    if (this.busy || !this.store || !this.engine || detail.targetKind !== "item") return;
+    const session = this.captureSession();
+    const command = { type: detail.pinned ? "pin" : "unpin", targetKind: "item", targetId: detail.targetId };
+    const list = [this.today, this.needs, this.shopping, this.staples].find((candidate) => candidate.contains(document.activeElement));
+    list?.rememberFocus();
+    this.setBusy(true);
+    this.clearAlert();
+    this.setStatus("Saving…");
+    try {
+      await this.appendCommand(command);
+      this.assertCurrentSession(session);
+      this.renderState();
+      this.setStatus(detail.pinned ? "Pinned for quick access." : "Unpinned.");
+      this.broadcastEventChange();
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === 4) this.pendingRefresh = true;
+      this.showAlert(error.userMessage ?? SAVE_ERROR, () => this.savePin(detail), command);
+      this.setStatus("");
+    } finally {
+      if (this.isCurrentSession(session)) {
+        this.setBusy(false);
+        this.flushPeerRefresh();
+      }
+    }
+  }
+
+  openPinnedItem(itemId) {
+    const item = this.state?.items.find((record) => record.itemId === itemId && record.status !== "archived");
+    if (!item) return;
+    const page = item.classification === "today" ? "today" : "lists";
+    history.pushState(null, "", `#${page}`);
+    this.showPageFromLocation();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const text = [...this.main.querySelectorAll(".item-text[data-item-id]")].find((node) => node.dataset.itemId === itemId);
+      if (!text) return;
+      text.scrollIntoView({ block: "center" });
+      text.focus();
+    }));
+  }
+
   async handleReopenItem(event) {
     return this.handleItemAction("reopen", event.detail.itemId);
   }
@@ -1637,12 +1685,16 @@ class KinApp extends HTMLElement {
     this.catchUp.lastLookedAt = this.catchUpCursor?.lastLookedAt;
     this.today.items = this.state.items;
     this.today.areas = this.state.areas ?? [];
+    this.today.pins = this.state.pins ?? [];
     this.needs.items = this.state.items;
     this.needs.areas = this.state.areas ?? [];
+    this.needs.pins = this.state.pins ?? [];
     this.shopping.items = this.state.items;
     this.shopping.areas = this.state.areas ?? [];
+    this.shopping.pins = this.state.pins ?? [];
     this.staples.items = this.state.items;
     this.staples.areas = this.state.areas ?? [];
+    this.staples.pins = this.state.pins ?? [];
     this.handoffs.handoffs = this.state.handoffs;
     this.talks.talks = this.state.talks;
     this.search.household = {

@@ -104,6 +104,14 @@ pub enum HouseholdCommand {
         item_id: ItemId,
         planning_date: Option<CivilDate>,
     },
+    Pin {
+        target_kind: PinTargetKind,
+        target_id: [u8; 16],
+    },
+    Unpin {
+        target_kind: PinTargetKind,
+        target_id: [u8; 16],
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -242,6 +250,20 @@ pub fn create_event(
         } => EventKind::ItemPlanningDateChanged {
             item_id: *item_id,
             planning_date: *planning_date,
+        },
+        Pin {
+            target_kind,
+            target_id,
+        } => EventKind::PinAdded {
+            target_kind: *target_kind,
+            target_id: *target_id,
+        },
+        Unpin {
+            target_kind,
+            target_id,
+        } => EventKind::PinRemoved {
+            target_kind: *target_kind,
+            target_id: *target_id,
         },
     };
     let event = EventEnvelope {
@@ -589,13 +611,14 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 25 && (17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length);
     if !text.is_empty() && !accepts_payload
         || !matches!(kind, 14..=16 | 30) && date != 0
-        || !matches!(kind, 1 | 12 | 14 | 29) && option != 0
+        || !matches!(kind, 1 | 12 | 14 | 29 | 31 | 32) && option != 0
         || kind != 12 && expires != 0
         || matches!(kind, 12 | 13 | 29) && id != [0; 16]
         || kind == 21 && text_length != 16
         || kind == 24 && text_length != 0
         || kind == 25 && !(17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
         || matches!(kind, 26..=28) && text_length != 16
+        || matches!(kind, 31 | 32) && text_length != 0
     {
         return Err(KinError::MalformedProtocol);
     }
@@ -749,6 +772,29 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
                 .then(|| CivilDate::from_encoded(date))
                 .transpose()?,
         },
+        31 | 32 if text_length == 0 => {
+            let target_kind = match option {
+                1 => PinTargetKind::Item,
+                2 => PinTargetKind::Note,
+                3 => PinTargetKind::Routine,
+                4 => PinTargetKind::Area,
+                _ => return Err(KinError::MalformedProtocol),
+            };
+            if id == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            if kind == 31 {
+                Pin {
+                    target_kind,
+                    target_id: id,
+                }
+            } else {
+                Unpin {
+                    target_kind,
+                    target_id: id,
+                }
+            }
+        }
         _ => return Err(KinError::UnsupportedVersion),
     };
     let context = CommandContext {

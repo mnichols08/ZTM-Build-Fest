@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** Current through v0.25.0 Search & Filters. v0.25 adds no ABI, protocol, or canonical event change. v0.24.0 adds protocol 17's per-Item Last changed projection field while preserving earlier layouts and canonical event bytes. Protocol 16 adds Item planning dates; protocol 15 adds household modes; protocol 14 gates Staples, protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
+**Status:** Current through v0.26.0 Pins & Quick Access. Protocol 18 adds canonical Pin events and a bounded Pin projection list while preserving all earlier layouts and event bytes. Protocol 17 adds the per-Item Last changed projection field. Protocol 16 adds Item planning dates; protocol 15 adds household modes; protocol 14 gates Staples, protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
 
 ## Target and exports
 
@@ -127,12 +127,12 @@ Items remain serialized in original add-event order, including archived tombston
 - Rust owns result/error buffers. `kin_result_ptr/len` refer to the most recent successful result; `kin_error_ptr/len` refer to the most recent failed call. The inactive pair returns `(0, 0)`.
 - Result/error bytes stay valid until the next `kin_apply_events` call or module teardown. JavaScript must copy them into host-owned memory before another call. The bridge must not retain a view that may become stale if WASM memory grows.
 - Each call clears the previous result and error before processing. Repeated calls are independent full replays; the module has no hidden household state between calls.
-- A valid empty household response is a non-empty protocol result containing zero entity counts (12 bytes for v1/v2, 16 for v3, 20 for v4; protocols 15 and 16 have a 72-byte header). A zero-length error/result accessor means that no buffer is available, not a successful empty state.
+- A valid empty household response is a non-empty protocol result containing zero entity counts (12 bytes for v1/v2, 16 for v3, 20 for v4; protocols 15–17 have a 72-byte header and protocol 18 has a 76-byte header). A zero-length error/result accessor means that no buffer is available, not a successful empty state.
 - Output allocation is released by Rust on the next apply call/module teardown; JavaScript must not call `kin_free` on result/error pointers.
 
 ## Call behavior
 
-`kin_apply_events` accepts the supported protocol versions 1–15. Protocols v1–v7 replay the supplied order; v8 and later sort a copy for distributed state replay while preserving input order for catch-up boundaries. It validates the entire request and reconstructs from scratch. On success it publishes a complete result in the requested protocol version and returns zero. On failure it publishes an error and no partial result; stored IndexedDB bytes remain untouched. Unknown protocol/event versions fail with a stable unsupported-version code; malformed payload, bounds overflow, and invalid state transitions fail deterministically.
+`kin_apply_events` accepts the supported protocol versions 1–18. Protocols v1–v7 replay the supplied order; v8 and later sort a copy for distributed state replay while preserving input order for catch-up boundaries. It validates the entire request and reconstructs from scratch. On success it publishes a complete result in the requested protocol version and returns zero. On failure it publishes an error and no partial result; stored IndexedDB bytes remain untouched. Unknown protocol/event versions fail with a stable unsupported-version code; malformed payload, bounds overflow, and invalid state transitions fail deterministically.
 
 The function may grow memory while parsing or building output. JavaScript must reacquire `memory.buffer` after the call before copying result/error bytes. Length arithmetic is checked for overflow in both languages. Cap a request and result at 64 MiB, a request at 10,000 events, and individual item text at 4096 UTF-8 bytes for v0.1.0; reject larger input before unbounded allocation. The matching 10,000-event storage limit is specified in [STORAGE](STORAGE.md).
 
@@ -466,3 +466,14 @@ storage field, read receipt, actor attribution, exact-time UI, or history
 timeline. Its eight bytes per Item add at most 80,000 bytes under the existing
 10,000-entity limit; the 64 MiB protocol result bound still applies.
 Protocols 1–16 retain their exact layouts.
+
+## Protocol version 18 — Pins
+
+Schema-1 event kinds 31 and 32 add or remove a Pin. Their fixed 20-byte
+payload is `target-kind:u8`, three zero reserved bytes, and a stable 16-byte
+target ID. Target kinds are Item=1, Note=2, Routine=3, Area=4. The result
+header extends to 76 bytes with `pin-count:u32` at offset 72. After the
+protocol-17 per-Item timestamps, each Pin is encoded as the same 20-byte
+target-kind/reserved/ID record, in deterministic insertion order. The count
+is bounded at ten. Protocols 1–17 retain their layouts and reject Pin history
+or a state containing Pins rather than omitting it.

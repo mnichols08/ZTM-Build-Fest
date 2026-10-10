@@ -2,6 +2,16 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
+## v0.26.0 — Pins & Quick Access
+
+- Add stable, ordered Pin and Unpin events with a ten-Pin household limit.
+- Add an accessible Quick Access section on Today. The current UI supports
+  Item Pins, while the protocol defines stable targets for Items, Notes,
+  Routines, and Areas.
+- Add protocol 18 event kinds 31–32 and a Pin state projection. Existing
+  histories replay with no Pins; no storage, archive, or server migration is
+  required. Archived targets are omitted from Quick Access.
+
 ## v0.25.0 — Search & Filters
 
 - Add private, in-memory search across unarchived Items, checklist Steps,

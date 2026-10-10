@@ -1,6 +1,15 @@
 # Data Migrations
 
-**Status:** v0.24.0 adds a derived Item history date through replay protocol 17 without an IndexedDB, archive-container, sync-envelope, or server-schema migration. Earlier version sections are historical.
+**Status:** v0.26.0 adds Pins through replay protocol 18 without an IndexedDB, archive-container, sync-envelope, or server-schema migration. Earlier version sections are historical.
+
+## v0.26.0 Pins compatibility
+
+Protocol 18 adds event kinds 31 and 32 and appends a bounded Pin count and
+stable target references to the state projection. Old histories contain no
+Pin events and therefore project an empty list. Protocols 1–17 remain readable
+for legacy histories and reject histories containing Pins; event bytes are
+never silently discarded or reinterpreted. No stored envelope or IndexedDB
+schema changes.
 
 ## v0.24.0 Useful Household History compatibility
 

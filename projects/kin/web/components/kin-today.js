@@ -3,6 +3,7 @@ class KinToday extends HTMLElement {
     super();
     this.records = [];
     this.areaRecords = [];
+    this.pinRecords = [];
     this.isDisabled = false;
     this.display = "all";
     this.expandedSteps = new Set();
@@ -34,6 +35,11 @@ class KinToday extends HTMLElement {
     this.render();
   }
 
+  set pins(value) {
+    this.pinRecords = Array.isArray(value) ? value : [];
+    this.render();
+  }
+
   set disabled(value) {
     this.isDisabled = Boolean(value);
     for (const item of this.querySelectorAll("kin-item")) {
@@ -52,7 +58,12 @@ class KinToday extends HTMLElement {
   render() {
     const focus = this.pendingFocus ?? this.captureFocus();
     this.pendingFocus = null;
-    const sections = [
+    const sections = [];
+    if (this.display === "today") {
+      const quick = this.createQuickAccess();
+      if (quick) sections.push(quick);
+    }
+    sections.push(...[
       ["today", "Today"],
       ["need", "Needs"],
       ["shopping", "Shopping"],
@@ -91,9 +102,50 @@ class KinToday extends HTMLElement {
         section.append(empty);
       }
       return section;
-    });
+    }));
     this.replaceChildren(...sections);
     this.restoreFocus(focus);
+  }
+
+  createQuickAccess() {
+    const targets = this.pinRecords
+      .filter((pin) => pin.targetKind === "item")
+      .map((pin) => this.records.find((item) => item.itemId === pin.targetId && item.status !== "archived"))
+      .filter(Boolean);
+    if (!targets.length) return null;
+    const section = document.createElement("section");
+    section.className = "today-section quick-access";
+    const heading = document.createElement("h2");
+    heading.textContent = "Quick access";
+    section.append(heading);
+    const list = document.createElement("ul");
+    list.className = "item-list";
+    for (const item of targets) {
+      const row = document.createElement("li");
+      const entry = document.createElement("div");
+      entry.className = "quick-access-row";
+      const open = document.createElement("button");
+      open.type = "button";
+      open.className = "quick-access-open";
+      open.textContent = item.text;
+      open.setAttribute("aria-label", `Open ${item.text}`);
+      open.addEventListener("click", () => this.dispatchEvent(new CustomEvent("kin:open-pin", {
+        detail: { itemId: item.itemId }, bubbles: true, composed: true,
+      })));
+      const unpin = document.createElement("button");
+      unpin.type = "button";
+      unpin.textContent = "Unpin";
+      unpin.setAttribute("aria-label", `Unpin ${item.text}`);
+      unpin.disabled = this.isDisabled;
+      unpin.addEventListener("click", () => this.dispatchEvent(new CustomEvent("kin:pin-intent", {
+        detail: { targetKind: "item", targetId: item.itemId, pinned: false }, bubbles: true, composed: true,
+      })));
+      entry.append(open, unpin);
+      row.append(entry);
+      list.append(row);
+    }
+    section.append(list);
+    return section;
   }
 
   captureFocus() {
@@ -135,6 +187,8 @@ class KinToday extends HTMLElement {
       complete: "reopen",
       reopen: "complete",
       "archive-item-step": "toggle-step",
+      pin: "unpin",
+      unpin: "pin",
     }[focus.action];
     const target = sameItem.find((control) => control.dataset.itemAction === focus.action)
       ?? (replacementAction
@@ -156,6 +210,8 @@ class KinToday extends HTMLElement {
       const item = document.createElement("kin-item");
       item.item = record;
       item.areaOptions = this.areaRecords;
+      item.pinned = this.pinRecords.some((pin) => pin.targetKind === "item" && pin.targetId === record.itemId);
+      item.pinLimitReached = this.pinRecords.length >= 10;
       item.checklistExpanded = this.expandedSteps.has(record.itemId);
       item.disabled = this.isDisabled;
       listItem.append(item);

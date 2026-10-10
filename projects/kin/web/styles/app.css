@@ -215,6 +215,9 @@ main {
 }
 .page-intro p { margin: 7px 0 0; color: var(--ink-muted); }
 .calendar-export-button { margin-top: 12px; }
+.quick-access-row { display: flex; align-items: stretch; gap: 8px; }
+.quick-access-open { flex: 1; min-width: 0; padding: 8px 12px; text-align: left; overflow-wrap: anywhere; }
+.quick-access-row > button:last-child { padding-inline: 12px; }
 #today .page-intro {
   position: relative;
   margin: 0 0 22px;

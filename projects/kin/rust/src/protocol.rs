@@ -1,7 +1,8 @@
 use crate::error::KinError;
 use crate::event::{
     valid_timestamp, ActorId, DeviceId, EventEnvelope, EventId, EventKind, HandoffId, HouseholdId,
-    HouseholdMode, IdentityBinding, ItemClassification, ItemId, PulseValue, RoutineId, TalkId,
+    HouseholdMode, IdentityBinding, ItemClassification, ItemId, PinTargetKind, PulseValue,
+    RoutineId, TalkId,
 };
 use crate::recurrence::{Cadence, CivilDate};
 use crate::state::{
@@ -26,7 +27,8 @@ pub const PROTOCOL_V14: u16 = 14;
 pub const PROTOCOL_V15: u16 = 15;
 pub const PROTOCOL_V16: u16 = 16;
 pub const PROTOCOL_V17: u16 = 17;
-pub const PROTOCOL_VERSION: u16 = PROTOCOL_V17;
+pub const PROTOCOL_V18: u16 = 18;
+pub const PROTOCOL_VERSION: u16 = PROTOCOL_V18;
 pub const ERROR_PROTOCOL_VERSION: u16 = PROTOCOL_V1;
 pub const MAX_EVENT_COUNT: usize = 10_000;
 pub const MAX_PROTOCOL_BYTES: usize = 64 * 1024 * 1024;
@@ -86,6 +88,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
             | PROTOCOL_V15
             | PROTOCOL_V16
             | PROTOCOL_V17
+            | PROTOCOL_V18
     ) {
         return Err(KinError::UnsupportedVersion);
     }
@@ -183,7 +186,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
         .map_err(|_| KinError::SizeLimit)?;
     let mut offset = match version {
         PROTOCOL_V8 | PROTOCOL_V9 | PROTOCOL_V10 | PROTOCOL_V11 | PROTOCOL_V12 | PROTOCOL_V13
-        | PROTOCOL_V14 | PROTOCOL_V15 | PROTOCOL_V16 | PROTOCOL_V17 => {
+        | PROTOCOL_V14 | PROTOCOL_V15 | PROTOCOL_V16 | PROTOCOL_V17 | PROTOCOL_V18 => {
             V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES
         }
         PROTOCOL_V7 => 44,
@@ -251,6 +254,7 @@ pub fn encode_state(state: &HouseholdState, protocol_version: u16) -> Result<Vec
         || state.items.iter().any(|item| item.area_id.is_some())
         || state.items.iter().any(|item| !item.steps.is_empty())
         || state.items.iter().any(|item| item.planning_date.is_some())
+        || !state.pins.is_empty()
     {
         return Err(KinError::UnsupportedVersion);
     }
@@ -511,6 +515,13 @@ pub fn encode_state_v17(
     encode_state_with_summary(state, summary, PROTOCOL_V17)
 }
 
+pub fn encode_state_v18(
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<Vec<u8>, KinError> {
+    encode_state_with_summary(state, summary, PROTOCOL_V18)
+}
+
 fn encode_state_with_summary(
     state: &HouseholdState,
     summary: &CatchUpSummary,
@@ -532,6 +543,12 @@ fn encode_state_with_summary(
     }
     if version < PROTOCOL_V11 && state.items.iter().any(|item| !item.steps.is_empty()) {
         return Err(KinError::UnsupportedVersion);
+    }
+    if version < PROTOCOL_V18 && !state.pins.is_empty() {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if state.pins.len() > crate::state::MAX_PINS {
+        return Err(KinError::SizeLimit);
     }
     if version < PROTOCOL_V12
         && state
@@ -747,6 +764,7 @@ fn encode_state_with_summary(
             })
         })
         .and_then(|length| length.checked_add(if version >= PROTOCOL_V15 { 4 } else { 0 }))
+        .and_then(|length| length.checked_add(if version >= PROTOCOL_V18 { 4 } else { 0 }))
         .and_then(|length| {
             length.checked_add(if version >= PROTOCOL_V16 {
                 state.items.len().checked_mul(4)?
@@ -757,6 +775,13 @@ fn encode_state_with_summary(
         .and_then(|length| {
             length.checked_add(if version >= PROTOCOL_V17 {
                 state.items.len().checked_mul(8)?
+            } else {
+                0
+            })
+        })
+        .and_then(|length| {
+            length.checked_add(if version >= PROTOCOL_V18 {
+                state.pins.len().checked_mul(20)?
             } else {
                 0
             })
@@ -804,6 +829,9 @@ fn encode_state_with_summary(
         result.push(state.mode as u8);
         result.extend_from_slice(&[0; 3]);
     }
+    if version >= PROTOCOL_V18 {
+        push_u32(&mut result, state.pins.len() as u32);
+    }
     result.extend_from_slice(&previous[24..]);
     if version >= PROTOCOL_V9 {
         for item in &state.items {
@@ -836,6 +864,13 @@ fn encode_state_with_summary(
             result.extend_from_slice(&item.last_changed_at.to_le_bytes());
         }
     }
+    if version >= PROTOCOL_V18 {
+        for pin in &state.pins {
+            result.push(pin.target_kind as u8);
+            result.extend_from_slice(&[0; 3]);
+            result.extend_from_slice(&pin.target_id);
+        }
+    }
 
     for entry in &summary.entries {
         result.extend_from_slice(&entry.event_id.0);
@@ -856,7 +891,7 @@ fn encode_state_with_summary(
 }
 
 pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelope, KinError> {
-    if !(PROTOCOL_V1..=PROTOCOL_V17).contains(&protocol_version) {
+    if !(PROTOCOL_V1..=PROTOCOL_V18).contains(&protocol_version) {
         return Err(KinError::UnsupportedVersion);
     }
     if record.len() > MAX_PROTOCOL_BYTES {
@@ -1039,6 +1074,33 @@ pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelop
                 planning_date: (encoded_date != 0)
                     .then(|| CivilDate::from_encoded(encoded_date))
                     .transpose()?,
+            }
+        }
+        (1, 31 | 32) if protocol_version >= PROTOCOL_V18 => {
+            if payload.len() != 20 || payload[1..4] != [0; 3] {
+                return Err(KinError::MalformedProtocol);
+            }
+            let target_kind = match payload[0] {
+                1 => PinTargetKind::Item,
+                2 => PinTargetKind::Note,
+                3 => PinTargetKind::Routine,
+                4 => PinTargetKind::Area,
+                _ => return Err(KinError::MalformedProtocol),
+            };
+            let target_id = read_id(payload, 4)?;
+            if target_id == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            if event_kind == 31 {
+                EventKind::PinAdded {
+                    target_kind,
+                    target_id,
+                }
+            } else {
+                EventKind::PinRemoved {
+                    target_kind,
+                    target_id,
+                }
             }
         }
         (1, 15..=17) if protocol_version >= PROTOCOL_V7 => {

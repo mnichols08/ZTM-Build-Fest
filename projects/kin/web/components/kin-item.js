@@ -6,6 +6,8 @@ class KinItem extends HTMLElement {
     this.record = null;
     this.isDisabled = false;
     this.showSteps = false;
+    this.isPinned = false;
+    this.pinLimitReached = false;
   }
 
   set item(value) {
@@ -23,6 +25,8 @@ class KinItem extends HTMLElement {
     this.render();
   }
 
+  set pinned(value) { this.isPinned = Boolean(value); this.render(); }
+
   set disabled(value) {
     this.isDisabled = Boolean(value);
     for (const control of this.querySelectorAll("button, input, select")) {
@@ -39,6 +43,8 @@ class KinItem extends HTMLElement {
     const text = document.createElement("p");
     text.className = "item-text";
     text.textContent = this.record.text;
+    text.tabIndex = -1;
+    text.dataset.itemId = this.record.itemId;
     const details = document.createElement("div");
     details.className = "item-details";
     details.append(text);
@@ -167,6 +173,22 @@ class KinItem extends HTMLElement {
       action.append(this.createAction("Reopen", "reopen", "reopen-button"));
     }
     action.append(this.createAction("Archive", "archive", "archive-button"));
+    if (this.record.status !== "archived") {
+      const pin = document.createElement("button");
+      pin.type = "button";
+      pin.className = "pin-button";
+      pin.textContent = this.isPinned ? "Unpin" : "Pin";
+      pin.setAttribute("aria-pressed", String(this.isPinned));
+      pin.setAttribute("aria-label", `${this.isPinned ? "Unpin" : "Pin"} ${this.record.text}${!this.isPinned && this.pinLimitReached ? "; pin limit reached" : ""}`);
+      pin.dataset.itemId = this.record.itemId;
+      pin.dataset.itemAction = this.isPinned ? "unpin" : "pin";
+      pin.disabled = this.isDisabled || (!this.isPinned && this.pinLimitReached);
+      pin.addEventListener("click", () => this.dispatchEvent(new CustomEvent("kin:pin-intent", {
+        detail: { targetKind: "item", targetId: this.record.itemId, pinned: !this.isPinned },
+        bubbles: true, composed: true,
+      })));
+      action.append(pin);
+    }
 
     row.append(details, action);
     if (!isStaple && this.showSteps) {

@@ -1,6 +1,6 @@
 # Roadmap
 
-Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. PR #26 is merged into `kin-development` at `25e854eaa41a569650f89ea41db70a6f2bcb5c92`. The user-authorized fast-track v0.21.0–v0.25.0 on `kin-fast-track-v0.21-v0.25` now has implementation candidates for Household Modes, Lightweight Planning Dates, Calendar Interoperability, Useful Household History, and Search & Filters. These candidates are not production certification; do not create tags or merge the batch branch.
+Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. PR #26 is merged into `kin-development` at `25e854eaa41a569650f89ea41db70a6f2bcb5c92`. The authorized v0.26.0 Pins & Quick Access implementation candidate is the first separate milestone on `kin-fast-track-v0.26-v0.30`; the v0.26–v0.30 batch remains in progress. These candidates are not production certification; do not create tags or merge the batch branch.
 
 ```text
 v0.9.3 — Encrypted Event Sync Stabilization
@@ -33,7 +33,7 @@ v0.22.0 — Lightweight Planning Dates (implemented candidate)
 	↓
 v0.23.x–v0.25.x — Authorized fast-track (Calendar Export, History, Search; implemented candidates)
 	↓
-v0.26.x–v0.40.x — Remaining October daily features (October 17–31 targets)
+v0.27.x–v0.40.x — Remaining October daily features (October 18–31 targets)
 	↓
 v0.41.x–v0.45.x — Undated follow-up proposals
 	↓
@@ -42,11 +42,11 @@ v1.0.0 — Stable Kin Platform (readiness-driven, no fixed date)
 
 Kin supports encrypted local storage, recovery/optional PRF unlock, verified migration, Rust commands/codecs, encrypted archives and a static offline shell alongside opt-in encrypted sync. The v0.11 candidate adds durable server identity/relay state and service database backup/restore. Archives recover local history, not server identity. Independent security review and broader browser/authenticator coverage remain outstanding.
 
-The v0.11 candidate settled service durability before v0.12 lifecycle/deletion. The [v0.11](V0.11.0.md) and [v0.12](V0.12.0.md) records describe candidate evidence; v0.13 Recovery & Household Continuity and v0.14 UX/UI Consolidation are implemented through their `.5` patches. v0.15 Household Areas is complete through v0.15.5; v0.16 Notes is complete through v0.16.2 with a v0.16.3 hardening candidate; v0.17 Checklist Steps is preserved as the existing tagged candidate. v0.18 Richer Routine Scheduling, v0.19 Shared Shopping Lists, and v0.20 Staples & Replenishment were implemented on the prior fast-track. v0.21 Household Modes through v0.25 Search & Filters are implementation candidates; do not start v0.26.x before the authorized fast-track handoff.
+The v0.11 candidate settled service durability before v0.12 lifecycle/deletion. The [v0.11](V0.11.0.md) and [v0.12](V0.12.0.md) records describe candidate evidence; v0.13 Recovery & Household Continuity and v0.14 UX/UI Consolidation are implemented through their `.5` patches. v0.15 Household Areas is complete through v0.15.5; v0.16 Notes is complete through v0.16.2 with a v0.16.3 hardening candidate; v0.17 Checklist Steps is preserved as the existing tagged candidate. v0.18 Richer Routine Scheduling, v0.19 Shared Shopping Lists, and v0.20 Staples & Replenishment were implemented on the prior fast-track. v0.21 Household Modes through v0.25 Search & Filters are implementation candidates; v0.26 Pins & Quick Access is now an implementation candidate on the active authorized batch.
 
 ## October direction
 
-The goal for Build Fest is to add one small, useful household feature each day in October, supported by the existing product and platform foundations. v0.12.3 passed scripted Windows checks, including both launchers; v0.13–v0.20 are implemented through the noted candidates, v0.17.0 is preserved as the existing tagged candidate, and v0.21.0–v0.25.0 have implementation candidates on the current fast-track. Later daily plans remain targets, not completion claims. The [daily plan](#october-daily-feature-plan) covers the proposed minor lines through `v0.40.x` on October 31.
+The goal for Build Fest is to add one small, useful household feature each day in October, supported by the existing product and platform foundations. v0.12.3 passed scripted Windows checks, including both launchers; v0.13–v0.20 are implemented through the noted candidates, v0.17.0 is preserved as the existing tagged candidate, and v0.21.0–v0.26.0 have implementation candidates. Later daily plans remain targets, not completion claims. The [daily plan](#october-daily-feature-plan) covers the proposed minor lines through `v0.40.x` on October 31.
 
 > Kin should help a household remember, coordinate, hand off, and recover context without requiring everyone to become a project manager.
 
@@ -335,7 +335,7 @@ The [Build Fest cadence](BUILD-FEST-CADENCE.md) covers the daily loop; the [rele
 | 2026-10-14 | [`v0.23.x`](releases/V0.23.0.md) | **Calendar Interoperability** — Let Kin exchange intentional dated household context with calendars using open formats. |
 | 2026-10-15 | [`v0.24.x`](releases/V0.24.0.md) | **Useful Household History** — Answer 'when did we last do/change this?' without creating surveillance. |
 | 2026-10-16 | [`v0.25.x`](releases/V0.25.0.md) | **Search & Filters (implemented candidate)** — Make accumulated household context findable locally and privately. |
-| 2026-10-17 | [`v0.26.x`](releases/V0.26.0.md) | **Pins & Quick Access** — Let households keep a few important things immediately reachable. |
+| 2026-10-17 | [`v0.26.x`](releases/V0.26.0.md) | **Pins & Quick Access (implementation candidate)** — Let households keep a few important things immediately reachable. |
 | 2026-10-18 | [`v0.27.x`](releases/V0.27.0.md) | **Household Playbooks** — Turn repeatable household situations into user-authored templates. |
 | 2026-10-19 | [`v0.28.x`](releases/V0.28.0.md) | **Local Reminders** — Provide restrained opt-in reminders for explicit dated/routine work. |
 | 2026-10-20 | [`v0.29.x`](releases/V0.29.0.md) | **PWA & Offline Install Polish** — Make Kin feel dependable as an installed household tool. |
@@ -406,7 +406,7 @@ Through the October plan, preserve the [product principles](PRINCIPLES.md) and [
 
 ## Scope discipline
 
-Each roadmap item is future work unless explicitly marked as implemented. v0.9.3 supplies authentication, pairing and encrypted sync; v0.10.x adds local security, portable commands/codecs and encrypted recovery archives. v0.13.x and v0.14.x are complete through their `.5` patches; v0.15.x is complete through v0.15.5; the existing v0.17.0 Checklist Steps candidate is preserved. The user authorized v0.21.0–v0.25.0 on `kin-fast-track-v0.21-v0.25`, preserving one milestone commit per minor. Do not create tags or merge this branch, and do not begin v0.26.x. v1.0 remains readiness-driven. Releases through `v0.0.12` were documentation-only; v0.1.0 was the first coded release.
+Each roadmap item is future work unless explicitly marked as implemented. v0.9.3 supplies authentication, pairing and encrypted sync; v0.10.x adds local security, portable commands/codecs and encrypted recovery archives. v0.13.x and v0.14.x are complete through their `.5` patches; v0.15.x is complete through v0.15.5; the existing v0.17.0 Checklist Steps candidate is preserved. The user authorized v0.26.0–v0.30.0 on `kin-fast-track-v0.26-v0.30`, preserving one milestone commit per minor. Do not create tags or merge this branch, and do not begin v0.31.x. v1.0 remains readiness-driven. Releases through `v0.0.12` were documentation-only; v0.1.0 was the first coded release.
 
 Preserve every existing tag. The current batch candidate follows the release gates described in [agent guidance](../AGENTS.md) and the [release process](RELEASES.md); a date alone cannot bypass a release gate.
 

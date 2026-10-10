@@ -1,6 +1,6 @@
 # Household Events
 
-**Status:** Current through v0.24.0 Useful Household History. Rust owns canonical command encoding and decoding. Protocols 10–14 add Notes, Steps, richer Routine cadence, Shopping, and Staples; protocol 15 adds household-mode event kind 29, protocol 16 adds Item planning-date event kind 30, and protocol 17 adds a derived per-Item history timestamp to the projection only. No new event kind is introduced for history. Protocols 1–15 fail closed on date-bearing history rather than omit the field. Equal-time distributed replay remains deterministic; local encryption wraps canonical bytes without rewriting them.
+**Status:** Current through v0.26.0 Pins & Quick Access. Rust owns canonical command encoding and decoding. Protocols 10–14 add Notes, Steps, richer Routine cadence, Shopping, and Staples; protocol 15 adds household-mode event kind 29, protocol 16 adds Item planning-date event kind 30, protocol 17 adds a derived per-Item history timestamp to the projection only, and protocol 18 adds Pin events 31–32. Protocols 1–17 fail closed on Pins rather than omit them. Equal-time distributed replay remains deterministic; local encryption wraps canonical bytes without rewriting them.
 
 ## Canonical record
 
@@ -64,6 +64,8 @@ Use uppercase entity/action-past-tense names consistently. The milestone column 
 | `ITEM_STEP_COMPLETED`           | v0.17.0           | Complete an active Step without completing its Item.         |
 | `ITEM_STEP_REOPENED`            | v0.17.0           | Reopen a completed Step.                                     |
 | `ITEM_STEP_ARCHIVED`            | v0.17.0           | Terminally archive a Step while retaining its history.        |
+| `PIN_ADDED`                      | v0.26.0           | Pin an existing stable household entity ID for quick access.  |
+| `PIN_REMOVED`                    | v0.26.0           | Remove an existing entity from the ordered Pins projection.   |
 | `HOUSEHOLD_MODE_CHANGED`        | v0.21.0           | Set the explicit household-wide mode.                         |
 | `ITEM_PLANNING_DATE_CHANGED`    | v0.22.0           | Set or clear an Item's optional fixed civil planning date.     |
 | `HOUSEHOLD_CREATED`            | v0.8.0            | Establish a household identity when pairing is introduced.   |

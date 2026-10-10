@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::KinError;
 use crate::event::{
     valid_timestamp, ActorId, AreaId, DeviceId, EventEnvelope, EventId, EventKind, HandoffId,
-    HouseholdId, HouseholdMode, ItemClassification, ItemId, NoteId, PulseValue, RoutineId, StepId,
-    TalkId,
+    HouseholdId, HouseholdMode, ItemClassification, ItemId, NoteId, PinTargetKind, PulseValue,
+    RoutineId, StepId, TalkId,
 };
 use crate::recurrence::{Cadence, CivilDate};
 
@@ -99,6 +99,14 @@ pub struct NoteState {
     pub status: NoteStatus,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PinState {
+    pub target_kind: PinTargetKind,
+    pub target_id: [u8; 16],
+}
+
+pub const MAX_PINS: usize = 10;
+
 pub fn normalize_note(title: &str, body: &str) -> Result<(String, String), KinError> {
     let title = title.trim();
     if title.is_empty()
@@ -188,6 +196,7 @@ pub struct HouseholdState {
     pub routines: Vec<RoutineState>,
     pub areas: Vec<AreaState>,
     pub notes: Vec<NoteState>,
+    pub pins: Vec<PinState>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -303,6 +312,7 @@ fn rebuild_with_context(
     let mut notes: Vec<NoteState> = Vec::new();
     let mut note_positions = BTreeMap::new();
     let mut note_archive_events = BTreeMap::<NoteId, BTreeSet<(u64, DeviceId)>>::new();
+    let mut pins: Vec<PinState> = Vec::new();
     for event in events {
         match &event.kind {
             EventKind::NoteArchived { note_id } => {
@@ -389,6 +399,9 @@ fn rebuild_with_context(
                     .copied()
                     .ok_or(KinError::InvalidEvent)?;
                 areas[position].archived = true;
+                pins.retain(|pin| {
+                    !(pin.target_kind == PinTargetKind::Area && pin.target_id == area_id.0)
+                });
             }
             EventKind::ItemAreaChanged { item_id, area_id } => {
                 if !valid_timestamp(event.timestamp) {
@@ -509,6 +522,9 @@ fn rebuild_with_context(
                     return Err(KinError::InvalidEvent);
                 }
                 notes[position].status = NoteStatus::Archived;
+                pins.retain(|pin| {
+                    !(pin.target_kind == PinTargetKind::Note && pin.target_id == note_id.0)
+                });
             }
             EventKind::RoutineCreated {
                 routine_id,
@@ -585,6 +601,9 @@ fn rebuild_with_context(
                     routine.occurrence_key = None;
                     routine_archives.insert(*routine_id, (event.logical_time, event.device_id));
                 }
+                pins.retain(|pin| {
+                    !(pin.target_kind == PinTargetKind::Routine && pin.target_id == routine_id.0)
+                });
             }
             EventKind::PulseSet { value, expires_at } => {
                 if !valid_timestamp(event.timestamp) || !valid_timestamp(*expires_at) {
@@ -716,6 +735,57 @@ fn rebuild_with_context(
                     return Err(KinError::MalformedProtocol);
                 }
                 mode = *next_mode;
+            }
+            EventKind::PinAdded {
+                target_kind,
+                target_id,
+            } => {
+                if *target_id == [0; 16] {
+                    return Err(KinError::InvalidEvent);
+                }
+                let (exists, active) = match target_kind {
+                    PinTargetKind::Item => item_positions
+                        .get(&ItemId(*target_id))
+                        .map(|i| (true, items[*i].status != ItemStatus::Archived))
+                        .unwrap_or((false, false)),
+                    PinTargetKind::Note => note_positions
+                        .get(&NoteId(*target_id))
+                        .map(|i| (true, notes[*i].status != NoteStatus::Archived))
+                        .unwrap_or((false, false)),
+                    PinTargetKind::Routine => routine_positions
+                        .get(&RoutineId(*target_id))
+                        .map(|i| (true, !routines[*i].archived))
+                        .unwrap_or((false, false)),
+                    PinTargetKind::Area => area_positions
+                        .get(&AreaId(*target_id))
+                        .map(|i| (true, !areas[*i].archived))
+                        .unwrap_or((false, false)),
+                };
+                if !exists {
+                    return Err(KinError::InvalidEvent);
+                }
+                let pin = PinState {
+                    target_kind: *target_kind,
+                    target_id: *target_id,
+                };
+                if active && !pins.contains(&pin) {
+                    if pins.len() >= MAX_PINS {
+                        return Err(KinError::InvalidEvent);
+                    }
+                    pins.push(pin);
+                }
+            }
+            EventKind::PinRemoved {
+                target_kind,
+                target_id,
+            } => {
+                let pin = PinState {
+                    target_kind: *target_kind,
+                    target_id: *target_id,
+                };
+                if let Some(position) = pins.iter().position(|existing| *existing == pin) {
+                    pins.remove(position);
+                }
             }
             EventKind::ItemStepAdded {
                 item_id,
@@ -899,6 +969,20 @@ fn rebuild_with_context(
             .occurrence_key
             .is_some_and(|key| completed_periods.contains(&(routine.routine_id, key)));
     }
+    pins.retain(|pin| match pin.target_kind {
+        PinTargetKind::Item => item_positions
+            .get(&ItemId(pin.target_id))
+            .is_some_and(|i| items[*i].status != ItemStatus::Archived),
+        PinTargetKind::Note => note_positions
+            .get(&NoteId(pin.target_id))
+            .is_some_and(|i| notes[*i].status != NoteStatus::Archived),
+        PinTargetKind::Routine => routine_positions
+            .get(&RoutineId(pin.target_id))
+            .is_some_and(|i| !routines[*i].archived),
+        PinTargetKind::Area => area_positions
+            .get(&AreaId(pin.target_id))
+            .is_some_and(|i| !areas[*i].archived),
+    });
     Ok(HouseholdState {
         household_id,
         mode,
@@ -909,6 +993,7 @@ fn rebuild_with_context(
         routines,
         areas,
         notes,
+        pins,
     })
 }
 
@@ -1121,7 +1206,9 @@ pub(crate) fn summarize_validated(
             | EventKind::ItemStepReopened { .. }
             | EventKind::ItemStepArchived { .. }
             | EventKind::HouseholdModeChanged { .. }
-            | EventKind::ItemPlanningDateChanged { .. } => None,
+            | EventKind::ItemPlanningDateChanged { .. }
+            | EventKind::PinAdded { .. }
+            | EventKind::PinRemoved { .. } => None,
         };
 
         if let Some((kind, entity_kind, text, classification)) = summary {
@@ -1228,7 +1315,9 @@ mod tests {
             | EventKind::ItemAreaChanged { .. }
             | EventKind::NoteCreated { .. }
             | EventKind::NoteUpdated { .. }
-            | EventKind::NoteArchived { .. } => {
+            | EventKind::NoteArchived { .. }
+            | EventKind::PinAdded { .. }
+            | EventKind::PinRemoved { .. } => {
                 panic!("Area tests use independent wire fixtures")
             }
         }

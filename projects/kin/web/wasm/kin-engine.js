@@ -1,4 +1,4 @@
-const PROTOCOL_VERSION = 17;
+const PROTOCOL_VERSION = 18;
 const REQUEST_HEADER_BYTES = 64;
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 const PULSE_VALUES = ["good", "okay", "drained", "rough-day", "need-quiet"];
@@ -316,6 +316,8 @@ const COMMAND_TYPES = [
   "archive-item-step",
   "set-household-mode",
   "set-item-planning-date",
+  "pin",
+  "unpin",
 ];
 const EVENT_KINDS = [
   null,
@@ -349,6 +351,8 @@ const EVENT_KINDS = [
   "ITEM_STEP_ARCHIVED",
   "HOUSEHOLD_MODE_CHANGED",
   "ITEM_PLANNING_DATE_CHANGED",
+  "PIN_ADDED",
+  "PIN_REMOVED",
 ];
 
 function encodeIntent(type, value) {
@@ -437,6 +441,7 @@ function encodeIntentPacket(command, identity) {
       command.routineId ??
       command.areaId ??
       command.noteId ??
+      command.targetId ??
       command.id ??
       identity.entityId;
     packet.set(
@@ -474,6 +479,10 @@ function encodeIntentPacket(command, identity) {
   } else if (kind === 29) {
     const code = ["normal", "vacation", "guests", "rest"].indexOf(command.mode);
     if (code < 0) throw new KinEngineError(2, "Choose a valid household mode.");
+    packet[112] = code;
+  } else if (kind === 31 || kind === 32) {
+    const code = ["", "item", "note", "routine", "area"].indexOf(command.targetKind);
+    if (code < 1) throw new KinEngineError(2, "Choose a valid Pin target.");
     packet[112] = code;
   }
   if (kind === 22 || kind === 23) {
@@ -896,14 +905,14 @@ function decodeState(bytes) {
   const protocolVersion = view.getUint16(4, true);
   if (
     ![
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
     ].includes(protocolVersion) ||
     view.getUint16(6, true) !== 0
   ) {
     throw new KinEngineError(6, "Kin received an unsupported state format.");
   }
   const resultHeaderBytes =
-    protocolVersion >= 15 ? 72 : protocolVersion >= 11 ? 68 : protocolVersion >= 10 ? 64 : protocolVersion >= 9
+    protocolVersion >= 18 ? 76 : protocolVersion >= 15 ? 72 : protocolVersion >= 11 ? 68 : protocolVersion >= 10 ? 64 : protocolVersion >= 9
       ? 60
       : protocolVersion >= 7
       ? 56
@@ -928,6 +937,7 @@ function decodeState(bytes) {
   const noteCount = protocolVersion >= 10 ? view.getUint32(60, true) : 0;
   const stepCount = protocolVersion >= 11 ? view.getUint32(64, true) : 0;
   const modeCode = protocolVersion >= 15 ? view.getUint8(68) : 0;
+  const pinCount = protocolVersion >= 18 ? view.getUint32(72, true) : 0;
   if (
     protocolVersion >= 15 &&
     (modeCode > 3 || bytes.subarray(69, 72).some((byte) => byte !== 0))
@@ -960,6 +970,7 @@ function decodeState(bytes) {
   if (
     areaCount > 32 ||
     noteCount > 128 ||
+    pinCount > 10 ||
     stepCount > MAX_EVENT_COUNT ||
     stepCount > itemCount * MAX_STEPS_PER_ITEM ||
     itemCount + handoffCount + talkCount + pulseCount + routineCount + noteCount >
@@ -1344,7 +1355,32 @@ function decodeState(bytes) {
       offset += 8;
     }
   }
+  const pins = [];
+  const pinKeys = new Set();
+  if (protocolVersion >= 18) {
+    const targetNames = [null, "item", "note", "routine", "area"];
+    for (let index = 0; index < pinCount; index += 1) {
+      if (offset + 20 > bytes.length) throw new KinEngineError(6, "Kin received a truncated Pin.");
+      const kind = bytes[offset];
+      const idBytes = bytes.subarray(offset + 4, offset + 20);
+      const targetId = idToHex(idBytes);
+      const key = `${kind}:${targetId}`;
+      if (!targetNames[kind] || bytes.subarray(offset + 1, offset + 4).some(Boolean) || targetId === "00".repeat(16) || pinKeys.has(key))
+        throw new KinEngineError(6, "Kin received an invalid Pin.");
+      pinKeys.add(key);
+      pins.push({ targetKind: targetNames[kind], targetId });
+      offset += 20;
+    }
+  }
   const summaryEntries = [];
+  const knownTargets = {
+    item: new Set(items.map((item) => item.itemId)),
+    note: new Set(notes.map((note) => note.noteId)),
+    routine: new Set(routines.map((routine) => routine.routineId)),
+    area: new Set(areas.map((area) => area.areaId)),
+  };
+  if (pins.some((pin) => !knownTargets[pin.targetKind]?.has(pin.targetId)))
+    throw new KinEngineError(6, "Kin received a Pin for an unknown household record.");
   const entityNames = ["", "item", "handoff", "talk", "routine"];
   for (let index = 0; index < summaryCount; index += 1) {
     const headerEnd = offset + 24;
@@ -1421,6 +1457,7 @@ function decodeState(bytes) {
       ...(protocolVersion >= 7 ? { routines } : {}),
       ...(protocolVersion >= 9 ? { areas } : {}),
       ...(protocolVersion >= 10 ? { notes } : {}),
+      ...(protocolVersion >= 18 ? { pins } : {}),
       ...(modeCode === 0
         ? {}
         : { mode: ["normal", "vacation", "guests", "rest"][modeCode] }),
