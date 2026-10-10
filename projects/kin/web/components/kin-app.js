@@ -1978,8 +1978,7 @@ class KinApp extends HTMLElement {
     this.modeSelect.value = mode;
     this.routines.householdMode = mode;
     const memberId = this.syncCoordinator?.identity?.memberId ?? this.store?.actorId ?? null;
-    const otherMemberId = this.activeMemberIds?.find((id) => id !== memberId) ?? null;
-    const responsibilityContext = { responsibilities: this.state.responsibilities ?? [], memberId, otherMemberId };
+    const responsibilityContext = { responsibilities: this.state.responsibilities ?? [], memberId, memberIds: this.activeMemberIds ?? (memberId ? [memberId] : []) };
     this.catchUp.summary = this.state.summary;
     this.catchUp.lastLookedAt = this.catchUpCursor?.lastLookedAt;
     this.today.items = this.state.items;
@@ -2057,8 +2056,11 @@ class KinApp extends HTMLElement {
     this.notes.disabled = isBusy || !this.store;
     if (this.modeSelect) this.modeSelect.disabled = isBusy || !this.store;
     this.household.disabled = isBusy || !this.store;
+    if (this.installButton) this.installButton.disabled = isBusy;
     for (const tab of this.handoffTabs?.querySelectorAll('[role="tab"]') ?? [])
       tab.disabled = isBusy;
+    for (const button of this.main.querySelectorAll("kin-responsibility button"))
+      button.disabled = isBusy;
     this.retryButton.disabled = isBusy;
   }
 

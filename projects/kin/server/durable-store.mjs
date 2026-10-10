@@ -32,7 +32,7 @@ import {
   validStoredDevice,
 } from "./durable-identity.mjs";
 
-const SERVER_SCHEMA_VERSION = 3;
+const SERVER_SCHEMA_VERSION = 4;
 export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024 + 4096;
 export const MAX_HOUSEHOLD_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 export const MAX_HOUSEHOLD_ATTACHMENTS = 64;
@@ -460,7 +460,7 @@ export class DurableStore {
             SELECT COUNT(*) FROM members
             WHERE household_id = NEW.household_id AND active = 1
               AND id <> NEW.id
-          ) >= 2
+          ) >= ${MAX_ACTIVE_MEMBERS}
           BEGIN
             SELECT RAISE(ABORT, 'household active member limit');
           END;
@@ -470,7 +470,7 @@ export class DurableStore {
             SELECT COUNT(*) FROM members
             WHERE household_id = NEW.household_id AND active = 1
               AND id <> NEW.id
-          ) >= 2
+          ) >= ${MAX_ACTIVE_MEMBERS}
           BEGIN
             SELECT RAISE(ABORT, 'household active member limit');
           END;
@@ -688,6 +688,42 @@ export class DurableStore {
       } catch (error) {
         if (error instanceof DurableStoreError) throw error;
         throw new DurableStoreError("Kin could not complete the encrypted attachment migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 3) {
+      try {
+        this.transaction(() => {
+          this.db.exec(`
+            DROP TRIGGER members_active_limit_insert;
+            DROP TRIGGER members_active_limit_update;
+            CREATE TRIGGER members_active_limit_insert
+            BEFORE INSERT ON members
+            WHEN NEW.active = 1 AND (
+              SELECT COUNT(*) FROM members
+              WHERE household_id = NEW.household_id AND active = 1
+                AND id <> NEW.id
+            ) >= ${MAX_ACTIVE_MEMBERS}
+            BEGIN
+              SELECT RAISE(ABORT, 'household active member limit');
+            END;
+            CREATE TRIGGER members_active_limit_update
+            BEFORE UPDATE OF active, household_id ON members
+            WHEN NEW.active = 1 AND (
+              SELECT COUNT(*) FROM members
+              WHERE household_id = NEW.household_id AND active = 1
+                AND id <> NEW.id
+            ) >= ${MAX_ACTIVE_MEMBERS}
+            BEGIN
+              SELECT RAISE(ABORT, 'household active member limit');
+            END;
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(4, Date.now());
+          sqlitePragma(this.db, "user_version = 4");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the adult membership migration.", { cause: error });
       }
     }
   }

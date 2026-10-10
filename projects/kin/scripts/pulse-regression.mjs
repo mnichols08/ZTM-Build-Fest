@@ -146,7 +146,7 @@ export async function pulseRegressions() {
   check((await count()) === beforeExpiry, "expiry appends nothing");
   await app.savePulse({ type: "clear-pulse" });
   check(
-    app.store.database.version === 3,
+    app.store.database.version === 4,
     "sync stores are additive to the event schema",
   );
   return "PASS Pulse fixed values, actor projection, set/replace/clear, timer expiry, original retry and repeated refresh recovery";

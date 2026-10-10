@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.35.0 — More Adult Members (candidate)
+
+- Bound households at four active adults using the existing approved pairing ceremony.
+- Extend Responsibility assignment controls across active member IDs.
+- Preserve current/future epoch access for new adults and document recovery, removal, and legacy behavior.
+
 ## v0.34.0 — Responsibility Ownership
 
 - Add canonical Items and Routines responsibility assignments with Take, explicit handoff, and clear actions.

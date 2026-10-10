@@ -30,7 +30,7 @@ class KinItem extends HTMLElement {
 
   set pinned(value) { this.isPinned = Boolean(value); this.render(); }
   set attachments(value) { this.attachmentRecords = Array.isArray(value) ? value : []; this.render(); }
-  set responsibilityContext(value) { this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.otherMemberId = value?.otherMemberId ?? null; this.render(); }
+  set responsibilityContext(value) { this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.memberIds = value?.memberIds ?? []; this.render(); }
 
   set disabled(value) {
     this.isDisabled = Boolean(value);
@@ -59,7 +59,7 @@ class KinItem extends HTMLElement {
     details.append(attachments);
     if (this.record.status !== "archived") {
       const responsibility = document.createElement("kin-responsibility");
-      responsibility.record = { targetKind: "item", targetId: this.record.itemId, text: this.record.text, ownerId: this.responsibilities?.find((entry) => entry.targetKind === "item" && entry.targetId === this.record.itemId)?.memberId ?? null, memberId: this.memberId, otherMemberId: this.otherMemberId };
+      responsibility.record = { targetKind: "item", targetId: this.record.itemId, text: this.record.text, ownerId: this.responsibilities?.find((entry) => entry.targetKind === "item" && entry.targetId === this.record.itemId)?.memberId ?? null, memberId: this.memberId, memberIds: this.memberIds };
       details.append(responsibility);
     }
     if (this.record.status !== "archived") details.append(this.createReminderControl());

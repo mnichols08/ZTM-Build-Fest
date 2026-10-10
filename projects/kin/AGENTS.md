@@ -144,13 +144,15 @@ through v0.34.0 on `kin-fast-track-v0.31-v0.34`. Current v0.31.0 Maintenance
 Records candidate adds protocol 21 bounded factual maintenance history under
 Reference Records. The authorized batch continues through v0.32.0 Encrypted
 Attachments Foundation, v0.33.0 Attachment UX & Lifecycle, and v0.34.0
-Responsibility Ownership; stop before v0.35.x because it changes membership
-trust semantics. Preserve separate milestone commits; do not tag or merge this
-branch. These are implementation candidates, not production certification.
+Responsibility Ownership. The user has separately authorized v0.35.0 More Adult
+Members v0.35.0 on `kin-v0.35-more-adults`; keep its trust-model changes isolated for
+security and human review. Preserve separate milestone commits; do not tag or
+merge this branch. These are implementation candidates, not production certification.
+The release label `kin-v0.35.0` is reserved for a separately approved release commit.
 Preserve the v0.13.5
 recovery authority guarantees and all earlier security/domain contracts.
 
-Kin's last published release is `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Complete only the explicitly authorized v0.31.0–v0.34.0 scope on `kin-fast-track-v0.31-v0.34`; do not begin v0.35.x. Preserve every existing tag exactly. Root replacement follows [ROOT-ROTATION](docs/ROOT-ROTATION.md); archive recovery remains intentionally local-only and KARC v1 remains supported. No production certification, mobile readiness or independent audit is claimed. Do not merge the batch. See the release records for actual evidence and limitations.
+Kin's last published release is `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. The v0.31.0–v0.34.0 batch is complete; v0.35.0 More Adult Members is authorized on `kin-v0.35-more-adults`. Preserve every existing tag exactly. Root replacement follows [ROOT-ROTATION](docs/ROOT-ROTATION.md); archive recovery remains intentionally local-only and KARC v1 remains supported. No production certification, mobile readiness or independent audit is claimed. Do not merge the batch. See the release records for actual evidence and limitations.
 
 The pre-implementation releases are:
 

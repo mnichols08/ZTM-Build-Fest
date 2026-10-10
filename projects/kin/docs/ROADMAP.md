@@ -1,6 +1,6 @@
 # Roadmap
 
-Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. The v0.31.0–v0.34.0 candidate batch is on `kin-fast-track-v0.31-v0.34`; no v0.35.x work is included.
+Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. The v0.35.0 implementation candidate is on `kin-v0.35-more-adults`; security and release gates remain pending.
 
 ```text
 v0.9.3 — Encrypted Event Sync Stabilization
@@ -354,7 +354,7 @@ The [Build Fest cadence](BUILD-FEST-CADENCE.md) covers the daily loop; the [rele
 | 2026-10-23 | [`v0.32.x`](releases/V0.32.0.md) | **Encrypted Attachments Foundation** — Support small private attachments without weakening Kin's encrypted/local-first boundaries. |
 | 2026-10-24 | [`v0.33.x`](releases/V0.33.0.md) | **Attachment UX & Lifecycle** — Make attachments understandable, removable, and resilient across sync/offline states. |
 | 2026-10-25 | [`v0.34.x`](releases/V0.34.0.md) | **Responsibility Ownership** — Allow explicit lightweight ownership without scoring household contribution. |
-| 2026-10-26 | [`v0.35.x`](releases/V0.35.0.md) | **More Adult Members** — Generalize the proven two-adult household model to a small bounded adult household. |
+| 2026-10-26 | [`v0.35.x`](releases/V0.35.0.md) | **More Adult Members** — Implementation candidate: four active adults, existing admission ceremony, and member-ID responsibility assignment. |
 | 2026-10-27 | [`v0.36.x`](releases/V0.36.0.md) | **Limited Household Members** — Introduce one constrained member class for teens/caregivers/limited participants. |
 | 2026-10-28 | [`v0.37.x`](releases/V0.37.0.md) | **Guest & Caregiver Access** — Support deliberately temporary household participation. |
 | 2026-10-29 | [`v0.38.x`](releases/V0.38.0.md) | **Modes & Member Context Polish** — Make temporary household context work cleanly with expanded membership without surveillance. |
@@ -416,7 +416,7 @@ Through the October plan, preserve the [product principles](PRINCIPLES.md) and [
 
 ## Scope discipline
 
-Each roadmap item is future work unless explicitly marked as implemented. This fast-track preserves one milestone commit per minor through v0.34.0. Do not begin v0.35.x; membership trust changes require separate review. v1.0 remains readiness-driven. Releases through `v0.0.12` were documentation-only; v0.1.0 was the first coded release.
+Each roadmap item is future work unless explicitly marked as implemented. The v0.35.0 implementation candidate requires security and human review before release. v1.0 remains readiness-driven. Releases through `v0.0.12` were documentation-only; v0.1.0 was the first coded release.
 
 Preserve every existing tag. The current batch candidate follows the release gates described in [agent guidance](../AGENTS.md) and the [release process](RELEASES.md); a date alone cannot bypass a release gate.
 
@@ -424,4 +424,4 @@ Preserve every existing tag. The current batch candidate follows the release gat
 
 After the end-of-month Build Fest build (target `v0.40.x`), stop feature development and gather human feedback. Use patches on the actual completed minor line for concrete defects. Do not automatically advance to the undated v0.41–v0.45 proposals or `v1.0.0`.
 
-The v0.31.0–v0.34.0 fast-track milestones are implementation candidates in PR #30. Attachment accessibility and real-browser integration checks remain unverified for the current environment. No v0.35.x work is included.
+The v0.31.0–v0.34.0 fast-track milestones are implementation candidates in PR #30. v0.35.0 adds a bounded four-adult household and is under separate trust-model review on its feature branch.

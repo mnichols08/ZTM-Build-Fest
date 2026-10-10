@@ -75,11 +75,13 @@ function assertCorrupt(f) {
   assert.equal(hasDatabaseProcessLock(f.databasePath), false);
 }
 
-test("three active adults fail identity load and startup without repairing membership", (t) => {
+test("four active adults remain valid while a fifth fails identity load and startup", (t) => {
   const f = fixture(t);
   const removed = f.joinMember("removed");
   f.pairing.removeOtherAdult(f.adult.sessionToken, removed.memberId, f.adult.memberId);
   f.joinMember("replacement");
+  f.joinMember("third");
+  f.joinMember("fourth");
   assert.equal(f.store.validate(), true);
   // Only this synthetic database drops its trigger to represent restored or
   // manually corrupted state; production constraints are unchanged.

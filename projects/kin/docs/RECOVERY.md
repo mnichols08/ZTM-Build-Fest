@@ -7,17 +7,21 @@ household authority.
 
 ## Capability matrix
 
+There may be up to four active adults. Where this table says “another active
+adult,” any one other active adult may authorize the existing targeted
+recovery ceremony; there is no majority or quorum rule.
+
 | Loss scenario | Recoverable? | Authority required | Data preserved? |
 | --- | --- | --- | --- |
 | One browser session lost | Yes | Existing trusted-device token and that member's valid passkey | Yes; server state and local encrypted storage are unchanged. |
 | One trusted device lost | Yes, if another trusted device for that active adult remains | Active same-member session, fresh replacement enrollment, and explicit approval on the remaining device | Yes when the remaining device holds the retained epoch keys; the lost device is revoked. |
 | One passkey lost | Yes, if another trusted device/passkey remains | Existing trusted device plus another valid credential; replacement adds a fresh credential | Yes; losing a passkey does not remove content keys already held by devices. |
 | Browser profile wiped | Sometimes | Another trusted same-member device can authorize a fresh device, or a local encrypted archive and its recovery secret can restore local-only history | Shared history is preserved when keys are provisioned; archive restore remains local-only. |
-| One adult loses all credentials | Yes, while the other adult has a trusted device and valid passkey | The other active adult authorizes; the affected adult establishes and activates a fresh passkey/device | Yes when the authorizing device holds and provisions the entitled epochs. |
+| One adult loses all credentials | Yes, while another active adult has a trusted device and valid passkey | One other active adult authorizes; the affected adult establishes and activates a fresh passkey/device | Yes when the authorizing device holds and provisions the entitled epochs. |
 | Server DB restored from backup | Yes, within the backup and retained tombstone limits | Service operator, verified backup, explicit deletion-history acknowledgement, and preserved newer lifecycle ledger | Opaque relay data and authority present in the accepted restore are preserved; plaintext keys are never in the DB. |
 | Household key missing on one device | Sometimes | Another currently trusted, entitled device must provision the missing epoch | Only epochs held by an entitled device are recoverable; sync pauses instead of skipping ciphertext. |
 | All trusted devices lost | Only from an encrypted local archive for local-only use | Archive plus its recovery secret; no sync authority is restored | Archive history may survive, but the server household and missing epoch keys cannot be recovered. |
-| Both adults lose credentials | No supported server recovery | None; Kin has no email/SMS fallback, universal delegate, or server escrow | Encrypted local archives may remain locally readable with their secrets; shared authority is unrecoverable. |
+| All active adults lose credentials | No supported server recovery | None; Kin has no email/SMS fallback, universal delegate, or server escrow | Encrypted local archives may remain locally readable with their secrets; shared authority is unrecoverable. |
 | Deleted household | No | None after finalization | Server identity, relay data, and authority are gone; external local copies remain outside the service boundary. |
 
 ## Separate recovery authorities
@@ -68,8 +72,8 @@ revoked devices, expired claims, stale approval versions, and activation
 replays fail closed.
 
 A malicious or compromised account can authorize an attacker as the recovery
-claimant and thereby lock B out; the two-adult product already lets one adult
-remove the other. Kin records the approving member/device and recovery target,
+claimant and thereby lock B out; the existing trust model lets one active adult
+remove another. Kin records the approving member/device and recovery target,
 requires a separate claimant credential, and never makes A become B, but it
 cannot distinguish a coerced or dishonest approval from a legitimate one.
 

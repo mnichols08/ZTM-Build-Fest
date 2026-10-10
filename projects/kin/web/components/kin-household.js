@@ -5,6 +5,7 @@ import {
   deviceKeyFingerprint,
 } from "../sync/crypto.js";
 
+const MAX_ACTIVE_ADULTS = 4;
 
 const decode = (value) =>
   Uint8Array.from(
@@ -383,7 +384,6 @@ class KinHousehold extends HTMLElement {
     }
     if (!this.pairing) {
       if (!this.syncKeyError) {
-        this.button("Pair another adult", () => this.createPairing());
         this.button(
           "Add another device",
           () => this.createDevicePairing(),
@@ -400,7 +400,7 @@ class KinHousehold extends HTMLElement {
     state.setAttribute("role", "status");
     state.textContent =
       this.pairing.state === "Pending"
-        ? "Waiting for the other adult to claim this code."
+        ? "Waiting for another trusted adult to claim this code."
         : this.pairing.state === "Claimed"
           ? ["device", "replacement"].includes(this.pairing.purpose)
             ? `${this.pairing.deviceLabel || "This device"} is awaiting approval for your account.`
@@ -619,7 +619,7 @@ class KinHousehold extends HTMLElement {
   async authorizeRecovery(memberId) {
     if (
       !confirm(
-        "Authorize recovery for the other adult? They must create and activate a fresh passkey. Approval will revoke their old credentials, sessions, and devices.",
+        "Authorize recovery for this adult? They must create and activate a fresh passkey. Approval will revoke their old credentials, sessions, and devices.",
       )
     )
       return;
@@ -942,20 +942,20 @@ class KinHousehold extends HTMLElement {
         "Membership and device trust are separate. Removing an adult revokes that adult’s devices and sessions, but cannot erase information already copied.",
       );
       const list = document.createElement("ul");
-      for (const member of household.members.filter((value) => value.active)) {
+      const activeMembers = household.members.filter((value) => value.active);
+      for (const [index, member] of activeMembers.entries()) {
         const item = document.createElement("li");
-        item.textContent = member.current
-          ? "You — active adult"
-          : "Other adult — active";
+        const memberLabel = member.current ? "You" : `Household adult ${index + 1}`;
+        item.textContent = `${memberLabel} — active`;
         if (!member.current)
           item.append(
             this.makeButton(
-              "Authorize recovery",
+              `Authorize recovery for ${memberLabel}`,
               () => this.authorizeRecovery(member.id),
               "secondary",
             ),
             this.makeButton(
-              "Remove other adult",
+              `Remove ${memberLabel} from household`,
               () => this.removeMember(member.id),
               "danger",
             ),
@@ -964,6 +964,9 @@ class KinHousehold extends HTMLElement {
       }
       this.append(
         list,
+        ...(activeMembers.length < MAX_ACTIVE_ADULTS
+          ? [this.makeButton("Add another adult", () => this.createPairing())]
+          : []),
         this.makeButton(
           "Delete household",
           () => this.deleteHousehold(),
@@ -978,7 +981,7 @@ class KinHousehold extends HTMLElement {
   async deleteHousehold() {
     if (
       !confirm(
-        "Delete this household from Kin? Sync stops immediately for both adults and all devices. Kin will remove its encrypted relay history and authorization records after 30 days; either adult can cancel with a passkey before then. This does not erase this browser, offline devices, exported archives, or external backups. After final deletion Kin cannot restore the household.",
+        "Delete this household from Kin? Sync stops immediately for all adults and devices. Kin will remove its encrypted relay history and authorization records after 30 days; any active adult can cancel with a passkey before then. This does not erase this browser, offline devices, exported archives, or external backups. After final deletion Kin cannot restore the household.",
       )
     )
       return;
@@ -1054,7 +1057,7 @@ class KinHousehold extends HTMLElement {
   async removeMember(memberId) {
     if (
       !confirm(
-        "Remove the other adult and revoke all of their trusted devices? Previously copied information cannot be erased.",
+        "Remove this adult and revoke all of their trusted devices? Removal prevents future authorized access but cannot erase copies already decrypted on a trusted device.",
       )
     )
       return;

@@ -1134,10 +1134,16 @@ test("duplicate claims, stale approval, full households, and revoked devices fai
     () => service.authorize(activated.sessionToken),
     (error) => error.code === "authentication_required",
   );
-  assert.throws(
-    () => service.createPairing(adult.sessionToken),
-    (error) => error.code === "household_full",
-  );
+  const thirdInvite = service.createPairing(adult.sessionToken);
+  const thirdClaim = service.claimPairing({ code: thirdInvite.code, credential: credential("c"), deviceLabel: "C" });
+  service.approvePairing(adult.sessionToken, thirdInvite.pairingId, thirdClaim.version);
+  const third = service.activateClaim(thirdClaim.claimToken);
+  const fourthInvite = service.createPairing(third.sessionToken);
+  const fourthClaim = service.claimPairing({ code: fourthInvite.code, credential: credential("d"), deviceLabel: "D" });
+  service.approvePairing(third.sessionToken, fourthInvite.pairingId, fourthClaim.version);
+  service.activateClaim(fourthClaim.claimToken);
+  assert.equal(service.activeMemberCount(service.households.get(adult.householdId)), 4);
+  assert.throws(() => service.createPairing(adult.sessionToken), (error) => error.code === "household_full");
 });
 
 test("approval does not create a joining session until passkey activation", () => {
@@ -1594,14 +1600,16 @@ test("approval rejects a newly full household without partial mutation", () => {
     deviceLabel: "Pending third",
   });
   const household = service.households.get(adult.householdId);
-  const occupyingMemberId = "occupying-member";
-  household.members.add(occupyingMemberId);
-  service.members.set(occupyingMemberId, {
-    id: occupyingMemberId,
-    householdId: household.id,
-    active: true,
-    credentials: new Set(),
-  });
+  for (let index = 0; index < 3; index++) {
+    const occupyingMemberId = `occupying-member-${index}`;
+    household.members.add(occupyingMemberId);
+    service.members.set(occupyingMemberId, {
+      id: occupyingMemberId,
+      householdId: household.id,
+      active: true,
+      credentials: new Set(),
+    });
+  }
 
   const before = {
     members: service.members.size,
@@ -1633,7 +1641,7 @@ test("approval rejects a newly full household without partial mutation", () => {
   );
   assert.equal(service.pairings.get(invitation.pairingId).state, "Claimed");
   assert.equal(service.credentials.has("credential-pending-third"), false);
-  assert.equal(service.activeMemberCount(household), 2);
+  assert.equal(service.activeMemberCount(household), 4);
 });
 
 test("the last adult cannot leave, while a joined adult can leave without removing the household", () => {
@@ -1656,4 +1664,39 @@ test("the last adult cannot leave, while a joined adult can leave without removi
   const joined = service.activateClaim(claim.claimToken);
   assert.equal(service.leaveHousehold(joined.sessionToken).removed, true);
   assert.equal(service.authorize(adult.sessionToken).member.id, adult.memberId);
+});
+
+test("removing an invitation author revokes that adult's pending admission", () => {
+  const { service, adult } = setup();
+  const initial = service.createPairing(adult.sessionToken);
+  const initialClaim = service.claimPairing({ code: initial.code, credential: credential("member-b"), deviceLabel: "B" });
+  service.approvePairing(adult.sessionToken, initial.pairingId, initialClaim.version);
+  const memberB = service.activateClaim(initialClaim.claimToken);
+  const invitation = service.createPairing(memberB.sessionToken);
+  const claim = service.claimPairing({ code: invitation.code, credential: credential("member-c"), deviceLabel: "C" });
+
+  service.removeOtherAdult(adult.sessionToken, memberB.memberId, adult.memberId);
+
+  assert.equal(service.pairings.get(invitation.pairingId).state, "Revoked");
+  assert.throws(() => service.pairingForClaim(claim.claimToken), (error) => error.code === "claim_unavailable");
+  assert.equal(service.activeMemberCount(service.households.get(adult.householdId)), 1);
+});
+
+test("trusted adults share one live admission slot and only the inviter approves", () => {
+  const { service, adult } = setup();
+  const initial = service.createPairing(adult.sessionToken);
+  const initialClaim = service.claimPairing({ code: initial.code, credential: credential("member-b"), deviceLabel: "B" });
+  service.approvePairing(adult.sessionToken, initial.pairingId, initialClaim.version);
+  const memberB = service.activateClaim(initialClaim.claimToken);
+
+  const firstInvite = service.createPairing(adult.sessionToken);
+  const secondInvite = service.createPairing(memberB.sessionToken);
+  assert.equal(service.pairings.get(firstInvite.pairingId).state, "Revoked");
+  const claim = service.claimPairing({ code: secondInvite.code, credential: credential("member-c"), deviceLabel: "C" });
+  assert.throws(
+    () => service.approvePairing(adult.sessionToken, secondInvite.pairingId, claim.version),
+    (error) => error.code === "not_found",
+  );
+  service.approvePairing(memberB.sessionToken, secondInvite.pairingId, claim.version);
+  assert.equal(service.activeMemberCount(service.households.get(adult.householdId)), 3);
 });
