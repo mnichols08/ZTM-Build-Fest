@@ -294,7 +294,6 @@ class KinApp extends HTMLElement {
     const destinations = [
       ["today", "Today", '<path d="M3 10.8 12 3l9 7.8"/><path d="M5.5 9.5V20h13V9.5M9.5 20v-6h5v6"/>'],
       ["lists", "Lists", '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h5"/>'],
-      ["search", "Search", '<circle cx="10.8" cy="10.8" r="6.5"/><path d="m16 16 4.5 4.5"/>'],
       ["routines", "Routines", '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.5 9a7 7 0 0 1 12-2L20 12M4 12l2.5 5a7 7 0 0 0 12-2"/>'],
       ["handoff", "Handoff", '<path d="M8 10h8M8 14h5"/><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-4l-3 3-3-3H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/>'],
       ["more", "More", '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'],
@@ -460,6 +459,11 @@ class KinApp extends HTMLElement {
     tablist.addEventListener("keydown", this.onHandoffTabKeydown);
 
     const more = page("more", "More", "Household context, people, devices, and continuity.");
+    const searchLink = document.createElement("a");
+    searchLink.className = "more-search-link";
+    searchLink.href = "#search";
+    searchLink.textContent = "Search household";
+    more.append(searchLink);
     const modeSection = document.createElement("section");
     modeSection.className = "today-section household-mode";
     const modeHeading = document.createElement("h2");
@@ -514,9 +518,10 @@ class KinApp extends HTMLElement {
     this.activePage = active;
     document.title = `${labels[active]} — Kin`;
     if (changed && this.routeAnnouncement) this.routeAnnouncement.textContent = `${labels[active]} view`;
+    const currentDestination = active === "search" ? "more" : active;
     for (const [id, section] of this.pages) section.hidden = id !== active;
     for (const [id, link] of this.navLinks) {
-      if (id === active) link.setAttribute("aria-current", "page");
+      if (id === currentDestination) link.setAttribute("aria-current", "page");
       else link.removeAttribute("aria-current");
     }
   }

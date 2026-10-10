@@ -167,6 +167,15 @@ kin-app { display: block; min-height: 100vh; }
 }
 .nav-link:hover { background: var(--surface-secondary); color: var(--ink); }
 
+.more-search-link {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  margin-bottom: 16px;
+  color: var(--accent);
+  font-weight: 650;
+}
+
 .section-tabs {
   display: flex;
   gap: 6px;

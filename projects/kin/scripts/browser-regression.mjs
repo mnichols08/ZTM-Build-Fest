@@ -222,10 +222,10 @@ async function regressions() {
   check(app.status.textContent === "Ready.", "startup");
   check(
     [...app.nav.querySelectorAll("a")].map((link) => link.textContent.trim()).join(",") ===
-      "Today,Lists,Search,Routines,Handoff,More" &&
+      "Today,Lists,Routines,Handoff,More" && app.nav.querySelectorAll("a").length <= 5 &&
       app.nav.querySelectorAll('[aria-current="page"]').length === 1 &&
       app.nav.querySelector('[aria-current="page"]').dataset.page === "today",
-    "the unlocked shell exposes six stable destinations and marks Today as current",
+    "the unlocked shell exposes at most five primary destinations and marks Today as current",
   );
   check(
     getComputedStyle(app.shell).display !== "grid" &&
@@ -257,13 +257,15 @@ async function regressions() {
     "Today and Lists remain views over existing records and More owns household/security controls",
   );
   const search = app.search;
-  app.nav.querySelector('a[href="#search"]').click();
+  app.nav.querySelector('a[href="#more"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  app.pages.get("more").querySelector('a[href="#search"]').click();
   await new Promise((resolve) => setTimeout(resolve, 0));
   check(
     !app.pages.get("search").hidden &&
-      app.nav.querySelector('[aria-current="page"]').dataset.page === "search" &&
+      app.nav.querySelector('[aria-current="page"]').dataset.page === "more" &&
       app.routeAnnouncement.textContent === "Search view",
-    "Search is reachable as a primary keyboard-operable destination",
+    "Search remains reachable from More with its route announcement and More destination current",
   );
   search.household = {
     items: [

@@ -377,7 +377,6 @@ export class DurableStore {
       this.db = new DatabaseSync(this.databasePath, {
         readOnly: readonly,
         enableForeignKeyConstraints: true,
-        timeout: BUSY_TIMEOUT_MS,
       });
       sqlitePragma(this.db, "foreign_keys = ON");
       sqlitePragma(this.db, `busy_timeout = ${BUSY_TIMEOUT_MS}`);
