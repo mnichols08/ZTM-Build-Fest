@@ -1,4 +1,5 @@
 import { projectionContext } from "../browser-time.js";
+import { LocalReminders } from "../reminders.js";
 import { createCalendarExport } from "../calendar-export.js";
 import "./kin-routines.js";
 import "./kin-areas.js";
@@ -35,6 +36,8 @@ class KinApp extends HTMLElement {
     this.store = null;
     this.syncCoordinator = null;
     this.state = null;
+    this.localReminders = new LocalReminders();
+    this.deferredInstallPrompt = null;
     this.vault = null;
     this.securityGeneration = 0;
     this.busy = false;
@@ -83,13 +86,21 @@ class KinApp extends HTMLElement {
       this.saveTalk({ type: "reopen-talk", talkId: event.detail.talkId });
     this.onArchiveTalk = (event) =>
       this.saveTalk({ type: "archive-talk", talkId: event.detail.talkId });
-    this.onRoutineIntent = (event) =>
+    this.onRoutineIntent = (event) => {
+      if (event.type === "kin:archive-routine" || event.type === "kin:complete-routine-occurrence") this.localReminders.cancel(`routine:${event.detail.routineId}`);
       this.saveRoutine({ ...event.detail, type: event.type.slice(4) });
+    };
     this.onAreaIntent = (event) => this.saveArea(event.detail);
     this.onNoteIntent = (event) => this.saveNote(event.type.slice(4), event.detail);
+    this.onReferenceIntent = (event) => this.saveReferenceRecord(event.type.slice(4), event.detail);
     this.onItemAreaChange = (event) => this.saveArea({ ...event.detail, action: "assign-item-area" });
     this.onItemPlanningDateChange = (event) =>
       this.saveItemPlanningDate(event.detail, event.target.closest("kin-today"));
+    this.onPinIntent = (event) => this.savePin(event.detail);
+    this.onOpenPin = (event) => this.openPinnedItem(event.detail.itemId);
+    this.onPlaybookIntent = (event) => this.handlePlaybookIntent(event);
+    this.onLocalReminder = (event) => this.handleLocalReminder(event.detail);
+    this.onCancelLocalReminder = (event) => { this.localReminders.cancel(event.detail.id); this.setStatus("Reminder canceled on this device."); };
     this.onModeChange = () => this.saveMode(this.modeSelect.value);
     this.pulseTimer = null;
     this.catchUpCursor = null;
@@ -169,11 +180,34 @@ class KinApp extends HTMLElement {
     this.onPeerMessage = (event) => this.handlePeerMessage(event);
     this.onLockRequest = () => this.lockHousehold();
     this.onPageHide = () => this.lockHousehold(false);
+    this.updateRegistration = null;
+    this.updateRequested = false;
+    this.onServiceWorkerMessage = (event) => {
+      if (event.data?.type === "KIN_UPDATE_READY") this.showUpdateNotice();
+    };
+    this.onControllerChange = () => {
+      if (this.updateRequested) window.location.reload();
+    };
+    this.onBeforeInstallPrompt = (event) => { event.preventDefault(); this.deferredInstallPrompt = event; if (this.installButton) this.installButton.hidden = false; };
+    this.onAppInstalled = () => { this.deferredInstallPrompt = null; if (this.installButton) this.installButton.hidden = true; };
   }
 
   connectedCallback() {
+    window.addEventListener("beforeinstallprompt", this.onBeforeInstallPrompt);
+    window.addEventListener("appinstalled", this.onAppInstalled);
     if ("serviceWorker" in navigator) {
-      void navigator.serviceWorker.register("/service-worker.js").catch(() => {
+      navigator.serviceWorker.addEventListener("message", this.onServiceWorkerMessage);
+      navigator.serviceWorker.addEventListener("controllerchange", this.onControllerChange);
+      void navigator.serviceWorker.register("/service-worker.js").then((registration) => {
+        this.updateRegistration = registration;
+        if (registration.waiting && navigator.serviceWorker.controller) this.showUpdateNotice();
+        registration.addEventListener("updatefound", () => {
+          const worker = registration.installing;
+          worker?.addEventListener("statechange", () => {
+            if (worker.state === "installed" && navigator.serviceWorker.controller) this.showUpdateNotice();
+          });
+        });
+      }).catch(() => {
         // Online use still follows the same security boundary without offline cache.
       });
     }
@@ -192,8 +226,13 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:archive-item-step", this.onArchiveItemStep);
     this.addEventListener("kin:change-item-area", this.onItemAreaChange);
     this.addEventListener("kin:set-item-planning-date", this.onItemPlanningDateChange);
+    this.addEventListener("kin:set-local-reminder", this.onLocalReminder);
+    this.addEventListener("kin:cancel-local-reminder", this.onCancelLocalReminder);
+    this.addEventListener("kin:pin-intent", this.onPinIntent);
+    this.addEventListener("kin:open-pin", this.onOpenPin);
     this.addEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.addEventListener(`kin:${action}`, this.onNoteIntent);
+    for (const action of ["save-reference-record", "archive-reference-record"]) this.addEventListener(`kin:${action}`, this.onReferenceIntent);
     this.addEventListener("kin:add-handoff", this.onAddHandoff);
     this.addEventListener("kin:acknowledge-handoff", this.onAcknowledgeHandoff);
     this.addEventListener("kin:archive-handoff", this.onArchiveHandoff);
@@ -221,6 +260,7 @@ class KinApp extends HTMLElement {
     ]) {
       this.addEventListener(`kin:${action}`, this.onRoutineIntent);
     }
+    for (const action of ["save-playbook", "archive-playbook", "instantiate-playbook"]) this.addEventListener(`kin:${action}`, this.onPlaybookIntent);
     document.addEventListener("visibilitychange", this.onTimeWake);
     window.addEventListener("focus", this.onWindowFocus);
     this.authorizationTimer = setInterval(
@@ -365,8 +405,38 @@ class KinApp extends HTMLElement {
     this.security.onUnlocked = (vault) => this.openUnlockedHousehold(vault);
     this.security.onLockRequested = () => this.lockHousehold();
     this.replaceChildren(header, this.security, shell, feedback, this.routeAnnouncement);
+    this.updateNotice = document.createElement("section");
+    this.updateNotice.className = "update-notice";
+    this.updateNotice.setAttribute("aria-label", "Application update");
+    this.updateNotice.setAttribute("role", "status");
+    const updateMessage = document.createElement("span");
+    updateMessage.textContent = "A new Kin version is ready.";
+    const updateNow = document.createElement("button");
+    updateNow.type = "button";
+    updateNow.textContent = "Update now";
+    updateNow.addEventListener("click", () => {
+      const focusedEditor = document.activeElement?.matches?.("input, textarea, select, [contenteditable='true']");
+      const hasDraft = this.compose?.input?.value.trim() || this.routines?.input?.value.trim() || this.routines?.playbookTitle?.value.trim() || this.routines?.playbookEntries?.value.trim() || this.notes?.editor?.title.trim() || this.notes?.editor?.body.trim();
+      if (this.busy || focusedEditor || hasDraft) {
+        this.setStatus("Finish or save your current edit before updating Kin.");
+        return;
+      }
+      this.updateRequested = true;
+      this.updateRegistration?.waiting?.postMessage({ type: "KIN_SKIP_WAITING" });
+    });
+    const updateLater = document.createElement("button");
+    updateLater.type = "button";
+    updateLater.textContent = "Later";
+    updateLater.addEventListener("click", () => { this.updateNotice.hidden = true; });
+    this.updateNotice.append(updateMessage, updateNow, updateLater);
+    this.updateNotice.hidden = true;
+    this.prepend(this.updateNotice);
     this.retryButton.addEventListener("click", () => this.retryAction?.());
     this.showPageFromLocation();
+  }
+
+  showUpdateNotice() {
+    if (this.updateNotice) this.updateNotice.hidden = false;
   }
 
   buildViews(main) {
@@ -459,6 +529,20 @@ class KinApp extends HTMLElement {
     tablist.addEventListener("keydown", this.onHandoffTabKeydown);
 
     const more = page("more", "More", "Household context, people, devices, and continuity.");
+    this.installButton = document.createElement("button");
+    this.installButton.type = "button";
+    this.installButton.textContent = "Install Kin";
+    this.installButton.hidden = true;
+    this.installButton.addEventListener("click", async () => {
+      const prompt = this.deferredInstallPrompt;
+      if (!prompt) return;
+      this.deferredInstallPrompt = null;
+      this.installButton.hidden = true;
+      await prompt.prompt();
+      await prompt.userChoice;
+    });
+    if (this.deferredInstallPrompt) this.installButton.hidden = false;
+    more.append(this.installButton);
     const searchLink = document.createElement("a");
     searchLink.className = "more-search-link";
     searchLink.href = "#search";
@@ -541,6 +625,10 @@ class KinApp extends HTMLElement {
 
   disconnectedCallback() {
     this.lockHousehold(false);
+    window.removeEventListener("beforeinstallprompt", this.onBeforeInstallPrompt);
+    window.removeEventListener("appinstalled", this.onAppInstalled);
+    navigator.serviceWorker?.removeEventListener("message", this.onServiceWorkerMessage);
+    navigator.serviceWorker?.removeEventListener("controllerchange", this.onControllerChange);
     this.removeEventListener("kin:lock", this.onLockRequest);
     window.removeEventListener("pagehide", this.onPageHide);
     window.removeEventListener("hashchange", this.onHashChange);
@@ -558,8 +646,13 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:archive-item-step", this.onArchiveItemStep);
     this.removeEventListener("kin:change-item-area", this.onItemAreaChange);
     this.removeEventListener("kin:set-item-planning-date", this.onItemPlanningDateChange);
+    this.removeEventListener("kin:set-local-reminder", this.onLocalReminder);
+    this.removeEventListener("kin:cancel-local-reminder", this.onCancelLocalReminder);
+    this.removeEventListener("kin:pin-intent", this.onPinIntent);
+    this.removeEventListener("kin:open-pin", this.onOpenPin);
     this.removeEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.removeEventListener(`kin:${action}`, this.onNoteIntent);
+    for (const action of ["save-reference-record", "archive-reference-record"]) this.removeEventListener(`kin:${action}`, this.onReferenceIntent);
     this.removeEventListener("kin:add-handoff", this.onAddHandoff);
     this.removeEventListener(
       "kin:acknowledge-handoff",
@@ -584,6 +677,7 @@ class KinApp extends HTMLElement {
     ]) {
       this.removeEventListener(`kin:${action}`, this.onRoutineIntent);
     }
+    for (const action of ["save-playbook", "archive-playbook", "instantiate-playbook"]) this.removeEventListener(`kin:${action}`, this.onPlaybookIntent);
     document.removeEventListener("visibilitychange", this.onTimeWake);
     window.removeEventListener("focus", this.onWindowFocus);
     clearInterval(this.authorizationTimer);
@@ -1074,6 +1168,48 @@ class KinApp extends HTMLElement {
     }
   }
 
+  async handlePlaybookIntent(event) {
+    const action = event.type.slice(4);
+    const detail = event.detail;
+    if (action === "instantiate-playbook") {
+      const playbook = this.state?.playbooks?.find(record => record.playbookId === detail.playbookId && !record.archived);
+      if (!playbook) return;
+      const batch = { itemId: crypto.randomUUID().replaceAll("-", ""), title: playbook.title, steps: playbook.entries.map(text => ({ stepId: crypto.randomUUID().replaceAll("-", ""), text })) };
+      return this.instantiatePlaybook(batch);
+    }
+    const session = this.captureSession();
+    const command = action === "save-playbook"
+      ? { type: action, id: detail.playbookId ?? crypto.randomUUID().replaceAll("-", ""), title: detail.title, entries: detail.entries }
+      : { type: action, playbookId: detail.playbookId };
+    if (action === "save-playbook") detail.playbookId = command.id;
+    this.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
+    try {
+      await this.appendCommand(command); this.assertCurrentSession(session); this.routines.clearPlaybookEditor(); this.renderState(); this.broadcastEventChange();
+      this.setStatus(action === "save-playbook" ? "Playbook saved." : "Playbook archived.");
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      this.showAlert(error.userMessage ?? SAVE_ERROR, () => this.handlePlaybookIntent(event), command); this.setStatus("");
+    } finally { if (this.isCurrentSession(session)) { this.setBusy(false); this.flushPeerRefresh(); } }
+  }
+
+  async instantiatePlaybook(batch) {
+    if (this.busy || !this.store || !this.engine) return;
+    const session = this.captureSession(); this.setBusy(true); this.clearAlert(); this.setStatus("Creating checklist…");
+    try {
+      let item = this.state?.items.find(record => record.itemId === batch.itemId);
+      if (!item) { await this.appendCommand({ type: "add", id: batch.itemId, text: batch.title, classification: "need" }); item = this.state?.items.find(record => record.itemId === batch.itemId); }
+      for (const step of batch.steps) {
+        if (item?.steps?.some(record => record.stepId === step.stepId)) continue;
+        await this.appendCommand({ type: "add-item-step", itemId: batch.itemId, stepId: step.stepId, text: step.text });
+        item = this.state?.items.find(record => record.itemId === batch.itemId);
+      }
+      this.assertCurrentSession(session); this.renderState(); this.broadcastEventChange(); this.setStatus("Checklist created. It is now an ordinary household item.");
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      this.showAlert(error.userMessage ?? SAVE_ERROR, () => this.instantiatePlaybook(batch)); this.setStatus("");
+    } finally { if (this.isCurrentSession(session)) { this.setBusy(false); this.flushPeerRefresh(); } }
+  }
+
   async saveArea(detail) {
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
@@ -1122,6 +1258,7 @@ class KinApp extends HTMLElement {
   }
 
   async saveItemPlanningDate(detail, sourceList) {
+    this.localReminders.cancel(`item:${detail.itemId}`);
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
     this.setBusy(true);
@@ -1151,6 +1288,17 @@ class KinApp extends HTMLElement {
         )?.focus();
         this.flushPeerRefresh();
       }
+    }
+  }
+
+  async handleLocalReminder({ id, title, at }) {
+    const itemId = id.startsWith("item:") ? id.slice(5) : null;
+    const currentItem = () => !itemId || this.state?.items?.some((item) => item.itemId === itemId && item.status === "active");
+    try {
+      const result = await this.localReminders.schedule({ id, title, at, isCurrent: currentItem });
+      this.setStatus(result === "granted" ? "Reminder set on this device while Kin is open." : result === "denied" ? "Notifications are blocked in browser settings. Kin still works normally." : "Reminders are unavailable in this browser. Kin still works normally.");
+    } catch (error) {
+      this.showAlert(error.message ?? "Choose a future reminder time.");
     }
   }
 
@@ -1213,6 +1361,24 @@ class KinApp extends HTMLElement {
     }
   }
 
+  async saveReferenceRecord(action, detail) {
+    if (this.busy || !this.store || !this.engine) return;
+    const session = this.captureSession();
+    const recordId = detail.recordId ?? crypto.randomUUID().replaceAll("-", "");
+    const type = action === "archive-reference-record" ? action : "save-reference-record";
+    this.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
+    try {
+      await this.appendCommand({ type, ...detail, recordId, id: recordId });
+      this.assertCurrentSession(session);
+      if (action === "save-reference-record") this.notes.clearReferenceEditor();
+      this.renderState(); this.broadcastEventChange();
+      this.setStatus(action === "archive-reference-record" ? "Reference archived." : "Reference saved on this device.");
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      this.showAlert(error.userMessage ?? SAVE_ERROR); this.setStatus("");
+    } finally { if (this.isCurrentSession(session)) { this.setBusy(false); this.flushPeerRefresh(); } }
+  }
+
   schedulePulseRefresh() {
     clearTimeout(this.pulseTimer);
     if (
@@ -1240,7 +1406,50 @@ class KinApp extends HTMLElement {
   }
 
   async handleCompleteItem(event) {
+    this.localReminders.cancel(`item:${event.detail.itemId}`);
     return this.handleItemAction("complete", event.detail.itemId);
+  }
+
+  async savePin(detail) {
+    if (this.busy || !this.store || !this.engine || detail.targetKind !== "item") return;
+    const session = this.captureSession();
+    const command = { type: detail.pinned ? "pin" : "unpin", targetKind: "item", targetId: detail.targetId };
+    const list = [this.today, this.needs, this.shopping, this.staples].find((candidate) => candidate.contains(document.activeElement));
+    list?.rememberFocus();
+    this.setBusy(true);
+    this.clearAlert();
+    this.setStatus("Saving…");
+    try {
+      await this.appendCommand(command);
+      this.assertCurrentSession(session);
+      this.renderState();
+      this.setStatus(detail.pinned ? "Pinned for quick access." : "Unpinned.");
+      this.broadcastEventChange();
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === 4) this.pendingRefresh = true;
+      this.showAlert(error.userMessage ?? SAVE_ERROR, () => this.savePin(detail), command);
+      this.setStatus("");
+    } finally {
+      if (this.isCurrentSession(session)) {
+        this.setBusy(false);
+        this.flushPeerRefresh();
+      }
+    }
+  }
+
+  openPinnedItem(itemId) {
+    const item = this.state?.items.find((record) => record.itemId === itemId && record.status !== "archived");
+    if (!item) return;
+    const page = item.classification === "today" ? "today" : "lists";
+    history.pushState(null, "", `#${page}`);
+    this.showPageFromLocation();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const text = [...this.main.querySelectorAll(".item-text[data-item-id]")].find((node) => node.dataset.itemId === itemId);
+      if (!text) return;
+      text.scrollIntoView({ block: "center" });
+      text.focus();
+    }));
   }
 
   async handleReopenItem(event) {
@@ -1248,6 +1457,7 @@ class KinApp extends HTMLElement {
   }
 
   async handleArchiveItem(event) {
+    this.localReminders.cancel(`item:${event.detail.itemId}`);
     return this.handleItemAction("archive", event.detail.itemId);
   }
 
@@ -1637,12 +1847,16 @@ class KinApp extends HTMLElement {
     this.catchUp.lastLookedAt = this.catchUpCursor?.lastLookedAt;
     this.today.items = this.state.items;
     this.today.areas = this.state.areas ?? [];
+    this.today.pins = this.state.pins ?? [];
     this.needs.items = this.state.items;
     this.needs.areas = this.state.areas ?? [];
+    this.needs.pins = this.state.pins ?? [];
     this.shopping.items = this.state.items;
     this.shopping.areas = this.state.areas ?? [];
+    this.shopping.pins = this.state.pins ?? [];
     this.staples.items = this.state.items;
     this.staples.areas = this.state.areas ?? [];
+    this.staples.pins = this.state.pins ?? [];
     this.handoffs.handoffs = this.state.handoffs;
     this.talks.talks = this.state.talks;
     this.search.household = {
@@ -1656,8 +1870,10 @@ class KinApp extends HTMLElement {
       (pulse) => pulse.actorId === this.store?.actorId,
     );
     this.routines.routines = this.state.routines ?? [];
+    this.routines.playbooks = this.state.playbooks ?? [];
     this.areas.areas = this.state.areas ?? [];
     this.notes.notes = this.state.notes ?? [];
+    this.notes.references = this.state.referenceRecords ?? [];
     this.notes.areas = this.state.areas ?? [];
     this.updateCalendarExportButton();
     this.schedulePulseRefresh();

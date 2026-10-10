@@ -126,6 +126,39 @@ test("planning dates roundtrip as civil dates and can be cleared", async () => {
   );
 });
 
+test("protocol 18 Pins persist, deduplicate, unpin and replay with stable targets", async () => {
+  const wasm = await readFile(new URL("./kin_engine.wasm", import.meta.url));
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${wasm.toString("base64")}`);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const context = (sequence) => ({
+    eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa),
+    actorId: new Uint8Array(16).fill(0xbb), deviceId: new Uint8Array(16).fill(0xcc),
+    timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence),
+  });
+  const itemId = new Uint8Array(16).fill(0x43);
+  const asOf = 1_791_475_200_000;
+  const civilDate = 20261003;
+  const records = [encodeAddedRecord({ ...context(1), itemId, text: "Check filter", classification: "need" })];
+  const pin = (type, sequence) => engine.executeCommand(
+    { type, targetKind: "item", targetId: hex(itemId) }, context(sequence), records, asOf, null, civilDate,
+  );
+  const first = pin("pin", 2);
+  assert.equal(new DataView(first.encodedEvent.buffer).getUint16(2, true), 31);
+  assert.deepEqual(first.state.pins, [{ targetKind: "item", targetId: hex(itemId) }]);
+  records.push(first.encodedEvent);
+  const duplicate = pin("pin", 3);
+  assert.equal(duplicate.state.pins.length, 1);
+  records.push(duplicate.encodedEvent);
+  const removed = pin("unpin", 4);
+  assert.deepEqual(removed.state.pins, []);
+  records.push(removed.encodedEvent);
+  const replayed = engine.applyEvents(records, asOf, null, civilDate);
+  assert.deepEqual(replayed.pins, []);
+  assert.throws(() => engine.executeCommand(
+    { type: "pin", targetKind: "item", targetId: "99".repeat(16) }, context(5), records, asOf, null, civilDate,
+  ));
+});
+
 test("protocol 16 projections remain decodable without history timestamps", async (context) => {
   const instantiate = WebAssembly.instantiate;
   context.mock.method(WebAssembly, "instantiate", async (...args) => {
@@ -447,6 +480,8 @@ function emptyV7State() {
     routines: [],
     areas: [],
     notes: [],
+    pins: [],
+    playbooks: [],
     summary: { entries: [], totalCount: 0, throughEventId: null },
   };
 }

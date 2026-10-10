@@ -3,8 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::KinError;
 use crate::event::{
     valid_timestamp, ActorId, AreaId, DeviceId, EventEnvelope, EventId, EventKind, HandoffId,
-    HouseholdId, HouseholdMode, ItemClassification, ItemId, NoteId, PulseValue, RoutineId, StepId,
-    TalkId,
+    HouseholdId, HouseholdMode, ItemClassification, ItemId, NoteId, PinTargetKind, PulseValue,
+    ReferenceFieldId, ReferenceRecordId, RoutineId, StepId, TalkId,
 };
 use crate::recurrence::{Cadence, CivilDate};
 
@@ -57,6 +57,106 @@ pub struct AreaState {
     pub archived: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlaybookState {
+    pub playbook_id: crate::event::PlaybookId,
+    pub title: String,
+    pub entries: Vec<String>,
+    pub archived: bool,
+}
+
+pub const MAX_PLAYBOOKS: usize = 32;
+pub const MAX_PLAYBOOK_ENTRIES: usize = 16;
+pub const MAX_PLAYBOOK_TITLE_BYTES: usize = 128;
+pub const MAX_PLAYBOOK_ENTRY_BYTES: usize = 256;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferenceFieldState {
+    pub field_id: ReferenceFieldId,
+    pub label: String,
+    pub value: String,
+}
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferenceRecordState {
+    pub record_id: ReferenceRecordId,
+    pub title: String,
+    pub area_id: Option<AreaId>,
+    pub fields: Vec<ReferenceFieldState>,
+    pub archived: bool,
+}
+pub const MAX_REFERENCE_RECORDS: usize = 128;
+pub const MAX_REFERENCE_FIELDS: usize = 16;
+pub const MAX_REFERENCE_TITLE_BYTES: usize = 128;
+pub const MAX_REFERENCE_LABEL_BYTES: usize = 64;
+pub const MAX_REFERENCE_VALUE_BYTES: usize = 1024;
+pub const MAX_REFERENCE_COMMAND_BYTES: usize = 20
+    + MAX_REFERENCE_TITLE_BYTES
+    + MAX_REFERENCE_FIELDS * (20 + MAX_REFERENCE_LABEL_BYTES + MAX_REFERENCE_VALUE_BYTES);
+pub fn normalize_reference_text(
+    title: &str,
+    fields: &[(ReferenceFieldId, String, String)],
+) -> Result<(String, Vec<ReferenceFieldState>), KinError> {
+    let title = title.trim();
+    if title.is_empty()
+        || title.len() > MAX_REFERENCE_TITLE_BYTES
+        || title.chars().any(char::is_control)
+        || fields.is_empty()
+        || fields.len() > MAX_REFERENCE_FIELDS
+    {
+        return Err(KinError::InvalidEvent);
+    }
+    let mut seen = BTreeSet::new();
+    let mut normalized = Vec::with_capacity(fields.len());
+    for (id, label, value) in fields {
+        let label = label.trim();
+        if id.0 == [0; 16]
+            || !seen.insert(*id)
+            || label.is_empty()
+            || label.len() > MAX_REFERENCE_LABEL_BYTES
+            || label.chars().any(char::is_control)
+            || value.len() > MAX_REFERENCE_VALUE_BYTES
+            || value
+                .chars()
+                .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
+        {
+            return Err(KinError::InvalidEvent);
+        }
+        normalized.push(ReferenceFieldState {
+            field_id: *id,
+            label: label.to_owned(),
+            value: value.clone(),
+        });
+    }
+    Ok((title.to_owned(), normalized))
+}
+
+pub fn normalize_playbook(
+    title: &str,
+    entries: &[String],
+) -> Result<(String, Vec<String>), KinError> {
+    let title = title.trim();
+    if title.is_empty()
+        || title.len() > MAX_PLAYBOOK_TITLE_BYTES
+        || title.chars().any(char::is_control)
+        || entries.is_empty()
+        || entries.len() > MAX_PLAYBOOK_ENTRIES
+    {
+        return Err(KinError::InvalidEvent);
+    }
+    let mut normalized = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let text = entry.trim();
+        if text.is_empty()
+            || text.len() > MAX_PLAYBOOK_ENTRY_BYTES
+            || text.chars().any(char::is_control)
+        {
+            return Err(KinError::InvalidEvent);
+        }
+        normalized.push(text.to_owned());
+    }
+    Ok((title.to_owned(), normalized))
+}
+
 pub const MAX_AREAS: usize = 32;
 pub const MAX_AREA_NAME_BYTES: usize = 96;
 pub const MAX_AREA_NAME_CHARS: usize = 48;
@@ -98,6 +198,14 @@ pub struct NoteState {
     pub updated_at: i64,
     pub status: NoteStatus,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PinState {
+    pub target_kind: PinTargetKind,
+    pub target_id: [u8; 16],
+}
+
+pub const MAX_PINS: usize = 10;
 
 pub fn normalize_note(title: &str, body: &str) -> Result<(String, String), KinError> {
     let title = title.trim();
@@ -188,6 +296,9 @@ pub struct HouseholdState {
     pub routines: Vec<RoutineState>,
     pub areas: Vec<AreaState>,
     pub notes: Vec<NoteState>,
+    pub pins: Vec<PinState>,
+    pub playbooks: Vec<PlaybookState>,
+    pub reference_records: Vec<ReferenceRecordState>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -303,11 +414,24 @@ fn rebuild_with_context(
     let mut notes: Vec<NoteState> = Vec::new();
     let mut note_positions = BTreeMap::new();
     let mut note_archive_events = BTreeMap::<NoteId, BTreeSet<(u64, DeviceId)>>::new();
+    let mut reference_archive_events =
+        BTreeMap::<ReferenceRecordId, BTreeSet<(u64, DeviceId)>>::new();
+    let mut pins: Vec<PinState> = Vec::new();
+    let mut playbooks: Vec<PlaybookState> = Vec::new();
+    let mut reference_records = Vec::<ReferenceRecordState>::new();
+    let mut reference_positions = BTreeMap::<ReferenceRecordId, usize>::new();
+    let mut reference_field_owners = BTreeMap::<ReferenceFieldId, ReferenceRecordId>::new();
     for event in events {
         match &event.kind {
             EventKind::NoteArchived { note_id } => {
                 note_archive_events
                     .entry(*note_id)
+                    .or_default()
+                    .insert((event.logical_time, event.device_id));
+            }
+            EventKind::ReferenceRecordArchived { record_id } => {
+                reference_archive_events
+                    .entry(*record_id)
                     .or_default()
                     .insert((event.logical_time, event.device_id));
             }
@@ -389,6 +513,9 @@ fn rebuild_with_context(
                     .copied()
                     .ok_or(KinError::InvalidEvent)?;
                 areas[position].archived = true;
+                pins.retain(|pin| {
+                    !(pin.target_kind == PinTargetKind::Area && pin.target_id == area_id.0)
+                });
             }
             EventKind::ItemAreaChanged { item_id, area_id } => {
                 if !valid_timestamp(event.timestamp) {
@@ -509,6 +636,9 @@ fn rebuild_with_context(
                     return Err(KinError::InvalidEvent);
                 }
                 notes[position].status = NoteStatus::Archived;
+                pins.retain(|pin| {
+                    !(pin.target_kind == PinTargetKind::Note && pin.target_id == note_id.0)
+                });
             }
             EventKind::RoutineCreated {
                 routine_id,
@@ -585,6 +715,9 @@ fn rebuild_with_context(
                     routine.occurrence_key = None;
                     routine_archives.insert(*routine_id, (event.logical_time, event.device_id));
                 }
+                pins.retain(|pin| {
+                    !(pin.target_kind == PinTargetKind::Routine && pin.target_id == routine_id.0)
+                });
             }
             EventKind::PulseSet { value, expires_at } => {
                 if !valid_timestamp(event.timestamp) || !valid_timestamp(*expires_at) {
@@ -716,6 +849,163 @@ fn rebuild_with_context(
                     return Err(KinError::MalformedProtocol);
                 }
                 mode = *next_mode;
+            }
+            EventKind::PinAdded {
+                target_kind,
+                target_id,
+            } => {
+                if *target_id == [0; 16] {
+                    return Err(KinError::InvalidEvent);
+                }
+                let (exists, active) = match target_kind {
+                    PinTargetKind::Item => item_positions
+                        .get(&ItemId(*target_id))
+                        .map(|i| (true, items[*i].status != ItemStatus::Archived))
+                        .unwrap_or((false, false)),
+                    PinTargetKind::Note => note_positions
+                        .get(&NoteId(*target_id))
+                        .map(|i| (true, notes[*i].status != NoteStatus::Archived))
+                        .unwrap_or((false, false)),
+                    PinTargetKind::Routine => routine_positions
+                        .get(&RoutineId(*target_id))
+                        .map(|i| (true, !routines[*i].archived))
+                        .unwrap_or((false, false)),
+                    PinTargetKind::Area => area_positions
+                        .get(&AreaId(*target_id))
+                        .map(|i| (true, !areas[*i].archived))
+                        .unwrap_or((false, false)),
+                };
+                if !exists {
+                    return Err(KinError::InvalidEvent);
+                }
+                let pin = PinState {
+                    target_kind: *target_kind,
+                    target_id: *target_id,
+                };
+                if active && !pins.contains(&pin) {
+                    if pins.len() >= MAX_PINS {
+                        return Err(KinError::InvalidEvent);
+                    }
+                    pins.push(pin);
+                }
+            }
+            EventKind::PinRemoved {
+                target_kind,
+                target_id,
+            } => {
+                let pin = PinState {
+                    target_kind: *target_kind,
+                    target_id: *target_id,
+                };
+                if let Some(position) = pins.iter().position(|existing| *existing == pin) {
+                    pins.remove(position);
+                }
+            }
+            EventKind::PlaybookSaved {
+                playbook_id,
+                title,
+                entries,
+            } => {
+                let (title, entries) = normalize_playbook(title, entries)?;
+                if !valid_timestamp(event.timestamp) || playbook_id.0 == [0; 16] {
+                    return Err(KinError::InvalidEvent);
+                }
+                if let Some(existing) = playbooks
+                    .iter_mut()
+                    .find(|record| record.playbook_id == *playbook_id)
+                {
+                    if existing.archived {
+                        return Err(KinError::InvalidEvent);
+                    }
+                    existing.title = title;
+                    existing.entries = entries;
+                } else {
+                    if playbooks.len() >= MAX_PLAYBOOKS {
+                        return Err(KinError::InvalidEvent);
+                    }
+                    playbooks.push(PlaybookState {
+                        playbook_id: *playbook_id,
+                        title,
+                        entries,
+                        archived: false,
+                    });
+                }
+            }
+            EventKind::PlaybookArchived { playbook_id } => {
+                let record = playbooks
+                    .iter_mut()
+                    .find(|record| record.playbook_id == *playbook_id)
+                    .ok_or(KinError::InvalidEvent)?;
+                record.archived = true;
+            }
+            EventKind::ReferenceRecordSaved {
+                record_id,
+                title,
+                area_id,
+                fields,
+            } => {
+                let (title, fields) = normalize_reference_text(title, fields)?;
+                if !valid_timestamp(event.timestamp)
+                    || record_id.0 == [0; 16]
+                    || area_id.is_some_and(|id| !area_positions.contains_key(&id))
+                {
+                    return Err(KinError::InvalidEvent);
+                }
+                let owner = *record_id;
+                let concurrent_archive = allow_equal_logical_time
+                    && reference_archive_events
+                        .get(record_id)
+                        .is_some_and(|archives| {
+                            archives.iter().any(|(time, device)| {
+                                *time == event.logical_time && *device != event.device_id
+                            })
+                        });
+                if fields.iter().any(|field| {
+                    reference_field_owners
+                        .get(&field.field_id)
+                        .is_some_and(|existing| *existing != owner)
+                }) {
+                    return Err(KinError::InvalidEvent);
+                }
+                for field in &fields {
+                    reference_field_owners.insert(field.field_id, owner);
+                }
+                if let Some(position) = reference_positions.get(record_id).copied() {
+                    let existing = &mut reference_records[position];
+                    if existing.archived && !concurrent_archive {
+                        return Err(KinError::InvalidEvent);
+                    }
+                    if !concurrent_archive {
+                        existing.title = title;
+                        existing.area_id = *area_id;
+                        existing.fields = fields;
+                    }
+                } else {
+                    if reference_records.len() >= MAX_REFERENCE_RECORDS {
+                        return Err(KinError::InvalidEvent);
+                    }
+                    reference_positions.insert(*record_id, reference_records.len());
+                    reference_records.push(ReferenceRecordState {
+                        record_id: *record_id,
+                        title,
+                        area_id: *area_id,
+                        fields,
+                        archived: false,
+                    });
+                }
+            }
+            EventKind::ReferenceRecordArchived { record_id } => {
+                if !valid_timestamp(event.timestamp) {
+                    return Err(KinError::MalformedProtocol);
+                }
+                reference_records
+                    .get_mut(
+                        *reference_positions
+                            .get(record_id)
+                            .ok_or(KinError::InvalidEvent)?,
+                    )
+                    .ok_or(KinError::InvalidEvent)?
+                    .archived = true;
             }
             EventKind::ItemStepAdded {
                 item_id,
@@ -899,6 +1189,20 @@ fn rebuild_with_context(
             .occurrence_key
             .is_some_and(|key| completed_periods.contains(&(routine.routine_id, key)));
     }
+    pins.retain(|pin| match pin.target_kind {
+        PinTargetKind::Item => item_positions
+            .get(&ItemId(pin.target_id))
+            .is_some_and(|i| items[*i].status != ItemStatus::Archived),
+        PinTargetKind::Note => note_positions
+            .get(&NoteId(pin.target_id))
+            .is_some_and(|i| notes[*i].status != NoteStatus::Archived),
+        PinTargetKind::Routine => routine_positions
+            .get(&RoutineId(pin.target_id))
+            .is_some_and(|i| !routines[*i].archived),
+        PinTargetKind::Area => area_positions
+            .get(&AreaId(pin.target_id))
+            .is_some_and(|i| !areas[*i].archived),
+    });
     Ok(HouseholdState {
         household_id,
         mode,
@@ -909,6 +1213,9 @@ fn rebuild_with_context(
         routines,
         areas,
         notes,
+        pins,
+        playbooks,
+        reference_records,
     })
 }
 
@@ -1121,7 +1428,13 @@ pub(crate) fn summarize_validated(
             | EventKind::ItemStepReopened { .. }
             | EventKind::ItemStepArchived { .. }
             | EventKind::HouseholdModeChanged { .. }
-            | EventKind::ItemPlanningDateChanged { .. } => None,
+            | EventKind::ItemPlanningDateChanged { .. }
+            | EventKind::PinAdded { .. }
+            | EventKind::PinRemoved { .. }
+            | EventKind::PlaybookSaved { .. }
+            | EventKind::PlaybookArchived { .. }
+            | EventKind::ReferenceRecordSaved { .. }
+            | EventKind::ReferenceRecordArchived { .. } => None,
         };
 
         if let Some((kind, entity_kind, text, classification)) = summary {
@@ -1228,7 +1541,13 @@ mod tests {
             | EventKind::ItemAreaChanged { .. }
             | EventKind::NoteCreated { .. }
             | EventKind::NoteUpdated { .. }
-            | EventKind::NoteArchived { .. } => {
+            | EventKind::NoteArchived { .. }
+            | EventKind::PinAdded { .. }
+            | EventKind::PinRemoved { .. }
+            | EventKind::PlaybookSaved { .. }
+            | EventKind::PlaybookArchived { .. }
+            | EventKind::ReferenceRecordSaved { .. }
+            | EventKind::ReferenceRecordArchived { .. } => {
                 panic!("Area tests use independent wire fixtures")
             }
         }

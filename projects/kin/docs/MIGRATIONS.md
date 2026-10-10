@@ -1,6 +1,33 @@
 # Data Migrations
 
-**Status:** v0.24.0 adds a derived Item history date through replay protocol 17 without an IndexedDB, archive-container, sync-envelope, or server-schema migration. Earlier version sections are historical.
+**Status:** v0.30.0 adds Home Reference Records through protocol 20 without changing IndexedDB, archive-container, sync-envelope, or server schemas. v0.29.0 changes only the static application shell cache and manifest. v0.28.0 reminders remain ephemeral browser-local state. Earlier version sections are historical.
+
+## v0.30.0 Home Reference Records compatibility
+
+Protocol 20 adds event kinds 35 and 36 and appends up to 128 bounded
+Reference Records after Playbooks. Protocols 1–19 retain their prior layouts
+and reject Reference Record events and projections rather than omit household
+data. Existing encrypted storage, sync, and portable event-history archives
+preserve the canonical bytes, so no persistent-format migration is required.
+Older clients cannot replay records created by v0.30.0; active devices should
+be updated before creating them.
+
+## v0.27.0 Household Playbooks compatibility
+
+Protocol 19 adds event kinds 33 and 34 and appends a bounded Playbook list to
+the state projection after Pins. Protocols 1–18 remain unchanged for histories
+without Playbooks and reject Playbook events and Playbook-bearing projections.
+Templates and their generated Items/Steps remain separate canonical records;
+there is no persistent schema migration or server plaintext index.
+
+## v0.26.0 Pins compatibility
+
+Protocol 18 adds event kinds 31 and 32 and appends a bounded Pin count and
+stable target references to the state projection. Old histories contain no
+Pin events and therefore project an empty list. Protocols 1–17 remain readable
+for legacy histories and reject histories containing Pins; event bytes are
+never silently discarded or reinterpreted. No stored envelope or IndexedDB
+schema changes.
 
 ## v0.24.0 Useful Household History compatibility
 

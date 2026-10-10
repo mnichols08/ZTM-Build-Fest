@@ -104,6 +104,27 @@ pub enum HouseholdCommand {
         item_id: ItemId,
         planning_date: Option<CivilDate>,
     },
+    Pin {
+        target_kind: PinTargetKind,
+        target_id: [u8; 16],
+    },
+    Unpin {
+        target_kind: PinTargetKind,
+        target_id: [u8; 16],
+    },
+    SavePlaybook {
+        id: PlaybookId,
+        title: String,
+        entries: Vec<String>,
+    },
+    ArchivePlaybook(PlaybookId),
+    SaveReferenceRecord {
+        id: ReferenceRecordId,
+        title: String,
+        area_id: Option<AreaId>,
+        fields: Vec<(ReferenceFieldId, String, String)>,
+    },
+    ArchiveReferenceRecord(ReferenceRecordId),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -243,6 +264,38 @@ pub fn create_event(
             item_id: *item_id,
             planning_date: *planning_date,
         },
+        Pin {
+            target_kind,
+            target_id,
+        } => EventKind::PinAdded {
+            target_kind: *target_kind,
+            target_id: *target_id,
+        },
+        Unpin {
+            target_kind,
+            target_id,
+        } => EventKind::PinRemoved {
+            target_kind: *target_kind,
+            target_id: *target_id,
+        },
+        SavePlaybook { id, title, entries } => EventKind::PlaybookSaved {
+            playbook_id: *id,
+            title: title.clone(),
+            entries: entries.clone(),
+        },
+        ArchivePlaybook(id) => EventKind::PlaybookArchived { playbook_id: *id },
+        SaveReferenceRecord {
+            id,
+            title,
+            area_id,
+            fields,
+        } => EventKind::ReferenceRecordSaved {
+            record_id: *id,
+            title: title.clone(),
+            area_id: *area_id,
+            fields: fields.clone(),
+        },
+        ArchiveReferenceRecord(id) => EventKind::ReferenceRecordArchived { record_id: *id },
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -295,6 +348,20 @@ pub fn execute(
         return Err(KinError::InvalidEvent);
     }
     let current = project(&request)?;
+    if matches!(
+        command,
+        HouseholdCommand::SavePlaybook { .. } | HouseholdCommand::ArchivePlaybook(_)
+    ) && request.protocol_version < crate::protocol::PROTOCOL_V19
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if matches!(
+        command,
+        HouseholdCommand::SaveReferenceRecord { .. } | HouseholdCommand::ArchiveReferenceRecord(_)
+    ) && request.protocol_version < crate::protocol::PROTOCOL_V20
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
     if matches!(
         command,
         HouseholdCommand::AddItemStep { .. }
@@ -576,7 +643,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
     if bytes.len() != 128 + text_length {
         return Err(KinError::MalformedProtocol);
     }
-    let text = if matches!(kind, 21..=28) {
+    let text = if matches!(kind, 21..=28 | 33 | 35) {
         String::new()
     } else {
         std::str::from_utf8(&bytes[128..])
@@ -589,13 +656,15 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 25 && (17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length);
     if !text.is_empty() && !accepts_payload
         || !matches!(kind, 14..=16 | 30) && date != 0
-        || !matches!(kind, 1 | 12 | 14 | 29) && option != 0
+        || !matches!(kind, 1 | 12 | 14 | 29 | 31 | 32) && option != 0
         || kind != 12 && expires != 0
         || matches!(kind, 12 | 13 | 29) && id != [0; 16]
         || kind == 21 && text_length != 16
         || kind == 24 && text_length != 0
         || kind == 25 && !(17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
         || matches!(kind, 26..=28) && text_length != 16
+        || matches!(kind, 31 | 32 | 34 | 36) && text_length != 0
+        || matches!(kind, 33 | 34 | 35 | 36) && id == [0; 16]
     {
         return Err(KinError::MalformedProtocol);
     }
@@ -749,6 +818,134 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
                 .then(|| CivilDate::from_encoded(date))
                 .transpose()?,
         },
+        31 | 32 if text_length == 0 => {
+            let target_kind = match option {
+                1 => PinTargetKind::Item,
+                2 => PinTargetKind::Note,
+                3 => PinTargetKind::Routine,
+                4 => PinTargetKind::Area,
+                _ => return Err(KinError::MalformedProtocol),
+            };
+            if id == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            if kind == 31 {
+                Pin {
+                    target_kind,
+                    target_id: id,
+                }
+            } else {
+                Unpin {
+                    target_kind,
+                    target_id: id,
+                }
+            }
+        }
+        33 if text_length >= 4 => {
+            let payload = &bytes[128..];
+            let title_len = u16::from_le_bytes(field(payload, 0)?) as usize;
+            let count = payload[2] as usize;
+            if payload[3] != 0 || count == 0 || count > crate::state::MAX_PLAYBOOK_ENTRIES {
+                return Err(KinError::MalformedProtocol);
+            }
+            let title_end = 4usize
+                .checked_add(title_len)
+                .ok_or(KinError::MalformedProtocol)?;
+            let title = std::str::from_utf8(
+                payload
+                    .get(4..title_end)
+                    .ok_or(KinError::MalformedProtocol)?,
+            )
+            .map_err(|_| KinError::MalformedProtocol)?
+            .to_owned();
+            let mut offset = title_end;
+            let mut entries = Vec::with_capacity(count);
+            for _ in 0..count {
+                let length = u16::from_le_bytes(field(payload, offset)?) as usize;
+                offset += 2;
+                let end = offset
+                    .checked_add(length)
+                    .ok_or(KinError::MalformedProtocol)?;
+                entries.push(
+                    std::str::from_utf8(
+                        payload
+                            .get(offset..end)
+                            .ok_or(KinError::MalformedProtocol)?,
+                    )
+                    .map_err(|_| KinError::MalformedProtocol)?
+                    .to_owned(),
+                );
+                offset = end;
+            }
+            if offset != payload.len() {
+                return Err(KinError::MalformedProtocol);
+            }
+            SavePlaybook {
+                id: PlaybookId(id),
+                title,
+                entries,
+            }
+        }
+        34 if text_length == 0 => ArchivePlaybook(PlaybookId(id)),
+        35 if text_length >= 58 => {
+            let payload = &bytes[128..];
+            let area = field(payload, 16)?;
+            let title_len = u16::from_le_bytes(field(payload, 32)?) as usize;
+            let count = payload[34] as usize;
+            if payload[35] != 0 || count == 0 || count > crate::state::MAX_REFERENCE_FIELDS {
+                return Err(KinError::MalformedProtocol);
+            }
+            let title_end = 36usize
+                .checked_add(title_len)
+                .ok_or(KinError::MalformedProtocol)?;
+            let title = std::str::from_utf8(
+                payload
+                    .get(36..title_end)
+                    .ok_or(KinError::MalformedProtocol)?,
+            )
+            .map_err(|_| KinError::MalformedProtocol)?
+            .to_owned();
+            let mut offset = title_end;
+            let mut fields = Vec::with_capacity(count);
+            for _ in 0..count {
+                let field_id = ReferenceFieldId(field(payload, offset)?);
+                let label_len = u16::from_le_bytes(field(payload, offset + 16)?) as usize;
+                let value_len = u16::from_le_bytes(field(payload, offset + 18)?) as usize;
+                offset += 20;
+                let label_end = offset
+                    .checked_add(label_len)
+                    .ok_or(KinError::MalformedProtocol)?;
+                let value_end = label_end
+                    .checked_add(value_len)
+                    .ok_or(KinError::MalformedProtocol)?;
+                let label = std::str::from_utf8(
+                    payload
+                        .get(offset..label_end)
+                        .ok_or(KinError::MalformedProtocol)?,
+                )
+                .map_err(|_| KinError::MalformedProtocol)?
+                .to_owned();
+                let value = std::str::from_utf8(
+                    payload
+                        .get(label_end..value_end)
+                        .ok_or(KinError::MalformedProtocol)?,
+                )
+                .map_err(|_| KinError::MalformedProtocol)?
+                .to_owned();
+                fields.push((field_id, label, value));
+                offset = value_end;
+            }
+            if offset != payload.len() {
+                return Err(KinError::MalformedProtocol);
+            }
+            SaveReferenceRecord {
+                id: ReferenceRecordId(id),
+                title,
+                area_id: (area != [0; 16]).then_some(AreaId(area)),
+                fields,
+            }
+        }
+        36 if text_length == 0 => ArchiveReferenceRecord(ReferenceRecordId(id)),
         _ => return Err(KinError::UnsupportedVersion),
     };
     let context = CommandContext {

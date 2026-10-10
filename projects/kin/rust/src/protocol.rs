@@ -1,7 +1,8 @@
 use crate::error::KinError;
 use crate::event::{
     valid_timestamp, ActorId, DeviceId, EventEnvelope, EventId, EventKind, HandoffId, HouseholdId,
-    HouseholdMode, IdentityBinding, ItemClassification, ItemId, PulseValue, RoutineId, TalkId,
+    HouseholdMode, IdentityBinding, ItemClassification, ItemId, PinTargetKind, PulseValue,
+    ReferenceFieldId, ReferenceRecordId, RoutineId, TalkId,
 };
 use crate::recurrence::{Cadence, CivilDate};
 use crate::state::{
@@ -26,7 +27,10 @@ pub const PROTOCOL_V14: u16 = 14;
 pub const PROTOCOL_V15: u16 = 15;
 pub const PROTOCOL_V16: u16 = 16;
 pub const PROTOCOL_V17: u16 = 17;
-pub const PROTOCOL_VERSION: u16 = PROTOCOL_V17;
+pub const PROTOCOL_V18: u16 = 18;
+pub const PROTOCOL_V19: u16 = 19;
+pub const PROTOCOL_V20: u16 = 20;
+pub const PROTOCOL_VERSION: u16 = PROTOCOL_V20;
 pub const ERROR_PROTOCOL_VERSION: u16 = PROTOCOL_V1;
 pub const MAX_EVENT_COUNT: usize = 10_000;
 pub const MAX_PROTOCOL_BYTES: usize = 64 * 1024 * 1024;
@@ -86,6 +90,9 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
             | PROTOCOL_V15
             | PROTOCOL_V16
             | PROTOCOL_V17
+            | PROTOCOL_V18
+            | PROTOCOL_V19
+            | PROTOCOL_V20
     ) {
         return Err(KinError::UnsupportedVersion);
     }
@@ -183,7 +190,8 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
         .map_err(|_| KinError::SizeLimit)?;
     let mut offset = match version {
         PROTOCOL_V8 | PROTOCOL_V9 | PROTOCOL_V10 | PROTOCOL_V11 | PROTOCOL_V12 | PROTOCOL_V13
-        | PROTOCOL_V14 | PROTOCOL_V15 | PROTOCOL_V16 | PROTOCOL_V17 => {
+        | PROTOCOL_V14 | PROTOCOL_V15 | PROTOCOL_V16 | PROTOCOL_V17 | PROTOCOL_V18
+        | PROTOCOL_V19 | PROTOCOL_V20 => {
             V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES
         }
         PROTOCOL_V7 => 44,
@@ -251,6 +259,9 @@ pub fn encode_state(state: &HouseholdState, protocol_version: u16) -> Result<Vec
         || state.items.iter().any(|item| item.area_id.is_some())
         || state.items.iter().any(|item| !item.steps.is_empty())
         || state.items.iter().any(|item| item.planning_date.is_some())
+        || !state.pins.is_empty()
+        || !state.playbooks.is_empty()
+        || !state.reference_records.is_empty()
     {
         return Err(KinError::UnsupportedVersion);
     }
@@ -511,6 +522,26 @@ pub fn encode_state_v17(
     encode_state_with_summary(state, summary, PROTOCOL_V17)
 }
 
+pub fn encode_state_v18(
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<Vec<u8>, KinError> {
+    encode_state_with_summary(state, summary, PROTOCOL_V18)
+}
+
+pub fn encode_state_v19(
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<Vec<u8>, KinError> {
+    encode_state_with_summary(state, summary, PROTOCOL_V19)
+}
+pub fn encode_state_v20(
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<Vec<u8>, KinError> {
+    encode_state_with_summary(state, summary, PROTOCOL_V20)
+}
+
 fn encode_state_with_summary(
     state: &HouseholdState,
     summary: &CatchUpSummary,
@@ -532,6 +563,18 @@ fn encode_state_with_summary(
     }
     if version < PROTOCOL_V11 && state.items.iter().any(|item| !item.steps.is_empty()) {
         return Err(KinError::UnsupportedVersion);
+    }
+    if version < PROTOCOL_V18 && !state.pins.is_empty() {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if version < PROTOCOL_V19 && !state.playbooks.is_empty() {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if version < PROTOCOL_V20 && !state.reference_records.is_empty() {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if state.pins.len() > crate::state::MAX_PINS {
+        return Err(KinError::SizeLimit);
     }
     if version < PROTOCOL_V12
         && state
@@ -747,6 +790,8 @@ fn encode_state_with_summary(
             })
         })
         .and_then(|length| length.checked_add(if version >= PROTOCOL_V15 { 4 } else { 0 }))
+        .and_then(|length| length.checked_add(if version >= PROTOCOL_V18 { 4 } else { 0 }))
+        .and_then(|length| length.checked_add(if version >= PROTOCOL_V19 { 4 } else { 0 }))
         .and_then(|length| {
             length.checked_add(if version >= PROTOCOL_V16 {
                 state.items.len().checked_mul(4)?
@@ -757,6 +802,45 @@ fn encode_state_with_summary(
         .and_then(|length| {
             length.checked_add(if version >= PROTOCOL_V17 {
                 state.items.len().checked_mul(8)?
+            } else {
+                0
+            })
+        })
+        .and_then(|length| {
+            length.checked_add(if version >= PROTOCOL_V18 {
+                state.pins.len().checked_mul(20)?
+            } else {
+                0
+            })
+        })
+        .and_then(|length| {
+            length.checked_add(if version >= PROTOCOL_V19 {
+                state.playbooks.iter().try_fold(0usize, |sum, record| {
+                    let entries = record.entries.iter().try_fold(0usize, |entry_sum, entry| {
+                        entry_sum.checked_add(2 + entry.len())
+                    })?;
+                    sum.checked_add(22 + record.title.len() + entries)
+                })?
+            } else {
+                0
+            })
+        })
+        .and_then(|length| length.checked_add(if version >= PROTOCOL_V20 { 4 } else { 0 }))
+        .and_then(|length| {
+            length.checked_add(if version >= PROTOCOL_V20 {
+                if state.reference_records.len() > crate::state::MAX_REFERENCE_RECORDS {
+                    return None;
+                }
+                state
+                    .reference_records
+                    .iter()
+                    .try_fold(0usize, |sum, record| {
+                        let fields =
+                            record.fields.iter().try_fold(0usize, |field_sum, field| {
+                                field_sum.checked_add(20 + field.label.len() + field.value.len())
+                            })?;
+                        sum.checked_add(36 + record.title.len() + fields)
+                    })?
             } else {
                 0
             })
@@ -804,6 +888,15 @@ fn encode_state_with_summary(
         result.push(state.mode as u8);
         result.extend_from_slice(&[0; 3]);
     }
+    if version >= PROTOCOL_V18 {
+        push_u32(&mut result, state.pins.len() as u32);
+    }
+    if version >= PROTOCOL_V19 {
+        push_u32(&mut result, state.playbooks.len() as u32);
+    }
+    if version >= PROTOCOL_V20 {
+        push_u32(&mut result, state.reference_records.len() as u32);
+    }
     result.extend_from_slice(&previous[24..]);
     if version >= PROTOCOL_V9 {
         for item in &state.items {
@@ -836,6 +929,52 @@ fn encode_state_with_summary(
             result.extend_from_slice(&item.last_changed_at.to_le_bytes());
         }
     }
+    if version >= PROTOCOL_V18 {
+        for pin in &state.pins {
+            result.push(pin.target_kind as u8);
+            result.extend_from_slice(&[0; 3]);
+            result.extend_from_slice(&pin.target_id);
+        }
+    }
+    if version >= PROTOCOL_V19 {
+        for record in &state.playbooks {
+            result.extend_from_slice(&record.playbook_id.0);
+            result.push(u8::from(record.archived));
+            result.push(record.entries.len() as u8);
+            push_u16(&mut result, record.title.len() as u16);
+            result.extend_from_slice(&[0; 2]);
+            result.extend_from_slice(record.title.as_bytes());
+            for entry in &record.entries {
+                push_u16(&mut result, entry.len() as u16);
+                result.extend_from_slice(entry.as_bytes());
+            }
+        }
+    }
+    if version >= PROTOCOL_V20 {
+        for record in &state.reference_records {
+            let (title, fields) = crate::state::normalize_reference_text(
+                &record.title,
+                &record
+                    .fields
+                    .iter()
+                    .map(|f| (f.field_id, f.label.clone(), f.value.clone()))
+                    .collect::<Vec<_>>(),
+            )?;
+            result.extend_from_slice(&record.record_id.0);
+            result.extend_from_slice(&record.area_id.map_or([0; 16], |id| id.0));
+            push_u16(&mut result, title.len() as u16);
+            result.push(fields.len() as u8);
+            result.push(u8::from(record.archived));
+            result.extend_from_slice(title.as_bytes());
+            for field in fields {
+                result.extend_from_slice(&field.field_id.0);
+                push_u16(&mut result, field.label.len() as u16);
+                push_u16(&mut result, field.value.len() as u16);
+                result.extend_from_slice(field.label.as_bytes());
+                result.extend_from_slice(field.value.as_bytes());
+            }
+        }
+    }
 
     for entry in &summary.entries {
         result.extend_from_slice(&entry.event_id.0);
@@ -856,7 +995,7 @@ fn encode_state_with_summary(
 }
 
 pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelope, KinError> {
-    if !(PROTOCOL_V1..=PROTOCOL_V17).contains(&protocol_version) {
+    if !(PROTOCOL_V1..=PROTOCOL_V20).contains(&protocol_version) {
         return Err(KinError::UnsupportedVersion);
     }
     if record.len() > MAX_PROTOCOL_BYTES {
@@ -1040,6 +1179,175 @@ pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelop
                     .then(|| CivilDate::from_encoded(encoded_date))
                     .transpose()?,
             }
+        }
+        (1, 31 | 32) if protocol_version >= PROTOCOL_V18 => {
+            if payload.len() != 20 || payload[1..4] != [0; 3] {
+                return Err(KinError::MalformedProtocol);
+            }
+            let target_kind = match payload[0] {
+                1 => PinTargetKind::Item,
+                2 => PinTargetKind::Note,
+                3 => PinTargetKind::Routine,
+                4 => PinTargetKind::Area,
+                _ => return Err(KinError::MalformedProtocol),
+            };
+            let target_id = read_id(payload, 4)?;
+            if target_id == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            if event_kind == 31 {
+                EventKind::PinAdded {
+                    target_kind,
+                    target_id,
+                }
+            } else {
+                EventKind::PinRemoved {
+                    target_kind,
+                    target_id,
+                }
+            }
+        }
+        (1, 33) if protocol_version >= PROTOCOL_V19 => {
+            if payload.len() < 20 || payload[19] != 0 {
+                return Err(KinError::MalformedProtocol);
+            }
+            let title_len = u16::from_le_bytes(payload[16..18].try_into().unwrap()) as usize;
+            let count = payload[18] as usize;
+            if count == 0
+                || count > crate::state::MAX_PLAYBOOK_ENTRIES
+                || title_len == 0
+                || title_len > crate::state::MAX_PLAYBOOK_TITLE_BYTES
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            let mut offset = 20usize;
+            let title_end = offset
+                .checked_add(title_len)
+                .ok_or(KinError::MalformedProtocol)?;
+            let title = std::str::from_utf8(
+                payload
+                    .get(offset..title_end)
+                    .ok_or(KinError::MalformedProtocol)?,
+            )
+            .map_err(|_| KinError::MalformedProtocol)?
+            .to_owned();
+            offset = title_end;
+            let mut entries = Vec::with_capacity(count);
+            for _ in 0..count {
+                let len = u16::from_le_bytes(
+                    payload
+                        .get(offset..offset + 2)
+                        .ok_or(KinError::MalformedProtocol)?
+                        .try_into()
+                        .unwrap(),
+                ) as usize;
+                offset += 2;
+                let end = offset.checked_add(len).ok_or(KinError::MalformedProtocol)?;
+                entries.push(
+                    std::str::from_utf8(
+                        payload
+                            .get(offset..end)
+                            .ok_or(KinError::MalformedProtocol)?,
+                    )
+                    .map_err(|_| KinError::MalformedProtocol)?
+                    .to_owned(),
+                );
+                offset = end;
+            }
+            if offset != payload.len() {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::PlaybookSaved {
+                playbook_id: crate::event::PlaybookId(read_id(payload, 0)?),
+                title,
+                entries,
+            }
+        }
+        (1, 34) if protocol_version >= PROTOCOL_V19 && payload.len() == 16 => {
+            EventKind::PlaybookArchived {
+                playbook_id: crate::event::PlaybookId(read_id(payload, 0)?),
+            }
+        }
+        (1, 35) if protocol_version >= PROTOCOL_V20 => {
+            if payload.len() < 36
+                || payload[34] == 0
+                || payload[34] as usize > crate::state::MAX_REFERENCE_FIELDS
+                || payload[35] != 0
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            let record_id = ReferenceRecordId(read_id(payload, 0)?);
+            let area = read_id(payload, 16)?;
+            let title_len = read_u16(payload, 32)? as usize;
+            if record_id.0 == [0; 16]
+                || title_len == 0
+                || title_len > crate::state::MAX_REFERENCE_TITLE_BYTES
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            let mut offset = 36usize;
+            let title_end = offset
+                .checked_add(title_len)
+                .ok_or(KinError::MalformedProtocol)?;
+            let title = std::str::from_utf8(
+                payload
+                    .get(offset..title_end)
+                    .ok_or(KinError::MalformedProtocol)?,
+            )
+            .map_err(|_| KinError::MalformedProtocol)?
+            .to_owned();
+            offset = title_end;
+            let mut fields = Vec::with_capacity(payload[34] as usize);
+            for _ in 0..payload[34] {
+                let id = ReferenceFieldId(read_id(payload, offset)?);
+                let label_len = read_u16(payload, offset + 16)? as usize;
+                let value_len = read_u16(payload, offset + 18)? as usize;
+                offset += 20;
+                if id.0 == [0; 16]
+                    || label_len == 0
+                    || label_len > crate::state::MAX_REFERENCE_LABEL_BYTES
+                    || value_len > crate::state::MAX_REFERENCE_VALUE_BYTES
+                {
+                    return Err(KinError::MalformedProtocol);
+                }
+                let end = offset
+                    .checked_add(label_len)
+                    .and_then(|v| v.checked_add(value_len))
+                    .ok_or(KinError::MalformedProtocol)?;
+                let label_end = offset + label_len;
+                let label = std::str::from_utf8(
+                    payload
+                        .get(offset..label_end)
+                        .ok_or(KinError::MalformedProtocol)?,
+                )
+                .map_err(|_| KinError::MalformedProtocol)?
+                .to_owned();
+                let value = std::str::from_utf8(
+                    payload
+                        .get(label_end..end)
+                        .ok_or(KinError::MalformedProtocol)?,
+                )
+                .map_err(|_| KinError::MalformedProtocol)?
+                .to_owned();
+                fields.push((id, label, value));
+                offset = end;
+            }
+            if offset != payload.len() {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::ReferenceRecordSaved {
+                record_id,
+                title,
+                area_id: (area != [0; 16]).then_some(crate::event::AreaId(area)),
+                fields,
+            }
+        }
+        (1, 36) if protocol_version >= PROTOCOL_V20 && payload.len() == 16 => {
+            let record_id = ReferenceRecordId(read_id(payload, 0)?);
+            if record_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::ReferenceRecordArchived { record_id }
         }
         (1, 15..=17) if protocol_version >= PROTOCOL_V7 => {
             if payload.len() != if event_kind == 17 { 16 } else { 20 }

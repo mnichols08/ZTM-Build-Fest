@@ -1,6 +1,45 @@
 # Changelog
 
+## v0.30.0 — Home Reference Records
+
+- Add bounded structured household reference cards with optional Area, labeled fields, edit, and archive.
+- Add protocol 20 save/archive events and deterministic replay; older protocols reject records rather than discard them.
+- Keep records inside the existing encrypted local-first event history. No storage or server schema migration is required.
+- Cross-device browser and accessibility release-gate checks remain to be completed.
+
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
+
+## v0.29.0 — PWA & Offline Install Polish
+
+- Complete-shell service-worker staging keeps the prior known-good cache on failure; intentional activation cleans obsolete caches.
+- Add calm, user-controlled update-ready messaging and local manifest metadata.
+- Browser installation/offline launch validation remains environment-unverified.
+
+## v0.28.0 — Local Reminders
+
+- Add explicit, browser-local reminders for active Items and Routines.
+- Request Notification permission only after a reminder action; handle denied and unsupported browsers.
+- Cancel an Item reminder when its date changes, it is completed, or it is archived.
+- Reminders exist only in the active page session. Browser shutdown, suspension, and unavailable service workers can delay or prevent delivery. No push service or nag loop is used.
+
+## v0.27.0 — Household Playbooks
+
+- Add canonical protocol 19 Playbook templates with ordered checklist entries,
+  bounded household counts and lengths, edit/archive, and stable replay.
+- Add Playbook authoring and use under Routines. Instantiation creates a normal
+  Item with independent Checklist Steps; archived templates are retained.
+- Protocols 1–18 preserve their prior behavior and reject Playbook-bearing
+  history rather than silently dropping templates.
+
+## v0.26.0 — Pins & Quick Access
+
+- Add stable, ordered Pin and Unpin events with a ten-Pin household limit.
+- Add an accessible Quick Access section on Today. The current UI supports
+  Item Pins, while the protocol defines stable targets for Items, Notes,
+  Routines, and Areas.
+- Add protocol 18 event kinds 31–32 and a Pin state projection. Existing
+  histories replay with no Pins; no storage, archive, or server migration is
+  required. Archived targets are omitted from Quick Access.
 
 ## v0.25.0 — Search & Filters
 

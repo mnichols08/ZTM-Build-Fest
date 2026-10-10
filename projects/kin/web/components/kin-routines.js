@@ -1,10 +1,18 @@
 
+import {
+  MAX_PLAYBOOK_ENTRIES,
+  validatePlaybook,
+} from "../household-validation.js";
+
 class KinRoutines extends HTMLElement {
   constructor() {
     super();
     this.records = [];
+    this.playbookRecords = [];
+    this.editingPlaybookId = null;
     this.isDisabled = false;
     this.householdMode = "normal";
+    this.instanceId = `routines-${++KinRoutines.instances}`;
   }
 
   connectedCallback() {
@@ -64,25 +72,72 @@ class KinRoutines extends HTMLElement {
       this.dispatch("create-routine", { text, cadence: this.cadence.value });
     });
     form.append(label, this.input, cadenceLabel, this.cadence, this.button, this.message);
+    const playbooks = document.createElement("section");
+    playbooks.className = "playbook-section";
+    const playbookHeading = document.createElement("h3"); playbookHeading.textContent = "Household playbooks";
+    const playbookHint = document.createElement("p"); playbookHint.textContent = "Save a reusable checklist. Using one creates an ordinary checklist you can edit independently.";
+    const playbookForm = document.createElement("form"); playbookForm.className = "compose-form"; playbookForm.noValidate = true;
+    const playbookTitleId = `${this.instanceId}-playbook-title`;
+    const playbookTitleLabel = document.createElement("label"); playbookTitleLabel.htmlFor = playbookTitleId; playbookTitleLabel.textContent = "Playbook name";
+    this.playbookTitle = document.createElement("input"); this.playbookTitle.id = playbookTitleId; this.playbookTitle.placeholder = "Playbook name";
+    this.playbookTitleError = document.createElement("small"); this.playbookTitleError.id = `${this.instanceId}-playbook-title-error`; this.playbookTitleError.setAttribute("role", "alert"); this.playbookTitleError.hidden = true; this.playbookTitle.setAttribute("aria-describedby", this.playbookTitleError.id);
+    const playbookEntriesId = `${this.instanceId}-playbook-entries`;
+    const playbookEntriesLabel = document.createElement("label"); playbookEntriesLabel.htmlFor = playbookEntriesId; playbookEntriesLabel.textContent = "Checklist steps (one per line)";
+    this.playbookEntries = document.createElement("textarea"); this.playbookEntries.id = playbookEntriesId; this.playbookEntries.rows = 4; this.playbookEntries.placeholder = "One checklist step per line";
+    this.playbookCountError = document.createElement("small"); this.playbookCountError.id = `${this.instanceId}-playbook-count-error`; this.playbookCountError.setAttribute("role", "alert"); this.playbookCountError.hidden = true;
+    this.playbookEntryErrors = document.createElement("div"); this.playbookEntryErrors.className = "field-errors";
+    this.playbookEntries.setAttribute("aria-describedby", this.playbookCountError.id);
+    this.playbookSave = document.createElement("button"); this.playbookSave.type = "submit"; this.playbookSave.className = "add-button"; this.playbookSave.textContent = "Save playbook";
+    playbookForm.addEventListener("submit", event => {
+      event.preventDefault();
+      if (this.isDisabled) return;
+      const entries = this.playbookEntries.value.split(/\r?\n/);
+      const result = validatePlaybook(this.playbookTitle.value, entries);
+      this.showValidationError(this.playbookTitle, this.playbookTitleError, result.errors.title);
+      this.showValidationError(this.playbookEntries, this.playbookCountError, result.errors.count);
+      this.playbookEntryErrors.replaceChildren();
+      const entryErrorIds = [];
+      result.errors.entries.forEach((message, index) => {
+        if (!message) return;
+        const error = document.createElement("small");
+        error.id = `${this.instanceId}-playbook-entry-error-${index}`;
+        error.setAttribute("role", "alert");
+        error.textContent = `Step ${index + 1}: ${message}`;
+        entryErrorIds.push(error.id);
+        this.playbookEntryErrors.append(error);
+      });
+      this.playbookEntries.setAttribute("aria-describedby", [this.playbookCountError.id, ...entryErrorIds].join(" "));
+      if (entryErrorIds.length && !this.playbookEntries.hasAttribute("aria-invalid")) this.playbookEntries.setAttribute("aria-invalid", "true");
+      if (!entryErrorIds.length && !result.errors.count) this.playbookEntries.removeAttribute("aria-invalid");
+      if (!result.valid) {
+        (result.errors.title ? this.playbookTitle : this.playbookEntries).focus();
+        return;
+      }
+      this.dispatch("save-playbook", { playbookId: this.editingPlaybookId, title: result.title, entries: result.entries });
+    });
+    playbookForm.append(playbookTitleLabel, this.playbookTitle, this.playbookTitleError, playbookEntriesLabel, this.playbookEntries, this.playbookCountError, this.playbookEntryErrors, this.playbookSave);
+    this.playbookList = document.createElement("ul"); this.playbookList.className = "item-list";
+    playbooks.append(playbookHeading, playbookHint, playbookForm, this.playbookList);
     this.list = document.createElement("ul");
     this.list.className = "item-list";
     this.empty = document.createElement("p");
     this.empty.className = "empty-state";
     this.empty.textContent = "No routines yet. Add a small household rhythm.";
-    section.append(heading, hint, form, this.empty, this.list);
+    section.append(heading, hint, form, this.empty, this.list, playbooks);
     this.append(section);
     this.render();
     this.disabled = this.isDisabled;
   }
 
   set routines(value) { this.records = value; this.render(); }
+  set playbooks(value) { this.playbookRecords = value ?? []; this.renderPlaybooks(); }
   set householdMode(value) {
     this.mode = value;
     this.render();
   }
   set disabled(value) {
     this.isDisabled = Boolean(value);
-    for (const control of this.querySelectorAll("input, select, button")) control.disabled = this.isDisabled;
+    for (const control of this.querySelectorAll("input, textarea, select, button")) control.disabled = this.isDisabled;
   }
   focusInput() { this.input.focus(); }
   saveDraft() {
@@ -92,6 +147,13 @@ class KinRoutines extends HTMLElement {
     if (this.input.value !== text || this.cadence.value !== cadence) return;
     this.input.value = "";
     this.saveDraft();
+  }
+  clearPlaybookEditor() { this.editingPlaybookId = null; this.playbookTitle.value = ""; this.playbookEntries.value = ""; this.playbookSave.textContent = "Save playbook"; }
+  showValidationError(control, messageNode, message) {
+    messageNode.textContent = message;
+    messageNode.hidden = !message;
+    if (message) control.setAttribute("aria-invalid", "true");
+    else control.removeAttribute("aria-invalid");
   }
   dispatch(action, detail) {
     if (!this.isDisabled) this.dispatchEvent(new CustomEvent(`kin:${action}`, { detail, bubbles: true, composed: true }));
@@ -136,6 +198,18 @@ class KinRoutines extends HTMLElement {
       content.append(text, status);
       const actions = document.createElement("div");
       actions.className = "item-action";
+      const remind = document.createElement("button");
+      remind.type = "button"; remind.textContent = "Routine reminder"; remind.disabled = this.isDisabled;
+      remind.setAttribute("aria-label", `Set a reminder for ${record.text}`);
+      remind.addEventListener("click", () => {
+        const value = window.prompt("When should Kin remind you? Enter a local date and time, such as 2026-10-10T09:00");
+        if (!value) return;
+        this.dispatch("set-local-reminder", { id: `routine:${record.routineId}`, title: record.text, at: new Date(value).getTime() });
+      });
+      const cancelReminder = document.createElement("button"); cancelReminder.type = "button"; cancelReminder.textContent = "Cancel reminder"; cancelReminder.disabled = this.isDisabled;
+      cancelReminder.setAttribute("aria-label", `Cancel reminder for ${record.text}`);
+      cancelReminder.addEventListener("click", () => this.dispatch("cancel-local-reminder", { id: `routine:${record.routineId}` }));
+      actions.append(remind, cancelReminder);
       const addAction = (label, action) => {
         const button = document.createElement("button");
         button.type = "button";
@@ -154,6 +228,24 @@ class KinRoutines extends HTMLElement {
       this.list.append(row);
     }
     this.restoreFocus(focus);
+    this.renderPlaybooks();
+  }
+  renderPlaybooks() {
+    if (!this.playbookList) return;
+    this.playbookList.replaceChildren();
+    for (const record of this.playbookRecords.filter(value => !value.archived)) {
+      const row = document.createElement("li"); row.className = "item-row";
+      const content = document.createElement("div"); const title = document.createElement("p"); title.className = "item-text"; title.textContent = record.title;
+      const entries = document.createElement("ol"); for (const text of record.entries) { const item = document.createElement("li"); item.textContent = text; entries.append(item); }
+      content.append(title, entries);
+      const actions = document.createElement("div"); actions.className = "item-action";
+      const add = (label, action, callback) => { const button = document.createElement("button"); button.type = "button"; button.textContent = label; button.disabled = this.isDisabled; button.dataset.playbookId = record.playbookId; button.dataset.action = action; button.addEventListener("click", callback); actions.append(button); };
+      add("Use checklist", "instantiate", () => this.dispatch("instantiate-playbook", { playbookId: record.playbookId }));
+      add("Edit", "edit", () => { this.editingPlaybookId = record.playbookId; this.playbookTitle.value = record.title; this.playbookEntries.value = record.entries.join("\n"); this.playbookSave.textContent = "Save changes"; this.playbookTitle.focus(); });
+      add("Archive", "archive", () => this.dispatch("archive-playbook", { playbookId: record.playbookId }));
+      row.append(content, actions); this.playbookList.append(row);
+    }
   }
 }
+KinRoutines.instances = 0;
 customElements.define("kin-routines", KinRoutines);

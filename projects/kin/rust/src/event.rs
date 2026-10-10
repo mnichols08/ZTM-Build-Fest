@@ -28,6 +28,18 @@ id_type!(RoutineId);
 id_type!(AreaId);
 id_type!(NoteId);
 id_type!(StepId);
+id_type!(PlaybookId);
+id_type!(ReferenceRecordId);
+id_type!(ReferenceFieldId);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum PinTargetKind {
+    Item = 1,
+    Note = 2,
+    Routine = 3,
+    Area = 4,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -186,6 +198,31 @@ pub enum EventKind {
     },
     HouseholdModeChanged {
         mode: HouseholdMode,
+    },
+    PinAdded {
+        target_kind: PinTargetKind,
+        target_id: [u8; 16],
+    },
+    PinRemoved {
+        target_kind: PinTargetKind,
+        target_id: [u8; 16],
+    },
+    PlaybookSaved {
+        playbook_id: PlaybookId,
+        title: String,
+        entries: Vec<String>,
+    },
+    PlaybookArchived {
+        playbook_id: PlaybookId,
+    },
+    ReferenceRecordSaved {
+        record_id: ReferenceRecordId,
+        title: String,
+        area_id: Option<AreaId>,
+        fields: Vec<(ReferenceFieldId, String, String)>,
+    },
+    ReferenceRecordArchived {
+        record_id: ReferenceRecordId,
     },
 }
 

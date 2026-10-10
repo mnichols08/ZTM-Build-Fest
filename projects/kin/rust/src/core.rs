@@ -2,7 +2,8 @@
 use crate::error::KinError;
 use crate::protocol::{
     self, DecodedRequest, PROTOCOL_V10, PROTOCOL_V11, PROTOCOL_V12, PROTOCOL_V13, PROTOCOL_V14,
-    PROTOCOL_V15, PROTOCOL_V16, PROTOCOL_V17, PROTOCOL_V6, PROTOCOL_V7, PROTOCOL_V8, PROTOCOL_V9,
+    PROTOCOL_V15, PROTOCOL_V16, PROTOCOL_V17, PROTOCOL_V18, PROTOCOL_V19, PROTOCOL_V20,
+    PROTOCOL_V6, PROTOCOL_V7, PROTOCOL_V8, PROTOCOL_V9,
 };
 use crate::state::{self, HouseholdState};
 
@@ -44,6 +45,9 @@ pub fn encode_projection(
             PROTOCOL_V15 => protocol::encode_state_v15(household, &summary),
             PROTOCOL_V16 => protocol::encode_state_v16(household, &summary),
             PROTOCOL_V17 => protocol::encode_state_v17(household, &summary),
+            PROTOCOL_V18 => protocol::encode_state_v18(household, &summary),
+            PROTOCOL_V19 => protocol::encode_state_v19(household, &summary),
+            PROTOCOL_V20 => protocol::encode_state_v20(household, &summary),
             PROTOCOL_V7 => protocol::encode_state_v7(household, &summary),
             _ => protocol::encode_state_v6(household, &summary),
         }

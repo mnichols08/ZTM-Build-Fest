@@ -134,13 +134,21 @@ label from effective Item and checklist-Step events under protocol 17, without
 actor attribution or a persistent-format migration. The v0.25.0 Search & Filters (`kin-v0.25.0` candidate name; no tag created)
 searches unarchived Item/Step, Handoff, Talk, and Note text locally,
 with Item-only classification/status/Area filters and no persistent index.
-The user-authorized
-fast-track continues through v0.25.x on this branch. Preserve the five separate minor milestone
-commits; do not create tags or merge the branch. These are implementation
-candidates, not production certification. Preserve the v0.13.5 recovery
-authority guarantees and all earlier security/domain contracts.
+The user-authorized v0.26.0 Pins & Quick Access milestone (`kin-v0.26.0`
+candidate name; no tag created) adds protocol 18 Pin/Unpin events, deterministic
+bounded replay and a compact Today section. The authorized v0.27.0 Household
+Playbooks milestone (`kin-v0.27.0` candidate name; no tag created) adds
+protocol 19 ordered reusable checklist templates that instantiate as ordinary
+Items and Steps. The authorized v0.28.0 Local Reminders milestone (`kin-v0.28.0` candidate; no tag created) adds opt-in browser-local foreground notifications for Items and Routines; it adds no canonical event or server dependency, and browser suspension/termination may suppress delivery. The authorized v0.29.0 PWA candidate (`kin-v0.29.0`; no tag created) adds complete-shell cache staging, safe update activation, offline navigation fallback and a calm update prompt. The authorized fast-track continues
+through v0.30.x on `kin-fast-track-v0.26-v0.30`. Current v0.30.0 Home
+Reference Records candidate (`kin-v0.30.0`; no tag created) adds protocol 20
+bounded household reference cards with optional Areas and no persistent schema
+migration. Preserve separate minor
+milestone commits; do not create tags or merge the branch. These are
+implementation candidates, not production certification. Preserve the v0.13.5
+recovery authority guarantees and all earlier security/domain contracts.
 
-Kin's last published release is `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Complete only the authorized v0.21.x–v0.25.x scope on `kin-fast-track-v0.21-v0.25`; do not start v0.26.x. Preserve every existing tag exactly. Root replacement follows [ROOT-ROTATION](docs/ROOT-ROTATION.md); archive recovery remains intentionally local-only and KARC v1 remains supported. The [forward roadmap](docs/ROADMAP.md) targets one minor line per day through v0.40, with v0.41–v0.45 as undated follow-ups and v1.0 dependent on readiness. No production certification, mobile readiness or independent audit is claimed. Do not automatically merge to kin-main. See the release records for actual evidence and limitations.
+Kin's last published release is `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Complete only the authorized v0.26.x–v0.30.x scope on `kin-fast-track-v0.26-v0.30`; do not begin v0.31.x. Preserve every existing tag exactly. Root replacement follows [ROOT-ROTATION](docs/ROOT-ROTATION.md); archive recovery remains intentionally local-only and KARC v1 remains supported. The [forward roadmap](docs/ROADMAP.md) targets one minor line per day through v0.40, with v0.41–v0.45 as undated follow-ups and v1.0 dependent on readiness. No production certification, mobile readiness or independent audit is claimed. Do not automatically merge to kin-main. See the release records for actual evidence and limitations.
 
 The pre-implementation releases are:
 
