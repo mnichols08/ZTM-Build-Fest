@@ -1,3 +1,8 @@
+import {
+  MAX_REFERENCE_FIELDS,
+  validateReferenceRecord,
+} from "../household-validation.js";
+
 class KinNotes extends HTMLElement {
   constructor() {
     super();
@@ -6,6 +11,7 @@ class KinNotes extends HTMLElement {
     this.areaRecords = [];
     this.disabledState = false;
     this.editor = { noteId: null, title: "", body: "", areaId: "" };
+    this.referenceEditor = null;
     this.pendingFocus = null;
     this.instanceId = `notes-${++KinNotes.instances}`;
   }
@@ -167,40 +173,192 @@ class KinNotes extends HTMLElement {
     }
     section.append(list);
 
-    const references = document.createElement("section"); references.className = "reference-records";
-    const referenceHeading = document.createElement("h2"); referenceHeading.textContent = "Household reference";
-    const referenceHint = document.createElement("p"); referenceHint.textContent = "Keep practical details such as Wi-Fi names, appliance models, or service contacts. Values are shared with the household.";
+    const references = document.createElement("section");
+    references.className = "reference-records";
+    const referenceHeading = document.createElement("h2");
+    referenceHeading.textContent = "Household reference";
+    const referenceHint = document.createElement("p");
+    referenceHint.textContent = "Keep practical details such as Wi-Fi names, appliance models, or service contacts. Values are shared with the household.";
     const referenceForm = document.createElement("form");
-    const referenceTitle = document.createElement("input"); referenceTitle.required = true; referenceTitle.maxLength = 128; referenceTitle.placeholder = "Record title"; referenceTitle.setAttribute("aria-label", "Reference record title");
-    const referenceArea = document.createElement("select"); referenceArea.setAttribute("aria-label", "Reference record Area");
-    const noReferenceArea = document.createElement("option"); noReferenceArea.value = ""; noReferenceArea.textContent = "No Area"; referenceArea.append(noReferenceArea);
-    for (const item of this.areaRecords.filter((candidate) => !candidate.archived)) { const option = document.createElement("option"); option.value = item.areaId; option.textContent = item.name; referenceArea.append(option); }
-    const referenceFields = document.createElement("textarea"); referenceFields.required = true; referenceFields.rows = 4; referenceFields.placeholder = "One field per line, for example: Network name: Home"; referenceFields.setAttribute("aria-label", "Reference fields");
-    const referenceSave = document.createElement("button"); referenceSave.type = "submit"; referenceSave.textContent = "Save reference";
-    let editing = null;
+    referenceForm.noValidate = true;
+    const referenceEditor = this.referenceEditor ?? {
+      recordId: null,
+      title: "",
+      areaId: "",
+      fields: [{ fieldId: crypto.randomUUID().replaceAll("-", ""), label: "", value: "" }],
+    };
+    this.referenceEditor = referenceEditor;
+    const referenceTitleId = id("reference-title");
+    const referenceTitleLabel = document.createElement("label");
+    referenceTitleLabel.htmlFor = referenceTitleId;
+    referenceTitleLabel.textContent = "Title";
+    const referenceTitle = document.createElement("input");
+    referenceTitle.id = referenceTitleId;
+    referenceTitle.value = referenceEditor.title;
+    referenceTitle.dataset.focusId = "reference-title";
+    const referenceTitleError = this.makeError(id("reference-title-error"));
+    referenceTitle.setAttribute("aria-describedby", referenceTitleError.id);
+    referenceTitle.addEventListener("input", () => { referenceEditor.title = referenceTitle.value; });
+
+    const referenceAreaId = id("reference-area");
+    const referenceAreaLabel = document.createElement("label");
+    referenceAreaLabel.htmlFor = referenceAreaId;
+    referenceAreaLabel.textContent = "Area (optional)";
+    const referenceArea = document.createElement("select");
+    referenceArea.id = referenceAreaId;
+    const noReferenceArea = document.createElement("option");
+    noReferenceArea.value = "";
+    noReferenceArea.textContent = "No Area";
+    referenceArea.append(noReferenceArea);
+    for (const item of this.areaRecords.filter((candidate) => !candidate.archived)) {
+      const option = document.createElement("option");
+      option.value = item.areaId;
+      option.textContent = item.name;
+      referenceArea.append(option);
+    }
+    if (referenceEditor.areaId && ![...referenceArea.options].some((option) => option.value === referenceEditor.areaId)) {
+      const oldArea = this.areaRecords.find((candidate) => candidate.areaId === referenceEditor.areaId);
+      const option = document.createElement("option");
+      option.value = referenceEditor.areaId;
+      option.textContent = `${oldArea?.name ?? "Archived Area"} (archived)`;
+      referenceArea.append(option);
+    }
+    referenceArea.value = referenceEditor.areaId;
+    referenceArea.addEventListener("change", () => { referenceEditor.areaId = referenceArea.value; });
+
+    const fieldHeading = document.createElement("h3");
+    fieldHeading.textContent = "Fields";
+    const referenceCountError = this.makeError(id("reference-count-error"));
+    const referenceFields = document.createElement("div");
+    referenceFields.className = "reference-field-list";
+    const fieldControls = [];
+    referenceEditor.fields.forEach((field, index) => {
+      const fieldset = document.createElement("fieldset");
+      const legend = document.createElement("legend");
+      legend.textContent = `Field ${index + 1}`;
+      const labelId = id(`reference-label-${index}`);
+      const fieldLabel = document.createElement("label");
+      fieldLabel.htmlFor = labelId;
+      fieldLabel.textContent = "Label";
+      const labelInput = document.createElement("input");
+      labelInput.id = labelId;
+      labelInput.value = field.label;
+      labelInput.dataset.focusId = `reference-label-${index}`;
+      labelInput.dataset.referenceIndex = String(index);
+      const labelError = this.makeError(id(`reference-label-error-${index}`));
+      labelInput.setAttribute("aria-describedby", labelError.id);
+      labelInput.addEventListener("input", () => { field.label = labelInput.value; });
+      const valueId = id(`reference-value-${index}`);
+      const valueLabel = document.createElement("label");
+      valueLabel.htmlFor = valueId;
+      valueLabel.textContent = "Value";
+      const valueInput = document.createElement("textarea");
+      valueInput.id = valueId;
+      valueInput.rows = 2;
+      valueInput.value = field.value;
+      valueInput.dataset.focusId = `reference-value-${index}`;
+      valueInput.dataset.referenceIndex = String(index);
+      const valueError = this.makeError(id(`reference-value-error-${index}`));
+      valueInput.setAttribute("aria-describedby", valueError.id);
+      valueInput.addEventListener("input", () => { field.value = valueInput.value; });
+      fieldset.append(fieldLabel, labelInput, labelError, valueLabel, valueInput, valueError);
+      if (referenceEditor.fields.length > 1) {
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.textContent = "Remove field";
+        remove.addEventListener("click", () => {
+          referenceEditor.fields.splice(index, 1);
+          this.pendingFocus = `reference-label-${Math.max(0, index - 1)}`;
+          this.referenceEditor = referenceEditor;
+          this.render();
+        });
+        fieldset.append(remove);
+      }
+      fieldControls.push({ labelInput, labelError, valueInput, valueError });
+      referenceFields.append(fieldset);
+    });
+    const addReferenceField = document.createElement("button");
+    addReferenceField.type = "button";
+    addReferenceField.textContent = "Add field";
+    addReferenceField.setAttribute("aria-describedby", referenceCountError.id);
+    addReferenceField.addEventListener("click", () => {
+      referenceEditor.fields.push({ fieldId: crypto.randomUUID().replaceAll("-", ""), label: "", value: "" });
+      this.pendingFocus = `reference-label-${referenceEditor.fields.length - 1}`;
+      this.referenceEditor = referenceEditor;
+      this.render();
+    });
+    const referenceSave = document.createElement("button");
+    referenceSave.type = "submit";
+    referenceSave.textContent = referenceEditor.recordId ? "Save changes" : "Save reference";
+    referenceSave.dataset.focusId = "reference-save";
     referenceForm.addEventListener("submit", (event) => {
       event.preventDefault();
-      const fields = referenceFields.value.split(/\r?\n/).map((line, index) => {
-        const split = line.indexOf(":");
-        const label = split < 0 ? "" : line.slice(0, split).trim();
-        const value = split < 0 ? line : line.slice(split + 1).trim();
-        const prior = editing?.fields[index];
-        return { fieldId: prior?.fieldId ?? crypto.randomUUID().replaceAll("-", ""), label, value };
+      if (this.disabledState) return;
+      referenceEditor.title = referenceTitle.value;
+      referenceEditor.areaId = referenceArea.value;
+      fieldControls.forEach((controls, index) => {
+        referenceEditor.fields[index].label = controls.labelInput.value;
+        referenceEditor.fields[index].value = controls.valueInput.value;
       });
-      if (!referenceTitle.value.trim() || fields.length > 16 || fields.some((field) => !field.label)) return;
-      this.dispatch("save-reference-record", { recordId: editing?.recordId ?? null, title: referenceTitle.value, areaId: referenceArea.value || null, fields });
-      editing = null; referenceTitle.value = ""; referenceFields.value = ""; referenceArea.value = ""; referenceSave.textContent = "Save reference";
+      const result = validateReferenceRecord(referenceEditor.title, referenceEditor.fields);
+      this.showFieldError(referenceTitle, referenceTitleError, result.errors.title);
+      this.showFieldError(addReferenceField, referenceCountError, result.errors.count);
+      result.errors.fields.forEach((errors, index) => {
+        const controls = fieldControls[index];
+        this.showFieldError(controls.labelInput, controls.labelError, errors.label);
+        this.showFieldError(controls.valueInput, controls.valueError, errors.value);
+      });
+      if (!result.valid) {
+        const invalid = referenceTitleError.textContent
+          ? referenceTitle
+          : referenceCountError.textContent
+            ? addReferenceField
+            : fieldControls.find((controls) => controls.labelError.textContent || controls.valueError.textContent);
+        (invalid?.labelError?.textContent ? invalid.labelInput : invalid?.valueError?.textContent ? invalid.valueInput : invalid)?.focus();
+        return;
+      }
+      this.dispatch("save-reference-record", {
+        recordId: referenceEditor.recordId,
+        title: result.title,
+        areaId: referenceArea.value || null,
+        fields: result.fields,
+      });
     });
-    referenceForm.append(referenceTitle, referenceArea, referenceFields, referenceSave);
+    referenceForm.append(referenceTitleLabel, referenceTitle, referenceTitleError, referenceAreaLabel, referenceArea, fieldHeading, referenceCountError, referenceFields, addReferenceField, referenceSave);
     const referenceList = document.createElement("ul");
     for (const record of this.referenceRecords.filter((item) => !item.archived)) {
-      const row = document.createElement("li"); const title = document.createElement("h3"); title.textContent = record.title; row.append(title);
-      const fields = document.createElement("dl"); for (const field of record.fields) { const label = document.createElement("dt"); label.textContent = field.label; const value = document.createElement("dd"); value.textContent = field.value; fields.append(label, value); } row.append(fields);
-      if (record.areaId) { const linked = this.areaRecords.find((candidate) => candidate.areaId === record.areaId); const areaText = document.createElement("small"); areaText.textContent = linked ? `${linked.name}${linked.archived ? " (archived Area)" : ""}` : "Archived Area"; row.append(areaText); }
-      const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Edit"; edit.addEventListener("click", () => { editing = record; if (record.areaId && ![...referenceArea.options].some((option) => option.value === record.areaId)) { const oldArea = this.areaRecords.find((candidate) => candidate.areaId === record.areaId); const option = document.createElement("option"); option.value = record.areaId; option.textContent = `${oldArea?.name ?? "Archived Area"} (archived)`; referenceArea.append(option); } referenceTitle.value = record.title; referenceArea.value = record.areaId ?? ""; referenceFields.value = record.fields.map((field) => `${field.label}: ${field.value}`).join("\n"); referenceSave.textContent = "Save changes"; referenceTitle.focus(); });
-      const archive = document.createElement("button"); archive.type = "button"; archive.textContent = "Archive"; archive.addEventListener("click", () => this.dispatch("archive-reference-record", { recordId: record.recordId })); row.append(edit, archive); referenceList.append(row);
+      const row = document.createElement("li");
+      const title = document.createElement("h3");
+      title.textContent = record.title;
+      row.append(title);
+      const fields = document.createElement("dl");
+      for (const field of record.fields) {
+        const label = document.createElement("dt"); label.textContent = field.label;
+        const value = document.createElement("dd"); value.textContent = field.value;
+        fields.append(label, value);
+      }
+      row.append(fields);
+      if (record.areaId) {
+        const linked = this.areaRecords.find((candidate) => candidate.areaId === record.areaId);
+        const areaText = document.createElement("small");
+        areaText.textContent = linked ? `${linked.name}${linked.archived ? " (archived Area)" : ""}` : "Archived Area";
+        row.append(areaText);
+      }
+      const edit = document.createElement("button");
+      edit.type = "button"; edit.textContent = "Edit";
+      edit.addEventListener("click", () => {
+        this.referenceEditor = { recordId: record.recordId, title: record.title, areaId: record.areaId ?? "", fields: record.fields.map((field) => ({ ...field })) };
+        this.pendingFocus = "reference-title";
+        this.render();
+      });
+      const archive = document.createElement("button");
+      archive.type = "button"; archive.textContent = "Archive";
+      archive.addEventListener("click", () => this.dispatch("archive-reference-record", { recordId: record.recordId }));
+      row.append(edit, archive);
+      referenceList.append(row);
     }
-    references.append(referenceHeading, referenceHint, referenceForm, referenceList); section.append(references);
+    references.append(referenceHeading, referenceHint, referenceForm, referenceList);
+    section.append(references);
     this.replaceChildren(section);
     for (const control of this.querySelectorAll("button,input,textarea,select")) control.disabled = this.disabledState;
     const candidate = focused && [...this.querySelectorAll("[data-focus-id]")]
@@ -223,6 +381,10 @@ class KinNotes extends HTMLElement {
 
   clearEditor() {
     this.editor = { noteId: null, title: "", body: "", areaId: "" };
+  }
+
+  clearReferenceEditor() {
+    this.referenceEditor = null;
   }
 
   dispatch(action, detail) {

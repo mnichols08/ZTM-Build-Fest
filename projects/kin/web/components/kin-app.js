@@ -1369,7 +1369,9 @@ class KinApp extends HTMLElement {
     this.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
     try {
       await this.appendCommand({ type, ...detail, recordId, id: recordId });
-      this.assertCurrentSession(session); this.renderState(); this.broadcastEventChange();
+      this.assertCurrentSession(session);
+      if (action === "save-reference-record") this.notes.clearReferenceEditor();
+      this.renderState(); this.broadcastEventChange();
       this.setStatus(action === "archive-reference-record" ? "Reference archived." : "Reference saved on this device.");
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;

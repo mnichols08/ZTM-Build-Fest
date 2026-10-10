@@ -1,4 +1,9 @@
 
+import {
+  MAX_PLAYBOOK_ENTRIES,
+  validatePlaybook,
+} from "../household-validation.js";
+
 class KinRoutines extends HTMLElement {
   constructor() {
     super();
@@ -7,6 +12,7 @@ class KinRoutines extends HTMLElement {
     this.editingPlaybookId = null;
     this.isDisabled = false;
     this.householdMode = "normal";
+    this.instanceId = `routines-${++KinRoutines.instances}`;
   }
 
   connectedCallback() {
@@ -70,12 +76,46 @@ class KinRoutines extends HTMLElement {
     playbooks.className = "playbook-section";
     const playbookHeading = document.createElement("h3"); playbookHeading.textContent = "Household playbooks";
     const playbookHint = document.createElement("p"); playbookHint.textContent = "Save a reusable checklist. Using one creates an ordinary checklist you can edit independently.";
-    const playbookForm = document.createElement("form"); playbookForm.className = "compose-form";
-    this.playbookTitle = document.createElement("input"); this.playbookTitle.maxLength = 128; this.playbookTitle.required = true; this.playbookTitle.placeholder = "Playbook name"; this.playbookTitle.setAttribute("aria-label", "Playbook name");
-    this.playbookEntries = document.createElement("textarea"); this.playbookEntries.required = true; this.playbookEntries.rows = 4; this.playbookEntries.maxLength = 4096; this.playbookEntries.placeholder = "One checklist step per line"; this.playbookEntries.setAttribute("aria-label", "Ordered checklist entries");
+    const playbookForm = document.createElement("form"); playbookForm.className = "compose-form"; playbookForm.noValidate = true;
+    const playbookTitleId = `${this.instanceId}-playbook-title`;
+    const playbookTitleLabel = document.createElement("label"); playbookTitleLabel.htmlFor = playbookTitleId; playbookTitleLabel.textContent = "Playbook name";
+    this.playbookTitle = document.createElement("input"); this.playbookTitle.id = playbookTitleId; this.playbookTitle.placeholder = "Playbook name";
+    this.playbookTitleError = document.createElement("small"); this.playbookTitleError.id = `${this.instanceId}-playbook-title-error`; this.playbookTitleError.setAttribute("role", "alert"); this.playbookTitleError.hidden = true; this.playbookTitle.setAttribute("aria-describedby", this.playbookTitleError.id);
+    const playbookEntriesId = `${this.instanceId}-playbook-entries`;
+    const playbookEntriesLabel = document.createElement("label"); playbookEntriesLabel.htmlFor = playbookEntriesId; playbookEntriesLabel.textContent = "Checklist steps (one per line)";
+    this.playbookEntries = document.createElement("textarea"); this.playbookEntries.id = playbookEntriesId; this.playbookEntries.rows = 4; this.playbookEntries.placeholder = "One checklist step per line";
+    this.playbookCountError = document.createElement("small"); this.playbookCountError.id = `${this.instanceId}-playbook-count-error`; this.playbookCountError.setAttribute("role", "alert"); this.playbookCountError.hidden = true;
+    this.playbookEntryErrors = document.createElement("div"); this.playbookEntryErrors.className = "field-errors";
+    this.playbookEntries.setAttribute("aria-describedby", this.playbookCountError.id);
     this.playbookSave = document.createElement("button"); this.playbookSave.type = "submit"; this.playbookSave.className = "add-button"; this.playbookSave.textContent = "Save playbook";
-    playbookForm.addEventListener("submit", event => { event.preventDefault(); if (this.isDisabled) return; const entries = this.playbookEntries.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean); if (!this.playbookTitle.value.trim() || entries.length < 1 || entries.length > 16 || entries.some(value => new TextEncoder().encode(value).length > 256)) return; this.dispatch("save-playbook", { playbookId: this.editingPlaybookId, title: this.playbookTitle.value, entries }); });
-    playbookForm.append(this.playbookTitle, this.playbookEntries, this.playbookSave);
+    playbookForm.addEventListener("submit", event => {
+      event.preventDefault();
+      if (this.isDisabled) return;
+      const entries = this.playbookEntries.value.split(/\r?\n/);
+      const result = validatePlaybook(this.playbookTitle.value, entries);
+      this.showValidationError(this.playbookTitle, this.playbookTitleError, result.errors.title);
+      this.showValidationError(this.playbookEntries, this.playbookCountError, result.errors.count);
+      this.playbookEntryErrors.replaceChildren();
+      const entryErrorIds = [];
+      result.errors.entries.forEach((message, index) => {
+        if (!message) return;
+        const error = document.createElement("small");
+        error.id = `${this.instanceId}-playbook-entry-error-${index}`;
+        error.setAttribute("role", "alert");
+        error.textContent = `Step ${index + 1}: ${message}`;
+        entryErrorIds.push(error.id);
+        this.playbookEntryErrors.append(error);
+      });
+      this.playbookEntries.setAttribute("aria-describedby", [this.playbookCountError.id, ...entryErrorIds].join(" "));
+      if (entryErrorIds.length && !this.playbookEntries.hasAttribute("aria-invalid")) this.playbookEntries.setAttribute("aria-invalid", "true");
+      if (!entryErrorIds.length && !result.errors.count) this.playbookEntries.removeAttribute("aria-invalid");
+      if (!result.valid) {
+        (result.errors.title ? this.playbookTitle : this.playbookEntries).focus();
+        return;
+      }
+      this.dispatch("save-playbook", { playbookId: this.editingPlaybookId, title: result.title, entries: result.entries });
+    });
+    playbookForm.append(playbookTitleLabel, this.playbookTitle, this.playbookTitleError, playbookEntriesLabel, this.playbookEntries, this.playbookCountError, this.playbookEntryErrors, this.playbookSave);
     this.playbookList = document.createElement("ul"); this.playbookList.className = "item-list";
     playbooks.append(playbookHeading, playbookHint, playbookForm, this.playbookList);
     this.list = document.createElement("ul");
@@ -109,6 +149,12 @@ class KinRoutines extends HTMLElement {
     this.saveDraft();
   }
   clearPlaybookEditor() { this.editingPlaybookId = null; this.playbookTitle.value = ""; this.playbookEntries.value = ""; this.playbookSave.textContent = "Save playbook"; }
+  showValidationError(control, messageNode, message) {
+    messageNode.textContent = message;
+    messageNode.hidden = !message;
+    if (message) control.setAttribute("aria-invalid", "true");
+    else control.removeAttribute("aria-invalid");
+  }
   dispatch(action, detail) {
     if (!this.isDisabled) this.dispatchEvent(new CustomEvent(`kin:${action}`, { detail, bubbles: true, composed: true }));
   }
@@ -201,4 +247,5 @@ class KinRoutines extends HTMLElement {
     }
   }
 }
+KinRoutines.instances = 0;
 customElements.define("kin-routines", KinRoutines);
