@@ -6,6 +6,7 @@ import {
   canParticipate,
   CLAIM_TTL_MS,
   isTemporaryMember,
+  normalizeMemberKind,
   PAIRING_CODE_ALPHABET,
   PAIRING_TTL_MS,
   PairingError,
@@ -82,6 +83,110 @@ test("member trust rules keep limited and temporary participation separate from 
   assert.equal(canParticipate(temporaryMember, now), true);
   assert.equal(canParticipate(expiredTemporaryMember, now), false);
   assert.equal(isTemporaryMember(expiredTemporaryMember, now), false);
+});
+
+test("legacy missing kinds stay adult while malformed explicit kinds fail closed", () => {
+  assert.equal(normalizeMemberKind(undefined), "adult");
+  assert.equal(normalizeMemberKind("adult"), "adult");
+  assert.equal(normalizeMemberKind("limited"), "limited");
+  assert.equal(normalizeMemberKind("temporary"), "temporary");
+  for (const kind of ["whatever", "admin", null, "", "malformed-object"]) {
+    assert.equal(normalizeMemberKind(kind), "invalid");
+    const member = { active: true, kind };
+    assert.equal(canManageTrust(member), false);
+    assert.equal(canParticipate(member), false);
+    assert.equal(isTemporaryMember(member), false);
+  }
+});
+
+test("the final trusted adult cannot leave when only limited or temporary members remain", () => {
+  const scenarios = [
+    [{ adult: 1, limited: 1, temporary: 0 }, "last_adult"],
+    [{ adult: 1, limited: 0, temporary: 1 }, "last_adult"],
+    [{ adult: 1, limited: 1, temporary: 1 }, "last_adult"],
+    [{ adult: 2, limited: 1, temporary: 0 }, true],
+    [{ adult: 2, limited: 0, temporary: 1 }, true],
+  ];
+
+  for (const [counts, expected] of scenarios) {
+    const service = new PairingService({
+      now: () => 1_000_000,
+      secret: Buffer.alloc(32, 7),
+    });
+    const householdId = `household-${Math.random().toString(16).slice(2)}`;
+    const adultId = "a".repeat(32);
+    const adultDeviceId = "b".repeat(32);
+    service.households.set(householdId, {
+      id: householdId,
+      members: new Set([adultId]),
+      version: 1,
+      lifecycleState: "active",
+      deletionRequestedAt: null,
+      deletionFinalizeAt: null,
+      deletedAt: null,
+    });
+    service.members.set(adultId, {
+      id: adultId,
+      householdId,
+      active: true,
+      kind: "adult",
+      credentials: new Set(),
+    });
+    service.devices.set(adultDeviceId, {
+      id: adultDeviceId,
+      memberId: adultId,
+      householdId,
+      label: "adult device",
+      trustedAt: 1_000,
+      revokedAt: null,
+      tokenHash: null,
+    });
+    const adultSessionToken = service.issueSession(adultId, adultDeviceId).sessionToken;
+
+    for (let index = 0; index < counts.limited; index += 1) {
+      const memberId = `${index}`.padStart(32, "0");
+      service.members.set(memberId, {
+        id: memberId,
+        householdId,
+        active: true,
+        kind: "limited",
+        credentials: new Set(),
+      });
+      service.households.get(householdId).members.add(memberId);
+    }
+    for (let index = 0; index < counts.temporary; index += 1) {
+      const memberId = `${index + 100}`.padStart(32, "0");
+      service.members.set(memberId, {
+        id: memberId,
+        householdId,
+        active: true,
+        kind: "temporary",
+        expiresAt: 2_000_000,
+        credentials: new Set(),
+      });
+      service.households.get(householdId).members.add(memberId);
+    }
+    for (let index = 0; index < counts.adult - 1; index += 1) {
+      const memberId = `adult-${index}`.padStart(32, "0");
+      service.members.set(memberId, {
+        id: memberId,
+        householdId,
+        active: true,
+        kind: "adult",
+        credentials: new Set(),
+      });
+      service.households.get(householdId).members.add(memberId);
+    }
+
+    if (expected === "last_adult") {
+      assert.throws(
+        () => service.leaveHousehold(adultSessionToken, adultId),
+        (error) => error.code === "last_adult",
+      );
+    } else {
+      assert.equal(service.leaveHousehold(adultSessionToken, adultId).removed, true);
+    }
+  }
 });
 
 test("expired temporary members lose session access even when the device remains trusted", () => {

@@ -36,21 +36,32 @@ const hash = (value) => createHash("sha256").update(value).digest("hex");
 export const MEMBER_KINDS = Object.freeze(["adult", "limited", "temporary"]);
 
 export function normalizeMemberKind(kind, fallback = "adult") {
-  const value = String(kind ?? fallback).trim().toLowerCase();
-  if (value === "adult_member" || value === "trusted_adult") return "adult";
+  if (kind === undefined) return fallback;
+  if (kind === null) return "invalid";
+  const value = String(kind).trim().toLowerCase();
+  if (!value) return "invalid";
+  if (value === "adult_member" || value === "trusted_adult" || value === "adult")
+    return "adult";
   if (value === "limited_member" || value === "limited") return "limited";
-  if (value === "temporary_member" || value === "guest" || value === "caregiver") return "temporary";
-  return MEMBER_KINDS.includes(value) ? value : fallback;
+  if (
+    value === "temporary_member" ||
+    value === "temporary" ||
+    value === "guest" ||
+    value === "caregiver"
+  )
+    return "temporary";
+  return "invalid";
 }
 
 export function canManageTrust(member, now = Date.now()) {
   if (!member || member.active === false || member.revokedAt) return false;
-  return normalizeMemberKind(member.kind, "adult") === "adult";
+  return normalizeMemberKind(member.kind) === "adult";
 }
 
 export function canParticipate(member, now = Date.now()) {
   if (!member || member.active === false || member.revokedAt) return false;
-  const normalized = normalizeMemberKind(member.kind, "adult");
+  const normalized = normalizeMemberKind(member.kind);
+  if (normalized === "invalid") return false;
   if (normalized === "temporary") return isTemporaryMember(member, now);
   return normalized === "adult" || normalized === "limited";
 }
@@ -66,9 +77,9 @@ export function requireTrustAuthority(member, action = "manage trust", now = Dat
 
 export function isTemporaryMember(member, now = Date.now()) {
   if (!member || member.active === false || member.revokedAt) return false;
-  const normalized = normalizeMemberKind(member.kind, "adult");
+  const normalized = normalizeMemberKind(member.kind);
   if (normalized !== "temporary") return false;
-  if (typeof member.expiresAt !== "number") return true;
+  if (!Number.isFinite(member.expiresAt)) return false;
   return member.expiresAt > now;
 }
 
@@ -1376,14 +1387,15 @@ export class PairingService {
         "This household member is no longer active.",
         403,
       );
-    const remaining = [...household.members].filter(
-      (memberId) =>
-        memberId !== member.id && this.members.get(memberId)?.active,
-    );
-    if (!remaining.length)
+    const hasTrustedAdult = [...household.members].some((memberId) => {
+      if (memberId === member.id) return false;
+      const other = this.members.get(memberId);
+      return other?.active && canManageTrust(other, this.now());
+    });
+    if (!hasTrustedAdult)
       throw new PairingError(
         "last_adult",
-        "The only active adult cannot leave. Household deletion and recovery are not available.",
+        "The only active trusted adult cannot leave. Household deletion and recovery are not available.",
         409,
       );
     return this.removeMembership(household, member.id, member.id);
