@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.36.0 — Limited Household Members (shipped on this branch)
+
+- Adult invitations carry a server-held `adult` or `limited` member kind through the existing pairing, passkey, approval, and single-use confirmation flow.
+- Limited Members can participate in ordinary synced household work and Responsibility; trust administration stays Adult-only at the server boundary.
+- Bound active membership to 12 total: four Adults and eight Limited Members. Temporary members share the total bound.
+- Persist member kind in server identity storage with a schema v5 migration; historical rows migrate to Adult.
+- Keep Temporary admissions bounded by a required server-held future expiry. Expiry reconciliation revokes devices and sessions and marks key rotation pending.
+- Local content archives remain event-history archives; durable server identity backups preserve member kind and expiry.
+- Pairing security (48), durable identity (40), durable store/identity round-trip (8), and sync service security (16) pass under Node 24.21.0. Full batch verification remains in progress.
+
 ## v0.35.1 — Fresh Passkey Self-Removal (candidate)
 
 - Self-removal now requires fresh passkey authentication before membership/device revocation and access-change rotation.

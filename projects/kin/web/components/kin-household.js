@@ -6,6 +6,7 @@ import {
 } from "../sync/crypto.js";
 
 const MAX_ACTIVE_ADULTS = 4;
+const MAX_ACTIVE_LIMITED = 8;
 
 const decode = (value) =>
   Uint8Array.from(
@@ -369,7 +370,9 @@ class KinHousehold extends HTMLElement {
   }
 
   renderMember() {
-    this.text("This device belongs to an authenticated household adult.");
+    this.text("This device belongs to an authenticated household member.");
+    if (this.syncStatus?.memberKind === "temporary" && this.syncStatus.memberExpiresAt)
+      this.text(`Temporary household access · ends ${new Date(this.syncStatus.memberExpiresAt).toLocaleString()}`);
     if (this.syncKeyError) {
       this.message(this.syncKeyError, true);
     } else if (this.syncStatus?.enabled) {
@@ -383,14 +386,15 @@ class KinHousehold extends HTMLElement {
       this.button("Enable device sync", () => this.enableSync());
     }
     if (!this.pairing) {
-      if (!this.syncKeyError) {
+      if (this.syncStatus?.memberKind === "adult" && !this.syncKeyError) {
         this.button(
           "Add another device",
           () => this.createDevicePairing(),
           "secondary",
         );
       }
-      this.button("Trusted devices", () => this.showDevices(), "secondary");
+      if (this.syncStatus?.memberKind === "adult")
+        this.button("Trusted devices", () => this.showDevices(), "secondary");
       this.button("Household access", () => this.showHousehold(), "secondary");
       this.button("Log out", () => this.logout(), "secondary");
       return;
@@ -569,9 +573,9 @@ class KinHousehold extends HTMLElement {
     });
   }
 
-  async createPairing() {
+  async createPairing(kind = "adult", expiresAt) {
     await this.run(async () => {
-      this.pairing = await this.api("/api/pairings", { method: "POST", body: "{}" });
+      this.pairing = await this.api("/api/pairings", { method: "POST", body: JSON.stringify({ kind, ...(expiresAt === undefined ? {} : { expiresAt }) }) });
       if (
         !this.localFingerprint ||
         this.pairing.inviterKeyFingerprint !== this.localFingerprint
@@ -939,15 +943,25 @@ class KinHousehold extends HTMLElement {
       heading.textContent = "Household access";
       this.append(heading);
       this.text(
-        "Membership and device trust are separate. Removing an adult revokes that adult’s devices and sessions, but cannot erase information already copied.",
+        "Only adults can manage household access. Removing a member blocks future access, but cannot erase information already copied.",
       );
-      const list = document.createElement("ul");
       const activeMembers = household.members.filter((value) => value.active);
-      for (const [index, member] of activeMembers.entries()) {
+      const me = household.members.find((value) => value.current);
+      for (const kind of ["adult", "limited", "temporary"]) {
+        const sectionMembers = activeMembers.filter((member) => member.kind === kind);
+        if (!sectionMembers.length && kind === "temporary") continue;
+        const section = document.createElement("section");
+        const title = document.createElement("h3");
+        title.textContent = kind === "adult" ? "Adults" : kind === "limited" ? "Limited Members" : "Temporary Access";
+        section.append(title);
+        const list = document.createElement("ul");
+        for (const [index, member] of sectionMembers.entries()) {
         const item = document.createElement("li");
-        const memberLabel = member.current ? "You" : `Household adult ${index + 1}`;
-        item.textContent = `${memberLabel} — active`;
-        if (!member.current)
+        const memberLabel = member.current ? "You" : `${kind === "adult" ? "Adult" : kind === "limited" ? "Limited member" : "Temporary member"} ${index + 1}`;
+        const expiryText = kind === "temporary" && member.expiresAt ? ` — ends ${new Date(member.expiresAt).toLocaleString()}` : "";
+        item.textContent = `${memberLabel}${expiryText}`;
+        if (member.current && kind === "temporary") item.textContent = `Temporary household access — ends ${new Date(member.expiresAt).toLocaleString()}`;
+        if (me?.kind === "adult" && !member.current)
           item.append(
             this.makeButton(
               `Authorize recovery for ${memberLabel}`,
@@ -961,17 +975,26 @@ class KinHousehold extends HTMLElement {
             ),
           );
         list.append(item);
+        }
+        section.append(list);
+        this.append(section);
       }
       this.append(
-        list,
-        ...(activeMembers.length < MAX_ACTIVE_ADULTS
-          ? [this.makeButton("Add another adult", () => this.createPairing())]
+        ...(me?.kind === "adult" && activeMembers.length < 12
+          ? [
+              ...(activeMembers.filter((member) => member.kind === "adult").length < MAX_ACTIVE_ADULTS
+                ? [this.makeButton("Add Adult", () => this.createPairing("adult"))]
+                : []),
+              ...(activeMembers.filter((member) => member.kind === "limited").length < MAX_ACTIVE_LIMITED
+                ? [this.makeButton("Add Limited Member", () => this.createPairing("limited"))]
+                : []),
+            ]
           : []),
-        this.makeButton(
+        ...(me?.kind === "adult" ? [this.makeButton(
           "Delete household",
           () => this.deleteHousehold(),
           "danger",
-        ),
+        )] : []),
         this.makeButton("Leave household", () => this.leave(), "danger"),
         this.makeButton("Back", () => this.render(), "secondary"),
       );

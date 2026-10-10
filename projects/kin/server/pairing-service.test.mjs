@@ -1351,6 +1351,96 @@ test("pairing requires claim and explicit approval, then becomes single use", ()
   );
 });
 
+test("Adult invitation records the chosen kind and confirmation ignores claimant kind fields", () => {
+  const { service, adult } = setup();
+  const invitation = service.createPairing(adult.sessionToken, { kind: "limited" });
+  assert.equal(invitation.memberKind, "limited");
+  const claim = service.claimPairing({
+    code: invitation.code,
+    credential: credential("limited-member"),
+    deviceLabel: "Tablet",
+    kind: "adult",
+    expiresAt: Number.MAX_SAFE_INTEGER,
+  });
+  const confirmed = service.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
+  assert.equal(service.members.get(confirmed.confirmedMemberId).kind, "limited");
+  assert.equal(service.members.get(confirmed.confirmedMemberId).expiresAt, undefined);
+});
+
+test("Limited member direct HTTP trust-management calls are denied", async () => {
+  const { service, adult } = setup();
+  const invitation = service.createPairing(adult.sessionToken);
+  const memberId = "c".repeat(32);
+  const deviceId = "d".repeat(32);
+  service.members.set(memberId, { id: memberId, householdId: adult.householdId, active: true, kind: "limited", credentials: new Set() });
+  service.households.get(adult.householdId).members.add(memberId);
+  service.devices.set(deviceId, { id: deviceId, householdId: adult.householdId, memberId, label: "Limited tablet", trustedAt: 1_000_000, revokedAt: null, tokenHash: null });
+  const limited = service.issueSession(memberId, deviceId);
+  const server = await startTestServer({ service });
+  const cookie = `kin_session=${limited.sessionToken}`;
+  try {
+    const requests = [
+      apiRequest(server, "/api/pairings", { method: "POST", cookie, body: { kind: "limited" } }),
+      apiRequest(server, `/api/pairings/${invitation.pairingId}`, { cookie }),
+      apiRequest(server, `/api/pairings/${invitation.pairingId}`, { method: "DELETE", cookie }),
+      apiRequest(server, `/api/pairings/${invitation.pairingId}/approve/options`, { method: "POST", cookie, body: { expectedVersion: 1 } }),
+      apiRequest(server, "/api/devices/pairings", { method: "POST", cookie, body: {} }),
+      apiRequest(server, "/api/devices", { cookie }),
+      apiRequest(server, `/api/devices/${deviceId}`, { method: "DELETE", cookie }),
+      apiRequest(server, "/api/household/membership/remove/options", { method: "POST", cookie, body: { memberId: adult.memberId } }),
+      apiRequest(server, "/api/household/recovery", { method: "POST", cookie, body: {} }),
+      apiRequest(server, "/api/household/deletion/options", { method: "POST", cookie, body: {} }),
+      apiRequest(server, "/api/sync/epochs", { method: "POST", cookie, body: {} }),
+      apiRequest(server, "/api/sync/provisioning/grants", { method: "POST", cookie, body: {} }),
+    ];
+    const responses = await Promise.all(requests);
+    assert.deepEqual(responses.map((response) => response.status), Array(12).fill(403));
+    const syncStatus = await apiRequest(server, "/api/sync/status", { cookie });
+    assert.equal(syncStatus.status, 200);
+    assert.equal((await syncStatus.json()).memberKind, "limited");
+    assert.equal((await apiRequest(server, "/api/sync/events", { cookie })).status, 200);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Temporary invitation requires and persists a server-held future expiry", () => {
+  const { service, adult } = setup();
+  for (const expiresAt of [undefined, null, NaN, Infinity, "later", 999_999])
+    assert.throws(() => service.createPairing(adult.sessionToken, { kind: "temporary", expiresAt }), (error) => error.code === "temporary_expiry_required");
+  const expiry = 2_000_000;
+  const invitation = service.createPairing(adult.sessionToken, { kind: "temporary", expiresAt: expiry });
+  const claim = service.claimPairing({ code: invitation.code, credential: credential("temporary-member"), deviceLabel: "Guest phone" });
+  const confirmed = service.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
+  const member = service.members.get(confirmed.confirmedMemberId);
+  assert.equal(member.kind, "temporary");
+  assert.equal(member.expiresAt, expiry);
+  assert.equal(canManageTrust(member), false);
+});
+
+test("member limits are bounded by type and Temporary expiry reconciliation is deterministic", () => {
+  const { service, adult } = setup();
+  for (let index = 0; index < 8; index += 1) {
+    const memberId = `${index + 1}`.padStart(32, "0");
+    service.members.set(memberId, { id: memberId, householdId: adult.householdId, active: true, kind: "limited", credentials: new Set() });
+    service.households.get(adult.householdId).members.add(memberId);
+  }
+  assert.throws(() => service.createPairing(adult.sessionToken, { kind: "limited" }), (error) => error.code === "household_full");
+  const temporaryId = "e".repeat(32);
+  const deviceId = "f".repeat(32);
+  const household = service.households.get(adult.householdId);
+  service.members.set(temporaryId, { id: temporaryId, householdId: adult.householdId, active: true, kind: "temporary", expiresAt: 1_000_000, credentials: new Set() });
+  household.members.add(temporaryId);
+  service.devices.set(deviceId, { id: deviceId, householdId: adult.householdId, memberId: temporaryId, label: "Guest device", trustedAt: 1_000_000, revokedAt: null, tokenHash: null });
+  const originalVersion = household.version;
+  assert.deepEqual(service.expireTemporaryMemberships(), [{ householdId: adult.householdId, memberId: temporaryId, deviceIds: [deviceId] }]);
+  assert.equal(service.members.get(temporaryId).active, false);
+  assert.equal(service.devices.get(deviceId).revokedAt, 1_000_000);
+  assert.equal(household.version, originalVersion + 1);
+  assert.deepEqual(service.expireTemporaryMemberships(), []);
+  assert.equal(household.version, originalVersion + 1);
+});
+
 test("expiry and revocation are terminal and create no membership", () => {
   const { service, adult, advance } = setup();
   const expired = service.createPairing(adult.sessionToken);

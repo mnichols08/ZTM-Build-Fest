@@ -79,7 +79,7 @@ test("failed v0-to-v1 migration rolls back and permits a clean retry", () => {
   }
 });
 
-test("server schema v1 upgrades transactionally through membership schema v4", () => {
+test("server schema v1 upgrades transactionally through member-kind schema v5", () => {
   const directory = temporaryDirectory();
   const databasePath = join(directory, "kin.sqlite");
   try {
@@ -93,9 +93,14 @@ test("server schema v1 upgrades transactionally through membership schema v4", (
         DROP TRIGGER sync_events_active_household_insert;
         DROP TRIGGER sync_bindings_active_household_insert;
         DROP TRIGGER provisioning_grants_active_household_insert;
+        DROP TRIGGER members_temporary_expiry_insert;
+        DROP TRIGGER members_temporary_expiry_update;
         DROP TABLE sync_attachments;
+        ALTER TABLE members DROP COLUMN expires_at;
+        ALTER TABLE members DROP COLUMN kind;
         DELETE FROM server_migrations WHERE version = 4;
         DELETE FROM server_migrations WHERE version = 3;
+        DELETE FROM server_migrations WHERE version = 5;
         ALTER TABLE households DROP COLUMN deleted_at;
         ALTER TABLE households DROP COLUMN deletion_finalize_at;
         ALTER TABLE households DROP COLUMN deletion_requested_at;
@@ -108,13 +113,13 @@ test("server schema v1 upgrades transactionally through membership schema v4", (
     }
     const migrated = new DurableStore(databasePath);
     try {
-      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 4);
+      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 5);
       assert.deepEqual(
         migrated.db
           .prepare("SELECT version FROM server_migrations ORDER BY version")
           .all()
           .map(({ version }) => version),
-        [1, 2, 3, 4],
+        [1, 2, 3, 4, 5],
       );
       assert.equal(migrated.validate(), true);
     } finally {
@@ -125,12 +130,38 @@ test("server schema v1 upgrades transactionally through membership schema v4", (
   }
 });
 
+test("server identity reload preserves Limited and expired Temporary membership", () => {
+  const store = new DurableStore(":memory:");
+  try {
+    const first = new PairingService({ store, now: () => 5_000_000 });
+    const adult = first.bootstrap({ credential: { id: "membership-adult", publicKey: "key-adult", algorithm: -7 }, deviceLabel: "Adult device" });
+    const household = first.households.get(adult.householdId);
+    const limitedId = "a".repeat(32);
+    const temporaryId = "b".repeat(32);
+    first.members.set(limitedId, { id: limitedId, householdId: adult.householdId, active: true, kind: "limited", credentials: new Set() });
+    first.members.set(temporaryId, { id: temporaryId, householdId: adult.householdId, active: true, kind: "temporary", expiresAt: 4_000_000, credentials: new Set() });
+    household.members.add(limitedId);
+    household.members.add(temporaryId);
+    store.saveIdentityHousehold(adult.householdId, first);
+
+    const reloaded = new PairingService({ store, now: () => 5_000_000 });
+    assert.equal(reloaded.members.get(limitedId).kind, "limited");
+    assert.equal(reloaded.members.get(temporaryId).kind, "temporary");
+    assert.equal(reloaded.members.get(temporaryId).expiresAt, 4_000_000);
+    const authority = store.loadActiveAuthority()[0];
+    assert.equal(authority.members.find((row) => row.id === limitedId).kind, "limited");
+    assert.equal(authority.members.find((row) => row.id === temporaryId).expires_at, 4_000_000);
+  } finally {
+    store.close();
+  }
+});
+
 test("a database with a newer schema fails closed without modification", () => {
   const directory = temporaryDirectory();
   const databasePath = join(directory, "kin.sqlite");
   try {
     const database = openTestDatabase(databasePath);
-    sqlitePragma(database, "user_version = 5");
+    sqlitePragma(database, "user_version = 6");
     database.close();
 
     assert.throws(
@@ -138,7 +169,7 @@ test("a database with a newer schema fails closed without modification", () => {
       /newer server version/,
     );
     const inspection = openTestDatabase(databasePath, { readonly: true });
-    assert.equal(sqlitePragma(inspection, "user_version", { simple: true }), 5);
+    assert.equal(sqlitePragma(inspection, "user_version", { simple: true }), 6);
     inspection.close();
   } finally {
     rmSync(directory, { recursive: true, force: true });

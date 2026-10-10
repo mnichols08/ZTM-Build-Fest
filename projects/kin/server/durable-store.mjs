@@ -25,14 +25,14 @@ import {
   MAX_HOUSEHOLD_EVENTS,
   MAX_KEY_EPOCHS,
 } from "./sync-contract.mjs";
-import { MAX_ACTIVE_MEMBERS, MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
+import { MAX_ACTIVE_ADULTS, MAX_ACTIVE_LIMITED_MEMBERS, MAX_ACTIVE_MEMBERS, MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
 import {
   validCredentialId,
   validStoredCredential,
   validStoredDevice,
 } from "./durable-identity.mjs";
 
-const SERVER_SCHEMA_VERSION = 4;
+const SERVER_SCHEMA_VERSION = 5;
 export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024 + 4096;
 export const MAX_HOUSEHOLD_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 export const MAX_HOUSEHOLD_ATTACHMENTS = 64;
@@ -726,6 +726,31 @@ export class DurableStore {
         throw new DurableStoreError("Kin could not complete the adult membership migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 4) {
+      try {
+        this.transaction(() => {
+          this.db.exec(`
+            ALTER TABLE members ADD COLUMN kind TEXT NOT NULL DEFAULT 'adult'
+              CHECK (kind IN ('adult', 'limited', 'temporary'));
+            ALTER TABLE members ADD COLUMN expires_at INTEGER;
+            CREATE TRIGGER members_temporary_expiry_insert
+            BEFORE INSERT ON members
+            WHEN NEW.kind = 'temporary' AND NEW.expires_at IS NULL
+            BEGIN SELECT RAISE(ABORT, 'temporary member expiry required'); END;
+            CREATE TRIGGER members_temporary_expiry_update
+            BEFORE UPDATE OF kind, expires_at ON members
+            WHEN NEW.kind = 'temporary' AND NEW.expires_at IS NULL
+            BEGIN SELECT RAISE(ABORT, 'temporary member expiry required'); END;
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(5, Date.now());
+          sqlitePragma(this.db, "user_version = 5");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the member-kind migration.", { cause: error });
+      }
+    }
   }
 
   verify() {
@@ -835,6 +860,7 @@ export class DurableStore {
       const credentials = new Map();
       const devices = new Map();
       const activeMemberCounts = new Map();
+      const activeKindCounts = new Map();
       const trustedDeviceCounts = new Map();
       for (const row of this.db.prepare("SELECT * FROM households").all()) {
         if (
@@ -884,8 +910,14 @@ export class DurableStore {
           id: row.id,
           householdId: row.household_id,
           active: Boolean(row.active),
+          kind: row.kind ?? "adult",
+          ...(row.expires_at == null ? {} : { expiresAt: row.expires_at }),
           credentials: new Set(credentialIds),
         };
+        if (!["adult", "limited", "temporary"].includes(member.kind) ||
+            (member.kind === "temporary" && !Number.isSafeInteger(member.expiresAt)) ||
+            (member.kind !== "temporary" && member.expiresAt !== undefined))
+          throw new DurableStoreError("Kin server membership data is invalid.");
         members.set(member.id, member);
         const household = households.get(member.householdId);
         if (!household)
@@ -896,6 +928,13 @@ export class DurableStore {
         if (activeCount > MAX_ACTIVE_MEMBERS)
           throw new DurableStoreError("Kin server membership data is invalid.");
         activeMemberCounts.set(household.id, activeCount);
+        if (row.active) {
+          const kindCount = activeKindCounts.get(`${household.id}:${member.kind}`) ?? 0;
+          const limit = member.kind === "adult" ? MAX_ACTIVE_ADULTS : member.kind === "limited" ? MAX_ACTIVE_LIMITED_MEMBERS : MAX_ACTIVE_MEMBERS;
+          if (kindCount + 1 > limit)
+            throw new DurableStoreError("Kin server membership data is invalid.");
+          activeKindCounts.set(`${household.id}:${member.kind}`, kindCount + 1);
+        }
       }
       for (const row of this.db.prepare("SELECT * FROM credentials").all()) {
         const credential = parseStoredJson(row.credential_json);
@@ -977,13 +1016,15 @@ export class DurableStore {
           throw new DurableStoreError("Kin server membership data is invalid.");
         this.db
           .prepare(
-            "INSERT INTO members(id, household_id, active, credential_ids) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET active = excluded.active, credential_ids = excluded.credential_ids",
+            "INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET active = excluded.active, credential_ids = excluded.credential_ids, kind = excluded.kind, expires_at = excluded.expires_at",
           )
           .run(
             member.id,
             householdId,
             Number(member.active),
             JSON.stringify([...member.credentials]),
+            member.kind ?? "adult",
+            member.expiresAt ?? null,
           );
         for (const credentialId of member.credentials) {
           const credential = service.credentials.get(credentialId);
@@ -1218,15 +1259,17 @@ export class DurableStore {
           )
           .run(Math.max(current.version, snapshot.household.version), snapshot.householdId);
         const insertMember = this.db.prepare(
-          `INSERT INTO members(id, household_id, active, credential_ids)
-           VALUES (?, ?, ?, ?)
+          `INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              household_id = excluded.household_id,
              active = excluded.active,
-             credential_ids = excluded.credential_ids`,
+             credential_ids = excluded.credential_ids,
+             kind = excluded.kind,
+             expires_at = excluded.expires_at`,
         );
         for (const row of snapshot.members)
-          insertMember.run(row.id, row.household_id, row.active, row.credential_ids);
+          insertMember.run(row.id, row.household_id, row.active, row.credential_ids, row.kind ?? "adult", row.expires_at ?? null);
         const insertCredential = this.db.prepare(
           "INSERT INTO credentials(id, member_id, credential_json) VALUES (?, ?, ?)",
         );
