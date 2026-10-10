@@ -152,6 +152,18 @@ class KinRoutines extends HTMLElement {
       content.append(text, status);
       const actions = document.createElement("div");
       actions.className = "item-action";
+      const remind = document.createElement("button");
+      remind.type = "button"; remind.textContent = "Routine reminder"; remind.disabled = this.isDisabled;
+      remind.setAttribute("aria-label", `Set a reminder for ${record.text}`);
+      remind.addEventListener("click", () => {
+        const value = window.prompt("When should Kin remind you? Enter a local date and time, such as 2026-10-10T09:00");
+        if (!value) return;
+        this.dispatch("set-local-reminder", { id: `routine:${record.routineId}`, title: record.text, at: new Date(value).getTime() });
+      });
+      const cancelReminder = document.createElement("button"); cancelReminder.type = "button"; cancelReminder.textContent = "Cancel reminder"; cancelReminder.disabled = this.isDisabled;
+      cancelReminder.setAttribute("aria-label", `Cancel reminder for ${record.text}`);
+      cancelReminder.addEventListener("click", () => this.dispatch("cancel-local-reminder", { id: `routine:${record.routineId}` }));
+      actions.append(remind, cancelReminder);
       const addAction = (label, action) => {
         const button = document.createElement("button");
         button.type = "button";

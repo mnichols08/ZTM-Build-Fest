@@ -1,4 +1,5 @@
 import { projectionContext } from "../browser-time.js";
+import { LocalReminders } from "../reminders.js";
 import { createCalendarExport } from "../calendar-export.js";
 import "./kin-routines.js";
 import "./kin-areas.js";
@@ -35,6 +36,7 @@ class KinApp extends HTMLElement {
     this.store = null;
     this.syncCoordinator = null;
     this.state = null;
+    this.localReminders = new LocalReminders();
     this.vault = null;
     this.securityGeneration = 0;
     this.busy = false;
@@ -83,8 +85,10 @@ class KinApp extends HTMLElement {
       this.saveTalk({ type: "reopen-talk", talkId: event.detail.talkId });
     this.onArchiveTalk = (event) =>
       this.saveTalk({ type: "archive-talk", talkId: event.detail.talkId });
-    this.onRoutineIntent = (event) =>
+    this.onRoutineIntent = (event) => {
+      if (event.type === "kin:archive-routine" || event.type === "kin:complete-routine-occurrence") this.localReminders.cancel(`routine:${event.detail.routineId}`);
       this.saveRoutine({ ...event.detail, type: event.type.slice(4) });
+    };
     this.onAreaIntent = (event) => this.saveArea(event.detail);
     this.onNoteIntent = (event) => this.saveNote(event.type.slice(4), event.detail);
     this.onItemAreaChange = (event) => this.saveArea({ ...event.detail, action: "assign-item-area" });
@@ -93,6 +97,8 @@ class KinApp extends HTMLElement {
     this.onPinIntent = (event) => this.savePin(event.detail);
     this.onOpenPin = (event) => this.openPinnedItem(event.detail.itemId);
     this.onPlaybookIntent = (event) => this.handlePlaybookIntent(event);
+    this.onLocalReminder = (event) => this.handleLocalReminder(event.detail);
+    this.onCancelLocalReminder = (event) => { this.localReminders.cancel(event.detail.id); this.setStatus("Reminder canceled on this device."); };
     this.onModeChange = () => this.saveMode(this.modeSelect.value);
     this.pulseTimer = null;
     this.catchUpCursor = null;
@@ -195,6 +201,8 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:archive-item-step", this.onArchiveItemStep);
     this.addEventListener("kin:change-item-area", this.onItemAreaChange);
     this.addEventListener("kin:set-item-planning-date", this.onItemPlanningDateChange);
+    this.addEventListener("kin:set-local-reminder", this.onLocalReminder);
+    this.addEventListener("kin:cancel-local-reminder", this.onCancelLocalReminder);
     this.addEventListener("kin:pin-intent", this.onPinIntent);
     this.addEventListener("kin:open-pin", this.onOpenPin);
     this.addEventListener("kin:area-intent", this.onAreaIntent);
@@ -564,6 +572,8 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:archive-item-step", this.onArchiveItemStep);
     this.removeEventListener("kin:change-item-area", this.onItemAreaChange);
     this.removeEventListener("kin:set-item-planning-date", this.onItemPlanningDateChange);
+    this.removeEventListener("kin:set-local-reminder", this.onLocalReminder);
+    this.removeEventListener("kin:cancel-local-reminder", this.onCancelLocalReminder);
     this.removeEventListener("kin:pin-intent", this.onPinIntent);
     this.removeEventListener("kin:open-pin", this.onOpenPin);
     this.removeEventListener("kin:area-intent", this.onAreaIntent);
@@ -1173,6 +1183,7 @@ class KinApp extends HTMLElement {
   }
 
   async saveItemPlanningDate(detail, sourceList) {
+    this.localReminders.cancel(`item:${detail.itemId}`);
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
     this.setBusy(true);
@@ -1202,6 +1213,17 @@ class KinApp extends HTMLElement {
         )?.focus();
         this.flushPeerRefresh();
       }
+    }
+  }
+
+  async handleLocalReminder({ id, title, at }) {
+    const itemId = id.startsWith("item:") ? id.slice(5) : null;
+    const currentItem = () => !itemId || this.state?.items?.some((item) => item.itemId === itemId && item.status === "active");
+    try {
+      const result = await this.localReminders.schedule({ id, title, at, isCurrent: currentItem });
+      this.setStatus(result === "granted" ? "Reminder set on this device while Kin is open." : result === "denied" ? "Notifications are blocked in browser settings. Kin still works normally." : "Reminders are unavailable in this browser. Kin still works normally.");
+    } catch (error) {
+      this.showAlert(error.message ?? "Choose a future reminder time.");
     }
   }
 
@@ -1291,6 +1313,7 @@ class KinApp extends HTMLElement {
   }
 
   async handleCompleteItem(event) {
+    this.localReminders.cancel(`item:${event.detail.itemId}`);
     return this.handleItemAction("complete", event.detail.itemId);
   }
 
@@ -1341,6 +1364,7 @@ class KinApp extends HTMLElement {
   }
 
   async handleArchiveItem(event) {
+    this.localReminders.cancel(`item:${event.detail.itemId}`);
     return this.handleItemAction("archive", event.detail.itemId);
   }
 

@@ -2,6 +2,13 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
+## v0.28.0 — Local Reminders
+
+- Add explicit, browser-local reminders for active Items and Routines.
+- Request Notification permission only after a reminder action; handle denied and unsupported browsers.
+- Cancel an Item reminder when its date changes, it is completed, or it is archived.
+- Reminders exist only in the active page session. Browser shutdown, suspension, and unavailable service workers can delay or prevent delivery. No push service or nag loop is used.
+
 ## v0.27.0 — Household Playbooks
 
 - Add canonical protocol 19 Playbook templates with ordered checklist entries,

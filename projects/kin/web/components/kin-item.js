@@ -48,6 +48,7 @@ class KinItem extends HTMLElement {
     const details = document.createElement("div");
     details.className = "item-details";
     details.append(text);
+    if (this.record.status !== "archived") details.append(this.createReminderControl());
     if (this.record.status !== "archived") {
       const label = document.createElement("label");
       label.className = "item-area-label";
@@ -384,6 +385,37 @@ class KinItem extends HTMLElement {
       editor.append(clear);
     }
     return editor;
+  }
+
+  createReminderControl() {
+    const wrap = document.createElement("div");
+    wrap.className = "item-reminder";
+    const input = document.createElement("input");
+    input.type = "datetime-local";
+    input.required = true;
+    input.setAttribute("aria-label", `Reminder time for ${this.record.text}`);
+    input.dataset.itemId = this.record.itemId;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = "Remind me about this";
+    button.setAttribute("aria-label", `Set reminder for ${this.record.text}`);
+    button.dataset.itemId = this.record.itemId;
+    button.disabled = this.isDisabled || this.record.status !== "active";
+    button.addEventListener("click", () => {
+      const at = new Date(input.value).getTime();
+      if (!Number.isFinite(at)) { input.reportValidity(); input.focus(); return; }
+      this.dispatchEvent(new CustomEvent("kin:set-local-reminder", {
+        detail: { id: `item:${this.record.itemId}`, title: this.record.text, at }, bubbles: true, composed: true,
+      }));
+    });
+    const cancel = document.createElement("button");
+    cancel.type = "button"; cancel.textContent = "Cancel reminder"; cancel.disabled = this.isDisabled;
+    cancel.setAttribute("aria-label", `Cancel reminder for ${this.record.text}`);
+    cancel.addEventListener("click", () => this.dispatchEvent(new CustomEvent("kin:cancel-local-reminder", {
+      detail: { id: `item:${this.record.itemId}` }, bubbles: true, composed: true,
+    })));
+    wrap.append(input, button, cancel);
+    return wrap;
   }
 
   dispatchPlanningDate(planningDate) {

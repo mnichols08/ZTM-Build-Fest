@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** Current through v0.27.0 Household Playbooks. Protocol 19 adds canonical Playbook save/archive events and a bounded ordered projection while preserving all earlier layouts and event bytes. Protocol 18 adds Pin events and a bounded Pin projection; protocol 17 adds the per-Item Last changed projection field. Protocol 16 adds Item planning dates; protocol 15 adds household modes; protocol 14 gates Staples, protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
+**Status:** Current through v0.28.0 Local Reminders. Reminders are ephemeral browser-local UI state and do not change the canonical protocol. Protocol 19 adds canonical Playbook save/archive events and a bounded ordered projection while preserving all earlier layouts and event bytes. Protocol 18 adds Pin events and a bounded Pin projection; protocol 17 adds the per-Item Last changed projection field. Protocol 16 adds Item planning dates; protocol 15 adds household modes; protocol 14 gates Staples, protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
 
 ## Target and exports
 

@@ -1,6 +1,6 @@
 # Data Migrations
 
-**Status:** v0.27.0 adds Playbooks through replay protocol 19 without an IndexedDB, archive-container, sync-envelope, or server-schema migration. Earlier version sections are historical.
+**Status:** v0.28.0 Local Reminders adds ephemeral browser-local UI state only. There is no IndexedDB, archive-container, sync-envelope, or server-schema migration. v0.27.0 added Playbooks through protocol 19. Earlier version sections are historical.
 
 ## v0.27.0 Household Playbooks compatibility
 
