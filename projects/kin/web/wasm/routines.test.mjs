@@ -117,13 +117,14 @@ test("current result decoder rejects truncation, fields, duplicates and trailing
   const run = () => engine.applyEvents(rows, 1234, null, 20261002);
   const valid = run(); const totalLength = actualLength;
   const write32 = (offset, value) => bytes => new DataView(bytes.buffer, bytes.byteOffset).setUint32(offset, value, true);
-  const mutations = [write32(56, 10001), write32(128, 20260229), write32(132, 20261001), write32(132, 0),
-    bytes => bytes[132] = 0, ...[137, 138].map(offset => bytes => bytes[offset] = 255), bytes => bytes[139] = 1,
-    write32(140, 0), write32(140, 4097), write32(140, 0xffffffff), bytes => bytes[144] = 255,
-    bytes => bytes[137] = 1, bytes => bytes[138] = 0,
-    bytes => bytes[136] = 4,
-    write32(132, 20261002), // Friday cannot be a weekly key
-    bytes => new DataView(bytes.buffer, bytes.byteOffset).setBigInt64(120, 8640000000000001n, true),
+  const resultBase = 136; // Protocol 23 extends the prior 88-byte header by eight bytes.
+  const mutations = [write32(56, 10001), write32(resultBase, 20260229), write32(resultBase + 4, 20261001), write32(resultBase + 4, 0),
+    bytes => bytes[resultBase + 4] = 0, ...[resultBase + 9, resultBase + 10].map(offset => bytes => bytes[offset] = 255), bytes => bytes[resultBase + 11] = 1,
+    write32(resultBase + 12, 0), write32(resultBase + 12, 4097), write32(resultBase + 12, 0xffffffff), bytes => bytes[resultBase + 16] = 255,
+    bytes => bytes[resultBase + 9] = 1, bytes => bytes[resultBase + 10] = 0,
+    bytes => bytes[resultBase + 8] = 4,
+    write32(resultBase + 4, 20261002), // Friday cannot be a weekly key
+    bytes => new DataView(bytes.buffer, bytes.byteOffset).setBigInt64(resultBase - 8, 8640000000000001n, true),
   ];
   for (const [index, mutation] of mutations.entries()) {
     mutate = mutation;
@@ -136,8 +137,8 @@ test("current result decoder rejects truncation, fields, duplicates and trailing
   assert.deepEqual(run(), valid);
   rows.push(encodeRoutineCreatedRecord({ ...identity(2), routineId: id(0x22), text: "Other", cadence: "daily", createdOn: 20261002 }));
   // Protocol 12 preserves the protocol-11 Step count after the protocol-10 Note count.
-  // Protocol 21's 88-byte header precedes the 56-byte first Routine record and its seven-byte title.
-  mutate = bytes => bytes.copyWithin(151, 88, 104);
+  // Protocol 23's 96-byte header precedes the first Routine record and its title.
+  mutate = bytes => bytes.copyWithin(159, 96, 112);
   assert.throws(run, error => error.code === 6);
 });
 

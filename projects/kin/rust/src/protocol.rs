@@ -1,8 +1,9 @@
 use crate::error::KinError;
 use crate::event::{
-    valid_timestamp, ActorId, DeviceId, EventEnvelope, EventId, EventKind, HandoffId, HouseholdId,
-    HouseholdMode, IdentityBinding, ItemClassification, ItemId, MaintenanceEventId, PinTargetKind,
-    PulseValue, ReferenceFieldId, ReferenceRecordId, RoutineId, TalkId,
+    valid_timestamp, ActorId, AttachmentId, AttachmentParentKind, DeviceId, EventEnvelope, EventId,
+    EventKind, HandoffId, HouseholdId, HouseholdMode, IdentityBinding, ItemClassification, ItemId,
+    MaintenanceEventId, PinTargetKind, PulseValue, ReferenceFieldId, ReferenceRecordId,
+    ResponsibilityTargetKind, RoutineId, TalkId,
 };
 use crate::recurrence::{Cadence, CivilDate};
 use crate::state::{
@@ -31,7 +32,9 @@ pub const PROTOCOL_V18: u16 = 18;
 pub const PROTOCOL_V19: u16 = 19;
 pub const PROTOCOL_V20: u16 = 20;
 pub const PROTOCOL_V21: u16 = 21;
-pub const PROTOCOL_VERSION: u16 = PROTOCOL_V21;
+pub const PROTOCOL_V22: u16 = 22;
+pub const PROTOCOL_V23: u16 = 23;
+pub const PROTOCOL_VERSION: u16 = PROTOCOL_V23;
 pub const ERROR_PROTOCOL_VERSION: u16 = PROTOCOL_V1;
 pub const MAX_EVENT_COUNT: usize = 10_000;
 pub const MAX_PROTOCOL_BYTES: usize = 64 * 1024 * 1024;
@@ -96,6 +99,8 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
             | PROTOCOL_V19
             | PROTOCOL_V20
             | PROTOCOL_V21
+            | PROTOCOL_V22
+            | PROTOCOL_V23
     ) {
         return Err(KinError::UnsupportedVersion);
     }
@@ -194,7 +199,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
     let mut offset = match version {
         PROTOCOL_V8 | PROTOCOL_V9 | PROTOCOL_V10 | PROTOCOL_V11 | PROTOCOL_V12 | PROTOCOL_V13
         | PROTOCOL_V14 | PROTOCOL_V15 | PROTOCOL_V16 | PROTOCOL_V17 | PROTOCOL_V18
-        | PROTOCOL_V19 | PROTOCOL_V20 | PROTOCOL_V21 => {
+        | PROTOCOL_V19 | PROTOCOL_V20 | PROTOCOL_V21 | PROTOCOL_V22 | PROTOCOL_V23 => {
             V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES
         }
         PROTOCOL_V7 => 44,
@@ -550,6 +555,18 @@ pub fn encode_state_v21(
 ) -> Result<Vec<u8>, KinError> {
     encode_state_with_summary(state, summary, PROTOCOL_V21)
 }
+pub fn encode_state_v22(
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<Vec<u8>, KinError> {
+    encode_state_with_summary(state, summary, PROTOCOL_V22)
+}
+pub fn encode_state_v23(
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<Vec<u8>, KinError> {
+    encode_state_with_summary(state, summary, PROTOCOL_V23)
+}
 
 fn encode_state_with_summary(
     state: &HouseholdState,
@@ -563,6 +580,12 @@ fn encode_state_with_summary(
         return Err(KinError::UnsupportedVersion);
     }
     if version < PROTOCOL_V21 && !state.maintenance_events.is_empty() {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if version < PROTOCOL_V22 && !state.attachments.is_empty() {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if version < PROTOCOL_V23 && !state.responsibilities.is_empty() {
         return Err(KinError::UnsupportedVersion);
     }
     if version < PROTOCOL_V9
@@ -839,6 +862,14 @@ fn encode_state_with_summary(
         })
         .and_then(|length| length.checked_add(if version >= PROTOCOL_V20 { 4 } else { 0 }))
         .and_then(|length| length.checked_add(if version >= PROTOCOL_V21 { 4 } else { 0 }))
+        .and_then(|length| length.checked_add(if version >= PROTOCOL_V22 { 4 } else { 0 }))
+        .and_then(|length| {
+            length.checked_add(if version >= PROTOCOL_V23 {
+                4 + state.responsibilities.len().checked_mul(33)?
+            } else {
+                0
+            })
+        })
         .and_then(|length| {
             length.checked_add(if version >= PROTOCOL_V20 {
                 if state.reference_records.len() > crate::state::MAX_REFERENCE_RECORDS {
@@ -869,6 +900,16 @@ fn encode_state_with_summary(
                     .try_fold(0usize, |sum, entry| {
                         sum.checked_add(60 + entry.summary.len())
                     })?
+            } else {
+                0
+            })
+        })
+        .and_then(|length| {
+            length.checked_add(if version >= PROTOCOL_V22 {
+                if state.attachments.len() > crate::state::MAX_ATTACHMENTS {
+                    return None;
+                }
+                state.attachments.len().checked_mul(36)?
             } else {
                 0
             })
@@ -927,6 +968,12 @@ fn encode_state_with_summary(
     }
     if version >= PROTOCOL_V21 {
         push_u32(&mut result, state.maintenance_events.len() as u32);
+    }
+    if version >= PROTOCOL_V22 {
+        push_u32(&mut result, state.attachments.len() as u32);
+    }
+    if version >= PROTOCOL_V23 {
+        push_u32(&mut result, state.responsibilities.len() as u32);
     }
     result.extend_from_slice(&previous[24..]);
     if version >= PROTOCOL_V9 {
@@ -1019,6 +1066,22 @@ fn encode_state_with_summary(
             result.extend_from_slice(entry.summary.as_bytes());
         }
     }
+    if version >= PROTOCOL_V22 {
+        for entry in &state.attachments {
+            result.extend_from_slice(&entry.attachment_id.0);
+            result.push(entry.parent_kind as u8);
+            result.push(u8::from(entry.removed));
+            result.extend_from_slice(&[0; 2]);
+            result.extend_from_slice(&entry.parent_id);
+        }
+    }
+    if version >= PROTOCOL_V23 {
+        for entry in &state.responsibilities {
+            result.push(entry.target_kind as u8);
+            result.extend_from_slice(&entry.target_id);
+            result.extend_from_slice(&entry.member_id.map_or([0; 16], |id| id.0));
+        }
+    }
 
     for entry in &summary.entries {
         result.extend_from_slice(&entry.event_id.0);
@@ -1039,7 +1102,7 @@ fn encode_state_with_summary(
 }
 
 pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelope, KinError> {
-    if !(PROTOCOL_V1..=PROTOCOL_V21).contains(&protocol_version) {
+    if !(PROTOCOL_V1..=PROTOCOL_V23).contains(&protocol_version) {
         return Err(KinError::UnsupportedVersion);
     }
     if record.len() > MAX_PROTOCOL_BYTES {
@@ -1434,6 +1497,49 @@ pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelop
                 return Err(KinError::MalformedProtocol);
             }
             EventKind::MaintenanceEventArchived { maintenance_id }
+        }
+        (1, 39) if protocol_version >= PROTOCOL_V22 && payload.len() == 33 => {
+            let attachment_id = AttachmentId(read_id(payload, 0)?);
+            let parent_kind = match payload[16] {
+                1 => AttachmentParentKind::Note,
+                2 => AttachmentParentKind::ReferenceRecord,
+                3 => AttachmentParentKind::Maintenance,
+                4 => AttachmentParentKind::Item,
+                _ => return Err(KinError::MalformedProtocol),
+            };
+            let parent_id = read_id(payload, 17)?;
+            if attachment_id.0 == [0; 16] || parent_id == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::AttachmentBound {
+                attachment_id,
+                parent_kind,
+                parent_id,
+            }
+        }
+        (1, 40) if protocol_version >= PROTOCOL_V22 && payload.len() == 16 => {
+            let attachment_id = AttachmentId(read_id(payload, 0)?);
+            if attachment_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::AttachmentRemoved { attachment_id }
+        }
+        (1, 41) if protocol_version >= PROTOCOL_V23 && payload.len() == 33 => {
+            let target_kind = match payload[0] {
+                1 => ResponsibilityTargetKind::Item,
+                2 => ResponsibilityTargetKind::Routine,
+                _ => return Err(KinError::MalformedProtocol),
+            };
+            let target_id = read_id(payload, 1)?;
+            let member = read_id(payload, 17)?;
+            if target_id == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::ResponsibilityChanged {
+                target_kind,
+                target_id,
+                member_id: (member != [0; 16]).then_some(ActorId(member)),
+            }
         }
         (1, 15..=17) if protocol_version >= PROTOCOL_V7 => {
             if payload.len() != if event_kind == 17 { 16 } else { 20 }

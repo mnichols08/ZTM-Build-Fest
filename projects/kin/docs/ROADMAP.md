@@ -423,3 +423,5 @@ Preserve every existing tag. The current batch candidate follows the release gat
 ## Feedback gate
 
 After the end-of-month Build Fest build (target `v0.40.x`), stop feature development and gather human feedback. Use patches on the actual completed minor line for concrete defects. Do not automatically advance to the undated v0.41–v0.45 proposals or `v1.0.0`.
+
+The v0.31.0–v0.34.0 fast-track milestones are implementation candidates in PR #30. Attachment accessibility and real-browser integration checks remain unverified for the current environment. No v0.35.x work is included.

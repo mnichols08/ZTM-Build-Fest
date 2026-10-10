@@ -114,7 +114,7 @@ fn maintenance_links_and_limits_fail_closed_and_old_histories_stay_empty() {
     )
     .unwrap()];
     let mut complete = events.clone();
-    complete.extend(linked.drain(..));
+    complete.append(&mut linked);
     add(
         &mut complete,
         C::SaveMaintenanceEvent {
@@ -197,7 +197,7 @@ fn maintenance_links_and_limits_fail_closed_and_old_histories_stay_empty() {
 
 #[test]
 fn archived_reference_history_is_retained_and_concurrent_create_converges() {
-    let base = vec![crate::command::create_event(&reference(), ctx(1, 3)).unwrap()];
+    let base = [crate::command::create_event(&reference(), ctx(1, 3)).unwrap()];
     let record_id = ReferenceRecordId([4; 16]);
     let maintenance = crate::command::create_event(
         &C::SaveMaintenanceEvent {

@@ -15,6 +15,7 @@ import {
 } from "./crypto.js";
 import { SyncKeyStore } from "./key-store.js";
 import { idToHex } from "../wasm/kin-engine.js";
+import { reconcileAttachments } from "../attachments/attachment-lifecycle.js";
 
 const MAX_PUSH_BATCH = 20;
 const MAX_PULL_PASSES = 5;
@@ -327,10 +328,15 @@ export class SyncCoordinator {
 
     const pendingOutbox = await this.store.getPendingOutbox(1);
     const pendingBindings = await this.store.getPendingBindings();
+    try {
+      const attachmentResult = await reconcileAttachments({ identity: this.identity, store: this.store, keyStore: this.keyStore, state: await this.store.projectCurrent(), signal: this.abortController.signal });
+      this.onState({ state: "syncing", attachmentRows: attachmentResult.rows });
+    } catch { /* Attachment transport retries independently; household event sync remains available. */ }
     if (!hasMore && pendingOutbox.length === 0 && pendingBindings.length === 0)
       await this.store.markSyncInitialized();
     this.onState({
       state: hasMore ? "syncing" : "ready",
+      memberIds: [...new Set(devices.filter((device) => !device.revokedAt).map((device) => device.memberId))],
       message: hasMore
         ? "Sync will continue in the background."
         : "Device sync is up to date.",

@@ -159,6 +159,38 @@ test("protocol 18 Pins persist, deduplicate, unpin and replay with stable target
   ));
 });
 
+test("protocol 23 responsibility events encode, clear and replay", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const context = (sequence) => ({ eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId: new Uint8Array(16).fill(0xbb), deviceId: new Uint8Array(16).fill(0xcc), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) });
+  const itemId = new Uint8Array(16).fill(0x47), memberId = new Uint8Array(16).fill(0x48);
+  const records = [encodeAddedRecord({ ...context(1), itemId, text: "Pharmacy pickup", classification: "need" })];
+  const change = (member, sequence) => engine.executeCommand({ type: "change-responsibility", targetKind: "item", targetId: hex(itemId), memberId: member ? hex(member) : null }, context(sequence), records, 1_791_475_200_000, null, 20261009);
+  const assigned = change(memberId, 2);
+  assert.equal(new DataView(assigned.encodedEvent.buffer).getUint16(2, true), 41);
+  assert.deepEqual(assigned.state.responsibilities, [{ targetKind: "item", targetId: hex(itemId), memberId: hex(memberId) }]);
+  records.push(assigned.encodedEvent);
+  const cleared = change(null, 3);
+  assert.equal(cleared.state.responsibilities[0].memberId, null);
+  records.push(cleared.encodedEvent);
+  assert.deepEqual(engine.applyEvents(records, 1_791_475_200_010, null, 20261009).responsibilities, cleared.state.responsibilities);
+});
+
+test("protocol 22 attachment bind and remove intent payloads roundtrip through real WASM", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const context = (sequence) => ({ eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId: new Uint8Array(16).fill(0xbb), deviceId: new Uint8Array(16).fill(0xcc), timestamp: 1_791_475_000_000 + sequence, logicalTime: BigInt(sequence) });
+  const itemId = new Uint8Array(16).fill(0x51), attachmentId = new Uint8Array(16).fill(0x52);
+  const records = [encodeAddedRecord({ ...context(1), itemId, text: "Photo", classification: "need" })];
+  const bound = engine.executeCommand({ type: "bind-attachment", id: hex(attachmentId), parentKind: "item", parentId: hex(itemId) }, context(2), records, 1_791_475_000_000, null, 20261009);
+  assert.equal(new DataView(bound.encodedEvent.buffer).getUint16(2, true), 39);
+  assert.deepEqual(bound.state.attachments, [{ attachmentId: hex(attachmentId), parentKind: "item", parentId: hex(itemId), removed: false }]);
+  records.push(bound.encodedEvent);
+  const removed = engine.executeCommand({ type: "remove-attachment", id: hex(attachmentId) }, context(3), records, 1_791_475_000_000, null, 20261009);
+  assert.equal(new DataView(removed.encodedEvent.buffer).getUint16(2, true), 40);
+  assert.equal(removed.state.attachments[0].removed, true);
+});
+
 test("protocol 16 projections remain decodable without history timestamps", async (context) => {
   const instantiate = WebAssembly.instantiate;
   context.mock.method(WebAssembly, "instantiate", async (...args) => {

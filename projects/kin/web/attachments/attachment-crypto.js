@@ -12,8 +12,7 @@ const decoder = new TextDecoder("utf-8", { fatal: true });
 
 export async function encryptAttachment(file, { householdId, attachmentId, keyEpoch, householdKey, parentKind, parentId }) {
   validateContext({ householdId, attachmentId, keyEpoch, householdKey });
-  if (!(file instanceof Blob) || file.size < 1 || file.size > MAX_ATTACHMENT_PLAINTEXT_BYTES || !ALLOWED_ATTACHMENT_TYPES.has(file.type))
-    throw new Error("Choose an image or PDF up to 4 MiB.");
+  validateAttachmentFile(file);
   if (!new Set(["note", "reference-record", "maintenance", "item"]).has(parentKind) || !isId(parentId))
     throw new Error("Kin could not attach this file to that household record.");
   const fileBytes = new Uint8Array(await file.arrayBuffer());
@@ -33,6 +32,12 @@ export async function encryptAttachment(file, { householdId, attachmentId, keyEp
     fileBytes.fill(0);
     plaintext.fill(0);
   }
+}
+
+export function validateAttachmentFile(file) {
+  if (!(file instanceof Blob) || file.size < 1 || file.size > MAX_ATTACHMENT_PLAINTEXT_BYTES || !ALLOWED_ATTACHMENT_TYPES.has(file.type))
+    throw new Error("Choose an image or PDF up to 4 MiB.");
+  return true;
 }
 
 export async function decryptAttachment(ciphertext, { householdId, attachmentId, keyEpoch, householdKey, digest }) {

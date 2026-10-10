@@ -1,6 +1,7 @@
 import { projectionContext } from "../browser-time.js";
 import { LocalReminders } from "../reminders.js";
 import { createCalendarExport } from "../calendar-export.js";
+import { captureAttachment, loadLocalAttachmentRows, openAttachment, removeAttachment } from "../attachments/attachment-lifecycle.js";
 import "./kin-routines.js";
 import "./kin-areas.js";
 import "./kin-notes.js";
@@ -34,6 +35,7 @@ class KinApp extends HTMLElement {
     super();
     this.engine = null;
     this.store = null;
+    this.attachmentRows = [];
     this.syncCoordinator = null;
     this.state = null;
     this.localReminders = new LocalReminders();
@@ -53,6 +55,11 @@ class KinApp extends HTMLElement {
     this.suspendedRetry = null;
     this.retryRefresh = () => this.refreshFromEvents();
     this.onAddItem = (event) => this.handleAddItem(event);
+    this.onAddAttachment = (event) => this.handleAddAttachment(event);
+    this.onOpenAttachment = (event) => this.handleOpenAttachment(event);
+    this.onRemoveAttachment = (event) => this.handleRemoveAttachment(event);
+    this.onRetryAttachments = () => { if (this.syncCoordinator) void this.syncCoordinator.syncNow(); else void this.configureSyncCoordinator(); };
+    this.onChangeResponsibility = (event) => this.handleChangeResponsibility(event);
     this.onReplenishStaple = (event) => this.handleReplenishStaple(event);
     this.onOffline = () => {
       this.stateNotice.textContent =
@@ -217,6 +224,11 @@ class KinApp extends HTMLElement {
       this.initialized = true;
     }
     this.addEventListener("kin:add-item", this.onAddItem);
+    this.addEventListener("kin:add-attachment", this.onAddAttachment);
+    this.addEventListener("kin:open-attachment", this.onOpenAttachment);
+    this.addEventListener("kin:remove-attachment", this.onRemoveAttachment);
+    this.addEventListener("kin:retry-attachments", this.onRetryAttachments);
+    this.addEventListener("kin:change-responsibility", this.onChangeResponsibility);
     this.addEventListener("kin:replenish-staple", this.onReplenishStaple);
     this.addEventListener("kin:complete-item", this.onCompleteItem);
     this.addEventListener("kin:reopen-item", this.onReopenItem);
@@ -638,6 +650,11 @@ class KinApp extends HTMLElement {
     window.removeEventListener("offline", this.onOffline);
     window.removeEventListener("online", this.onOnline);
     this.removeEventListener("kin:add-item", this.onAddItem);
+    this.removeEventListener("kin:add-attachment", this.onAddAttachment);
+    this.removeEventListener("kin:open-attachment", this.onOpenAttachment);
+    this.removeEventListener("kin:remove-attachment", this.onRemoveAttachment);
+    this.removeEventListener("kin:retry-attachments", this.onRetryAttachments);
+    this.removeEventListener("kin:change-responsibility", this.onChangeResponsibility);
     this.removeEventListener("kin:replenish-staple", this.onReplenishStaple);
     this.removeEventListener("kin:complete-item", this.onCompleteItem);
     this.removeEventListener("kin:reopen-item", this.onReopenItem);
@@ -772,6 +789,7 @@ class KinApp extends HTMLElement {
       this.assertCurrentSession(session);
       this.applyCatchUpSnapshot(snapshot);
       this.renderState();
+      void this.refreshAttachmentRows();
       this.main.hidden = false;
       this.nav.hidden = false;
       this.moreSecurity.before(this.household);
@@ -914,6 +932,15 @@ class KinApp extends HTMLElement {
         this.renderState();
         if (value.snapshotBoundary) this.broadcastEventChange();
       }
+    }
+    if (Array.isArray(value.attachmentRows)) {
+      this.attachmentRows = value.attachmentRows;
+      this.renderState();
+    }
+    if (Array.isArray(value.memberIds)) {
+      this.activeMemberIds = [...new Set(value.memberIds)];
+      this.renderState();
+      void this.reconcileResponsibilityMembers();
     }
     if (value.message && value.state !== "paused")
       this.setStatus(value.message);
@@ -1423,6 +1450,95 @@ class KinApp extends HTMLElement {
     this.pulseTimer = setTimeout(this.onTimeWake, delay);
   }
 
+  async handleAddAttachment(event) {
+    if (this.busy || !this.store || !this.engine) return;
+    const session = this.captureSession();
+    const { file, parentKind, parentId, status } = event.detail;
+    this.setBusy(true); this.clearAlert();
+    try {
+      const saved = await captureAttachment({ file, parentKind, parentId, identity: this.syncCoordinator?.identity ?? this.household?.identity, store: session.store, keyStore: this.syncCoordinator?.keyStore, append: (command) => this.appendCommand(command) });
+      this.assertCurrentSession(session);
+      this.attachmentRows = [...this.attachmentRows.filter((row) => row.attachmentId !== saved.attachmentId), { ...saved, parentKind, parentId }];
+      this.renderState(); this.broadcastEventChange();
+      if (status) status.textContent = `${saved.name} is saved on this device. Waiting to sync.`;
+      void this.syncCoordinator?.syncNow();
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      this.showAlert(error.userMessage ?? error.message ?? "Kin could not save this attachment on this device.");
+      if (status) status.textContent = "Kin couldn't save this attachment.";
+    } finally { if (this.isCurrentSession(session)) this.setBusy(false); }
+  }
+
+  async handleOpenAttachment(event) {
+    if (!this.store) { this.showAlert("This attachment is unavailable on this device."); return; }
+    const session = this.captureSession();
+    const detail = event.detail;
+    const binding = this.state?.attachments?.find((item) => item.attachmentId === detail.attachmentId && !item.removed);
+    if (!binding || binding.parentKind !== detail.parentKind || binding.parentId !== detail.parentId) { this.showAlert("This attachment is unavailable."); return; }
+    const tab = detail.download ? null : window.open("about:blank", "_blank");
+    if (tab) tab.opener = null;
+    try {
+      const syncState = await session.store.getSyncState();
+      const opened = await openAttachment({ attachmentId: detail.attachmentId, binding, identity: this.syncCoordinator?.identity ?? (syncState ? { householdId: syncState.householdId } : null), store: session.store, keyStore: this.syncCoordinator?.keyStore });
+      this.assertCurrentSession(session);
+      const url = URL.createObjectURL(opened.blob);
+      if (detail.download) { const link = document.createElement("a"); link.href = url; link.download = opened.name; link.hidden = true; document.body.append(link); link.click(); link.remove(); }
+      else if (tab) tab.location.href = url;
+      else { const link = document.createElement("a"); link.href = url; link.target = "_blank"; link.rel = "noopener"; link.click(); }
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error) { tab?.close(); if (error.code !== "locked") this.showAlert("This attachment is unavailable on this device."); }
+  }
+
+  async handleRemoveAttachment(event) {
+    if (this.busy || !this.store || !this.engine) return;
+    const session = this.captureSession(); this.setBusy(true); this.clearAlert();
+    try {
+      await removeAttachment({ attachmentId: event.detail.attachmentId, append: (command) => this.appendCommand(command), store: session.store });
+      this.assertCurrentSession(session);
+      this.attachmentRows = this.attachmentRows.filter((row) => row.attachmentId !== event.detail.attachmentId);
+      this.renderState(); this.broadcastEventChange(); void this.syncCoordinator?.syncNow();
+    } catch (error) { if (error.code !== "locked" && this.isCurrentSession(session)) this.showAlert(error.userMessage ?? SAVE_ERROR); }
+    finally { if (this.isCurrentSession(session)) this.setBusy(false); }
+  }
+
+  async refreshAttachmentRows() {
+    if (!this.store || !this.state || !this.vault || this.vault.locked) return;
+    const session = this.captureSession();
+    try {
+      const rows = await loadLocalAttachmentRows({ store: session.store, state: this.state });
+      if (!this.isCurrentSession(session)) return;
+      this.attachmentRows = rows; this.renderState();
+    } catch { /* A later sync retries attachment indexing. */ }
+  }
+
+  async handleChangeResponsibility(event) {
+    if (this.busy || !this.store || !this.engine) return;
+    const session = this.captureSession(); this.setBusy(true); this.clearAlert();
+    try {
+      const { targetKind, targetId, memberId } = event.detail;
+      await this.appendCommand({ type: "change-responsibility", targetKind, id: targetId, memberId });
+      this.assertCurrentSession(session); this.broadcastEventChange(); void this.syncCoordinator?.syncNow();
+    } catch (error) { if (error.code !== "locked" && this.isCurrentSession(session)) this.showAlert(error.userMessage ?? SAVE_ERROR); }
+    finally { if (this.isCurrentSession(session)) this.setBusy(false); }
+  }
+
+  async reconcileResponsibilityMembers() {
+    if (this.reconcilingResponsibility || this.busy || !this.activeMemberIds || !this.state?.responsibilities?.length) return;
+    const active = new Set(this.activeMemberIds);
+    const stale = this.state.responsibilities.filter((entry) => entry.memberId && !active.has(entry.memberId));
+    if (!stale.length) return;
+    this.reconcilingResponsibility = true;
+    try {
+      for (const entry of stale) {
+        if (!this.activeMemberIds.includes(this.syncCoordinator?.identity?.memberId)) break;
+        await this.appendCommand({ type: "change-responsibility", targetKind: entry.targetKind, id: entry.targetId, memberId: null });
+      }
+      this.broadcastEventChange();
+      void this.syncCoordinator?.syncNow();
+    } catch { /* Another device may have cleared the same removed member concurrently. */ }
+    finally { this.reconcilingResponsibility = false; }
+  }
+
   async handleCompleteItem(event) {
     this.localReminders.cancel(`item:${event.detail.itemId}`);
     return this.handleItemAction("complete", event.detail.itemId);
@@ -1861,20 +1977,31 @@ class KinApp extends HTMLElement {
     const mode = this.state.mode ?? "normal";
     this.modeSelect.value = mode;
     this.routines.householdMode = mode;
+    const memberId = this.syncCoordinator?.identity?.memberId ?? this.store?.actorId ?? null;
+    const otherMemberId = this.activeMemberIds?.find((id) => id !== memberId) ?? null;
+    const responsibilityContext = { responsibilities: this.state.responsibilities ?? [], memberId, otherMemberId };
     this.catchUp.summary = this.state.summary;
     this.catchUp.lastLookedAt = this.catchUpCursor?.lastLookedAt;
     this.today.items = this.state.items;
+    this.today.responsibilityContext = responsibilityContext;
     this.today.areas = this.state.areas ?? [];
     this.today.pins = this.state.pins ?? [];
+    this.today.attachments = this.attachmentRows;
     this.needs.items = this.state.items;
+    this.needs.responsibilityContext = responsibilityContext;
     this.needs.areas = this.state.areas ?? [];
     this.needs.pins = this.state.pins ?? [];
+    this.needs.attachments = this.attachmentRows;
     this.shopping.items = this.state.items;
+    this.shopping.responsibilityContext = responsibilityContext;
     this.shopping.areas = this.state.areas ?? [];
     this.shopping.pins = this.state.pins ?? [];
+    this.shopping.attachments = this.attachmentRows;
     this.staples.items = this.state.items;
+    this.staples.responsibilityContext = responsibilityContext;
     this.staples.areas = this.state.areas ?? [];
     this.staples.pins = this.state.pins ?? [];
+    this.staples.attachments = this.attachmentRows;
     this.handoffs.handoffs = this.state.handoffs;
     this.talks.talks = this.state.talks;
     this.search.household = {
@@ -1890,11 +2017,13 @@ class KinApp extends HTMLElement {
       (pulse) => pulse.actorId === this.store?.actorId,
     );
     this.routines.routines = this.state.routines ?? [];
+    this.routines.responsibilityContext = responsibilityContext;
     this.routines.playbooks = this.state.playbooks ?? [];
     this.areas.areas = this.state.areas ?? [];
     this.notes.notes = this.state.notes ?? [];
     this.notes.references = this.state.referenceRecords ?? [];
     this.notes.maintenance = this.state.maintenanceEvents ?? [];
+    this.notes.attachments = this.attachmentRows;
     this.notes.routines = this.state.routines ?? [];
     this.notes.areas = this.state.areas ?? [];
     this.updateCalendarExportButton();
@@ -2005,6 +2134,7 @@ class KinApp extends HTMLElement {
     this.engine?.dispose?.();
     this.engine = null;
     this.state = null;
+    this.attachmentRows = [];
     this.snapshotBoundary = null;
     this.catchUpCursor = null;
     this.pendingRefresh = false;

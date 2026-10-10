@@ -1,4 +1,4 @@
-const PROTOCOL_VERSION = 21;
+const PROTOCOL_VERSION = 23;
 const REQUEST_HEADER_BYTES = 64;
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 const PULSE_VALUES = ["good", "okay", "drained", "rough-day", "need-quiet"];
@@ -324,6 +324,9 @@ const COMMAND_TYPES = [
   "archive-reference-record",
   "save-maintenance-event",
   "archive-maintenance-event",
+  "bind-attachment",
+  "remove-attachment",
+  "change-responsibility",
 ];
 const EVENT_KINDS = [
   null,
@@ -365,6 +368,9 @@ const EVENT_KINDS = [
   "REFERENCE_RECORD_ARCHIVED",
   "MAINTENANCE_EVENT_SAVED",
   "MAINTENANCE_EVENT_ARCHIVED",
+  "ATTACHMENT_BOUND",
+  "ATTACHMENT_REMOVED",
+  "RESPONSIBILITY_CHANGED",
 ];
 
 function encodeIntent(type, value) {
@@ -423,7 +429,7 @@ function encodeIntentPacket(command, identity) {
           ? 16 + stepText.length
           : kind === 22 || kind === 23
             ? 24 + noteTitle.length + noteBody.length
-            : kind === 33 ? playbookBytes.length : kind === 35 ? referenceBytes.length : kind === 37 ? maintenanceBytes.length : textBytes.length),
+            : kind === 33 ? playbookBytes.length : kind === 35 ? referenceBytes.length : kind === 37 ? maintenanceBytes.length : kind === 39 || kind === 41 ? 16 : textBytes.length),
   );
   packet.set([75, 67, 77, 68, 1, 0, 0, 0]);
   const view = new DataView(packet.buffer);
@@ -502,6 +508,18 @@ function encodeIntentPacket(command, identity) {
     const code = ["", "item", "note", "routine", "area"].indexOf(command.targetKind);
     if (code < 1) throw new KinEngineError(2, "Choose a valid Pin target.");
     packet[112] = code;
+  } else if (kind === 39) {
+    const code = ["", "note", "reference-record", "maintenance", "item"].indexOf(command.parentKind);
+    if (code < 1 || !/^[a-f0-9]{32}$/.test(command.parentId ?? "")) throw new KinEngineError(2, "Choose a valid attachment parent.");
+    packet[112] = code;
+    packet.set(idFromHex(command.parentId), 128);
+    view.setUint32(124, 16, true);
+  } else if (kind === 41) {
+    const targetKind = ["", "item", "routine"].indexOf(command.targetKind);
+    if (targetKind < 1 || (command.memberId !== null && !/^[a-f0-9]{32}$/.test(command.memberId ?? ""))) throw new KinEngineError(2, "Choose a household member.");
+    packet[112] = targetKind;
+    packet.set(command.memberId ? idFromHex(command.memberId) : new Uint8Array(16), 128);
+    view.setUint32(124, 16, true);
   } else if (kind === 33) {
     packet.set(playbookBytes, 128);
     view.setUint32(124, playbookBytes.length, true);
@@ -527,7 +545,7 @@ function encodeIntentPacket(command, identity) {
   } else if (stepAction) {
     packet.set(idFromHex(command.itemId), 128);
     view.setUint32(124, 16, true);
-  } else if (kind === 33 || kind === 35 || kind === 37) {
+  } else if (kind === 33 || kind === 35 || kind === 37 || kind === 39 || kind === 41) {
     // The Playbook packet payload was encoded above.
   } else {
     view.setUint32(124, textBytes.length, true);
@@ -987,14 +1005,14 @@ function decodeState(bytes) {
   const protocolVersion = view.getUint16(4, true);
   if (
     ![
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
     ].includes(protocolVersion) ||
     view.getUint16(6, true) !== 0
   ) {
     throw new KinEngineError(6, "Kin received an unsupported state format.");
   }
   const resultHeaderBytes =
-    protocolVersion >= 21 ? 88 : protocolVersion >= 20 ? 84 : protocolVersion >= 19 ? 80 : protocolVersion >= 18 ? 76 : protocolVersion >= 15 ? 72 : protocolVersion >= 11 ? 68 : protocolVersion >= 10 ? 64 : protocolVersion >= 9
+    protocolVersion >= 23 ? 96 : protocolVersion >= 22 ? 92 : protocolVersion >= 21 ? 88 : protocolVersion >= 20 ? 84 : protocolVersion >= 19 ? 80 : protocolVersion >= 18 ? 76 : protocolVersion >= 15 ? 72 : protocolVersion >= 11 ? 68 : protocolVersion >= 10 ? 64 : protocolVersion >= 9
       ? 60
       : protocolVersion >= 7
       ? 56
@@ -1023,6 +1041,8 @@ function decodeState(bytes) {
   const playbookCount = protocolVersion >= 19 ? view.getUint32(76, true) : 0;
   const referenceRecordCount = protocolVersion >= 20 ? view.getUint32(80, true) : 0;
   const maintenanceEventCount = protocolVersion >= 21 ? view.getUint32(84, true) : 0;
+  const attachmentCount = protocolVersion >= 22 ? view.getUint32(88, true) : 0;
+  const responsibilityCount = protocolVersion >= 23 ? view.getUint32(92, true) : 0;
   if (
     protocolVersion >= 15 &&
     (modeCode > 3 || bytes.subarray(69, 72).some((byte) => byte !== 0))
@@ -1059,9 +1079,11 @@ function decodeState(bytes) {
     playbookCount > 32 ||
     referenceRecordCount > 128 ||
     maintenanceEventCount > 8192 ||
+    attachmentCount > 256 ||
+    responsibilityCount > itemCount + routineCount ||
     stepCount > MAX_EVENT_COUNT ||
     stepCount > itemCount * MAX_STEPS_PER_ITEM ||
-    itemCount + handoffCount + talkCount + pulseCount + routineCount + noteCount + playbookCount + referenceRecordCount + maintenanceEventCount >
+      itemCount + handoffCount + talkCount + pulseCount + routineCount + noteCount + playbookCount + referenceRecordCount + maintenanceEventCount + attachmentCount + responsibilityCount >
       MAX_EVENT_COUNT
   ) {
     throw new KinEngineError(
@@ -1546,6 +1568,34 @@ function decodeState(bytes) {
     maintenanceEvents.push({ maintenanceId, recordId, performedOn: performed, summary, nextOn, routineId: routineBytes.every((byte) => byte === 0) ? null : idToHex(routineBytes), archived: archived === 1 });
     offset = end;
   }
+  const attachments = [];
+  const attachmentIds = new Set();
+  for (let index = 0; index < attachmentCount; index += 1) {
+    if (offset + 36 > bytes.length) throw new KinEngineError(6, "Kin received a truncated attachment binding.");
+    const attachmentId = idToHex(bytes.subarray(offset, offset + 16));
+    const parentKind = ["", "note", "reference-record", "maintenance", "item"][bytes[offset + 16]];
+    const removed = bytes[offset + 17];
+    const parentId = idToHex(bytes.subarray(offset + 20, offset + 36));
+    if (attachmentId === "00".repeat(16) || attachmentIds.has(attachmentId) || !parentKind || removed > 1 || bytes[offset + 18] || bytes[offset + 19]) throw new KinEngineError(6, "Kin received an invalid attachment binding.");
+    const exists = parentKind === "note" ? notes.some((item) => item.noteId === parentId) : parentKind === "reference-record" ? referenceRecords.some((item) => item.recordId === parentId) : parentKind === "maintenance" ? maintenanceEvents.some((item) => item.maintenanceId === parentId) : items.some((item) => item.itemId === parentId);
+    if (!exists) throw new KinEngineError(6, "Kin received an attachment for an unknown household record.");
+    attachmentIds.add(attachmentId);
+    attachments.push({ attachmentId, parentKind, parentId, removed: removed === 1 });
+    offset += 36;
+  }
+  const responsibilities = [];
+  const responsibilityIds = new Set();
+  for (let index = 0; index < responsibilityCount; index += 1) {
+    if (offset + 33 > bytes.length) throw new KinEngineError(6, "Kin received truncated responsibility data.");
+    const targetKind = ["", "item", "routine"][bytes[offset]];
+    const targetId = idToHex(bytes.subarray(offset + 1, offset + 17));
+    const memberId = idToHex(bytes.subarray(offset + 17, offset + 33));
+    const key = `${targetKind}:${targetId}`;
+    if (!targetKind || targetId === "00".repeat(16) || responsibilityIds.has(key) || !(targetKind === "item" ? items.some((item) => item.itemId === targetId) : routines.some((routine) => routine.routineId === targetId))) throw new KinEngineError(6, "Kin received invalid responsibility data.");
+    responsibilityIds.add(key);
+    responsibilities.push({ targetKind, targetId, memberId: memberId === "00".repeat(16) ? null : memberId });
+    offset += 33;
+  }
   const entityNames = ["", "item", "handoff", "talk", "routine"];
   for (let index = 0; index < summaryCount; index += 1) {
     const headerEnd = offset + 24;
@@ -1626,6 +1676,8 @@ function decodeState(bytes) {
       ...(protocolVersion >= 19 ? { playbooks } : {}),
       ...(protocolVersion >= 20 ? { referenceRecords } : {}),
       ...(protocolVersion >= 21 ? { maintenanceEvents } : {}),
+      ...(protocolVersion >= 22 && attachments.length ? { attachments } : {}),
+      ...(protocolVersion >= 23 && responsibilities.length ? { responsibilities } : {}),
       ...(modeCode === 0
         ? {}
         : { mode: ["normal", "vacation", "guests", "rest"][modeCode] }),

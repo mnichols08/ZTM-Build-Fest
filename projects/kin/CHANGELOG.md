@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.34.0 — Responsibility Ownership
+
+- Add canonical Items and Routines responsibility assignments with Take, explicit handoff, and clear actions.
+- Resolve concurrent assignments by `(logical time, device ID, event ID)` and clear ownership through canonical events after sync detects removed members.
+- Add protocol 23 projection support. No scores, contribution analytics, or workload summaries are included.
+- Rust replay, protocol, and real WASM tests pass. Browser interaction and accessibility checks remain unverified.
+
+## v0.33.0 — Attachment UX & Lifecycle
+
+- Add local-first attachment capture, protected offline persistence, retryable authenticated relay sync, remote restore, canonical removal, and client orphan reconciliation.
+- Include attachment records in bounded household archive format 2; verify ciphertext digests and local-sealed metadata against canonical parent bindings. Older format 1 archives remain supported.
+- Add file controls to Items, Notes, Reference Records, and Maintenance Records using the JPEG/PNG/WebP/PDF 4 MiB limit.
+- Native, real-WASM, crypto, and offline lifecycle tests pass. Browser interaction, accessibility, and direct archive migration checks remain unverified.
+
 ## v0.32.0 — Encrypted Attachments Foundation
 
 - Add bounded AES-256-GCM attachment encryption with routing and epoch authenticated as additional data; filename, MIME type, size, and parent remain encrypted.

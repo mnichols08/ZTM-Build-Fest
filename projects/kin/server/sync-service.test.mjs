@@ -50,6 +50,18 @@ test("attachment relay is opaque, authorized, idempotent, integrity checked, and
   assert.throws(() => sync.getAttachment("not-a-session", attachmentId), (error) => error.code === "authentication_required");
 });
 
+test("a queued attachment from a previously provisioned epoch can upload after key rotation", () => {
+  const { pairing, adult, sync } = fixture();
+  sync.enable(adult.sessionToken);
+  const device = pairing.devices.get(adult.deviceId);
+  device.syncProvisionedEpochs = [1, 2];
+  sync.state(adult.householdId).currentEpoch = 2;
+  const ciphertext = Buffer.alloc(64, 0x7a), digest = createHash("sha256").update(ciphertext).digest("hex");
+  const row = { attachmentId: "d".repeat(32), keyEpoch: 1, ciphertext, digest };
+  assert.deepEqual(sync.pushAttachment(adult.sessionToken, row), { accepted: true, size: 64, digest });
+  assert.deepEqual(sync.pushAttachment(adult.sessionToken, row), { accepted: false, size: 64, digest });
+});
+
 function makeBindings(adult, count, start = 1) {
   return Array.from({ length: count }, (_, index) => {
     const sequence = start + index;

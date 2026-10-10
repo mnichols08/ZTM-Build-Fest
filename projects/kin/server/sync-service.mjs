@@ -230,8 +230,8 @@ export class EncryptedSyncService {
 
   pushAttachment(sessionToken, { attachmentId, keyEpoch, ciphertext, digest }) {
     const auth = this.authorize(sessionToken);
-    const state = this.attachmentState(auth);
-    if (!isSyncId(attachmentId) || keyEpoch !== state.currentEpoch || !Buffer.isBuffer(ciphertext) || ciphertext.length < 29 || ciphertext.length > MAX_ATTACHMENT_BYTES || !/^[a-f0-9]{64}$/.test(digest) || createHash("sha256").update(ciphertext).digest("hex") !== digest)
+    this.attachmentState(auth, keyEpoch);
+    if (!isSyncId(attachmentId) || !Buffer.isBuffer(ciphertext) || ciphertext.length < 29 || ciphertext.length > MAX_ATTACHMENT_BYTES || !/^[a-f0-9]{64}$/.test(digest) || createHash("sha256").update(ciphertext).digest("hex") !== digest)
       throw new PairingError("attachment_invalid", "That attachment could not be verified.", 400);
     const existing = this.store?.getAttachment(auth.household.id, attachmentId) ?? this.attachments.get(`${auth.household.id}:${attachmentId}`);
     if (existing) {

@@ -134,6 +134,17 @@ pub enum HouseholdCommand {
         routine_id: Option<RoutineId>,
     },
     ArchiveMaintenanceEvent(MaintenanceEventId),
+    BindAttachment {
+        id: AttachmentId,
+        parent_kind: AttachmentParentKind,
+        parent_id: [u8; 16],
+    },
+    RemoveAttachment(AttachmentId),
+    ChangeResponsibility {
+        target_kind: ResponsibilityTargetKind,
+        target_id: [u8; 16],
+        member_id: Option<ActorId>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -323,6 +334,25 @@ pub fn create_event(
         ArchiveMaintenanceEvent(id) => EventKind::MaintenanceEventArchived {
             maintenance_id: *id,
         },
+        BindAttachment {
+            id,
+            parent_kind,
+            parent_id,
+        } => EventKind::AttachmentBound {
+            attachment_id: *id,
+            parent_kind: *parent_kind,
+            parent_id: *parent_id,
+        },
+        RemoveAttachment(id) => EventKind::AttachmentRemoved { attachment_id: *id },
+        ChangeResponsibility {
+            target_kind,
+            target_id,
+            member_id,
+        } => EventKind::ResponsibilityChanged {
+            target_kind: *target_kind,
+            target_id: *target_id,
+            member_id: *member_id,
+        },
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -396,6 +426,47 @@ pub fn execute(
     ) && request.protocol_version < crate::protocol::PROTOCOL_V21
     {
         return Err(KinError::UnsupportedVersion);
+    }
+    if matches!(
+        command,
+        HouseholdCommand::BindAttachment { .. } | HouseholdCommand::RemoveAttachment(_)
+    ) && request.protocol_version < crate::protocol::PROTOCOL_V22
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if matches!(command, HouseholdCommand::ChangeResponsibility { .. })
+        && request.protocol_version < crate::protocol::PROTOCOL_V23
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if let HouseholdCommand::ChangeResponsibility {
+        target_kind,
+        target_id,
+        member_id,
+    } = command
+    {
+        if *target_id == [0; 16] || member_id.is_some_and(|id| id.0 == [0; 16]) {
+            return Err(KinError::InvalidEvent);
+        }
+        let active = match target_kind {
+            ResponsibilityTargetKind::Item => current
+                .items
+                .iter()
+                .any(|item| item.item_id.0 == *target_id && item.status != ItemStatus::Archived),
+            ResponsibilityTargetKind::Routine => current
+                .routines
+                .iter()
+                .any(|routine| routine.routine_id.0 == *target_id && !routine.archived),
+        };
+        if !active
+            || current
+                .responsibilities
+                .iter()
+                .find(|entry| entry.target_kind == *target_kind && entry.target_id == *target_id)
+                .is_some_and(|entry| entry.member_id == *member_id)
+        {
+            return Err(KinError::InvalidEvent);
+        }
     }
     if matches!(
         command,
@@ -625,6 +696,60 @@ pub fn execute(
         {
             return Err(KinError::InvalidEvent)
         }
+        HouseholdCommand::BindAttachment {
+            id,
+            parent_kind,
+            parent_id,
+        } => {
+            if id.0 == [0; 16]
+                || current.attachments.len() >= crate::state::MAX_ATTACHMENTS
+                || current
+                    .attachments
+                    .iter()
+                    .any(|attachment| attachment.attachment_id == *id)
+                || current
+                    .attachments
+                    .iter()
+                    .filter(|attachment| {
+                        attachment.parent_kind == *parent_kind
+                            && attachment.parent_id == *parent_id
+                            && !attachment.removed
+                    })
+                    .count()
+                    >= 5
+            {
+                return Err(KinError::InvalidEvent);
+            }
+            let exists = match parent_kind {
+                AttachmentParentKind::Note => current
+                    .notes
+                    .iter()
+                    .any(|item| item.note_id.0 == *parent_id),
+                AttachmentParentKind::ReferenceRecord => current
+                    .reference_records
+                    .iter()
+                    .any(|item| item.record_id.0 == *parent_id),
+                AttachmentParentKind::Maintenance => current
+                    .maintenance_events
+                    .iter()
+                    .any(|item| item.maintenance_id.0 == *parent_id),
+                AttachmentParentKind::Item => current
+                    .items
+                    .iter()
+                    .any(|item| item.item_id.0 == *parent_id),
+            };
+            if !exists {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::RemoveAttachment(id)
+            if !current
+                .attachments
+                .iter()
+                .any(|item| item.attachment_id == *id && !item.removed) =>
+        {
+            return Err(KinError::InvalidEvent)
+        }
         _ => {}
     }
     if let HouseholdCommand::CreateRoutine { created_on, .. } = command {
@@ -678,7 +803,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
     if bytes.len() != 128 + text_length {
         return Err(KinError::MalformedProtocol);
     }
-    let text = if matches!(kind, 21..=28 | 33 | 35 | 37) {
+    let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41) {
         String::new()
     } else {
         std::str::from_utf8(&bytes[128..])
@@ -688,10 +813,12 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
     let accepts_payload = matches!(kind, 1 | 5 | 8 | 14 | 18 | 19)
         || kind == 21 && text_length == 16
         || matches!(kind, 22 | 23) && text_length >= 24
-        || kind == 25 && (17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length);
+        || kind == 25 && (17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
+        || kind == 39 && text_length == 16
+        || kind == 41 && text_length == 16;
     if !text.is_empty() && !accepts_payload
         || !matches!(kind, 14..=16 | 30) && date != 0
-        || !matches!(kind, 1 | 12 | 14 | 29 | 31 | 32) && option != 0
+        || !matches!(kind, 1 | 12 | 14 | 29 | 31 | 32 | 39 | 41) && option != 0
         || kind != 12 && expires != 0
         || matches!(kind, 12 | 13 | 29) && id != [0; 16]
         || kind == 21 && text_length != 16
@@ -699,9 +826,12 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 25 && !(17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
         || matches!(kind, 26..=28) && text_length != 16
         || matches!(kind, 31 | 32 | 34 | 36) && text_length != 0
-        || matches!(kind, 33..=38) && id == [0; 16]
+        || matches!(kind, 33..=41) && id == [0; 16]
         || kind == 37 && text_length < 42
         || kind == 38 && text_length != 0
+        || kind == 39 && !matches!(option, 1..=4)
+        || kind == 40 && text_length != 0
+        || kind == 41 && (!matches!(option, 1..=2) || text_length != 16)
     {
         return Err(KinError::MalformedProtocol);
     }
@@ -1013,6 +1143,30 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             }
         }
         38 if text_length == 0 => ArchiveMaintenanceEvent(MaintenanceEventId(id)),
+        39 if text_length == 16 => BindAttachment {
+            id: AttachmentId(id),
+            parent_kind: match option {
+                1 => AttachmentParentKind::Note,
+                2 => AttachmentParentKind::ReferenceRecord,
+                3 => AttachmentParentKind::Maintenance,
+                4 => AttachmentParentKind::Item,
+                _ => return Err(KinError::MalformedProtocol),
+            },
+            parent_id: field(bytes, 128)?,
+        },
+        40 if text_length == 0 => RemoveAttachment(AttachmentId(id)),
+        41 if text_length == 16 => ChangeResponsibility {
+            target_kind: match option {
+                1 => ResponsibilityTargetKind::Item,
+                2 => ResponsibilityTargetKind::Routine,
+                _ => return Err(KinError::MalformedProtocol),
+            },
+            target_id: id,
+            member_id: {
+                let value = field(bytes, 128)?;
+                (value != [0; 16]).then_some(ActorId(value))
+            },
+        },
         _ => return Err(KinError::UnsupportedVersion),
     };
     let context = CommandContext {

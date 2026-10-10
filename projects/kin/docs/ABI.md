@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** Current through v0.32.0 Encrypted Attachments Foundation. Attachments use the existing event protocol and household key epochs; no Rust ABI or canonical event format changes. Protocol 21 appends bounded maintenance history after Reference Records while preserving all earlier layouts and event bytes. Protocol 20 adds Reference Records; protocol 19 adds Playbooks; earlier sections remain historical contracts.
+**Status:** Current through v0.34.0 Responsibility Ownership. Protocol 22 appends bounded attachment bindings and protocol 23 appends responsibility projection entries. Event kinds 39–41 add attachment bind/remove and responsibility change events; earlier event bytes remain immutable. Protocol 21 appends maintenance history, protocol 20 Reference Records, and protocol 19 Playbooks.
 
 ## Target and exports
 

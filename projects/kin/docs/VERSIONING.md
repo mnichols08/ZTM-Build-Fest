@@ -1,22 +1,22 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.32.0; the last published product release remains v0.10.3. Maintenance Records add replay protocol 21; encrypted attachments use the existing household key epochs and a new server SQLite schema v3. IndexedDB, encrypted sync envelopes, and KARC archive framing remain unchanged. Candidate milestones are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.34.0; the last published product release remains v0.10.3. Maintenance Records add replay protocol 21, attachment bindings use protocol 22, and responsibility projection uses protocol 23. Attachments reuse household key epochs and opaque server SQLite schema v3. IndexedDB schema 4 adds protected attachment rows; attachment-inclusive household archive format 2 preserves format 1 imports. Candidate milestones are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.24.0 | Governs |
+| Version axis | Last published v0.10.3 / current candidate v0.34.0 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.32.0` | Encrypted attachments foundation |
+| Application | Last published `0.10.3`; candidate `0.34.0` | Attachment lifecycle and responsibility ownership |
 | Server database schema | `3` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination, household lifecycle and encrypted attachment records |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
-| Replay protocol | Reads v1–v21; writes v21 for local and synchronized requests | Request context and projection semantics |
+| Replay protocol | Reads v1–v23; writes v23 for local and synchronized requests | Request context and projection semantics |
 | Manual WASM ABI | Existing exports plus additive command/metadata/archive/import APIs | Host ownership and calls; new command packet v1 |
-| IndexedDB schema | Event DB 2→3; key DB 3→4 | Journalled upgrade to encrypted records |
+| IndexedDB schema | Event DB 2→4; key DB 3→4 | Journalled upgrade to encrypted records; protected attachment rows |
 | Local envelope | v1 for original roots; v2 for rotated roots | v2 authenticates rootVersion in addition to purpose/routing |
 | Security manifest / rotation journal | Manifest v1/root 1; v2/root 2+; journal v1 | Monotonic root replacement, CAS and exact restart |
-| Portable archive | KARC v1; metadata/body version 1 | Bounded encrypted archive and complete import planning |
+| Portable archive | KARC v1; body formats 1 and 2 | Bounded encrypted archive; format 2 includes protected attachments |
 | Sync envelope | v1 unchanged | Relay encryption/signature/provisioning contracts; Note plaintext remains only in encrypted event content |
 | Device-key successor | v1 with monotonic generation, maximum 16 transitions | Signed replacement of legacy transport capabilities |
 

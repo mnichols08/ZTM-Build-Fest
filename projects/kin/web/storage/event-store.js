@@ -8,7 +8,7 @@ import { projectionContext } from "../browser-time.js";
 import { rotateEventProtection, resumeEventProtection } from "./root-rotation.js";
 
 const DATABASE_NAME = "kin";
-const DATABASE_VERSION = 3;
+const DATABASE_VERSION = 4;
 const SECURITY_STORE = "security_state";
 const SECURITY_KEY = "vault";
 export const EVENT_STORE_DEFINITIONS = {
@@ -17,6 +17,7 @@ export const EVENT_STORE_DEFINITIONS = {
   sync_state: { keyPath: "key" },
   sync_outbox: { keyPath: "event_id" },
   sync_bindings: { keyPath: "legacy_key" },
+  attachment_records: { keyPath: "attachment_id" },
 };
 const EVENT_STORE = "events";
 const CONTEXT_STORE = "local_context";
@@ -272,6 +273,7 @@ export class EventStore {
       const store = new EventStore(encryptedDatabase(database, vault, EVENT_STORE_DEFINITIONS, {
         securityGuard: { store: SECURITY_STORE, key: SECURITY_KEY, epoch, rootVersion: manifest.rootVersion },
       }));
+      store.vault = vault;
       store.engine = engine;
       const context = await store.ensureContext();
       store.actorId = idToHex(context.sync_member_id ?? context.actor_id);
@@ -304,10 +306,65 @@ export class EventStore {
     });
   }
 
+  async loadAttachments() {
+    const transaction = this.database.transaction("attachment_records", "readonly");
+    const request = transaction.objectStore("attachment_records").getAll();
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => { try { finish(validateAttachmentRows(request.result)); } catch (error) { abortWith(transaction, error); } };
+      request.onerror = () => abortWith(transaction, storageError(request.error));
+    });
+  }
+
+  async saveAttachment(record) {
+    const [validated] = validateAttachmentRows([record]);
+    const transaction = this.database.transaction("attachment_records", "readwrite");
+    const store = transaction.objectStore("attachment_records"), request = store.getAll();
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => {
+        try {
+          const current = validateAttachmentRows(request.result);
+          const existing = current.find((row) => row.attachment_id === validated.attachment_id);
+          if (!existing && (current.length >= 64 || current.reduce((sum, row) => sum + (row.ciphertext?.byteLength ?? 0), 0) + (validated.ciphertext?.byteLength ?? 0) > 50 * 1024 * 1024)) throw new EventStoreError("Kin reached its local attachment storage limit.");
+          if (existing?.ciphertext && validated.ciphertext && (!bytesEqual(existing.ciphertext, validated.ciphertext) || existing.digest !== validated.digest || existing.keyEpoch !== validated.keyEpoch)) throw new EventStoreError("Kin found conflicting encrypted content for this attachment.");
+          const row = existing ? { ...existing, ...validated, state: validated.ciphertext ? validated.state : existing.state } : validated;
+          const put = store.put(row);
+          put.onsuccess = () => finish(validated.attachment_id);
+          put.onerror = () => abortWith(transaction, storageError(put.error));
+        } catch (error) { abortWith(transaction, error); }
+      };
+      request.onerror = () => abortWith(transaction, storageError(request.error));
+    });
+  }
+
+  async sealAttachmentData(attachmentId, data) {
+    if (!this.vault || !/^[a-f0-9]{32}$/.test(attachmentId)) throw new EventStoreError("Kin could not protect this attachment locally.");
+    return this.vault.seal(data, { store: "attachment-file", id: attachmentId });
+  }
+
+  async openAttachmentData(attachmentId, sealed) {
+    if (!this.vault || !/^[a-f0-9]{32}$/.test(attachmentId) || !sealed) throw new EventStoreError("This attachment is unavailable on this device.");
+    return this.vault.open(sealed, { store: "attachment-file", id: attachmentId });
+  }
+
+  async updateAttachmentState(attachmentId, state) {
+    if (!/^[a-f0-9]{32}$/.test(attachmentId) || !["local", "queued", "uploading", "synced", "failed", "removed"].includes(state)) throw new EventStoreError("Kin could not update this attachment.");
+    const transaction = this.database.transaction("attachment_records", "readwrite");
+    const store = transaction.objectStore("attachment_records"), request = store.get(attachmentId);
+    return transactionResult(transaction, (finish) => { request.onsuccess = () => { if (!request.result) { finish(false); return; } store.put({ ...request.result, state }); finish(true); }; request.onerror = () => abortWith(transaction, storageError(request.error)); });
+  }
+
+  async deleteAttachment(attachmentId) {
+    if (!/^[a-f0-9]{32}$/.test(attachmentId)) throw new EventStoreError("Kin could not remove this attachment.");
+    const transaction = this.database.transaction("attachment_records", "readwrite");
+    const store = transaction.objectStore("attachment_records"), request = store.get(attachmentId);
+    return transactionResult(transaction, (finish) => { request.onsuccess = () => { if (request.result) store.delete(attachmentId); finish(Boolean(request.result)); }; request.onerror = () => abortWith(transaction, storageError(request.error)); });
+  }
+
   async snapshotForArchive() {
-    const snapshot = await snapshotStores(this.database, [EVENT_STORE, CONTEXT_STORE]);
-    const archive = { formatVersion: 1, events: snapshot.events, local_context: snapshot.local_context };
-    validateArchiveSnapshot(archive, this.engine);
+    const snapshot = await snapshotStores(this.database, [EVENT_STORE, CONTEXT_STORE, "attachment_records"]);
+    const archive = { formatVersion: 2, events: snapshot.events, local_context: snapshot.local_context, attachments: snapshot.attachment_records };
+    const plan = validateArchiveSnapshot(archive, this.engine);
+    await validateAttachmentArchivePayloads(archive.attachments, plan.state.attachments ?? [], (id, sealed) => this.openAttachmentData(id, sealed));
     return archive;
   }
 
@@ -316,7 +373,8 @@ export class EventStore {
     // Authenticated archive decoding can transfer its private result to this
     // operation. Public callers retain defensive cloning against later mutation.
     const source = ownedSnapshot ? snapshot : structuredClone(snapshot);
-    validateArchiveSnapshot(source, engine);
+    let plan = validateArchiveSnapshot(source, engine);
+    await validateAttachmentArchivePayloads(source.attachments ?? [], plan.state.attachments ?? [], (id, sealed) => vault.open(sealed, { store: "attachment-file", id }));
     const context = source.local_context[0];
     // An archive contains history, not device authorization. New local actions
     // use fresh anonymous IDs while the historical replay household stays stable.
@@ -328,8 +386,9 @@ export class EventStore {
       sync_identity_bindings: [...(context.sync_identity_bindings ?? [])],
       archive_imported: true,
     });
-    validateArchiveSnapshot(source, engine);
-    const rows = { events: source.events, local_context: source.local_context };
+    plan = validateArchiveSnapshot(source, engine);
+    await validateAttachmentArchivePayloads(source.attachments ?? [], plan.state.attachments ?? [], (id, sealed) => vault.open(sealed, { store: "attachment-file", id }));
+    const rows = { events: source.events, local_context: source.local_context, attachment_records: source.attachments ?? [] };
     const protectedRows = await protectRows(vault, EVENT_STORE_DEFINITIONS, rows, { check: () => EventStore.checkSecurityEpoch(vault) });
     const database = await openEventDatabase();
     try {
@@ -862,6 +921,14 @@ export class EventStore {
       request.onerror = () =>
         abortWith(transaction, storageError(request.error));
     });
+  }
+
+  async projectCurrent() {
+    if (!this.engine) throw new EventStoreError("Kin could not rebuild the household view.");
+    const [events, context] = await Promise.all([this.loadEvents(), this.ensureContext()]);
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.applyEvents(events.map((row) => row.encoded_event), asOf,
+      context.last_looked_event_id === null ? null : idToHex(context.last_looked_event_id), civilDate, syncIdentityFromContext(context));
   }
 
   updateSyncServerState(status) {
@@ -1820,6 +1887,24 @@ export class EventStore {
   }
 }
 
+function validateAttachmentRows(rows) {
+  const fields = ["attachment_id", "ciphertext", "localSealed", "keyEpoch", "digest", "state"];
+  if (!Array.isArray(rows) || rows.length > 64) throw new EventStoreError("Kin found invalid local attachment records.");
+  const ids = new Set(); let total = 0;
+  for (const row of rows) {
+    if (!row || Object.keys(row).some((key) => !fields.includes(key)) || Object.keys(row).length !== fields.length || !/^[a-f0-9]{32}$/.test(row.attachment_id ?? "") || ids.has(row.attachment_id) || !["local", "queued", "uploading", "synced", "failed", "removed"].includes(row.state))
+      throw new EventStoreError("Kin found an invalid local attachment record.");
+    if (row.ciphertext) {
+      const bytes = asBytes(row.ciphertext);
+      if (bytes.length < 29 || bytes.length > 4 * 1024 * 1024 + 4096 || !Number.isSafeInteger(row.keyEpoch) || row.keyEpoch < 1 || row.keyEpoch > 128 || !/^[a-f0-9]{64}$/.test(row.digest ?? "")) throw new EventStoreError("Kin found an attachment outside its supported size.");
+      total += bytes.length;
+    } else if (!row.localSealed || row.keyEpoch !== null || row.digest !== null) throw new EventStoreError("Kin found an attachment without protected local content.");
+    if (total > 50 * 1024 * 1024) throw new EventStoreError("Kin found attachment data above the household storage limit.");
+    ids.add(row.attachment_id);
+  }
+  return rows;
+}
+
 function transactionResult(transaction, schedule) {
   return new Promise((resolve, reject) => {
     let failure;
@@ -2201,10 +2286,11 @@ function validateRotationRows(rows, engine) {
 
 function validateArchiveSnapshot(snapshot, engine) {
   const onlyFields = (value, names) => value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).every((key) => names.includes(key));
-  if (!engine || !onlyFields(snapshot, ["formatVersion", "events", "local_context"]) || snapshot.formatVersion !== 1 ||
+  if (!engine || !onlyFields(snapshot, ["formatVersion", "events", "local_context", "attachments"]) || ![1, 2].includes(snapshot.formatVersion) || (snapshot.formatVersion === 2 && !Array.isArray(snapshot.attachments)) ||
       !Array.isArray(snapshot.local_context) || snapshot.local_context.length !== 1)
     throw new EventStoreError("Kin could not validate this archive's household records.");
   const rows = validateEventRows(snapshot.events);
+  const attachments = validateAttachmentRows(snapshot.attachments ?? []);
   const eventFields = ["local_sequence", "event_id", "household_id", "actor_id", "device_id", "timestamp", "logical_time", "kind", "event_version", "encoded_event"];
   if (rows.some((row) => !onlyFields(row, eventFields)) || rows.reduce((size, row) => size + asBytes(row.encoded_event).byteLength, 0) > 64 * 1024 * 1024)
     throw new EventStoreError("Kin found unsupported archive event fields or size.");
@@ -2221,9 +2307,34 @@ function validateArchiveSnapshot(snapshot, engine) {
   if ((context.sync_identity_bindings ?? []).some((binding) => !onlyFields(binding, bindingFields) || Object.keys(binding).length !== bindingFields.length))
     throw new EventStoreError("Kin found unsupported archive identity bindings.");
   const { asOf, civilDate } = projectionContext();
-  engine.planImport(rows.map((row) => row.encoded_event), asOf,
+  const plan = engine.planImport(rows.map((row) => row.encoded_event), asOf,
     context.last_looked_event_id === null ? null : idToHex(context.last_looked_event_id), civilDate, syncIdentityFromContext(context));
-  return snapshot;
+  const bound = new Set((plan.state.attachments ?? []).map((attachment) => attachment.attachmentId));
+  if (attachments.some((attachment) => !bound.has(attachment.attachment_id))) throw new EventStoreError("Kin found attachment data without matching household history.");
+  const included = new Set(attachments.map((attachment) => attachment.attachment_id));
+  if ((plan.state.attachments ?? []).some((attachment) => !attachment.removed && !included.has(attachment.attachmentId))) throw new EventStoreError("Kin cannot export this household yet because an attachment needs to be downloaded to this device.");
+  return plan;
+}
+
+async function validateAttachmentArchivePayloads(rows, bindings, openSealed) {
+  const byId = new Map(bindings.map((entry) => [entry.attachmentId, entry]));
+  for (const row of rows) {
+    const binding = byId.get(row.attachment_id);
+    if (!binding) throw new EventStoreError("Kin found attachment data without matching household history.");
+    if (row.ciphertext) {
+      const bytes = asBytes(row.ciphertext);
+      const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      if (digest !== row.digest) throw new EventStoreError("Kin found an attachment archive with damaged file data.");
+      continue;
+    }
+    let saved;
+    try { saved = await openSealed(row.attachment_id, row.localSealed); }
+    catch { throw new EventStoreError("Kin could not open protected attachment data in this archive."); }
+    try {
+      if (!(saved?.bytes instanceof Uint8Array) || saved.bytes.length < 1 || saved.bytes.length > 4 * 1024 * 1024 || !["image/jpeg", "image/png", "image/webp", "application/pdf"].includes(saved.type) || typeof saved.name !== "string" || saved.name.length > 240 || saved.parentKind !== binding.parentKind || saved.parentId !== binding.parentId)
+        throw new EventStoreError("Kin found attachment data that does not match its household binding.");
+    } finally { saved?.bytes?.fill(0); }
+  }
 }
 
 async function readSecurity(database) {

@@ -232,6 +232,16 @@ main {
 }
 .page-intro p { margin: 7px 0 0; color: var(--ink-muted); }
 .calendar-export-button { margin-top: 12px; }
+.attachment-list { display: grid; gap: 8px; margin-block: 10px; min-width: 0; }
+.attachment-list > label { font-weight: 600; }
+.attachment-list input[type="file"] { max-width: 100%; }
+.attachment-list ul { display: grid; gap: 8px; margin: 0; padding-inline-start: 20px; }
+.attachment-list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.attachment-list li > span { min-width: 0; overflow-wrap: anywhere; }
+.attachment-list li > small { flex: 1 1 120px; }
+.attachment-list [role="status"]:empty { display: none; }
+kin-responsibility { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; margin-block: 6px; }
+.responsibility-status { overflow-wrap: anywhere; }
 .quick-access-row { display: flex; align-items: stretch; gap: 8px; }
 .quick-access-open { flex: 1; min-width: 0; padding: 8px 12px; text-align: left; overflow-wrap: anywhere; }
 .quick-access-row > button:last-child { padding-inline: 12px; }

@@ -2,6 +2,7 @@ import {
   MAX_REFERENCE_FIELDS,
   validateReferenceRecord,
 } from "../household-validation.js";
+import "./kin-attachments.js";
 
 class KinNotes extends HTMLElement {
   constructor() {
@@ -10,6 +11,7 @@ class KinNotes extends HTMLElement {
     this.referenceRecords = [];
     this.areaRecords = [];
     this.maintenanceEvents = [];
+    this.attachmentRecords = [];
     this.routineRecords = [];
     this.disabledState = false;
     this.editor = { noteId: null, title: "", body: "", areaId: "" };
@@ -22,6 +24,7 @@ class KinNotes extends HTMLElement {
   set references(value) { this.referenceRecords = Array.isArray(value) ? value : []; this.render(); }
   set areas(value) { this.areaRecords = Array.isArray(value) ? value : []; this.render(); }
   set maintenance(value) { this.maintenanceEvents = Array.isArray(value) ? value : []; this.render(); }
+  set attachments(value) { this.attachmentRecords = Array.isArray(value) ? value : []; this.render(); }
   set routines(value) { this.routineRecords = Array.isArray(value) ? value : []; this.render(); }
   set disabled(value) { this.disabledState = Boolean(value); this.render(); }
 
@@ -146,6 +149,7 @@ class KinNotes extends HTMLElement {
       text.className = "note-body";
       text.textContent = note.body;
       row.append(name, text);
+      row.append(this.makeAttachmentControl("note", note.noteId, note.title));
       const linkedArea = this.areaRecords.find((candidate) => candidate.areaId === note.areaId);
       if (note.areaId) {
         const context = document.createElement("small");
@@ -342,6 +346,7 @@ class KinNotes extends HTMLElement {
         fields.append(label, value);
       }
       row.append(fields);
+      row.append(this.makeAttachmentControl("reference-record", record.recordId, record.title));
       const maintenance = document.createElement("section");
       const maintenanceHeading = document.createElement("h4"); maintenanceHeading.textContent = "Maintenance";
       maintenance.append(maintenanceHeading);
@@ -350,6 +355,7 @@ class KinNotes extends HTMLElement {
         const entry = document.createElement("li");
         const date = String(event.performedOn); const next = event.nextOn ? ` · Next around ${String(event.nextOn).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3")}` : "";
         entry.textContent = `${event.summary} · ${date.slice(4,6)}/${date.slice(6,8)}/${date.slice(0,4)}${next}`;
+        entry.append(this.makeAttachmentControl("maintenance", event.maintenanceId, event.summary));
         const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "Archive event"; remove.setAttribute("aria-label", `Archive maintenance event: ${event.summary}`);
         remove.addEventListener("click", () => this.dispatch("archive-maintenance-event", { maintenanceId: event.maintenanceId }));
         entry.append(" ", remove); history.append(entry);
@@ -404,6 +410,13 @@ class KinNotes extends HTMLElement {
       error.hidden = true;
       control.removeAttribute("aria-invalid");
     }
+  }
+
+  makeAttachmentControl(kind, parentId, label) {
+    const control = document.createElement("kin-attachments");
+    control.parentRecord = { kind, id: parentId, label };
+    control.attachments = this.attachmentRecords;
+    return control;
   }
 
   clearEditor() {

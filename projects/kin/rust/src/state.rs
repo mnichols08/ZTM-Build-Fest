@@ -2,9 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::KinError;
 use crate::event::{
-    valid_timestamp, ActorId, AreaId, DeviceId, EventEnvelope, EventId, EventKind, HandoffId,
-    HouseholdId, HouseholdMode, ItemClassification, ItemId, NoteId, PinTargetKind, PulseValue,
-    ReferenceFieldId, ReferenceRecordId, RoutineId, StepId, TalkId,
+    valid_timestamp, ActorId, AreaId, AttachmentId, AttachmentParentKind, DeviceId, EventEnvelope,
+    EventId, EventKind, HandoffId, HouseholdId, HouseholdMode, ItemClassification, ItemId, NoteId,
+    PinTargetKind, PulseValue, ReferenceFieldId, ReferenceRecordId, ResponsibilityTargetKind,
+    RoutineId, StepId, TalkId,
 };
 use crate::recurrence::{Cadence, CivilDate};
 
@@ -94,6 +95,14 @@ pub struct MaintenanceEventState {
     pub routine_id: Option<RoutineId>,
     pub archived: bool,
 }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttachmentState {
+    pub attachment_id: AttachmentId,
+    pub parent_kind: AttachmentParentKind,
+    pub parent_id: [u8; 16],
+    pub removed: bool,
+}
+pub const MAX_ATTACHMENTS: usize = 256;
 pub const MAX_MAINTENANCE_EVENTS_PER_RECORD: usize = 64;
 pub const MAX_MAINTENANCE_SUMMARY_BYTES: usize = 240;
 pub fn normalize_maintenance_summary(summary: &str) -> Result<String, KinError> {
@@ -322,6 +331,15 @@ pub struct HouseholdState {
     pub playbooks: Vec<PlaybookState>,
     pub reference_records: Vec<ReferenceRecordState>,
     pub maintenance_events: Vec<MaintenanceEventState>,
+    pub attachments: Vec<AttachmentState>,
+    pub responsibilities: Vec<ResponsibilityState>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResponsibilityState {
+    pub target_kind: ResponsibilityTargetKind,
+    pub target_id: [u8; 16],
+    pub member_id: Option<ActorId>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -443,6 +461,8 @@ fn rebuild_with_context(
     let mut playbooks: Vec<PlaybookState> = Vec::new();
     let mut reference_records = Vec::<ReferenceRecordState>::new();
     let mut maintenance_events = Vec::<MaintenanceEventState>::new();
+    let mut attachments = Vec::<AttachmentState>::new();
+    let mut responsibilities = Vec::<ResponsibilityState>::new();
     let mut reference_positions = BTreeMap::<ReferenceRecordId, usize>::new();
     let mut reference_field_owners = BTreeMap::<ReferenceFieldId, ReferenceRecordId>::new();
     for event in events {
@@ -1118,6 +1138,85 @@ fn rebuild_with_context(
                 }
                 entry.archived = true;
             }
+            EventKind::AttachmentBound {
+                attachment_id,
+                parent_kind,
+                parent_id,
+            } => {
+                if attachment_id.0 == [0; 16]
+                    || *parent_id == [0; 16]
+                    || attachments
+                        .iter()
+                        .any(|entry| entry.attachment_id == *attachment_id)
+                    || attachments.len() >= MAX_ATTACHMENTS
+                {
+                    return Err(KinError::InvalidEvent);
+                }
+                let parent_exists = match parent_kind {
+                    AttachmentParentKind::Note => {
+                        notes.iter().any(|entry| entry.note_id.0 == *parent_id)
+                    }
+                    AttachmentParentKind::ReferenceRecord => reference_records
+                        .iter()
+                        .any(|entry| entry.record_id.0 == *parent_id),
+                    AttachmentParentKind::Maintenance => maintenance_events
+                        .iter()
+                        .any(|entry| entry.maintenance_id.0 == *parent_id),
+                    AttachmentParentKind::Item => {
+                        items.iter().any(|entry| entry.item_id.0 == *parent_id)
+                    }
+                };
+                if !parent_exists {
+                    return Err(KinError::InvalidEvent);
+                }
+                attachments.push(AttachmentState {
+                    attachment_id: *attachment_id,
+                    parent_kind: *parent_kind,
+                    parent_id: *parent_id,
+                    removed: false,
+                });
+            }
+            EventKind::AttachmentRemoved { attachment_id } => {
+                let attachment = attachments
+                    .iter_mut()
+                    .find(|entry| entry.attachment_id == *attachment_id)
+                    .ok_or(KinError::InvalidEvent)?;
+                if attachment.removed {
+                    return Err(KinError::InvalidEvent);
+                }
+                attachment.removed = true;
+            }
+            EventKind::ResponsibilityChanged {
+                target_kind,
+                target_id,
+                member_id,
+            } => {
+                if *target_id == [0; 16] || member_id.is_some_and(|id| id.0 == [0; 16]) {
+                    return Err(KinError::InvalidEvent);
+                }
+                let active = match target_kind {
+                    ResponsibilityTargetKind::Item => item_positions
+                        .get(&crate::event::ItemId(*target_id))
+                        .is_some_and(|i| items[*i].status != ItemStatus::Archived),
+                    ResponsibilityTargetKind::Routine => routine_positions
+                        .get(&RoutineId(*target_id))
+                        .is_some_and(|i| !routines[*i].archived),
+                };
+                if !active {
+                    return Err(KinError::InvalidEvent);
+                }
+                if let Some(existing) = responsibilities.iter_mut().find(|entry| {
+                    entry.target_kind == *target_kind && entry.target_id == *target_id
+                }) {
+                    existing.member_id = *member_id;
+                } else {
+                    responsibilities.push(ResponsibilityState {
+                        target_kind: *target_kind,
+                        target_id: *target_id,
+                        member_id: *member_id,
+                    });
+                }
+            }
             EventKind::ItemStepAdded {
                 item_id,
                 step_id,
@@ -1328,6 +1427,8 @@ fn rebuild_with_context(
         playbooks,
         reference_records,
         maintenance_events,
+        attachments,
+        responsibilities,
     })
 }
 
@@ -1548,7 +1649,10 @@ pub(crate) fn summarize_validated(
             | EventKind::ReferenceRecordSaved { .. }
             | EventKind::ReferenceRecordArchived { .. }
             | EventKind::MaintenanceEventSaved { .. }
-            | EventKind::MaintenanceEventArchived { .. } => None,
+            | EventKind::MaintenanceEventArchived { .. }
+            | EventKind::AttachmentBound { .. }
+            | EventKind::AttachmentRemoved { .. }
+            | EventKind::ResponsibilityChanged { .. } => None,
         };
 
         if let Some((kind, entity_kind, text, classification)) = summary {
@@ -1663,7 +1767,10 @@ mod tests {
             | EventKind::ReferenceRecordSaved { .. }
             | EventKind::ReferenceRecordArchived { .. }
             | EventKind::MaintenanceEventSaved { .. }
-            | EventKind::MaintenanceEventArchived { .. } => {
+            | EventKind::MaintenanceEventArchived { .. }
+            | EventKind::AttachmentBound { .. }
+            | EventKind::AttachmentRemoved { .. }
+            | EventKind::ResponsibilityChanged { .. } => {
                 panic!("Area tests use independent wire fixtures")
             }
         }
