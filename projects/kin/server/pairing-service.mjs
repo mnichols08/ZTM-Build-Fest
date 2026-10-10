@@ -1483,7 +1483,7 @@ export class PairingService {
     if (reauthenticatedMemberId !== context.memberId)
       throw new PairingError(
         "fresh_auth_required",
-        "Authenticate with your passkey again before removing a household adult.",
+        "Authenticate with your passkey again before removing a household member.",
         401,
       );
     const household = this.households.get(

@@ -1367,7 +1367,7 @@ test("Adult invitation records the chosen kind and confirmation ignores claimant
   assert.equal(service.members.get(confirmed.confirmedMemberId).expiresAt, undefined);
 });
 
-test("Limited member direct HTTP trust-management calls are denied", async () => {
+test("Limited and Temporary direct HTTP trust-management calls are denied", async () => {
   const { service, adult } = setup();
   const invitation = service.createPairing(adult.sessionToken);
   const memberId = "c".repeat(32);
@@ -1376,29 +1376,97 @@ test("Limited member direct HTTP trust-management calls are denied", async () =>
   service.households.get(adult.householdId).members.add(memberId);
   service.devices.set(deviceId, { id: deviceId, householdId: adult.householdId, memberId, label: "Limited tablet", trustedAt: 1_000_000, revokedAt: null, tokenHash: null });
   const limited = service.issueSession(memberId, deviceId);
-  const server = await startTestServer({ service });
-  const cookie = `kin_session=${limited.sessionToken}`;
+  const temporaryId = "e".repeat(32);
+  const temporaryDeviceId = "f".repeat(32);
+  service.members.set(temporaryId, { id: temporaryId, householdId: adult.householdId, active: true, kind: "temporary", expiresAt: 2_000_000, credentials: new Set() });
+  service.households.get(adult.householdId).members.add(temporaryId);
+  service.devices.set(temporaryDeviceId, { id: temporaryDeviceId, householdId: adult.householdId, memberId: temporaryId, label: "Temporary phone", trustedAt: 1_000_000, revokedAt: null, tokenHash: null });
+  const temporary = service.issueSession(temporaryId, temporaryDeviceId);
+  const server = await startTestServer({ service, now: () => 1_000_000 });
   try {
-    const requests = [
-      apiRequest(server, "/api/pairings", { method: "POST", cookie, body: { kind: "limited" } }),
-      apiRequest(server, `/api/pairings/${invitation.pairingId}`, { cookie }),
-      apiRequest(server, `/api/pairings/${invitation.pairingId}`, { method: "DELETE", cookie }),
-      apiRequest(server, `/api/pairings/${invitation.pairingId}/approve/options`, { method: "POST", cookie, body: { expectedVersion: 1 } }),
-      apiRequest(server, "/api/devices/pairings", { method: "POST", cookie, body: {} }),
-      apiRequest(server, "/api/devices", { cookie }),
-      apiRequest(server, `/api/devices/${deviceId}`, { method: "DELETE", cookie }),
-      apiRequest(server, "/api/household/membership/remove/options", { method: "POST", cookie, body: { memberId: adult.memberId } }),
-      apiRequest(server, "/api/household/recovery", { method: "POST", cookie, body: {} }),
-      apiRequest(server, "/api/household/deletion/options", { method: "POST", cookie, body: {} }),
-      apiRequest(server, "/api/sync/epochs", { method: "POST", cookie, body: {} }),
-      apiRequest(server, "/api/sync/provisioning/grants", { method: "POST", cookie, body: {} }),
-    ];
-    const responses = await Promise.all(requests);
-    assert.deepEqual(responses.map((response) => response.status), Array(12).fill(403));
-    const syncStatus = await apiRequest(server, "/api/sync/status", { cookie });
-    assert.equal(syncStatus.status, 200);
-    assert.equal((await syncStatus.json()).memberKind, "limited");
-    assert.equal((await apiRequest(server, "/api/sync/events", { cookie })).status, 200);
+    for (const [kind, sessionToken, targetDeviceId] of [["limited", limited.sessionToken, deviceId], ["temporary", temporary.sessionToken, temporaryDeviceId]]) {
+      const cookie = `kin_session=${sessionToken}`;
+      const requests = [
+        apiRequest(server, "/api/pairings", { method: "POST", cookie, body: { kind: "limited" } }),
+        apiRequest(server, `/api/pairings/${invitation.pairingId}`, { cookie }),
+        apiRequest(server, `/api/pairings/${invitation.pairingId}`, { method: "DELETE", cookie }),
+        apiRequest(server, `/api/pairings/${invitation.pairingId}/approve/options`, { method: "POST", cookie, body: { expectedVersion: 1 } }),
+        apiRequest(server, "/api/devices/pairings", { method: "POST", cookie, body: {} }),
+        apiRequest(server, "/api/devices", { cookie }),
+        apiRequest(server, `/api/devices/${targetDeviceId}`, { method: "DELETE", cookie }),
+        apiRequest(server, "/api/household/membership/remove/options", { method: "POST", cookie, body: { memberId: adult.memberId } }),
+        apiRequest(server, "/api/household/recovery", { method: "POST", cookie, body: {} }),
+        apiRequest(server, "/api/household/deletion/options", { method: "POST", cookie, body: {} }),
+        apiRequest(server, "/api/sync/epochs", { method: "POST", cookie, body: {} }),
+        apiRequest(server, "/api/sync/provisioning/grants", { method: "POST", cookie, body: {} }),
+      ];
+      const responses = await Promise.all(requests);
+      assert.deepEqual(responses.map((response) => response.status), Array(12).fill(403));
+      const syncStatus = await apiRequest(server, "/api/sync/status", { cookie });
+      assert.equal(syncStatus.status, 200);
+      assert.equal((await syncStatus.json()).memberKind, kind);
+      assert.equal((await apiRequest(server, "/api/sync/events", { cookie })).status, 200);
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test("Temporary participation works before expiry and expires into a server-side access change", async () => {
+  let now = 3_000_000;
+  const service = new PairingService({ now: () => now, secret: Buffer.alloc(32, 11) });
+  const adult = service.bootstrap({ credential: credential("expiry-adult"), deviceLabel: "Adult device" });
+  const expiry = now + 10_000;
+  const invitation = service.createPairing(adult.sessionToken, { kind: "temporary", expiresAt: expiry });
+  const claim = service.claimPairing({ code: invitation.code, credential: credential("expiry-guest"), deviceLabel: "Guest device" });
+  service.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
+  const temporary = service.activateClaim(claim.claimToken);
+  const server = await startTestServer({ service, now: () => now });
+  try {
+    await apiRequest(server, "/api/sync/enable", { method: "POST", cookie: `kin_session=${adult.sessionToken}`, body: {} });
+    const status = await apiRequest(server, "/api/sync/status", { cookie: `kin_session=${temporary.sessionToken}` });
+    assert.equal(status.status, 200);
+    assert.equal((await status.json()).memberKind, "temporary");
+    assert.equal((await apiRequest(server, "/api/sync/events", { cookie: `kin_session=${temporary.sessionToken}` })).status, 200);
+
+    now = expiry;
+    assert.notEqual((await apiRequest(server, "/api/sync/events", { cookie: `kin_session=${temporary.sessionToken}` })).status, 200);
+    const member = service.members.get(temporary.memberId);
+    assert.equal(member.active, false);
+    assert.equal(service.devices.get(temporary.deviceId).revokedAt, expiry);
+    const adultStatus = await apiRequest(server, "/api/sync/status", { cookie: `kin_session=${adult.sessionToken}` });
+    assert.equal((await adultStatus.json()).rotationPending, true);
+    assert.equal((await apiRequest(server, "/api/sync/events", { method: "POST", cookie: `kin_session=${adult.sessionToken}`, body: { events: [] } })).status, 409);
+    assert.equal((await apiRequest(server, "/api/sync/provisioning/grants", {
+      method: "POST",
+      cookie: `kin_session=${adult.sessionToken}`,
+      body: { recipientDeviceId: temporary.deviceId, keyEpoch: 2, requestId: "a".repeat(32) },
+    })).status, 409);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Adult can revoke Temporary access early through the existing passkey removal ceremony", async () => {
+  const { service, adult } = setup();
+  const invitation = service.createPairing(adult.sessionToken, { kind: "temporary", expiresAt: 2_000_000 });
+  const claim = service.claimPairing({ code: invitation.code, credential: credential("early-guest"), deviceLabel: "Guest device" });
+  service.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
+  const temporary = service.activateClaim(claim.claimToken);
+  const server = await startTestServer({ service, now: () => 1_000_000 });
+  const cookie = `kin_session=${adult.sessionToken}`;
+  try {
+    const options = await apiRequest(server, "/api/household/membership/remove/options", { method: "POST", cookie, body: { memberId: temporary.memberId } });
+    const flow = await options.json();
+    const result = await apiRequest(server, "/api/household/membership/remove/finish", {
+      method: "POST",
+      cookie,
+      body: { flow: flow.flow, credential: { id: "credential-a", flow: flow.flow } },
+    });
+    assert.equal(result.status, 200);
+    assert.equal(service.members.get(temporary.memberId).active, false);
+    assert.ok(service.devices.get(temporary.deviceId).revokedAt);
+    assert.equal(server.syncService.status(adult.sessionToken).rotationPending, true);
   } finally {
     await server.close();
   }
@@ -1410,7 +1478,7 @@ test("Temporary invitation requires and persists a server-held future expiry", (
     assert.throws(() => service.createPairing(adult.sessionToken, { kind: "temporary", expiresAt }), (error) => error.code === "temporary_expiry_required");
   const expiry = 2_000_000;
   const invitation = service.createPairing(adult.sessionToken, { kind: "temporary", expiresAt: expiry });
-  const claim = service.claimPairing({ code: invitation.code, credential: credential("temporary-member"), deviceLabel: "Guest phone" });
+  const claim = service.claimPairing({ code: invitation.code, credential: credential("temporary-member"), deviceLabel: "Guest phone", kind: "adult", expiresAt: Number.MAX_SAFE_INTEGER });
   const confirmed = service.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
   const member = service.members.get(confirmed.confirmedMemberId);
   assert.equal(member.kind, "temporary");

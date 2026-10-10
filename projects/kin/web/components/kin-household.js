@@ -7,6 +7,12 @@ import {
 
 const MAX_ACTIVE_ADULTS = 4;
 const MAX_ACTIVE_LIMITED = 8;
+const localDateTimeValue = (timestamp) => {
+  const date = new Date(timestamp);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+    .toISOString()
+    .slice(0, 16);
+};
 
 const decode = (value) =>
   Uint8Array.from(
@@ -948,7 +954,9 @@ class KinHousehold extends HTMLElement {
       const activeMembers = household.members.filter((value) => value.active);
       const me = household.members.find((value) => value.current);
       for (const kind of ["adult", "limited", "temporary"]) {
-        const sectionMembers = activeMembers.filter((member) => member.kind === kind);
+        const sectionMembers = household.members.filter((member) =>
+          kind === "temporary" ? member.kind === kind : member.kind === kind && member.active,
+        );
         if (!sectionMembers.length && kind === "temporary") continue;
         const section = document.createElement("section");
         const title = document.createElement("h3");
@@ -959,21 +967,24 @@ class KinHousehold extends HTMLElement {
         const item = document.createElement("li");
         const memberLabel = member.current ? "You" : `${kind === "adult" ? "Adult" : kind === "limited" ? "Limited member" : "Temporary member"} ${index + 1}`;
         const expiryText = kind === "temporary" && member.expiresAt ? ` — ends ${new Date(member.expiresAt).toLocaleString()}` : "";
-        item.textContent = `${memberLabel}${expiryText}`;
+        item.textContent = `${memberLabel}${expiryText}${member.active ? "" : " — access ended"}`;
         if (member.current && kind === "temporary") item.textContent = `Temporary household access — ends ${new Date(member.expiresAt).toLocaleString()}`;
-        if (me?.kind === "adult" && !member.current)
-          item.append(
+        if (me?.kind === "adult" && !member.current && member.active) {
+          if (kind !== "temporary") item.append(
             this.makeButton(
               `Authorize recovery for ${memberLabel}`,
               () => this.authorizeRecovery(member.id),
               "secondary",
             ),
+          );
+          item.append(
             this.makeButton(
-              `Remove ${memberLabel} from household`,
-              () => this.removeMember(member.id),
+              kind === "temporary" ? `Revoke ${memberLabel}'s temporary access` : `Remove ${memberLabel} from household`,
+              () => this.removeMember(member.id, memberLabel, kind),
               "danger",
             ),
           );
+        }
         list.append(item);
         }
         section.append(list);
@@ -988,6 +999,9 @@ class KinHousehold extends HTMLElement {
               ...(activeMembers.filter((member) => member.kind === "limited").length < MAX_ACTIVE_LIMITED
                 ? [this.makeButton("Add Limited Member", () => this.createPairing("limited"))]
                 : []),
+              ...(activeMembers.length < 12
+                ? [this.temporaryInvitationForm()]
+                : []),
             ]
           : []),
         ...(me?.kind === "adult" ? [this.makeButton(
@@ -999,6 +1013,35 @@ class KinHousehold extends HTMLElement {
         this.makeButton("Back", () => this.render(), "secondary"),
       );
     });
+  }
+
+  temporaryInvitationForm() {
+    const form = document.createElement("form");
+    form.className = "temporary-invitation-form";
+    const label = document.createElement("label");
+    label.textContent = "Temporary access ends";
+    const expiry = document.createElement("input");
+    expiry.type = "datetime-local";
+    expiry.required = true;
+    expiry.min = localDateTimeValue(Date.now() + 60_000);
+    expiry.value = localDateTimeValue(Date.now() + 7 * 24 * 60 * 60_000);
+    const help = document.createElement("small");
+    help.textContent = "Uses your device's local time. Kin checks the expiry on every server request.";
+    const submit = document.createElement("button");
+    submit.type = "submit";
+    submit.textContent = "Add Temporary Member";
+    label.append(expiry);
+    form.append(label, help, submit);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const timestamp = Date.parse(expiry.value);
+      if (!Number.isSafeInteger(timestamp) || timestamp <= Date.now()) {
+        this.message("Choose a future expiry date and time.", true);
+        return;
+      }
+      this.createPairing("temporary", timestamp);
+    });
+    return form;
   }
 
   async deleteHousehold() {
@@ -1077,10 +1120,12 @@ class KinHousehold extends HTMLElement {
       this.render();
     });
   }
-  async removeMember(memberId) {
+  async removeMember(memberId, memberLabel = "member", kind = "adult") {
     if (
       !confirm(
-        "Remove this adult and revoke all of their trusted devices? Removal prevents future authorized access but cannot erase copies already decrypted on a trusted device.",
+        kind === "temporary"
+          ? `Revoke ${memberLabel}'s temporary access? Kin will block future sync and rotate household access. Copies already decrypted on a device cannot be erased.`
+          : `Remove ${memberLabel} and revoke their trusted devices? This blocks future access but cannot erase copies already decrypted on a device.`,
       )
     )
       return;

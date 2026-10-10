@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.37.0 — Guest & Caregiver Access (shipped on this branch)
+
+- Adults can invite Temporary Members through the existing pairing flow with a required local date/time expiry held by the server.
+- Claimants cannot supply or extend kind/expiry during confirmation; server confirmation uses the invitation record.
+- At expiry, the first server request reconciles membership, revokes member devices and sessions, and marks key rotation pending. New sync and key access stay blocked until an Adult rotates household access.
+- Adults can revoke Temporary access early through the existing passkey-protected member removal flow.
+- Responsibility participant lists filter expired members; settings group active and ended Temporary access and provide a named revoke action.
+- Already decrypted plaintext on an offline device cannot be remotely erased. A reconnect after expiry is denied.
+- Pairing/expiry, durable identity and sync security regressions pass under Node 24.21.0. The full batch release gate remains in progress.
+
 ## v0.36.0 — Limited Household Members (shipped on this branch)
 
 - Adult invitations carry a server-held `adult` or `limited` member kind through the existing pairing, passkey, approval, and single-use confirmation flow.

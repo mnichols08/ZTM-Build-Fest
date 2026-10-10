@@ -10,7 +10,7 @@ import {
   DurableStoreError,
   hasDatabaseProcessLock,
 } from "./durable-store.mjs";
-import { PairingService } from "./pairing-service.mjs";
+import { canParticipate, PairingService } from "./pairing-service.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
 import { openTestDatabase, sqlitePragma } from "./sqlite-test-utils.mjs";
 
@@ -138,19 +138,27 @@ test("server identity reload preserves Limited and expired Temporary membership"
     const household = first.households.get(adult.householdId);
     const limitedId = "a".repeat(32);
     const temporaryId = "b".repeat(32);
+    const activeTemporaryId = "c".repeat(32);
     first.members.set(limitedId, { id: limitedId, householdId: adult.householdId, active: true, kind: "limited", credentials: new Set() });
     first.members.set(temporaryId, { id: temporaryId, householdId: adult.householdId, active: true, kind: "temporary", expiresAt: 4_000_000, credentials: new Set() });
+    first.members.set(activeTemporaryId, { id: activeTemporaryId, householdId: adult.householdId, active: true, kind: "temporary", expiresAt: 6_000_000, credentials: new Set() });
     household.members.add(limitedId);
     household.members.add(temporaryId);
+    household.members.add(activeTemporaryId);
     store.saveIdentityHousehold(adult.householdId, first);
 
     const reloaded = new PairingService({ store, now: () => 5_000_000 });
     assert.equal(reloaded.members.get(limitedId).kind, "limited");
     assert.equal(reloaded.members.get(temporaryId).kind, "temporary");
     assert.equal(reloaded.members.get(temporaryId).expiresAt, 4_000_000);
+    assert.equal(canParticipate(reloaded.members.get(temporaryId), 5_000_000), false);
+    assert.equal(reloaded.members.get(activeTemporaryId).kind, "temporary");
+    assert.equal(reloaded.members.get(activeTemporaryId).expiresAt, 6_000_000);
+    assert.equal(canParticipate(reloaded.members.get(activeTemporaryId), 5_000_000), true);
     const authority = store.loadActiveAuthority()[0];
     assert.equal(authority.members.find((row) => row.id === limitedId).kind, "limited");
     assert.equal(authority.members.find((row) => row.id === temporaryId).expires_at, 4_000_000);
+    assert.equal(authority.members.find((row) => row.id === activeTemporaryId).expires_at, 6_000_000);
   } finally {
     store.close();
   }
