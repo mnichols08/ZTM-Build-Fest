@@ -118,6 +118,13 @@ pub enum HouseholdCommand {
         entries: Vec<String>,
     },
     ArchivePlaybook(PlaybookId),
+    SaveReferenceRecord {
+        id: ReferenceRecordId,
+        title: String,
+        area_id: Option<AreaId>,
+        fields: Vec<(ReferenceFieldId, String, String)>,
+    },
+    ArchiveReferenceRecord(ReferenceRecordId),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -277,6 +284,18 @@ pub fn create_event(
             entries: entries.clone(),
         },
         ArchivePlaybook(id) => EventKind::PlaybookArchived { playbook_id: *id },
+        SaveReferenceRecord {
+            id,
+            title,
+            area_id,
+            fields,
+        } => EventKind::ReferenceRecordSaved {
+            record_id: *id,
+            title: title.clone(),
+            area_id: *area_id,
+            fields: fields.clone(),
+        },
+        ArchiveReferenceRecord(id) => EventKind::ReferenceRecordArchived { record_id: *id },
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -333,6 +352,13 @@ pub fn execute(
         command,
         HouseholdCommand::SavePlaybook { .. } | HouseholdCommand::ArchivePlaybook(_)
     ) && request.protocol_version < crate::protocol::PROTOCOL_V19
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if matches!(
+        command,
+        HouseholdCommand::SaveReferenceRecord { .. } | HouseholdCommand::ArchiveReferenceRecord(_)
+    ) && request.protocol_version < crate::protocol::PROTOCOL_V20
     {
         return Err(KinError::UnsupportedVersion);
     }
@@ -617,7 +643,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
     if bytes.len() != 128 + text_length {
         return Err(KinError::MalformedProtocol);
     }
-    let text = if matches!(kind, 21..=28 | 33) {
+    let text = if matches!(kind, 21..=28 | 33 | 35) {
         String::new()
     } else {
         std::str::from_utf8(&bytes[128..])
@@ -637,8 +663,8 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 24 && text_length != 0
         || kind == 25 && !(17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
         || matches!(kind, 26..=28) && text_length != 16
-        || matches!(kind, 31 | 32 | 34) && text_length != 0
-        || matches!(kind, 33 | 34) && id == [0; 16]
+        || matches!(kind, 31 | 32 | 34 | 36) && text_length != 0
+        || matches!(kind, 33 | 34 | 35 | 36) && id == [0; 16]
     {
         return Err(KinError::MalformedProtocol);
     }
@@ -861,6 +887,65 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             }
         }
         34 if text_length == 0 => ArchivePlaybook(PlaybookId(id)),
+        35 if text_length >= 58 => {
+            let payload = &bytes[128..];
+            let area = field(payload, 16)?;
+            let title_len = u16::from_le_bytes(field(payload, 32)?) as usize;
+            let count = payload[34] as usize;
+            if payload[35] != 0 || count == 0 || count > crate::state::MAX_REFERENCE_FIELDS {
+                return Err(KinError::MalformedProtocol);
+            }
+            let title_end = 36usize
+                .checked_add(title_len)
+                .ok_or(KinError::MalformedProtocol)?;
+            let title = std::str::from_utf8(
+                payload
+                    .get(36..title_end)
+                    .ok_or(KinError::MalformedProtocol)?,
+            )
+            .map_err(|_| KinError::MalformedProtocol)?
+            .to_owned();
+            let mut offset = title_end;
+            let mut fields = Vec::with_capacity(count);
+            for _ in 0..count {
+                let field_id = ReferenceFieldId(field(payload, offset)?);
+                let label_len = u16::from_le_bytes(field(payload, offset + 16)?) as usize;
+                let value_len = u16::from_le_bytes(field(payload, offset + 18)?) as usize;
+                offset += 20;
+                let label_end = offset
+                    .checked_add(label_len)
+                    .ok_or(KinError::MalformedProtocol)?;
+                let value_end = label_end
+                    .checked_add(value_len)
+                    .ok_or(KinError::MalformedProtocol)?;
+                let label = std::str::from_utf8(
+                    payload
+                        .get(offset..label_end)
+                        .ok_or(KinError::MalformedProtocol)?,
+                )
+                .map_err(|_| KinError::MalformedProtocol)?
+                .to_owned();
+                let value = std::str::from_utf8(
+                    payload
+                        .get(label_end..value_end)
+                        .ok_or(KinError::MalformedProtocol)?,
+                )
+                .map_err(|_| KinError::MalformedProtocol)?
+                .to_owned();
+                fields.push((field_id, label, value));
+                offset = value_end;
+            }
+            if offset != payload.len() {
+                return Err(KinError::MalformedProtocol);
+            }
+            SaveReferenceRecord {
+                id: ReferenceRecordId(id),
+                title,
+                area_id: (area != [0; 16]).then_some(AreaId(area)),
+                fields,
+            }
+        }
+        36 if text_length == 0 => ArchiveReferenceRecord(ReferenceRecordId(id)),
         _ => return Err(KinError::UnsupportedVersion),
     };
     let context = CommandContext {

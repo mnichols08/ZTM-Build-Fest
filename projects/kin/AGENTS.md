@@ -140,7 +140,10 @@ bounded replay and a compact Today section. The authorized v0.27.0 Household
 Playbooks milestone (`kin-v0.27.0` candidate name; no tag created) adds
 protocol 19 ordered reusable checklist templates that instantiate as ordinary
 Items and Steps. The authorized v0.28.0 Local Reminders milestone (`kin-v0.28.0` candidate; no tag created) adds opt-in browser-local foreground notifications for Items and Routines; it adds no canonical event or server dependency, and browser suspension/termination may suppress delivery. The authorized v0.29.0 PWA candidate (`kin-v0.29.0`; no tag created) adds complete-shell cache staging, safe update activation, offline navigation fallback and a calm update prompt. The authorized fast-track continues
-through v0.30.x on `kin-fast-track-v0.26-v0.30`. Preserve separate minor
+through v0.30.x on `kin-fast-track-v0.26-v0.30`. Current v0.30.0 Home
+Reference Records candidate (`kin-v0.30.0`; no tag created) adds protocol 20
+bounded household reference cards with optional Areas and no persistent schema
+migration. Preserve separate minor
 milestone commits; do not create tags or merge the branch. These are
 implementation candidates, not production certification. Preserve the v0.13.5
 recovery authority guarantees and all earlier security/domain contracts.

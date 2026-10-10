@@ -1,6 +1,6 @@
 # Roadmap
 
-Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. PR #26 is merged into `kin-development` at `25e854eaa41a569650f89ea41db70a6f2bcb5c92`. The authorized v0.26.0 Pins & Quick Access and v0.27.0 Household Playbooks candidates are committed separately on `kin-fast-track-v0.26-v0.30`; the v0.26–v0.30 batch remains in progress. These candidates are not production certification; do not create tags or merge the batch branch.
+Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. PR #26 is merged into `kin-development` at `25e854eaa41a569650f89ea41db70a6f2bcb5c92`. The v0.26.0–v0.30.0 candidate milestones are committed separately on `kin-fast-track-v0.26-v0.30`; the batch remains in progress. These candidates are not production certification; do not create tags or merge the batch branch.
 
 ```text
 v0.9.3 — Encrypted Event Sync Stabilization

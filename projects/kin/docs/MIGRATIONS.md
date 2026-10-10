@@ -1,6 +1,16 @@
 # Data Migrations
 
-**Status:** v0.29.0 changes only the static application shell cache and manifest. It introduces no household-state, IndexedDB, archive-container, sync-envelope, or server-schema migration. v0.28.0 reminders remain ephemeral browser-local state. v0.27.0 added Playbooks through protocol 19. Earlier version sections are historical.
+**Status:** v0.30.0 adds Home Reference Records through protocol 20 without changing IndexedDB, archive-container, sync-envelope, or server schemas. v0.29.0 changes only the static application shell cache and manifest. v0.28.0 reminders remain ephemeral browser-local state. Earlier version sections are historical.
+
+## v0.30.0 Home Reference Records compatibility
+
+Protocol 20 adds event kinds 35 and 36 and appends up to 128 bounded
+Reference Records after Playbooks. Protocols 1–19 retain their prior layouts
+and reject Reference Record events and projections rather than omit household
+data. Existing encrypted storage, sync, and portable event-history archives
+preserve the canonical bytes, so no persistent-format migration is required.
+Older clients cannot replay records created by v0.30.0; active devices should
+be updated before creating them.
 
 ## v0.27.0 Household Playbooks compatibility
 

@@ -2,6 +2,7 @@ class KinNotes extends HTMLElement {
   constructor() {
     super();
     this.records = [];
+    this.referenceRecords = [];
     this.areaRecords = [];
     this.disabledState = false;
     this.editor = { noteId: null, title: "", body: "", areaId: "" };
@@ -10,6 +11,7 @@ class KinNotes extends HTMLElement {
   }
 
   set notes(value) { this.records = Array.isArray(value) ? value : []; this.render(); }
+  set references(value) { this.referenceRecords = Array.isArray(value) ? value : []; this.render(); }
   set areas(value) { this.areaRecords = Array.isArray(value) ? value : []; this.render(); }
   set disabled(value) { this.disabledState = Boolean(value); this.render(); }
 
@@ -164,6 +166,41 @@ class KinNotes extends HTMLElement {
       list.append(row);
     }
     section.append(list);
+
+    const references = document.createElement("section"); references.className = "reference-records";
+    const referenceHeading = document.createElement("h2"); referenceHeading.textContent = "Household reference";
+    const referenceHint = document.createElement("p"); referenceHint.textContent = "Keep practical details such as Wi-Fi names, appliance models, or service contacts. Values are shared with the household.";
+    const referenceForm = document.createElement("form");
+    const referenceTitle = document.createElement("input"); referenceTitle.required = true; referenceTitle.maxLength = 128; referenceTitle.placeholder = "Record title"; referenceTitle.setAttribute("aria-label", "Reference record title");
+    const referenceArea = document.createElement("select"); referenceArea.setAttribute("aria-label", "Reference record Area");
+    const noReferenceArea = document.createElement("option"); noReferenceArea.value = ""; noReferenceArea.textContent = "No Area"; referenceArea.append(noReferenceArea);
+    for (const item of this.areaRecords.filter((candidate) => !candidate.archived)) { const option = document.createElement("option"); option.value = item.areaId; option.textContent = item.name; referenceArea.append(option); }
+    const referenceFields = document.createElement("textarea"); referenceFields.required = true; referenceFields.rows = 4; referenceFields.placeholder = "One field per line, for example: Network name: Home"; referenceFields.setAttribute("aria-label", "Reference fields");
+    const referenceSave = document.createElement("button"); referenceSave.type = "submit"; referenceSave.textContent = "Save reference";
+    let editing = null;
+    referenceForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const fields = referenceFields.value.split(/\r?\n/).map((line, index) => {
+        const split = line.indexOf(":");
+        const label = split < 0 ? "" : line.slice(0, split).trim();
+        const value = split < 0 ? line : line.slice(split + 1).trim();
+        const prior = editing?.fields[index];
+        return { fieldId: prior?.fieldId ?? crypto.randomUUID().replaceAll("-", ""), label, value };
+      });
+      if (!referenceTitle.value.trim() || fields.length > 16 || fields.some((field) => !field.label)) return;
+      this.dispatch("save-reference-record", { recordId: editing?.recordId ?? null, title: referenceTitle.value, areaId: referenceArea.value || null, fields });
+      editing = null; referenceTitle.value = ""; referenceFields.value = ""; referenceArea.value = ""; referenceSave.textContent = "Save reference";
+    });
+    referenceForm.append(referenceTitle, referenceArea, referenceFields, referenceSave);
+    const referenceList = document.createElement("ul");
+    for (const record of this.referenceRecords.filter((item) => !item.archived)) {
+      const row = document.createElement("li"); const title = document.createElement("h3"); title.textContent = record.title; row.append(title);
+      const fields = document.createElement("dl"); for (const field of record.fields) { const label = document.createElement("dt"); label.textContent = field.label; const value = document.createElement("dd"); value.textContent = field.value; fields.append(label, value); } row.append(fields);
+      if (record.areaId) { const linked = this.areaRecords.find((candidate) => candidate.areaId === record.areaId); const areaText = document.createElement("small"); areaText.textContent = linked ? `${linked.name}${linked.archived ? " (archived Area)" : ""}` : "Archived Area"; row.append(areaText); }
+      const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Edit"; edit.addEventListener("click", () => { editing = record; if (record.areaId && ![...referenceArea.options].some((option) => option.value === record.areaId)) { const oldArea = this.areaRecords.find((candidate) => candidate.areaId === record.areaId); const option = document.createElement("option"); option.value = record.areaId; option.textContent = `${oldArea?.name ?? "Archived Area"} (archived)`; referenceArea.append(option); } referenceTitle.value = record.title; referenceArea.value = record.areaId ?? ""; referenceFields.value = record.fields.map((field) => `${field.label}: ${field.value}`).join("\n"); referenceSave.textContent = "Save changes"; referenceTitle.focus(); });
+      const archive = document.createElement("button"); archive.type = "button"; archive.textContent = "Archive"; archive.addEventListener("click", () => this.dispatch("archive-reference-record", { recordId: record.recordId })); row.append(edit, archive); referenceList.append(row);
+    }
+    references.append(referenceHeading, referenceHint, referenceForm, referenceList); section.append(references);
     this.replaceChildren(section);
     for (const control of this.querySelectorAll("button,input,textarea,select")) control.disabled = this.disabledState;
     const candidate = focused && [...this.querySelectorAll("[data-focus-id]")]

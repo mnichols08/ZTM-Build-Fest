@@ -92,6 +92,7 @@ class KinApp extends HTMLElement {
     };
     this.onAreaIntent = (event) => this.saveArea(event.detail);
     this.onNoteIntent = (event) => this.saveNote(event.type.slice(4), event.detail);
+    this.onReferenceIntent = (event) => this.saveReferenceRecord(event.type.slice(4), event.detail);
     this.onItemAreaChange = (event) => this.saveArea({ ...event.detail, action: "assign-item-area" });
     this.onItemPlanningDateChange = (event) =>
       this.saveItemPlanningDate(event.detail, event.target.closest("kin-today"));
@@ -231,6 +232,7 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:open-pin", this.onOpenPin);
     this.addEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.addEventListener(`kin:${action}`, this.onNoteIntent);
+    for (const action of ["save-reference-record", "archive-reference-record"]) this.addEventListener(`kin:${action}`, this.onReferenceIntent);
     this.addEventListener("kin:add-handoff", this.onAddHandoff);
     this.addEventListener("kin:acknowledge-handoff", this.onAcknowledgeHandoff);
     this.addEventListener("kin:archive-handoff", this.onArchiveHandoff);
@@ -650,6 +652,7 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:open-pin", this.onOpenPin);
     this.removeEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.removeEventListener(`kin:${action}`, this.onNoteIntent);
+    for (const action of ["save-reference-record", "archive-reference-record"]) this.removeEventListener(`kin:${action}`, this.onReferenceIntent);
     this.removeEventListener("kin:add-handoff", this.onAddHandoff);
     this.removeEventListener(
       "kin:acknowledge-handoff",
@@ -1358,6 +1361,22 @@ class KinApp extends HTMLElement {
     }
   }
 
+  async saveReferenceRecord(action, detail) {
+    if (this.busy || !this.store || !this.engine) return;
+    const session = this.captureSession();
+    const recordId = detail.recordId ?? crypto.randomUUID().replaceAll("-", "");
+    const type = action === "archive-reference-record" ? action : "save-reference-record";
+    this.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
+    try {
+      await this.appendCommand({ type, ...detail, recordId, id: recordId });
+      this.assertCurrentSession(session); this.renderState(); this.broadcastEventChange();
+      this.setStatus(action === "archive-reference-record" ? "Reference archived." : "Reference saved on this device.");
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      this.showAlert(error.userMessage ?? SAVE_ERROR); this.setStatus("");
+    } finally { if (this.isCurrentSession(session)) { this.setBusy(false); this.flushPeerRefresh(); } }
+  }
+
   schedulePulseRefresh() {
     clearTimeout(this.pulseTimer);
     if (
@@ -1852,6 +1871,7 @@ class KinApp extends HTMLElement {
     this.routines.playbooks = this.state.playbooks ?? [];
     this.areas.areas = this.state.areas ?? [];
     this.notes.notes = this.state.notes ?? [];
+    this.notes.references = this.state.referenceRecords ?? [];
     this.notes.areas = this.state.areas ?? [];
     this.updateCalendarExportButton();
     this.schedulePulseRefresh();

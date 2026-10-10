@@ -19,10 +19,10 @@ async function worker({ failPath, offline = false } = {}) {
 test('complete new shell stages all assets while retaining prior cache until activation', async () => {
   const { listeners, stored } = await worker(); let install;
   listeners.get('install')({ waitUntil(value) { install = value; } }); await install;
-  const next = stored.get('kin-static-v0.29.0'); assert.ok(next.has('/reminders.js')); assert.ok(next.has('/wasm/kin_engine.wasm'));
+  const next = stored.get('kin-static-v0.30.0'); assert.ok(next.has('/reminders.js')); assert.ok(next.has('/wasm/kin_engine.wasm'));
   assert.ok(stored.has('kin-static-v0.28.0'));
   let activation; listeners.get('activate')({ waitUntil(value) { activation = value; } }); await activation;
-  assert.deepEqual([...stored.keys()], ['kin-static-v0.29.0']);
+  assert.deepEqual([...stored.keys()], ['kin-static-v0.30.0']);
 });
 
 test('failed shell staging leaves the known-good cache available', async () => {
@@ -39,7 +39,7 @@ test('manifest declares an installable local app shell', async () => {
 
 test('offline navigation falls back to the shell and API requests bypass the worker', async () => {
   const { listeners, stored } = await worker({ offline: true });
-  stored.set('kin-static-v0.29.0', new Map([['/index.html', new Response('offline-shell')]]));
+  stored.set('kin-static-v0.30.0', new Map([['/index.html', new Response('offline-shell')]]));
   let response; let called = false;
   listeners.get('fetch')({ request: { method: 'GET', url: 'https://kin.test/', mode: 'navigate' }, respondWith(value) { called = true; response = value; } });
   assert.equal((await response).status, 200); assert.equal(await (await response).text(), 'offline-shell');

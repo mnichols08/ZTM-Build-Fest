@@ -29,6 +29,8 @@ id_type!(AreaId);
 id_type!(NoteId);
 id_type!(StepId);
 id_type!(PlaybookId);
+id_type!(ReferenceRecordId);
+id_type!(ReferenceFieldId);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -212,6 +214,15 @@ pub enum EventKind {
     },
     PlaybookArchived {
         playbook_id: PlaybookId,
+    },
+    ReferenceRecordSaved {
+        record_id: ReferenceRecordId,
+        title: String,
+        area_id: Option<AreaId>,
+        fields: Vec<(ReferenceFieldId, String, String)>,
+    },
+    ReferenceRecordArchived {
+        record_id: ReferenceRecordId,
     },
 }
 

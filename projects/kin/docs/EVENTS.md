@@ -1,6 +1,6 @@
 # Household Events
 
-**Status:** Current through v0.29.0 PWA & Offline Install Polish. The service worker caches only static shell assets; reminders remain ephemeral browser-local state. No protocol change. Rust owns canonical command encoding and decoding. Protocol 19 adds ordered Playbook save/archive events 33–34 and a bounded projection. Protocols 1–18 fail closed on Playbook-bearing histories rather than omit them. Protocols 10–18 add Notes, Steps, richer Routine cadence, Shopping, Staples, household modes, planning dates, history timestamps, and Pins. Equal-time distributed replay remains deterministic; local encryption wraps canonical bytes without rewriting them.
+**Status:** Current through v0.30.0 Home Reference Records. Protocol 20 adds bounded Reference Record save/archive events 35–36 and a bounded projection. Rust owns canonical command encoding and decoding; older protocols reject Reference Record-bearing histories. Protocol 19 adds ordered Playbook events, with protocols 10–18 adding Notes, Steps, richer Routine cadence, Shopping, Staples, household modes, planning dates, history timestamps, and Pins. Equal-time distributed replay remains deterministic; local encryption wraps canonical bytes without rewriting them.
 
 ## Canonical record
 
@@ -68,6 +68,8 @@ Use uppercase entity/action-past-tense names consistently. The milestone column 
 | `PIN_REMOVED`                    | v0.26.0           | Remove an existing entity from the ordered Pins projection.   |
 | `PLAYBOOK_SAVED`                  | v0.27.0           | Create or edit an ordered reusable checklist template.        |
 | `PLAYBOOK_ARCHIVED`               | v0.27.0           | Retain a Playbook as an archived template.                    |
+| `REFERENCE_RECORD_SAVED`          | v0.30.0           | Create or edit a bounded household reference card.             |
+| `REFERENCE_RECORD_ARCHIVED`       | v0.30.0           | Retain a reference card as an archived record.                 |
 | `HOUSEHOLD_MODE_CHANGED`        | v0.21.0           | Set the explicit household-wide mode.                         |
 | `ITEM_PLANNING_DATE_CHANGED`    | v0.22.0           | Set or clear an Item's optional fixed civil planning date.     |
 | `HOUSEHOLD_CREATED`            | v0.8.0            | Establish a household identity when pairing is introduced.   |

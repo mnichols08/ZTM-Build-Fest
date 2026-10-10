@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.30.0 — Home Reference Records
+
+- Add bounded structured household reference cards with optional Area, labeled fields, edit, and archive.
+- Add protocol 20 save/archive events and deterministic replay; older protocols reject records rather than discard them.
+- Keep records inside the existing encrypted local-first event history. No storage or server schema migration is required.
+- Cross-device browser and accessibility release-gate checks remain to be completed.
+
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
 ## v0.29.0 — PWA & Offline Install Polish

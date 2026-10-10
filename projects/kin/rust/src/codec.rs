@@ -39,6 +39,8 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::PinRemoved { .. } => 32,
         EventKind::PlaybookSaved { .. } => 33,
         EventKind::PlaybookArchived { .. } => 34,
+        EventKind::ReferenceRecordSaved { .. } => 35,
+        EventKind::ReferenceRecordArchived { .. } => 36,
     }
 }
 
@@ -204,6 +206,28 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             }
         }
         EventKind::PlaybookArchived { playbook_id } => payload.extend_from_slice(&playbook_id.0),
+        EventKind::ReferenceRecordSaved {
+            record_id,
+            title,
+            area_id,
+            fields,
+        } => {
+            let (title, fields) = crate::state::normalize_reference_text(title, fields)?;
+            payload.extend_from_slice(&record_id.0);
+            payload.extend_from_slice(&area_id.map_or([0; 16], |id| id.0));
+            payload.extend_from_slice(&(title.len() as u16).to_le_bytes());
+            payload.push(fields.len() as u8);
+            payload.push(0);
+            payload.extend_from_slice(title.as_bytes());
+            for field in fields {
+                payload.extend_from_slice(&field.field_id.0);
+                payload.extend_from_slice(&(field.label.len() as u16).to_le_bytes());
+                payload.extend_from_slice(&(field.value.len() as u16).to_le_bytes());
+                payload.extend_from_slice(field.label.as_bytes());
+                payload.extend_from_slice(field.value.as_bytes());
+            }
+        }
+        EventKind::ReferenceRecordArchived { record_id } => payload.extend_from_slice(&record_id.0),
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());
     bytes.extend_from_slice(&event.event_version.to_le_bytes());
