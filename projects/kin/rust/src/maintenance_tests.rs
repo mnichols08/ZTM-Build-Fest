@@ -194,3 +194,55 @@ fn maintenance_links_and_limits_fail_closed_and_old_histories_stay_empty() {
     )
     .is_err());
 }
+
+#[test]
+fn archived_reference_history_is_retained_and_concurrent_create_converges() {
+    let base = vec![crate::command::create_event(&reference(), ctx(1, 3)).unwrap()];
+    let record_id = ReferenceRecordId([4; 16]);
+    let maintenance = crate::command::create_event(
+        &C::SaveMaintenanceEvent {
+            id: MaintenanceEventId([70; 16]),
+            record_id,
+            performed_on: date(20260918),
+            summary: "Filter changed".into(),
+            next_on: None,
+            routine_id: None,
+        },
+        CommandContext {
+            event_id: EventId([31; 16]),
+            logical_time: 2,
+            ..ctx(2, 4)
+        },
+    )
+    .unwrap();
+    let archive = crate::command::create_event(
+        &C::ArchiveReferenceRecord(record_id),
+        CommandContext {
+            event_id: EventId([32; 16]),
+            logical_time: 2,
+            ..ctx(3, 3)
+        },
+    )
+    .unwrap();
+    let replay = rebuild_distributed_on(
+        &[base[0].clone(), archive.clone(), maintenance.clone()],
+        1_791_475_200_010,
+        date(20261009),
+    )
+    .unwrap();
+    assert!(replay.reference_records[0].archived);
+    assert_eq!(replay.maintenance_events.len(), 1);
+    assert!(execute(
+        &C::SaveMaintenanceEvent {
+            id: MaintenanceEventId([71; 16]),
+            record_id,
+            performed_on: date(20260918),
+            summary: "Late edit".into(),
+            next_on: None,
+            routine_id: None
+        },
+        ctx(4, 3),
+        req(vec![base[0].clone(), archive], PROTOCOL_V21),
+    )
+    .is_err());
+}

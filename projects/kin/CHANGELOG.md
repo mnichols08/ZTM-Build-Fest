@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.31.1 — Concurrent Maintenance Archive Correction
+
+- Preserve a maintenance event created offline concurrently with archiving its Reference Record, independent of deterministic device replay order.
+- Continue rejecting new maintenance events authored after a Reference Record was archived.
+- Rust replay regression test passes.
+
 ## v0.31.0 — Maintenance Records
 
 - Add bounded factual maintenance history to Reference Records, including optional next dates and active Routine links.

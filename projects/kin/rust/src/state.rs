@@ -1049,7 +1049,14 @@ fn rebuild_with_context(
                 let record_pos = *reference_positions
                     .get(record_id)
                     .ok_or(KinError::InvalidEvent)?;
-                if reference_records[record_pos].archived || performed_on.encoded() == 0 {
+                if (reference_records[record_pos].archived
+                    && !has_concurrent_archive(
+                        allow_equal_logical_time,
+                        reference_archive_events.get(record_id),
+                        event,
+                    ))
+                    || performed_on.encoded() == 0
+                {
                     return Err(KinError::InvalidEvent);
                 }
                 if let Some(routine_id) = routine_id {
