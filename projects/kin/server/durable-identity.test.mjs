@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { DurableStore, DurableStoreError, hasDatabaseProcessLock } from "./durable-store.mjs";
 import { MAX_TRUSTED_DEVICES, PairingService } from "./pairing-service.mjs";
+import { sqlitePragma } from "./sqlite-test-utils.mjs";
 import {
   createDeviceAuthorizationCertificate,
   createDeviceKeyTransition,
@@ -57,8 +58,8 @@ function changeCredential(f, edit) {
 }
 
 function assertCorrupt(f) {
-  assert.equal(f.store.db.pragma("quick_check", { simple: true }), "ok");
-  assert.deepEqual(f.store.db.pragma("foreign_key_check"), []);
+  assert.equal(sqlitePragma(f.store.db, "quick_check", { simple: true }), "ok");
+  assert.deepEqual(sqlitePragma(f.store.db, "foreign_key_check"), []);
   const safeError = (error) => {
     assert.ok(error instanceof DurableStoreError);
     assert.doesNotMatch(error.message, /SELECT|UPDATE|sqlite|synthetic-key/);

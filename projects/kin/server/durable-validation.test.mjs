@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import Database from "better-sqlite3";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +8,7 @@ import { DurableStore, DurableStoreError, hasDatabaseProcessLock } from "./durab
 import { PairingService } from "./pairing-service.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
 import { createKinServer } from "./server.mjs";
+import { openTestDatabase, sqlitePragma } from "./sqlite-test-utils.mjs";
 
 function fixture(t, count = 3) {
   const directory = mkdtempSync(join(tmpdir(), "kin-semantic-validation-"));
@@ -108,8 +108,8 @@ for (const [name, corrupt] of corruptions) {
   test(`SQLite-valid ${name} prevents durable startup`, (t) => {
     const state = fixture(t);
     corrupt(state);
-    assert.equal(state.store.db.pragma("integrity_check", { simple: true }), "ok");
-    assert.deepEqual(state.store.db.pragma("foreign_key_check"), []);
+    assert.equal(sqlitePragma(state.store.db, "integrity_check", { simple: true }), "ok");
+    assert.deepEqual(sqlitePragma(state.store.db, "foreign_key_check"), []);
     state.store.close();
     assert.throws(() => new DurableStore(state.path), DurableStoreError);
     assert.equal(hasDatabaseProcessLock(state.path), false);
@@ -137,7 +137,7 @@ test("readiness detects semantic corruption before any household request; health
     const origin = `http://127.0.0.1:${app.server.address().port}`;
     assert.equal((await fetch(`${origin}/readiness`)).status, 200);
     store.db.exec("UPDATE sync_device_sequences SET last_sequence = 99");
-    assert.equal(store.db.pragma("quick_check", { simple: true }), "ok");
+    assert.equal(sqlitePragma(store.db, "quick_check", { simple: true }), "ok");
     const ready = await fetch(`${origin}/readiness`);
     assert.equal(ready.status, 503);
     const body = await ready.text();
@@ -196,18 +196,25 @@ test("backup and restore reject semantic corruption without publishing or replac
 test("backup copy must pass semantic validation before becoming a verified backup", async (t) => {
   const { store, directory } = fixture(t);
   const backup = join(directory, "backup.sqlite");
-  const original = store.db.backup.bind(store.db);
-  store.db.backup = async (temporary) => {
-    const result = await original(temporary);
-    const copy = new Database(temporary);
-    try {
-      copy.exec("UPDATE sync_device_sequences SET last_sequence = 99");
-    } finally {
-      copy.close();
-    }
-    return result;
+  const originalPrepare = store.db.prepare.bind(store.db);
+  store.db.prepare = (sql) => {
+    if (sql === "VACUUM INTO ?")
+      return {
+        run(temporary) {
+          const result = originalPrepare(sql).run(temporary);
+          const copy = openTestDatabase(temporary);
+          try {
+            copy.exec("UPDATE sync_device_sequences SET last_sequence = 99");
+          } finally {
+            copy.close();
+          }
+          return result;
+        },
+      };
+    return originalPrepare(sql);
   };
   await assert.rejects(store.backup(backup), DurableStoreError);
+  store.db.prepare = originalPrepare;
   assert.equal(existsSync(backup), false);
   assert.equal(readdirSync(directory).some((name) => name.endsWith(".tmp")), false);
   assert.equal(store.validate(), true);

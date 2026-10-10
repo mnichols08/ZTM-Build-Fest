@@ -4,7 +4,7 @@
   "version": "0.25.0",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "dev": "node --watch server/server.mjs",
@@ -13,8 +13,5 @@
     "restore": "node server/admin.mjs restore",
     "test:calendar": "node --test web/calendar-export.test.mjs",
     "test:server": "node --test server/*.test.mjs"
-  },
-  "dependencies": {
-    "better-sqlite3": "12.4.1"
   }
 }

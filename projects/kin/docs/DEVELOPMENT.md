@@ -55,10 +55,10 @@ Windows developers should be able to use PowerShell and standard Rust tooling. m
 
 - Rust toolchain (`rustup`, `cargo`) and the `wasm32-unknown-unknown` target
 - A modern secure-context browser with WebAssembly, Web Crypto, IndexedDB, Web Locks, BroadcastChannel, service workers and the platform APIs in [IMPLEMENTATION](IMPLEMENTATION.md)
-- Node.js 22 or later and npm for the same-origin application/API server and built-in tests; the locked `better-sqlite3` dependency is a native addon
+- Node.js 22.13.0 or later and npm for the same-origin application/API server and built-in tests; SQLite uses the built-in `node:sqlite` API, with no npm runtime dependencies
 - Python 3.11 or later for version checks and launcher smoke tests; it is not needed to serve the app
 
-The current implementation has been exercised on Windows with Node 22.12. Other operating-system and runtime/architecture combinations remain unverified; do not infer support from the npm package's availability.
+The current implementation has been exercised on Windows with Node 22.12 using its experimental SQLite flag. Node 22.13.0 or later is the supported runtime floor for using `node:sqlite` without that flag. Other operating-system and runtime/architecture combinations remain unverified.
 
 ## Browser capabilities
 
@@ -74,8 +74,9 @@ location. The production server holds an exclusive adjacent
 `<database-path>.service.lock`. Backup and restore share an adjacent
 `<database-path>.maintenance.lock`; restore also takes the service lock and
 requires the service to be stopped. Backup may run while the service is active,
-using SQLite's backup API. Graceful completion releases owned locks, while a
-crash or hard kill can leave a stale lock. Kin does not reclaim locks automatically.
+using SQLite's `VACUUM INTO` snapshot support. Graceful completion releases
+owned locks, while a crash or hard kill can leave a stale lock. Kin does not
+reclaim locks automatically.
 
 If startup or an admin operation reports an existing lock, use the exact absolute
 lock path in the error. Each lock contains JSON with `pid`, `operation`,

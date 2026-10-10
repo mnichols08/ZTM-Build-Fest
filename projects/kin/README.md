@@ -130,9 +130,11 @@ The script builds the WASM module and serves the web app at `http://localhost:80
 The service database defaults to `projects/kin/.kin-data/kin.sqlite`; set
 `KIN_DATA_DIR` or `KIN_DATABASE_PATH` to choose another location. Keep the data
 directory outside `web/`, restrict access to the service account, and back it
-up separately. Kin uses SQLite through the locked `better-sqlite3` dependency;
-only Windows with Node 22.12 has been exercised in this implementation
-candidate, so other platform/runtime combinations are not yet certified.
+up separately. Kin uses SQLite through Node's built-in `node:sqlite` API and
+has no npm runtime dependencies. Node.js 22.13.0 or later is required; this
+implementation candidate has only been exercised on Windows with Node 22.12
+and its experimental SQLite flag, so the supported-version floor and other
+platform/runtime combinations are not yet certified.
 
 The service persists household identity, authorization metadata, opaque relay
 events and synchronization state. Sessions and in-flight WebAuthn/pairing
