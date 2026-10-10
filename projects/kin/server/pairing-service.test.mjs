@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { createHash, webcrypto } from "node:crypto";
 import test from "node:test";
 import {
+  canManageTrust,
+  canParticipate,
   CLAIM_TTL_MS,
+  isTemporaryMember,
   PAIRING_CODE_ALPHABET,
   PAIRING_TTL_MS,
   PairingError,
@@ -66,6 +69,65 @@ const setup = () => {
     },
   };
 };
+
+test("member trust rules keep limited and temporary participation separate from adult authority", () => {
+  const now = 1_500_000;
+  const limitedMember = { active: true, kind: "limited" };
+  const temporaryMember = { active: true, kind: "temporary", expiresAt: now + 10_000 };
+  const expiredTemporaryMember = { active: true, kind: "temporary", expiresAt: now - 10_000 };
+
+  assert.equal(canManageTrust(limitedMember), false);
+  assert.equal(canParticipate(limitedMember, now), true);
+  assert.equal(canManageTrust(temporaryMember, now), false);
+  assert.equal(canParticipate(temporaryMember, now), true);
+  assert.equal(canParticipate(expiredTemporaryMember, now), false);
+  assert.equal(isTemporaryMember(expiredTemporaryMember, now), false);
+});
+
+test("expired temporary members lose session access even when the device remains trusted", () => {
+  let now = 1_000_000;
+  const service = new PairingService({
+    now: () => now,
+    secret: Buffer.alloc(32, 7),
+  });
+  const householdId = "household-1";
+  const memberId = "member-1";
+  const deviceId = "device-1";
+
+  service.households.set(householdId, {
+    id: householdId,
+    members: new Set([memberId]),
+    version: 1,
+    lifecycleState: "active",
+    deletionRequestedAt: null,
+    deletionFinalizeAt: null,
+    deletedAt: null,
+  });
+  service.members.set(memberId, {
+    id: memberId,
+    householdId,
+    active: true,
+    kind: "temporary",
+    expiresAt: now + 10_000,
+    credentials: new Set(),
+  });
+  service.devices.set(deviceId, {
+    id: deviceId,
+    memberId,
+    householdId,
+    label: "Guest device",
+    trustedAt: now,
+    revokedAt: null,
+    tokenHash: null,
+  });
+  const { sessionToken } = service.issueSession(memberId, deviceId);
+  now += 20_000;
+
+  assert.throws(
+    () => service.authorize(sessionToken),
+    (error) => error instanceof PairingError && error.code === "membership_removed",
+  );
+});
 
 function testWebAuthn() {
   return {
