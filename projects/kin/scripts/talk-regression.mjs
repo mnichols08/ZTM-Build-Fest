@@ -342,7 +342,7 @@ export async function talkRegressions() {
     "mixed deterministic replay",
   );
   check(
-    app.store.database.version === 3,
+    app.store.database.version === 4,
     "encrypted stores retain canonical event compatibility",
   );
   return "PASS Talk add/resolve/reopen/archive, tombstones, invalid references, inert Unicode, retry draft ownership and mixed replay";

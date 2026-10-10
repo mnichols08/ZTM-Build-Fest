@@ -1,14 +1,14 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.34.0; the last published product release remains v0.10.3. Maintenance Records add replay protocol 21, attachment bindings use protocol 22, and responsibility projection uses protocol 23. Attachments reuse household key epochs and opaque server SQLite schema v3. IndexedDB schema 4 adds protected attachment rows; attachment-inclusive household archive format 2 preserves format 1 imports. Candidate milestones are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.35.0; the last published product release remains v0.10.3. Adult membership is bounded at four active members and reuses existing pairing, key epochs, and server authorization. No event, storage, or archive format migration is introduced. Candidate milestones are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.34.0 | Governs |
+| Version axis | Last published v0.10.3 / current candidate v0.35.0 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.34.0` | Attachment lifecycle and responsibility ownership |
+| Application | Last published `0.10.3`; candidate `0.35.0` | Bounded multi-adult membership |
 | Server database schema | `3` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination, household lifecycle and encrypted attachment records |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v23; writes v23 for local and synchronized requests | Request context and projection semantics |

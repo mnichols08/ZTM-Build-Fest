@@ -12,7 +12,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createKinServer } from "../server/server.mjs";
 import { DurableStore } from "../server/durable-store.mjs";
 
-export async function passkeyRegressions(client) {
+export async function passkeyRegressions(client, service, syncService) {
   await client.send("WebAuthn.enable", { enableUI: false });
   const { authenticatorId } = await client.send(
     "WebAuthn.addVirtualAuthenticator",
@@ -57,6 +57,48 @@ export async function passkeyRegressions(client) {
     checks += await client.evaluate(
       `(${recoverPasskey.toString()})(${JSON.stringify(setup.recovery)})`,
     );
+    await client.evaluate(`(${prepareLeave.toString()})(${JSON.stringify(setup.recovery)})`);
+    const departing = [...service.members.values()].find(member => member.active);
+    const device = [...service.devices.values()].find(value => value.memberId === departing.id);
+    const { sessionToken: token } = service.issueSession(departing.id, device.id);
+    const invitation = service.createPairing(token);
+    const claim = service.claimPairing({
+      code: invitation.code,
+      credential: { id: "synthetic-remaining-adult", publicKey: "synthetic-key", algorithm: -7 },
+      deviceLabel: "Remaining adult fixture",
+    });
+    service.approvePairing(token, invitation.pairingId, claim.version);
+    const remaining = service.activateClaim(claim.claimToken);
+    syncService.enable(remaining.sessionToken);
+    for (const override of [{ isBadUV: true }, { isBogusSignature: true }]) {
+      await client.send("WebAuthn.setResponseOverrideBits", { authenticatorId, ...override });
+      checks += await client.evaluate(`(${rejectedLeave.toString()})()`);
+      assert.equal(service.members.get(departing.id).active, true);
+      assert.equal(service.devices.get(device.id).revokedAt, null);
+      assert.equal(syncService.status(remaining.sessionToken).rotationPending, false);
+      checks += 3;
+    }
+    await client.send("WebAuthn.setResponseOverrideBits", { authenticatorId });
+    await client.evaluate(`(${successfulLeave.toString()})()`);
+    for (let attempt = 0; attempt < 400 && service.members.get(departing.id).active; attempt++)
+      await delay(25);
+    assert.equal(service.members.get(departing.id).active, false, "fresh verified passkey completes self-leave");
+    assert.ok(service.devices.get(device.id).revokedAt);
+    assert.equal([...service.sessions.values()].some(session => session.memberId === departing.id), false);
+    assert.equal(syncService.status(remaining.sessionToken).pendingEpoch, 2);
+    let leftLocally = false;
+    for (let attempt = 0; attempt < 400 && !leftLocally; attempt++) {
+      try {
+        leftLocally = await client.evaluate("sessionStorage.getItem('kin-leave-check') === 'locked-after-passkey' && document.querySelector('kin-app')?.vault === null");
+      } catch {
+        // Successful leave navigates to the locked shell.
+      }
+      if (!leftLocally) await delay(25);
+    }
+    assert.ok(leftLocally, "successful component leave clears local authority only after verification");
+    const status = await client.evaluate("fetch('/api/status').then(response => response.json()).then(value => value.identity)");
+    assert.equal(status, null, "departing session and device cookies are cleared");
+    checks += 6;
     console.log(
       `PASS ${checks} virtual-authenticator assertions; PRF ${setup.prfSupported ? "supported and exercised" : "unavailable; explicit recovery exercised"}`,
     );
@@ -65,6 +107,50 @@ export async function passkeyRegressions(client) {
       authenticatorId,
     });
     await client.send("WebAuthn.disable");
+  }
+
+  async function prepareLeave(recovery) {
+    const app = document.querySelector("kin-app");
+    await app.security.run(() => app.security.unlockRecovery(recovery));
+    await app.household.load();
+    if (!app.household.identity) throw new Error("Self-leave fixture needs its registered session.");
+  }
+
+  async function rejectedLeave() {
+    const app = document.querySelector("kin-app");
+    const controller = app.household;
+    const originalConfirm = globalThis.confirm;
+    globalThis.confirm = () => true;
+    try {
+      await controller.leave();
+      if (!controller.identity || !app.vault || controller.querySelector(".household-message")?.getAttribute("role") !== "alert")
+        throw new Error("Rejected passkey leave must preserve authority and surface an accessible error.");
+      return 1;
+    } finally {
+      globalThis.confirm = originalConfirm;
+    }
+  }
+
+  function successfulLeave() {
+    const app = document.querySelector("kin-app");
+    const controller = app.household;
+    const originalGet = navigator.credentials.get.bind(navigator.credentials);
+    const originalConfirm = globalThis.confirm;
+    let asserted = false;
+    navigator.credentials.get = async options => {
+      const credential = await originalGet(options);
+      asserted = true;
+      return credential;
+    };
+    globalThis.confirm = () => true;
+    app.addEventListener("kin:lock", () => {
+      if (asserted && controller.identity === null && app.vault === null)
+        sessionStorage.setItem("kin-leave-check", "locked-after-passkey");
+    }, { once: true });
+    void controller.leave().finally(() => {
+      navigator.credentials.get = originalGet;
+      globalThis.confirm = originalConfirm;
+    });
   }
 }
 
@@ -237,7 +323,7 @@ if (
   const applicationPort = reservation.address().port;
   await new Promise((resolve) => reservation.close(resolve));
   const origin = `http://localhost:${applicationPort}`;
-  const { server, store } = createKinServer({
+  const { server, store, service, syncService } = createKinServer({
     port: applicationPort,
     host: "127.0.0.1",
     origin,
@@ -325,7 +411,7 @@ if (
         break;
       await delay(20);
     }
-    await passkeyRegressions(client);
+    await passkeyRegressions(client, service, syncService);
   } finally {
     if (socket) {
       const closed = new Promise((resolve) => socket.addEventListener("close", resolve, { once: true }));

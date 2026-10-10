@@ -9,7 +9,7 @@ credential; it never derives authority from an archive, stale device, or old
 credential. Same-member replacement revokes the selected lost device.
 Member-assisted recovery keeps the target member identity but replaces all of
 that member's credentials/devices/sessions. A malicious approving adult can
-authorize an attacker and lock out the other adult, consistent with the
+authorize an attacker and lock out other active adults, consistent with the
 existing one-adult removal authority; audit attribution and separate claimant
 activation prevent silent impersonation but cannot prove honest human intent.
 

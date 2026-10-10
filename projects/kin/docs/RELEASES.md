@@ -1,6 +1,6 @@
 # Release Process
 
-**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. The v0.31.0–v0.34.0 candidate batch is on `kin-fast-track-v0.31-v0.34`; no tags or merges are created on the feature branch.
+**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. The v0.35.0 More Adult Members implementation candidate is on `kin-v0.35-more-adults`; no release tag or merge is created on the feature branch.
 
 ## Release sequence
 

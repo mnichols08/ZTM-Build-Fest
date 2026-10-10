@@ -6,9 +6,9 @@ import {
   timingSafeEqual,
   verify as verifySignature,
 } from "node:crypto";
-import { MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
+import { MAX_ACTIVE_MEMBERS, MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
 import { HOUSEHOLD_DELETION_GRACE_MS } from "./durable-store.mjs";
-export { MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
+export { MAX_ACTIVE_MEMBERS, MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
 
 export const PAIRING_TTL_MS = 10 * 60_000;
 export const CLAIM_TTL_MS = 15 * 60_000;
@@ -460,10 +460,10 @@ export class PairingService {
   createPairing(sessionToken) {
     const { member, household, device } = this.authorize(sessionToken);
     this.prunePairingCapabilities();
-    if (this.activeMemberCount(household) >= 2)
+    if (this.activeMemberCount(household) >= MAX_ACTIVE_MEMBERS)
       throw new PairingError(
         "household_full",
-        "This household already has two adult members.",
+        "This household has reached its four-adult limit.",
         409,
       );
     for (const pairing of this.pairings.values()) {
@@ -1001,10 +1001,10 @@ export class PairingService {
       this.persistHousehold(household.id);
       return this.pairingView(pairing);
     }
-    if (this.activeMemberCount(household) >= 2)
+    if (this.activeMemberCount(household) >= MAX_ACTIVE_MEMBERS)
       throw new PairingError(
         "household_full",
-        "This household already has two adult members.",
+        "This household has reached its four-adult limit.",
         409,
       );
     if (this.activeTrustedDeviceCount(household) >= MAX_TRUSTED_DEVICES)
@@ -1305,8 +1305,14 @@ export class PairingService {
     };
   }
 
-  leaveHousehold(sessionToken) {
+  leaveHousehold(sessionToken, reauthenticatedMemberId) {
     const { member, household } = this.authorize(sessionToken);
+    if (reauthenticatedMemberId !== member.id)
+      throw new PairingError(
+        "fresh_auth_required",
+        "Authenticate with your passkey again before leaving the household.",
+        401,
+      );
     const remaining = [...household.members].filter(
       (memberId) =>
         memberId !== member.id && this.members.get(memberId)?.active,
@@ -1320,9 +1326,9 @@ export class PairingService {
     return this.removeMembership(household, member.id, member.id);
   }
 
-  removalContext(sessionToken, memberId) {
+  removalContext(sessionToken, memberId, { allowSelf = false } = {}) {
     const { member, household, device } = this.authorize(sessionToken);
-    if (memberId === member.id)
+    if (memberId === member.id && !allowSelf)
       throw new PairingError(
         "use_leave",
         "Use Leave household to remove your own membership.",
@@ -1346,7 +1352,7 @@ export class PairingService {
     if (reauthenticatedMemberId !== context.memberId)
       throw new PairingError(
         "fresh_auth_required",
-        "Authenticate with your passkey again before removing another adult.",
+        "Authenticate with your passkey again before removing a household adult.",
         401,
       );
     const household = this.households.get(
@@ -1357,6 +1363,26 @@ export class PairingService {
 
   removeMembership(household, memberId, actorId) {
     const target = this.members.get(memberId);
+    // An invitation is bound to its author. Once that member loses authority,
+    // pending claims must not remain stranded or become approvable later.
+    for (const pairing of this.pairings.values()) {
+      if (
+        pairing.householdId !== household.id ||
+        pairing.inviterId !== memberId ||
+        !["Pending", "Claimed"].includes(this.state(pairing))
+      ) continue;
+      pairing.state = "Revoked";
+      pairing.terminalAt = this.now();
+      pairing.version += 1;
+      this.codeIndex.delete(pairing.verifier);
+      for (const [claimHash, storedPairingId] of this.claimTokens)
+        if (storedPairingId === pairing.id) this.claimTokens.delete(claimHash);
+      this.audit("pairing_revoked", {
+        householdId: household.id,
+        pairingId: pairing.id,
+        reason: "inviter_removed",
+      });
+    }
     target.active = false;
     household.version += 1;
     for (const device of this.devices.values())
@@ -1544,7 +1570,7 @@ function terminalPairingError(state) {
     ],
     Pending: [
       "pairing_not_claimed",
-      "The other adult has not claimed this request yet.",
+      "The invited adult has not claimed this request yet.",
       409,
     ],
   };

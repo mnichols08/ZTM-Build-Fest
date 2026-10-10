@@ -913,7 +913,7 @@ async function api(request, response, url, context) {
     request.method === "POST" &&
     url.pathname === "/api/household/membership/remove/options"
   ) {
-    const removal = service.removalContext(session, body.memberId);
+    const removal = service.removalContext(session, body.memberId, { allowSelf: true });
     const flow = createFlow(
       {
         purpose: "remove-adult",
@@ -946,18 +946,21 @@ async function api(request, response, url, context) {
         401,
       );
     webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    const leaving = flow.targetMemberId === auth.member.id;
     const excludedDevices = [...service.devices.values()]
       .filter((device) => device.memberId === flow.targetMemberId)
       .map((device) => device.id);
     const result = withTransaction(context, () => {
-      const removed = service.removeOtherAdult(
-        session,
-        flow.targetMemberId,
-        auth.member.id,
-      );
+      const removed = leaving
+        ? service.leaveHousehold(session, auth.member.id)
+        : service.removeOtherAdult(session, flow.targetMemberId, auth.member.id);
       syncService.onAccessChange(auth.household.id, excludedDevices);
       return removed;
     });
+    if (leaving) {
+      clearCookie(response, "kin_session", secureCookies);
+      clearCookie(response, "kin_device", secureCookies);
+    }
     json(response, 200, result);
     return;
   }
@@ -965,24 +968,11 @@ async function api(request, response, url, context) {
     request.method === "DELETE" &&
     url.pathname === "/api/household/membership"
   ) {
-    if (body.memberId)
-      throw new PairingError(
-        "fresh_auth_required",
-        "Authenticate with your passkey again before removing another adult.",
-        401,
-      );
-    const auth = service.authorize(session);
-    const excludedDevices = [...service.devices.values()]
-      .filter((device) => device.memberId === auth.member.id)
-      .map((device) => device.id);
-    const result = withTransaction(context, () => {
-      const removed = service.leaveHousehold(session);
-      syncService.onAccessChange(auth.household.id, excludedDevices);
-      return removed;
-    });
-    clearCookie(response, "kin_session", secureCookies);
-    json(response, 200, result);
-    return;
+    throw new PairingError(
+      "fresh_auth_required",
+      "Authenticate with your passkey again before removing a household adult or leaving.",
+      401,
+    );
   }
   throw new PairingError("not_found", "That endpoint is unavailable.", 404);
 }

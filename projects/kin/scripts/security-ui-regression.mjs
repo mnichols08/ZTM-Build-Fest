@@ -1,6 +1,7 @@
 // Real browser IndexedDB + Web Crypto regressions; no third-party harness.
 import assert from "node:assert/strict";
 import { householdLifecycleChecks } from "./security-household-regression.mjs";
+import { householdLeaveChecks } from "./household-leave-regression.mjs";
 import { securityOperationChecks } from "./security-operation-regression.mjs";
 import { rootRotationUiChecks } from "./root-rotation-ui-regression.mjs";
 import { spawn } from "node:child_process";
@@ -21,6 +22,8 @@ export async function securityUiRegressions(client) {
   console.log(`PASS ${operations.checks} overlapping security operation assertions`);
   const lifecycle = await client.evaluate(`(${householdLifecycleChecks.toString()})(${JSON.stringify(result.recovery)})`);
   console.log(`PASS ${lifecycle.checks} household lifecycle cancellation assertions`);
+  const leave = await client.evaluate(`(${householdLeaveChecks.toString()})()`);
+  console.log(`PASS ${leave.checks} household leave component assertions`);
   const rotation = await client.evaluate(`(${rootRotationUiChecks.toString()})(${JSON.stringify(result.recovery)})`);
   result.recovery = rotation.recovery;
   console.log(`PASS ${rotation.checks} root rotation UI assertions`);
@@ -51,7 +54,7 @@ export async function securityUiRegressions(client) {
       `(${offlineReloadChecks.toString()})(${JSON.stringify(result.recovery)})`,
     );
     console.log(
-      `PASS ${result.checks + operations.checks + lifecycle.checks + rotation.checks + offline.checks} application lock, recovery, peer-tab and offline assertions`,
+      `PASS ${result.checks + operations.checks + lifecycle.checks + leave.checks + rotation.checks + offline.checks} application lock, recovery, peer-tab and offline assertions`,
     );
     console.log(JSON.stringify({ ...result.timings, ...offline.timings }));
   } finally {
