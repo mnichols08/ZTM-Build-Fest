@@ -1,15 +1,15 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.35.0; the last published product release remains v0.10.3. Adult membership is bounded at four active members and reuses existing pairing, key epochs, and server authorization. No event, storage, or archive format migration is introduced. Candidate milestones are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.38.0; the last published product release remains v0.10.3. Household membership is bounded to 12 total participants (four Adults and eight Limited Members); Temporary Members require expiry. Member kind and expiry are persisted in server schema v5. Candidate milestones are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.35.0 | Governs |
+| Version axis | Last published v0.10.3 / current candidate v0.38.0 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.35.0` | Bounded multi-adult membership |
-| Server database schema | `3` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination, household lifecycle and encrypted attachment records |
+| Application | Last published `0.10.3`; candidate `0.38.0` | Limited and Temporary household membership and context integration |
+| Server database schema | `5` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination, lifecycle, encrypted attachment records, member kind and Temporary expiry |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v23; writes v23 for local and synchronized requests | Request context and projection semantics |
 | Manual WASM ABI | Existing exports plus additive command/metadata/archive/import APIs | Host ownership and calls; new command packet v1 |

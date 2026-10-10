@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.38.0 — Modes & Member Context Polish (shipped on this branch)
+
+- Household settings present Adults, Limited Members, and Temporary Access as compact sections. Active Temporary access shows its absolute end time; ended access remains identifiable.
+- Adult-only controls stay out of Limited and Temporary views. Removal/revocation actions name the member target; Temporary revocation uses the existing passkey-protected access-change flow.
+- Responsibility selectors use active Adult/Limited/Temporary participants and exclude removed or expired members. Historical assignment records remain entity-centric.
+- Household Modes continue to affect routine presentation/availability only. UI states that Guest mode does not grant Temporary access; Vacation and Rest do not change authority.
+- Handoff remains a shared, multi-device household list without a two-person assumption. Reminders remain explicit and browser-local.
+- No presence, activity tracking, read receipts, location, scores, contribution analytics, or behavior-monitoring notifications were added.
+- Full release gate: 372 Node tests, 170 Rust tests, Edge browser/accessibility regressions, 32 virtual-authenticator assertions, formatting, lint, WASM build, and version consistency pass. WASM-target test execution is unverified on Windows because the generated test binary is not executable there.
+
+## v0.37.0 — Guest & Caregiver Access (shipped on this branch)
+
+- Adults can invite Temporary Members through the existing pairing flow with a required local date/time expiry held by the server.
+- Claimants cannot supply or extend kind/expiry during confirmation; server confirmation uses the invitation record.
+- At expiry, the first server request reconciles membership, revokes member devices and sessions, and marks key rotation pending. New sync and key access stay blocked until an Adult rotates household access.
+- Adults can revoke Temporary access early through the existing passkey-protected member removal flow.
+- Responsibility participant lists filter expired members; settings group active and ended Temporary access and provide a named revoke action.
+- Already decrypted plaintext on an offline device cannot be remotely erased. A reconnect after expiry is denied.
+- Pairing/expiry, durable identity and sync security regressions pass under Node 24.21.0. The full batch release gate remains in progress.
+
+## v0.36.0 — Limited Household Members (shipped on this branch)
+
+- Adult invitations carry a server-held `adult` or `limited` member kind through the existing pairing, passkey, approval, and single-use confirmation flow.
+- Limited Members can participate in ordinary synced household work and Responsibility; trust administration stays Adult-only at the server boundary.
+- Bound active membership to 12 total: four Adults and eight Limited Members. Temporary members share the total bound.
+- Persist member kind in server identity storage with a schema v5 migration; historical rows migrate to Adult.
+- Keep Temporary admissions bounded by a required server-held future expiry. Expiry reconciliation revokes devices and sessions and marks key rotation pending.
+- Local content archives remain event-history archives; durable server identity backups preserve member kind and expiry.
+- Pairing security (50), durable identity (40), durable store/identity round-trip (8), and sync service security (16) pass under Node 24.21.0. The full v0.36–v0.38 gate is recorded under v0.38.0.
+
 ## v0.35.1 — Fresh Passkey Self-Removal (candidate)
 
 - Self-removal now requires fresh passkey authentication before membership/device revocation and access-change rotation.

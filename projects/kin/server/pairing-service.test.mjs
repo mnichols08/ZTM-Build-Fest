@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { createHash, webcrypto } from "node:crypto";
 import test from "node:test";
 import {
+  canManageTrust,
+  canParticipate,
   CLAIM_TTL_MS,
+  isTemporaryMember,
+  normalizeMemberKind,
   PAIRING_CODE_ALPHABET,
   PAIRING_TTL_MS,
   PairingError,
@@ -66,6 +70,169 @@ const setup = () => {
     },
   };
 };
+
+test("member trust rules keep limited and temporary participation separate from adult authority", () => {
+  const now = 1_500_000;
+  const limitedMember = { active: true, kind: "limited" };
+  const temporaryMember = { active: true, kind: "temporary", expiresAt: now + 10_000 };
+  const expiredTemporaryMember = { active: true, kind: "temporary", expiresAt: now - 10_000 };
+
+  assert.equal(canManageTrust(limitedMember), false);
+  assert.equal(canParticipate(limitedMember, now), true);
+  assert.equal(canManageTrust(temporaryMember, now), false);
+  assert.equal(canParticipate(temporaryMember, now), true);
+  assert.equal(canParticipate(expiredTemporaryMember, now), false);
+  assert.equal(isTemporaryMember(expiredTemporaryMember, now), false);
+});
+
+test("legacy missing kinds stay adult while malformed explicit kinds fail closed", () => {
+  assert.equal(normalizeMemberKind(undefined), "adult");
+  assert.equal(normalizeMemberKind("adult"), "adult");
+  assert.equal(normalizeMemberKind("limited"), "limited");
+  assert.equal(normalizeMemberKind("temporary"), "temporary");
+  for (const kind of ["whatever", "admin", null, "", "malformed-object"]) {
+    assert.equal(normalizeMemberKind(kind), "invalid");
+    const member = { active: true, kind };
+    assert.equal(canManageTrust(member), false);
+    assert.equal(canParticipate(member), false);
+    assert.equal(isTemporaryMember(member), false);
+  }
+});
+
+test("the final trusted adult cannot leave when only limited or temporary members remain", () => {
+  const scenarios = [
+    [{ adult: 1, limited: 1, temporary: 0 }, "last_adult"],
+    [{ adult: 1, limited: 0, temporary: 1 }, "last_adult"],
+    [{ adult: 1, limited: 1, temporary: 1 }, "last_adult"],
+    [{ adult: 2, limited: 1, temporary: 0 }, true],
+    [{ adult: 2, limited: 0, temporary: 1 }, true],
+  ];
+
+  for (const [counts, expected] of scenarios) {
+    const service = new PairingService({
+      now: () => 1_000_000,
+      secret: Buffer.alloc(32, 7),
+    });
+    const householdId = `household-${Math.random().toString(16).slice(2)}`;
+    const adultId = "a".repeat(32);
+    const adultDeviceId = "b".repeat(32);
+    service.households.set(householdId, {
+      id: householdId,
+      members: new Set([adultId]),
+      version: 1,
+      lifecycleState: "active",
+      deletionRequestedAt: null,
+      deletionFinalizeAt: null,
+      deletedAt: null,
+    });
+    service.members.set(adultId, {
+      id: adultId,
+      householdId,
+      active: true,
+      kind: "adult",
+      credentials: new Set(),
+    });
+    service.devices.set(adultDeviceId, {
+      id: adultDeviceId,
+      memberId: adultId,
+      householdId,
+      label: "adult device",
+      trustedAt: 1_000,
+      revokedAt: null,
+      tokenHash: null,
+    });
+    const adultSessionToken = service.issueSession(adultId, adultDeviceId).sessionToken;
+
+    for (let index = 0; index < counts.limited; index += 1) {
+      const memberId = `${index}`.padStart(32, "0");
+      service.members.set(memberId, {
+        id: memberId,
+        householdId,
+        active: true,
+        kind: "limited",
+        credentials: new Set(),
+      });
+      service.households.get(householdId).members.add(memberId);
+    }
+    for (let index = 0; index < counts.temporary; index += 1) {
+      const memberId = `${index + 100}`.padStart(32, "0");
+      service.members.set(memberId, {
+        id: memberId,
+        householdId,
+        active: true,
+        kind: "temporary",
+        expiresAt: 2_000_000,
+        credentials: new Set(),
+      });
+      service.households.get(householdId).members.add(memberId);
+    }
+    for (let index = 0; index < counts.adult - 1; index += 1) {
+      const memberId = `adult-${index}`.padStart(32, "0");
+      service.members.set(memberId, {
+        id: memberId,
+        householdId,
+        active: true,
+        kind: "adult",
+        credentials: new Set(),
+      });
+      service.households.get(householdId).members.add(memberId);
+    }
+
+    if (expected === "last_adult") {
+      assert.throws(
+        () => service.leaveHousehold(adultSessionToken, adultId),
+        (error) => error.code === "last_adult",
+      );
+    } else {
+      assert.equal(service.leaveHousehold(adultSessionToken, adultId).removed, true);
+    }
+  }
+});
+
+test("expired temporary members lose session access even when the device remains trusted", () => {
+  let now = 1_000_000;
+  const service = new PairingService({
+    now: () => now,
+    secret: Buffer.alloc(32, 7),
+  });
+  const householdId = "household-1";
+  const memberId = "member-1";
+  const deviceId = "device-1";
+
+  service.households.set(householdId, {
+    id: householdId,
+    members: new Set([memberId]),
+    version: 1,
+    lifecycleState: "active",
+    deletionRequestedAt: null,
+    deletionFinalizeAt: null,
+    deletedAt: null,
+  });
+  service.members.set(memberId, {
+    id: memberId,
+    householdId,
+    active: true,
+    kind: "temporary",
+    expiresAt: now + 10_000,
+    credentials: new Set(),
+  });
+  service.devices.set(deviceId, {
+    id: deviceId,
+    memberId,
+    householdId,
+    label: "Guest device",
+    trustedAt: now,
+    revokedAt: null,
+    tokenHash: null,
+  });
+  const { sessionToken } = service.issueSession(memberId, deviceId);
+  now += 20_000;
+
+  assert.throws(
+    () => service.authorize(sessionToken),
+    (error) => error instanceof PairingError && error.code === "membership_removed",
+  );
+});
 
 function testWebAuthn() {
   return {
@@ -1182,6 +1349,164 @@ test("pairing requires claim and explicit approval, then becomes single use", ()
       }),
     (error) => error.code === "invalid_code" || error.code === "pairing_used",
   );
+});
+
+test("Adult invitation records the chosen kind and confirmation ignores claimant kind fields", () => {
+  const { service, adult } = setup();
+  const invitation = service.createPairing(adult.sessionToken, { kind: "limited" });
+  assert.equal(invitation.memberKind, "limited");
+  const claim = service.claimPairing({
+    code: invitation.code,
+    credential: credential("limited-member"),
+    deviceLabel: "Tablet",
+    kind: "adult",
+    expiresAt: Number.MAX_SAFE_INTEGER,
+  });
+  const confirmed = service.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
+  assert.equal(service.members.get(confirmed.confirmedMemberId).kind, "limited");
+  assert.equal(service.members.get(confirmed.confirmedMemberId).expiresAt, undefined);
+});
+
+test("Limited and Temporary direct HTTP trust-management calls are denied", async () => {
+  const { service, adult } = setup();
+  const invitation = service.createPairing(adult.sessionToken);
+  const memberId = "c".repeat(32);
+  const deviceId = "d".repeat(32);
+  service.members.set(memberId, { id: memberId, householdId: adult.householdId, active: true, kind: "limited", credentials: new Set() });
+  service.households.get(adult.householdId).members.add(memberId);
+  service.devices.set(deviceId, { id: deviceId, householdId: adult.householdId, memberId, label: "Limited tablet", trustedAt: 1_000_000, revokedAt: null, tokenHash: null });
+  const limited = service.issueSession(memberId, deviceId);
+  const temporaryId = "e".repeat(32);
+  const temporaryDeviceId = "f".repeat(32);
+  service.members.set(temporaryId, { id: temporaryId, householdId: adult.householdId, active: true, kind: "temporary", expiresAt: 2_000_000, credentials: new Set() });
+  service.households.get(adult.householdId).members.add(temporaryId);
+  service.devices.set(temporaryDeviceId, { id: temporaryDeviceId, householdId: adult.householdId, memberId: temporaryId, label: "Temporary phone", trustedAt: 1_000_000, revokedAt: null, tokenHash: null });
+  const temporary = service.issueSession(temporaryId, temporaryDeviceId);
+  const server = await startTestServer({ service, now: () => 1_000_000 });
+  try {
+    for (const [kind, sessionToken, targetDeviceId] of [["limited", limited.sessionToken, deviceId], ["temporary", temporary.sessionToken, temporaryDeviceId]]) {
+      const cookie = `kin_session=${sessionToken}`;
+      const requests = [
+        apiRequest(server, "/api/pairings", { method: "POST", cookie, body: { kind: "limited" } }),
+        apiRequest(server, `/api/pairings/${invitation.pairingId}`, { cookie }),
+        apiRequest(server, `/api/pairings/${invitation.pairingId}`, { method: "DELETE", cookie }),
+        apiRequest(server, `/api/pairings/${invitation.pairingId}/approve/options`, { method: "POST", cookie, body: { expectedVersion: 1 } }),
+        apiRequest(server, "/api/devices/pairings", { method: "POST", cookie, body: {} }),
+        apiRequest(server, "/api/devices", { cookie }),
+        apiRequest(server, `/api/devices/${targetDeviceId}`, { method: "DELETE", cookie }),
+        apiRequest(server, "/api/household/membership/remove/options", { method: "POST", cookie, body: { memberId: adult.memberId } }),
+        apiRequest(server, "/api/household/recovery", { method: "POST", cookie, body: {} }),
+        apiRequest(server, "/api/household/deletion/options", { method: "POST", cookie, body: {} }),
+        apiRequest(server, "/api/sync/epochs", { method: "POST", cookie, body: {} }),
+        apiRequest(server, "/api/sync/provisioning/grants", { method: "POST", cookie, body: {} }),
+      ];
+      const responses = await Promise.all(requests);
+      assert.deepEqual(responses.map((response) => response.status), Array(12).fill(403));
+      const syncStatus = await apiRequest(server, "/api/sync/status", { cookie });
+      assert.equal(syncStatus.status, 200);
+      assert.equal((await syncStatus.json()).memberKind, kind);
+      assert.equal((await apiRequest(server, "/api/sync/events", { cookie })).status, 200);
+    }
+  } finally {
+    await server.close();
+  }
+});
+
+test("Temporary participation works before expiry and expires into a server-side access change", async () => {
+  let now = 3_000_000;
+  const service = new PairingService({ now: () => now, secret: Buffer.alloc(32, 11) });
+  const adult = service.bootstrap({ credential: credential("expiry-adult"), deviceLabel: "Adult device" });
+  const expiry = now + 10_000;
+  const invitation = service.createPairing(adult.sessionToken, { kind: "temporary", expiresAt: expiry });
+  const claim = service.claimPairing({ code: invitation.code, credential: credential("expiry-guest"), deviceLabel: "Guest device" });
+  service.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
+  const temporary = service.activateClaim(claim.claimToken);
+  const server = await startTestServer({ service, now: () => now });
+  try {
+    await apiRequest(server, "/api/sync/enable", { method: "POST", cookie: `kin_session=${adult.sessionToken}`, body: {} });
+    const status = await apiRequest(server, "/api/sync/status", { cookie: `kin_session=${temporary.sessionToken}` });
+    assert.equal(status.status, 200);
+    assert.equal((await status.json()).memberKind, "temporary");
+    assert.equal((await apiRequest(server, "/api/sync/events", { cookie: `kin_session=${temporary.sessionToken}` })).status, 200);
+
+    now = expiry;
+    assert.notEqual((await apiRequest(server, "/api/sync/events", { cookie: `kin_session=${temporary.sessionToken}` })).status, 200);
+    const member = service.members.get(temporary.memberId);
+    assert.equal(member.active, false);
+    assert.equal(service.devices.get(temporary.deviceId).revokedAt, expiry);
+    const adultStatus = await apiRequest(server, "/api/sync/status", { cookie: `kin_session=${adult.sessionToken}` });
+    assert.equal((await adultStatus.json()).rotationPending, true);
+    assert.equal((await apiRequest(server, "/api/sync/events", { method: "POST", cookie: `kin_session=${adult.sessionToken}`, body: { events: [] } })).status, 409);
+    assert.equal((await apiRequest(server, "/api/sync/provisioning/grants", {
+      method: "POST",
+      cookie: `kin_session=${adult.sessionToken}`,
+      body: { recipientDeviceId: temporary.deviceId, keyEpoch: 2, requestId: "a".repeat(32) },
+    })).status, 409);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Adult can revoke Temporary access early through the existing passkey removal ceremony", async () => {
+  const { service, adult } = setup();
+  const invitation = service.createPairing(adult.sessionToken, { kind: "temporary", expiresAt: 2_000_000 });
+  const claim = service.claimPairing({ code: invitation.code, credential: credential("early-guest"), deviceLabel: "Guest device" });
+  service.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
+  const temporary = service.activateClaim(claim.claimToken);
+  const server = await startTestServer({ service, now: () => 1_000_000 });
+  const cookie = `kin_session=${adult.sessionToken}`;
+  try {
+    const options = await apiRequest(server, "/api/household/membership/remove/options", { method: "POST", cookie, body: { memberId: temporary.memberId } });
+    const flow = await options.json();
+    const result = await apiRequest(server, "/api/household/membership/remove/finish", {
+      method: "POST",
+      cookie,
+      body: { flow: flow.flow, credential: { id: "credential-a", flow: flow.flow } },
+    });
+    assert.equal(result.status, 200);
+    assert.equal(service.members.get(temporary.memberId).active, false);
+    assert.ok(service.devices.get(temporary.deviceId).revokedAt);
+    assert.equal(server.syncService.status(adult.sessionToken).rotationPending, true);
+  } finally {
+    await server.close();
+  }
+});
+
+test("Temporary invitation requires and persists a server-held future expiry", () => {
+  const { service, adult } = setup();
+  for (const expiresAt of [undefined, null, NaN, Infinity, "later", 999_999])
+    assert.throws(() => service.createPairing(adult.sessionToken, { kind: "temporary", expiresAt }), (error) => error.code === "temporary_expiry_required");
+  const expiry = 2_000_000;
+  const invitation = service.createPairing(adult.sessionToken, { kind: "temporary", expiresAt: expiry });
+  const claim = service.claimPairing({ code: invitation.code, credential: credential("temporary-member"), deviceLabel: "Guest phone", kind: "adult", expiresAt: Number.MAX_SAFE_INTEGER });
+  const confirmed = service.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
+  const member = service.members.get(confirmed.confirmedMemberId);
+  assert.equal(member.kind, "temporary");
+  assert.equal(member.expiresAt, expiry);
+  assert.equal(canManageTrust(member), false);
+});
+
+test("member limits are bounded by type and Temporary expiry reconciliation is deterministic", () => {
+  const { service, adult } = setup();
+  for (let index = 0; index < 8; index += 1) {
+    const memberId = `${index + 1}`.padStart(32, "0");
+    service.members.set(memberId, { id: memberId, householdId: adult.householdId, active: true, kind: "limited", credentials: new Set() });
+    service.households.get(adult.householdId).members.add(memberId);
+  }
+  assert.throws(() => service.createPairing(adult.sessionToken, { kind: "limited" }), (error) => error.code === "household_full");
+  const temporaryId = "e".repeat(32);
+  const deviceId = "f".repeat(32);
+  const household = service.households.get(adult.householdId);
+  service.members.set(temporaryId, { id: temporaryId, householdId: adult.householdId, active: true, kind: "temporary", expiresAt: 1_000_000, credentials: new Set() });
+  household.members.add(temporaryId);
+  service.devices.set(deviceId, { id: deviceId, householdId: adult.householdId, memberId: temporaryId, label: "Guest device", trustedAt: 1_000_000, revokedAt: null, tokenHash: null });
+  const originalVersion = household.version;
+  assert.deepEqual(service.expireTemporaryMemberships(), [{ householdId: adult.householdId, memberId: temporaryId, deviceIds: [deviceId] }]);
+  assert.equal(service.members.get(temporaryId).active, false);
+  assert.equal(service.devices.get(deviceId).revokedAt, 1_000_000);
+  assert.equal(household.version, originalVersion + 1);
+  assert.deepEqual(service.expireTemporaryMemberships(), []);
+  assert.equal(household.version, originalVersion + 1);
 });
 
 test("expiry and revocation are terminal and create no membership", () => {

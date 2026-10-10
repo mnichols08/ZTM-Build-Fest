@@ -4,7 +4,7 @@ import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
-import { PairingError, PairingService } from "./pairing-service.mjs";
+import { PairingError, PairingService, requireTrustAuthority } from "./pairing-service.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
 import {
   DurableConflictError,
@@ -272,6 +272,10 @@ function assertSecureOrigin(host, origin) {
 
 async function api(request, response, url, context) {
   const { service, syncService, webauthn, secureCookies } = context;
+  withTransaction(context, () => {
+    for (const expired of service.expireTemporaryMemberships(context.now()))
+      syncService.onAccessChange(expired.householdId, expired.deviceIds);
+  });
   for (const householdId of service.finalizeExpiredDeletions(context.now()))
     syncService.forgetHousehold(householdId);
   const attachmentUpload = request.method === "POST" && /^\/api\/sync\/attachments\/[a-f0-9]{32}$/.test(url.pathname);
@@ -466,7 +470,10 @@ async function api(request, response, url, context) {
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/pairings") {
-    json(response, 201, service.createPairing(session));
+    json(response, 201, service.createPairing(session, {
+      kind: body?.kind ?? "adult",
+      ...(body && typeof body === "object" && Object.hasOwn(body, "expiresAt") ? { expiresAt: body.expiresAt } : {}),
+    }));
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/devices/pairings") {
@@ -509,6 +516,7 @@ async function api(request, response, url, context) {
   );
   if (request.method === "POST" && approveOptions) {
     const auth = service.authorize(session);
+    requireTrustAuthority(auth.member, "approve a pairing");
     const ids = [...auth.member.credentials];
     const flow = createFlow(
       {
@@ -776,6 +784,7 @@ async function api(request, response, url, context) {
     url.pathname === "/api/household/deletion/options"
   ) {
     const auth = service.authorize(session);
+    requireTrustAuthority(auth.member, "delete the household");
     const flow = createFlow(
       {
         purpose: "delete-household",
@@ -837,6 +846,7 @@ async function api(request, response, url, context) {
     const { device, member } = service.trustedDevice(deviceToken, {
       allowDeletionPending: true,
     });
+    requireTrustAuthority(member, "cancel household deletion");
     const household = service.households.get(member.householdId);
     if (household?.lifecycleState !== "deletion_pending")
       throw new PairingError(

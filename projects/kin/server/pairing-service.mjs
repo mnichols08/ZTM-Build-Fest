@@ -6,7 +6,7 @@ import {
   timingSafeEqual,
   verify as verifySignature,
 } from "node:crypto";
-import { MAX_ACTIVE_MEMBERS, MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
+import { MAX_ACTIVE_ADULTS, MAX_ACTIVE_LIMITED_MEMBERS, MAX_ACTIVE_MEMBERS, MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
 import { HOUSEHOLD_DELETION_GRACE_MS } from "./durable-store.mjs";
 export { MAX_ACTIVE_MEMBERS, MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
 
@@ -32,6 +32,56 @@ export class PairingError extends Error {
 const id = () => randomBytes(16).toString("hex");
 const token = () => randomBytes(32).toString("base64url");
 const hash = (value) => createHash("sha256").update(value).digest("hex");
+
+export const MEMBER_KINDS = Object.freeze(["adult", "limited", "temporary"]);
+
+export function normalizeMemberKind(kind, fallback = "adult") {
+  if (kind === undefined) return fallback;
+  if (kind === null) return "invalid";
+  const value = String(kind).trim().toLowerCase();
+  if (!value) return "invalid";
+  if (value === "adult_member" || value === "trusted_adult" || value === "adult")
+    return "adult";
+  if (value === "limited_member" || value === "limited") return "limited";
+  if (
+    value === "temporary_member" ||
+    value === "temporary" ||
+    value === "guest" ||
+    value === "caregiver"
+  )
+    return "temporary";
+  return "invalid";
+}
+
+export function canManageTrust(member, now = Date.now()) {
+  if (!member || member.active === false || member.revokedAt) return false;
+  return normalizeMemberKind(member.kind) === "adult";
+}
+
+export function canParticipate(member, now = Date.now()) {
+  if (!member || member.active === false || member.revokedAt) return false;
+  const normalized = normalizeMemberKind(member.kind);
+  if (normalized === "invalid") return false;
+  if (normalized === "temporary") return isTemporaryMember(member, now);
+  return normalized === "adult" || normalized === "limited";
+}
+
+export function requireTrustAuthority(member, action = "manage trust", now = Date.now()) {
+  if (!canManageTrust(member, now))
+    throw new PairingError(
+      "adult_required",
+      `Only adults can ${action}.`,
+      403,
+    );
+}
+
+export function isTemporaryMember(member, now = Date.now()) {
+  if (!member || member.active === false || member.revokedAt) return false;
+  const normalized = normalizeMemberKind(member.kind);
+  if (normalized !== "temporary") return false;
+  if (!Number.isFinite(member.expiresAt)) return false;
+  return member.expiresAt > now;
+}
 
 function codeValue() {
   let value = "";
@@ -140,6 +190,7 @@ export class PairingService {
       id: memberId,
       householdId,
       active: true,
+      kind: "adult",
       credentials: new Set([credential.id]),
     });
     this.addCredential(memberId, credential);
@@ -207,7 +258,14 @@ export class PairingService {
         "This household was deleted and can no longer sync.",
         410,
       );
-    if (!member?.active || (requireTrusted && (!device || device.revokedAt))) {
+    if (!member?.active || !canParticipate(member, this.now())) {
+      throw new PairingError(
+        "membership_removed",
+        "This household membership is no longer active.",
+        403,
+      );
+    }
+    if (requireTrusted && (!device || device.revokedAt)) {
       throw new PairingError(
         "device_not_trusted",
         "This device is no longer trusted. Use another trusted device or recovery.",
@@ -241,7 +299,7 @@ export class PairingService {
         403,
       );
     const member = this.members.get(device.memberId);
-    if (!member?.active)
+    if (!member?.active || !canParticipate(member, this.now()))
       throw new PairingError(
         "membership_removed",
         "This household membership is no longer active.",
@@ -274,6 +332,7 @@ export class PairingService {
 
   requestHouseholdDeletion(sessionToken, reauthenticatedMemberId) {
     const { member, household } = this.authorize(sessionToken);
+    requireTrustAuthority(member, "delete the household");
     if (reauthenticatedMemberId !== member.id)
       throw new PairingError(
         "fresh_auth_required",
@@ -315,6 +374,7 @@ export class PairingService {
     const { device, member } = this.trustedDevice(deviceToken, {
       allowDeletionPending: true,
     });
+    requireTrustAuthority(member, "cancel household deletion");
     const household = this.households.get(member.householdId);
     const credential = this.credentials.get(credentialId);
     if (!credential || credential.memberId !== member.id)
@@ -443,9 +503,10 @@ export class PairingService {
   }
 
   activeMemberCount(household) {
-    return [...household.members].filter(
-      (memberId) => this.members.get(memberId)?.active === true,
-    ).length;
+    return [...household.members].filter((memberId) => {
+      const member = this.members.get(memberId);
+      return member && canParticipate(member, this.now());
+    }).length;
   }
 
   activeTrustedDeviceCount(household) {
@@ -453,17 +514,27 @@ export class PairingService {
       (device) =>
         device.householdId === household.id &&
         !device.revokedAt &&
-        this.members.get(device.memberId)?.active,
+        this.members.get(device.memberId) &&
+        canParticipate(this.members.get(device.memberId), this.now()),
     ).length;
   }
 
-  createPairing(sessionToken) {
+  createPairing(sessionToken, { kind = "adult", expiresAt } = {}) {
     const { member, household, device } = this.authorize(sessionToken);
+    requireTrustAuthority(member, "invite a new household member");
+    if (! ["adult", "limited", "temporary"].includes(kind))
+      throw new PairingError("member_kind_invalid", "Choose a supported member type.");
+    if (kind === "temporary" && (!Number.isSafeInteger(expiresAt) || expiresAt <= this.now()))
+      throw new PairingError("temporary_expiry_required", "Temporary access needs a valid future expiry.");
+    if (kind !== "temporary" && expiresAt !== undefined)
+      throw new PairingError("temporary_expiry_unexpected", "Only temporary access can have an expiry.");
     this.prunePairingCapabilities();
-    if (this.activeMemberCount(household) >= MAX_ACTIVE_MEMBERS)
+    if (this.activeMemberCount(household) >= MAX_ACTIVE_MEMBERS ||
+        kind === "adult" && this.activeKindCount(household, "adult") >= MAX_ACTIVE_ADULTS ||
+        kind === "limited" && this.activeKindCount(household, "limited") >= MAX_ACTIVE_LIMITED_MEMBERS)
       throw new PairingError(
         "household_full",
-        "This household has reached its four-adult limit.",
+        "This household has reached its member limit.",
         409,
       );
     for (const pairing of this.pairings.values()) {
@@ -483,6 +554,8 @@ export class PairingService {
       id: id(),
       householdId: household.id,
       inviterId: member.id,
+      admissionKind: kind,
+      ...(kind === "temporary" ? { admissionExpiresAt: expiresAt } : {}),
       inviterDeviceId: device.id,
       inviterKeyFingerprint: device.syncKeyFingerprint,
       verifier,
@@ -507,12 +580,45 @@ export class PairingService {
       code,
       state: pairing.state,
       expiresAt: pairing.expiresAt,
+      memberKind: pairing.admissionKind,
       version: pairing.version,
     };
   }
 
+  activeKindCount(household, kind) {
+    return [...household.members].filter((memberId) => {
+      const candidate = this.members.get(memberId);
+      return canParticipate(candidate, this.now()) && normalizeMemberKind(candidate.kind) === kind;
+    }).length;
+  }
+
+  expireTemporaryMemberships(now = this.now()) {
+    const expired = [];
+    for (const member of this.members.values()) {
+      if (member.active !== true || normalizeMemberKind(member.kind) !== "temporary" ||
+          !Number.isSafeInteger(member.expiresAt) || member.expiresAt > now) continue;
+      const household = this.households.get(member.householdId);
+      if (!household) continue;
+      member.active = false;
+      household.version += 1;
+      const deviceIds = [];
+      for (const device of this.devices.values())
+        if (device.memberId === member.id && !device.revokedAt) {
+          device.revokedAt = now;
+          deviceIds.push(device.id);
+        }
+      for (const [sessionHash, session] of this.sessions)
+        if (session.memberId === member.id) this.sessions.delete(sessionHash);
+      this.audit("temporary_access_expired", { householdId: household.id, memberId: member.id });
+      this.persistHousehold(household.id);
+      expired.push({ householdId: household.id, memberId: member.id, deviceIds });
+    }
+    return expired;
+  }
+
   createDevicePairing(sessionToken) {
     const { member, household, device } = this.authorize(sessionToken);
+    requireTrustAuthority(member, "manage this device");
     this.prunePairingCapabilities();
     if (this.activeTrustedDeviceCount(household) >= MAX_TRUSTED_DEVICES)
       throw new PairingError(
@@ -572,6 +678,7 @@ export class PairingService {
   createReplacementPairing(sessionToken, lostDeviceId) {
     const { member, household, device: approverDevice } =
       this.authorize(sessionToken);
+    requireTrustAuthority(member, "replace a trusted device");
     this.prunePairingCapabilities();
     const lostDevice = this.devices.get(lostDeviceId);
     if (
@@ -638,6 +745,7 @@ export class PairingService {
   createMemberRecoveryPairing(sessionToken, targetMemberId) {
     const { member: approver, household, device: approverDevice } =
       this.authorize(sessionToken);
+    requireTrustAuthority(approver, "approve member recovery");
     this.prunePairingCapabilities();
     const target = this.members.get(targetMemberId);
     if (
@@ -832,6 +940,7 @@ export class PairingService {
       household,
       device: approverDevice,
     } = this.authorize(sessionToken);
+    requireTrustAuthority(member, "approve a pairing");
     const pairing = this.pairings.get(pairingId);
     if (
       !pairing ||
@@ -1004,9 +1113,14 @@ export class PairingService {
     if (this.activeMemberCount(household) >= MAX_ACTIVE_MEMBERS)
       throw new PairingError(
         "household_full",
-        "This household has reached its four-adult limit.",
+        "This household has reached its member limit.",
         409,
       );
+    if (pairing.admissionKind === "temporary" && pairing.admissionExpiresAt <= this.now())
+      throw new PairingError("temporary_expiry_elapsed", "This temporary invitation has expired. Create a new invitation.", 409);
+    if (pairing.admissionKind === "adult" && this.activeKindCount(household, "adult") >= MAX_ACTIVE_ADULTS ||
+        pairing.admissionKind === "limited" && this.activeKindCount(household, "limited") >= MAX_ACTIVE_LIMITED_MEMBERS)
+      throw new PairingError("household_full", "This household has reached that member type's limit.", 409);
     if (this.activeTrustedDeviceCount(household) >= MAX_TRUSTED_DEVICES)
       throw new PairingError(
         "device_limit",
@@ -1020,6 +1134,8 @@ export class PairingService {
       id: memberId,
       householdId: household.id,
       active: true,
+      kind: pairing.admissionKind ?? "adult",
+      ...(pairing.admissionKind === "temporary" ? { expiresAt: pairing.admissionExpiresAt } : {}),
       credentials: new Set([pairing.claimant.credential.id]),
     });
     this.devices.set(deviceId, {
@@ -1064,7 +1180,8 @@ export class PairingService {
   }
 
   revokePairing(sessionToken, pairingId) {
-    const { household } = this.authorize(sessionToken);
+    const { member, household } = this.authorize(sessionToken);
+    requireTrustAuthority(member, "revoke a household invitation");
     const pairing = this.pairings.get(pairingId);
     if (!pairing || pairing.householdId !== household.id)
       throw new PairingError(
@@ -1085,7 +1202,8 @@ export class PairingService {
   }
 
   pairingForAdult(sessionToken, pairingId) {
-    const { household } = this.authorize(sessionToken);
+    const { member, household } = this.authorize(sessionToken);
+    requireTrustAuthority(member, "review a household invitation");
     const pairing = this.pairings.get(pairingId);
     if (!pairing || pairing.householdId !== household.id)
       throw new PairingError(
@@ -1195,6 +1313,8 @@ export class PairingService {
     return {
       pairingId: pairing.id,
       purpose: pairing.purpose ?? "adult",
+      memberKind: pairing.admissionKind ?? "adult",
+      ...(pairing.admissionExpiresAt == null ? {} : { memberExpiresAt: pairing.admissionExpiresAt }),
       inviterDeviceId: pairing.inviterDeviceId,
       inviterKeyFingerprint: pairing.inviterKeyFingerprint,
       state: this.state(pairing),
@@ -1219,7 +1339,8 @@ export class PairingService {
   }
 
   listDevices(sessionToken) {
-    const { household } = this.authorize(sessionToken);
+    const { member, household } = this.authorize(sessionToken);
+    requireTrustAuthority(member, "inspect trusted devices");
     return [...this.devices.values()]
       .filter((device) => device.householdId === household.id)
       .map(
@@ -1300,7 +1421,9 @@ export class PairingService {
       members: [...household.members].map((memberId) => ({
         id: memberId,
         current: memberId === member.id,
-        active: this.members.get(memberId)?.active === true,
+        active: canParticipate(this.members.get(memberId), this.now()),
+        kind: normalizeMemberKind(this.members.get(memberId)?.kind),
+        ...(this.members.get(memberId)?.expiresAt == null ? {} : { expiresAt: this.members.get(memberId).expiresAt }),
       })),
     };
   }
@@ -1313,14 +1436,21 @@ export class PairingService {
         "Authenticate with your passkey again before leaving the household.",
         401,
       );
-    const remaining = [...household.members].filter(
-      (memberId) =>
-        memberId !== member.id && this.members.get(memberId)?.active,
-    );
-    if (!remaining.length)
+    if (!canParticipate(member))
+      throw new PairingError(
+        "membership_not_active",
+        "This household member is no longer active.",
+        403,
+      );
+    const hasTrustedAdult = [...household.members].some((memberId) => {
+      if (memberId === member.id) return false;
+      const other = this.members.get(memberId);
+      return other?.active && canManageTrust(other, this.now());
+    });
+    if (!hasTrustedAdult)
       throw new PairingError(
         "last_adult",
-        "The only active adult cannot leave. Household deletion and recovery are not available.",
+        "The only active trusted adult cannot leave. Household deletion and recovery are not available.",
         409,
       );
     return this.removeMembership(household, member.id, member.id);
@@ -1328,6 +1458,7 @@ export class PairingService {
 
   removalContext(sessionToken, memberId, { allowSelf = false } = {}) {
     const { member, household, device } = this.authorize(sessionToken);
+    requireTrustAuthority(member, "remove a household member");
     if (memberId === member.id && !allowSelf)
       throw new PairingError(
         "use_leave",
@@ -1352,7 +1483,7 @@ export class PairingService {
     if (reauthenticatedMemberId !== context.memberId)
       throw new PairingError(
         "fresh_auth_required",
-        "Authenticate with your passkey again before removing a household adult.",
+        "Authenticate with your passkey again before removing a household member.",
         401,
       );
     const household = this.households.get(
@@ -1406,7 +1537,8 @@ export class PairingService {
   }
 
   revokeDevice(sessionToken, deviceId) {
-    const { household, device: actingDevice } = this.authorize(sessionToken);
+    const { member, household, device: actingDevice } = this.authorize(sessionToken);
+    requireTrustAuthority(member, "revoke a trusted device");
     const device = this.devices.get(deviceId);
     if (!device || device.householdId !== household.id)
       throw new PairingError("not_found", "That device is unavailable.", 404);
