@@ -1,6 +1,14 @@
 # Data Migrations
 
-**Status:** v0.26.0 adds Pins through replay protocol 18 without an IndexedDB, archive-container, sync-envelope, or server-schema migration. Earlier version sections are historical.
+**Status:** v0.27.0 adds Playbooks through replay protocol 19 without an IndexedDB, archive-container, sync-envelope, or server-schema migration. Earlier version sections are historical.
+
+## v0.27.0 Household Playbooks compatibility
+
+Protocol 19 adds event kinds 33 and 34 and appends a bounded Playbook list to
+the state projection after Pins. Protocols 1–18 remain unchanged for histories
+without Playbooks and reject Playbook events and Playbook-bearing projections.
+Templates and their generated Items/Steps remain separate canonical records;
+there is no persistent schema migration or server plaintext index.
 
 ## v0.26.0 Pins compatibility
 

@@ -2,6 +2,15 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
+## v0.27.0 — Household Playbooks
+
+- Add canonical protocol 19 Playbook templates with ordered checklist entries,
+  bounded household counts and lengths, edit/archive, and stable replay.
+- Add Playbook authoring and use under Routines. Instantiation creates a normal
+  Item with independent Checklist Steps; archived templates are retained.
+- Protocols 1–18 preserve their prior behavior and reject Playbook-bearing
+  history rather than silently dropping templates.
+
 ## v0.26.0 — Pins & Quick Access
 
 - Add stable, ordered Pin and Unpin events with a ten-Pin household limit.

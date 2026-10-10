@@ -37,6 +37,8 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::ItemPlanningDateChanged { .. } => 30,
         EventKind::PinAdded { .. } => 31,
         EventKind::PinRemoved { .. } => 32,
+        EventKind::PlaybookSaved { .. } => 33,
+        EventKind::PlaybookArchived { .. } => 34,
     }
 }
 
@@ -185,6 +187,23 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             payload.extend_from_slice(&[0; 3]);
             payload.extend_from_slice(target_id);
         }
+        EventKind::PlaybookSaved {
+            playbook_id,
+            title,
+            entries,
+        } => {
+            let (title, entries) = crate::state::normalize_playbook(title, entries)?;
+            payload.extend_from_slice(&playbook_id.0);
+            payload.extend_from_slice(&(title.len() as u16).to_le_bytes());
+            payload.push(entries.len() as u8);
+            payload.push(0);
+            payload.extend_from_slice(title.as_bytes());
+            for entry in entries {
+                payload.extend_from_slice(&(entry.len() as u16).to_le_bytes());
+                payload.extend_from_slice(entry.as_bytes());
+            }
+        }
+        EventKind::PlaybookArchived { playbook_id } => payload.extend_from_slice(&playbook_id.0),
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());
     bytes.extend_from_slice(&event.event_version.to_le_bytes());

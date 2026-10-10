@@ -1,6 +1,6 @@
 # Roadmap
 
-Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. PR #26 is merged into `kin-development` at `25e854eaa41a569650f89ea41db70a6f2bcb5c92`. The authorized v0.26.0 Pins & Quick Access implementation candidate is the first separate milestone on `kin-fast-track-v0.26-v0.30`; the v0.26–v0.30 batch remains in progress. These candidates are not production certification; do not create tags or merge the batch branch.
+Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. PR #26 is merged into `kin-development` at `25e854eaa41a569650f89ea41db70a6f2bcb5c92`. The authorized v0.26.0 Pins & Quick Access and v0.27.0 Household Playbooks candidates are committed separately on `kin-fast-track-v0.26-v0.30`; the v0.26–v0.30 batch remains in progress. These candidates are not production certification; do not create tags or merge the batch branch.
 
 ```text
 v0.9.3 — Encrypted Event Sync Stabilization
@@ -42,7 +42,7 @@ v1.0.0 — Stable Kin Platform (readiness-driven, no fixed date)
 
 Kin supports encrypted local storage, recovery/optional PRF unlock, verified migration, Rust commands/codecs, encrypted archives and a static offline shell alongside opt-in encrypted sync. The v0.11 candidate adds durable server identity/relay state and service database backup/restore. Archives recover local history, not server identity. Independent security review and broader browser/authenticator coverage remain outstanding.
 
-The v0.11 candidate settled service durability before v0.12 lifecycle/deletion. The [v0.11](V0.11.0.md) and [v0.12](V0.12.0.md) records describe candidate evidence; v0.13 Recovery & Household Continuity and v0.14 UX/UI Consolidation are implemented through their `.5` patches. v0.15 Household Areas is complete through v0.15.5; v0.16 Notes is complete through v0.16.2 with a v0.16.3 hardening candidate; v0.17 Checklist Steps is preserved as the existing tagged candidate. v0.18 Richer Routine Scheduling, v0.19 Shared Shopping Lists, and v0.20 Staples & Replenishment were implemented on the prior fast-track. v0.21 Household Modes through v0.25 Search & Filters are implementation candidates; v0.26 Pins & Quick Access is now an implementation candidate on the active authorized batch.
+The v0.11 candidate settled service durability before v0.12 lifecycle/deletion. The [v0.11](V0.11.0.md) and [v0.12](V0.12.0.md) records describe candidate evidence; v0.13 Recovery & Household Continuity and v0.14 UX/UI Consolidation are implemented through their `.5` patches. v0.15 Household Areas is complete through v0.15.5; v0.16 Notes is complete through v0.16.2 with a v0.16.3 hardening candidate; v0.17 Checklist Steps is preserved as the existing tagged candidate. v0.18 Richer Routine Scheduling, v0.19 Shared Shopping Lists, and v0.20 Staples & Replenishment were implemented on the prior fast-track. v0.21 Household Modes through v0.25 Search & Filters are implementation candidates; v0.26 Pins & Quick Access and v0.27 Household Playbooks are committed milestones on the active authorized batch.
 
 ## October direction
 

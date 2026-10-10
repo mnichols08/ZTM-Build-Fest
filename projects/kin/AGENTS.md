@@ -136,7 +136,10 @@ searches unarchived Item/Step, Handoff, Talk, and Note text locally,
 with Item-only classification/status/Area filters and no persistent index.
 The user-authorized v0.26.0 Pins & Quick Access milestone (`kin-v0.26.0`
 candidate name; no tag created) adds protocol 18 Pin/Unpin events, deterministic
-bounded replay and a compact Today section. The authorized fast-track continues
+bounded replay and a compact Today section. The authorized v0.27.0 Household
+Playbooks milestone (`kin-v0.27.0` candidate name; no tag created) adds
+protocol 19 ordered reusable checklist templates that instantiate as ordinary
+Items and Steps. The authorized fast-track continues
 through v0.30.x on `kin-fast-track-v0.26-v0.30`. Preserve separate minor
 milestone commits; do not create tags or merge the branch. These are
 implementation candidates, not production certification. Preserve the v0.13.5

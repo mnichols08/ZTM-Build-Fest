@@ -1,4 +1,4 @@
-const PROTOCOL_VERSION = 18;
+const PROTOCOL_VERSION = 19;
 const REQUEST_HEADER_BYTES = 64;
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 const PULSE_VALUES = ["good", "okay", "drained", "rough-day", "need-quiet"];
@@ -318,6 +318,8 @@ const COMMAND_TYPES = [
   "set-item-planning-date",
   "pin",
   "unpin",
+  "save-playbook",
+  "archive-playbook",
 ];
 const EVENT_KINDS = [
   null,
@@ -353,6 +355,8 @@ const EVENT_KINDS = [
   "ITEM_PLANNING_DATE_CHANGED",
   "PIN_ADDED",
   "PIN_REMOVED",
+  "PLAYBOOK_SAVED",
+  "PLAYBOOK_ARCHIVED",
 ];
 
 function encodeIntent(type, value) {
@@ -387,6 +391,7 @@ function encodeIntentPacket(command, identity) {
   if ((kind === 22 || kind === 23) && (typeof command.title !== "string" || typeof command.body !== "string" || strictTextDecoder.decode(noteTitle) !== command.title || strictTextDecoder.decode(noteBody) !== command.body || noteTitle.length > 256 || noteBody.length > 4096))
     throw new KinEngineError(2, "Note text must be valid Unicode and within its supported size.");
   const textBytes = textEncoder.encode(text);
+  const playbookBytes = kind === 33 ? encodePlaybookPayload(command) : null;
   if (
     hasText &&
     (typeof text !== "string" ||
@@ -408,7 +413,7 @@ function encodeIntentPacket(command, identity) {
           ? 16 + stepText.length
           : kind === 22 || kind === 23
             ? 24 + noteTitle.length + noteBody.length
-            : textBytes.length),
+            : kind === 33 ? playbookBytes.length : textBytes.length),
   );
   packet.set([75, 67, 77, 68, 1, 0, 0, 0]);
   const view = new DataView(packet.buffer);
@@ -441,6 +446,7 @@ function encodeIntentPacket(command, identity) {
       command.routineId ??
       command.areaId ??
       command.noteId ??
+      command.playbookId ??
       command.targetId ??
       command.id ??
       identity.entityId;
@@ -484,6 +490,9 @@ function encodeIntentPacket(command, identity) {
     const code = ["", "item", "note", "routine", "area"].indexOf(command.targetKind);
     if (code < 1) throw new KinEngineError(2, "Choose a valid Pin target.");
     packet[112] = code;
+  } else if (kind === 33) {
+    packet.set(playbookBytes, 128);
+    view.setUint32(124, playbookBytes.length, true);
   }
   if (kind === 22 || kind === 23) {
     packet.set(command.areaId ? idFromHex(command.areaId) : new Uint8Array(16), 128);
@@ -500,11 +509,28 @@ function encodeIntentPacket(command, identity) {
   } else if (stepAction) {
     packet.set(idFromHex(command.itemId), 128);
     view.setUint32(124, 16, true);
+  } else if (kind === 33) {
+    // The Playbook packet payload was encoded above.
   } else {
     view.setUint32(124, textBytes.length, true);
     packet.set(textBytes, 128);
   }
   return packet;
+}
+
+function encodePlaybookPayload(command) {
+  if (typeof command.title !== "string" || !Array.isArray(command.entries) || command.entries.length < 1 || command.entries.length > 16)
+    throw new KinEngineError(2, "A Playbook needs a title and one to sixteen entries.");
+  const title = textEncoder.encode(command.title.trim());
+  const entries = command.entries.map((entry) => textEncoder.encode(String(entry).trim()));
+  if (title.length < 1 || title.length > 128 || entries.some((entry) => entry.length < 1 || entry.length > 256))
+    throw new KinEngineError(2, "Playbook text is outside its supported size.");
+  const size = 4 + title.length + entries.reduce((sum, entry) => sum + 2 + entry.length, 0);
+  const bytes = new Uint8Array(size); const view = new DataView(bytes.buffer);
+  view.setUint16(0, title.length, true); bytes[2] = entries.length; bytes[3] = 0;
+  let offset = 4; bytes.set(title, offset); offset += title.length;
+  for (const entry of entries) { view.setUint16(offset, entry.length, true); offset += 2; bytes.set(entry, offset); offset += entry.length; }
+  return bytes;
 }
 
 function assertTimestamp(value) {
@@ -905,14 +931,14 @@ function decodeState(bytes) {
   const protocolVersion = view.getUint16(4, true);
   if (
     ![
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
     ].includes(protocolVersion) ||
     view.getUint16(6, true) !== 0
   ) {
     throw new KinEngineError(6, "Kin received an unsupported state format.");
   }
   const resultHeaderBytes =
-    protocolVersion >= 18 ? 76 : protocolVersion >= 15 ? 72 : protocolVersion >= 11 ? 68 : protocolVersion >= 10 ? 64 : protocolVersion >= 9
+    protocolVersion >= 19 ? 80 : protocolVersion >= 18 ? 76 : protocolVersion >= 15 ? 72 : protocolVersion >= 11 ? 68 : protocolVersion >= 10 ? 64 : protocolVersion >= 9
       ? 60
       : protocolVersion >= 7
       ? 56
@@ -938,6 +964,7 @@ function decodeState(bytes) {
   const stepCount = protocolVersion >= 11 ? view.getUint32(64, true) : 0;
   const modeCode = protocolVersion >= 15 ? view.getUint8(68) : 0;
   const pinCount = protocolVersion >= 18 ? view.getUint32(72, true) : 0;
+  const playbookCount = protocolVersion >= 19 ? view.getUint32(76, true) : 0;
   if (
     protocolVersion >= 15 &&
     (modeCode > 3 || bytes.subarray(69, 72).some((byte) => byte !== 0))
@@ -971,9 +998,10 @@ function decodeState(bytes) {
     areaCount > 32 ||
     noteCount > 128 ||
     pinCount > 10 ||
+    playbookCount > 32 ||
     stepCount > MAX_EVENT_COUNT ||
     stepCount > itemCount * MAX_STEPS_PER_ITEM ||
-    itemCount + handoffCount + talkCount + pulseCount + routineCount + noteCount >
+    itemCount + handoffCount + talkCount + pulseCount + routineCount + noteCount + playbookCount >
       MAX_EVENT_COUNT
   ) {
     throw new KinEngineError(
@@ -1381,6 +1409,30 @@ function decodeState(bytes) {
   };
   if (pins.some((pin) => !knownTargets[pin.targetKind]?.has(pin.targetId)))
     throw new KinEngineError(6, "Kin received a Pin for an unknown household record.");
+  const playbooks = [];
+  const playbookIds = new Set();
+  for (let index = 0; index < playbookCount; index += 1) {
+    if (offset + 22 > bytes.length) throw new KinEngineError(6, "Kin received a truncated Playbook.");
+    const playbookId = idToHex(bytes.subarray(offset, offset + 16));
+    const archived = bytes[offset + 16];
+    const entryCount = bytes[offset + 17];
+    const titleLength = view.getUint16(offset + 18, true);
+    if (playbookId === "00".repeat(16) || playbookIds.has(playbookId) || archived > 1 || entryCount < 1 || entryCount > 16 || titleLength < 1 || titleLength > 128 || bytes.subarray(offset + 20, offset + 22).some(Boolean))
+      throw new KinEngineError(6, "Kin received an invalid Playbook.");
+    playbookIds.add(playbookId);
+    offset += 22;
+    const titleEnd = offset + titleLength;
+    if (titleEnd > bytes.length) throw new KinEngineError(6, "Kin received a truncated Playbook title.");
+    const title = strictTextDecoder.decode(bytes.subarray(offset, titleEnd)); offset = titleEnd;
+    const entries = [];
+    for (let item = 0; item < entryCount; item += 1) {
+      if (offset + 2 > bytes.length) throw new KinEngineError(6, "Kin received a truncated Playbook entry.");
+      const length = view.getUint16(offset, true); offset += 2;
+      if (length < 1 || length > 256 || offset + length > bytes.length) throw new KinEngineError(6, "Kin received an invalid Playbook entry.");
+      entries.push(strictTextDecoder.decode(bytes.subarray(offset, offset + length))); offset += length;
+    }
+    playbooks.push({ playbookId, title, entries, archived: archived === 1 });
+  }
   const entityNames = ["", "item", "handoff", "talk", "routine"];
   for (let index = 0; index < summaryCount; index += 1) {
     const headerEnd = offset + 24;
@@ -1458,6 +1510,7 @@ function decodeState(bytes) {
       ...(protocolVersion >= 9 ? { areas } : {}),
       ...(protocolVersion >= 10 ? { notes } : {}),
       ...(protocolVersion >= 18 ? { pins } : {}),
+      ...(protocolVersion >= 19 ? { playbooks } : {}),
       ...(modeCode === 0
         ? {}
         : { mode: ["normal", "vacation", "guests", "rest"][modeCode] }),

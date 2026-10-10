@@ -3,6 +3,8 @@ class KinRoutines extends HTMLElement {
   constructor() {
     super();
     this.records = [];
+    this.playbookRecords = [];
+    this.editingPlaybookId = null;
     this.isDisabled = false;
     this.householdMode = "normal";
   }
@@ -64,25 +66,38 @@ class KinRoutines extends HTMLElement {
       this.dispatch("create-routine", { text, cadence: this.cadence.value });
     });
     form.append(label, this.input, cadenceLabel, this.cadence, this.button, this.message);
+    const playbooks = document.createElement("section");
+    playbooks.className = "playbook-section";
+    const playbookHeading = document.createElement("h3"); playbookHeading.textContent = "Household playbooks";
+    const playbookHint = document.createElement("p"); playbookHint.textContent = "Save a reusable checklist. Using one creates an ordinary checklist you can edit independently.";
+    const playbookForm = document.createElement("form"); playbookForm.className = "compose-form";
+    this.playbookTitle = document.createElement("input"); this.playbookTitle.maxLength = 128; this.playbookTitle.required = true; this.playbookTitle.placeholder = "Playbook name"; this.playbookTitle.setAttribute("aria-label", "Playbook name");
+    this.playbookEntries = document.createElement("textarea"); this.playbookEntries.required = true; this.playbookEntries.rows = 4; this.playbookEntries.maxLength = 4096; this.playbookEntries.placeholder = "One checklist step per line"; this.playbookEntries.setAttribute("aria-label", "Ordered checklist entries");
+    this.playbookSave = document.createElement("button"); this.playbookSave.type = "submit"; this.playbookSave.className = "add-button"; this.playbookSave.textContent = "Save playbook";
+    playbookForm.addEventListener("submit", event => { event.preventDefault(); if (this.isDisabled) return; const entries = this.playbookEntries.value.split(/\r?\n/).map(value => value.trim()).filter(Boolean); if (!this.playbookTitle.value.trim() || entries.length < 1 || entries.length > 16 || entries.some(value => new TextEncoder().encode(value).length > 256)) return; this.dispatch("save-playbook", { playbookId: this.editingPlaybookId, title: this.playbookTitle.value, entries }); });
+    playbookForm.append(this.playbookTitle, this.playbookEntries, this.playbookSave);
+    this.playbookList = document.createElement("ul"); this.playbookList.className = "item-list";
+    playbooks.append(playbookHeading, playbookHint, playbookForm, this.playbookList);
     this.list = document.createElement("ul");
     this.list.className = "item-list";
     this.empty = document.createElement("p");
     this.empty.className = "empty-state";
     this.empty.textContent = "No routines yet. Add a small household rhythm.";
-    section.append(heading, hint, form, this.empty, this.list);
+    section.append(heading, hint, form, this.empty, this.list, playbooks);
     this.append(section);
     this.render();
     this.disabled = this.isDisabled;
   }
 
   set routines(value) { this.records = value; this.render(); }
+  set playbooks(value) { this.playbookRecords = value ?? []; this.renderPlaybooks(); }
   set householdMode(value) {
     this.mode = value;
     this.render();
   }
   set disabled(value) {
     this.isDisabled = Boolean(value);
-    for (const control of this.querySelectorAll("input, select, button")) control.disabled = this.isDisabled;
+    for (const control of this.querySelectorAll("input, textarea, select, button")) control.disabled = this.isDisabled;
   }
   focusInput() { this.input.focus(); }
   saveDraft() {
@@ -93,6 +108,7 @@ class KinRoutines extends HTMLElement {
     this.input.value = "";
     this.saveDraft();
   }
+  clearPlaybookEditor() { this.editingPlaybookId = null; this.playbookTitle.value = ""; this.playbookEntries.value = ""; this.playbookSave.textContent = "Save playbook"; }
   dispatch(action, detail) {
     if (!this.isDisabled) this.dispatchEvent(new CustomEvent(`kin:${action}`, { detail, bubbles: true, composed: true }));
   }
@@ -154,6 +170,23 @@ class KinRoutines extends HTMLElement {
       this.list.append(row);
     }
     this.restoreFocus(focus);
+    this.renderPlaybooks();
+  }
+  renderPlaybooks() {
+    if (!this.playbookList) return;
+    this.playbookList.replaceChildren();
+    for (const record of this.playbookRecords.filter(value => !value.archived)) {
+      const row = document.createElement("li"); row.className = "item-row";
+      const content = document.createElement("div"); const title = document.createElement("p"); title.className = "item-text"; title.textContent = record.title;
+      const entries = document.createElement("ol"); for (const text of record.entries) { const item = document.createElement("li"); item.textContent = text; entries.append(item); }
+      content.append(title, entries);
+      const actions = document.createElement("div"); actions.className = "item-action";
+      const add = (label, action, callback) => { const button = document.createElement("button"); button.type = "button"; button.textContent = label; button.disabled = this.isDisabled; button.dataset.playbookId = record.playbookId; button.dataset.action = action; button.addEventListener("click", callback); actions.append(button); };
+      add("Use checklist", "instantiate", () => this.dispatch("instantiate-playbook", { playbookId: record.playbookId }));
+      add("Edit", "edit", () => { this.editingPlaybookId = record.playbookId; this.playbookTitle.value = record.title; this.playbookEntries.value = record.entries.join("\n"); this.playbookSave.textContent = "Save changes"; this.playbookTitle.focus(); });
+      add("Archive", "archive", () => this.dispatch("archive-playbook", { playbookId: record.playbookId }));
+      row.append(content, actions); this.playbookList.append(row);
+    }
   }
 }
 customElements.define("kin-routines", KinRoutines);

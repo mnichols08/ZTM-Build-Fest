@@ -28,6 +28,7 @@ id_type!(RoutineId);
 id_type!(AreaId);
 id_type!(NoteId);
 id_type!(StepId);
+id_type!(PlaybookId);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -203,6 +204,14 @@ pub enum EventKind {
     PinRemoved {
         target_kind: PinTargetKind,
         target_id: [u8; 16],
+    },
+    PlaybookSaved {
+        playbook_id: PlaybookId,
+        title: String,
+        entries: Vec<String>,
+    },
+    PlaybookArchived {
+        playbook_id: PlaybookId,
     },
 }
 

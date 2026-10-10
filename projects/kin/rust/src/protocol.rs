@@ -28,7 +28,8 @@ pub const PROTOCOL_V15: u16 = 15;
 pub const PROTOCOL_V16: u16 = 16;
 pub const PROTOCOL_V17: u16 = 17;
 pub const PROTOCOL_V18: u16 = 18;
-pub const PROTOCOL_VERSION: u16 = PROTOCOL_V18;
+pub const PROTOCOL_V19: u16 = 19;
+pub const PROTOCOL_VERSION: u16 = PROTOCOL_V19;
 pub const ERROR_PROTOCOL_VERSION: u16 = PROTOCOL_V1;
 pub const MAX_EVENT_COUNT: usize = 10_000;
 pub const MAX_PROTOCOL_BYTES: usize = 64 * 1024 * 1024;
@@ -89,6 +90,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
             | PROTOCOL_V16
             | PROTOCOL_V17
             | PROTOCOL_V18
+            | PROTOCOL_V19
     ) {
         return Err(KinError::UnsupportedVersion);
     }
@@ -186,9 +188,8 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
         .map_err(|_| KinError::SizeLimit)?;
     let mut offset = match version {
         PROTOCOL_V8 | PROTOCOL_V9 | PROTOCOL_V10 | PROTOCOL_V11 | PROTOCOL_V12 | PROTOCOL_V13
-        | PROTOCOL_V14 | PROTOCOL_V15 | PROTOCOL_V16 | PROTOCOL_V17 | PROTOCOL_V18 => {
-            V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES
-        }
+        | PROTOCOL_V14 | PROTOCOL_V15 | PROTOCOL_V16 | PROTOCOL_V17 | PROTOCOL_V18
+        | PROTOCOL_V19 => V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES,
         PROTOCOL_V7 => 44,
         PROTOCOL_V6 => V6_REQUEST_HEADER_BYTES,
         PROTOCOL_V5 => 20,
@@ -255,6 +256,7 @@ pub fn encode_state(state: &HouseholdState, protocol_version: u16) -> Result<Vec
         || state.items.iter().any(|item| !item.steps.is_empty())
         || state.items.iter().any(|item| item.planning_date.is_some())
         || !state.pins.is_empty()
+        || !state.playbooks.is_empty()
     {
         return Err(KinError::UnsupportedVersion);
     }
@@ -522,6 +524,13 @@ pub fn encode_state_v18(
     encode_state_with_summary(state, summary, PROTOCOL_V18)
 }
 
+pub fn encode_state_v19(
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<Vec<u8>, KinError> {
+    encode_state_with_summary(state, summary, PROTOCOL_V19)
+}
+
 fn encode_state_with_summary(
     state: &HouseholdState,
     summary: &CatchUpSummary,
@@ -545,6 +554,9 @@ fn encode_state_with_summary(
         return Err(KinError::UnsupportedVersion);
     }
     if version < PROTOCOL_V18 && !state.pins.is_empty() {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if version < PROTOCOL_V19 && !state.playbooks.is_empty() {
         return Err(KinError::UnsupportedVersion);
     }
     if state.pins.len() > crate::state::MAX_PINS {
@@ -765,6 +777,7 @@ fn encode_state_with_summary(
         })
         .and_then(|length| length.checked_add(if version >= PROTOCOL_V15 { 4 } else { 0 }))
         .and_then(|length| length.checked_add(if version >= PROTOCOL_V18 { 4 } else { 0 }))
+        .and_then(|length| length.checked_add(if version >= PROTOCOL_V19 { 4 } else { 0 }))
         .and_then(|length| {
             length.checked_add(if version >= PROTOCOL_V16 {
                 state.items.len().checked_mul(4)?
@@ -782,6 +795,18 @@ fn encode_state_with_summary(
         .and_then(|length| {
             length.checked_add(if version >= PROTOCOL_V18 {
                 state.pins.len().checked_mul(20)?
+            } else {
+                0
+            })
+        })
+        .and_then(|length| {
+            length.checked_add(if version >= PROTOCOL_V19 {
+                state.playbooks.iter().try_fold(0usize, |sum, record| {
+                    let entries = record.entries.iter().try_fold(0usize, |entry_sum, entry| {
+                        entry_sum.checked_add(2 + entry.len())
+                    })?;
+                    sum.checked_add(22 + record.title.len() + entries)
+                })?
             } else {
                 0
             })
@@ -832,6 +857,9 @@ fn encode_state_with_summary(
     if version >= PROTOCOL_V18 {
         push_u32(&mut result, state.pins.len() as u32);
     }
+    if version >= PROTOCOL_V19 {
+        push_u32(&mut result, state.playbooks.len() as u32);
+    }
     result.extend_from_slice(&previous[24..]);
     if version >= PROTOCOL_V9 {
         for item in &state.items {
@@ -871,6 +899,20 @@ fn encode_state_with_summary(
             result.extend_from_slice(&pin.target_id);
         }
     }
+    if version >= PROTOCOL_V19 {
+        for record in &state.playbooks {
+            result.extend_from_slice(&record.playbook_id.0);
+            result.push(u8::from(record.archived));
+            result.push(record.entries.len() as u8);
+            push_u16(&mut result, record.title.len() as u16);
+            result.extend_from_slice(&[0; 2]);
+            result.extend_from_slice(record.title.as_bytes());
+            for entry in &record.entries {
+                push_u16(&mut result, entry.len() as u16);
+                result.extend_from_slice(entry.as_bytes());
+            }
+        }
+    }
 
     for entry in &summary.entries {
         result.extend_from_slice(&entry.event_id.0);
@@ -891,7 +933,7 @@ fn encode_state_with_summary(
 }
 
 pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelope, KinError> {
-    if !(PROTOCOL_V1..=PROTOCOL_V18).contains(&protocol_version) {
+    if !(PROTOCOL_V1..=PROTOCOL_V19).contains(&protocol_version) {
         return Err(KinError::UnsupportedVersion);
     }
     if record.len() > MAX_PROTOCOL_BYTES {
@@ -1101,6 +1143,67 @@ pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelop
                     target_kind,
                     target_id,
                 }
+            }
+        }
+        (1, 33) if protocol_version >= PROTOCOL_V19 => {
+            if payload.len() < 20 || payload[19] != 0 {
+                return Err(KinError::MalformedProtocol);
+            }
+            let title_len = u16::from_le_bytes(payload[16..18].try_into().unwrap()) as usize;
+            let count = payload[18] as usize;
+            if count == 0
+                || count > crate::state::MAX_PLAYBOOK_ENTRIES
+                || title_len == 0
+                || title_len > crate::state::MAX_PLAYBOOK_TITLE_BYTES
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            let mut offset = 20usize;
+            let title_end = offset
+                .checked_add(title_len)
+                .ok_or(KinError::MalformedProtocol)?;
+            let title = std::str::from_utf8(
+                payload
+                    .get(offset..title_end)
+                    .ok_or(KinError::MalformedProtocol)?,
+            )
+            .map_err(|_| KinError::MalformedProtocol)?
+            .to_owned();
+            offset = title_end;
+            let mut entries = Vec::with_capacity(count);
+            for _ in 0..count {
+                let len = u16::from_le_bytes(
+                    payload
+                        .get(offset..offset + 2)
+                        .ok_or(KinError::MalformedProtocol)?
+                        .try_into()
+                        .unwrap(),
+                ) as usize;
+                offset += 2;
+                let end = offset.checked_add(len).ok_or(KinError::MalformedProtocol)?;
+                entries.push(
+                    std::str::from_utf8(
+                        payload
+                            .get(offset..end)
+                            .ok_or(KinError::MalformedProtocol)?,
+                    )
+                    .map_err(|_| KinError::MalformedProtocol)?
+                    .to_owned(),
+                );
+                offset = end;
+            }
+            if offset != payload.len() {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::PlaybookSaved {
+                playbook_id: crate::event::PlaybookId(read_id(payload, 0)?),
+                title,
+                entries,
+            }
+        }
+        (1, 34) if protocol_version >= PROTOCOL_V19 && payload.len() == 16 => {
+            EventKind::PlaybookArchived {
+                playbook_id: crate::event::PlaybookId(read_id(payload, 0)?),
             }
         }
         (1, 15..=17) if protocol_version >= PROTOCOL_V7 => {

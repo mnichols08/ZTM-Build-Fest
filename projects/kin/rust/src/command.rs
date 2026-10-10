@@ -112,6 +112,12 @@ pub enum HouseholdCommand {
         target_kind: PinTargetKind,
         target_id: [u8; 16],
     },
+    SavePlaybook {
+        id: PlaybookId,
+        title: String,
+        entries: Vec<String>,
+    },
+    ArchivePlaybook(PlaybookId),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -265,6 +271,12 @@ pub fn create_event(
             target_kind: *target_kind,
             target_id: *target_id,
         },
+        SavePlaybook { id, title, entries } => EventKind::PlaybookSaved {
+            playbook_id: *id,
+            title: title.clone(),
+            entries: entries.clone(),
+        },
+        ArchivePlaybook(id) => EventKind::PlaybookArchived { playbook_id: *id },
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -317,6 +329,13 @@ pub fn execute(
         return Err(KinError::InvalidEvent);
     }
     let current = project(&request)?;
+    if matches!(
+        command,
+        HouseholdCommand::SavePlaybook { .. } | HouseholdCommand::ArchivePlaybook(_)
+    ) && request.protocol_version < crate::protocol::PROTOCOL_V19
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
     if matches!(
         command,
         HouseholdCommand::AddItemStep { .. }
@@ -598,7 +617,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
     if bytes.len() != 128 + text_length {
         return Err(KinError::MalformedProtocol);
     }
-    let text = if matches!(kind, 21..=28) {
+    let text = if matches!(kind, 21..=28 | 33) {
         String::new()
     } else {
         std::str::from_utf8(&bytes[128..])
@@ -618,7 +637,8 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 24 && text_length != 0
         || kind == 25 && !(17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
         || matches!(kind, 26..=28) && text_length != 16
-        || matches!(kind, 31 | 32) && text_length != 0
+        || matches!(kind, 31 | 32 | 34) && text_length != 0
+        || matches!(kind, 33 | 34) && id == [0; 16]
     {
         return Err(KinError::MalformedProtocol);
     }
@@ -795,6 +815,52 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
                 }
             }
         }
+        33 if text_length >= 4 => {
+            let payload = &bytes[128..];
+            let title_len = u16::from_le_bytes(field(payload, 0)?) as usize;
+            let count = payload[2] as usize;
+            if payload[3] != 0 || count == 0 || count > crate::state::MAX_PLAYBOOK_ENTRIES {
+                return Err(KinError::MalformedProtocol);
+            }
+            let title_end = 4usize
+                .checked_add(title_len)
+                .ok_or(KinError::MalformedProtocol)?;
+            let title = std::str::from_utf8(
+                payload
+                    .get(4..title_end)
+                    .ok_or(KinError::MalformedProtocol)?,
+            )
+            .map_err(|_| KinError::MalformedProtocol)?
+            .to_owned();
+            let mut offset = title_end;
+            let mut entries = Vec::with_capacity(count);
+            for _ in 0..count {
+                let length = u16::from_le_bytes(field(payload, offset)?) as usize;
+                offset += 2;
+                let end = offset
+                    .checked_add(length)
+                    .ok_or(KinError::MalformedProtocol)?;
+                entries.push(
+                    std::str::from_utf8(
+                        payload
+                            .get(offset..end)
+                            .ok_or(KinError::MalformedProtocol)?,
+                    )
+                    .map_err(|_| KinError::MalformedProtocol)?
+                    .to_owned(),
+                );
+                offset = end;
+            }
+            if offset != payload.len() {
+                return Err(KinError::MalformedProtocol);
+            }
+            SavePlaybook {
+                id: PlaybookId(id),
+                title,
+                entries,
+            }
+        }
+        34 if text_length == 0 => ArchivePlaybook(PlaybookId(id)),
         _ => return Err(KinError::UnsupportedVersion),
     };
     let context = CommandContext {

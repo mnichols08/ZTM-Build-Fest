@@ -57,6 +57,46 @@ pub struct AreaState {
     pub archived: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlaybookState {
+    pub playbook_id: crate::event::PlaybookId,
+    pub title: String,
+    pub entries: Vec<String>,
+    pub archived: bool,
+}
+
+pub const MAX_PLAYBOOKS: usize = 32;
+pub const MAX_PLAYBOOK_ENTRIES: usize = 16;
+pub const MAX_PLAYBOOK_TITLE_BYTES: usize = 128;
+pub const MAX_PLAYBOOK_ENTRY_BYTES: usize = 256;
+
+pub fn normalize_playbook(
+    title: &str,
+    entries: &[String],
+) -> Result<(String, Vec<String>), KinError> {
+    let title = title.trim();
+    if title.is_empty()
+        || title.len() > MAX_PLAYBOOK_TITLE_BYTES
+        || title.chars().any(char::is_control)
+        || entries.is_empty()
+        || entries.len() > MAX_PLAYBOOK_ENTRIES
+    {
+        return Err(KinError::InvalidEvent);
+    }
+    let mut normalized = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let text = entry.trim();
+        if text.is_empty()
+            || text.len() > MAX_PLAYBOOK_ENTRY_BYTES
+            || text.chars().any(char::is_control)
+        {
+            return Err(KinError::InvalidEvent);
+        }
+        normalized.push(text.to_owned());
+    }
+    Ok((title.to_owned(), normalized))
+}
+
 pub const MAX_AREAS: usize = 32;
 pub const MAX_AREA_NAME_BYTES: usize = 96;
 pub const MAX_AREA_NAME_CHARS: usize = 48;
@@ -197,6 +237,7 @@ pub struct HouseholdState {
     pub areas: Vec<AreaState>,
     pub notes: Vec<NoteState>,
     pub pins: Vec<PinState>,
+    pub playbooks: Vec<PlaybookState>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -313,6 +354,7 @@ fn rebuild_with_context(
     let mut note_positions = BTreeMap::new();
     let mut note_archive_events = BTreeMap::<NoteId, BTreeSet<(u64, DeviceId)>>::new();
     let mut pins: Vec<PinState> = Vec::new();
+    let mut playbooks: Vec<PlaybookState> = Vec::new();
     for event in events {
         match &event.kind {
             EventKind::NoteArchived { note_id } => {
@@ -787,6 +829,43 @@ fn rebuild_with_context(
                     pins.remove(position);
                 }
             }
+            EventKind::PlaybookSaved {
+                playbook_id,
+                title,
+                entries,
+            } => {
+                let (title, entries) = normalize_playbook(title, entries)?;
+                if !valid_timestamp(event.timestamp) || playbook_id.0 == [0; 16] {
+                    return Err(KinError::InvalidEvent);
+                }
+                if let Some(existing) = playbooks
+                    .iter_mut()
+                    .find(|record| record.playbook_id == *playbook_id)
+                {
+                    if existing.archived {
+                        return Err(KinError::InvalidEvent);
+                    }
+                    existing.title = title;
+                    existing.entries = entries;
+                } else {
+                    if playbooks.len() >= MAX_PLAYBOOKS {
+                        return Err(KinError::InvalidEvent);
+                    }
+                    playbooks.push(PlaybookState {
+                        playbook_id: *playbook_id,
+                        title,
+                        entries,
+                        archived: false,
+                    });
+                }
+            }
+            EventKind::PlaybookArchived { playbook_id } => {
+                let record = playbooks
+                    .iter_mut()
+                    .find(|record| record.playbook_id == *playbook_id)
+                    .ok_or(KinError::InvalidEvent)?;
+                record.archived = true;
+            }
             EventKind::ItemStepAdded {
                 item_id,
                 step_id,
@@ -994,6 +1073,7 @@ fn rebuild_with_context(
         areas,
         notes,
         pins,
+        playbooks,
     })
 }
 
@@ -1208,7 +1288,9 @@ pub(crate) fn summarize_validated(
             | EventKind::HouseholdModeChanged { .. }
             | EventKind::ItemPlanningDateChanged { .. }
             | EventKind::PinAdded { .. }
-            | EventKind::PinRemoved { .. } => None,
+            | EventKind::PinRemoved { .. }
+            | EventKind::PlaybookSaved { .. }
+            | EventKind::PlaybookArchived { .. } => None,
         };
 
         if let Some((kind, entity_kind, text, classification)) = summary {
@@ -1317,7 +1399,9 @@ mod tests {
             | EventKind::NoteUpdated { .. }
             | EventKind::NoteArchived { .. }
             | EventKind::PinAdded { .. }
-            | EventKind::PinRemoved { .. } => {
+            | EventKind::PinRemoved { .. }
+            | EventKind::PlaybookSaved { .. }
+            | EventKind::PlaybookArchived { .. } => {
                 panic!("Area tests use independent wire fixtures")
             }
         }

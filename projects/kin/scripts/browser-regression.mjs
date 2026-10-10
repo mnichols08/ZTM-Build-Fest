@@ -1311,6 +1311,34 @@ try {
   console.log(await first.evaluate(`(${planningDateRegressions.toString()})()`));
   await visit(first, "routines");
   console.log(await first.evaluate(`(${routineRegressions.toString()})()`));
+  const playbookResult = await first.evaluate(async () => {
+    const app = document.querySelector("kin-app"), ui = app.routines;
+    const wait = async () => { for (let i = 0; app.busy && i < 300; i++) await new Promise(resolve => setTimeout(resolve, 10)); };
+    ui.playbookTitle.value = "Regression playbook";
+    ui.playbookEntries.value = "First step\nSecond step";
+    ui.playbookList.parentElement.querySelector("form").requestSubmit();
+    await wait();
+    const record = app.state.playbooks.find(item => item.title === "Regression playbook");
+    if (!record || record.entries.join("|") !== "First step|Second step") return false;
+    const instantiate = app.instantiatePlaybook.bind(app); let savedBatch;
+    app.instantiatePlaybook = batch => { savedBatch = batch; return instantiate(batch); };
+    [...ui.playbookList.querySelectorAll("button")].find(button => button.textContent === "Use checklist").click();
+    await wait();
+    const item = app.state.items.find(value => value.text === "Regression playbook");
+    if (!item || item.steps.map(step => step.text).join("|") !== "First step|Second step") return false;
+    const itemCount = app.state.items.length;
+    await instantiate(savedBatch); await wait();
+    if (app.state.items.length !== itemCount || app.state.items.find(value => value.itemId === item.itemId).steps.length !== 2) return false;
+    [...ui.playbookList.querySelectorAll("button")].find(button => button.textContent === "Edit").click();
+    ui.playbookTitle.value = "Edited template"; ui.playbookEntries.value = "Changed later";
+    ui.playbookList.parentElement.querySelector("form").requestSubmit(); await wait();
+    const independent = app.state.items.find(value => value.itemId === item.itemId);
+    if (independent.text !== "Regression playbook" || independent.steps[0].text !== "First step") return false;
+    [...ui.playbookList.querySelectorAll("button")].find(button => button.textContent === "Archive").click(); await wait();
+    return app.state.playbooks.find(value => value.playbookId === record.playbookId).archived;
+  });
+  assert.equal(playbookResult, true, "Playbooks save ordered entries, instantiate independent checklist state, edit, and archive");
+  console.log("PASS Playbook authoring, independent checklist instantiation, edit, and archive");
   await visit(first, "today");
   await first.evaluate(
     'sessionStorage.setItem("kin.test.expectedState", JSON.stringify(document.querySelector("kin-app").state))',

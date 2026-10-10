@@ -92,6 +92,7 @@ class KinApp extends HTMLElement {
       this.saveItemPlanningDate(event.detail, event.target.closest("kin-today"));
     this.onPinIntent = (event) => this.savePin(event.detail);
     this.onOpenPin = (event) => this.openPinnedItem(event.detail.itemId);
+    this.onPlaybookIntent = (event) => this.handlePlaybookIntent(event);
     this.onModeChange = () => this.saveMode(this.modeSelect.value);
     this.pulseTimer = null;
     this.catchUpCursor = null;
@@ -225,6 +226,7 @@ class KinApp extends HTMLElement {
     ]) {
       this.addEventListener(`kin:${action}`, this.onRoutineIntent);
     }
+    for (const action of ["save-playbook", "archive-playbook", "instantiate-playbook"]) this.addEventListener(`kin:${action}`, this.onPlaybookIntent);
     document.addEventListener("visibilitychange", this.onTimeWake);
     window.addEventListener("focus", this.onWindowFocus);
     this.authorizationTimer = setInterval(
@@ -590,6 +592,7 @@ class KinApp extends HTMLElement {
     ]) {
       this.removeEventListener(`kin:${action}`, this.onRoutineIntent);
     }
+    for (const action of ["save-playbook", "archive-playbook", "instantiate-playbook"]) this.removeEventListener(`kin:${action}`, this.onPlaybookIntent);
     document.removeEventListener("visibilitychange", this.onTimeWake);
     window.removeEventListener("focus", this.onWindowFocus);
     clearInterval(this.authorizationTimer);
@@ -1078,6 +1081,48 @@ class KinApp extends HTMLElement {
         this.flushPeerRefresh();
       }
     }
+  }
+
+  async handlePlaybookIntent(event) {
+    const action = event.type.slice(4);
+    const detail = event.detail;
+    if (action === "instantiate-playbook") {
+      const playbook = this.state?.playbooks?.find(record => record.playbookId === detail.playbookId && !record.archived);
+      if (!playbook) return;
+      const batch = { itemId: crypto.randomUUID().replaceAll("-", ""), title: playbook.title, steps: playbook.entries.map(text => ({ stepId: crypto.randomUUID().replaceAll("-", ""), text })) };
+      return this.instantiatePlaybook(batch);
+    }
+    const session = this.captureSession();
+    const command = action === "save-playbook"
+      ? { type: action, id: detail.playbookId ?? crypto.randomUUID().replaceAll("-", ""), title: detail.title, entries: detail.entries }
+      : { type: action, playbookId: detail.playbookId };
+    if (action === "save-playbook") detail.playbookId = command.id;
+    this.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
+    try {
+      await this.appendCommand(command); this.assertCurrentSession(session); this.routines.clearPlaybookEditor(); this.renderState(); this.broadcastEventChange();
+      this.setStatus(action === "save-playbook" ? "Playbook saved." : "Playbook archived.");
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      this.showAlert(error.userMessage ?? SAVE_ERROR, () => this.handlePlaybookIntent(event), command); this.setStatus("");
+    } finally { if (this.isCurrentSession(session)) { this.setBusy(false); this.flushPeerRefresh(); } }
+  }
+
+  async instantiatePlaybook(batch) {
+    if (this.busy || !this.store || !this.engine) return;
+    const session = this.captureSession(); this.setBusy(true); this.clearAlert(); this.setStatus("Creating checklist…");
+    try {
+      let item = this.state?.items.find(record => record.itemId === batch.itemId);
+      if (!item) { await this.appendCommand({ type: "add", id: batch.itemId, text: batch.title, classification: "need" }); item = this.state?.items.find(record => record.itemId === batch.itemId); }
+      for (const step of batch.steps) {
+        if (item?.steps?.some(record => record.stepId === step.stepId)) continue;
+        await this.appendCommand({ type: "add-item-step", itemId: batch.itemId, stepId: step.stepId, text: step.text });
+        item = this.state?.items.find(record => record.itemId === batch.itemId);
+      }
+      this.assertCurrentSession(session); this.renderState(); this.broadcastEventChange(); this.setStatus("Checklist created. It is now an ordinary household item.");
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      this.showAlert(error.userMessage ?? SAVE_ERROR, () => this.instantiatePlaybook(batch)); this.setStatus("");
+    } finally { if (this.isCurrentSession(session)) { this.setBusy(false); this.flushPeerRefresh(); } }
   }
 
   async saveArea(detail) {
@@ -1708,6 +1753,7 @@ class KinApp extends HTMLElement {
       (pulse) => pulse.actorId === this.store?.actorId,
     );
     this.routines.routines = this.state.routines ?? [];
+    this.routines.playbooks = this.state.playbooks ?? [];
     this.areas.areas = this.state.areas ?? [];
     this.notes.notes = this.state.notes ?? [];
     this.notes.areas = this.state.areas ?? [];

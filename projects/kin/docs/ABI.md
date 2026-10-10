@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** Current through v0.26.0 Pins & Quick Access. Protocol 18 adds canonical Pin events and a bounded Pin projection list while preserving all earlier layouts and event bytes. Protocol 17 adds the per-Item Last changed projection field. Protocol 16 adds Item planning dates; protocol 15 adds household modes; protocol 14 gates Staples, protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
+**Status:** Current through v0.27.0 Household Playbooks. Protocol 19 adds canonical Playbook save/archive events and a bounded ordered projection while preserving all earlier layouts and event bytes. Protocol 18 adds Pin events and a bounded Pin projection; protocol 17 adds the per-Item Last changed projection field. Protocol 16 adds Item planning dates; protocol 15 adds household modes; protocol 14 gates Staples, protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
 
 ## Target and exports
 
@@ -127,7 +127,7 @@ Items remain serialized in original add-event order, including archived tombston
 - Rust owns result/error buffers. `kin_result_ptr/len` refer to the most recent successful result; `kin_error_ptr/len` refer to the most recent failed call. The inactive pair returns `(0, 0)`.
 - Result/error bytes stay valid until the next `kin_apply_events` call or module teardown. JavaScript must copy them into host-owned memory before another call. The bridge must not retain a view that may become stale if WASM memory grows.
 - Each call clears the previous result and error before processing. Repeated calls are independent full replays; the module has no hidden household state between calls.
-- A valid empty household response is a non-empty protocol result containing zero entity counts (12 bytes for v1/v2, 16 for v3, 20 for v4; protocols 15–17 have a 72-byte header and protocol 18 has a 76-byte header). A zero-length error/result accessor means that no buffer is available, not a successful empty state.
+- A valid empty household response is a non-empty protocol result containing zero entity counts (12 bytes for v1/v2, 16 for v3, 20 for v4; protocols 15–17 have a 72-byte header, protocol 18 has a 76-byte header, and protocol 19 has an 80-byte header). A zero-length error/result accessor means that no buffer is available, not a successful empty state.
 - Output allocation is released by Rust on the next apply call/module teardown; JavaScript must not call `kin_free` on result/error pointers.
 
 ## Call behavior
@@ -477,3 +477,15 @@ protocol-17 per-Item timestamps, each Pin is encoded as the same 20-byte
 target-kind/reserved/ID record, in deterministic insertion order. The count
 is bounded at ten. Protocols 1–17 retain their layouts and reject Pin history
 or a state containing Pins rather than omitting it.
+
+## Protocol version 19 — Household Playbooks
+
+Schema-1 event kinds 33 and 34 save/edit or archive a Playbook. A save payload
+contains the stable 16-byte Playbook ID, a bounded UTF-8 title, and 1–16 ordered
+UTF-8 entries. The protocol-19 result header extends to 80 bytes with
+`playbook-count:u32` at offset 76. After protocol-18 Pin records, each
+Playbook contains its ID, archived flag, entry count, title byte length, two
+zero reserved bytes, title bytes, then length-prefixed entry bytes. Projection
+limits are 32 Playbooks, 128 title bytes, and 256 bytes per entry. Protocols
+1–18 retain their layouts and reject Playbook history or state rather than
+omitting templates.

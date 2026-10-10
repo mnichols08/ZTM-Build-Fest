@@ -35,3 +35,6 @@ mod mode_tests;
 
 #[cfg(test)]
 mod pin_tests;
+
+#[cfg(test)]
+mod playbook_tests;
