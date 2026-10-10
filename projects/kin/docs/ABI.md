@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** v0.24.0 adds protocol 17's per-Item Last changed projection field while preserving earlier layouts and canonical event bytes. Protocol 16 adds Item planning dates; protocol 15 adds household modes; protocol 14 gates Staples, protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
+**Status:** Current through v0.25.0 Search & Filters. v0.25 adds no ABI, protocol, or canonical event change. v0.24.0 adds protocol 17's per-Item Last changed projection field while preserving earlier layouts and canonical event bytes. Protocol 16 adds Item planning dates; protocol 15 adds household modes; protocol 14 gates Staples, protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
 
 ## Target and exports
 

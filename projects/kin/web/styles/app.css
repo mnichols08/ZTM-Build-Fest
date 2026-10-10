@@ -296,6 +296,42 @@ p { margin: 7px 0; }
 .add-button:hover:not(:disabled), .complete-button:hover:not(:disabled), .retry-button:hover:not(:disabled) { filter: brightness(.94); }
 .compose-message { grid-column: 1 / -1; min-height: 1em; margin: 0; color: var(--danger); font-size: 14px; }
 
+.search-hint, .search-result-status, .search-result-detail, .search-result-context {
+  color: var(--ink-muted);
+  font-size: 14px;
+}
+.search-form { display: grid; gap: 12px; }
+.search-form > label { display: grid; gap: 5px; font-size: 14px; font-weight: 650; }
+.search-form input, .search-form select {
+  width: 100%;
+  min-width: 0;
+  min-height: var(--tap);
+  padding: 9px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--ink);
+}
+.search-filters {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+}
+.search-filters legend { padding-inline: 5px; font-size: 13px; font-weight: 650; }
+.search-filters label { display: grid; gap: 4px; min-width: 0; font-size: 12px; }
+.search-clear-button { justify-self: start; padding-inline: 13px; }
+.search-result-status { min-height: 1.5em; margin-block: 16px 8px; }
+.search-results { margin: 0; padding: 0; list-style: none; }
+.search-result { min-width: 0; padding: 13px 0; border-top: 1px solid var(--line); }
+.search-result-text, .search-result-detail { margin: 4px 0; overflow-wrap: anywhere; }
+.search-result-text { font-size: 16px; }
+.search-result-context { display: block; }
+
 .empty-state {
   margin: 8px 0 0;
   padding: 15px 0 1px;
@@ -435,7 +471,7 @@ kin-app > .security-panel {
     z-index: 20;
     inset: auto 0 0;
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 3px;
     min-height: 0;
     padding: 6px 8px max(6px, env(safe-area-inset-bottom));
@@ -462,6 +498,7 @@ kin-app > .security-panel {
   .item-action { justify-content: flex-start; }
   .handoff-form .add-button, .talk-form .add-button { grid-column: 1 / -1; }
   .routine-form { grid-template-columns: minmax(0, 1fr); }
+  .search-filters { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (prefers-reduced-motion: reduce) {

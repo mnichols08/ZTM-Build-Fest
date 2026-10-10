@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** v0.24.0 adds a date-only Item history label derived from canonical event replay and exposes it in protocol 17; no domain event, storage schema, sync-envelope, server, or archive-container change is introduced. v0.23.0's iCalendar export remains explicit, local, plaintext, bounded, and read-only. Planning dates remain fixed civil dates in protocol 16; canonical Rust events and deterministic Rust/WASM replay remain authoritative.
+**Status:** v0.25.0 adds local, in-memory search over the existing decrypted projection without a search index, event, protocol, storage, sync-envelope, server, or archive-container change. v0.24.0 adds a date-only Item history label derived from canonical event replay and exposes it in protocol 17. v0.23.0's iCalendar export remains explicit, local, plaintext, bounded, and read-only. Planning dates remain fixed civil dates in protocol 16; canonical Rust events and deterministic Rust/WASM replay remain authoritative.
 
 ## v0.10 implementation boundary
 

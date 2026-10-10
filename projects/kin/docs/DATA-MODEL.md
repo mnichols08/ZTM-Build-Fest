@@ -1,6 +1,6 @@
 # Data Model
 
-**Status:** Current through v0.24.0 Useful Household History; earlier version sections are historical contracts. See v0.7.0 and v0.18.0–v0.24.0 below.
+**Status:** Current through v0.25.0 Search & Filters; earlier version sections are historical contracts. Search derives results from the existing unlocked projection and adds no entity, event, or persistent index. See v0.7.0 and v0.18.0–v0.25.0 below.
 
 ## Event-oriented source of truth
 

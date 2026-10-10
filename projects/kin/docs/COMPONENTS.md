@@ -1,6 +1,6 @@
 # Web Component Contract
 
-**Status:** Current through v0.24.0 Useful Household History; earlier version sections are historical contracts.
+**Status:** Current through v0.25.0 Search & Filters; earlier version sections are historical contracts.
 
 ## Component responsibilities
 
@@ -117,3 +117,13 @@ that the downloaded file contains plaintext Item text. See
 date-only “Last changed” text label. It receives no actor/device identity and
 does not expose a read receipt, exact time, or timeline. It adds no command or
 event. See [V0.24.0](releases/V0.24.0.md).
+
+## v0.25.0 Search & Filters
+
+`<kin-search>` receives the unlocked Item, Handoff, Talk, Note, and Area
+projection from `<kin-app>`. It searches unarchived text in memory and renders
+up to 100 results with the total count. Classification, status, and Area
+filters narrow Item and checklist-Step matches only. Native labeled controls,
+keyboard focus retention, and a polite live result count support accessible
+use. Search queries and filters are discarded on lock and are not persisted,
+exported, or synchronized. See [V0.25.0](releases/V0.25.0.md).

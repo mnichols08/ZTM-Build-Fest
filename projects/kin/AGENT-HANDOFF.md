@@ -15,9 +15,9 @@ Read:
 For the current user-authorized fast-track, complete `v0.21.0` through
 `v0.25.0` one minor at a time on `kin-fast-track-v0.21-v0.25`, preserving
 one milestone commit per minor. v0.21.0 Household Modes, v0.22.0
-Lightweight Planning Dates, v0.23.0 Calendar Interoperability, and v0.24.0
-Useful Household History are implemented candidates; v0.25 is the remaining
-scoped work. Do not tag or merge the batch branch, and do not start v0.26.x.
+Lightweight Planning Dates, v0.23.0 Calendar Interoperability, v0.24.0
+Useful Household History, and v0.25.0 Search & Filters are implementation
+candidates. Do not tag or merge the batch branch, and do not start v0.26.x.
 The broader October roadmap still targets
 v0.40.x, with v0.41–v0.45 as undated proposals for reassessment after
 October feedback.

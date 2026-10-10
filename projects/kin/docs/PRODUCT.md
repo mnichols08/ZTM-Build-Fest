@@ -59,4 +59,7 @@ with workflow-only resolution. Pulse adds fixed temporary current capacity,
 explicit expiry and clear. Since You Last Looked is implemented as a bounded
 protocol-v6 projection with schema-1 local cursor metadata. Routines support
 daily, Monday-start weekly, creation-anchored every-two-weeks, and
-calendar-month schedules.
+calendar-month schedules. Search finds unarchived Item/Step, Handoff, Talk,
+and Note text from the unlocked local projection. Classification, status, and
+Area filters narrow Item/Step results only; queries are ephemeral and no
+search index is persisted.

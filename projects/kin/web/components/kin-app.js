@@ -11,6 +11,7 @@ import "./kin-item.js";
 import "./kin-today.js";
 import "./kin-handoff-list.js";
 import "./kin-talk-list.js";
+import "./kin-search.js";
 import "./kin-pulse.js";
 import "./kin-catch-up.js";
 import "./kin-household.js";
@@ -293,6 +294,7 @@ class KinApp extends HTMLElement {
     const destinations = [
       ["today", "Today", '<path d="M3 10.8 12 3l9 7.8"/><path d="M5.5 9.5V20h13V9.5M9.5 20v-6h5v6"/>'],
       ["lists", "Lists", '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h5"/>'],
+      ["search", "Search", '<circle cx="10.8" cy="10.8" r="6.5"/><path d="m16 16 4.5 4.5"/>'],
       ["routines", "Routines", '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.5 9a7 7 0 0 1 12-2L20 12M4 12l2.5 5a7 7 0 0 0 12-2"/>'],
       ["handoff", "Handoff", '<path d="M8 10h8M8 14h5"/><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-4l-3 3-3-3H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/>'],
       ["more", "More", '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'],
@@ -325,6 +327,7 @@ class KinApp extends HTMLElement {
     this.compose = document.createElement("kin-compose");
     this.handoffs = document.createElement("kin-handoff-list");
     this.talks = document.createElement("kin-talk-list");
+    this.search = document.createElement("kin-search");
     this.pulse = document.createElement("kin-pulse");
     this.routines = document.createElement("kin-routines");
     this.areas = document.createElement("kin-areas");
@@ -417,6 +420,9 @@ class KinApp extends HTMLElement {
     this.staples.display = "staple";
     lists.append(this.needs, this.shopping, this.staples);
 
+    const search = page("search", "Search", "Find household context without sending your search outside this device.");
+    search.append(this.search);
+
     const routines = page("routines", "Routines", "Small household rhythms, without streaks or pressure.");
     routines.append(this.routines);
 
@@ -491,7 +497,7 @@ class KinApp extends HTMLElement {
     this.notes = document.createElement("kin-notes");
     more.insertBefore(this.notes, this.moreSecurity);
 
-    for (const section of [today, lists, routines, handoff, more]) {
+    for (const section of [today, lists, search, routines, handoff, more]) {
       this.pages.set(section.id, section);
       main.append(section);
     }
@@ -503,7 +509,7 @@ class KinApp extends HTMLElement {
     if (!this.pages || !this.navLinks) return;
     const requested = location.hash.slice(1);
     const active = this.pages.has(requested) ? requested : "today";
-    const labels = { today: "Today", lists: "Lists", routines: "Routines", handoff: "Handoff", more: "More" };
+    const labels = { today: "Today", lists: "Lists", search: "Search", routines: "Routines", handoff: "Handoff", more: "More" };
     const changed = this.activePage !== active;
     this.activePage = active;
     document.title = `${labels[active]} — Kin`;
@@ -1634,6 +1640,13 @@ class KinApp extends HTMLElement {
     this.staples.areas = this.state.areas ?? [];
     this.handoffs.handoffs = this.state.handoffs;
     this.talks.talks = this.state.talks;
+    this.search.household = {
+      items: this.state.items,
+      handoffs: this.state.handoffs,
+      talks: this.state.talks,
+      notes: this.state.notes ?? [],
+      areas: this.state.areas ?? [],
+    };
     this.pulse.pulse = this.state.pulses.find(
       (pulse) => pulse.actorId === this.store?.actorId,
     );
@@ -1662,6 +1675,7 @@ class KinApp extends HTMLElement {
     this.needs.disabled = isBusy || !this.store;
     this.shopping.disabled = isBusy || !this.store;
     this.staples.disabled = isBusy || !this.store;
+    this.search.disabled = isBusy || !this.store;
     this.handoffs.disabled = isBusy || !this.store;
     this.talks.disabled = isBusy || !this.store;
     this.pulse.disabled = isBusy || !this.store;
@@ -1774,6 +1788,7 @@ class KinApp extends HTMLElement {
         ["compose", "kin-compose"],
         ["handoffs", "kin-handoff-list"],
         ["talks", "kin-talk-list"],
+        ["search", "kin-search"],
         ["pulse", "kin-pulse"],
         ["routines", "kin-routines"],
       ];

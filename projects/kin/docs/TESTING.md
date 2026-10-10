@@ -409,6 +409,16 @@ Protocol tests verify the exact protocol-17 timestamp extension while
 preserving protocol 16. Real-WASM and Edge regressions verify the projected
 timestamp, date-only UI label, and update after an effective change.
 
+## v0.25.0 Search & Filters
+
+Run `node --test projects/kin/web/search.test.mjs` for case-insensitive
+substring matching across unarchived household text, active checklist Steps,
+combined Item-only filters, unassigned Areas, empty queries, and the 100-result
+display bound. The full Edge browser regression verifies labeled keyboard
+controls, live result feedback, filter isolation from Handoff/Talk/Note
+results, archived-record exclusion, navigation, focus retention, and clearing.
+No Rust/WASM or persistent-format migration is introduced.
+
 ## v0.18.0 Richer Routine Scheduling
 
 Run the same Rust, WASM, and browser routine suites after rebuilding

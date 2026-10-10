@@ -2,6 +2,16 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
+## v0.25.0 — Search & Filters
+
+- Add private, in-memory search across unarchived Items, checklist Steps,
+  Handoffs, Talks, and Notes. Searches remain on the current device and are not
+  saved or synchronized separately.
+- Add classification, status, and Area filters for Item and checklist-Step
+  results while leaving other matching household text visible.
+- Bound displayed results to 100 and report the total match count. No event,
+  ABI, protocol, storage, or migration change is required.
+
 ## v0.24.0 — Useful Household History
 
 - Show a date-only “Last changed” label for each Item, derived from its latest

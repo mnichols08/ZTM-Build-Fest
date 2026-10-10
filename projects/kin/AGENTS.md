@@ -131,7 +131,10 @@ fixed civil date to Items. The v0.23.0 Calendar Interoperability candidate
 files, without a new domain or storage contract. The v0.24.0 Useful Household
 History candidate (`kin-v0.24.0`) derives each Item's date-only Last changed
 label from effective Item and checklist-Step events under protocol 17, without
-actor attribution or a persistent-format migration. The user-authorized
+actor attribution or a persistent-format migration. The v0.25.0 Search & Filters (`kin-v0.25.0` candidate name; no tag created)
+searches unarchived Item/Step, Handoff, Talk, and Note text locally,
+with Item-only classification/status/Area filters and no persistent index.
+The user-authorized
 fast-track continues through v0.25.x on this branch. Preserve the five separate minor milestone
 commits; do not create tags or merge the branch. These are implementation
 candidates, not production certification. Preserve the v0.13.5 recovery
