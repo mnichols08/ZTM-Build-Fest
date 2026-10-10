@@ -1,6 +1,6 @@
 # Derived Household State
 
-**Status:** v0.22.0 adds optional Item planning dates through protocol 16 while preserving prior result layouts. Modes, Item categories, and planning dates are derived from canonical events; protocols 1–15 fail closed on date-bearing history. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
+**Status:** v0.24.0 adds a derived date-only Item history value through protocol 17 while preserving prior result layouts. Modes, Item categories, planning dates, and Item history dates are derived from canonical events; protocols 1–15 fail closed on date-bearing history. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
 
 ## Projection pipeline
 

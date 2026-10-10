@@ -2,6 +2,13 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
+## v0.24.0 — Useful Household History
+
+- Show a date-only “Last changed” label for each Item, derived from its latest
+  effective Item or checklist-Step event in deterministic replay order.
+- Add protocol 17's per-Item timestamp projection extension without adding an
+  event kind, storage migration, actor attribution, read receipt, or timeline.
+
 ## v0.23.0 — Calendar Interoperability
 
 - Download active Items with planning dates as UTF-8 iCalendar (`.ics`)

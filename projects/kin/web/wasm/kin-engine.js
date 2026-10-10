@@ -1,4 +1,4 @@
-const PROTOCOL_VERSION = 16;
+const PROTOCOL_VERSION = 17;
 const REQUEST_HEADER_BYTES = 64;
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 const PULSE_VALUES = ["good", "okay", "drained", "rough-day", "need-quiet"];
@@ -895,7 +895,9 @@ function decodeState(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const protocolVersion = view.getUint16(4, true);
   if (
-    ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].includes(protocolVersion) ||
+    ![
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+    ].includes(protocolVersion) ||
     view.getUint16(6, true) !== 0
   ) {
     throw new KinEngineError(6, "Kin received an unsupported state format.");
@@ -1324,6 +1326,22 @@ function decodeState(bytes) {
       }
       item.planningDate = planningDate === 0 ? null : planningDate;
       offset += 4;
+    }
+  }
+  if (protocolVersion >= 17) {
+    for (const item of items) {
+      if (offset + 8 > bytes.length) {
+        throw new KinEngineError(6, "Kin received a truncated Item history date.");
+      }
+      const lastChangedAt = Number(view.getBigInt64(offset, true));
+      if (
+        !Number.isSafeInteger(lastChangedAt) ||
+        Math.abs(lastChangedAt) > MAX_TIMESTAMP
+      ) {
+        throw new KinEngineError(6, "Kin received an invalid Item history date.");
+      }
+      item.lastChangedAt = lastChangedAt;
+      offset += 8;
     }
   }
   const summaryEntries = [];

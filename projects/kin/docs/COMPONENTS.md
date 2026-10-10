@@ -1,6 +1,6 @@
 # Web Component Contract
 
-**Status:** Current through v0.23.0 Calendar Interoperability; earlier version sections are historical contracts.
+**Status:** Current through v0.24.0 Useful Household History; earlier version sections are historical contracts.
 
 ## Component responsibilities
 
@@ -110,3 +110,10 @@ bounded, local iCalendar all-day export, then uses a browser Blob download.
 No event is appended and no calendar service is contacted. The UI discloses
 that the downloaded file contains plaintext Item text. See
 [V0.23.0](releases/V0.23.0.md).
+
+## v0.24.0 Useful Household History
+
+`<kin-item>` renders the Rust-derived `lastChangedAt` as a localized,
+date-only “Last changed” text label. It receives no actor/device identity and
+does not expose a read receipt, exact time, or timeline. It adds no command or
+event. See [V0.24.0](releases/V0.24.0.md).

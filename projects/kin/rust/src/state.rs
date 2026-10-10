@@ -34,6 +34,7 @@ pub struct ItemState {
     pub text: String,
     pub created_by: ActorId,
     pub created_at: i64,
+    pub last_changed_at: i64,
     pub classification: ItemClassification,
     pub planning_date: Option<CivilDate>,
     pub status: ItemStatus,
@@ -400,7 +401,10 @@ fn rebuild_with_context(
                 if area_id.is_some_and(|id| !area_positions.contains_key(&id)) {
                     return Err(KinError::InvalidEvent);
                 }
-                items[position].area_id = *area_id;
+                if items[position].area_id != *area_id {
+                    items[position].area_id = *area_id;
+                    items[position].last_changed_at = event.timestamp;
+                }
             }
             EventKind::ItemPlanningDateChanged {
                 item_id,
@@ -413,7 +417,10 @@ fn rebuild_with_context(
                     .get(item_id)
                     .copied()
                     .ok_or(KinError::InvalidEvent)?;
-                items[position].planning_date = *planning_date;
+                if items[position].planning_date != *planning_date {
+                    items[position].planning_date = *planning_date;
+                    items[position].last_changed_at = event.timestamp;
+                }
             }
             EventKind::NoteCreated {
                 note_id,
@@ -696,6 +703,7 @@ fn rebuild_with_context(
                     text: text.clone(),
                     created_by: event.actor_id,
                     created_at: event.timestamp,
+                    last_changed_at: event.timestamp,
                     classification: *classification,
                     planning_date: None,
                     status: ItemStatus::Active,
@@ -742,6 +750,7 @@ fn rebuild_with_context(
                         completed: false,
                         archived: false,
                     });
+                    items[position].last_changed_at = event.timestamp;
                 }
             }
             EventKind::ItemStepCompleted { item_id, step_id }
@@ -792,11 +801,25 @@ fn rebuild_with_context(
                     }
                     return Err(KinError::InvalidEvent);
                 }
-                match event.kind {
-                    EventKind::ItemStepCompleted { .. } => step.completed = true,
-                    EventKind::ItemStepReopened { .. } => step.completed = false,
-                    EventKind::ItemStepArchived { .. } => step.archived = true,
+                let changed = match event.kind {
+                    EventKind::ItemStepCompleted { .. } => {
+                        let changed = !step.completed;
+                        step.completed = true;
+                        changed
+                    }
+                    EventKind::ItemStepReopened { .. } => {
+                        let changed = step.completed;
+                        step.completed = false;
+                        changed
+                    }
+                    EventKind::ItemStepArchived { .. } => {
+                        step.archived = true;
+                        true
+                    }
                     _ => unreachable!(),
+                };
+                if changed {
+                    items[position].last_changed_at = event.timestamp;
                 }
             }
             EventKind::ItemCompleted { item_id } => {
@@ -805,7 +828,10 @@ fn rebuild_with_context(
                     .copied()
                     .ok_or(KinError::InvalidEvent)?;
                 match items[position].status {
-                    ItemStatus::Active => items[position].status = ItemStatus::Completed,
+                    ItemStatus::Active => {
+                        items[position].status = ItemStatus::Completed;
+                        items[position].last_changed_at = event.timestamp;
+                    }
                     ItemStatus::Completed => {}
                     ItemStatus::Archived => {
                         if !is_concurrent_terminal_conflict(
@@ -825,7 +851,10 @@ fn rebuild_with_context(
                     .ok_or(KinError::InvalidEvent)?;
                 match items[position].status {
                     ItemStatus::Active => {}
-                    ItemStatus::Completed => items[position].status = ItemStatus::Active,
+                    ItemStatus::Completed => {
+                        items[position].status = ItemStatus::Active;
+                        items[position].last_changed_at = event.timestamp;
+                    }
                     ItemStatus::Archived => {
                         if !is_concurrent_terminal_conflict(
                             allow_equal_logical_time,
@@ -845,6 +874,7 @@ fn rebuild_with_context(
                 match items[position].status {
                     ItemStatus::Active | ItemStatus::Completed => {
                         items[position].status = ItemStatus::Archived;
+                        items[position].last_changed_at = event.timestamp;
                         item_archives.insert(*item_id, (event.logical_time, event.device_id));
                     }
                     ItemStatus::Archived => {
@@ -1233,6 +1263,7 @@ mod tests {
         assert_eq!(state.items.len(), 1);
         assert_eq!(state.items[0].text, "Buy milk");
         assert_eq!(state.items[0].status, ItemStatus::Active);
+        assert_eq!(state.items[0].last_changed_at, 1_760_000_000_001);
     }
 
     #[test]
@@ -1286,6 +1317,93 @@ mod tests {
         assert_eq!(forward, reverse);
         assert_eq!(forward.items[0].status, ItemStatus::Archived);
         assert_eq!(forward.items[0].planning_date, Some(first_date));
+        assert_eq!(forward.items[0].last_changed_at, 1_760_000_000_005);
+    }
+
+    #[test]
+    fn effective_item_and_step_changes_advance_history_but_noops_do_not() {
+        let item_id = ItemId(id(0x11));
+        let step_id = StepId(id(0x22));
+        let planning_date = CivilDate::from_encoded(20261004).unwrap();
+        let events = [
+            added(1, 1, 0x11, "Buy milk"),
+            event(
+                2,
+                2,
+                EventKind::ItemPlanningDateChanged {
+                    item_id,
+                    planning_date: Some(planning_date),
+                },
+            ),
+            event(
+                3,
+                3,
+                EventKind::ItemPlanningDateChanged {
+                    item_id,
+                    planning_date: Some(planning_date),
+                },
+            ),
+            event(
+                4,
+                4,
+                EventKind::ItemStepAdded {
+                    item_id,
+                    step_id,
+                    text: "Check the label".into(),
+                },
+            ),
+            event(5, 5, EventKind::ItemStepCompleted { item_id, step_id }),
+            event(6, 6, EventKind::ItemStepCompleted { item_id, step_id }),
+            event(7, 7, EventKind::ItemStepReopened { item_id, step_id }),
+            event(8, 8, EventKind::ItemStepArchived { item_id, step_id }),
+            event(9, 9, EventKind::ItemCompleted { item_id }),
+            event(10, 10, EventKind::ItemCompleted { item_id }),
+            event(11, 11, EventKind::ItemReopened { item_id }),
+            event(12, 12, EventKind::ItemArchived { item_id }),
+        ];
+
+        let after_create = rebuild(&events[..1]).unwrap();
+        assert_eq!(after_create.items[0].last_changed_at, 1_760_000_000_001);
+        let after_date_change = rebuild(&events[..2]).unwrap();
+        assert_eq!(
+            after_date_change.items[0].last_changed_at,
+            1_760_000_000_002
+        );
+        let after_date_noop = rebuild(&events[..3]).unwrap();
+        assert_eq!(after_date_noop.items[0].last_changed_at, 1_760_000_000_002);
+        let after_step_change = rebuild(&events[..5]).unwrap();
+        assert_eq!(
+            after_step_change.items[0].last_changed_at,
+            1_760_000_000_005
+        );
+        let after_step_noop = rebuild(&events[..6]).unwrap();
+        assert_eq!(after_step_noop.items[0].last_changed_at, 1_760_000_000_005);
+        let after_step_archive = rebuild(&events[..8]).unwrap();
+        assert_eq!(
+            after_step_archive.items[0].last_changed_at,
+            1_760_000_000_008
+        );
+        let after_status_noop = rebuild(&events[..10]).unwrap();
+        assert_eq!(
+            after_status_noop.items[0].last_changed_at,
+            1_760_000_000_009
+        );
+        let final_state = rebuild(&events).unwrap();
+        assert_eq!(final_state.items[0].status, ItemStatus::Archived);
+        assert_eq!(final_state.items[0].last_changed_at, 1_760_000_000_012);
+
+        let mut equal_time_events = events[..3].to_vec();
+        equal_time_events[1].logical_time = 2;
+        equal_time_events[2].logical_time = 2;
+        equal_time_events[2].kind = EventKind::ItemPlanningDateChanged {
+            item_id,
+            planning_date: Some(CivilDate::from_encoded(20261005).unwrap()),
+        };
+        let forward = rebuild_distributed_on(&equal_time_events, 0, planning_date).unwrap();
+        equal_time_events.reverse();
+        let reverse = rebuild_distributed_on(&equal_time_events, 0, planning_date).unwrap();
+        assert_eq!(forward, reverse);
+        assert_eq!(forward.items[0].last_changed_at, 1_760_000_000_003);
     }
 
     #[test]

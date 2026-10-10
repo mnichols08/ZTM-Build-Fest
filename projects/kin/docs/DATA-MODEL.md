@@ -1,6 +1,6 @@
 # Data Model
 
-**Status:** Current through v0.22.0 Lightweight Planning Dates; earlier version sections are historical contracts. See v0.7.0 and v0.18.0–v0.22.0 below.
+**Status:** Current through v0.24.0 Useful Household History; earlier version sections are historical contracts. See v0.7.0 and v0.18.0–v0.24.0 below.
 
 ## Event-oriented source of truth
 
@@ -120,6 +120,18 @@ planning date; the user edits it afterward as a separate canonical event.
 Archived Items remain hidden from ordinary lists and read-only in the UI, but
 a previously authored stale offline date event still replays so it cannot
 invalidate shared history. See [V0.22.0](releases/V0.22.0.md).
+
+`ItemState.last_changed_at` is a derived event timestamp, initialized from
+`ITEM_ADDED` and advanced when replay changes the effective Item area,
+planning date, status, or checklist-Step state. Idempotent/no-op events leave
+it unchanged; equal-time distributed events use canonical replay order.
+Protocol 17 exposes the value, while the UI displays only its local date and
+does not expose an actor, device, exact time, read receipt, or timeline. It is
+not a separately persisted field. The timestamp uses the source event clock,
+so device clock skew can make the shown date appear earlier or later; replay
+ordering is determined by logical time and stable identity, not wall time.
+The browser formats the timestamp in the viewing device's local time zone, so
+the date can also differ across devices in different time zones.
 
 ## v0.15.0 Areas
 

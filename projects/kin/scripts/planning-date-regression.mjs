@@ -11,7 +11,8 @@ export async function planningDateRegressions() {
   };
   const originalNow = Date.now;
   const originalPage = location.hash.slice(1) || "today";
-  Date.now = () => new Date(2026, 9, 3, 12).getTime();
+  let now = new Date(2026, 9, 3, 12).getTime();
+  Date.now = () => now;
   try {
     const text = `Planning date ${crypto.randomUUID()}`;
     app.compose.input.value = text;
@@ -19,7 +20,10 @@ export async function planningDateRegressions() {
     app.compose.form.requestSubmit();
     await idle();
     const item = app.state.items.find((entry) => entry.text === text);
-    check(item?.planningDate === null, "new Items begin without a planning date");
+    check(
+      item?.planningDate === null && item.lastChangedAt === now,
+      "new Items begin without a planning date and record their creation date",
+    );
     app.navLinks.get("lists").click();
     const dateInput = () => app.needs.querySelector(
       `.item-planning-date-input[data-item-id="${item.itemId}"]`,
@@ -28,18 +32,32 @@ export async function planningDateRegressions() {
       dateInput()?.getAttribute("aria-label") === `Planned date for ${text}`,
       "native date input has an item-specific accessible name",
     );
+    const lastChangedLabel = () =>
+      dateInput().closest("kin-item").querySelector(".item-last-changed");
+    const expectedDate = () =>
+      new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
+        new Date(now),
+      );
+    check(
+      lastChangedLabel()?.textContent === `Last changed ${expectedDate()}`,
+      "Item history is exposed as a date-only label",
+    );
 
     const beforeToday = (await app.store.loadEvents()).length;
     const shortcuts = () => [...dateInput().closest("kin-item").querySelectorAll(".item-planning-date-shortcut")];
+    now += 60_000;
     shortcuts().find((button) => button.textContent === "Today").click();
     await idle();
     check(
       app.state.items.find((entry) => entry.itemId === item.itemId).planningDate === 20261003 &&
+        app.state.items.find((entry) => entry.itemId === item.itemId).lastChangedAt === now &&
+        lastChangedLabel()?.textContent === `Last changed ${expectedDate()}` &&
         (await app.store.loadEvents()).length === beforeToday + 1,
-      "Today commits one concrete local civil date",
+      "effective date changes update Last changed without displaying a time",
     );
     check(document.activeElement === dateInput(), "focus returns to the date editor");
 
+    now += 60_000;
     shortcuts().find((button) => button.textContent === "Tomorrow").click();
     await idle();
     check(
@@ -47,6 +65,7 @@ export async function planningDateRegressions() {
       "Tomorrow commits the next local civil date",
     );
 
+    now += 60_000;
     dateInput().value = "2026-10-07";
     dateInput().dispatchEvent(new Event("change", { bubbles: true }));
     await idle();
@@ -84,6 +103,7 @@ export async function planningDateRegressions() {
       URL.revokeObjectURL = originalRevokeObjectURL;
       HTMLAnchorElement.prototype.click = originalAnchorClick;
     }
+    now += 60_000;
     shortcuts().find((button) => button.textContent === "Clear").click();
     await idle();
     await app.refreshFromEvents();

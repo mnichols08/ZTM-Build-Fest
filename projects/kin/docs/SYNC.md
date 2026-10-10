@@ -1,6 +1,14 @@
 # Synchronization Design
 
-**Status:** v0.22.0 preserves the existing encrypted-sync boundary for Item planning-date events. Date values remain inside encrypted canonical event payloads; no plaintext metadata, server interpretation, or new authority is added.
+**Status:** v0.24.0 preserves the existing encrypted-sync boundary. Item planning dates remain inside encrypted canonical event payloads, and the Last changed display value is derived client-side; no plaintext metadata, server interpretation, or new authority is added.
+
+## v0.24.0 Useful Household History
+
+The date-only Item history value is derived during client-side replay from
+existing encrypted canonical events. No timestamp is duplicated into
+plaintext sync metadata and no actor/device or read-receipt state is added.
+Distinct concurrent events continue to converge by the established
+`(logical_time, device_id, event_id)` ordering.
 
 ## v0.22.0 Lightweight Planning Dates
 

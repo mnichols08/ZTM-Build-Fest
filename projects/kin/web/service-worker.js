@@ -1,6 +1,6 @@
 // Only source-controlled static shell assets are eligible for this cache.
 // API, archives, projections, drafts and keys never pass through Cache.put.
-const CACHE = "kin-static-v0.23.0";
+const CACHE = "kin-static-v0.24.0";
 const SHELL = [
   "/", "/index.html", "/styles/app.css", "/manifest.webmanifest", "/icon.svg",
   "/browser-time.js", "/calendar-export.js", "/wasm/kin-engine.js", "/wasm/kin_engine.wasm",

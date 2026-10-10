@@ -1,6 +1,6 @@
 # Household Events
 
-**Status:** Current through v0.22.0 Lightweight Planning Dates. Rust owns canonical command encoding and decoding. Protocols 10–14 add Notes, Steps, richer Routine cadence, Shopping, and Staples; protocol 15 adds household-mode event kind 29, and protocol 16 adds Item planning-date event kind 30. Protocols 1–15 fail closed on date-bearing history rather than omit the field. Equal-time distributed replay remains deterministic; local encryption wraps canonical bytes without rewriting them.
+**Status:** Current through v0.24.0 Useful Household History. Rust owns canonical command encoding and decoding. Protocols 10–14 add Notes, Steps, richer Routine cadence, Shopping, and Staples; protocol 15 adds household-mode event kind 29, protocol 16 adds Item planning-date event kind 30, and protocol 17 adds a derived per-Item history timestamp to the projection only. No new event kind is introduced for history. Protocols 1–15 fail closed on date-bearing history rather than omit the field. Equal-time distributed replay remains deterministic; local encryption wraps canonical bytes without rewriting them.
 
 ## Canonical record
 

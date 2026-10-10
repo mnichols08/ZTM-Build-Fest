@@ -1,6 +1,6 @@
 # Release Process
 
-**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. PR #26 is merged into `kin-development`; v0.16.3 and the existing tagged v0.17.0 candidate are preserved. The v0.21.0–v0.25.0 fast-track milestones are developed on `kin-fast-track-v0.21-v0.25`; v0.21.0 Household Modes, v0.22.0 Lightweight Planning Dates, and v0.23.0 Calendar Interoperability are implementation candidates. These candidates are not production certification. No tags are created on the batch branch.
+**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive Hardening & Architecture Closure. PR #26 is merged into `kin-development`; v0.16.3 and the existing tagged v0.17.0 candidate are preserved. The v0.21.0–v0.25.0 fast-track milestones are developed on `kin-fast-track-v0.21-v0.25`; v0.21.0 Household Modes through v0.24.0 Useful Household History are implementation candidates. These candidates are not production certification. No tags are created on the batch branch.
 
 ## Release sequence
 

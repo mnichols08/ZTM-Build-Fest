@@ -98,6 +98,55 @@ fn assigned_items_keep_area_identity_through_rename_and_archive() {
 }
 
 #[test]
+fn item_history_changes_only_when_area_assignment_changes() {
+    let mut events = Vec::new();
+    let area_id = AreaId([20; 16]);
+    let item_id = ItemId([21; 16]);
+    run(
+        &mut events,
+        C::CreateArea {
+            id: area_id,
+            name: "Kitchen".into(),
+        },
+        1,
+    )
+    .unwrap();
+    run(
+        &mut events,
+        C::AddItem {
+            id: item_id,
+            text: "Wipe counter".into(),
+            classification: ItemClassification::Need,
+        },
+        2,
+    )
+    .unwrap();
+    run(
+        &mut events,
+        C::ChangeItemArea {
+            item_id,
+            area_id: Some(area_id),
+        },
+        3,
+    )
+    .unwrap();
+    let changed = rebuild(&events).unwrap();
+    assert_eq!(changed.items[0].last_changed_at, 1_760_000_000_003);
+
+    run(
+        &mut events,
+        C::ChangeItemArea {
+            item_id,
+            area_id: Some(area_id),
+        },
+        4,
+    )
+    .unwrap();
+    let unchanged = rebuild(&events).unwrap();
+    assert_eq!(unchanged.items[0].last_changed_at, 1_760_000_000_003);
+}
+
+#[test]
 fn unassigned_pre_area_history_needs_no_synthetic_area() {
     let request = request(Vec::new());
     assert!(request.events.is_empty());

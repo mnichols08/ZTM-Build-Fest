@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** v0.22.0 adds protocol 16 for Item planning dates while preserving earlier layouts and canonical event bytes. Protocol 15 adds household modes; protocol 14 gates Staples, protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
+**Status:** v0.24.0 adds protocol 17's per-Item Last changed projection field while preserving earlier layouts and canonical event bytes. Protocol 16 adds Item planning dates; protocol 15 adds household modes; protocol 14 gates Staples, protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
 
 ## Target and exports
 
@@ -454,3 +454,15 @@ The result header remains 72 bytes. After the existing protocol-11 Step
 records, protocol 16 appends one little-endian `u32` per Item in Item order.
 Zero represents no date. Protocols 1–15 retain their exact layouts and reject
 date-bearing history/state instead of silently omitting the field.
+
+## Protocol version 17 — derived Item history date
+
+Request framing and canonical event bytes are unchanged. After the existing
+protocol-16 planning-date array, protocol 17 appends one little-endian `i64`
+timestamp per Item, in Item order. Each timestamp is the event clock of the
+latest effective Item or checklist-Step event in deterministic replay order.
+It is derived projection data: protocol 17 adds no event kind, persistent
+storage field, read receipt, actor attribution, exact-time UI, or history
+timeline. Its eight bytes per Item add at most 80,000 bytes under the existing
+10,000-entity limit; the 64 MiB protocol result bound still applies.
+Protocols 1–16 retain their exact layouts.

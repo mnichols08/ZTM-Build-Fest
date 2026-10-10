@@ -321,6 +321,7 @@ p { margin: 7px 0; }
 .item-planning-date-input { min-height: var(--tap); max-width: 170px; padding: 4px 7px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; }
 .item-planning-date-shortcut { min-height: var(--tap); padding-inline: 9px; }
 .item-planning-date-label { color: var(--ink-muted); font-size: 12px; }
+.item-last-changed { color: var(--ink-muted); font-size: 12px; }
 .item-completed .item-text { color: var(--ink-muted); text-decoration: line-through; text-decoration-thickness: 1px; }
 .item-action { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 7px; min-width: 0; }
 .step-summary { color: var(--ink-muted); font-size: 13px; }

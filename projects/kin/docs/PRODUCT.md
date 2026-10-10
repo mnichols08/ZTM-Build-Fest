@@ -48,7 +48,9 @@ Kin is not couples therapy, a marriage score, a chore competition, a relationshi
 
 Kin implements the Today, Needs, Shopping, and Staples views with fixed
 lightweight classification, fast local capture, completion, reopening, and
-archival. Staples are reusable Item entries; a household member can manually
+archival. Each Item also shows a date-only Last changed value derived from its
+canonical Item and checklist-Step events, without actor attribution. Staples
+are reusable Item entries; a household member can manually
 add one to Shopping without tracking inventory or stock. All use the same
 local-first, encrypted-sync flow. Older v0.1.x items without classification
 remain visible in Today. Handoff adds short context capture, acknowledgement, recent context,

@@ -1,6 +1,16 @@
 # Data Migrations
 
-**Status:** v0.22.0 adds Item planning dates behind replay protocol 16 without an IndexedDB, archive-container, sync-envelope, or server-schema migration. Earlier version sections are historical.
+**Status:** v0.24.0 adds a derived Item history date through replay protocol 17 without an IndexedDB, archive-container, sync-envelope, or server-schema migration. Earlier version sections are historical.
+
+## v0.24.0 Useful Household History compatibility
+
+Protocol 17 appends one derived little-endian `i64` timestamp per Item after
+the protocol-16 planning-date array. The value is reconstructed from existing
+canonical events on every replay; there is no event, persistent-format
+migration, archive rewrite, sync-envelope change, or server-schema change.
+Protocol 16 can replay the same current history but does not receive the new
+display field. Protocols 1–15 retain their historical layouts and continue to
+fail closed on event kinds they do not support.
 
 ## v0.22.0 Lightweight Planning Dates compatibility
 

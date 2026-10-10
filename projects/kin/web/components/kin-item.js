@@ -85,6 +85,19 @@ class KinItem extends HTMLElement {
       planned.textContent = `Planned for ${formatPlanningDate(this.record.planningDate)}`;
       details.append(planned);
     }
+    if (
+      Number.isSafeInteger(this.record.lastChangedAt) &&
+      Number.isFinite(new Date(this.record.lastChangedAt).getTime())
+    ) {
+      const lastChanged = document.createElement("span");
+      lastChanged.className = "item-last-changed";
+      const date = new Date(this.record.lastChangedAt).toLocaleDateString(
+        undefined,
+        { dateStyle: "medium" },
+      );
+      lastChanged.textContent = `Last changed ${date}`;
+      details.append(lastChanged);
+    }
     const action = document.createElement("div");
     action.className = "item-action";
     const isStaple = this.record.classification === "staple";

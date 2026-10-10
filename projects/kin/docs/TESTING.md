@@ -401,6 +401,14 @@ unencrypted-download disclosure, MIME type, filename, local iCalendar payload,
 and that clearing the last active planning date disables export. No event,
 IndexedDB row, or network request is produced by download.
 
+## v0.24.0 Useful Household History
+
+Rust replay tests cover Item creation, effective area/date/status/Step
+changes, idempotent no-ops, and deterministic equal-time distributed replay.
+Protocol tests verify the exact protocol-17 timestamp extension while
+preserving protocol 16. Real-WASM and Edge regressions verify the projected
+timestamp, date-only UI label, and update after an effective change.
+
 ## v0.18.0 Richer Routine Scheduling
 
 Run the same Rust, WASM, and browser routine suites after rebuilding
