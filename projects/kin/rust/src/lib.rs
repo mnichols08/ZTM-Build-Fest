@@ -29,3 +29,6 @@ mod note_tests;
 
 #[cfg(test)]
 mod step_tests;
+
+#[cfg(test)]
+mod mode_tests;

@@ -1,17 +1,17 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.20.0; the last published product release remains v0.10.3. Tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.24.0; the last published product release remains v0.10.3. The derived Item history date adds replay protocol 17 but no persistent storage or canonical event contract. Tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.20.0 | Governs |
+| Version axis | Last published v0.10.3 / current candidate v0.24.0 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.20.0` | Staples & Replenishment; additive protocol 14 |
+| Application | Last published `0.10.3`; candidate `0.24.0` | Useful Household History with a derived per-Item date |
 | Server database schema | `2` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination and household lifecycle records |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
-| Replay protocol | Reads v1–v14; writes v14 for local and synchronized requests | Request context and projection semantics |
+| Replay protocol | Reads v1–v17; writes v17 for local and synchronized requests | Request context and projection semantics |
 | Manual WASM ABI | Existing exports plus additive command/metadata/archive/import APIs | Host ownership and calls; new command packet v1 |
 | IndexedDB schema | Event DB 2→3; key DB 3→4 | Journalled upgrade to encrypted records |
 | Local envelope | v1 for original roots; v2 for rotated roots | v2 authenticates rootVersion in addition to purpose/routing |
@@ -22,7 +22,7 @@ Kin version numbers describe product releases; they do not version every persist
 
 These numbers evolve independently. An application release may keep the same event, protocol, storage, or export version; a contract may change between application versions. Never infer compatibility from equal version numbers or silently bump one axis as a proxy for another.
 
-The v0.2.0 implementation reads event schema 1 for all supported kinds and schema 2 for `ITEM_ADDED`; new instances write add schema 2 and other Item event schema 1. v0.3.0 additionally reads Handoff schema 1, supports protocols 1/2/3, and writes protocol 3. IndexedDB schema remains 1. Export format version 1 is a future design baseline only.
+The v0.2.0 implementation reads event schema 1 for all supported kinds and schema 2 for `ITEM_ADDED`; new instances write add schema 2 and other Item event schema 1. v0.3.0 additionally reads Handoff schema 1, supports protocols 1/2/3, and writes protocol 3. IndexedDB schema remains 1. The v0.23.0 `.ics` output uses iCalendar 2.0 independently of Kin's encrypted KARC archive format; it does not change either persistent contract. v0.24.0 protocol 17 appends an Item's derived latest-effective-event timestamp after its planning date; it stores no separate history value.
 
 ## Compatibility policy
 
@@ -147,6 +147,30 @@ Staple-bearing events, summaries, or projections; protocol 13 continues to
 support Shopping. IndexedDB, server schema, KARC v1, and encrypted sync
 envelope remain unchanged. Replenishment is a user-triggered append of an
 independent Shopping Item and requires no data migration.
+
+## v0.21.0 Household Modes
+
+Protocol 15 adds schema-1 canonical event kind 29, with a one-byte closed
+mode value, and appends a four-byte mode/reserved field to the result header.
+Protocols 1–14 reject mode events and non-Normal projections. Histories
+without a mode event default to Normal without rewriting canonical bytes.
+IndexedDB, server schema, KARC v1, and encrypted sync envelope remain
+unchanged; older protocol serialization fails closed rather than dropping
+mode state.
+
+## v0.22.0 Lightweight Planning Dates
+
+Application v0.22.0 adds schema-1 event kind 30 and replay protocol 16.
+Protocol 16 appends an optional `u32` planning date for each Item after the
+existing Step records. Protocols 1–15 retain their historical layouts and
+fail closed on the new event or dated projection. Existing canonical event
+bytes, IndexedDB schema, KARC v1, and encrypted sync envelope are unchanged.
+
+Application v0.24.0 adds replay protocol 17, which appends one derived
+little-endian `i64` event timestamp per Item after the protocol-16 planning
+dates. It represents the latest effective Item or checklist-Step event in
+deterministic replay order. Protocols 1–16 retain their historical layouts;
+there is no new canonical event or persistent migration.
 
 ## v0.9.x Encrypted Sync
 

@@ -1,6 +1,6 @@
 # Architecture
 
-**Status:** v0.20.0 adds reusable Staples as an Item classification through additive protocol 14. Manual replenishment creates an ordinary Shopping Item. Canonical Item events, deterministic Rust/WASM replay, encrypted local persistence, encrypted sync, and archive adapters remain authoritative; browser code supplies the lists and user-triggered action. No IndexedDB, server, sync-envelope, event-shape, or archive-container schema change is required.
+**Status:** v0.25.0 adds local, in-memory search over the existing decrypted projection without a search index, event, protocol, storage, sync-envelope, server, or archive-container change. v0.24.0 adds a date-only Item history label derived from canonical event replay and exposes it in protocol 17. v0.23.0's iCalendar export remains explicit, local, plaintext, bounded, and read-only. Planning dates remain fixed civil dates in protocol 16; canonical Rust events and deterministic Rust/WASM replay remain authoritative.
 
 ## v0.10 implementation boundary
 

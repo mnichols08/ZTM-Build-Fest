@@ -1,12 +1,16 @@
 # Web Component Contract
 
-**Status:** Current through v0.20.0 Staples & Replenishment; earlier version sections are historical contracts.
+**Status:** Current through v0.25.0 Search & Filters; earlier version sections are historical contracts.
 
 ## Component responsibilities
 
 ### `<kin-app>`
 
 Own application initialization, WASM loading, IndexedDB opening/loading, orchestration of the storage and Rust bridge, global loading/error states, and passing Rust-derived state to presentation components. It is the only owner of the command-to-event-to-persist flow. It must not duplicate Rust's validation or reducer.
+
+The More page exposes the native household-mode selector and submits explicit
+mode-change commands through the same command, replay, and persistence path.
+It restores the selected value if local persistence fails.
 
 ### `<kin-today>`
 
@@ -19,6 +23,13 @@ Provide a labeled, short item-entry form that defaults classification to Needs. 
 ### `<kin-item>`
 
 Render one item and expose semantic complete, reopen, and archive controls as appropriate. Dispatch the corresponding command with the item ID. It does not decide or persist transitions.
+
+### `<kin-routines>`
+
+Keep routine definitions visible during Vacation, Guests, or Rest and explain
+that occurrences are paused. Hide occurrence complete/reopen actions while
+paused; the Rust command validator independently rejects those mutations.
+Routine archival remains available.
 
 Only create the components needed for these responsibilities; do not componentize for its own sake. A simpler `<kin-app>`-owned view is acceptable if it avoids needless indirection while preserving these boundaries.
 
@@ -81,3 +92,38 @@ dispatches `kin:replenish-staple` with only the staple Item ID; the app reads
 the canonical staple text and appends a separate Shopping Item, preserving
 list focus and leaving the staple active. Archiving the staple does not affect
 the Shopping Item. See [V0.20.0](releases/V0.20.0.md).
+
+## v0.22.0 Lightweight Planning Dates
+
+`<kin-item>` exposes a native, accessible date input and Today/Tomorrow/Clear
+controls for existing non-archived Items. The browser resolves shortcuts to
+fixed local civil dates and dispatches `kin:set-item-planning-date`; `<kin-app>`
+persists that intent through the same event-store transaction as other Item
+changes. Archived Items are read-only. See
+[V0.22.0](releases/V0.22.0.md).
+
+## v0.23.0 Calendar Interoperability
+
+`<kin-app>` enables a Lists-page download only when an active dated Item
+exists. It serializes the existing Rust-derived Item projection into a
+bounded, local iCalendar all-day export, then uses a browser Blob download.
+No event is appended and no calendar service is contacted. The UI discloses
+that the downloaded file contains plaintext Item text. See
+[V0.23.0](releases/V0.23.0.md).
+
+## v0.24.0 Useful Household History
+
+`<kin-item>` renders the Rust-derived `lastChangedAt` as a localized,
+date-only “Last changed” text label. It receives no actor/device identity and
+does not expose a read receipt, exact time, or timeline. It adds no command or
+event. See [V0.24.0](releases/V0.24.0.md).
+
+## v0.25.0 Search & Filters
+
+`<kin-search>` receives the unlocked Item, Handoff, Talk, Note, and Area
+projection from `<kin-app>`. It searches unarchived text in memory and renders
+up to 100 results with the total count. Classification, status, and Area
+filters narrow Item and checklist-Step matches only. Native labeled controls,
+keyboard focus retention, and a polite live result count support accessible
+use. Search queries and filters are discarded on lock and are not persisted,
+exported, or synchronized. See [V0.25.0](releases/V0.25.0.md).

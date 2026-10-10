@@ -1,6 +1,36 @@
 # Data Migrations
 
-**Status:** v0.20.0 adds reusable Staples as an Item classification behind replay protocol 14 without an IndexedDB, archive-container, or server-schema migration. Earlier version sections are historical.
+**Status:** v0.24.0 adds a derived Item history date through replay protocol 17 without an IndexedDB, archive-container, sync-envelope, or server-schema migration. Earlier version sections are historical.
+
+## v0.24.0 Useful Household History compatibility
+
+Protocol 17 appends one derived little-endian `i64` timestamp per Item after
+the protocol-16 planning-date array. The value is reconstructed from existing
+canonical events on every replay; there is no event, persistent-format
+migration, archive rewrite, sync-envelope change, or server-schema change.
+Protocol 16 can replay the same current history but does not receive the new
+display field. Protocols 1–15 retain their historical layouts and continue to
+fail closed on event kinds they do not support.
+
+## v0.22.0 Lightweight Planning Dates compatibility
+
+Protocol 16 introduces schema-1 event kind 30 and appends one little-endian
+`u32` planning-date value per Item to the projection after existing protocol
+extensions. Zero means no date. Protocols 1–15 continue to replay histories
+that contain no planning-date events and reject event kind 30; their original
+state layouts remain unchanged. No stored rows are rewritten: the local
+encrypted event store, sync relay/outbox, and KARC v1 archive already carry
+canonical event bytes. Upgrading Kin is the migration for devices that share
+a history containing planning dates.
+
+## v0.21.0 Household Modes compatibility
+
+Protocol 15 adds canonical event kind 29 and appends a bounded mode field to
+its projection header. Protocols 1–14 fail closed when they encounter the new
+event or a non-Normal state. A history with no mode event defaults to Normal;
+its source bytes are unchanged. The existing encrypted local store, relay,
+and archive carry the canonical event without a storage or envelope
+migration.
 
 ## v0.20.0 Staples & Replenishment compatibility
 

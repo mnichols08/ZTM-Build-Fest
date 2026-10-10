@@ -99,6 +99,11 @@ pub enum HouseholdCommand {
         area_id: Option<AreaId>,
     },
     ArchiveNote(NoteId),
+    SetHouseholdMode(HouseholdMode),
+    SetItemPlanningDate {
+        item_id: ItemId,
+        planning_date: Option<CivilDate>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -230,6 +235,14 @@ pub fn create_event(
             }
         }
         ArchiveNote(id) => EventKind::NoteArchived { note_id: *id },
+        SetHouseholdMode(mode) => EventKind::HouseholdModeChanged { mode: *mode },
+        SetItemPlanningDate {
+            item_id,
+            planning_date,
+        } => EventKind::ItemPlanningDateChanged {
+            item_id: *item_id,
+            planning_date: *planning_date,
+        },
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -322,6 +335,33 @@ pub fn execute(
     {
         return Err(KinError::UnsupportedVersion);
     }
+    if matches!(command, HouseholdCommand::SetHouseholdMode(_))
+        && request.protocol_version < crate::protocol::PROTOCOL_V15
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if let HouseholdCommand::SetHouseholdMode(mode) = command {
+        if current.mode == *mode {
+            return Err(KinError::InvalidEvent);
+        }
+    }
+    if let HouseholdCommand::SetItemPlanningDate {
+        item_id,
+        planning_date,
+    } = command
+    {
+        let item = current
+            .items
+            .iter()
+            .find(|item| item.item_id == *item_id)
+            .ok_or(KinError::InvalidEvent)?;
+        if item.status == ItemStatus::Archived || item.planning_date == *planning_date {
+            return Err(KinError::InvalidEvent);
+        }
+        if request.protocol_version < crate::protocol::PROTOCOL_V16 {
+            return Err(KinError::UnsupportedVersion);
+        }
+    }
     let routine_intent = match command {
         HouseholdCommand::CompleteOccurrence { id, key } => Some((id, key, false)),
         HouseholdCommand::ReopenOccurrence { id, key } => Some((id, key, true)),
@@ -334,6 +374,7 @@ pub fn execute(
             .find(|r| r.routine_id == *id)
             .ok_or(KinError::InvalidEvent)?;
         if routine.archived
+            || current.mode != HouseholdMode::Normal
             || routine.occurrence_key != Some(*key)
             || routine.completed != completed
         {
@@ -547,10 +588,10 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || matches!(kind, 22 | 23) && text_length >= 24
         || kind == 25 && (17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length);
     if !text.is_empty() && !accepts_payload
-        || !matches!(kind, 14..=16) && date != 0
-        || !matches!(kind, 1 | 12 | 14) && option != 0
+        || !matches!(kind, 14..=16 | 30) && date != 0
+        || !matches!(kind, 1 | 12 | 14 | 29) && option != 0
         || kind != 12 && expires != 0
-        || matches!(kind, 12 | 13) && id != [0; 16]
+        || matches!(kind, 12 | 13 | 29) && id != [0; 16]
         || kind == 21 && text_length != 16
         || kind == 24 && text_length != 0
         || kind == 25 && !(17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
@@ -695,6 +736,19 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             }
         }
         24 if text_length == 0 => ArchiveNote(NoteId(id)),
+        29 if text_length == 0 => SetHouseholdMode(match option {
+            0 => HouseholdMode::Normal,
+            1 => HouseholdMode::Vacation,
+            2 => HouseholdMode::Guests,
+            3 => HouseholdMode::Rest,
+            _ => return Err(KinError::MalformedProtocol),
+        }),
+        30 if text_length == 0 => SetItemPlanningDate {
+            item_id: ItemId(id),
+            planning_date: (date != 0)
+                .then(|| CivilDate::from_encoded(date))
+                .transpose()?,
+        },
         _ => return Err(KinError::UnsupportedVersion),
     };
     let context = CommandContext {

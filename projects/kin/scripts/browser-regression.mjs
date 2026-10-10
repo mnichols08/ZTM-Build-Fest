@@ -14,6 +14,7 @@ import {
   routineKeyboardRegressions,
 } from "./routine-regression.mjs";
 import { shoppingRegressions } from "./shopping-regression.mjs";
+import { planningDateRegressions } from "./planning-date-regression.mjs";
 import {
   handoffRegressions,
   handoffPeerRegressions,
@@ -221,10 +222,10 @@ async function regressions() {
   check(app.status.textContent === "Ready.", "startup");
   check(
     [...app.nav.querySelectorAll("a")].map((link) => link.textContent.trim()).join(",") ===
-      "Today,Lists,Routines,Handoff,More" &&
+      "Today,Lists,Routines,Handoff,More" && app.nav.querySelectorAll("a").length <= 5 &&
       app.nav.querySelectorAll('[aria-current="page"]').length === 1 &&
       app.nav.querySelector('[aria-current="page"]').dataset.page === "today",
-    "the unlocked shell exposes five stable destinations and marks Today as current",
+    "the unlocked shell exposes at most five primary destinations and marks Today as current",
   );
   check(
     getComputedStyle(app.shell).display !== "grid" &&
@@ -255,6 +256,113 @@ async function regressions() {
       app.pages.get("more").contains(app.security),
     "Today and Lists remain views over existing records and More owns household/security controls",
   );
+  const search = app.search;
+  app.nav.querySelector('a[href="#more"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  app.pages.get("more").querySelector('a[href="#search"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check(
+    !app.pages.get("search").hidden &&
+      app.nav.querySelector('[aria-current="page"]').dataset.page === "more" &&
+      app.routeAnnouncement.textContent === "Search view",
+    "Search remains reachable from More with its route announcement and More destination current",
+  );
+  search.household = {
+    items: [
+      {
+        itemId: "search-need",
+        text: "Pack a snack",
+        classification: "need",
+        status: "active",
+        areaId: "search-kitchen",
+        steps: [{ stepId: "search-step", text: "Add apple slices", archived: false }],
+      },
+      {
+        itemId: "search-shopping",
+        text: "Buy oat milk",
+        classification: "shopping",
+        status: "active",
+        areaId: "search-kitchen",
+        steps: [{ stepId: "search-archived-step", text: "Archived milk step", archived: true }],
+      },
+      {
+        itemId: "search-archived",
+        text: "Archived milk item",
+        classification: "shopping",
+        status: "archived",
+        areaId: "search-kitchen",
+        steps: [],
+      },
+    ],
+    handoffs: [
+      { handoffId: "search-handoff", text: "Milk is in the fridge", status: "acknowledged" },
+      { handoffId: "search-archived-handoff", text: "Archived milk handoff", status: "archived" },
+    ],
+    talks: [
+      { talkId: "search-talk", text: "Discuss oat milk", status: "open" },
+      { talkId: "search-archived-talk", text: "Archived milk topic", status: "archived" },
+    ],
+    notes: [
+      { noteId: "search-note", title: "Milk preference", body: "Oat milk", archived: false },
+      { noteId: "search-archived-note", title: "Archived milk note", body: "Old details", archived: true },
+    ],
+    areas: [{ areaId: "search-kitchen", name: "Kitchen", archived: false }],
+  };
+  check(
+    search.queryInput.labels[0]?.textContent === "Search household text" &&
+      search.resultStatus.getAttribute("aria-live") === "polite" &&
+      search.queryInput.spellcheck === false,
+    "search exposes a labeled local search field and an accessible live result count",
+  );
+  search.queryInput.focus();
+  search.queryInput.value = "apple";
+  search.queryInput.dispatchEvent(new Event("input", { bubbles: true }));
+  check(
+    document.activeElement === search.queryInput &&
+      search.resultStatus.textContent === "1 match." &&
+      search.resultsList.textContent.includes("Add apple slices"),
+    "typing keeps focus and finds active checklist Step text",
+  );
+  search.queryInput.value = "milk";
+  search.queryInput.dispatchEvent(new Event("input", { bubbles: true }));
+  search.classificationSelect.value = "shopping";
+  search.classificationSelect.dispatchEvent(new Event("change", { bubbles: true }));
+  search.statusSelect.value = "active";
+  search.statusSelect.dispatchEvent(new Event("change", { bubbles: true }));
+  search.areaSelect.value = "search-kitchen";
+  search.areaSelect.dispatchEvent(new Event("change", { bubbles: true }));
+  check(
+    search.resultStatus.textContent === "4 matches." &&
+      [...search.resultsList.querySelectorAll(".search-result strong")].map((entry) => entry.textContent).join(",") ===
+        "Item,Handoff,Talk,Note" &&
+      !search.resultsList.textContent.includes("Archived"),
+    "Item filters combine while preserving matching unarchived Handoff, Talk, and Note results",
+  );
+  search.queryInput.value = "no household record contains this";
+  search.queryInput.dispatchEvent(new Event("input", { bubbles: true }));
+  check(
+    search.resultStatus.textContent === "No matching unarchived household text." &&
+      search.resultsList.childElementCount === 0,
+    "a query with no matches shows a clear empty state",
+  );
+  search.clearButton.click();
+  check(
+    document.activeElement === search.queryInput &&
+      search.queryInput.value === "" &&
+      search.classificationSelect.value === "" &&
+      search.statusSelect.value === "" &&
+      search.areaSelect.value === "" &&
+      search.resultStatus.textContent === "Enter text above to search.",
+    "clear search restores defaults and returns keyboard focus to the query",
+  );
+  app.nav.querySelector('a[href="#today"]').click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  check(
+    !app.pages.get("today").hidden &&
+      app.nav.querySelector('[aria-current="page"]').dataset.page === "today",
+    "navigation returns from Search to Today",
+  );
+  passed.push("local household search, archive exclusion, Item filters, result cap, accessibility and focus");
   const initialCatchUp = await app.store.getCatchUpState();
   check(
     initialCatchUp.events.length === 0 &&
@@ -1199,6 +1307,8 @@ try {
   console.log(await first.evaluate(`(${catchUpRegressions.toString()})()`));
   await visit(first, "lists");
   console.log(await first.evaluate(`(${shoppingRegressions.toString()})()`));
+  await visit(first, "today");
+  console.log(await first.evaluate(`(${planningDateRegressions.toString()})()`));
   await visit(first, "routines");
   console.log(await first.evaluate(`(${routineRegressions.toString()})()`));
   await visit(first, "today");
@@ -1631,6 +1741,46 @@ try {
   await visit(second, "routines");
   await routinePeerRegressions(first, second, until);
   await routineKeyboardRegressions(first, until);
+  await visit(first, "more");
+  await first.evaluate(`(()=>{
+    const app=document.querySelector('kin-app');
+    app.modeSelect.value='vacation';
+    app.modeSelect.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+  await until(() =>
+    first.evaluate(`(()=>{
+      const app=document.querySelector('kin-app');
+      return !app.busy&&app.state.mode==='vacation';
+    })()`),
+  );
+  const modeResult = await first.evaluate(`(async()=>{
+      const app=document.querySelector('kin-app');
+      const events=await app.store.loadEvents();
+      return {
+        mode:app.modeSelect.value,
+        record:events.at(-1).kind,
+        routineCount:app.state.routines.length,
+        completionActions:app.routines.querySelectorAll('[data-action="complete-routine-occurrence"]').length,
+        paused:app.routines.textContent.includes('paused during Vacation'),
+      };
+    })()`);
+  assert.equal(modeResult.mode, "vacation");
+  assert.equal(modeResult.record, "HOUSEHOLD_MODE_CHANGED");
+  assert.ok(modeResult.routineCount > 0, "routine definitions remain intact");
+  assert.equal(modeResult.completionActions, 0);
+  assert.equal(modeResult.paused, true, "routine occurrences are paused");
+  await first.evaluate(`(()=>{
+    const app=document.querySelector('kin-app');
+    app.modeSelect.value='normal';
+    app.modeSelect.dispatchEvent(new Event('change',{bubbles:true}));
+  })()`);
+  await until(() =>
+    first.evaluate(`(()=>{
+      const app=document.querySelector('kin-app');
+      return !app.busy&&(app.state.mode??'normal')==='normal';
+    })()`),
+  );
+  console.log("PASS household mode replay, local persistence, and routine pause");
   await visit(first, "today");
   await visit(second, "today");
   await visit(first, "lists");
@@ -2161,8 +2311,11 @@ try {
   assert.deepEqual(problems, [], "Uncaught errors or CSP/console errors");
   assert.ok(
     requests.length > 0 &&
-      requests.every((url) => url.startsWith(origin + "/")),
-    `All page requests stay same-origin: ${requests.filter((url) => !url.startsWith(origin + "/")).join(", ")}`,
+      requests.every((url) =>
+        url.startsWith(origin + "/") ||
+        url.startsWith("data:image/svg+xml;base64,")
+      ),
+    `All page requests stay same-origin or use browser-native SVG data: ${requests.filter((url) => !url.startsWith(origin + "/") && !url.startsWith("data:image/svg+xml;base64,")).join(", ")}`,
   );
   console.log(
     "PASS CSP/console and same-origin requests (favicon 404 excluded)",

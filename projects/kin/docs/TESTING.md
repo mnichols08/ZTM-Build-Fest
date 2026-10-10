@@ -372,7 +372,52 @@ Run every truncated v6 result boundary and malformed summary count, kind, entity
 
 ## v0.7.0 Routines
 
-Run `cargo test`, `node web/wasm/kin-engine.test.mjs`, `node web/wasm/routines.test.mjs`, and the complete browser runner after a release Wasm build. `rust/src/routine_tests.rs` holds independent v7 wire fixtures; `recurrence.rs` covers Gregorian calendar primitives. `scripts/routine-regression.mjs` exercises real IndexedDB/Wasm lifecycle, boundaries, stale keys, quota/abort/retry, cross-tab races and keyboard focus. Existing suites retain explicit legacy protocol fixtures. See [V0.7.0](V0.7.0.md) for the full matrix and actual release evidence.
+Run `cargo test`, the `web/wasm/kin-engine.test.mjs`, `routines.test.mjs`,
+and `modes.test.mjs` suites, and the complete browser runner after a release
+Wasm build. `rust/src/routine_tests.rs` holds independent v7 wire fixtures;
+`recurrence.rs` covers Gregorian calendar primitives.
+`scripts/routine-regression.mjs` exercises real IndexedDB/Wasm lifecycle,
+boundaries, stale keys, quota/abort/retry, cross-tab races and keyboard focus.
+`scripts/browser-regression.mjs` also verifies mode persistence, paused
+routine actions, and planning-date capture/edit/clear/persistence with local
+Today/Tomorrow shortcuts. Existing suites retain explicit legacy protocol
+fixtures.
+
+## v0.22.0 Lightweight Planning Dates
+
+Run Rust command/replay tests and `web/wasm/kin-engine.test.mjs` after
+rebuilding the release WASM. The browser regression exercises the native date
+input, local Today/Tomorrow resolution, clear behavior, event persistence,
+replay, accessibility naming, and focus restoration.
+See [V0.7.0](V0.7.0.md) for the full matrix and actual release evidence.
+
+## v0.23.0 Calendar Interoperability
+
+Run `npm run test:calendar` for RFC text escaping, UTF-8 line folding, all-day
+date encoding, deterministic ordering, stable UIDs, exclusion of completed,
+archived, and undated Items, invalid civil dates, and 10,000-event/16 MiB
+bounds. The full Edge regression verifies the accessible Lists action,
+unencrypted-download disclosure, MIME type, filename, local iCalendar payload,
+and that clearing the last active planning date disables export. No event,
+IndexedDB row, or network request is produced by download.
+
+## v0.24.0 Useful Household History
+
+Rust replay tests cover Item creation, effective area/date/status/Step
+changes, idempotent no-ops, and deterministic equal-time distributed replay.
+Protocol tests verify the exact protocol-17 timestamp extension while
+preserving protocol 16. Real-WASM and Edge regressions verify the projected
+timestamp, date-only UI label, and update after an effective change.
+
+## v0.25.0 Search & Filters
+
+Run `node --test projects/kin/web/search.test.mjs` for case-insensitive
+substring matching across unarchived household text, active checklist Steps,
+combined Item-only filters, unassigned Areas, empty queries, and the 100-result
+display bound. The full Edge browser regression verifies labeled keyboard
+controls, live result feedback, filter isolation from Handoff/Talk/Note
+results, archived-record exclusion, navigation, focus retention, and clearing.
+No Rust/WASM or persistent-format migration is introduced.
 
 ## v0.18.0 Richer Routine Scheduling
 
@@ -392,7 +437,7 @@ Run from the repository root after the release WASM build:
 cargo test --manifest-path projects/kin/Cargo.toml
 node --test projects/kin/web/sync/crypto.test.mjs
 node --test projects/kin/server/pairing-service.test.mjs projects/kin/server/pairing-sync-keys.test.mjs projects/kin/server/sync-service.test.mjs projects/kin/server/sync-http.test.mjs projects/kin/server/sync-e2e.test.mjs
-node --test projects/kin/web/wasm/kin-engine.test.mjs projects/kin/web/wasm/routines.test.mjs
+node --test projects/kin/web/wasm/kin-engine.test.mjs projects/kin/web/wasm/routines.test.mjs projects/kin/web/wasm/modes.test.mjs
 node projects/kin/scripts/browser-regression.mjs 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
 ```
 

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import Database from "better-sqlite3";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -25,6 +24,7 @@ import {
   hasDatabaseProcessLock,
 } from "./durable-store.mjs";
 import { PairingService } from "./pairing-service.mjs";
+import { openTestDatabase, sqlitePragma } from "./sqlite-test-utils.mjs";
 
 function temporaryDatabase(t) {
   const directory = mkdtempSync(join(tmpdir(), "kin-durable-lock-"));
@@ -261,21 +261,27 @@ test("backup failure removes partial output and releases its maintenance lock", 
   const { directory, databasePath } = temporaryDatabase(t);
   const store = new DurableStore(databasePath);
   const destination = join(directory, "backup.sqlite");
-  const originalBackup = store.db.backup;
+  const originalPrepare = store.db.prepare.bind(store.db);
   try {
-    store.db.backup = async (temporary) => {
-      writeFileSync(temporary, "partial backup");
-      throw new Error("injected backup write failure");
+    store.db.prepare = (sql) => {
+      if (sql === "VACUUM INTO ?")
+        return {
+          run(temporary) {
+            writeFileSync(temporary, "partial backup");
+            throw new Error("injected backup write failure");
+          },
+        };
+      return originalPrepare(sql);
     };
     await assert.rejects(store.backup(destination), /could not create a verified backup/);
     assert.equal(existsSync(destination), false);
     assert.equal(readdirSync(directory).some((name) => name.endsWith(".tmp")), false);
     assert.equal(hasDatabaseMaintenanceLock(databasePath), false);
     assert.equal(hasDatabaseProcessLock(databasePath), true);
-    store.db.backup = originalBackup;
+    store.db.prepare = originalPrepare;
     assert.equal(await store.backup(destination), destination);
   } finally {
-    store.db.backup = originalBackup;
+    store.db.prepare = originalPrepare;
     store.close();
   }
 });
@@ -289,8 +295,8 @@ for (const kind of ["missing", "directory", "newer-schema", "empty"]) {
     if (kind === "directory") mkdirSync(sourcePath);
     if (kind === "empty") writeFileSync(sourcePath, "");
     if (kind === "newer-schema") {
-      const source = new Database(sourcePath);
-      source.pragma("user_version = 3");
+      const source = openTestDatabase(sourcePath);
+      sqlitePragma(source, "user_version = 3");
       source.close();
     }
     const sourceBytes = ["newer-schema", "empty"].includes(kind)

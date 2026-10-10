@@ -2,6 +2,52 @@
 
 This file records completed Kin releases. The `v0.0.x` releases are planning and documentation milestones; they do not represent implemented application features. The first implementation milestone remains `v0.1.0`.
 
+## v0.25.0 — Search & Filters
+
+- Add private, in-memory search across unarchived Items, checklist Steps,
+  Handoffs, Talks, and Notes. Searches remain on the current device and are not
+  saved or synchronized separately.
+- Add classification, status, and Area filters for Item and checklist-Step
+  results while leaving other matching household text visible.
+- Bound displayed results to 100 and report the total match count. No event,
+  ABI, protocol, storage, or migration change is required.
+
+## v0.24.0 — Useful Household History
+
+- Show a date-only “Last changed” label for each Item, derived from its latest
+  effective Item or checklist-Step event in deterministic replay order.
+- Add protocol 17's per-Item timestamp projection extension without adding an
+  event kind, storage migration, actor attribution, read receipt, or timeline.
+
+## v0.23.0 — Calendar Interoperability
+
+- Download active Items with planning dates as UTF-8 iCalendar (`.ics`)
+  all-day events, sorted by date with stable Item-based UIDs.
+- Keep export local and read-only; omit completed/archived and undated Items,
+  Routines, household metadata, and reminders. No storage migration is needed.
+
+## v0.22.0 — Lightweight Planning Dates
+
+- Add an optional Gregorian civil planning date to existing Items, with a
+  native date control, Today/Tomorrow shortcuts, and an explicit clear action.
+- Add schema-1 event kind 30 and replay protocol 16. Dates are fixed values,
+  never reminders or values that roll with the local clock.
+- Preserve offline, encrypted sync, and archive behavior without a storage
+  migration; older replay protocols fail closed on dated histories.
+
+## v0.21.0 — Household Modes
+
+- Add Normal, Vacation, Guests, and Rest as explicit canonical household
+  modes; old histories default to Normal.
+- Pause routine occurrence actions without changing or hiding routine
+  definitions; routine archival remains available.
+- Add additive replay protocol 15 and event kind 29; older protocol writers
+  fail closed on mode-bearing state. Existing encrypted storage, sync, and
+  archive boundaries need no migration.
+- Pass 151 Rust tests, 230 server tests, focused real-WASM tests, formatting,
+  warnings-denied Clippy, release WASM build, version consistency, and the full
+  Edge browser regression.
+
 ## v0.20.0 — Staples & Replenishment
 
 - Add a reusable Staples list using Item classification code 3; “Add to

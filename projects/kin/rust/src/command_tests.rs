@@ -186,6 +186,58 @@ fn staple_items_require_protocol_v14() {
 }
 
 #[test]
+fn item_planning_dates_require_protocol_v16_and_can_be_cleared() {
+    let created = execute(&add(), context(1), {
+        let mut request = request(vec![]);
+        request.protocol_version = 16;
+        request
+    })
+    .unwrap()
+    .event;
+    let command = C::SetItemPlanningDate {
+        item_id: ItemId([4; 16]),
+        planning_date: Some(CivilDate::from_encoded(20261004).unwrap()),
+    };
+    let mut older = request(vec![created.clone()]);
+    older.protocol_version = 15;
+    assert_eq!(
+        execute(&command, context(2), older).unwrap_err(),
+        KinError::UnsupportedVersion
+    );
+
+    let mut current = request(vec![created.clone()]);
+    current.protocol_version = 16;
+    let changed = execute(&command, context(2), current).unwrap();
+    assert_eq!(
+        changed.projection.items[0].planning_date,
+        Some(CivilDate::from_encoded(20261004).unwrap())
+    );
+    assert_eq!(changed.event.canonical_bytes[2..4], [30, 0]);
+    assert_eq!(
+        decode_event(&changed.event.canonical_bytes, 16)
+            .unwrap()
+            .kind,
+        EventKind::ItemPlanningDateChanged {
+            item_id: ItemId([4; 16]),
+            planning_date: Some(CivilDate::from_encoded(20261004).unwrap()),
+        }
+    );
+    assert!(decode_event(&changed.event.canonical_bytes, 15).is_err());
+
+    let clear = C::SetItemPlanningDate {
+        item_id: ItemId([4; 16]),
+        planning_date: None,
+    };
+    let cleared = execute(&clear, context(3), {
+        let mut request = request(vec![created, changed.event]);
+        request.protocol_version = 16;
+        request
+    })
+    .unwrap();
+    assert_eq!(cleared.projection.items[0].planning_date, None);
+}
+
+#[test]
 fn codec_preserves_legacy_schema_one_and_rejects_lossy_schema() {
     let mut event = create_event(&add(), context(1)).unwrap();
     event.event_version = 1;

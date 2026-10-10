@@ -210,7 +210,7 @@ fn v5_headers_trailing_bytes_versions_and_combined_counts() {
     let mut trailing = valid.clone();
     trailing.push(0);
     assert_eq!(decode_request(&trailing), Err(KinError::MalformedProtocol));
-    for version in [0u16, 15, u16::MAX] {
+    for version in [0u16, 18, u16::MAX] {
         let mut bad = valid.clone();
         bad[4..6].copy_from_slice(&version.to_le_bytes());
         assert_eq!(decode_request(&bad), Err(KinError::UnsupportedVersion));
@@ -232,7 +232,9 @@ fn v5_headers_trailing_bytes_versions_and_combined_counts() {
         text: "x".into(),
         created_by: crate::event::ActorId([1; 16]),
         created_at: 0,
+        last_changed_at: 0,
         classification: crate::event::ItemClassification::Today,
+        planning_date: None,
         status: crate::state::ItemStatus::Active,
         area_id: None,
         steps: Vec::new(),

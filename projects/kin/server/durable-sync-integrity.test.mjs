@@ -3,12 +3,12 @@ import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Database from "better-sqlite3";
 import test from "node:test";
 import { DurableStore, DurableStoreError } from "./durable-store.mjs";
 import { PairingService } from "./pairing-service.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
 import { canonicalJson } from "./sync-contract.mjs";
+import { openTestDatabase, sqlitePragma } from "./sqlite-test-utils.mjs";
 
 function deviceKeys() {
   const agreement = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
@@ -203,12 +203,12 @@ for (const [name, mutate] of mutations) {
     try {
       assert.equal(f.store.validate(), true);
       f.store.close();
-      const db = new Database(f.databasePath);
+      const db = openTestDatabase(f.databasePath);
       try {
-        db.pragma("foreign_keys = ON");
+        sqlitePragma(db, "foreign_keys = ON");
         mutate(db, f);
-        assert.equal(db.pragma("quick_check", { simple: true }), "ok");
-        assert.deepEqual(db.pragma("foreign_key_check"), []);
+        assert.equal(sqlitePragma(db, "quick_check", { simple: true }), "ok");
+        assert.deepEqual(sqlitePragma(db, "foreign_key_check"), []);
       } finally {
         db.close();
       }
@@ -241,10 +241,10 @@ for (const [name, mutate] of [
       f.rotate();
       assert.equal(f.store.validate(), true);
       f.store.close();
-      const db = new Database(f.databasePath);
+      const db = openTestDatabase(f.databasePath);
       try {
         mutateRotation(db, f.adult.householdId, mutate);
-        assert.equal(db.pragma("quick_check", { simple: true }), "ok");
+        assert.equal(sqlitePragma(db, "quick_check", { simple: true }), "ok");
       } finally {
         db.close();
       }
@@ -325,13 +325,13 @@ test("grant routing to another valid household cannot override the stored grant 
     });
     f.sync.enable(other.sessionToken);
     f.store.close();
-    const db = new Database(f.databasePath);
+    const db = openTestDatabase(f.databasePath);
     try {
-      db.pragma("foreign_keys = ON");
+      sqlitePragma(db, "foreign_keys = ON");
       db.prepare("UPDATE provisioning_grants SET household_id = ?, sender_device_id = ?, recipient_device_id = ?")
         .run(other.householdId, other.deviceId, other.deviceId);
-      assert.deepEqual(db.pragma("foreign_key_check"), []);
-      assert.equal(db.pragma("quick_check", { simple: true }), "ok");
+      assert.deepEqual(sqlitePragma(db, "foreign_key_check"), []);
+      assert.equal(sqlitePragma(db, "quick_check", { simple: true }), "ok");
     } finally {
       db.close();
     }

@@ -1,4 +1,5 @@
 import { projectionContext } from "../browser-time.js";
+import { createCalendarExport } from "../calendar-export.js";
 import "./kin-routines.js";
 import "./kin-areas.js";
 import "./kin-notes.js";
@@ -10,6 +11,7 @@ import "./kin-item.js";
 import "./kin-today.js";
 import "./kin-handoff-list.js";
 import "./kin-talk-list.js";
+import "./kin-search.js";
 import "./kin-pulse.js";
 import "./kin-catch-up.js";
 import "./kin-household.js";
@@ -86,6 +88,9 @@ class KinApp extends HTMLElement {
     this.onAreaIntent = (event) => this.saveArea(event.detail);
     this.onNoteIntent = (event) => this.saveNote(event.type.slice(4), event.detail);
     this.onItemAreaChange = (event) => this.saveArea({ ...event.detail, action: "assign-item-area" });
+    this.onItemPlanningDateChange = (event) =>
+      this.saveItemPlanningDate(event.detail, event.target.closest("kin-today"));
+    this.onModeChange = () => this.saveMode(this.modeSelect.value);
     this.pulseTimer = null;
     this.catchUpCursor = null;
     this.snapshotBoundary = null;
@@ -186,6 +191,7 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:reopen-item-step", this.onReopenItemStep);
     this.addEventListener("kin:archive-item-step", this.onArchiveItemStep);
     this.addEventListener("kin:change-item-area", this.onItemAreaChange);
+    this.addEventListener("kin:set-item-planning-date", this.onItemPlanningDateChange);
     this.addEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.addEventListener(`kin:${action}`, this.onNoteIntent);
     this.addEventListener("kin:add-handoff", this.onAddHandoff);
@@ -320,6 +326,7 @@ class KinApp extends HTMLElement {
     this.compose = document.createElement("kin-compose");
     this.handoffs = document.createElement("kin-handoff-list");
     this.talks = document.createElement("kin-talk-list");
+    this.search = document.createElement("kin-search");
     this.pulse = document.createElement("kin-pulse");
     this.routines = document.createElement("kin-routines");
     this.areas = document.createElement("kin-areas");
@@ -390,10 +397,30 @@ class KinApp extends HTMLElement {
     today.append(this.catchUp, this.compose, this.today);
 
     const lists = page("lists", "Lists", "Capture first. Sort later.");
+    this.calendarExportButton = document.createElement("button");
+    this.calendarExportButton.type = "button";
+    this.calendarExportButton.className = "calendar-export-button";
+    this.calendarExportButton.textContent = "Download calendar (.ics)";
+    this.calendarExportButton.setAttribute(
+      "aria-label",
+      "Download active planned Items as an all-day calendar",
+    );
+    this.calendarExportButton.disabled = true;
+    this.calendarExportButton.addEventListener("click", () => this.downloadCalendar());
+    const calendarExportNote = document.createElement("p");
+    calendarExportNote.textContent =
+      "The downloaded .ics file is unencrypted and contains planned Item text.";
+    lists.querySelector(".page-intro").append(
+      this.calendarExportButton,
+      calendarExportNote,
+    );
     this.needs.display = "need";
     this.shopping.display = "shopping";
     this.staples.display = "staple";
     lists.append(this.needs, this.shopping, this.staples);
+
+    const search = page("search", "Search", "Find household context without sending your search outside this device.");
+    search.append(this.search);
 
     const routines = page("routines", "Routines", "Small household rhythms, without streaks or pressure.");
     routines.append(this.routines);
@@ -432,6 +459,36 @@ class KinApp extends HTMLElement {
     tablist.addEventListener("keydown", this.onHandoffTabKeydown);
 
     const more = page("more", "More", "Household context, people, devices, and continuity.");
+    const searchLink = document.createElement("a");
+    searchLink.className = "more-search-link";
+    searchLink.href = "#search";
+    searchLink.textContent = "Search household";
+    more.append(searchLink);
+    const modeSection = document.createElement("section");
+    modeSection.className = "today-section household-mode";
+    const modeHeading = document.createElement("h2");
+    modeHeading.textContent = "Household mode";
+    const modeLabel = document.createElement("label");
+    modeLabel.htmlFor = "household-mode";
+    modeLabel.textContent = "Current mode";
+    this.modeSelect = document.createElement("select");
+    this.modeSelect.id = "household-mode";
+    for (const [value, label] of [
+      ["normal", "Normal"],
+      ["vacation", "Vacation"],
+      ["guests", "Guests"],
+      ["rest", "Rest"],
+    ]) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = label;
+      this.modeSelect.append(option);
+    }
+    this.modeSelect.addEventListener("change", this.onModeChange);
+    const modeHint = document.createElement("p");
+    modeHint.textContent = "Routine occurrences pause outside Normal; routine definitions stay unchanged.";
+    modeSection.append(modeHeading, modeLabel, this.modeSelect, modeHint);
+    more.append(modeSection);
     more.append(this.pulse);
     this.household = document.createElement("kin-household");
     this.moreSecurity = document.createElement("section");
@@ -444,7 +501,7 @@ class KinApp extends HTMLElement {
     this.notes = document.createElement("kin-notes");
     more.insertBefore(this.notes, this.moreSecurity);
 
-    for (const section of [today, lists, routines, handoff, more]) {
+    for (const section of [today, lists, search, routines, handoff, more]) {
       this.pages.set(section.id, section);
       main.append(section);
     }
@@ -456,14 +513,15 @@ class KinApp extends HTMLElement {
     if (!this.pages || !this.navLinks) return;
     const requested = location.hash.slice(1);
     const active = this.pages.has(requested) ? requested : "today";
-    const labels = { today: "Today", lists: "Lists", routines: "Routines", handoff: "Handoff", more: "More" };
+    const labels = { today: "Today", lists: "Lists", search: "Search", routines: "Routines", handoff: "Handoff", more: "More" };
     const changed = this.activePage !== active;
     this.activePage = active;
     document.title = `${labels[active]} — Kin`;
     if (changed && this.routeAnnouncement) this.routeAnnouncement.textContent = `${labels[active]} view`;
+    const currentDestination = active === "search" ? "more" : active;
     for (const [id, section] of this.pages) section.hidden = id !== active;
     for (const [id, link] of this.navLinks) {
-      if (id === active) link.setAttribute("aria-current", "page");
+      if (id === currentDestination) link.setAttribute("aria-current", "page");
       else link.removeAttribute("aria-current");
     }
   }
@@ -499,6 +557,7 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:reopen-item-step", this.onReopenItemStep);
     this.removeEventListener("kin:archive-item-step", this.onArchiveItemStep);
     this.removeEventListener("kin:change-item-area", this.onItemAreaChange);
+    this.removeEventListener("kin:set-item-planning-date", this.onItemPlanningDateChange);
     this.removeEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.removeEventListener(`kin:${action}`, this.onNoteIntent);
     this.removeEventListener("kin:add-handoff", this.onAddHandoff);
@@ -938,6 +997,32 @@ class KinApp extends HTMLElement {
     }
   }
 
+  async saveMode(mode) {
+    if (this.busy || !this.store || !this.engine) return;
+    const session = this.captureSession();
+    const command = Object.freeze({ type: "set-household-mode", mode });
+    this.setBusy(true);
+    this.clearAlert();
+    this.setStatus("Saving…");
+    try {
+      await this.appendCommand(command);
+      this.assertCurrentSession(session);
+      this.renderState();
+      this.setStatus("Household mode updated.");
+      this.broadcastEventChange();
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      this.modeSelect.value = this.state?.mode ?? "normal";
+      this.showAlert(error.userMessage ?? SAVE_ERROR, () => this.saveMode(mode));
+      this.setStatus("");
+    } finally {
+      if (this.isCurrentSession(session)) {
+        this.setBusy(false);
+        this.flushPeerRefresh();
+      }
+    }
+  }
+
   async saveRoutine(command) {
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
@@ -1034,6 +1119,66 @@ class KinApp extends HTMLElement {
         this.flushPeerRefresh();
       }
     }
+  }
+
+  async saveItemPlanningDate(detail, sourceList) {
+    if (this.busy || !this.store || !this.engine) return;
+    const session = this.captureSession();
+    this.setBusy(true);
+    this.clearAlert();
+    this.setStatus("Saving…");
+    try {
+      await this.appendCommand({
+        type: "set-item-planning-date",
+        itemId: detail.itemId,
+        planningDate: detail.planningDate,
+      });
+      this.assertCurrentSession(session);
+      this.renderState();
+      this.broadcastEventChange();
+      this.setStatus(detail.planningDate ? "Planned date saved." : "Planned date cleared.");
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === 4) this.pendingRefresh = true;
+      this.renderState();
+      this.showAlert(error.userMessage ?? SAVE_ERROR);
+      this.setStatus("");
+    } finally {
+      if (this.isCurrentSession(session)) {
+        this.setBusy(false);
+        sourceList?.querySelector(
+          `.item-planning-date-input[data-item-id="${detail.itemId}"]`,
+        )?.focus();
+        this.flushPeerRefresh();
+      }
+    }
+  }
+
+  downloadCalendar() {
+    if (this.busy || !this.store || !this.state) return;
+    const planned = this.state.items.filter(
+      (item) => item.status === "active" && item.planningDate != null,
+    );
+    if (planned.length === 0) return;
+
+    let url;
+    try {
+      const contents = createCalendarExport(planned);
+      url = URL.createObjectURL(new Blob([contents], {
+        type: "text/calendar;charset=utf-8",
+      }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "kin-planned-items.ics";
+      link.click();
+      this.setStatus("Calendar file prepared for download.");
+    } catch (error) {
+      if (url) URL.revokeObjectURL(url);
+      this.showAlert(error.message || "Kin could not prepare the calendar file.");
+      this.setStatus("");
+      return;
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   async saveNote(action, detail) {
@@ -1485,6 +1630,9 @@ class KinApp extends HTMLElement {
 
   renderState() {
     if (!this.vault || this.vault.locked || !this.state) return;
+    const mode = this.state.mode ?? "normal";
+    this.modeSelect.value = mode;
+    this.routines.householdMode = mode;
     this.catchUp.summary = this.state.summary;
     this.catchUp.lastLookedAt = this.catchUpCursor?.lastLookedAt;
     this.today.items = this.state.items;
@@ -1497,6 +1645,13 @@ class KinApp extends HTMLElement {
     this.staples.areas = this.state.areas ?? [];
     this.handoffs.handoffs = this.state.handoffs;
     this.talks.talks = this.state.talks;
+    this.search.household = {
+      items: this.state.items,
+      handoffs: this.state.handoffs,
+      talks: this.state.talks,
+      notes: this.state.notes ?? [],
+      areas: this.state.areas ?? [],
+    };
     this.pulse.pulse = this.state.pulses.find(
       (pulse) => pulse.actorId === this.store?.actorId,
     );
@@ -1504,18 +1659,28 @@ class KinApp extends HTMLElement {
     this.areas.areas = this.state.areas ?? [];
     this.notes.notes = this.state.notes ?? [];
     this.notes.areas = this.state.areas ?? [];
+    this.updateCalendarExportButton();
     this.schedulePulseRefresh();
+  }
+
+  updateCalendarExportButton() {
+    if (!this.calendarExportButton) return;
+    this.calendarExportButton.disabled = this.busy || !this.state?.items?.some(
+      (item) => item.status === "active" && item.planningDate != null,
+    );
   }
 
   setBusy(isBusy) {
     this.busy = isBusy;
     if (!this.isConnected) return;
+    this.updateCalendarExportButton();
     this.main.setAttribute("aria-busy", String(isBusy));
     this.compose.disabled = isBusy || !this.store;
     this.today.disabled = isBusy || !this.store;
     this.needs.disabled = isBusy || !this.store;
     this.shopping.disabled = isBusy || !this.store;
     this.staples.disabled = isBusy || !this.store;
+    this.search.disabled = isBusy || !this.store;
     this.handoffs.disabled = isBusy || !this.store;
     this.talks.disabled = isBusy || !this.store;
     this.pulse.disabled = isBusy || !this.store;
@@ -1523,6 +1688,7 @@ class KinApp extends HTMLElement {
     this.routines.disabled = isBusy || !this.store;
     this.areas.disabled = isBusy || !this.store;
     this.notes.disabled = isBusy || !this.store;
+    if (this.modeSelect) this.modeSelect.disabled = isBusy || !this.store;
     this.household.disabled = isBusy || !this.store;
     for (const tab of this.handoffTabs?.querySelectorAll('[role="tab"]') ?? [])
       tab.disabled = isBusy;
@@ -1627,6 +1793,7 @@ class KinApp extends HTMLElement {
         ["compose", "kin-compose"],
         ["handoffs", "kin-handoff-list"],
         ["talks", "kin-talk-list"],
+        ["search", "kin-search"],
         ["pulse", "kin-pulse"],
         ["routines", "kin-routines"],
       ];

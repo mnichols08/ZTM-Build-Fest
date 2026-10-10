@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import Database from "better-sqlite3";
 import { copyFileSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +12,7 @@ import {
 } from "./durable-store.mjs";
 import { PairingService } from "./pairing-service.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
+import { openTestDatabase, sqlitePragma } from "./sqlite-test-utils.mjs";
 
 function temporaryDirectory() {
   return mkdtempSync(join(tmpdir(), "kin-durable-store-"));
@@ -59,8 +59,8 @@ test("failed v0-to-v1 migration rolls back and permits a clean retry", () => {
         }),
       DurableStoreError,
     );
-    const inspection = new Database(databasePath);
-    assert.equal(inspection.pragma("user_version", { simple: true }), 0);
+    const inspection = openTestDatabase(databasePath);
+    assert.equal(sqlitePragma(inspection, "user_version", { simple: true }), 0);
     assert.deepEqual(
       inspection
         .prepare(
@@ -84,7 +84,7 @@ test("server schema v1 upgrades transactionally to household lifecycle v2", () =
   const databasePath = join(directory, "kin.sqlite");
   try {
     new DurableStore(databasePath).close();
-    const legacy = new Database(databasePath);
+    const legacy = openTestDatabase(databasePath);
     try {
       legacy.exec(`
         DROP TRIGGER members_active_household_insert;
@@ -99,13 +99,13 @@ test("server schema v1 upgrades transactionally to household lifecycle v2", () =
         ALTER TABLE households DROP COLUMN lifecycle_state;
         DELETE FROM server_migrations WHERE version = 2;
       `);
-      legacy.pragma("user_version = 1");
+      sqlitePragma(legacy, "user_version = 1");
     } finally {
       legacy.close();
     }
     const migrated = new DurableStore(databasePath);
     try {
-      assert.equal(migrated.db.pragma("user_version", { simple: true }), 2);
+      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 2);
       assert.deepEqual(
         migrated.db
           .prepare("SELECT version FROM server_migrations ORDER BY version")
@@ -126,16 +126,16 @@ test("a database with a newer schema fails closed without modification", () => {
   const directory = temporaryDirectory();
   const databasePath = join(directory, "kin.sqlite");
   try {
-    const database = new Database(databasePath);
-    database.pragma("user_version = 3");
+    const database = openTestDatabase(databasePath);
+    sqlitePragma(database, "user_version = 3");
     database.close();
 
     assert.throws(
       () => new DurableStore(databasePath),
       /newer server version/,
     );
-    const inspection = new Database(databasePath, { readonly: true });
-    assert.equal(inspection.pragma("user_version", { simple: true }), 3);
+    const inspection = openTestDatabase(databasePath, { readonly: true });
+    assert.equal(sqlitePragma(inspection, "user_version", { simple: true }), 3);
     inspection.close();
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -306,7 +306,7 @@ test("verified backup restores identity and opaque relay state offline", async (
     }
 
     copyFileSync(backupPath, corruptBackupPath);
-    const corruptBackup = new Database(corruptBackupPath);
+    const corruptBackup = openTestDatabase(corruptBackupPath);
     corruptBackup
       .prepare(
         "UPDATE sync_events SET canonical_envelope = ? WHERE household_id = ?",

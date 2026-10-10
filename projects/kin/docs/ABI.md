@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** v0.20.0 adds protocol 14 as an additive Staples-classification compatibility gate while preserving earlier layouts and canonical event bytes. Protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
+**Status:** Current through v0.25.0 Search & Filters. v0.25 adds no ABI, protocol, or canonical event change. v0.24.0 adds protocol 17's per-Item Last changed projection field while preserving earlier layouts and canonical event bytes. Protocol 16 adds Item planning dates; protocol 15 adds household modes; protocol 14 gates Staples, protocol 13 enables Shopping, protocol 12 enables richer Routine cadence, protocol 11 adds Checklist Steps, protocol 10 adds Notes, and protocol 9 adds Areas. Earlier version sections are historical contracts.
 
 ## Target and exports
 
@@ -116,7 +116,7 @@ size  field
 N     text bytes
 ```
 
-Items remain serialized in original add-event order, including archived tombstones so the caller can make a filtered view without becoming a reducer. The browser hides archived items from ordinary lists. Protocol 13 is the current browser writer; see the additive contracts below. `KERR` retains the v1 header/version and stable numeric error codes across all supported request protocol versions.
+Items remain serialized in original add-event order, including archived tombstones so the caller can make a filtered view without becoming a reducer. The browser hides archived items from ordinary lists. Protocol 15 is the current browser writer; see the additive contracts below. `KERR` retains the v1 header/version and stable numeric error codes across all supported request protocol versions.
 
 ## Ownership and lifetime
 
@@ -127,12 +127,12 @@ Items remain serialized in original add-event order, including archived tombston
 - Rust owns result/error buffers. `kin_result_ptr/len` refer to the most recent successful result; `kin_error_ptr/len` refer to the most recent failed call. The inactive pair returns `(0, 0)`.
 - Result/error bytes stay valid until the next `kin_apply_events` call or module teardown. JavaScript must copy them into host-owned memory before another call. The bridge must not retain a view that may become stale if WASM memory grows.
 - Each call clears the previous result and error before processing. Repeated calls are independent full replays; the module has no hidden household state between calls.
-- A valid empty household response is a non-empty protocol result containing zero entity counts (12 bytes for v1/v2, 16 for v3, 20 for v4). A zero-length error/result accessor means that no buffer is available, not a successful empty state.
+- A valid empty household response is a non-empty protocol result containing zero entity counts (12 bytes for v1/v2, 16 for v3, 20 for v4; protocols 15 and 16 have a 72-byte header). A zero-length error/result accessor means that no buffer is available, not a successful empty state.
 - Output allocation is released by Rust on the next apply call/module teardown; JavaScript must not call `kin_free` on result/error pointers.
 
 ## Call behavior
 
-`kin_apply_events` accepts one complete event batch using protocol version 1, 2, 3, 4, 5, 6, 7, or 8. Protocols v1-v7 replay the supplied order; v8 sorts a copy for distributed state replay while preserving input order for catch-up boundaries. It validates the entire request and reconstructs from scratch. On success it publishes a complete result in the requested protocol version and returns zero. On failure it publishes an error and no partial result; stored IndexedDB bytes remain untouched. Unknown protocol/event versions fail with a stable unsupported-version code; malformed payload, bounds overflow, and invalid state transitions fail deterministically.
+`kin_apply_events` accepts the supported protocol versions 1–15. Protocols v1–v7 replay the supplied order; v8 and later sort a copy for distributed state replay while preserving input order for catch-up boundaries. It validates the entire request and reconstructs from scratch. On success it publishes a complete result in the requested protocol version and returns zero. On failure it publishes an error and no partial result; stored IndexedDB bytes remain untouched. Unknown protocol/event versions fail with a stable unsupported-version code; malformed payload, bounds overflow, and invalid state transitions fail deterministically.
 
 The function may grow memory while parsing or building output. JavaScript must reacquire `memory.buffer` after the call before copying result/error bytes. Length arithmetic is checked for overflow in both languages. Cap a request and result at 64 MiB, a request at 10,000 events, and individual item text at 4096 UTF-8 bytes for v0.1.0; reject larger input before unbounded allocation. The matching 10,000-event storage limit is specified in [STORAGE](STORAGE.md).
 
@@ -289,6 +289,23 @@ state. Protocol 13 continues to carry Shopping; older supported data retains
 its prior layout and behavior. No event kind, storage, archive, or encrypted
 sync-envelope migration is introduced.
 
+## Protocol 15 — Household Modes
+
+Protocol 15 preserves the 64-byte `KINE` request header and the protocol-14
+event, Item, Routine, and summary sections. Its `KINS` result header is 72
+bytes: offset 68 contains the household mode (`0 = Normal`, `1 = Vacation`,
+`2 = Guests`, `3 = Rest`) followed by three reserved zero bytes. The canonical
+schema-1 `HOUSEHOLD_MODE_CHANGED` kind 29 payload is exactly one mode byte.
+Histories without this event project to Normal. Protocols 1–14 reject kind 29
+and reject non-Normal mode projections rather than omitting the state; older
+result layouts remain unchanged.
+
+The KCMD v1 `SetHouseholdMode` action uses action code 29, a zero entity ID,
+the mode value at offset 112, and no payload. It requires protocol 15 or later.
+The fixed mode enum has no implicit time window, automatic transition,
+reminder, or inferred state. Existing event-count and 64 MiB request/result
+bounds continue to apply.
+
 ### KCMD v1 intent transport
 
 This is an independent command transport, not the canonical event layout. JS
@@ -309,8 +326,8 @@ constructs canonical payloads and validates command semantics.
 | 76     | 8     | Explicit timestamp:i64                                              |
 | 84     | 8     | Explicit logical time:u64                                           |
 | 92     | 16    | Entity ID; zero for Pulse                                           |
-| 108    | 4     | Routine creation date/occurrence key; zero otherwise                |
-| 112    | 1     | Item classification, Pulse value or Routine cadence; zero otherwise |
+| 108    | 4     | Routine date key or Item planning date; zero otherwise              |
+| 112    | 1     | Item classification, Pulse value, Routine cadence or mode; zero otherwise |
 | 113    | 3     | Reserved zero                                                       |
 | 116    | 8     | Pulse expiration:i64; zero otherwise                                |
 | 124    | 4     | Payload length; zero for no-payload actions                         |
@@ -319,6 +336,11 @@ constructs canonical payloads and validates command semantics.
 For `AddItem`, the byte at offset 112 is 0 for Today, 1 for Needs, 2 for
 Shopping, or 3 for Staples. Code 2 requires protocol 13 or later; code 3
 requires protocol 14 or later. Older protocol requests fail closed.
+Household mode values are 0–3 and require protocol 15 or later; the mode
+command has a zero entity ID and no action payload.
+Planning-date intent 30 uses the entity-ID field for the Item ID and the
+four-byte date field at offset 108; zero clears the date and nonzero values
+require protocol 16 or later.
 
 IDs and time are explicit browser capabilities. Capture commands use a supplied
 random entity ID. Noncapture commands use the referenced entity ID. Step
@@ -420,3 +442,27 @@ Validation: native command/codec/archive tests, all historical protocol fixtures
 and `web/wasm/portable-core.test.mjs` exercise command variants, full
 canonical metadata decoding, stale Routine rejection, archive/import corruption,
 and disposed-engine capability rejection through the real release WASM.
+
+## Protocol version 16 — Item planning dates
+
+Request framing and the 88-byte event envelope remain unchanged. Schema-1
+event kind 30 has a fixed 20-byte payload containing the 16-byte Item ID and
+little-endian `u32` civil date. `00000000` clears the optional date;
+nonzero values must be Gregorian `YYYYMMDD` dates in years 1–9999.
+
+The result header remains 72 bytes. After the existing protocol-11 Step
+records, protocol 16 appends one little-endian `u32` per Item in Item order.
+Zero represents no date. Protocols 1–15 retain their exact layouts and reject
+date-bearing history/state instead of silently omitting the field.
+
+## Protocol version 17 — derived Item history date
+
+Request framing and canonical event bytes are unchanged. After the existing
+protocol-16 planning-date array, protocol 17 appends one little-endian `i64`
+timestamp per Item, in Item order. Each timestamp is the event clock of the
+latest effective Item or checklist-Step event in deterministic replay order.
+It is derived projection data: protocol 17 adds no event kind, persistent
+storage field, read receipt, actor attribution, exact-time UI, or history
+timeline. Its eight bytes per Item add at most 80,000 bytes under the existing
+10,000-entity limit; the 64 MiB protocol result bound still applies.
+Protocols 1–16 retain their exact layouts.

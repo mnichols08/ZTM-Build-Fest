@@ -1,6 +1,6 @@
 # Household Events
 
-**Status:** Current through v0.20.0 Staples & Replenishment. Rust owns canonical command encoding and decoding; event schemas and kinds remain unchanged. Protocol 10 adds Notes, protocol 11 adds Item Steps, protocol 12 enables two additional Routine cadence values, protocol 13 enables Shopping classification code 2, and protocol 14 enables Staples code 3 within the existing Item-add schema. Protocols 1–12 reject Shopping and Staples; protocol 13 rejects Staples. Equal-time cross-device Note and Step archive conflicts preserve the terminal archive without changing event bytes. Local encryption wraps canonical bytes without rewriting them.
+**Status:** Current through v0.24.0 Useful Household History. Rust owns canonical command encoding and decoding. Protocols 10–14 add Notes, Steps, richer Routine cadence, Shopping, and Staples; protocol 15 adds household-mode event kind 29, protocol 16 adds Item planning-date event kind 30, and protocol 17 adds a derived per-Item history timestamp to the projection only. No new event kind is introduced for history. Protocols 1–15 fail closed on date-bearing history rather than omit the field. Equal-time distributed replay remains deterministic; local encryption wraps canonical bytes without rewriting them.
 
 ## Canonical record
 
@@ -64,6 +64,8 @@ Use uppercase entity/action-past-tense names consistently. The milestone column 
 | `ITEM_STEP_COMPLETED`           | v0.17.0           | Complete an active Step without completing its Item.         |
 | `ITEM_STEP_REOPENED`            | v0.17.0           | Reopen a completed Step.                                     |
 | `ITEM_STEP_ARCHIVED`            | v0.17.0           | Terminally archive a Step while retaining its history.        |
+| `HOUSEHOLD_MODE_CHANGED`        | v0.21.0           | Set the explicit household-wide mode.                         |
+| `ITEM_PLANNING_DATE_CHANGED`    | v0.22.0           | Set or clear an Item's optional fixed civil planning date.     |
 | `HOUSEHOLD_CREATED`            | v0.8.0            | Establish a household identity when pairing is introduced.   |
 | `MEMBER_INVITED`               | v0.8.0            | Record a member invitation.                                  |
 | `MEMBER_JOINED`                | v0.8.0            | Record accepted household membership.                        |
@@ -161,3 +163,21 @@ Sync encrypts the exact canonical event bytes; it does not create a semantic JSO
 Protocols v1-v7 preserve their legacy strict increasing logical-time behavior. Protocol v8 accepts equal logical times and sorts a copy for state replay by `(logical_time, effective device_id bytewise, event_id bytewise)`. The decoded/input event array retains local arrival order for catch-up summary boundaries; transport cursor and UI acknowledgement cursor are separate. The local logical clock advances beyond the maximum observed event before authoring a causally later event.
 
 Concurrent completion/reopen retains both facts and uses deterministic replay order for projection. Archive wins over an equal-Lamport concurrent mutation from another device; the losing mutation remains stored and is a state no-op. A mutation with greater logical time after the author observed archive is invalid and pauses replay. Duplicate delivery of identical event ID and bytes applies once; same ID with different bytes/envelope is corruption. See [V0.9.0](V0.9.0.md) and [ABI](ABI.md).
+
+## v0.21.0 Household Modes
+
+`HOUSEHOLD_MODE_CHANGED` is schema 1, event kind 29, with one payload byte:
+0 Normal, 1 Vacation, 2 Guests, or 3 Rest. A history without a mode event
+projects Normal. Distinct concurrent changes are retained and resolve by the
+existing protocol-15 distributed ordering tuple; exact duplicate event
+delivery is idempotent. The event has no entity ID, schedule, duration, or
+automatic actor.
+
+## v0.22.0 Lightweight Planning Dates
+
+`ITEM_PLANNING_DATE_CHANGED` is schema 1, event kind 30, with a 20-byte
+payload: 16-byte Item ID and a little-endian `u32` civil date. Values 00010101
+through 99991231 must represent valid Gregorian dates; zero clears the date.
+The event has no timestamp semantics beyond the ordinary envelope and stores
+no time zone or reminder. Event updates remain replayable after archival when
+authored offline; UI command validation rejects new changes to archived Items.

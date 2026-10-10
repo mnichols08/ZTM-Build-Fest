@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import {
   chmodSync,
   closeSync,
@@ -36,6 +36,15 @@ const SERVER_SCHEMA_VERSION = 2;
 const MAX_AUDIT_ROWS = 10_000;
 const BUSY_TIMEOUT_MS = 5_000;
 export const HOUSEHOLD_DELETION_GRACE_MS = 30 * 24 * 60 * 60_000;
+
+export function sqlitePragma(database, expression, { simple = false } = {}) {
+  if (expression.includes("=") || expression.includes("(")) {
+    database.exec(`PRAGMA ${expression}`);
+    return undefined;
+  }
+  const rows = database.prepare(`PRAGMA ${expression}`).all();
+  return simple ? Object.values(rows[0] ?? {})[0] : rows;
+}
 
 export class DurableStoreError extends Error {
   constructor(message, options) {
@@ -272,7 +281,7 @@ export class DurableStore {
         restoredStore.mergeActiveAuthority(currentAuthority);
       // The temporary database is published by renaming only its main file.
       // Checkpoint every merged lifecycle/authority write before that rename.
-      restoredStore.db.pragma("wal_checkpoint(TRUNCATE)");
+      sqlitePragma(restoredStore.db, "wal_checkpoint(TRUNCATE)");
       restoredStore.close();
       restoredStore = undefined;
 
@@ -340,6 +349,7 @@ export class DurableStore {
       databasePath === ":memory:" ? databasePath : resolve(databasePath);
     this.failed = false;
     this.closed = false;
+    this.transactionDepth = 0;
 
     this.releaseProcessLock =
       acquireProcessLock && !readonly && this.databasePath !== ":memory:"
@@ -364,13 +374,16 @@ export class DurableStore {
     }
 
     try {
-      this.db = new Database(this.databasePath, { readonly, fileMustExist: readonly });
-      this.db.pragma("foreign_keys = ON");
-      this.db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
-      this.db.pragma("trusted_schema = OFF");
+      this.db = new DatabaseSync(this.databasePath, {
+        readOnly: readonly,
+        enableForeignKeyConstraints: true,
+      });
+      sqlitePragma(this.db, "foreign_keys = ON");
+      sqlitePragma(this.db, `busy_timeout = ${BUSY_TIMEOUT_MS}`);
+      sqlitePragma(this.db, "trusted_schema = OFF");
       if (!readonly && this.databasePath !== ":memory:") {
-        this.db.pragma("journal_mode = WAL");
-        this.db.pragma("synchronous = FULL");
+        sqlitePragma(this.db, "journal_mode = WAL");
+        sqlitePragma(this.db, "synchronous = FULL");
       }
       if (!readonly) this.migrate(migrationFault);
       if (!readonly && this.databasePath !== ":memory:" && process.platform !== "win32")
@@ -389,7 +402,7 @@ export class DurableStore {
   }
 
   migrate(migrationFault) {
-    let version = this.db.pragma("user_version", { simple: true });
+    let version = sqlitePragma(this.db, "user_version", { simple: true });
     if (!Number.isSafeInteger(version) || version < 0)
       throw new DurableStoreError("Kin server schema metadata is invalid.");
     if (version > SERVER_SCHEMA_VERSION)
@@ -420,7 +433,7 @@ export class DurableStore {
         );
 
       try {
-        this.db.transaction(() => {
+        this.transaction(() => {
         this.db.exec(`
           CREATE TABLE server_migrations (
             version INTEGER PRIMARY KEY,
@@ -568,8 +581,8 @@ export class DurableStore {
             "INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)",
           )
             .run(1, Date.now());
-          this.db.pragma("user_version = 1");
-        })();
+          sqlitePragma(this.db, "user_version = 1");
+        });
       } catch (error) {
         if (error instanceof DurableStoreError) throw error;
         throw new DurableStoreError(
@@ -582,7 +595,7 @@ export class DurableStore {
 
     if (version === 1) {
       try {
-        this.db.transaction(() => {
+        this.transaction(() => {
           this.db.exec(`
             ALTER TABLE households ADD COLUMN lifecycle_state TEXT NOT NULL
               DEFAULT 'active'
@@ -638,8 +651,8 @@ export class DurableStore {
               "INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)",
             )
             .run(2, Date.now());
-          this.db.pragma("user_version = 2");
-        })();
+          sqlitePragma(this.db, "user_version = 2");
+        });
       } catch (error) {
         if (error instanceof DurableStoreError) throw error;
         throw new DurableStoreError(
@@ -651,7 +664,7 @@ export class DurableStore {
   }
 
   verify() {
-    if (this.db.pragma("user_version", { simple: true }) !== SERVER_SCHEMA_VERSION)
+    if (sqlitePragma(this.db, "user_version", { simple: true }) !== SERVER_SCHEMA_VERSION)
       throw new DurableStoreError("Kin server schema metadata is invalid.");
     const migrations = this.db
       .prepare("SELECT version, applied_at FROM server_migrations ORDER BY version")
@@ -666,10 +679,10 @@ export class DurableStore {
       )
     )
       throw new DurableStoreError("Kin server migration metadata is invalid.");
-    const integrity = this.db.pragma("integrity_check", { simple: true });
+    const integrity = sqlitePragma(this.db, "integrity_check", { simple: true });
     if (integrity !== "ok")
       throw new DurableStoreError("Kin server database integrity check failed.");
-    if (this.db.pragma("foreign_key_check").length)
+    if (sqlitePragma(this.db, "foreign_key_check").length)
       throw new DurableStoreError(
         "Kin server database relationships are inconsistent.",
       );
@@ -708,11 +721,35 @@ export class DurableStore {
 
   transaction(operation) {
     this.assertAvailable();
+    const depth = this.transactionDepth;
+    const savepoint = `kin_transaction_${depth}`;
+    let began = false;
+    this.transactionDepth += 1;
     try {
-      return this.db.transaction(operation).immediate();
+      this.db.exec(
+        depth === 0 ? "BEGIN IMMEDIATE" : `SAVEPOINT ${savepoint}`,
+      );
+      began = true;
+      const result = operation();
+      this.db.exec(depth === 0 ? "COMMIT" : `RELEASE ${savepoint}`);
+      began = false;
+      return result;
     } catch (error) {
-      // The SQLite wrapper completes rollback before rethrowing a conflict.
-      // Rollback failures surface as SQLite errors and still fail closed.
+      if (began) {
+        try {
+          this.db.exec(
+            depth === 0
+              ? "ROLLBACK"
+              : `ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`,
+          );
+        } catch (rollbackError) {
+          this.failed = true;
+          throw new AggregateError(
+            [error, rollbackError],
+            "Kin could not roll back its durable transaction.",
+          );
+        }
+      }
       if (
         isSqliteError(error) ||
         (error instanceof DurableStoreError &&
@@ -720,6 +757,8 @@ export class DurableStore {
       )
         this.failed = true;
       throw error;
+    } finally {
+      this.transactionDepth -= 1;
     }
   }
 
@@ -1327,7 +1366,7 @@ export class DurableStore {
         .prepare(
           "SELECT household_id, device_id, last_sequence FROM sync_device_sequences WHERE household_id = ?",
         )
-        .iterate(householdId)) {
+        .all(householdId)) {
         if (
           value.household_id !== householdId ||
           !isId(value.device_id) ||
@@ -1343,7 +1382,7 @@ export class DurableStore {
         .prepare(
           "SELECT * FROM provisioning_grants WHERE household_id = ?",
         )
-        .iterate(householdId)) {
+        .all(householdId)) {
         const grant = parseJson(value.grant_json);
         if (!isDurableGrantValid(grant, value, state.currentEpoch, getDevice))
           throw new DurableStoreError("Kin provisioning data is invalid.");
@@ -1361,7 +1400,7 @@ export class DurableStore {
         .prepare(
           "SELECT household_id, event_id, canonical_envelope FROM sync_bindings WHERE household_id = ?",
         )
-        .iterate(householdId)) {
+        .all(householdId)) {
         const binding = decodeCanonicalEnvelope(value.canonical_envelope);
         if (
           binding.eventId !== value.event_id ||
@@ -1586,7 +1625,7 @@ export class DurableStore {
     try {
       // One read transaction gives all cross-table checks the same snapshot,
       // even during an online backup while another connection is committing.
-      return this.db.transaction(() => this.validateSnapshot())();
+      return this.transaction(() => this.validateSnapshot());
     } catch (error) {
       this.failed = true;
       if (error instanceof DurableStoreError) throw error;
@@ -1671,7 +1710,7 @@ export class DurableStore {
     }
     for (const row of this.db
       .prepare("SELECT * FROM security_audit ORDER BY sequence")
-      .iterate()) {
+      .all()) {
       const details = parseJson(row.details_json);
       if (
         !identity.households.has(row.household_id) ||
@@ -1708,7 +1747,8 @@ export class DurableStore {
       const temporary = `${target}.${randomBytes(8).toString("hex")}.tmp`;
       let createdTarget = false;
       try {
-        await this.db.backup(temporary);
+        await new Promise((resolve) => setImmediate(resolve));
+        this.db.prepare("VACUUM INTO ?").run(temporary);
         const verification = new DurableStore(temporary, {
           acquireProcessLock: false,
           readonly: true,
@@ -1854,7 +1894,11 @@ function encodeCursor(sequence) {
 }
 
 function isSqliteError(error) {
-  return typeof error?.code === "string" && error.code.startsWith("SQLITE_");
+  return (
+    typeof error?.code === "string" &&
+    (error.code.startsWith("ERR_SQLITE_") ||
+      error.code.startsWith("SQLITE_"))
+  );
 }
 
 function exists(path) {

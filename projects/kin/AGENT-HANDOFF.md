@@ -12,9 +12,19 @@ Read:
 
 ## Mission
 
-Advance one coherent minor line at a time from the October 3 target of `v0.12.0` toward `v0.40.x` on October 31. This is 29 daily targets including the remaining platform work. Keep v0.41–v0.45 as undated follow-up proposals for reassessment after October feedback.
+For the current user-authorized fast-track, complete `v0.21.0` through
+`v0.25.0` one minor at a time on `kin-fast-track-v0.21-v0.25`, preserving
+one milestone commit per minor. v0.21.0 Household Modes, v0.22.0
+Lightweight Planning Dates, v0.23.0 Calendar Interoperability, v0.24.0
+Useful Household History, and v0.25.0 Search & Filters are implementation
+candidates. Do not tag or merge the batch branch, and do not start v0.26.x.
+The broader October roadmap still targets
+v0.40.x, with v0.41–v0.45 as undated proposals for reassessment after
+October feedback.
 
-This is a planning handoff. The v0.11.7 candidate remains subject to its existing human review gate; no later implementation, release publication or branch merge is authorized merely by this document. Follow the current scope in [AGENTS.md](AGENTS.md) and the [release process](docs/RELEASES.md).
+Follow the current user-authorized scope in [AGENTS.md](AGENTS.md) and the
+[release process](docs/RELEASES.md). This handoff does not authorize
+publication, tagging, or branch merge.
 
 Never fake tags to satisfy dates.
 

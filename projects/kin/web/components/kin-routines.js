@@ -4,6 +4,7 @@ class KinRoutines extends HTMLElement {
     super();
     this.records = [];
     this.isDisabled = false;
+    this.householdMode = "normal";
   }
 
   connectedCallback() {
@@ -13,7 +14,7 @@ class KinRoutines extends HTMLElement {
     const heading = document.createElement("h2");
     heading.textContent = "Routines";
     const hint = document.createElement("p");
-    hint.textContent = "Daily, weekly (Monday-start), every two weeks from creation, or by calendar month.";
+    this.hint = hint;
     const form = document.createElement("form");
     form.className = "compose-form routine-form";
     const label = document.createElement("label");
@@ -75,6 +76,10 @@ class KinRoutines extends HTMLElement {
   }
 
   set routines(value) { this.records = value; this.render(); }
+  set householdMode(value) {
+    this.mode = value;
+    this.render();
+  }
   set disabled(value) {
     this.isDisabled = Boolean(value);
     for (const control of this.querySelectorAll("input, select, button")) control.disabled = this.isDisabled;
@@ -105,6 +110,10 @@ class KinRoutines extends HTMLElement {
     if (!this.list) return;
     const focus = this.captureFocus();
     this.list.replaceChildren();
+    const modeLabels = { normal: "Normal", vacation: "Vacation", guests: "Guests", rest: "Rest" };
+    this.hint.textContent = this.mode === "normal"
+      ? "Daily, weekly (Monday-start), every two weeks from creation, or by calendar month."
+      : `Routine occurrences are paused during ${modeLabels[this.mode] ?? "this mode"}. Definitions stay unchanged.`;
     const visible = this.records.filter(record => record.status !== "archived");
     this.empty.hidden = visible.length !== 0;
     for (const record of visible) {
@@ -123,7 +132,7 @@ class KinRoutines extends HTMLElement {
         monthly: ["Monthly", "this month"],
       };
       const [cadenceLabel, period] = labels[record.cadence];
-      status.textContent = `${cadenceLabel} · ${record.occurrenceStatus === "unavailable" ? "Not available for the current date" : record.occurrenceStatus === "completed" ? `Done ${period}` : `Open ${period}`}`;
+      status.textContent = `${cadenceLabel} · ${this.mode !== "normal" ? `Paused during ${modeLabels[this.mode] ?? "this mode"}` : record.occurrenceStatus === "unavailable" ? "Not available for the current date" : record.occurrenceStatus === "completed" ? `Done ${period}` : `Open ${period}`}`;
       content.append(text, status);
       const actions = document.createElement("div");
       actions.className = "item-action";
@@ -139,7 +148,7 @@ class KinRoutines extends HTMLElement {
         button.addEventListener("click", () => this.dispatch(action, { routineId: record.routineId, ...(action === "archive-routine" ? {} : { occurrenceKey: record.occurrenceKey }) }));
         actions.append(button);
       };
-      if (record.occurrenceStatus !== "unavailable") addAction(record.occurrenceStatus === "completed" ? "Reopen" : "Complete", record.occurrenceStatus === "completed" ? "reopen-routine-occurrence" : "complete-routine-occurrence");
+      if (this.mode === "normal" && record.occurrenceStatus !== "unavailable") addAction(record.occurrenceStatus === "completed" ? "Reopen" : "Complete", record.occurrenceStatus === "completed" ? "reopen-routine-occurrence" : "complete-routine-occurrence");
       addAction("Archive", "archive-routine");
       row.append(content, actions);
       this.list.append(row);

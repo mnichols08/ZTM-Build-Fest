@@ -1,6 +1,6 @@
 # Data Model
 
-**Status:** Current through v0.20.0 Staples & Replenishment; earlier version sections are historical contracts. See v0.7.0, v0.18.0, v0.19.0, and v0.20.0 below.
+**Status:** Current through v0.25.0 Search & Filters; earlier version sections are historical contracts. Search derives results from the existing unlocked projection and adds no entity, event, or persistent index. See v0.7.0 and v0.18.0–v0.25.0 below.
 
 ## Event-oriented source of truth
 
@@ -100,6 +100,38 @@ independent Shopping Item; the source staple remains active. Both records use
 canonical Item events and share encrypted persistence, sync, and archive
 behavior. Protocol 14 adds Staples while protocols 1–13 reject Staple-bearing
 history or projections. See [V0.20.0](releases/V0.20.0.md).
+
+## v0.21.0 Household Modes
+
+Household mode is a closed four-value projection (`normal`, `vacation`,
+`guests`, `rest`) derived from canonical mode-change events. Histories without
+a mode event default to `normal`. A non-Normal mode pauses routine occurrences
+but does not mutate routine definitions or create per-occurrence records.
+Mode is household-wide context, not a member/device preference or a schedule.
+See [V0.21.0](releases/V0.21.0.md).
+
+## v0.22.0 Lightweight Planning Dates
+
+`ItemState.planning_date` is `Option<CivilDate>`, derived from schema-1
+`ITEM_PLANNING_DATE_CHANGED` events. The date is Gregorian `YYYYMMDD` in the
+supported year range 0001–9999; zero in the event payload means clear. It has
+no time, time zone, reminder, or automatic rollover. A new Item has no
+planning date; the user edits it afterward as a separate canonical event.
+Archived Items remain hidden from ordinary lists and read-only in the UI, but
+a previously authored stale offline date event still replays so it cannot
+invalidate shared history. See [V0.22.0](releases/V0.22.0.md).
+
+`ItemState.last_changed_at` is a derived event timestamp, initialized from
+`ITEM_ADDED` and advanced when replay changes the effective Item area,
+planning date, status, or checklist-Step state. Idempotent/no-op events leave
+it unchanged; equal-time distributed events use canonical replay order.
+Protocol 17 exposes the value, while the UI displays only its local date and
+does not expose an actor, device, exact time, read receipt, or timeline. It is
+not a separately persisted field. The timestamp uses the source event clock,
+so device clock skew can make the shown date appear earlier or later; replay
+ordering is determined by logical time and stable identity, not wall time.
+The browser formats the timestamp in the viewing device's local time zone, so
+the date can also differ across devices in different time zones.
 
 ## v0.15.0 Areas
 

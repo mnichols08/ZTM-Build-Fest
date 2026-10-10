@@ -1,6 +1,6 @@
 # Derived Household State
 
-**Status:** v0.20.0 adds Staples classification through protocol 14, preserving prior result layouts. Shopping and Staples are classifications on existing Items, with no additional reducer entities. Protocols 1–12 reject Shopping-bearing projections; protocols 1–13 reject Staple-bearing projections. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
+**Status:** v0.24.0 adds a derived date-only Item history value through protocol 17 while preserving prior result layouts. Modes, Item categories, planning dates, and Item history dates are derived from canonical events; protocols 1–15 fail closed on date-bearing history. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
 
 ## Projection pipeline
 
@@ -28,6 +28,7 @@ Keep the first projection small:
 ```text
 HouseholdState
 ├── household_id: Option<HouseholdId>
+├── mode: normal | vacation | guests | rest
 ├── items: Vec<ItemState> in original add-event order
 ├── handoffs: Vec<HandoffState> in original add-event order
 ├── talks: Vec<TalkState> in original add-event order
@@ -38,7 +39,7 @@ ItemState
 ├── text
 ├── created_by
 ├── created_at
-├── classification: today | need | shopping
+├── classification: today | need | shopping | staple
 ├── status: active | completed | archived
 └── steps: Vec<ItemStepState> in Step creation order
 
@@ -151,3 +152,21 @@ user-triggered replenish action appends a new Shopping Item with copied text;
 the staple remains active and the two Item lifecycles are independent. Older
 protocols fail closed rather than omit or remap Staples. No reducer entity or
 storage migration is added. See [V0.20.0](releases/V0.20.0.md).
+
+## v0.21.0 Household Modes
+
+`HouseholdState.mode` is Normal when the history contains no mode event;
+otherwise it is the last mode under deterministic event replay. Vacation,
+Guests, and Rest suppress routine occurrence completion/reopen actions but do
+not alter Routine definitions or their prior occurrence history. The browser
+keeps definitions visible and displays the pause explanation. Rust validates
+the command independently of the browser.
+
+## v0.22.0 Lightweight Planning Dates
+
+`ItemState.planning_date` is projected from ordered date-change events. A
+date event can update or clear an existing Item without relying on the
+projection clock; replay does not recalculate a saved Today/Tomorrow choice.
+Distributed updates use the established deterministic event order. A stale
+offline date event after Item archival remains valid history, while new UI
+commands cannot target archived Items.
