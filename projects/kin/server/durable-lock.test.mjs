@@ -296,7 +296,7 @@ for (const kind of ["missing", "directory", "newer-schema", "empty"]) {
     if (kind === "empty") writeFileSync(sourcePath, "");
     if (kind === "newer-schema") {
       const source = openTestDatabase(sourcePath);
-      sqlitePragma(source, "user_version = 3");
+      sqlitePragma(source, "user_version = 4");
       source.close();
     }
     const sourceBytes = ["newer-schema", "empty"].includes(kind)

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { PairingService } from "./pairing-service.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
@@ -31,6 +32,23 @@ function makeEnvelope(adult, overrides = {}) {
     ...overrides,
   };
 }
+
+test("attachment relay is opaque, authorized, idempotent, integrity checked, and removable", () => {
+  const { adult, sync } = fixture();
+  sync.enable(adult.sessionToken);
+  const attachmentId = "c".repeat(32), ciphertext = Buffer.alloc(128, 0xa5);
+  const digest = createHash("sha256").update(ciphertext).digest("hex");
+  assert.deepEqual(sync.pushAttachment(adult.sessionToken, { attachmentId, keyEpoch: 1, ciphertext, digest }), { accepted: true, size: 128, digest });
+  assert.deepEqual(sync.pushAttachment(adult.sessionToken, { attachmentId, keyEpoch: 1, ciphertext, digest }), { accepted: false, size: 128, digest });
+  assert.deepEqual(sync.listAttachments(adult.sessionToken), [{ attachmentId, keyEpoch: 1, size: 128, digest }]);
+  assert.deepEqual(sync.getAttachment(adult.sessionToken, attachmentId).ciphertext, ciphertext);
+  assert.throws(() => sync.pushAttachment(adult.sessionToken, { attachmentId, keyEpoch: 1, ciphertext, digest: "0".repeat(64) }), (error) => error.code === "attachment_invalid");
+  assert.throws(() => sync.pushAttachment(adult.sessionToken, { attachmentId, keyEpoch: 1, ciphertext: Buffer.alloc(128, 0x11), digest: createHash("sha256").update(Buffer.alloc(128, 0x11)).digest("hex") }), (error) => error.code === "attachment_conflict");
+  assert.deepEqual(sync.removeAttachment(adult.sessionToken, attachmentId), { removed: true });
+  assert.deepEqual(sync.removeAttachment(adult.sessionToken, attachmentId), { removed: true });
+  assert.throws(() => sync.getAttachment(adult.sessionToken, attachmentId), (error) => error.code === "attachment_missing");
+  assert.throws(() => sync.getAttachment("not-a-session", attachmentId), (error) => error.code === "authentication_required");
+});
 
 function makeBindings(adult, count, start = 1) {
   return Array.from({ length: count }, (_, index) => {

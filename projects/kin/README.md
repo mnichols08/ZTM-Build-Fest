@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current candidate: `v0.31.0` — Maintenance Records, on `kin-fast-track-v0.31-v0.34`.** Kin keeps household history in the existing local-first encrypted event store. Reference Records support bounded factual maintenance history, optional next dates, and optional Routine links. Maintenance remains entity history and carries no member attribution metrics.
+**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current candidate: `v0.32.0` — Encrypted Attachments Foundation, on `kin-fast-track-v0.31-v0.34`.** Kin keeps household history in the existing local-first encrypted event store. Reference Records support bounded factual maintenance history, optional next dates, and optional Routine links. Attachment encryption keeps file content and metadata private from the relay; capture and lifecycle UI are planned for v0.33.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Archives are intentionally local-only history recovery and do not restore sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 

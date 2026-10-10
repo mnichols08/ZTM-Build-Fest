@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.32.0 — Encrypted Attachments Foundation
+
+- Add bounded AES-256-GCM attachment encryption with routing and epoch authenticated as additional data; filename, MIME type, size, and parent remain encrypted.
+- Add authenticated opaque encrypted attachment relay with digest verification, idempotent upload, 4 MiB file, 64-file and 50 MiB household limits, and durable SQLite storage.
+- Attachment upload, retrieval, listing, and deletion require an active synced device with the relevant provisioned key epoch. Household finalization purges stored attachments.
+- User-facing attachment capture, offline queueing, and archive portability remain follow-up work.
+
 ## v0.31.1 — Concurrent Maintenance Archive Correction
 
 - Preserve a maintenance event created offline concurrently with archiving its Reference Record, independent of deterministic device replay order.

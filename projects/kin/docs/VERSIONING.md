@@ -1,6 +1,6 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.31.0; the last published product release remains v0.10.3. Maintenance Records add replay protocol 21; IndexedDB, encrypted sync envelopes, and KARC archive framing remain unchanged. Candidate milestones are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.32.0; the last published product release remains v0.10.3. Maintenance Records add replay protocol 21; encrypted attachments use the existing household key epochs and a new server SQLite schema v3. IndexedDB, encrypted sync envelopes, and KARC archive framing remain unchanged. Candidate milestones are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
@@ -8,8 +8,8 @@ Kin version numbers describe product releases; they do not version every persist
 
 | Version axis | Last published v0.10.3 / current candidate v0.24.0 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.31.0` | Maintenance Records on Reference Records |
-| Server database schema | `2` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination and household lifecycle records |
+| Application | Last published `0.10.3`; candidate `0.32.0` | Encrypted attachments foundation |
+| Server database schema | `3` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination, household lifecycle and encrypted attachment records |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v21; writes v21 for local and synchronized requests | Request context and projection semantics |
 | Manual WASM ABI | Existing exports plus additive command/metadata/archive/import APIs | Host ownership and calls; new command packet v1 |

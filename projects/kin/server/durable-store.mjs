@@ -32,7 +32,10 @@ import {
   validStoredDevice,
 } from "./durable-identity.mjs";
 
-const SERVER_SCHEMA_VERSION = 2;
+const SERVER_SCHEMA_VERSION = 3;
+export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024 + 4096;
+export const MAX_HOUSEHOLD_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+export const MAX_HOUSEHOLD_ATTACHMENTS = 64;
 const MAX_AUDIT_ROWS = 10_000;
 const BUSY_TIMEOUT_MS = 5_000;
 export const HOUSEHOLD_DELETION_GRACE_MS = 30 * 24 * 60 * 60_000;
@@ -659,6 +662,32 @@ export class DurableStore {
           "Kin could not complete the household lifecycle migration.",
           { cause: error },
         );
+      }
+      version = 2;
+    }
+
+    if (version === 2) {
+      try {
+        this.transaction(() => {
+          this.db.exec(`
+            CREATE TABLE sync_attachments (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              attachment_id TEXT NOT NULL,
+              key_epoch INTEGER NOT NULL CHECK (key_epoch BETWEEN 1 AND 128),
+              ciphertext BLOB NOT NULL,
+              size_bytes INTEGER NOT NULL CHECK (size_bytes BETWEEN 1 AND ${MAX_ATTACHMENT_BYTES}),
+              digest TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (household_id, attachment_id)
+            );
+            CREATE INDEX sync_attachments_by_household ON sync_attachments(household_id, attachment_id);
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(3, Date.now());
+          sqlitePragma(this.db, "user_version = 3");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the encrypted attachment migration.", { cause: error });
       }
     }
   }
@@ -1616,6 +1645,45 @@ export class DurableStore {
     }
   }
 
+  putAttachment(householdId, attachmentId, keyEpoch, ciphertext, digest, createdAt) {
+    this.assertAvailable();
+    if (!isId(householdId) || !isId(attachmentId) || !Number.isSafeInteger(keyEpoch) || keyEpoch < 1 || keyEpoch > MAX_KEY_EPOCHS ||
+        !Buffer.isBuffer(ciphertext) || ciphertext.length < 1 || ciphertext.length > MAX_ATTACHMENT_BYTES ||
+        !/^[a-f0-9]{64}$/.test(digest) || !isTimestamp(createdAt))
+      throw new DurableStoreError("Kin encrypted attachment metadata is invalid.");
+    return this.transaction(() => {
+      const existing = this.db.prepare("SELECT key_epoch, ciphertext, digest FROM sync_attachments WHERE household_id = ? AND attachment_id = ?").get(householdId, attachmentId);
+      if (existing) {
+        if (existing.key_epoch === keyEpoch && existing.digest === digest && Buffer.from(existing.ciphertext).equals(ciphertext)) return { accepted: false };
+        throw new DurableConflictError("attachment_conflict", "That attachment ID already has different encrypted content.");
+      }
+      const quota = this.db.prepare("SELECT COUNT(*) AS count, COALESCE(SUM(size_bytes), 0) AS bytes FROM sync_attachments WHERE household_id = ?").get(householdId);
+      if (quota.count >= MAX_HOUSEHOLD_ATTACHMENTS || quota.bytes + ciphertext.length > MAX_HOUSEHOLD_ATTACHMENT_BYTES)
+        throw new DurableConflictError("attachment_limit", "This household reached its encrypted attachment limit.");
+      this.db.prepare("INSERT INTO sync_attachments(household_id, attachment_id, key_epoch, ciphertext, size_bytes, digest, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(householdId, attachmentId, keyEpoch, ciphertext, ciphertext.length, digest, createdAt);
+      return { accepted: true };
+    });
+  }
+
+  getAttachment(householdId, attachmentId) {
+    this.assertAvailable();
+    const row = this.db.prepare("SELECT attachment_id AS attachmentId, key_epoch AS keyEpoch, ciphertext, size_bytes AS size, digest FROM sync_attachments WHERE household_id = ? AND attachment_id = ?").get(householdId, attachmentId);
+    if (!row) return null;
+    const ciphertext = Buffer.from(row.ciphertext);
+    if (ciphertext.length !== row.size) throw new DurableStoreError("Kin encrypted attachment storage is invalid.");
+    return { ...row, ciphertext };
+  }
+
+  listAttachments(householdId) {
+    this.assertAvailable();
+    return this.db.prepare("SELECT attachment_id AS attachmentId, key_epoch AS keyEpoch, size_bytes AS size, digest FROM sync_attachments WHERE household_id = ? ORDER BY attachment_id LIMIT ?").all(householdId, MAX_HOUSEHOLD_ATTACHMENTS);
+  }
+
+  removeAttachment(householdId, attachmentId) {
+    this.assertAvailable();
+    return this.db.prepare("DELETE FROM sync_attachments WHERE household_id = ? AND attachment_id = ?").run(householdId, attachmentId).changes > 0;
+  }
+
   health() {
     return this.validate();
   }
@@ -1858,6 +1926,7 @@ function isTimestamp(value) {
 }
 
 function purgeHouseholdData(database, householdId) {
+  database.prepare("DELETE FROM sync_attachments WHERE household_id = ?").run(householdId);
   database
     .prepare("DELETE FROM provisioning_grants WHERE household_id = ?")
     .run(householdId);
