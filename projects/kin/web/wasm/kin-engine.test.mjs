@@ -482,6 +482,8 @@ function emptyV7State() {
     notes: [],
     pins: [],
     playbooks: [],
+    referenceRecords: [],
+    maintenanceEvents: [],
     summary: { entries: [], totalCount: 0, throughEventId: null },
   };
 }

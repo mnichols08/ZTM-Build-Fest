@@ -3,7 +3,7 @@ import { MAX_SEARCH_RESULTS, searchHouseholdRecords } from "../search.js";
 class KinSearch extends HTMLElement {
   constructor() {
     super();
-    this.records = { items: [], handoffs: [], talks: [], notes: [], areas: [] };
+    this.records = { items: [], handoffs: [], talks: [], notes: [], referenceRecords: [], maintenanceEvents: [], areas: [] };
     this.isDisabled = false;
   }
 
@@ -17,7 +17,7 @@ class KinSearch extends HTMLElement {
     const hint = document.createElement("p");
     hint.className = "search-hint";
     hint.textContent =
-      "Searches run on this device across unarchived Items, checklist Steps, Handoffs, Talks, and Notes.";
+      "Searches run on this device across Items, checklist Steps, Handoffs, Talks, Notes, household references, and maintenance history.";
 
     this.form = document.createElement("form");
     this.form.className = "search-form";
@@ -92,6 +92,8 @@ class KinSearch extends HTMLElement {
       handoffs: Array.isArray(value?.handoffs) ? value.handoffs : [],
       talks: Array.isArray(value?.talks) ? value.talks : [],
       notes: Array.isArray(value?.notes) ? value.notes : [],
+      referenceRecords: Array.isArray(value?.referenceRecords) ? value.referenceRecords : [],
+      maintenanceEvents: Array.isArray(value?.maintenanceEvents) ? value.maintenanceEvents : [],
       areas: Array.isArray(value?.areas) ? value.areas : [],
     };
     this.updateAreaOptions();

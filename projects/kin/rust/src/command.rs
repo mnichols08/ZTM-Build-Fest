@@ -125,6 +125,15 @@ pub enum HouseholdCommand {
         fields: Vec<(ReferenceFieldId, String, String)>,
     },
     ArchiveReferenceRecord(ReferenceRecordId),
+    SaveMaintenanceEvent {
+        id: MaintenanceEventId,
+        record_id: ReferenceRecordId,
+        performed_on: CivilDate,
+        summary: String,
+        next_on: Option<CivilDate>,
+        routine_id: Option<RoutineId>,
+    },
+    ArchiveMaintenanceEvent(MaintenanceEventId),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -296,6 +305,24 @@ pub fn create_event(
             fields: fields.clone(),
         },
         ArchiveReferenceRecord(id) => EventKind::ReferenceRecordArchived { record_id: *id },
+        SaveMaintenanceEvent {
+            id,
+            record_id,
+            performed_on,
+            summary,
+            next_on,
+            routine_id,
+        } => EventKind::MaintenanceEventSaved {
+            maintenance_id: *id,
+            record_id: *record_id,
+            performed_on: *performed_on,
+            summary: summary.clone(),
+            next_on: *next_on,
+            routine_id: *routine_id,
+        },
+        ArchiveMaintenanceEvent(id) => EventKind::MaintenanceEventArchived {
+            maintenance_id: *id,
+        },
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -359,6 +386,14 @@ pub fn execute(
         command,
         HouseholdCommand::SaveReferenceRecord { .. } | HouseholdCommand::ArchiveReferenceRecord(_)
     ) && request.protocol_version < crate::protocol::PROTOCOL_V20
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if matches!(
+        command,
+        HouseholdCommand::SaveMaintenanceEvent { .. }
+            | HouseholdCommand::ArchiveMaintenanceEvent(_)
+    ) && request.protocol_version < crate::protocol::PROTOCOL_V21
     {
         return Err(KinError::UnsupportedVersion);
     }
@@ -643,7 +678,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
     if bytes.len() != 128 + text_length {
         return Err(KinError::MalformedProtocol);
     }
-    let text = if matches!(kind, 21..=28 | 33 | 35) {
+    let text = if matches!(kind, 21..=28 | 33 | 35 | 37) {
         String::new()
     } else {
         std::str::from_utf8(&bytes[128..])
@@ -664,7 +699,9 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 25 && !(17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
         || matches!(kind, 26..=28) && text_length != 16
         || matches!(kind, 31 | 32 | 34 | 36) && text_length != 0
-        || matches!(kind, 33 | 34 | 35 | 36) && id == [0; 16]
+        || matches!(kind, 33..=38) && id == [0; 16]
+        || kind == 37 && text_length < 42
+        || kind == 38 && text_length != 0
     {
         return Err(KinError::MalformedProtocol);
     }
@@ -946,6 +983,36 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             }
         }
         36 if text_length == 0 => ArchiveReferenceRecord(ReferenceRecordId(id)),
+        37 if text_length >= 42 => {
+            let payload = bytes.get(128..).ok_or(KinError::MalformedProtocol)?;
+            if payload.len() != text_length {
+                return Err(KinError::MalformedProtocol);
+            }
+            let record_id = ReferenceRecordId(field(payload, 0)?);
+            let performed_on = CivilDate::from_encoded(u32::from_le_bytes(field(payload, 16)?))?;
+            let next_raw = u32::from_le_bytes(field(payload, 20)?);
+            let routine = field(payload, 24)?;
+            let summary_len = u16::from_le_bytes(field(payload, 40)?) as usize;
+            if summary_len == 0 || payload.len() != 42 + summary_len {
+                return Err(KinError::MalformedProtocol);
+            }
+            let summary = std::str::from_utf8(&payload[42..])
+                .map_err(|_| KinError::MalformedProtocol)?
+                .to_owned();
+            SaveMaintenanceEvent {
+                id: MaintenanceEventId(id),
+                record_id,
+                performed_on,
+                summary,
+                next_on: if next_raw == 0 {
+                    None
+                } else {
+                    Some(CivilDate::from_encoded(next_raw)?)
+                },
+                routine_id: (routine != [0; 16]).then_some(RoutineId(routine)),
+            }
+        }
+        38 if text_length == 0 => ArchiveMaintenanceEvent(MaintenanceEventId(id)),
         _ => return Err(KinError::UnsupportedVersion),
     };
     let context = CommandContext {

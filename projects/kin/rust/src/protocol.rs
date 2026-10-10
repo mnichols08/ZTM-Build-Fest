@@ -1,8 +1,8 @@
 use crate::error::KinError;
 use crate::event::{
     valid_timestamp, ActorId, DeviceId, EventEnvelope, EventId, EventKind, HandoffId, HouseholdId,
-    HouseholdMode, IdentityBinding, ItemClassification, ItemId, PinTargetKind, PulseValue,
-    ReferenceFieldId, ReferenceRecordId, RoutineId, TalkId,
+    HouseholdMode, IdentityBinding, ItemClassification, ItemId, MaintenanceEventId, PinTargetKind,
+    PulseValue, ReferenceFieldId, ReferenceRecordId, RoutineId, TalkId,
 };
 use crate::recurrence::{Cadence, CivilDate};
 use crate::state::{
@@ -30,10 +30,12 @@ pub const PROTOCOL_V17: u16 = 17;
 pub const PROTOCOL_V18: u16 = 18;
 pub const PROTOCOL_V19: u16 = 19;
 pub const PROTOCOL_V20: u16 = 20;
-pub const PROTOCOL_VERSION: u16 = PROTOCOL_V20;
+pub const PROTOCOL_V21: u16 = 21;
+pub const PROTOCOL_VERSION: u16 = PROTOCOL_V21;
 pub const ERROR_PROTOCOL_VERSION: u16 = PROTOCOL_V1;
 pub const MAX_EVENT_COUNT: usize = 10_000;
 pub const MAX_PROTOCOL_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_MAINTENANCE_EVENTS: usize = 8192;
 pub const MAX_ITEM_TEXT_BYTES: usize = 4096;
 const REQUEST_HEADER_BYTES: usize = 12;
 const EVENT_HEADER_BYTES: usize = 88;
@@ -93,6 +95,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
             | PROTOCOL_V18
             | PROTOCOL_V19
             | PROTOCOL_V20
+            | PROTOCOL_V21
     ) {
         return Err(KinError::UnsupportedVersion);
     }
@@ -191,7 +194,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
     let mut offset = match version {
         PROTOCOL_V8 | PROTOCOL_V9 | PROTOCOL_V10 | PROTOCOL_V11 | PROTOCOL_V12 | PROTOCOL_V13
         | PROTOCOL_V14 | PROTOCOL_V15 | PROTOCOL_V16 | PROTOCOL_V17 | PROTOCOL_V18
-        | PROTOCOL_V19 | PROTOCOL_V20 => {
+        | PROTOCOL_V19 | PROTOCOL_V20 | PROTOCOL_V21 => {
             V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES
         }
         PROTOCOL_V7 => 44,
@@ -541,6 +544,12 @@ pub fn encode_state_v20(
 ) -> Result<Vec<u8>, KinError> {
     encode_state_with_summary(state, summary, PROTOCOL_V20)
 }
+pub fn encode_state_v21(
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<Vec<u8>, KinError> {
+    encode_state_with_summary(state, summary, PROTOCOL_V21)
+}
 
 fn encode_state_with_summary(
     state: &HouseholdState,
@@ -551,6 +560,9 @@ fn encode_state_with_summary(
         return Err(KinError::UnsupportedVersion);
     }
     if version < PROTOCOL_V16 && state.items.iter().any(|item| item.planning_date.is_some()) {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if version < PROTOCOL_V21 && !state.maintenance_events.is_empty() {
         return Err(KinError::UnsupportedVersion);
     }
     if version < PROTOCOL_V9
@@ -826,6 +838,7 @@ fn encode_state_with_summary(
             })
         })
         .and_then(|length| length.checked_add(if version >= PROTOCOL_V20 { 4 } else { 0 }))
+        .and_then(|length| length.checked_add(if version >= PROTOCOL_V21 { 4 } else { 0 }))
         .and_then(|length| {
             length.checked_add(if version >= PROTOCOL_V20 {
                 if state.reference_records.len() > crate::state::MAX_REFERENCE_RECORDS {
@@ -840,6 +853,21 @@ fn encode_state_with_summary(
                                 field_sum.checked_add(20 + field.label.len() + field.value.len())
                             })?;
                         sum.checked_add(36 + record.title.len() + fields)
+                    })?
+            } else {
+                0
+            })
+        })
+        .and_then(|length| {
+            length.checked_add(if version >= PROTOCOL_V21 {
+                if state.maintenance_events.len() > MAX_MAINTENANCE_EVENTS {
+                    return None;
+                }
+                state
+                    .maintenance_events
+                    .iter()
+                    .try_fold(0usize, |sum, entry| {
+                        sum.checked_add(60 + entry.summary.len())
                     })?
             } else {
                 0
@@ -896,6 +924,9 @@ fn encode_state_with_summary(
     }
     if version >= PROTOCOL_V20 {
         push_u32(&mut result, state.reference_records.len() as u32);
+    }
+    if version >= PROTOCOL_V21 {
+        push_u32(&mut result, state.maintenance_events.len() as u32);
     }
     result.extend_from_slice(&previous[24..]);
     if version >= PROTOCOL_V9 {
@@ -975,6 +1006,19 @@ fn encode_state_with_summary(
             }
         }
     }
+    if version >= PROTOCOL_V21 {
+        for entry in &state.maintenance_events {
+            result.extend_from_slice(&entry.maintenance_id.0);
+            result.extend_from_slice(&entry.record_id.0);
+            push_u32(&mut result, entry.performed_on.encoded());
+            push_u32(&mut result, entry.next_on.map_or(0, CivilDate::encoded));
+            result.extend_from_slice(&entry.routine_id.map_or([0; 16], |id| id.0));
+            result.push(u8::from(entry.archived));
+            result.push(0);
+            push_u16(&mut result, entry.summary.len() as u16);
+            result.extend_from_slice(entry.summary.as_bytes());
+        }
+    }
 
     for entry in &summary.entries {
         result.extend_from_slice(&entry.event_id.0);
@@ -995,7 +1039,7 @@ fn encode_state_with_summary(
 }
 
 pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelope, KinError> {
-    if !(PROTOCOL_V1..=PROTOCOL_V20).contains(&protocol_version) {
+    if !(PROTOCOL_V1..=PROTOCOL_V21).contains(&protocol_version) {
         return Err(KinError::UnsupportedVersion);
     }
     if record.len() > MAX_PROTOCOL_BYTES {
@@ -1348,6 +1392,48 @@ pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelop
                 return Err(KinError::MalformedProtocol);
             }
             EventKind::ReferenceRecordArchived { record_id }
+        }
+        (1, 37) if protocol_version >= PROTOCOL_V21 => {
+            if payload.len() < 58 {
+                return Err(KinError::MalformedProtocol);
+            }
+            let maintenance_id = MaintenanceEventId(read_id(payload, 0)?);
+            let record_id = ReferenceRecordId(read_id(payload, 16)?);
+            let performed_on = CivilDate::from_encoded(read_u32(payload, 32)?)?;
+            let next_value = read_u32(payload, 36)?;
+            let next_on = if next_value == 0 {
+                None
+            } else {
+                Some(CivilDate::from_encoded(next_value)?)
+            };
+            let routine = read_id(payload, 40)?;
+            let summary_len = read_u16(payload, 56)? as usize;
+            if maintenance_id.0 == [0; 16]
+                || record_id.0 == [0; 16]
+                || summary_len == 0
+                || summary_len > crate::state::MAX_MAINTENANCE_SUMMARY_BYTES
+                || payload.len() != 58 + summary_len
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            let summary = std::str::from_utf8(&payload[58..])
+                .map_err(|_| KinError::MalformedProtocol)?
+                .to_owned();
+            EventKind::MaintenanceEventSaved {
+                maintenance_id,
+                record_id,
+                performed_on,
+                summary,
+                next_on,
+                routine_id: (routine != [0; 16]).then_some(RoutineId(routine)),
+            }
+        }
+        (1, 38) if protocol_version >= PROTOCOL_V21 && payload.len() == 16 => {
+            let maintenance_id = MaintenanceEventId(read_id(payload, 0)?);
+            if maintenance_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::MaintenanceEventArchived { maintenance_id }
         }
         (1, 15..=17) if protocol_version >= PROTOCOL_V7 => {
             if payload.len() != if event_kind == 17 { 16 } else { 20 }

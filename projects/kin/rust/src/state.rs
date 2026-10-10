@@ -84,6 +84,28 @@ pub struct ReferenceRecordState {
     pub fields: Vec<ReferenceFieldState>,
     pub archived: bool,
 }
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MaintenanceEventState {
+    pub maintenance_id: crate::event::MaintenanceEventId,
+    pub record_id: ReferenceRecordId,
+    pub performed_on: CivilDate,
+    pub summary: String,
+    pub next_on: Option<CivilDate>,
+    pub routine_id: Option<RoutineId>,
+    pub archived: bool,
+}
+pub const MAX_MAINTENANCE_EVENTS_PER_RECORD: usize = 64;
+pub const MAX_MAINTENANCE_SUMMARY_BYTES: usize = 240;
+pub fn normalize_maintenance_summary(summary: &str) -> Result<String, KinError> {
+    let summary = summary.trim();
+    if summary.is_empty()
+        || summary.len() > MAX_MAINTENANCE_SUMMARY_BYTES
+        || summary.chars().any(char::is_control)
+    {
+        return Err(KinError::InvalidEvent);
+    }
+    Ok(summary.to_owned())
+}
 pub const MAX_REFERENCE_RECORDS: usize = 128;
 pub const MAX_REFERENCE_FIELDS: usize = 16;
 pub const MAX_REFERENCE_TITLE_BYTES: usize = 128;
@@ -299,6 +321,7 @@ pub struct HouseholdState {
     pub pins: Vec<PinState>,
     pub playbooks: Vec<PlaybookState>,
     pub reference_records: Vec<ReferenceRecordState>,
+    pub maintenance_events: Vec<MaintenanceEventState>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -419,6 +442,7 @@ fn rebuild_with_context(
     let mut pins: Vec<PinState> = Vec::new();
     let mut playbooks: Vec<PlaybookState> = Vec::new();
     let mut reference_records = Vec::<ReferenceRecordState>::new();
+    let mut maintenance_events = Vec::<MaintenanceEventState>::new();
     let mut reference_positions = BTreeMap::<ReferenceRecordId, usize>::new();
     let mut reference_field_owners = BTreeMap::<ReferenceFieldId, ReferenceRecordId>::new();
     for event in events {
@@ -1007,6 +1031,86 @@ fn rebuild_with_context(
                     .ok_or(KinError::InvalidEvent)?
                     .archived = true;
             }
+            EventKind::MaintenanceEventSaved {
+                maintenance_id,
+                record_id,
+                performed_on,
+                summary,
+                next_on,
+                routine_id,
+            } => {
+                if !valid_timestamp(event.timestamp)
+                    || maintenance_id.0 == [0; 16]
+                    || record_id.0 == [0; 16]
+                {
+                    return Err(KinError::InvalidEvent);
+                }
+                let summary = normalize_maintenance_summary(summary)?;
+                let record_pos = *reference_positions
+                    .get(record_id)
+                    .ok_or(KinError::InvalidEvent)?;
+                if reference_records[record_pos].archived || performed_on.encoded() == 0 {
+                    return Err(KinError::InvalidEvent);
+                }
+                if let Some(routine_id) = routine_id {
+                    let position = *routine_positions
+                        .get(routine_id)
+                        .ok_or(KinError::InvalidEvent)?;
+                    if routines[position].archived {
+                        return Err(KinError::InvalidEvent);
+                    }
+                }
+                if let Some(next_on) = next_on {
+                    if next_on < performed_on {
+                        return Err(KinError::InvalidEvent);
+                    }
+                }
+                if let Some(existing) = maintenance_events
+                    .iter_mut()
+                    .find(|entry| entry.maintenance_id == *maintenance_id)
+                {
+                    if existing.archived || existing.record_id != *record_id {
+                        return Err(KinError::InvalidEvent);
+                    }
+                    *existing = MaintenanceEventState {
+                        maintenance_id: *maintenance_id,
+                        record_id: *record_id,
+                        performed_on: *performed_on,
+                        summary,
+                        next_on: *next_on,
+                        routine_id: *routine_id,
+                        archived: false,
+                    };
+                } else {
+                    if maintenance_events
+                        .iter()
+                        .filter(|entry| entry.record_id == *record_id)
+                        .count()
+                        >= MAX_MAINTENANCE_EVENTS_PER_RECORD
+                    {
+                        return Err(KinError::InvalidEvent);
+                    }
+                    maintenance_events.push(MaintenanceEventState {
+                        maintenance_id: *maintenance_id,
+                        record_id: *record_id,
+                        performed_on: *performed_on,
+                        summary,
+                        next_on: *next_on,
+                        routine_id: *routine_id,
+                        archived: false,
+                    });
+                }
+            }
+            EventKind::MaintenanceEventArchived { maintenance_id } => {
+                let entry = maintenance_events
+                    .iter_mut()
+                    .find(|entry| entry.maintenance_id == *maintenance_id)
+                    .ok_or(KinError::InvalidEvent)?;
+                if entry.archived {
+                    return Err(KinError::InvalidEvent);
+                }
+                entry.archived = true;
+            }
             EventKind::ItemStepAdded {
                 item_id,
                 step_id,
@@ -1216,6 +1320,7 @@ fn rebuild_with_context(
         pins,
         playbooks,
         reference_records,
+        maintenance_events,
     })
 }
 
@@ -1434,7 +1539,9 @@ pub(crate) fn summarize_validated(
             | EventKind::PlaybookSaved { .. }
             | EventKind::PlaybookArchived { .. }
             | EventKind::ReferenceRecordSaved { .. }
-            | EventKind::ReferenceRecordArchived { .. } => None,
+            | EventKind::ReferenceRecordArchived { .. }
+            | EventKind::MaintenanceEventSaved { .. }
+            | EventKind::MaintenanceEventArchived { .. } => None,
         };
 
         if let Some((kind, entity_kind, text, classification)) = summary {
@@ -1547,7 +1654,9 @@ mod tests {
             | EventKind::PlaybookSaved { .. }
             | EventKind::PlaybookArchived { .. }
             | EventKind::ReferenceRecordSaved { .. }
-            | EventKind::ReferenceRecordArchived { .. } => {
+            | EventKind::ReferenceRecordArchived { .. }
+            | EventKind::MaintenanceEventSaved { .. }
+            | EventKind::MaintenanceEventArchived { .. } => {
                 panic!("Area tests use independent wire fixtures")
             }
         }

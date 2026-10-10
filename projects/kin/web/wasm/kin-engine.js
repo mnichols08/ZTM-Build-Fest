@@ -1,4 +1,4 @@
-const PROTOCOL_VERSION = 20;
+const PROTOCOL_VERSION = 21;
 const REQUEST_HEADER_BYTES = 64;
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 const PULSE_VALUES = ["good", "okay", "drained", "rough-day", "need-quiet"];
@@ -322,6 +322,8 @@ const COMMAND_TYPES = [
   "archive-playbook",
   "save-reference-record",
   "archive-reference-record",
+  "save-maintenance-event",
+  "archive-maintenance-event",
 ];
 const EVENT_KINDS = [
   null,
@@ -361,6 +363,8 @@ const EVENT_KINDS = [
   "PLAYBOOK_ARCHIVED",
   "REFERENCE_RECORD_SAVED",
   "REFERENCE_RECORD_ARCHIVED",
+  "MAINTENANCE_EVENT_SAVED",
+  "MAINTENANCE_EVENT_ARCHIVED",
 ];
 
 function encodeIntent(type, value) {
@@ -397,6 +401,7 @@ function encodeIntentPacket(command, identity) {
   const textBytes = textEncoder.encode(text);
   const playbookBytes = kind === 33 ? encodePlaybookPayload(command) : null;
   const referenceBytes = kind === 35 ? encodeReferencePayload(command) : null;
+  const maintenanceBytes = kind === 37 ? encodeMaintenancePayload(command) : null;
   if (
     hasText &&
     (typeof text !== "string" ||
@@ -418,7 +423,7 @@ function encodeIntentPacket(command, identity) {
           ? 16 + stepText.length
           : kind === 22 || kind === 23
             ? 24 + noteTitle.length + noteBody.length
-            : kind === 33 ? playbookBytes.length : kind === 35 ? referenceBytes.length : textBytes.length),
+            : kind === 33 ? playbookBytes.length : kind === 35 ? referenceBytes.length : kind === 37 ? maintenanceBytes.length : textBytes.length),
   );
   packet.set([75, 67, 77, 68, 1, 0, 0, 0]);
   const view = new DataView(packet.buffer);
@@ -452,6 +457,7 @@ function encodeIntentPacket(command, identity) {
       command.areaId ??
       command.noteId ??
       command.playbookId ??
+      command.maintenanceId ??
       command.recordId ??
       command.targetId ??
       command.id ??
@@ -502,6 +508,9 @@ function encodeIntentPacket(command, identity) {
   } else if (kind === 35) {
     packet.set(referenceBytes, 128);
     view.setUint32(124, referenceBytes.length, true);
+  } else if (kind === 37) {
+    packet.set(maintenanceBytes, 128);
+    view.setUint32(124, maintenanceBytes.length, true);
   }
   if (kind === 22 || kind === 23) {
     packet.set(command.areaId ? idFromHex(command.areaId) : new Uint8Array(16), 128);
@@ -518,13 +527,31 @@ function encodeIntentPacket(command, identity) {
   } else if (stepAction) {
     packet.set(idFromHex(command.itemId), 128);
     view.setUint32(124, 16, true);
-  } else if (kind === 33 || kind === 35) {
+  } else if (kind === 33 || kind === 35 || kind === 37) {
     // The Playbook packet payload was encoded above.
   } else {
     view.setUint32(124, textBytes.length, true);
     packet.set(textBytes, 128);
   }
   return packet;
+}
+
+function encodeMaintenancePayload(command) {
+  const summary = textEncoder.encode(command.summary ?? "");
+  if (typeof command.summary !== "string" || summary.length < 1 || summary.length > 240 || strictTextDecoder.decode(summary) !== command.summary || command.summary.trim() !== command.summary || [...command.summary].some((character) => /\p{Cc}/u.test(character)))
+    throw new KinEngineError(2, "Add a short maintenance note.");
+  assertCivilDate(command.performedOn);
+  if (command.nextOn != null) {
+    assertCivilDate(command.nextOn);
+    if (command.nextOn < command.performedOn) throw new KinEngineError(2, "The next date must be on or after the performed date.");
+  }
+  const bytes = new Uint8Array(42 + summary.length), view = new DataView(bytes.buffer);
+  bytes.set(idFromHex(command.recordId), 0);
+  view.setUint32(16, command.performedOn, true);
+  view.setUint32(20, command.nextOn ?? 0, true);
+  bytes.set(command.routineId ? idFromHex(command.routineId) : new Uint8Array(16), 24);
+  view.setUint16(40, summary.length, true); bytes.set(summary, 42);
+  return bytes;
 }
 
 function encodeReferencePayload(command) {
@@ -960,14 +987,14 @@ function decodeState(bytes) {
   const protocolVersion = view.getUint16(4, true);
   if (
     ![
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21,
     ].includes(protocolVersion) ||
     view.getUint16(6, true) !== 0
   ) {
     throw new KinEngineError(6, "Kin received an unsupported state format.");
   }
   const resultHeaderBytes =
-    protocolVersion >= 20 ? 84 : protocolVersion >= 19 ? 80 : protocolVersion >= 18 ? 76 : protocolVersion >= 15 ? 72 : protocolVersion >= 11 ? 68 : protocolVersion >= 10 ? 64 : protocolVersion >= 9
+    protocolVersion >= 21 ? 88 : protocolVersion >= 20 ? 84 : protocolVersion >= 19 ? 80 : protocolVersion >= 18 ? 76 : protocolVersion >= 15 ? 72 : protocolVersion >= 11 ? 68 : protocolVersion >= 10 ? 64 : protocolVersion >= 9
       ? 60
       : protocolVersion >= 7
       ? 56
@@ -995,6 +1022,7 @@ function decodeState(bytes) {
   const pinCount = protocolVersion >= 18 ? view.getUint32(72, true) : 0;
   const playbookCount = protocolVersion >= 19 ? view.getUint32(76, true) : 0;
   const referenceRecordCount = protocolVersion >= 20 ? view.getUint32(80, true) : 0;
+  const maintenanceEventCount = protocolVersion >= 21 ? view.getUint32(84, true) : 0;
   if (
     protocolVersion >= 15 &&
     (modeCode > 3 || bytes.subarray(69, 72).some((byte) => byte !== 0))
@@ -1030,9 +1058,10 @@ function decodeState(bytes) {
     pinCount > 10 ||
     playbookCount > 32 ||
     referenceRecordCount > 128 ||
+    maintenanceEventCount > 8192 ||
     stepCount > MAX_EVENT_COUNT ||
     stepCount > itemCount * MAX_STEPS_PER_ITEM ||
-    itemCount + handoffCount + talkCount + pulseCount + routineCount + noteCount + playbookCount + referenceRecordCount >
+    itemCount + handoffCount + talkCount + pulseCount + routineCount + noteCount + playbookCount + referenceRecordCount + maintenanceEventCount >
       MAX_EVENT_COUNT
   ) {
     throw new KinEngineError(
@@ -1495,6 +1524,28 @@ function decodeState(bytes) {
   }
   if (referenceRecords.some((record) => record.areaId && !areas.some((area) => area.areaId === record.areaId)))
     throw new KinEngineError(6, "Kin received a reference record for an unknown Area.");
+  const maintenanceEvents = [];
+  const maintenanceIds = new Set();
+  for (let index = 0; index < maintenanceEventCount; index += 1) {
+    if (offset + 60 > bytes.length) throw new KinEngineError(6, "Kin received a truncated maintenance record.");
+    const maintenanceId = idToHex(bytes.subarray(offset, offset + 16));
+    const recordId = idToHex(bytes.subarray(offset + 16, offset + 32));
+    const performedOn = view.getUint32(offset + 32, true), nextOnCode = view.getUint32(offset + 36, true);
+    const routineBytes = bytes.subarray(offset + 40, offset + 56);
+    const archived = bytes[offset + 56], summaryLength = view.getUint16(offset + 58, true);
+    const end = offset + 60 + summaryLength;
+    if (maintenanceId === "00".repeat(16) || maintenanceIds.has(maintenanceId) || !referenceRecords.some((record) => record.recordId === recordId) || archived > 1 || bytes[offset + 57] !== 0 || summaryLength < 1 || summaryLength > 240 || end > bytes.length)
+      throw new KinEngineError(6, "Kin received an invalid maintenance record.");
+    assertCivilDate(performedOn);
+    const performed = performedOn;
+    const nextOn = nextOnCode === 0 ? null : nextOnCode;
+    if (nextOn != null && nextOn < performed) throw new KinEngineError(6, "Kin received invalid maintenance dates.");
+    const summary = strictTextDecoder.decode(bytes.subarray(offset + 60, end));
+    if (!summary.trim() || summary.trim() !== summary || [...summary].some((character) => /\p{Cc}/u.test(character))) throw new KinEngineError(6, "Kin received invalid maintenance text.");
+    maintenanceIds.add(maintenanceId);
+    maintenanceEvents.push({ maintenanceId, recordId, performedOn: performed, summary, nextOn, routineId: routineBytes.every((byte) => byte === 0) ? null : idToHex(routineBytes), archived: archived === 1 });
+    offset = end;
+  }
   const entityNames = ["", "item", "handoff", "talk", "routine"];
   for (let index = 0; index < summaryCount; index += 1) {
     const headerEnd = offset + 24;
@@ -1574,6 +1625,7 @@ function decodeState(bytes) {
       ...(protocolVersion >= 18 ? { pins } : {}),
       ...(protocolVersion >= 19 ? { playbooks } : {}),
       ...(protocolVersion >= 20 ? { referenceRecords } : {}),
+      ...(protocolVersion >= 21 ? { maintenanceEvents } : {}),
       ...(modeCode === 0
         ? {}
         : { mode: ["normal", "vacation", "guests", "rest"][modeCode] }),

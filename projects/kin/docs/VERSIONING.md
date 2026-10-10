@@ -1,6 +1,6 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.24.0; the last published product release remains v0.10.3. The derived Item history date adds replay protocol 17 but no persistent storage or canonical event contract. Tagged candidates are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.31.0; the last published product release remains v0.10.3. Maintenance Records add replay protocol 21; IndexedDB, encrypted sync envelopes, and KARC archive framing remain unchanged. Candidate milestones are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
@@ -8,10 +8,10 @@ Kin version numbers describe product releases; they do not version every persist
 
 | Version axis | Last published v0.10.3 / current candidate v0.24.0 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.24.0` | Useful Household History with a derived per-Item date |
+| Application | Last published `0.10.3`; candidate `0.31.0` | Maintenance Records on Reference Records |
 | Server database schema | `2` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination and household lifecycle records |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
-| Replay protocol | Reads v1–v17; writes v17 for local and synchronized requests | Request context and projection semantics |
+| Replay protocol | Reads v1–v21; writes v21 for local and synchronized requests | Request context and projection semantics |
 | Manual WASM ABI | Existing exports plus additive command/metadata/archive/import APIs | Host ownership and calls; new command packet v1 |
 | IndexedDB schema | Event DB 2→3; key DB 3→4 | Journalled upgrade to encrypted records |
 | Local envelope | v1 for original roots; v2 for rotated roots | v2 authenticates rootVersion in addition to purpose/routing |

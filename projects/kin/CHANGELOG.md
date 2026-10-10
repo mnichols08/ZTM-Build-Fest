@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.31.0 — Maintenance Records
+
+- Add bounded factual maintenance history to Reference Records, including optional next dates and active Routine links.
+- Add protocol 21 save/archive events; old histories remain valid and event export/sync reuse existing encrypted paths.
+- Add local maintenance history and capture controls under each Reference Record.
+- Native Rust, Node, and real WASM tests pass. Manual browser accessibility and the broad regression gate remain pending.
+
 ## v0.30.0 — Home Reference Records
 
 - Add bounded structured household reference cards with optional Area, labeled fields, edit, and archive.

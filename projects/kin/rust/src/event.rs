@@ -31,6 +31,7 @@ id_type!(StepId);
 id_type!(PlaybookId);
 id_type!(ReferenceRecordId);
 id_type!(ReferenceFieldId);
+id_type!(MaintenanceEventId);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -223,6 +224,17 @@ pub enum EventKind {
     },
     ReferenceRecordArchived {
         record_id: ReferenceRecordId,
+    },
+    MaintenanceEventSaved {
+        maintenance_id: MaintenanceEventId,
+        record_id: ReferenceRecordId,
+        performed_on: CivilDate,
+        summary: String,
+        next_on: Option<CivilDate>,
+        routine_id: Option<RoutineId>,
+    },
+    MaintenanceEventArchived {
+        maintenance_id: MaintenanceEventId,
     },
 }
 

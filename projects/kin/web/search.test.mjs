@@ -65,6 +65,17 @@ test("search matches all active text collections case-insensitively", () => {
   assert.match(results.at(-1).detail, /oat milk/i);
 });
 
+test("local search includes maintenance facts and active Reference Record fields", () => {
+  const { results } = searchHouseholdRecords({
+    ...household,
+    query: "filter",
+    referenceRecords: [{ recordId: "furnace", title: "Furnace", archived: false, fields: [{ label: "Model", value: "FilterMax" }] }],
+    maintenanceEvents: [{ maintenanceId: "maint-1", recordId: "furnace", performedOn: 20260918, summary: "Filter changed", archived: false }, { maintenanceId: "old", recordId: "furnace", performedOn: 20250918, summary: "Archived filter", archived: true }],
+  });
+  assert.deepEqual(results.slice(-2).map(({ kind, text }) => [kind, text]), [["Reference Record", "Furnace"], ["Maintenance", "Filter changed"]]);
+  assert.equal(results.at(-1).context, "Furnace · 09/18/2026");
+});
+
 test("search includes matching active checklist Steps and excludes archived records", () => {
   const { results, totalCount } = searchHouseholdRecords({
     ...household,

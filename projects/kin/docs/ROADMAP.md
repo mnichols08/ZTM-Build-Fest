@@ -1,6 +1,6 @@
 # Roadmap
 
-Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. PR #26 is merged into `kin-development` at `25e854eaa41a569650f89ea41db70a6f2bcb5c92`. The v0.26.0–v0.30.0 candidate milestones are committed separately on `kin-fast-track-v0.26-v0.30`; the batch remains in progress. These candidates are not production certification; do not create tags or merge the batch branch.
+Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. The v0.31.0–v0.34.0 candidate batch is on `kin-fast-track-v0.31-v0.34`; no v0.35.x work is included.
 
 ```text
 v0.9.3 — Encrypted Event Sync Stabilization
@@ -31,7 +31,17 @@ v0.21.0 — Household Modes (implemented candidate)
 	↓
 v0.22.0 — Lightweight Planning Dates (implemented candidate)
 	↓
-v0.23.x–v0.25.x — Authorized fast-track (Calendar Export, History, Search; implemented candidates)
+v0.23.x–v0.25.x — Calendar Export, History, Search (implementation candidates)
+	↓
+v0.31.x — Maintenance Records
+	↓
+v0.32.x — Encrypted Attachments Foundation
+	↓
+v0.33.x — Attachment UX & Lifecycle
+	↓
+v0.34.x — Responsibility Ownership
+	↓
+v0.35.x — More Adult Members (separate trust-model review)
 	↓
 v0.27.x–v0.40.x — Remaining October daily features (October 18–31 targets)
 	↓
@@ -406,7 +416,7 @@ Through the October plan, preserve the [product principles](PRINCIPLES.md) and [
 
 ## Scope discipline
 
-Each roadmap item is future work unless explicitly marked as implemented. v0.9.3 supplies authentication, pairing and encrypted sync; v0.10.x adds local security, portable commands/codecs and encrypted recovery archives. v0.13.x and v0.14.x are complete through their `.5` patches; v0.15.x is complete through v0.15.5; the existing v0.17.0 Checklist Steps candidate is preserved. The user authorized v0.26.0–v0.30.0 on `kin-fast-track-v0.26-v0.30`, preserving one milestone commit per minor. Do not create tags or merge this branch, and do not begin v0.31.x. v1.0 remains readiness-driven. Releases through `v0.0.12` were documentation-only; v0.1.0 was the first coded release.
+Each roadmap item is future work unless explicitly marked as implemented. This fast-track preserves one milestone commit per minor through v0.34.0. Do not begin v0.35.x; membership trust changes require separate review. v1.0 remains readiness-driven. Releases through `v0.0.12` were documentation-only; v0.1.0 was the first coded release.
 
 Preserve every existing tag. The current batch candidate follows the release gates described in [agent guidance](../AGENTS.md) and the [release process](RELEASES.md); a date alone cannot bypass a release gate.
 

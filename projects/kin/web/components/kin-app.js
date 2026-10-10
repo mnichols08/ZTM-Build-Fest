@@ -93,6 +93,7 @@ class KinApp extends HTMLElement {
     this.onAreaIntent = (event) => this.saveArea(event.detail);
     this.onNoteIntent = (event) => this.saveNote(event.type.slice(4), event.detail);
     this.onReferenceIntent = (event) => this.saveReferenceRecord(event.type.slice(4), event.detail);
+    this.onMaintenanceIntent = (event) => this.saveMaintenanceEvent(event.type.slice(4), event.detail);
     this.onItemAreaChange = (event) => this.saveArea({ ...event.detail, action: "assign-item-area" });
     this.onItemPlanningDateChange = (event) =>
       this.saveItemPlanningDate(event.detail, event.target.closest("kin-today"));
@@ -233,6 +234,7 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.addEventListener(`kin:${action}`, this.onNoteIntent);
     for (const action of ["save-reference-record", "archive-reference-record"]) this.addEventListener(`kin:${action}`, this.onReferenceIntent);
+    for (const action of ["save-maintenance-event", "archive-maintenance-event"]) this.addEventListener(`kin:${action}`, this.onMaintenanceIntent);
     this.addEventListener("kin:add-handoff", this.onAddHandoff);
     this.addEventListener("kin:acknowledge-handoff", this.onAcknowledgeHandoff);
     this.addEventListener("kin:archive-handoff", this.onArchiveHandoff);
@@ -653,6 +655,7 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.removeEventListener(`kin:${action}`, this.onNoteIntent);
     for (const action of ["save-reference-record", "archive-reference-record"]) this.removeEventListener(`kin:${action}`, this.onReferenceIntent);
+    for (const action of ["save-maintenance-event", "archive-maintenance-event"]) this.removeEventListener(`kin:${action}`, this.onMaintenanceIntent);
     this.removeEventListener("kin:add-handoff", this.onAddHandoff);
     this.removeEventListener(
       "kin:acknowledge-handoff",
@@ -1379,6 +1382,21 @@ class KinApp extends HTMLElement {
     } finally { if (this.isCurrentSession(session)) { this.setBusy(false); this.flushPeerRefresh(); } }
   }
 
+  async saveMaintenanceEvent(action, detail) {
+    if (this.busy || !this.store || !this.engine) return;
+    const session = this.captureSession();
+    const type = action === "archive-maintenance-event" ? action : "save-maintenance-event";
+    this.setBusy(true); this.clearAlert(); this.setStatus("Saving maintenance history…");
+    try {
+      await this.appendCommand({ ...detail, type, id: detail.maintenanceId });
+      this.assertCurrentSession(session); this.renderState(); this.broadcastEventChange();
+      this.setStatus(action === "archive-maintenance-event" ? "Maintenance event archived." : "Maintenance saved on this device.");
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      this.showAlert(error.userMessage ?? SAVE_ERROR); this.setStatus("");
+    } finally { if (this.isCurrentSession(session)) { this.setBusy(false); this.flushPeerRefresh(); } }
+  }
+
   schedulePulseRefresh() {
     clearTimeout(this.pulseTimer);
     if (
@@ -1864,6 +1882,8 @@ class KinApp extends HTMLElement {
       handoffs: this.state.handoffs,
       talks: this.state.talks,
       notes: this.state.notes ?? [],
+      referenceRecords: this.state.referenceRecords ?? [],
+      maintenanceEvents: this.state.maintenanceEvents ?? [],
       areas: this.state.areas ?? [],
     };
     this.pulse.pulse = this.state.pulses.find(
@@ -1874,6 +1894,8 @@ class KinApp extends HTMLElement {
     this.areas.areas = this.state.areas ?? [];
     this.notes.notes = this.state.notes ?? [];
     this.notes.references = this.state.referenceRecords ?? [];
+    this.notes.maintenance = this.state.maintenanceEvents ?? [];
+    this.notes.routines = this.state.routines ?? [];
     this.notes.areas = this.state.areas ?? [];
     this.updateCalendarExportButton();
     this.schedulePulseRefresh();
