@@ -110,7 +110,8 @@ The month targets a coherent, demoable pre-1.0 build at `v0.40.x`. The `v0.41.x`
 - Fast-track candidate: `v0.26.0` — Pins & Quick Access; see the `v0.26.0` release record.
 - Fast-track candidate: `v0.27.0` — Household Playbooks; see the `v0.27.0` release record.
 - Fast-track candidate: `v0.28.0` - Local Reminders; see the `v0.28.0` release record.
-- Fast-track candidate: `v0.31.0` - Maintenance Records; see the `v0.31.0` release record.
+- Fast-track candidates: `v0.31.0`–`v0.31.1` - Maintenance Records and concurrent archive correction; see their release records.
+- Current fast-track candidate: `v0.32.0` - Encrypted Attachments Foundation; user-facing lifecycle work is still in progress.
 - Authorized fast-track: `v0.31.0`–`v0.34.0` — Maintenance Records, encrypted attachments, attachment lifecycle, and responsibility ownership; stop before `v0.35.x`.
 - Planned after October, undated: `v0.41.x`–`v0.45.x` — Recovery drills, broader platform validation, performance, and release-candidate readiness
 - Planned: `v1.0.0` — Stable Kin Platform, when readiness and human feedback support it
