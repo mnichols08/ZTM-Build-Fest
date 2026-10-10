@@ -1,6 +1,6 @@
 # Household Events
 
-**Status:** Current through v0.30.0 Home Reference Records. Protocol 20 adds bounded Reference Record save/archive events 35–36 and a bounded projection. Rust owns canonical command encoding and decoding; older protocols reject Reference Record-bearing histories. Protocol 19 adds ordered Playbook events, with protocols 10–18 adding Notes, Steps, richer Routine cadence, Shopping, Staples, household modes, planning dates, history timestamps, and Pins. Equal-time distributed replay remains deterministic; local encryption wraps canonical bytes without rewriting them.
+**Status:** Current through v0.31.0 Maintenance Records. Protocol 21 adds bounded maintenance save/archive events 37–38 and an additive projection after Reference Records. Rust owns canonical command encoding and decoding; older protocols reject histories containing unsupported new entities. Protocol 20 adds Reference Records; protocol 19 adds ordered Playbooks. Equal-time distributed replay remains deterministic; local encryption wraps canonical bytes without rewriting them.
 
 ## Canonical record
 
@@ -70,6 +70,8 @@ Use uppercase entity/action-past-tense names consistently. The milestone column 
 | `PLAYBOOK_ARCHIVED`               | v0.27.0           | Retain a Playbook as an archived template.                    |
 | `REFERENCE_RECORD_SAVED`          | v0.30.0           | Create or edit a bounded household reference card.             |
 | `REFERENCE_RECORD_ARCHIVED`       | v0.30.0           | Retain a reference card as an archived record.                 |
+| `MAINTENANCE_EVENT_SAVED`         | v0.31.0           | Add or correct a factual maintenance event for a Reference Record. |
+| `MAINTENANCE_EVENT_ARCHIVED`      | v0.31.0           | Archive a maintenance event while retaining its history.       |
 | `HOUSEHOLD_MODE_CHANGED`        | v0.21.0           | Set the explicit household-wide mode.                         |
 | `ITEM_PLANNING_DATE_CHANGED`    | v0.22.0           | Set or clear an Item's optional fixed civil planning date.     |
 | `HOUSEHOLD_CREATED`            | v0.8.0            | Establish a household identity when pairing is introduced.   |

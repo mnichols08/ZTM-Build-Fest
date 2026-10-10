@@ -41,6 +41,11 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::PlaybookArchived { .. } => 34,
         EventKind::ReferenceRecordSaved { .. } => 35,
         EventKind::ReferenceRecordArchived { .. } => 36,
+        EventKind::MaintenanceEventSaved { .. } => 37,
+        EventKind::MaintenanceEventArchived { .. } => 38,
+        EventKind::AttachmentBound { .. } => 39,
+        EventKind::AttachmentRemoved { .. } => 40,
+        EventKind::ResponsibilityChanged { .. } => 41,
     }
 }
 
@@ -228,6 +233,50 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             }
         }
         EventKind::ReferenceRecordArchived { record_id } => payload.extend_from_slice(&record_id.0),
+        EventKind::MaintenanceEventSaved {
+            maintenance_id,
+            record_id,
+            performed_on,
+            summary,
+            next_on,
+            routine_id,
+        } => {
+            let summary = crate::state::normalize_maintenance_summary(summary)?;
+            payload.extend_from_slice(&maintenance_id.0);
+            payload.extend_from_slice(&record_id.0);
+            payload.extend_from_slice(&performed_on.encoded().to_le_bytes());
+            payload.extend_from_slice(&next_on.map_or(0, |date| date.encoded()).to_le_bytes());
+            payload.extend_from_slice(&routine_id.map_or([0; 16], |id| id.0));
+            payload.extend_from_slice(&(summary.len() as u16).to_le_bytes());
+            payload.extend_from_slice(summary.as_bytes());
+        }
+        EventKind::MaintenanceEventArchived { maintenance_id } => {
+            payload.extend_from_slice(&maintenance_id.0)
+        }
+        EventKind::AttachmentBound {
+            attachment_id,
+            parent_kind,
+            parent_id,
+        } => {
+            payload.extend_from_slice(&attachment_id.0);
+            payload.push(*parent_kind as u8);
+            payload.extend_from_slice(parent_id);
+        }
+        EventKind::AttachmentRemoved { attachment_id } => {
+            payload.extend_from_slice(&attachment_id.0)
+        }
+        EventKind::ResponsibilityChanged {
+            target_kind,
+            target_id,
+            member_id,
+        } => {
+            if *target_id == [0; 16] || member_id.is_some_and(|id| id.0 == [0; 16]) {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.push(*target_kind as u8);
+            payload.extend_from_slice(target_id);
+            payload.extend_from_slice(&member_id.map_or([0; 16], |id| id.0));
+        }
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());
     bytes.extend_from_slice(&event.event_version.to_le_bytes());

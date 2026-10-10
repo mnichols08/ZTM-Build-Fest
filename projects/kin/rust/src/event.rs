@@ -31,6 +31,24 @@ id_type!(StepId);
 id_type!(PlaybookId);
 id_type!(ReferenceRecordId);
 id_type!(ReferenceFieldId);
+id_type!(MaintenanceEventId);
+id_type!(AttachmentId);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum AttachmentParentKind {
+    Note = 1,
+    ReferenceRecord = 2,
+    Maintenance = 3,
+    Item = 4,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum ResponsibilityTargetKind {
+    Item = 1,
+    Routine = 2,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -223,6 +241,30 @@ pub enum EventKind {
     },
     ReferenceRecordArchived {
         record_id: ReferenceRecordId,
+    },
+    MaintenanceEventSaved {
+        maintenance_id: MaintenanceEventId,
+        record_id: ReferenceRecordId,
+        performed_on: CivilDate,
+        summary: String,
+        next_on: Option<CivilDate>,
+        routine_id: Option<RoutineId>,
+    },
+    MaintenanceEventArchived {
+        maintenance_id: MaintenanceEventId,
+    },
+    AttachmentBound {
+        attachment_id: AttachmentId,
+        parent_kind: AttachmentParentKind,
+        parent_id: [u8; 16],
+    },
+    AttachmentRemoved {
+        attachment_id: AttachmentId,
+    },
+    ResponsibilityChanged {
+        target_kind: ResponsibilityTargetKind,
+        target_id: [u8; 16],
+        member_id: Option<ActorId>,
     },
 }
 

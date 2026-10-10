@@ -93,6 +93,8 @@ test("server schema v1 upgrades transactionally to household lifecycle v2", () =
         DROP TRIGGER sync_events_active_household_insert;
         DROP TRIGGER sync_bindings_active_household_insert;
         DROP TRIGGER provisioning_grants_active_household_insert;
+        DROP TABLE sync_attachments;
+        DELETE FROM server_migrations WHERE version = 3;
         ALTER TABLE households DROP COLUMN deleted_at;
         ALTER TABLE households DROP COLUMN deletion_finalize_at;
         ALTER TABLE households DROP COLUMN deletion_requested_at;
@@ -105,13 +107,13 @@ test("server schema v1 upgrades transactionally to household lifecycle v2", () =
     }
     const migrated = new DurableStore(databasePath);
     try {
-      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 2);
+      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 3);
       assert.deepEqual(
         migrated.db
           .prepare("SELECT version FROM server_migrations ORDER BY version")
           .all()
           .map(({ version }) => version),
-        [1, 2],
+        [1, 2, 3],
       );
       assert.equal(migrated.validate(), true);
     } finally {
@@ -127,7 +129,7 @@ test("a database with a newer schema fails closed without modification", () => {
   const databasePath = join(directory, "kin.sqlite");
   try {
     const database = openTestDatabase(databasePath);
-    sqlitePragma(database, "user_version = 3");
+    sqlitePragma(database, "user_version = 4");
     database.close();
 
     assert.throws(
@@ -135,7 +137,7 @@ test("a database with a newer schema fails closed without modification", () => {
       /newer server version/,
     );
     const inspection = openTestDatabase(databasePath, { readonly: true });
-    assert.equal(sqlitePragma(inspection, "user_version", { simple: true }), 3);
+    assert.equal(sqlitePragma(inspection, "user_version", { simple: true }), 4);
     inspection.close();
   } finally {
     rmSync(directory, { recursive: true, force: true });

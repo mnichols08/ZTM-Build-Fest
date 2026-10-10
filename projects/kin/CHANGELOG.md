@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.34.0 — Responsibility Ownership
+
+- Add canonical Items and Routines responsibility assignments with Take, explicit handoff, and clear actions.
+- Resolve concurrent assignments by `(logical time, device ID, event ID)` and clear ownership through canonical events after sync detects removed members.
+- Add protocol 23 projection support. No scores, contribution analytics, or workload summaries are included.
+- Rust replay, protocol, and real WASM tests pass. Browser interaction and accessibility checks remain unverified.
+
+## v0.33.0 — Attachment UX & Lifecycle
+
+- Add local-first attachment capture, protected offline persistence, retryable authenticated relay sync, remote restore, canonical removal, and client orphan reconciliation.
+- Include attachment records in bounded household archive format 2; verify ciphertext digests and local-sealed metadata against canonical parent bindings. Older format 1 archives remain supported.
+- Add file controls to Items, Notes, Reference Records, and Maintenance Records using the JPEG/PNG/WebP/PDF 4 MiB limit.
+- Native, real-WASM, crypto, and offline lifecycle tests pass. Browser interaction, accessibility, and direct archive migration checks remain unverified.
+
+## v0.32.0 — Encrypted Attachments Foundation
+
+- Add bounded AES-256-GCM attachment encryption with routing and epoch authenticated as additional data; filename, MIME type, size, and parent remain encrypted.
+- Add authenticated opaque encrypted attachment relay with digest verification, idempotent upload, 4 MiB file, 64-file and 50 MiB household limits, and durable SQLite storage.
+- Attachment upload, retrieval, listing, and deletion require an active synced device with the relevant provisioned key epoch. Household finalization purges stored attachments.
+- User-facing attachment capture, offline queueing, and archive portability remain follow-up work.
+
+## v0.31.1 — Concurrent Maintenance Archive Correction
+
+- Preserve a maintenance event created offline concurrently with archiving its Reference Record, independent of deterministic device replay order.
+- Continue rejecting new maintenance events authored after a Reference Record was archived.
+- Rust replay regression test passes.
+
+## v0.31.0 — Maintenance Records
+
+- Add bounded factual maintenance history to Reference Records, including optional next dates and active Routine links.
+- Add protocol 21 save/archive events; old histories remain valid and event export/sync reuse existing encrypted paths.
+- Add local maintenance history and capture controls under each Reference Record.
+- Native Rust, Node, and real WASM tests pass. Manual browser accessibility and the broad regression gate remain pending.
+
 ## v0.30.0 — Home Reference Records
 
 - Add bounded structured household reference cards with optional Area, labeled fields, edit, and archive.

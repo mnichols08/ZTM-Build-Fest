@@ -1,4 +1,6 @@
 import { localCivilDateOffset } from "../browser-time.js";
+import "./kin-attachments.js";
+import "./kin-responsibility.js";
 
 class KinItem extends HTMLElement {
   constructor() {
@@ -8,6 +10,7 @@ class KinItem extends HTMLElement {
     this.showSteps = false;
     this.isPinned = false;
     this.pinLimitReached = false;
+    this.attachmentRecords = [];
   }
 
   set item(value) {
@@ -26,6 +29,8 @@ class KinItem extends HTMLElement {
   }
 
   set pinned(value) { this.isPinned = Boolean(value); this.render(); }
+  set attachments(value) { this.attachmentRecords = Array.isArray(value) ? value : []; this.render(); }
+  set responsibilityContext(value) { this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.otherMemberId = value?.otherMemberId ?? null; this.render(); }
 
   set disabled(value) {
     this.isDisabled = Boolean(value);
@@ -48,6 +53,15 @@ class KinItem extends HTMLElement {
     const details = document.createElement("div");
     details.className = "item-details";
     details.append(text);
+    const attachments = document.createElement("kin-attachments");
+    attachments.parentRecord = { kind: "item", id: this.record.itemId, label: this.record.text, readonly: this.record.status === "archived" };
+    attachments.attachments = this.attachmentRecords;
+    details.append(attachments);
+    if (this.record.status !== "archived") {
+      const responsibility = document.createElement("kin-responsibility");
+      responsibility.record = { targetKind: "item", targetId: this.record.itemId, text: this.record.text, ownerId: this.responsibilities?.find((entry) => entry.targetKind === "item" && entry.targetId === this.record.itemId)?.memberId ?? null, memberId: this.memberId, otherMemberId: this.otherMemberId };
+      details.append(responsibility);
+    }
     if (this.record.status !== "archived") details.append(this.createReminderControl());
     if (this.record.status !== "archived") {
       const label = document.createElement("label");

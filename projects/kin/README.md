@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.30.0` — Home Reference Records (candidate on `kin-fast-track-v0.26-v0.30`).** Kin keeps household records in the existing local-first encrypted event store. Pins provide explicit quick access, Playbooks create independent checklist Items with Steps, and reference cards keep practical household details in bounded labeled fields. Search remains local; reminders and browser update behavior are documented with their platform limits.
+**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current candidate: `v0.34.0` — Responsibility Ownership, on `kin-fast-track-v0.31-v0.34`.** Kin keeps household history in the existing local-first encrypted event store. Attachments persist encrypted locally before sync and portable archives include verified attachment payloads. Items and Routines support explicit, replayable responsibility assignment; ties resolve by canonical event order.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Archives are intentionally local-only history recovery and do not restore sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
@@ -110,8 +110,9 @@ The month targets a coherent, demoable pre-1.0 build at `v0.40.x`. The `v0.41.x`
 - Fast-track candidate: `v0.26.0` — Pins & Quick Access; see the `v0.26.0` release record.
 - Fast-track candidate: `v0.27.0` — Household Playbooks; see the `v0.27.0` release record.
 - Fast-track candidate: `v0.28.0` - Local Reminders; see the `v0.28.0` release record.
-- Fast-track candidate: `v0.30.0` - Home Reference Records; see the `v0.30.0` release record.
-- Planned: `v0.26.x`–`v0.40.x` — Further incremental household capabilities, portability, and device migration within the October plan; see the [daily roadmap](docs/ROADMAP.md).
+- Fast-track candidates: `v0.31.0`–`v0.31.1` - Maintenance Records and concurrent archive correction; see their release records.
+- Current fast-track candidate: `v0.34.0` - Responsibility Ownership; this implementation candidate is pending human review and browser integration checks.
+- Authorized fast-track: `v0.31.0`–`v0.34.0` — Maintenance Records, encrypted attachments, attachment lifecycle, and responsibility ownership; stop before `v0.35.x`.
 - Planned after October, undated: `v0.41.x`–`v0.45.x` — Recovery drills, broader platform validation, performance, and release-candidate readiness
 - Planned: `v1.0.0` — Stable Kin Platform, when readiness and human feedback support it
 - See the [changelog](CHANGELOG.md) for the completed release history.

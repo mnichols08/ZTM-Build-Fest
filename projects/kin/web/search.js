@@ -15,6 +15,8 @@ export function searchHouseholdRecords({
   handoffs = [],
   talks = [],
   notes = [],
+  referenceRecords = [],
+  maintenanceEvents = [],
   areas = [],
   query = "",
   classification = "",
@@ -105,6 +107,20 @@ export function searchHouseholdRecords({
       detail: note.body,
       context: note.areaId ? areaName(note.areaId) ?? "Archived Area" : "",
     });
+  }
+
+  const activeReferences = referenceRecords.filter((record) => !record.archived);
+  for (const record of activeReferences) {
+    const detail = record.fields.map((field) => `${field.label}: ${field.value}`).join(" · ");
+    if (!matches(record.title, normalizedQuery) && !record.fields.some((field) => matches(field.label, normalizedQuery) || matches(field.value, normalizedQuery))) continue;
+    addResult({ kind: "Reference Record", id: record.recordId, text: record.title, detail, context: "Household reference" });
+  }
+  for (const event of maintenanceEvents) {
+    if (event.archived || !matches(event.summary, normalizedQuery)) continue;
+    const record = activeReferences.find((candidate) => candidate.recordId === event.recordId);
+    if (!record) continue;
+    const date = String(event.performedOn);
+    addResult({ kind: "Maintenance", id: event.maintenanceId, text: event.summary, detail: "", context: `${record.title} · ${date.slice(4, 6)}/${date.slice(6, 8)}/${date.slice(0, 4)}` });
   }
 
   return { results, totalCount };

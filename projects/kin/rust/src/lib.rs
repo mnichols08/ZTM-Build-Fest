@@ -38,3 +38,12 @@ mod pin_tests;
 
 #[cfg(test)]
 mod playbook_tests;
+
+#[cfg(test)]
+mod maintenance_tests;
+
+#[cfg(test)]
+mod attachment_tests;
+
+#[cfg(test)]
+mod responsibility_tests;

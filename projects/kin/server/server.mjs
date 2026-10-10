@@ -10,6 +10,7 @@ import {
   DurableConflictError,
   DurableStore,
   DurableStoreError,
+  MAX_ATTACHMENT_BYTES,
 } from "./durable-store.mjs";
 import { WebAuthn } from "./webauthn.mjs";
 import { isInsideRoot, resolveDurablePath, webRoot } from "./path-safety.mjs";
@@ -273,7 +274,10 @@ async function api(request, response, url, context) {
   const { service, syncService, webauthn, secureCookies } = context;
   for (const householdId of service.finalizeExpiredDeletions(context.now()))
     syncService.forgetHousehold(householdId);
-  const body = ["POST", "PUT", "DELETE"].includes(request.method)
+  const attachmentUpload = request.method === "POST" && /^\/api\/sync\/attachments\/[a-f0-9]{32}$/.test(url.pathname);
+  const body = attachmentUpload
+    ? await readBinary(request)
+    : ["POST", "PUT", "DELETE"].includes(request.method)
     ? await readJson(request)
     : {};
   const session = cookies(request).kin_session;
@@ -692,6 +696,28 @@ async function api(request, response, url, context) {
     );
     return;
   }
+  const attachmentRoute = url.pathname.match(/^\/api\/sync\/attachments(?:\/([a-f0-9]{32}))?$/);
+  if (attachmentRoute && request.method === "GET" && !attachmentRoute[1]) {
+    json(response, 200, { attachments: syncService.listAttachments(session) });
+    return;
+  }
+  if (attachmentRoute && request.method === "POST" && attachmentRoute[1]) {
+    const keyEpoch = request.headers["x-attachment-key-epoch"];
+    const digest = request.headers["x-attachment-sha256"];
+    if (typeof keyEpoch !== "string" || !/^[1-9][0-9]{0,2}$/.test(keyEpoch) || typeof digest !== "string") throw badRequest();
+    json(response, 200, syncService.pushAttachment(session, { attachmentId: attachmentRoute[1], keyEpoch: Number(keyEpoch), ciphertext: body, digest }));
+    return;
+  }
+  if (attachmentRoute && request.method === "GET" && attachmentRoute[1]) {
+    const attachment = syncService.getAttachment(session, attachmentRoute[1]);
+    response.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": attachment.ciphertext.length, "Cache-Control": "no-store", "X-Attachment-Key-Epoch": String(attachment.keyEpoch), "X-Attachment-SHA256": attachment.digest });
+    response.end(attachment.ciphertext);
+    return;
+  }
+  if (attachmentRoute && request.method === "DELETE" && attachmentRoute[1]) {
+    json(response, 200, syncService.removeAttachment(session, attachmentRoute[1]));
+    return;
+  }
   if (request.method === "POST" && url.pathname === "/api/sync/bindings") {
     json(response, 200, syncService.pushBindings(session, body.bindings));
     return;
@@ -1075,6 +1101,19 @@ async function readJson(request) {
   } catch {
     throw badRequest();
   }
+}
+
+async function readBinary(request) {
+  let size = 0;
+  const chunks = [];
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > MAX_ATTACHMENT_BYTES)
+      throw new PairingError("request_too_large", "That attachment is larger than Kin supports.", 413);
+    chunks.push(chunk);
+  }
+  if (!size) throw badRequest();
+  return Buffer.concat(chunks, size);
 }
 
 function json(response, status, value) {

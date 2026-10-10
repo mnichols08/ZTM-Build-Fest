@@ -4,6 +4,7 @@ class KinToday extends HTMLElement {
     this.records = [];
     this.areaRecords = [];
     this.pinRecords = [];
+    this.attachmentRecords = [];
     this.isDisabled = false;
     this.display = "all";
     this.expandedSteps = new Set();
@@ -39,6 +40,9 @@ class KinToday extends HTMLElement {
     this.pinRecords = Array.isArray(value) ? value : [];
     this.render();
   }
+
+  set attachments(value) { this.attachmentRecords = Array.isArray(value) ? value : []; this.render(); }
+  set responsibilityContext(value) { this.ownerContext = value ?? {}; this.render(); }
 
   set disabled(value) {
     this.isDisabled = Boolean(value);
@@ -209,6 +213,8 @@ class KinToday extends HTMLElement {
       const listItem = document.createElement("li");
       const item = document.createElement("kin-item");
       item.item = record;
+      item.attachments = this.attachmentRecords;
+    item.responsibilityContext = this.ownerContext;
       item.areaOptions = this.areaRecords;
       item.pinned = this.pinRecords.some((pin) => pin.targetKind === "item" && pin.targetId === record.itemId);
       item.pinLimitReached = this.pinRecords.length >= 10;

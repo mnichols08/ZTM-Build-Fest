@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** Current through v0.30.0 Home Reference Records. Protocol 20 adds canonical Reference Record save/archive events and a bounded projection after Playbooks while preserving all earlier layouts and event bytes. Protocol 19 adds Playbooks; protocol 18 adds Pins; protocol 17 adds the per-Item Last changed field. Earlier version sections are historical contracts.
+**Status:** Current through v0.34.0 Responsibility Ownership. Protocol 22 appends bounded attachment bindings and protocol 23 appends responsibility projection entries. Event kinds 39–41 add attachment bind/remove and responsibility change events; earlier event bytes remain immutable. Protocol 21 appends maintenance history, protocol 20 Reference Records, and protocol 19 Playbooks.
 
 ## Target and exports
 
@@ -500,3 +500,7 @@ and contain ID, Area ID (zero when absent), title length, field count, archive
 flag, title, then each field ID, label/value lengths and bytes. Limits are 128
 records, 128 title bytes, 64 label bytes, and 1,024 value bytes. Protocols
 1–19 retain their layouts and reject Reference Record history or state.
+
+## Protocol version 21 — Maintenance Records
+
+Schema-1 event kinds 37 and 38 save/correct or archive a maintenance event. A save contains maintenance ID, Reference Record ID, performed `CivilDate`, optional next `CivilDate` (zero when absent), optional Routine ID, summary byte length, and summary UTF-8 bytes. The result header extends to 88 bytes with `maintenance-event-count:u32` at offset 84. Each projected row is 60 bytes plus summary: maintenance ID, record ID, performed date, next date, Routine ID, archived byte, reserved zero byte, summary length, and summary. A maximum of 64 lifetime events per Reference Record and 8,192 projected events apply; summary is 1–240 UTF-8 bytes. Protocols 1–20 retain their layouts and reject maintenance event history or state.

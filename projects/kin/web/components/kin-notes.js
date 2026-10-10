@@ -2,6 +2,7 @@ import {
   MAX_REFERENCE_FIELDS,
   validateReferenceRecord,
 } from "../household-validation.js";
+import "./kin-attachments.js";
 
 class KinNotes extends HTMLElement {
   constructor() {
@@ -9,6 +10,9 @@ class KinNotes extends HTMLElement {
     this.records = [];
     this.referenceRecords = [];
     this.areaRecords = [];
+    this.maintenanceEvents = [];
+    this.attachmentRecords = [];
+    this.routineRecords = [];
     this.disabledState = false;
     this.editor = { noteId: null, title: "", body: "", areaId: "" };
     this.referenceEditor = null;
@@ -19,6 +23,9 @@ class KinNotes extends HTMLElement {
   set notes(value) { this.records = Array.isArray(value) ? value : []; this.render(); }
   set references(value) { this.referenceRecords = Array.isArray(value) ? value : []; this.render(); }
   set areas(value) { this.areaRecords = Array.isArray(value) ? value : []; this.render(); }
+  set maintenance(value) { this.maintenanceEvents = Array.isArray(value) ? value : []; this.render(); }
+  set attachments(value) { this.attachmentRecords = Array.isArray(value) ? value : []; this.render(); }
+  set routines(value) { this.routineRecords = Array.isArray(value) ? value : []; this.render(); }
   set disabled(value) { this.disabledState = Boolean(value); this.render(); }
 
   render() {
@@ -142,6 +149,7 @@ class KinNotes extends HTMLElement {
       text.className = "note-body";
       text.textContent = note.body;
       row.append(name, text);
+      row.append(this.makeAttachmentControl("note", note.noteId, note.title));
       const linkedArea = this.areaRecords.find((candidate) => candidate.areaId === note.areaId);
       if (note.areaId) {
         const context = document.createElement("small");
@@ -338,6 +346,31 @@ class KinNotes extends HTMLElement {
         fields.append(label, value);
       }
       row.append(fields);
+      row.append(this.makeAttachmentControl("reference-record", record.recordId, record.title));
+      const maintenance = document.createElement("section");
+      const maintenanceHeading = document.createElement("h4"); maintenanceHeading.textContent = "Maintenance";
+      maintenance.append(maintenanceHeading);
+      const history = document.createElement("ul");
+      for (const event of this.maintenanceEvents.filter((entry) => entry.recordId === record.recordId && !entry.archived).sort((a, b) => b.performedOn - a.performedOn || a.maintenanceId.localeCompare(b.maintenanceId))) {
+        const entry = document.createElement("li");
+        const date = String(event.performedOn); const next = event.nextOn ? ` · Next around ${String(event.nextOn).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3")}` : "";
+        entry.textContent = `${event.summary} · ${date.slice(4,6)}/${date.slice(6,8)}/${date.slice(0,4)}${next}`;
+        entry.append(this.makeAttachmentControl("maintenance", event.maintenanceId, event.summary));
+        const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "Archive event"; remove.setAttribute("aria-label", `Archive maintenance event: ${event.summary}`);
+        remove.addEventListener("click", () => this.dispatch("archive-maintenance-event", { maintenanceId: event.maintenanceId }));
+        entry.append(" ", remove); history.append(entry);
+      }
+      maintenance.append(history);
+      const form = document.createElement("form"); form.noValidate = true;
+      const summary = document.createElement("input"); summary.required = true; summary.maxLength = 240; summary.setAttribute("aria-label", `Maintenance summary for ${record.title}`); summary.placeholder = "What was done?";
+      const performed = document.createElement("input"); performed.type = "date"; performed.required = true; performed.setAttribute("aria-label", "Date performed");
+      const nextOn = document.createElement("input"); nextOn.type = "date"; nextOn.setAttribute("aria-label", "Next date (optional)");
+      const routine = document.createElement("select"); routine.setAttribute("aria-label", "Link a Routine (optional)");
+      const none = document.createElement("option"); none.value = ""; none.textContent = "No linked Routine"; routine.append(none);
+      for (const candidate of this.routineRecords.filter((item) => item.status === "active")) { const option = document.createElement("option"); option.value = candidate.routineId; option.textContent = candidate.text; routine.append(option); }
+      const addEvent = document.createElement("button"); addEvent.type = "submit"; addEvent.textContent = "Add maintenance";
+      form.addEventListener("submit", (event) => { event.preventDefault(); if (!summary.value.trim() || !performed.value) return; const numericDate = (value) => value ? Number(value.replaceAll("-", "")) : null; this.dispatch("save-maintenance-event", { maintenanceId: crypto.randomUUID().replaceAll("-", ""), recordId: record.recordId, performedOn: numericDate(performed.value), summary: summary.value.trim(), nextOn: numericDate(nextOn.value), routineId: routine.value || null }); });
+      form.append(summary, performed, nextOn, routine, addEvent); maintenance.append(form); row.append(maintenance);
       if (record.areaId) {
         const linked = this.areaRecords.find((candidate) => candidate.areaId === record.areaId);
         const areaText = document.createElement("small");
@@ -377,6 +410,13 @@ class KinNotes extends HTMLElement {
       error.hidden = true;
       control.removeAttribute("aria-invalid");
     }
+  }
+
+  makeAttachmentControl(kind, parentId, label) {
+    const control = document.createElement("kin-attachments");
+    control.parentRecord = { kind, id: parentId, label };
+    control.attachments = this.attachmentRecords;
+    return control;
   }
 
   clearEditor() {

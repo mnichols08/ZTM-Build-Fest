@@ -1,5 +1,5 @@
-import { randomBytes } from "node:crypto";
-import { DurableConflictError } from "./durable-store.mjs";
+import { createHash, randomBytes } from "node:crypto";
+import { DurableConflictError, MAX_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "./durable-store.mjs";
 import { PairingError } from "./pairing-service.mjs";
 import {
   canonicalEventEnvelope,
@@ -30,6 +30,7 @@ export class EncryptedSyncService {
     this.store = store;
     this.households = new Map();
     this.rateBuckets = new Map();
+    this.attachments = new Map();
   }
 
   forgetHousehold(householdId) {
@@ -225,6 +226,68 @@ export class EncryptedSyncService {
       nextCursor: encodeCursor(lastScanned),
       hasMore: lastScanned < state.nextSequence - 1,
     };
+  }
+
+  pushAttachment(sessionToken, { attachmentId, keyEpoch, ciphertext, digest }) {
+    const auth = this.authorize(sessionToken);
+    this.attachmentState(auth, keyEpoch);
+    if (!isSyncId(attachmentId) || !Buffer.isBuffer(ciphertext) || ciphertext.length < 29 || ciphertext.length > MAX_ATTACHMENT_BYTES || !/^[a-f0-9]{64}$/.test(digest) || createHash("sha256").update(ciphertext).digest("hex") !== digest)
+      throw new PairingError("attachment_invalid", "That attachment could not be verified.", 400);
+    const existing = this.store?.getAttachment(auth.household.id, attachmentId) ?? this.attachments.get(`${auth.household.id}:${attachmentId}`);
+    if (existing) {
+      if (existing.keyEpoch !== keyEpoch || existing.digest !== digest || !Buffer.from(existing.ciphertext).equals(ciphertext))
+        throw new PairingError("attachment_conflict", "That attachment ID already has different encrypted content.", 409);
+      return { accepted: false, size: ciphertext.length, digest };
+    }
+    if (!this.store) {
+      const householdRows = [...this.attachments.entries()].filter(([key]) => key.startsWith(`${auth.household.id}:`));
+      const total = householdRows.reduce((sum, [, row]) => sum + row.ciphertext.length, 0);
+      if (householdRows.length >= MAX_HOUSEHOLD_ATTACHMENTS || total + ciphertext.length > MAX_HOUSEHOLD_ATTACHMENT_BYTES)
+        throw new PairingError("attachment_limit", "This household reached its encrypted attachment limit.", 409);
+      this.attachments.set(`${auth.household.id}:${attachmentId}`, { attachmentId, keyEpoch, ciphertext: Buffer.from(ciphertext), size: ciphertext.length, digest });
+    } else {
+      this.store.putAttachment(auth.household.id, attachmentId, keyEpoch, ciphertext, digest, this.now());
+    }
+    return { accepted: true, size: ciphertext.length, digest };
+  }
+
+  getAttachment(sessionToken, attachmentId) {
+    const auth = this.authorize(sessionToken);
+    const row = this.store?.getAttachment(auth.household.id, attachmentId) ?? this.attachments.get(`${auth.household.id}:${attachmentId}`);
+    if (!row) throw new PairingError("attachment_missing", "This attachment is no longer available.", 404);
+    this.attachmentState(auth, row.keyEpoch);
+    const ciphertext = Buffer.from(row.ciphertext);
+    if (ciphertext.length !== row.size || createHash("sha256").update(ciphertext).digest("hex") !== row.digest)
+      throw new PairingError("attachment_corrupt", "This attachment could not be verified.", 410);
+    return { ...row, ciphertext };
+  }
+
+  listAttachments(sessionToken) {
+    const auth = this.authorize(sessionToken);
+    this.attachmentState(auth);
+    const rows = this.store?.listAttachments(auth.household.id) ?? [...this.attachments.entries()].filter(([key]) => key.startsWith(`${auth.household.id}:`)).map(([, row]) => ({ attachmentId: row.attachmentId, keyEpoch: row.keyEpoch, size: row.size, digest: row.digest }));
+    return rows.filter((row) => {
+      try { this.attachmentState(auth, row.keyEpoch); return true; } catch { return false; }
+    });
+  }
+
+  removeAttachment(sessionToken, attachmentId) {
+    const auth = this.authorize(sessionToken);
+    this.attachmentState(auth);
+    if (!isSyncId(attachmentId)) throw new PairingError("attachment_invalid", "That attachment could not be found.", 400);
+    if (this.store) this.store.removeAttachment(auth.household.id, attachmentId);
+    else this.attachments.delete(`${auth.household.id}:${attachmentId}`);
+    return { removed: true };
+  }
+
+  attachmentState(auth, keyEpoch = null) {
+    const state = this.state(auth.household.id);
+    const provisioned = auth.device.syncProvisionedEpochs ?? [];
+    if (!state.enabled || state.rotationPending || !provisioned.includes(state.currentEpoch))
+      throw new PairingError("attachment_sync_unavailable", "Attachments are unavailable until this device finishes household sync setup.", 409);
+    if (keyEpoch !== null && (keyEpoch > state.currentEpoch || keyEpoch < (auth.device.syncHistoryFromEpoch ?? 1) || !provisioned.includes(keyEpoch)))
+      throw new PairingError("attachment_epoch_unavailable", "This attachment is unavailable to this device.", 403);
+    return state;
   }
 
   pushBindings(sessionToken, envelopes) {

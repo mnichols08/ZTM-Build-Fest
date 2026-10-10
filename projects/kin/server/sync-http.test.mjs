@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { webcrypto } from "node:crypto";
+import { createHash, webcrypto } from "node:crypto";
 import { PairingService } from "./pairing-service.mjs";
 import { createKinServer } from "./server.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
@@ -153,6 +153,31 @@ test("HTTP sync operations require an active session and revoked devices cannot 
   } finally {
     await app.close();
   }
+});
+
+test("HTTP attachment transfer requires an active synced session and returns only opaque bytes", async () => {
+  const service = new PairingService();
+  const adult = service.bootstrap({ credential: credential("attachment-http"), deviceLabel: "A" });
+  const app = await start(service);
+  const headers = { Cookie: `kin_session=${adult.sessionToken}` };
+  try {
+    assert.equal((await fetch(`${app.url}/api/sync/enable`, { method: "POST", headers })).status, 200);
+    const ciphertext = Buffer.alloc(64, 0xd3);
+    const digest = createHash("sha256").update(ciphertext).digest("hex");
+    const attachmentId = "d".repeat(32);
+    const uploaded = await fetch(`${app.url}/api/sync/attachments/${attachmentId}`, { method: "POST", headers: { ...headers, "Content-Type": "application/octet-stream", "X-Attachment-Key-Epoch": "1", "X-Attachment-SHA256": digest }, body: ciphertext });
+    assert.equal(uploaded.status, 200);
+    assert.deepEqual(await uploaded.json(), { accepted: true, size: 64, digest });
+    const listed = await fetch(`${app.url}/api/sync/attachments`, { headers });
+    assert.deepEqual(await listed.json(), { attachments: [{ attachmentId, keyEpoch: 1, size: 64, digest }] });
+    const downloaded = await fetch(`${app.url}/api/sync/attachments/${attachmentId}`, { headers });
+    assert.equal(downloaded.headers.get("content-type"), "application/octet-stream");
+    assert.equal(downloaded.headers.get("x-attachment-sha256"), digest);
+    assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), ciphertext);
+    assert.equal((await fetch(`${app.url}/api/sync/attachments/${attachmentId}`, { method: "DELETE", headers })).status, 200);
+    assert.equal((await fetch(`${app.url}/api/sync/attachments/${attachmentId}`, { headers })).status, 404);
+    assert.equal((await fetch(`${app.url}/api/sync/attachments`, {})).status, 401);
+  } finally { await app.close(); }
 });
 
 test("relay without a durable store is process-local and HTTPS is required outside loopback", async () => {

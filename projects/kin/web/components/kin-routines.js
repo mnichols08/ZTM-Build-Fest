@@ -3,6 +3,7 @@ import {
   MAX_PLAYBOOK_ENTRIES,
   validatePlaybook,
 } from "../household-validation.js";
+import "./kin-responsibility.js";
 
 class KinRoutines extends HTMLElement {
   constructor() {
@@ -130,6 +131,7 @@ class KinRoutines extends HTMLElement {
   }
 
   set routines(value) { this.records = value; this.render(); }
+  set responsibilityContext(value) { this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.otherMemberId = value?.otherMemberId ?? null; this.render(); }
   set playbooks(value) { this.playbookRecords = value ?? []; this.renderPlaybooks(); }
   set householdMode(value) {
     this.mode = value;
@@ -196,6 +198,9 @@ class KinRoutines extends HTMLElement {
       const [cadenceLabel, period] = labels[record.cadence];
       status.textContent = `${cadenceLabel} · ${this.mode !== "normal" ? `Paused during ${modeLabels[this.mode] ?? "this mode"}` : record.occurrenceStatus === "unavailable" ? "Not available for the current date" : record.occurrenceStatus === "completed" ? `Done ${period}` : `Open ${period}`}`;
       content.append(text, status);
+      const responsibility = document.createElement("kin-responsibility");
+      responsibility.record = { targetKind: "routine", targetId: record.routineId, text: record.text, ownerId: this.responsibilities?.find((entry) => entry.targetKind === "routine" && entry.targetId === record.routineId)?.memberId ?? null, memberId: this.memberId, otherMemberId: this.otherMemberId };
+      content.append(responsibility);
       const actions = document.createElement("div");
       actions.className = "item-action";
       const remind = document.createElement("button");
