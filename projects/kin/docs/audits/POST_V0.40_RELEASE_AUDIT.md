@@ -8,7 +8,7 @@
 
 Kin's core event replay, local persistence, encrypted-storage lifecycle, recovery UI, and the exercised Edge household flows performed well in the available automated checks. No reproducible product defect that meets the BLOCKER definition was confirmed in this audit. The isolated Edge suite passed its core, keyboard, 320px, 200% zoom, forced-colors, reduced-motion, replay, and sync-storage scenarios. Rust formatting, Clippy, 173 Rust tests, and the release WASM build passed.
 
-This is not enough evidence for a READY verdict. The installed Node runtime is 22.12.0 while the project requires 22.13.0 or later; all 20 server test files fail to load because this runtime lacks `node:sqlite`. The complete server trust and durability gates therefore remain unverified. The full product drills involving real household admission, migration/catch-up, server-enforced Temporary expiry, deletion/recovery, and offline reconnect were not conducted against a live isolated service and two profiles. Cross-browser, mobile, real PWA installation/update, and assistive-technology testing are also outstanding. The automated browser suites are valuable regression evidence, not substitutes for these drills.
+This is not enough evidence for a READY verdict. The complete automated frontend/server suite passed 392 tests on the installed Node 22.13.0 runtime, and automated server trust/durability tests passed. The full product drills involving real household admission, migration/catch-up, Temporary expiry, deletion/recovery, and offline reconnect across separate live profiles were not conducted. Cross-browser, mobile, real PWA installation/update, and assistive-technology testing are also outstanding. The automated browser suites are valuable regression evidence, not substitutes for these drills.
 
 ## Release-Candidate Recommendation
 
@@ -102,11 +102,11 @@ Source/docs review found the intended local-first and encrypted-relay boundary d
 
 ## Export & Restore
 
-The frontend test suite passed the 18-test archive group (included in the 135 passing frontend tests), and the Edge security-storage runner passed corruption, transaction, lock, and restore-related assertions. v0.40 documentation explicitly says restore stages the complete package in memory, validates canonical replay and attachment integrity before promotion, refuses incompatible non-empty targets, and does not restore credentials/device trust. **UNVERIFIED — ENVIRONMENT:** the full requested matrix (unsupported future format, wrong household/key, oversize package, invalid event, corrupt attachment, interrupted promotion, reload, unavailable service, offline restore) was not rerun as a single release drill; real member/attachment-rich export and clean-profile restore was not performed.
+The frontend test suite passed the archive coverage, the full Node suite passed all 392 tests, and the Edge security-storage runner passed corruption, transaction, lock, and restore-related assertions. v0.40 documentation explicitly says restore stages the complete package in memory, validates canonical replay and attachment integrity before promotion, refuses incompatible non-empty targets, and does not restore credentials/device trust. **UNVERIFIED — ENVIRONMENT:** the full requested matrix (unsupported future format, wrong household/key, oversize package, invalid event, corrupt attachment, interrupted promotion, reload, unavailable service, offline restore) was not rerun as a single release drill; real member/attachment-rich export and clean-profile restore was not performed.
 
 ## Device Migration
 
-**UNVERIFIED — ENVIRONMENT.** No real two-profile/device migration with another trusted Adult approving a new device, a stale export, attachments, sync catch-up, and Temporary/removed-member history was performed. The v0.40 contract and tests preserve the architecture boundary that export restores history but grants no device trust or sync authority. Passkey regression did not run because Node 22.12 cannot load `node:sqlite`; virtual passkey/device migration is not counted as PASS.
+**UNVERIFIED — ENVIRONMENT.** No real two-profile/device migration with another trusted Adult approving a new device, a stale export, attachments, sync catch-up, and Temporary/removed-member history was performed. The v0.40 contract and tests preserve the architecture boundary that export restores history but grants no device trust or sync authority. The Edge virtual-authenticator WebAuthn regression passed 32 assertions, including PRF, but does not count as a physical multi-device migration drill.
 
 ## Offline
 
@@ -169,7 +169,7 @@ The v0.41–v0.45 release files are planning contracts, not active work. No feat
 - Edge `security-ui-regression.mjs`: security UI, lock/recovery, peer-tab, offline and household lifecycle assertions passed.
 - Edge `passkey-regression.mjs` under Node 22.13.0: 32 virtual-authenticator assertions passed; PRF supported and exercised.
 - `python projects/kin/scripts/check_version.py`: candidate 0.40.1 consistent across client, server, and release metadata.
-- `git diff --check` before audit-document creation.
+- `git diff --cached --check` after staging the report: clean.
 
 ### FAIL
 
