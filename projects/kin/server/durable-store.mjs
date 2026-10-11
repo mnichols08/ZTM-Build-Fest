@@ -34,7 +34,7 @@ import {
   validStoredDevice,
 } from "./durable-identity.mjs";
 
-const SERVER_SCHEMA_VERSION = 5;
+const SERVER_SCHEMA_VERSION = 6;
 export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024 + 4096;
 export const MAX_HOUSEHOLD_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 export const MAX_HOUSEHOLD_ATTACHMENTS = 64;
@@ -753,6 +753,38 @@ export class DurableStore {
         throw new DurableStoreError("Kin could not complete the member-kind migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 5) {
+      try {
+        this.transaction(() => {
+          this.db.exec(`
+            ALTER TABLE members ADD COLUMN member_status TEXT NOT NULL DEFAULT 'active'
+              CHECK (member_status IN ('active', 'removed', 'expired'));
+            UPDATE members SET member_status = CASE
+              WHEN active = 1 AND kind = 'temporary' AND expires_at <= ${Date.now()} THEN 'expired'
+              WHEN active = 1 THEN 'active'
+              WHEN (SELECT event_type FROM security_audit
+                WHERE household_id = members.household_id
+                  AND json_extract(details_json, '$.memberId') = members.id
+                  AND event_type IN ('membership_removed', 'temporary_access_expired')
+                ORDER BY sequence DESC LIMIT 1) = 'temporary_access_expired' THEN 'expired'
+              WHEN (SELECT event_type FROM security_audit
+                WHERE household_id = members.household_id
+                  AND json_extract(details_json, '$.memberId') = members.id
+                  AND event_type IN ('membership_removed', 'temporary_access_expired')
+                ORDER BY sequence DESC LIMIT 1) = 'membership_removed' THEN 'removed'
+              WHEN kind = 'temporary' AND expires_at <= ${Date.now()} THEN 'expired'
+              ELSE 'removed'
+            END;
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(6, Date.now());
+          sqlitePragma(this.db, "user_version = 6");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the authoritative membership-status migration.", { cause: error });
+      }
+    }
   }
 
   verify() {
@@ -912,11 +944,14 @@ export class DurableStore {
           id: row.id,
           householdId: row.household_id,
           active: Boolean(row.active),
+          memberStatus: row.member_status ?? (row.active ? "active" : "removed"),
           kind: row.kind ?? "adult",
           ...(row.expires_at == null ? {} : { expiresAt: row.expires_at }),
           credentials: new Set(credentialIds),
         };
         if (!["adult", "limited", "temporary"].includes(member.kind) ||
+            !["active", "removed", "expired"].includes(member.memberStatus) ||
+            (member.memberStatus === "expired" && member.kind !== "temporary") ||
             (member.kind === "temporary" && !Number.isSafeInteger(member.expiresAt)) ||
             (member.kind !== "temporary" && member.expiresAt !== undefined))
           throw new DurableStoreError("Kin server membership data is invalid.");
@@ -1018,7 +1053,7 @@ export class DurableStore {
           throw new DurableStoreError("Kin server membership data is invalid.");
         this.db
           .prepare(
-            "INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET active = excluded.active, credential_ids = excluded.credential_ids, kind = excluded.kind, expires_at = excluded.expires_at",
+            "INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at, member_status) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET active = excluded.active, credential_ids = excluded.credential_ids, kind = excluded.kind, expires_at = excluded.expires_at, member_status = excluded.member_status",
           )
           .run(
             member.id,
@@ -1027,6 +1062,7 @@ export class DurableStore {
             JSON.stringify([...member.credentials]),
             member.kind ?? "adult",
             member.expiresAt ?? null,
+            member.memberStatus ?? (member.active ? "active" : "removed"),
           );
         for (const credentialId of member.credentials) {
           const credential = service.credentials.get(credentialId);
@@ -1261,17 +1297,18 @@ export class DurableStore {
           )
           .run(Math.max(current.version, snapshot.household.version), snapshot.householdId);
         const insertMember = this.db.prepare(
-          `INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at)
-           VALUES (?, ?, ?, ?, ?, ?)
+          `INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at, member_status)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              household_id = excluded.household_id,
              active = excluded.active,
              credential_ids = excluded.credential_ids,
              kind = excluded.kind,
-             expires_at = excluded.expires_at`,
+             expires_at = excluded.expires_at,
+             member_status = excluded.member_status`,
         );
         for (const row of snapshot.members)
-          insertMember.run(row.id, row.household_id, row.active, row.credential_ids, row.kind ?? "adult", row.expires_at ?? null);
+          insertMember.run(row.id, row.household_id, row.active, row.credential_ids, row.kind ?? "adult", row.expires_at ?? null, row.member_status ?? (row.active ? "active" : "removed"));
         const insertCredential = this.db.prepare(
           "INSERT INTO credentials(id, member_id, credential_json) VALUES (?, ?, ?)",
         );

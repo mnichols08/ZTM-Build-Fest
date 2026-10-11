@@ -74,6 +74,15 @@ The browser encrypts the exact canonical event bytes and signs envelopes with a 
 
 The service still sees household/member/device/session IDs, event IDs, per-device sequences, key epochs, cursors, ciphertext sizes, event counts/timing, provisioning participants, revocation timing, IP addresses, and connection patterns. It can infer which devices share a household and when they synchronize. Encryption does not make traffic anonymous.
 
+Package-v2 exports keep canonical household events, an optional bounded
+membership snapshot and protected attachments inside the encrypted payload.
+Their public authenticated manifest reveals format/application versions,
+export time, event/attachment counts and attachment ciphertext byte count so
+compatibility and bounds can be checked. It does not expose household text or
+IDs, membership records, credentials, device trust, sessions, or server
+authorization. The encrypted membership snapshot is descriptive only. An
+archive and its recovery key do not authorize pairing or sync.
+
 The v0.11 implementation candidate stored identity, credential-verification
 metadata, trusted-device authorization, opaque relay ciphertext, cursors,
 provisioning coordination and bounded security audit entries in SQLite.

@@ -325,7 +325,7 @@ async function storagePerformance({ maximumPayload = false } = {}) {
       const archive = await exportHouseholdArchive({ store, engine, vault: unlocked });
       measurement.archiveBytes = archive.byteLength;
       measurement.archiveExportMs = performance.now() - exportStart;
-      if (archive.byteLength > 64 * 1024 * 1024) throw Error("Archive exceeded its supported 64 MiB framing bound.");
+      if (archive.byteLength > 160 * 1024 * 1024) throw Error("Archive exceeded its supported 160 MiB framing bound.");
       store.close(); unlocked.lock();
       await new Promise((resolve, reject) => { const request = indexedDB.deleteDatabase("kin"); request.onsuccess = resolve; request.onerror = () => reject(request.error); });
       const target = await LocalVault.create();

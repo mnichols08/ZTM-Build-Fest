@@ -1,6 +1,6 @@
 # Portable Household Data
 
-**Status:** v0.10.3 implements encrypted `.kin` backup and restore for local household history. v0.15.0 extends the validated household event corpus additively; KARC v1 framing and archive metadata remain unchanged. Rust owns framing, 64 MiB bounds, version validation and complete import planning. Browser crypto/files own authenticated encryption, file selection/download and explicit restore confirmation. Corrupt/unsupported archives never partially import. v0.11 separately adds SQLite service-database backup/restore; these two backup types protect different state. Earlier conceptual sections below are design history.
+**Status:** v0.40.1 preserves explicit Temporary-member removal separately from natural expiry in the v0.39/v0.40 package-v2 flow. v0.40.0 adds a package-format-v2 manifest in the existing KARC v1 encrypted container. Package metadata is authenticated with the encrypted payload. The payload keeps exact canonical event history, a validated membership snapshot when available, protected local context and attachment records, including ciphertext and digest metadata. Historical package-v1 archives remain readable. The complete package remains bounded to 160 MiB; attachments remain bounded to 64 records and 50 MiB ciphertext. Membership snapshots are descriptive data only; credentials, sessions, device trust and authorization are never restored from an archive. Earlier conceptual sections below are design history.
 
 Current attachment and export limits are in [ATTACHMENT-ARCHIVE-LIMITS](ATTACHMENT-ARCHIVE-LIMITS.md). The pre-v0.39 corrective line keeps attachment ciphertext at a 50 MiB household bound and permits a bounded 160 MiB complete `.kin` archive, including protected snapshot serialization and KARC framing. Rust and browser import/export validation share this archive ceiling; the earlier 64 MiB figure below is historical.
 
@@ -16,38 +16,35 @@ does not alter Kin storage.
 
 ## Implemented archive boundary
 
-**Stable architecture decision (v0.10.2/v0.10.3): Option A — intentionally
-local-only restore.** Archives are recovery copies of household history. They
-grant no membership or trusted-device authority. Rejoining a synchronized
-household requires a separately authorized future workflow; no partial sync
-reattachment is supported. v0.13 must decide and specify whether restore remains
-local-only or gains authenticated reattachment. Until that decision is
-implemented and reviewed, archive restore continues to grant no sync authority;
-v0.14 must communicate the boundary plainly.
+**Stable architecture decision (v0.10.2/v0.10.3): archives carry household
+history, not authority.** They grant no membership or trusted-device authority.
+Device approval and encrypted sync remain separate ceremonies; possession of an
+archive and its recovery key is not proof of current membership.
 Root rotation does not change old archives: each retains its original recovery key.
 
-The public metadata carries archive version, recovery-wrapped root metadata and
-encryption parameters. The body is raw AES-GCM ciphertext, avoiding redundant
+The public metadata carries package version, a bounded event/attachment summary,
+recovery-wrapped root metadata and encryption parameters. The body is raw
+AES-GCM ciphertext, avoiding redundant
 base64 expansion of the whole archive. HKDF purpose `kin/archive/v1` separates its
 key from local-record keys; manifest metadata is authenticated as AAD. The encrypted
 body contains exact canonical rows and protected replay/catch-up context. The
 normal export includes recovery wrappers; it never emits plaintext JSON or device
 private keys. Keep the recovery secret separately from the archive.
 
-Restore requires an unlocked empty target and the archive's recovery key. Rust
-validates all bytes/identities/versions, rejects duplicate events and plans the
-whole replay before browser encryption/atomic import. The transaction checks that
+Restore requires an unlocked empty target and the archive's recovery key. Kin
+validates the manifest, authenticates and decrypts the complete payload, checks
+attachment integrity and plans the whole canonical replay before browser
+encryption/atomic import. The transaction checks that
 the target history and transport stores are still empty. Imported events remain
 byte-for-byte identical; fresh anonymous local actor/device IDs prevent new local
 commands from impersonating the source trusted device.
 
-Restored history is writable **local-only**. Sync reattachment is deliberately
-blocked: canonical history from several authors cannot be uploaded as one new
-signer's history without an authenticated transport restore protocol. No server
-trust, cookies, provisioning entitlement or epoch access is restored. This is an
-explicit compatibility boundary, not a claim of same-household server recovery.
-The v0.11 service database can preserve server identity and relay state when
-backed up separately; a local `.kin` archive cannot reconstruct that authority.
+Restored history remains local until the device completes normal household
+approval. After approval, the ordinary encrypted sync path binds imported
+historical identities to the approved device, deduplicates canonical event IDs,
+and catches up with current authorized state. Restore alone supplies no server
+trust, cookies, provisioning entitlement or epoch access. A stale archive
+cannot reverse server-side removal, expiry, revocation or key state.
 
 ## Ownership principle
 

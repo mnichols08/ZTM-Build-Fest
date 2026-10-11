@@ -109,3 +109,5 @@ Follow [V0.7.0](V0.7.0.md) for capability, correctness, resilience/accessibility
 ## v0.8.0 Household Pairing
 
 The v0.7.x line completed at `kin-v0.7.4`, validated commit `a8ded079be6fdbedba8738a64a5f0fb753e7fdd6`, pushed to the fork. The v0.8 record is [V0.8.0](V0.8.0.md); `kin-v0.8.8` corrected active-member slots. The v0.9 record is [V0.9.0](V0.9.0.md). The merged v0.9.3 base and completed v0.10 implementation line are recorded in [V0.10.0](V0.10.0.md). v1.0 remains gated by local security, durable service, lifecycle/deletion, recovery/continuity and UX/UI readiness. v0.11 is a prior implementation candidate; tagged `kin-v0.12.3` is a review candidate, while v0.13 onward remains planned, not implemented.
+
+The current patch candidate is [v0.40.1 — Portable Membership Status Fidelity](releases/V0.40.1.md), correcting removed-versus-expired Temporary membership preservation across export and restore.

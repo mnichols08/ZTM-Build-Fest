@@ -1,6 +1,6 @@
 [package]
 name = "kin"
-version = "0.38.4"
+version = "0.40.1"
 edition = "2021"
 
 [lib]

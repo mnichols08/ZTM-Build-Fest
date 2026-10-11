@@ -118,6 +118,14 @@ export async function syncStorageRegressions(client) {
     const localBindings=await store.getPendingBindings();
     if(localBindings.length!==1 || localBindings[0].deviceId!==identity.deviceId)
       throw Error('A remote signed identity binding was incorrectly queued for upload');
+    const alreadyRelayed=await store.commitRemoteBatch({
+      received:[{encodedEvent:before[0].encoded_event}],
+      nextCursor:'AAAAAAAAAAE',
+      engine:app.engine,
+    });
+    const remoteDuplicates=await store.getRemoteDuplicateOutbox();
+    if(alreadyRelayed.added!==0 || remoteDuplicates.length!==1 || remoteDuplicates[0].event_id!==idToHex(before[0].event_id))
+      throw Error('A stale restored event already on the relay was not marked for deduplicated catch-up');
     const keyRequest=await store.getProvisioningRequest('77'.repeat(16),2);
     const retriedKeyRequest=await store.getProvisioningRequest('77'.repeat(16),2);
     if(keyRequest.requestId!==retriedKeyRequest.requestId)
@@ -186,8 +194,8 @@ export async function syncStorageRegressions(client) {
       throw Error('Remote event was not persisted and replayed atomically');
     if(committed.state.items[1].text!=='Remote earlier tie-break' || committed.state.items[2].text!=='Remote later tie-break')
       throw Error('Equal-time remote state did not use the stable event-ID tie-break');
-    if(committed.state.summary.throughEventId!=='44'.repeat(16))
-      throw Error('Replay ordering replaced the local catch-up arrival boundary');
+    if(committed.state.summary.throughEventId!=='66'.repeat(16))
+      throw Error('Catch-up summary did not follow the stable equal-time replay order');
     snapshot=await store.getCatchUpState();
     if(snapshot.cursor.eventId!==uiCursorBefore)
       throw Error('Transport cursor corrupted the catch-up acknowledgement cursor');

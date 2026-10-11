@@ -1,15 +1,15 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.38.4; the last published product release remains v0.10.3. Household membership is bounded to 12 total participants (four Adults and eight Limited Members); Temporary Members require expiry. Member kind and expiry are persisted in server schema v5. Candidate milestones are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.40.1; the last published product release remains v0.10.3. Household membership is bounded to 12 total participants (four Adults and eight Limited Members); Temporary Members require expiry. Member kind, expiry, and authoritative active/removed/expired state are persisted in server schema v6 and remain server authority, not archive authority. Candidate milestones are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.38.4 | Governs |
+| Version axis | Last published v0.10.3 / current candidate v0.40.1 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.38.4` | PWA updates, archive limits, and existing household membership behavior |
-| Server database schema | `5` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination, lifecycle, encrypted attachment records, member kind and Temporary expiry |
+| Application | Last published `0.10.3`; candidate `0.40.1` | PWA updates, authenticated package-v2 metadata, staged restore, archive limits, and portable membership status fidelity |
+| Server database schema | `6` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination, lifecycle, encrypted attachment records, member kind, Temporary expiry, and authoritative membership status |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v23; writes v23 for local and synchronized requests | Request context and projection semantics |
 | Manual WASM ABI | Existing exports plus additive command/metadata/archive/import APIs | Host ownership and calls; new command packet v1 |

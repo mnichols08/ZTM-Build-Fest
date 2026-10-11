@@ -54,6 +54,7 @@ export function validateAttachmentAggregate(records, candidate) {
 export function reconcileRemoteEvents({ rows, received, engine, context, asOf, civilDate }) {
   const byId = new Map(rows.map((row) => [idToHex(row.event_id), row]));
   const additions = [];
+  const duplicateEventIds = [];
   const candidateRows = [...rows];
   let quarantined = 0;
   const projection = projectionContext();
@@ -82,6 +83,7 @@ export function reconcileRemoteEvents({ rows, received, engine, context, asOf, c
     if (existing) {
       if (!bytesEqual(existing.encoded_event, canonical))
         throw new EventStoreError("Kin found conflicting synchronized bytes for an existing event ID.");
+      duplicateEventIds.push(eventId);
       continue;
     }
     try {
@@ -102,7 +104,7 @@ export function reconcileRemoteEvents({ rows, received, engine, context, asOf, c
     candidateRows.push(candidate);
     byId.set(eventId, candidate);
   }
-  return { additions, candidateRows, quarantined };
+  return { additions, candidateRows, quarantined, duplicateEventIds };
 }
 
 function compareByteArrays(left, right) {
@@ -134,6 +136,25 @@ export class EventStore {
     const database = await openEventDatabase();
     try { return await readSecurity(database); }
     finally { database.close(); }
+  }
+
+  static async validateArchiveSnapshot({ snapshot, engine, vault }) {
+    vault.assertUnlocked();
+    const plan = validateArchiveSnapshot(snapshot, engine);
+    await validateAttachmentArchivePayloads(
+      snapshot.attachments ?? [],
+      plan.state.attachments ?? [],
+      (id, sealed) => vault.open(sealed, { store: "attachment-file", id }),
+    );
+    vault.assertUnlocked();
+    return {
+      eventCount: snapshot.events.length,
+      attachmentCount: snapshot.attachments?.length ?? 0,
+      attachmentBytes: (snapshot.attachments ?? []).reduce(
+        (total, row) => total + (row.ciphertext?.byteLength ?? 0),
+        0,
+      ),
+    };
   }
 
   static async prepareSecurity(manifest) {
@@ -434,12 +455,56 @@ export class EventStore {
     return transactionResult(transaction, (finish) => { request.onsuccess = () => { if (request.result) store.delete(attachmentId); finish(Boolean(request.result)); }; request.onerror = () => abortWith(transaction, storageError(request.error)); });
   }
 
-  async snapshotForArchive() {
+  async snapshotForArchive({ portableMembership } = {}) {
     const snapshot = await snapshotStores(this.database, [EVENT_STORE, CONTEXT_STORE, "attachment_records"]);
     const archive = { formatVersion: 2, events: snapshot.events, local_context: snapshot.local_context, attachments: snapshot.attachment_records };
+    if (portableMembership !== undefined) {
+      validatePortableMembership(portableMembership);
+      archive.local_context[0].portable_membership = structuredClone(portableMembership);
+    }
     const plan = validateArchiveSnapshot(archive, this.engine);
     await validateAttachmentArchivePayloads(archive.attachments, plan.state.attachments ?? [], (id, sealed) => this.openAttachmentData(id, sealed));
     return archive;
+  }
+
+  async containsSameHouseholdArchive(snapshot, { engine, vault }) {
+    vault.assertUnlocked();
+    this.engine = engine;
+    const incomingContext = snapshot?.local_context?.[0];
+    const current = await this.snapshotForArchive();
+    const currentContext = current.local_context?.[0];
+    const incomingHousehold = incomingContext?.sync_household_id ?? incomingContext?.household_id;
+    const currentHousehold = currentContext?.sync_household_id ?? currentContext?.household_id;
+    if (!incomingHousehold || !currentHousehold || !bytesEqual(incomingHousehold, currentHousehold))
+      return false;
+    const currentEvents = new Map(current.events.map((row) => [idToHex(row.event_id), row.encoded_event]));
+    for (const row of snapshot.events ?? []) {
+      const existing = currentEvents.get(idToHex(row.event_id));
+      if (!existing || !bytesEqual(existing, row.encoded_event)) return false;
+    }
+    const currentAttachments = new Map((current.attachments ?? []).map((row) => [row.attachment_id, row]));
+    for (const row of snapshot.attachments ?? []) {
+      const existing = currentAttachments.get(row.attachment_id);
+      if (!existing) return false;
+      if (row.ciphertext || existing.ciphertext) {
+        if (!row.ciphertext || !existing.ciphertext || row.digest !== existing.digest ||
+            row.keyEpoch !== existing.keyEpoch || !bytesEqual(row.ciphertext, existing.ciphertext)) return false;
+        continue;
+      }
+      if (!row.localSealed || !existing.localSealed) return false;
+      const [incomingPayload, currentPayload] = await Promise.all([
+        vault.open(row.localSealed, { store: "attachment-file", id: row.attachment_id }),
+        vault.open(existing.localSealed, { store: "attachment-file", id: row.attachment_id }),
+      ]);
+      try {
+        if (!valuesEqual(incomingPayload, currentPayload)) return false;
+      } finally {
+        incomingPayload?.bytes?.fill?.(0);
+        currentPayload?.bytes?.fill?.(0);
+      }
+    }
+    vault.assertUnlocked();
+    return true;
   }
 
   static async restoreEmpty({ vault, engine, snapshot, manifest, ownedSnapshot = false }) {
@@ -820,8 +885,9 @@ export class EventStore {
           validateCursorBoundary(context, loadedEvents);
           for (const field of ["householdId", "memberId", "deviceId"])
             idFromHex(identity?.[field]);
-          if (context.archive_imported)
-            throw new EventStoreError("Restored archives are local-only. Kin preserves their history without restoring device trust or uploading it as another device.");
+          if (context.archive_imported && context.sync_household_id &&
+              idToHex(context.sync_household_id) !== identity.householdId)
+            throw new EventStoreError("This export belongs to another household. Its history was kept on this device and was not synced.");
           if (state) {
             if (
               state.householdId !== identity.householdId ||
@@ -1100,11 +1166,16 @@ export class EventStore {
             return;
           }
           for (const row of rows) {
+            if (row.remote_present) {
+              delete row.remote_present;
+              delete row.remote_device_sequence;
+            }
             if (row.accepted && row.envelope) {
               row.accepted = false;
+            }
+            if (!row.accepted || row.envelope) {
               const write = outbox.put(row);
-              write.onerror = () =>
-                abortWith(transaction, storageError(write.error));
+              write.onerror = () => abortWith(transaction, storageError(write.error));
             }
           }
           state.pendingCount = rows.filter((row) => !row.accepted).length;
@@ -1509,6 +1580,65 @@ export class EventStore {
     });
   }
 
+  getRemoteDuplicateOutbox(limit = MAX_EVENT_COUNT) {
+    const transaction = this.database.transaction(SYNC_OUTBOX_STORE, "readonly");
+    const request = transaction.objectStore(SYNC_OUTBOX_STORE).getAll();
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => finish(request.result
+        .filter((row) => row.remote_present === true && !row.accepted)
+        .sort((left, right) => left.deviceSequence - right.deviceSequence)
+        .slice(0, limit));
+      request.onerror = () => abortWith(transaction, storageError(request.error));
+    });
+  }
+
+  compactArchiveOutboxSequences() {
+    const transaction = this.database.transaction(
+      [CONTEXT_STORE, SYNC_STATE_STORE, SYNC_OUTBOX_STORE], "readwrite",
+    );
+    const contexts = transaction.objectStore(CONTEXT_STORE);
+    const states = transaction.objectStore(SYNC_STATE_STORE);
+    const outbox = transaction.objectStore(SYNC_OUTBOX_STORE);
+    const contextRequest = contexts.get(CONTEXT_KEY);
+    const stateRequest = states.get("active");
+    const rowsRequest = outbox.getAll();
+    return transactionResult(transaction, (finish) => {
+      let context, state, rows, ready = 0;
+      const complete = () => {
+        ready += 1;
+        if (ready !== 3) return;
+        try {
+          validateContext(context);
+          if (!context.archive_imported || !state || state.initialized) {
+            finish(false);
+            return;
+          }
+          let nextSequence = rows.reduce((maximum, row) =>
+            row.remote_present && Number.isSafeInteger(row.remote_device_sequence) &&
+              row.deviceId === state.deviceId
+              ? Math.max(maximum, row.remote_device_sequence) : maximum, 0);
+          const pending = rows.filter((row) => !row.accepted && !row.remote_present)
+            .sort((left, right) => left.deviceSequence - right.deviceSequence);
+          for (const row of pending) {
+            row.deviceSequence = ++nextSequence;
+            row.envelope = null;
+            outbox.put(row);
+          }
+          state.nextDeviceSequence = nextSequence + 1;
+          state.pendingCount = pending.length;
+          states.put(state);
+          finish({ pendingCount: pending.length, nextDeviceSequence: state.nextDeviceSequence });
+        } catch (error) { abortWith(transaction, error); }
+      };
+      contextRequest.onsuccess = () => { context = contextRequest.result; complete(); };
+      stateRequest.onsuccess = () => { state = stateRequest.result; complete(); };
+      rowsRequest.onsuccess = () => { rows = rowsRequest.result; complete(); };
+      contextRequest.onerror = () => abortWith(transaction, storageError(contextRequest.error));
+      stateRequest.onerror = () => abortWith(transaction, storageError(stateRequest.error));
+      rowsRequest.onerror = () => abortWith(transaction, storageError(rowsRequest.error));
+    });
+  }
+
   storeOutboxEnvelope(eventId, envelope, keyEpoch) {
     const transaction = this.database.transaction(
       SYNC_OUTBOX_STORE,
@@ -1636,23 +1766,26 @@ export class EventStore {
         "Kin received a sync batch outside its supported bounds.",
       );
     const transaction = this.database.transaction(
-      [EVENT_STORE, CONTEXT_STORE, SYNC_STATE_STORE],
+      [EVENT_STORE, CONTEXT_STORE, SYNC_STATE_STORE, SYNC_OUTBOX_STORE],
       "readwrite",
     );
     const eventsStore = transaction.objectStore(EVENT_STORE);
     const contextStore = transaction.objectStore(CONTEXT_STORE);
     const syncStates = transaction.objectStore(SYNC_STATE_STORE);
+    const outbox = transaction.objectStore(SYNC_OUTBOX_STORE);
     const eventsRequest = eventsStore.getAll();
     const contextRequest = contextStore.get(CONTEXT_KEY);
     const stateRequest = syncStates.get("active");
+    const outboxRequest = outbox.getAll();
     return transactionResult(transaction, (finish) => {
       let rows;
       let context;
       let syncState;
+      let outboxRows;
       let ready = 0;
       const complete = () => {
         ready += 1;
-        if (ready !== 3) return;
+        if (ready !== 4) return;
         try {
           rows = validateEventRows(rows);
           validateContext(context);
@@ -1665,9 +1798,29 @@ export class EventStore {
           validateCursorBoundary(context, rows);
           // Validate each event independently. One poison event advances the
           // relay cursor without entering durable canonical history.
-          const { additions, candidateRows, quarantined } = reconcileRemoteEvents({
+          const { additions, candidateRows, quarantined, duplicateEventIds } = reconcileRemoteEvents({
             rows, received, engine, context, asOf, civilDate,
           });
+          const remoteIds = new Set(duplicateEventIds);
+          const remoteInfo = new Map();
+          for (const item of received) {
+            if (!item.sourceDeviceId || !Number.isSafeInteger(item.sourceDeviceSequence)) continue;
+            const metadata = engine.eventMetadata(item.encodedEvent);
+            remoteInfo.set(idToHex(metadata.eventId), item);
+          }
+          for (const row of outboxRows) {
+            if (remoteIds.has(row.event_id)) {
+              let changed = row.remote_present !== true;
+              row.remote_present = true;
+              const remote = remoteInfo.get(row.event_id);
+              if (remote?.sourceDeviceId === syncState.deviceId &&
+                  remote.sourceDeviceSequence !== row.remote_device_sequence) {
+                row.remote_device_sequence = remote.sourceDeviceSequence;
+                changed = true;
+              }
+              if (changed) outbox.put(row);
+            }
+          }
           validateEventRows(candidateRows);
           const { asOf: projectionAsOf, civilDate: projectionDate } =
             projectionContext();
@@ -1720,6 +1873,7 @@ export class EventStore {
             state,
             added: additions.length,
             quarantined,
+            duplicateEventIds: [...remoteIds],
             snapshotBoundary: tail
               ? {
                   eventId: idToHex(tail.event_id),
@@ -1745,12 +1899,14 @@ export class EventStore {
         syncState = stateRequest.result;
         complete();
       };
+      outboxRequest.onsuccess = () => { outboxRows = outboxRequest.result; complete(); };
       eventsRequest.onerror = () =>
         abortWith(transaction, storageError(eventsRequest.error));
       contextRequest.onerror = () =>
         abortWith(transaction, storageError(contextRequest.error));
       stateRequest.onerror = () =>
         abortWith(transaction, storageError(stateRequest.error));
+      outboxRequest.onerror = () => abortWith(transaction, storageError(outboxRequest.error));
     });
   }
 
@@ -2357,8 +2513,9 @@ function validateArchiveSnapshot(snapshot, engine) {
   if (rows.some((row) => !onlyFields(row, eventFields)) || rows.reduce((size, row) => size + asBytes(row.encoded_event).byteLength, 0) > 64 * 1024 * 1024)
     throw new EventStoreError("Kin found unsupported archive event fields or size.");
   const context = snapshot.local_context[0];
-  if (!onlyFields(context, ["key", "household_id", "actor_id", "device_id", "next_logical_time", "last_looked_event_id", "last_looked_local_sequence", "last_looked_at", "sync_household_id", "sync_member_id", "sync_device_id", "sync_identity_bindings", "archive_imported"]))
+  if (!onlyFields(context, ["key", "household_id", "actor_id", "device_id", "next_logical_time", "last_looked_event_id", "last_looked_local_sequence", "last_looked_at", "sync_household_id", "sync_member_id", "sync_device_id", "sync_identity_bindings", "archive_imported", "portable_membership"]))
     throw new EventStoreError("Kin found unsupported archive context fields.");
+  if (context.portable_membership !== undefined) validatePortableMembership(context.portable_membership);
   if (context.archive_imported !== undefined && context.archive_imported !== true)
     throw new EventStoreError("Kin found an invalid archive restore marker.");
   validateContext(context);
@@ -2376,6 +2533,27 @@ function validateArchiveSnapshot(snapshot, engine) {
   const included = new Set(attachments.map((attachment) => attachment.attachment_id));
   if ((plan.state.attachments ?? []).some((attachment) => !attachment.removed && !included.has(attachment.attachmentId))) throw new EventStoreError("Kin cannot export this household yet because an attachment needs to be downloaded to this device.");
   return plan;
+}
+
+function validatePortableMembership(members) {
+  if (!Array.isArray(members) || members.length > 12)
+    throw new EventStoreError("Kin found invalid household membership in this export.");
+  const ids = new Set();
+  for (const member of members) {
+    const keys = Object.keys(member ?? {}).sort().join(",");
+    const expected = member?.expiresAt === undefined
+      ? "memberId,memberKind,status"
+      : "expiresAt,memberId,memberKind,status";
+    if (keys !== expected || !/^[a-f0-9]{32}$/.test(member.memberId ?? "") ||
+        ids.has(member.memberId) || !["adult", "limited", "temporary"].includes(member.memberKind) ||
+        !["active", "removed", "expired"].includes(member.status) ||
+        (member.memberKind === "temporary"
+          ? !Number.isSafeInteger(member.expiresAt) || Math.abs(member.expiresAt) > 8_640_000_000_000_000 ||
+            (member.status === "expired" && member.expiresAt > Date.now())
+          : member.expiresAt !== undefined || member.status === "expired"))
+      throw new EventStoreError("Kin found invalid household membership in this export.");
+    ids.add(member.memberId);
+  }
 }
 
 async function validateAttachmentArchivePayloads(rows, bindings, openSealed) {

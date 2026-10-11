@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.40.1 — Portable Membership Status Fidelity
+
+- Preserve explicitly removed Temporary members separately from naturally expired Temporary members in the authoritative server membership directory, package export, and restore normalization.
+- Only normalize active Temporary membership to expired when its absolute expiry has passed; removed remains removed after time passes.
+- Add a durable server membership-status field without changing access-control decisions.
+
+## v0.39.0 — Portable Household Export v2
+
+- Introduce an authenticated package-v2 manifest with Kin/package versions, export time, canonical event count, attachment count and ciphertext-byte count while retaining KARC v1 framing.
+- Preserve canonical event history, bounded Adult/Limited/Temporary membership status and absolute expiry metadata, and protected attachment records under the existing complete 160 MiB archive and 50 MiB ciphertext limits.
+- Continue to read documented archive-v1 packages; reject unknown versions, invalid manifests, damaged attachments, invalid replay, duplicate events and oversized packages before import.
+- Keep credentials, sessions and device authority out of the export. Restored data gains sync only after normal household approval.
+
+## v0.40.0 — Restore & Device Migration UX
+
+- Validate the complete package and show its event/attachment summary before the user confirms restore.
+- Stage validated data in memory; reload or cancellation discards incomplete staging, and IndexedDB promotion remains one transaction.
+- Permit same-household restore as an idempotent no-op when all package events and attachments already exist with matching content; refuse other non-empty targets without changing their data.
+- Keep device trust and server authorization separate from household data; after ordinary approval, encrypted sync catches up and deduplicates canonical history.
+- Temporary expiry and removed-member state remain data only and cannot reinstate access.
+- Same-household restore does not import missing archive rows into an existing installation. If any package event or attachment is absent from the populated target, restore refuses; use a fresh local installation and ordinary approved-device sync for migration catch-up.
+
 ## v0.38.4 — PWA & Archive Preflight
 
 - Derive service-worker caches from the current release and stage complete shells before activation.
