@@ -708,7 +708,10 @@ async function api(request, response, url, context) {
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/sync/devices") {
-    json(response, 200, { devices: syncService.deviceDirectory(session) });
+    json(response, 200, {
+      devices: syncService.deviceDirectory(session),
+      members: syncService.membershipDirectory(session),
+    });
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/sync/events") {

@@ -3,7 +3,8 @@ import { authenticatePrf } from "../security/passkey-unlock.js";
 import { EventStore } from "../storage/event-store.js";
 import { migrateSyncKeys, finalizeSyncKeyMigration, prepareRootRotationKeys, commitRootRotationKeys } from "../sync/key-store.js";
 import { loadKinEngine } from "../wasm/kin-engine.js";
-import { exportHouseholdArchive, importHouseholdArchive } from "../security/archive.js";
+import { exportHouseholdArchive, validateHouseholdArchive, restoreValidatedHouseholdArchive, discardValidatedHouseholdArchive } from "../security/archive.js";
+import { portableMembershipFromDirectory } from "../sync/sync-coordinator.js";
 
 export function clearLegacyDrafts() {
   for (const key of ["kin.compose.draft", "kin.compose.classification", "kin.handoff.draft", "kin.talk.draft", "kin.routine.draft"]) {
@@ -21,6 +22,7 @@ class KinSecurity extends HTMLElement {
     this.operationAbort = new AbortController();
     this.onUnlocked = null;
     this.onLockRequested = null;
+    this.restoreStage = null;
   }
 
   async initialize() {
@@ -50,6 +52,7 @@ class KinSecurity extends HTMLElement {
     this.alert = document.createElement("p");
     this.alert.setAttribute("role", "alert");
     this.alert.className = "error-message";
+    this.alert.id = "security-alert";
     this.append(this.message, this.alert);
     if (this.phase === "protecting") {
       this.message.textContent = "Protecting household… Keep this tab open.";
@@ -75,14 +78,14 @@ class KinSecurity extends HTMLElement {
           this.onLockRequested?.();
         }));
       }
-      this.button("Download encrypted backup", () => this.run(() => this.downloadArchive()));
-      this.button("Restore encrypted backup", () => this.showRestore());
+      this.button("Export household", () => this.run(() => this.downloadArchive()));
+      this.button("Restore household", () => this.showRestore());
       if (navigator.storage?.persist) this.button("Request persistent storage", () => this.run(async (operation) => {
         const granted = await navigator.storage.persist();
         this.assertCurrentOperation(operation);
         this.message.textContent = granted ? "This browser granted persistent storage. Keep encrypted backups too." : "Persistent storage was not granted. Keep encrypted backups to protect against browser data loss.";
       }));
-      this.text("A backup preserves household history. Keep its recovery key separately. Restore uses an empty household and does not restore device trust.");
+      this.text("Use this Kin export to move or restore your household. Keep its recovery key separately. Exports are manual, not automatic backups, and do not restore device trust.");
       return;
     }
     if (!this.manifest) {
@@ -354,7 +357,15 @@ class KinSecurity extends HTMLElement {
   async downloadArchive() {
     const operation = this.operation;
     const app = this.closest("kin-app");
-    const bytes = await exportHouseholdArchive({ store: app.store, engine: app.engine, vault: getActiveVault() });
+    let portableMembership;
+    if (app.syncCoordinator) portableMembership = await app.syncCoordinator.portableMembershipSnapshot();
+    else if (app.household?.identity) {
+      const response = await fetch("/api/sync/devices", { cache: "no-store" });
+      if (!response.ok) throw new Error("Connect to your household before exporting its membership history.");
+      portableMembership = portableMembershipFromDirectory((await response.json()).members);
+    }
+    this.assertCurrentOperation(operation);
+    const bytes = await exportHouseholdArchive({ store: app.store, engine: app.engine, vault: getActiveVault(), portableMembership });
     this.assertCurrentOperation(operation);
     const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
     const link = document.createElement("a");
@@ -362,7 +373,7 @@ class KinSecurity extends HTMLElement {
     link.download = "kin-household.kin";
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    this.message.textContent = "Encrypted backup prepared. Keep it and its recovery key safe.";
+    this.message.textContent = "Kin export prepared. Keep it and its recovery key safe.";
   }
 
   showRestore() {
@@ -371,15 +382,14 @@ class KinSecurity extends HTMLElement {
     const form = document.createElement("form");
     const file = document.createElement("input");
     file.id = "archive-file"; file.type = "file"; file.accept = ".kin"; file.required = true;
-    const fileLabel = document.createElement("label"); fileLabel.htmlFor = file.id; fileLabel.textContent = "Encrypted Kin backup";
+    file.setAttribute("aria-describedby", "security-alert");
+    const fileLabel = document.createElement("label"); fileLabel.htmlFor = file.id; fileLabel.textContent = "Kin export";
     const recovery = document.createElement("input");
     recovery.id = "archive-recovery"; recovery.type = "password"; recovery.autocomplete = "off"; recovery.required = true;
-    const recoveryLabel = document.createElement("label"); recoveryLabel.htmlFor = recovery.id; recoveryLabel.textContent = "Backup recovery key";
-    const confirmLabel = document.createElement("label");
-    const confirmation = document.createElement("input"); confirmation.type = "checkbox"; confirmation.required = true;
-    confirmLabel.append(confirmation, document.createTextNode(" Restore into this empty local household. Device trust and sync access will not be restored."));
-    const button = document.createElement("button"); button.type = "submit"; button.textContent = "Verify and restore";
-    form.append(fileLabel, file, recoveryLabel, recovery, confirmLabel, button);
+    recovery.setAttribute("aria-describedby", "security-alert");
+    const recoveryLabel = document.createElement("label"); recoveryLabel.htmlFor = recovery.id; recoveryLabel.textContent = "Export recovery key";
+    const button = document.createElement("button"); button.type = "submit"; button.textContent = "Check export";
+    form.append(fileLabel, file, recoveryLabel, recovery, button);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const selected = file.files[0]; const secret = recovery.value; recovery.value = "";
@@ -387,21 +397,49 @@ class KinSecurity extends HTMLElement {
         if (!selected || selected.size > 160 * 1024 * 1024) throw new Error("Choose a Kin archive no larger than 160 MiB.");
         const app = this.closest("kin-app");
         const engine = app.engine, vault = getActiveVault();
+        this.message.textContent = "Checking your Kin export…";
         const bytes = new Uint8Array(await selected.arrayBuffer());
         this.assertCurrentOperation(operation);
-        await importHouseholdArchive({ bytes, recoverySecret: secret, engine, vault });
+        const staged = await validateHouseholdArchive({ bytes, recoverySecret: secret, engine, vault });
         this.assertCurrentOperation(operation);
-        await app.refreshFromEvents();
-        this.assertCurrentOperation(operation);
-        app.broadcastEventChange();
-        this.render();
-        this.message.textContent = "Household history restored locally. Device trust has not been restored.";
+        this.restoreStage = staged.stage;
+        form.remove();
+        const summary = document.createElement("p");
+        summary.textContent = `This export is ready to restore (${staged.eventCount} household changes, ${staged.attachmentCount} attachments). It can only be restored into an empty local household. Device approval and sync access are not included.`;
+        const confirm = document.createElement("button");
+        confirm.id = "restore-confirm";
+        confirm.type = "button";
+        confirm.textContent = "Restore household";
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.textContent = "Cancel";
+        confirm.addEventListener("click", () => void this.run(async (confirmOperation) => {
+          await restoreValidatedHouseholdArchive({ stage: staged.stage, engine, vault });
+          this.restoreStage = null;
+          this.assertCurrentOperation(confirmOperation);
+          await app.refreshFromEvents();
+          this.assertCurrentOperation(confirmOperation);
+          app.broadcastEventChange();
+          this.render();
+          this.message.textContent = "Your household is restored on this device. This device still needs household approval before sync can resume.";
+        }));
+        cancel.addEventListener("click", () => {
+          discardValidatedHouseholdArchive(staged.stage);
+          this.restoreStage = null;
+          summary.remove(); confirm.remove(); cancel.remove();
+          this.showRestore();
+        });
+        this.append(summary, confirm, cancel);
+        confirm.focus();
+        this.message.textContent = "This export is ready to restore.";
       });
     });
     this.append(form); file.focus();
   }
 
   locked() {
+    if (this.restoreStage) discardValidatedHouseholdArchive(this.restoreStage);
+    this.restoreStage = null;
     this.operation++;
     this.operationAbort.abort();
     this.operationAbort = new AbortController();

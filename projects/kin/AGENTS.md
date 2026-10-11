@@ -156,6 +156,8 @@ security/domain contracts. Do not merge or tag this candidate branch.
 
 Kin's last published release is `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. The v0.31.0–v0.34.0 batch is complete; v0.35.0 More Adult Members is authorized on `kin-v0.35-more-adults`. Preserve every existing tag exactly. Root replacement follows [ROOT-ROTATION](docs/ROOT-ROTATION.md); archive recovery remains intentionally local-only and KARC v1 remains supported. No production certification, mobile readiness or independent audit is claimed. Do not merge the batch. See the release records for actual evidence and limitations.
 
+The authorized final feature batch is `kin-fast-track-v0.39-v0.40`. The v0.39.0 candidate (`kin-v0.39.0`) adds authenticated portable-package metadata while preserving KARC v1 compatibility. The v0.40.0 candidate (`kin-v0.40.0`) adds validated restore staging and device-migration UX while preserving the archive/device-trust boundary. v0.40.0 is the final planned feature release in this phase; stop feature development afterward and do not begin v0.41. These candidates are not tags or production certification.
+
 The pre-implementation releases are:
 
 ```text

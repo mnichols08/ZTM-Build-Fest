@@ -24,6 +24,37 @@ export function activeResponsibilityMemberIds(devices, now = Date.now()) {
     .map((device) => device.memberId))];
 }
 
+export function portableMembershipFromDirectory(entries, now = Date.now()) {
+  if (!Array.isArray(entries) || entries.length > 12)
+    throw new Error("Kin could not validate current household membership for export.");
+  const members = new Map();
+  for (const member of entries) {
+    const kind = member.memberKind;
+    if (!/^[a-f0-9]{32}$/.test(member.memberId ?? "") ||
+        !["adult", "limited", "temporary"].includes(kind) ||
+        typeof member.memberActive !== "boolean")
+      throw new Error("Kin could not validate current household membership for export.");
+    const expiresAt = member.memberExpiresAt;
+    if ((kind === "temporary" && !Number.isSafeInteger(expiresAt)) ||
+        (kind !== "temporary" && expiresAt !== undefined))
+      throw new Error("Kin could not validate current household membership for export.");
+    const status = member.memberActive ? "active" :
+      kind === "temporary" && expiresAt <= now ? "expired" : "removed";
+    const record = {
+      memberId: member.memberId,
+      memberKind: kind,
+      status,
+      ...(expiresAt === undefined ? {} : { expiresAt }),
+    };
+    const prior = members.get(record.memberId);
+    if (prior && JSON.stringify(prior) !== JSON.stringify(record))
+      throw new Error("Kin found conflicting membership records during export.");
+    members.set(record.memberId, record);
+  }
+  return [...members.values()].sort((left, right) =>
+    left.memberId < right.memberId ? -1 : left.memberId > right.memberId ? 1 : 0);
+}
+
 const MAX_PUSH_BATCH = 20;
 const MAX_PULL_PASSES = 5;
 const KEY_GRANT_TTL_MS = 10 * 60_000;
@@ -267,7 +298,6 @@ export class SyncCoordinator {
 
     await this.provisionMemberHistory(status.currentEpoch, devices);
     await this.pushIdentityBindings();
-    await this.pushPendingEvents();
     let passes = 0;
     let quarantinedEvents = 0;
     let hasMore = true;
@@ -315,7 +345,11 @@ export class SyncCoordinator {
           bindings: remoteBindings.map((record) => record.binding),
           engine: this.engine,
         });
-        verified.push({ encodedEvent });
+        verified.push({
+          encodedEvent,
+          sourceDeviceId: envelope.deviceId,
+          sourceDeviceSequence: envelope.deviceSequence,
+        });
       }
       const committed = await this.store.commitRemoteBatch({
         received: verified,
@@ -335,6 +369,13 @@ export class SyncCoordinator {
       });
       hasMore = page.hasMore;
       passes += 1;
+    }
+
+    if (!hasMore) {
+      await this.acknowledgeRemoteDuplicateEvents(status.currentEpoch);
+      if (!(await this.store.getSyncState())?.initialized)
+        await this.store.compactArchiveOutboxSequences();
+      await this.pushPendingEvents();
     }
 
     const pendingOutbox = await this.store.getPendingOutbox(1);
@@ -435,6 +476,11 @@ export class SyncCoordinator {
       if (device.publicKeys || device.deviceId === this.identity.deviceId)
         await verify(device.deviceId);
     return devices;
+  }
+
+  async portableMembershipSnapshot() {
+    const { members } = await this.request("/api/sync/devices");
+    return portableMembershipFromDirectory(members);
   }
 
   async receiveProvisioning(devices) {
@@ -766,6 +812,30 @@ export class SyncCoordinator {
           envelope.eventId,
           acknowledgement.latestCursor,
         );
+    }
+  }
+
+  async acknowledgeRemoteDuplicateEvents(keyEpoch) {
+    const duplicates = await this.store.getRemoteDuplicateOutbox();
+    if (!duplicates.length) return;
+    const epoch = await this.keyStore.getEpoch(this.identity.householdId, keyEpoch);
+    if (!epoch) throw new Error(`The current household key epoch ${keyEpoch} is missing.`);
+    const state = await this.store.getSyncState();
+    for (const row of duplicates) {
+      const eventMetadata = this.engine.eventMetadata(row.canonical_event);
+      const envelope = row.envelope ?? await encryptEvent({
+        eventId: row.event_id,
+        householdId: this.identity.householdId,
+        deviceId: this.identity.deviceId,
+        deviceSequence: row.deviceSequence,
+        logicalTime: eventMetadata.logicalTime.toString(),
+        keyEpoch: row.keyEpoch ?? keyEpoch,
+        plaintext: row.canonical_event,
+        householdKey: epoch.householdKey,
+        signingKey: this.deviceKeys.keys.signingPrivateKey,
+      });
+      await this.store.storeOutboxEnvelope(row.event_id, envelope, row.keyEpoch ?? keyEpoch);
+      await this.store.markOutboxAccepted(row.event_id, state.syncCursor);
     }
   }
 

@@ -259,10 +259,17 @@ async function browserUiChecks() {
   );
   const unlockMs = performance.now() - unlockStart;
   const { exportHouseholdArchive } = await import("/security/archive.js");
+  const portableMembership = [
+    { memberId: "11111111111111111111111111111111", memberKind: "adult", status: "active" },
+    { memberId: "22222222222222222222222222222222", memberKind: "limited", status: "removed" },
+    { memberId: "33333333333333333333333333333333", memberKind: "temporary", status: "active", expiresAt: Date.now() + 60_000 },
+    { memberId: "44444444444444444444444444444444", memberKind: "temporary", status: "expired", expiresAt: Date.now() - 60_000 },
+  ];
   const archive = await exportHouseholdArchive({
     store: app.store,
     engine: app.engine,
     vault: app.vault,
+    portableMembership,
   });
   check(
     archive instanceof Uint8Array && archive.length > 100,
@@ -282,8 +289,9 @@ async function browserUiChecks() {
   const header = deserializeProtectedValue(parsed.metadata);
   const recoveryVault = await LocalVault.unlock(header.manifest, recovery);
   const authenticatedMetadata = serializeProtectedValue({
-    archiveVersion: 1,
+    archiveVersion: header.archiveVersion,
     manifest: header.manifest,
+    ...(header.archiveVersion === 2 ? { packageManifest: header.packageManifest } : {}),
   });
   const archiveEnvelope = {
     ...header.protection,
@@ -293,9 +301,63 @@ async function browserUiChecks() {
     archiveEnvelope,
     authenticatedMetadata,
   );
+  const secondArchive = await exportHouseholdArchive({
+    store: app.store,
+    engine: app.engine,
+    vault: app.vault,
+    portableMembership,
+  });
+  const secondParsed = app.engine.decodeArchive(secondArchive);
+  const secondHeader = deserializeProtectedValue(secondParsed.metadata);
+  const secondVault = await LocalVault.unlock(secondHeader.manifest, recovery);
+  let secondSnapshot;
+  try {
+    const secondAad = serializeProtectedValue({
+      archiveVersion: secondHeader.archiveVersion,
+      manifest: secondHeader.manifest,
+      packageManifest: secondHeader.packageManifest,
+    });
+    secondSnapshot = await secondVault.openArchive(
+      { ...secondHeader.protection, ciphertext: toBase64Url(secondParsed.ciphertext) },
+      secondAad,
+    );
+  } finally {
+    secondVault.lock();
+  }
   check(
-    snapshot.events.length === 1,
-    "archive recovery round trip preserves history",
+    (header.archiveVersion === 1 ? snapshot : snapshot.snapshot).events.length === 1 &&
+      header.archiveVersion === 2 &&
+      header.packageManifest.packageFormatVersion === 2 &&
+      header.packageManifest.eventCount === 1 &&
+      JSON.stringify(snapshot.snapshot.local_context[0].portable_membership) === JSON.stringify(portableMembership) &&
+      JSON.stringify(Array.from(snapshot.snapshot.events[0].encoded_event)) ===
+        JSON.stringify(Array.from(secondSnapshot.snapshot.events[0].encoded_event)),
+    "archive recovery round trip and deterministic canonical content",
+  );
+  denied = false;
+  try {
+    await exportHouseholdArchive({ store: app.store, engine: app.engine, vault: app.vault,
+      portableMembership: [{ memberId: "55555555555555555555555555555555", memberKind: "future-kind", status: "active" }] });
+  } catch { denied = true; }
+  check(denied, "unknown explicit member kinds fail closed during export");
+  const legacySnapshot = header.archiveVersion === 1 ? snapshot : snapshot.snapshot;
+  const legacyAad = serializeProtectedValue({
+    archiveVersion: 1,
+    manifest: header.manifest,
+  });
+  const legacyEnvelope = await recoveryVault.sealArchive(
+    legacySnapshot,
+    legacyAad,
+    { rawCiphertext: true },
+  );
+  const { ciphertext: legacyCiphertext, ...legacyProtection } = legacyEnvelope;
+  const legacyArchive = app.engine.encodeArchive(
+    serializeProtectedValue({
+      archiveVersion: 1,
+      manifest: header.manifest,
+      protection: legacyProtection,
+    }),
+    legacyCiphertext,
   );
   const changed = authenticatedMetadata.slice();
   changed[changed.length - 2] ^= 1;
@@ -341,13 +403,30 @@ async function browserUiChecks() {
   const targetInput = app.security.querySelector("#confirm-recovery");
   targetInput.value = recovery;
   targetInput.form.requestSubmit();
-  await wait(() => app.store && !app.security.busy && !app.busy);
+  await wait(() => app.vault?.vaultId && app.state && !app.security.busy && !app.busy);
   check(
     app.vault.vaultId !== header.manifest.vaultId &&
       app.state.items.length === 0,
     "restore target has an independently established empty protected household",
   );
   const { importHouseholdArchive } = await import("/security/archive.js");
+  const {
+    validateHouseholdArchive,
+    discardValidatedHouseholdArchive,
+  } = await import("/security/archive.js");
+  const legacyStage = await validateHouseholdArchive({
+    bytes: legacyArchive,
+    recoverySecret: sourceRecovery,
+    engine: app.engine,
+    vault: app.vault,
+  });
+  check(
+    legacyStage.packageFormatVersion === 1 &&
+      legacyStage.eventCount === 1 &&
+      (await app.store.loadEvents()).length === 0,
+    "legacy package-v1 validates without modifying the target",
+  );
+  discardValidatedHouseholdArchive(legacyStage.stage);
   const corrupted = archive.slice();
   corrupted[corrupted.length - 1] ^= 1;
   denied = false;
@@ -364,6 +443,27 @@ async function browserUiChecks() {
   check(
     denied && (await app.store.loadEvents()).length === 0,
     "corrupt portable archive rejects before any target history mutation",
+  );
+  const unsupportedHeader = {
+    ...header,
+    packageManifest: { ...header.packageManifest, packageFormatVersion: 99 },
+  };
+  denied = false;
+  try {
+    const unsupportedMetadata = serializeProtectedValue(unsupportedHeader);
+    const unsupportedArchive = app.engine.encodeArchive(unsupportedMetadata, parsed.ciphertext);
+    await importHouseholdArchive({
+      bytes: unsupportedArchive,
+      recoverySecret: sourceRecovery,
+      engine: app.engine,
+      vault: app.vault,
+    });
+  } catch {
+    denied = true;
+  }
+  check(
+    denied && (await app.store.loadEvents()).length === 0,
+    "unsupported package versions reject before any target history mutation",
   );
   for (const stage of ["unlock", "decrypt"]) {
     const unlockBefore = LocalVault.unlock;
@@ -440,24 +540,76 @@ async function browserUiChecks() {
       `cancelled archive ${stage} retains original recoverable empty target`,
     );
   }
-  const imported = await importHouseholdArchive({
-    bytes: archive,
-    recoverySecret: sourceRecovery,
-    engine: app.engine,
-    vault: app.vault,
-  });
+  location.hash = "#more";
+  app.showPageFromLocation();
+  app.security.showRestore();
+  const restoreFile = app.security.querySelector("#archive-file");
+  const transfer = new DataTransfer();
+  transfer.items.add(new File([archive], "household.kin", { type: "application/octet-stream" }));
+  restoreFile.files = transfer.files;
+  app.security.querySelector("#archive-recovery").value = sourceRecovery;
+  restoreFile.form.requestSubmit();
+  await wait(() => !app.security.busy && app.security.querySelector("#restore-confirm"));
+  const confirmation = app.security.querySelector("#restore-confirm");
+  check((await app.store.loadEvents()).length === 0,
+    "validated restore is staged without mutating household history");
+  check(document.activeElement === confirmation,
+    "validation moves keyboard focus to the restore confirmation");
+  confirmation.click();
+  await wait(() => app.state?.items?.[0]?.text === "Synthetic protected household secret" && !app.security.busy);
+  const imported = { eventCount: (await app.store.loadEvents()).length };
   await app.initialize();
   check(
     imported.eventCount === 1 &&
-      app.state.items[0].text === "Synthetic protected household secret",
-    "encrypted portable archive imports and renders exact recovered history",
+      app.state.items[0].text === "Synthetic protected household secret" &&
+      app.security.message.textContent.includes("restored on this device"),
+    "confirmed restore imports and renders exact recovered history with a trust notice",
   );
   const restored = await app.store.loadEvents();
   check(
     Array.from(restored[0].encoded_event).join(",") ===
-      Array.from(snapshot.events[0].encoded_event).join(","),
+      Array.from((header.archiveVersion === 1 ? snapshot : snapshot.snapshot).events[0].encoded_event).join(","),
     "archive restoration preserves canonical source bytes",
   );
+  const restoredPortableSnapshot = await app.store.snapshotForArchive();
+  check(
+    JSON.stringify(restoredPortableSnapshot.local_context[0].portable_membership) ===
+      JSON.stringify(portableMembership.map((member) => member.memberKind === "temporary" && member.expiresAt <= Date.now()
+        ? { ...member, status: "expired" } : member)),
+    "restored membership history retains kinds, removals, and absolute Temporary expiry",
+  );
+  const restoredHouseholdId = Array.from(restoredPortableSnapshot.local_context[0].sync_household_id,
+    (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const restoredIdentity = { householdId: restoredHouseholdId, memberId: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", deviceId: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" };
+  denied = false;
+  try {
+    await app.store.initializeSync({ identity: { ...restoredIdentity, householdId: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" },
+      serverStatus: { currentEpoch: 1, pendingEpoch: null, rotationPending: false } });
+  } catch (error) { denied = error.message.includes("belongs to another household"); }
+  check(denied && !(await app.store.getSyncState()),
+    "an approved identity for another household cannot attach restored history");
+  await app.store.initializeSync({ identity: restoredIdentity,
+    serverStatus: { currentEpoch: 1, pendingEpoch: null, rotationPending: false },
+    legacyBindingEnvelope: { version: 1, ciphertext: "authorized migration fixture" } });
+  check((await app.store.getSyncState())?.householdId === restoredHouseholdId,
+    "restored history can initialize sync only for its matching approved household identity");
+  const importedEventId = Array.from(restored[0].event_id,
+    (byte) => byte.toString(16).padStart(2, "0")).join("");
+  await app.store.commitRemoteBatch({
+    received: [{ encodedEvent: restored[0].encoded_event, sourceDeviceId: "cccccccccccccccccccccccccccccccc", sourceDeviceSequence: 7 }],
+    nextCursor: "AAAAAAAAAAE", engine: app.engine,
+  });
+  const duplicateOutbox = await app.store.getRemoteDuplicateOutbox();
+  check(duplicateOutbox.length === 1 && duplicateOutbox[0].event_id === importedEventId,
+    "stale export events already on the relay are identified for deduplicated catch-up");
+  await app.store.storeOutboxEnvelope(importedEventId, { eventId: importedEventId, ciphertext: "migration fixture" }, 1);
+  await app.store.markOutboxAccepted(importedEventId, "AAAAAAAAAAE");
+  await app.store.append({ type: "add", text: "New change after restore", classification: "need" }, app.engine);
+  await app.store.compactArchiveOutboxSequences();
+  const compactedOutbox = await app.store.getPendingOutbox();
+  check(compactedOutbox.length === 1 && compactedOutbox[0].deviceSequence === 1 &&
+      (await app.store.getSyncState()).nextDeviceSequence === 2,
+    "stale event deduplication keeps new local changes on a contiguous device sequence");
   denied = false;
   try {
     await importHouseholdArchive({
@@ -470,7 +622,7 @@ async function browserUiChecks() {
     denied = true;
   }
   check(
-    denied && (await app.store.loadEvents()).length === 1,
+    denied && (await app.store.loadEvents()).length === 2,
     "restore cannot silently overwrite an existing household",
   );
 
@@ -492,7 +644,7 @@ async function browserUiChecks() {
     );
     await peerApp.security.run(() => peerApp.security.unlockRecovery(recovery));
     check(
-      peerApp.state?.items.length === 1,
+      peerApp.state?.items.length === 2,
       "second tab independently unlocks same canonical history",
     );
     const peerStore = peerApp.store,
@@ -611,7 +763,7 @@ async function browserUiChecks() {
   }
   await app.security.run(() => app.security.unlockRecovery(recovery));
   check(
-    app.state?.items.length === 1,
+    app.state?.items.length === 2,
     "normal unlock still works after cancelled and unsupported paths: " + JSON.stringify({phase:app.security.phase,error:app.security.alert?.textContent,status:app.status?.textContent,items:app.state?.items.length}),
   );
   return {

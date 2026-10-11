@@ -24,3 +24,8 @@ import leaves the existing household history unchanged.
 Oversized input is rejected before it can be stored or restored. A household
 within the 50 MiB attachment allowance has room for archive representation and
 overhead; Kin does not rely on a smaller hidden 64 MiB snapshot limit.
+
+Package format v2 adds bounded event and attachment counts/byte totals to the
+authenticated encrypted manifest. It retains KARC v1 framing and the same full
+archive limit. Attachment ciphertext and its existing SHA-256 digest remain
+inside the authenticated payload; a digest mismatch rejects the whole package.

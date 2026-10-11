@@ -80,6 +80,20 @@ export class EncryptedSyncService {
       });
   }
 
+  membershipDirectory(sessionToken) {
+    const { household } = this.authorize(sessionToken);
+    const now = this.now();
+    return [...this.pairingService.members.values()]
+      .filter((member) => member.householdId === household.id)
+      .map((member) => ({
+        memberId: member.id,
+        memberKind: member.kind ?? "adult",
+        memberActive: canParticipate(member, now),
+        ...(member.expiresAt == null ? {} : { memberExpiresAt: member.expiresAt }),
+      }))
+      .sort((left, right) => left.memberId < right.memberId ? -1 : left.memberId > right.memberId ? 1 : 0);
+  }
+
   enable(sessionToken) {
     const auth = this.authorize(sessionToken);
     requireTrustAuthority(auth.member, "enable household sync");

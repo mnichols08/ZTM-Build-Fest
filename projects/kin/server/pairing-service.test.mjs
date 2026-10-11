@@ -1208,7 +1208,13 @@ test("HTTP same-member device pairing claims, approves, and activates without ad
     const directory = await apiRequest(server, "/api/sync/devices", {
       cookie: cookies.join("; "),
     });
-    const devices = (await directory.json()).devices;
+    const directoryBody = await directory.json();
+    const devices = directoryBody.devices;
+    assert.deepEqual(directoryBody.members, [{
+      memberId: adult.memberId,
+      memberKind: "adult",
+      memberActive: true,
+    }]);
     assert.equal(
       devices.find((device) => device.deviceId === adult.deviceId).certificate,
       null,

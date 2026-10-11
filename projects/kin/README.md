@@ -2,9 +2,9 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.38.4` — PWA & Archive Preflight candidate on `kin-pre-v0.39-stabilization`.** Kin keeps household history in the existing local-first encrypted event store. Attachments persist encrypted locally before sync and portable archives include verified attachment payloads. Items and Routines support explicit, replayable responsibility assignment; ties resolve by canonical event order.
+**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.40.0` — Restore & Device Migration UX candidate on `kin-fast-track-v0.39-v0.40`.** Kin keeps household history in the existing local-first encrypted event store. Versioned portable packages preserve canonical history and validated protected attachment records without restoring device trust. Items and Routines support explicit, replayable responsibility assignment; ties resolve by canonical event order.
 
-The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Archives are intentionally local-only history recovery and do not restore sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
+The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Exports are encrypted history recovery and do not restore server membership, device trust, credentials, or sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
 ## The problem
 
@@ -111,7 +111,7 @@ The month targets a coherent, demoable pre-1.0 build at `v0.40.x`. The `v0.41.x`
 - Fast-track candidate: `v0.27.0` — Household Playbooks; see the `v0.27.0` release record.
 - Fast-track candidate: `v0.28.0` - Local Reminders; see the `v0.28.0` release record.
 - Fast-track candidates: `v0.31.0`–`v0.31.1` - Maintenance Records and concurrent archive correction; see their release records.
-- Current candidate: `v0.38.4` - PWA & Archive Preflight; installed clients stage release-versioned shells and archive limits align with documented attachment bounds.
+- Current candidate: `v0.40.0` — Restore & Device Migration UX; package-v2 metadata authenticates compatibility and bounded resource counts while preserving KARC v1 framing. Restore validates and stages before user confirmation, and device approval remains a separate step.
 - Planned after October, undated: `v0.41.x`–`v0.45.x` — Recovery drills, broader platform validation, performance, and release-candidate readiness
 - Planned: `v1.0.0` — Stable Kin Platform, when readiness and human feedback support it
 - See the [changelog](CHANGELOG.md) for the completed release history.

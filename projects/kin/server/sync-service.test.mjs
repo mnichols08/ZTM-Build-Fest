@@ -72,6 +72,24 @@ test("only Adults may enable sync, while active Limited and Temporary members ma
   assert.deepEqual(sync.enable(adult.sessionToken), { enabled: true });
   assert.equal(sync.status(limited.sessionToken).enabled, true);
   assert.equal(sync.status(temporary.sessionToken).enabled, true);
+  const membership = new Map(sync.membershipDirectory(adult.sessionToken)
+    .map((member) => [member.memberId, member]));
+  assert.equal(membership.get(adult.memberId).memberKind, "adult");
+  assert.equal(membership.get(adult.memberId).memberActive, true);
+  assert.equal(membership.get(limited.memberId).memberKind, "limited");
+  assert.equal(membership.get(limited.memberId).memberActive, true);
+  assert.equal(membership.get(temporary.memberId).memberKind, "temporary");
+  assert.equal(membership.get(temporary.memberId).memberActive, true);
+  assert.equal(membership.get(temporary.memberId).memberExpiresAt,
+    pairing.members.get(temporary.memberId).expiresAt);
+  const temporaryMember = pairing.members.get(temporary.memberId);
+  temporaryMember.expiresAt = Date.now() - 1;
+  pairing.expireTemporaryMemberships();
+  pairing.removeMembership(pairing.households.get(adult.householdId), limited.memberId, adult.memberId);
+  const ended = new Map(sync.membershipDirectory(adult.sessionToken).map((member) => [member.memberId, member]));
+  assert.equal(ended.get(temporary.memberId).memberActive, false);
+  assert.ok(ended.get(temporary.memberId).memberExpiresAt < Date.now());
+  assert.equal(ended.get(limited.memberId).memberActive, false);
 });
 
 test("attachment relay is opaque, authorized, idempotent, integrity checked, and removable", () => {
