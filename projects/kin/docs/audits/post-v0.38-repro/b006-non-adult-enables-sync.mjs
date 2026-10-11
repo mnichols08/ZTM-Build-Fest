@@ -12,7 +12,16 @@ service.members.set(memberId, { id: memberId, householdId: adult.householdId, ac
 service.households.get(adult.householdId).members.add(memberId);
 service.devices.set(deviceId, { id: deviceId, householdId: adult.householdId, memberId, label: "Babysitter phone", trustedAt: 1, revokedAt: null, tokenHash: null });
 const temp = service.issueSession(memberId, deviceId);
+const limitedId = "9".repeat(32), limitedDeviceId = "8".repeat(32);
+service.members.set(limitedId, { id: limitedId, householdId: adult.householdId, active: true, kind: "limited", credentials: new Set() });
+service.households.get(adult.householdId).members.add(limitedId);
+service.devices.set(limitedDeviceId, { id: limitedDeviceId, householdId: adult.householdId, memberId: limitedId, label: "Child tablet", trustedAt: 1, revokedAt: null, tokenHash: null });
+const limited = service.issueSession(limitedId, limitedDeviceId);
 console.log("before:", sync.status(adult.sessionToken).enabled);
-console.log("temporary enable ->", sync.enable(temp.sessionToken));
-console.log("adult sees enabled:", sync.status(adult.sessionToken).enabled);
+for (const [kind, member] of [["limited", limited], ["temporary", temp]]) {
+  try { console.log(`${kind} enable ->`, sync.enable(member.sessionToken)); }
+  catch (error) { console.log(`${kind} enable rejected ->`, error.code); }
+}
+console.log("adult enable ->", sync.enable(adult.sessionToken));
+console.log("active Limited and Temporary participation:", sync.status(limited.sessionToken).enabled, sync.status(temp.sessionToken).enabled);
 console.log("temporary sees directory kinds:", sync.deviceDirectory(temp.sessionToken).map(d => [d.memberKind, d.memberExpiresAt ?? null]));

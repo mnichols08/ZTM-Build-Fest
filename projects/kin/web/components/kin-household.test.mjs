@@ -54,6 +54,35 @@ test("Limited and Temporary members get a clearly named Leave household button",
   }
 });
 
+test("only Adults can see Enable device sync while other members get participation guidance", () => {
+  for (const kind of ["limited", "temporary"]) {
+    const component = new KinHousehold();
+    component.syncStatus = { memberKind: kind, enabled: false };
+    component.renderMember();
+    assert.equal(component.children.some((child) => child.textContent === "Enable device sync"), false);
+    assert.ok(component.children.some((child) => child.textContent.includes("Ask a household Adult to enable it")));
+  }
+  const adult = new KinHousehold();
+  adult.syncStatus = { memberKind: "adult", enabled: false };
+  adult.renderMember();
+  assert.ok(adult.children.some((child) => child.textContent === "Enable device sync"));
+});
+
+test("device revocation control names its target", async () => {
+  const component = new KinHousehold();
+  component.identity = { memberId: "adult", deviceId: "self" };
+  component.syncKeyError = "skip sync-key access";
+  component.run = async (action) => action();
+  component.api = async () => ({ devices: [
+    { id: "self", label: "Adult phone", revokedAt: null },
+    { id: "other", label: "Kitchen tablet", revokedAt: null },
+  ] });
+  await component.showDevices();
+  const descendants = (items) => items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
+  const revoke = descendants(component.children).find((child) => child.textContent?.startsWith("Revoke "));
+  assert.equal(revoke.textContent, "Revoke Kitchen tablet");
+});
+
 test("self-leave requests a passkey and cancellation leaves local authority intact", async () => {
   const component = new KinHousehold();
   component.identity = { memberId: "limited-member" };

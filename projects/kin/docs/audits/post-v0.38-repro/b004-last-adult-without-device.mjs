@@ -5,6 +5,7 @@ const KIN = kinAuditPath(new URL("../../../", import.meta.url));
 import { PairingError, PairingService } from "../../../server/pairing-service.mjs";
 import { createKinServer } from "../../../server/server.mjs";
 import { DurableStore } from "../../../server/durable-store.mjs";
+import assert from "node:assert/strict";
 
 const cred = (s) => ({ id: `credential-${s}`, publicKey: `key-${s}`, algorithm: -7 });
 const webauthn = {
@@ -76,9 +77,13 @@ try {
 
   console.log("\n=== Last-Adult protection: Adult A revokes Adult B's only device, then self-leaves (HTTP) ===");
   show("A DELETE /api/devices/<B device>", await req(`/api/devices/${adultB.deviceId}`, { method: "DELETE", cookie: aCookie }));
+  service.revokeDevice(adult.sessionToken, adultB.deviceId, adult.memberId); // equivalent post-passkey service operation
   const leaveOpt = await req("/api/household/membership/remove/options", { method: "POST", cookie: aCookie, body: { memberId: adult.memberId } });
   show("A remove/options self", leaveOpt);
-  show("A remove/finish self (fresh passkey)", await req("/api/household/membership/remove/finish", { method: "POST", cookie: aCookie, body: { flow: leaveOpt.json.flow, credential: { id: "credential-a", flow: leaveOpt.json.flow } } }));
+  const leave = await req("/api/household/membership/remove/finish", { method: "POST", cookie: aCookie, body: { flow: leaveOpt.json.flow, credential: { id: "credential-a", flow: leaveOpt.json.flow } } });
+  show("A remove/finish self (fresh passkey)", leave);
+  assert.equal(leave.status, 409, "the only Adult with a usable device must not leave");
+  assert.equal(service.hasUsableTrustedDevice(adult.memberId), true);
   const bCookie = `kin_session=${adultB.sessionToken}; kin_device=${adultB.deviceToken}`;
   show("B POST /api/login/options", await req("/api/login/options", { method: "POST", cookie: bCookie, body: {} }));
   const lCookie = `kin_session=${limited2.sessionToken}; kin_device=${limited2.deviceToken}`;

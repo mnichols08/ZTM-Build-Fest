@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.38.3 — Trust & Access Hardening
+
+- Require Adult authority to enable sync while preserving authorized Limited/Temporary participation.
+- Require target-bound fresh passkey proof for device revocation and preserve a usable last-Adult trust path.
+
 ## v0.38.2 — Replay & Logical-Time Hardening
 
 - Stale cross-device Item completion/reopen and Responsibility assignment/clear events racing with archive now converge as terminal no-ops; same-device commands after archive remain rejected.
