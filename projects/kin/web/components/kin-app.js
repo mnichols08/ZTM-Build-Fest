@@ -206,7 +206,8 @@ class KinApp extends HTMLElement {
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.addEventListener("message", this.onServiceWorkerMessage);
       navigator.serviceWorker.addEventListener("controllerchange", this.onControllerChange);
-      void navigator.serviceWorker.register("/service-worker.js").then((registration) => {
+      const release = document.querySelector('meta[name="kin-version"]')?.content;
+      void navigator.serviceWorker.register(`/service-worker.js?v=${encodeURIComponent(release ?? "")}`).then((registration) => {
         this.updateRegistration = registration;
         if (registration.waiting && navigator.serviceWorker.controller) this.showUpdateNotice();
         registration.addEventListener("updatefound", () => {
@@ -1525,7 +1526,12 @@ class KinApp extends HTMLElement {
   async reconcileResponsibilityMembers() {
     if (this.reconcilingResponsibility || this.busy || !this.activeMemberIds || !this.state?.responsibilities?.length) return;
     const active = new Set(this.activeMemberIds);
-    const stale = this.state.responsibilities.filter((entry) => entry.memberId && !active.has(entry.memberId));
+    const stale = this.state.responsibilities.filter((entry) => {
+      if (!entry.memberId || active.has(entry.memberId)) return false;
+      return entry.targetKind === "item"
+        ? this.state.items?.some((item) => item.itemId === entry.targetId && item.status !== "archived")
+        : this.state.routines?.some((routine) => routine.routineId === entry.targetId && !routine.archived);
+    });
     if (!stale.length) return;
     this.reconcilingResponsibility = true;
     try {

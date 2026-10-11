@@ -389,7 +389,7 @@ pub fn execute(
     if request.events.len() >= MAX_EVENT_COUNT
         || !valid_timestamp(context.timestamp)
         || context.logical_time == 0
-        || context.logical_time == u64::MAX
+        || context.logical_time > crate::state::MAX_LOGICAL_TIME
     {
         return Err(KinError::InvalidEvent);
     }

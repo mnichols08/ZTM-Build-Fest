@@ -2168,14 +2168,13 @@ mod tests {
             &bindings,
         ))
         .unwrap();
-        assert_eq!(
-            crate::state::rebuild_distributed_on(
-                &decoded.events,
-                0,
-                CivilDate::from_encoded(20261002).unwrap(),
-            ),
-            Err(KinError::InvalidEvent)
-        );
+        let stale_offline = crate::state::rebuild_distributed_on(
+            &decoded.events,
+            0,
+            CivilDate::from_encoded(20261002).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(stale_offline.items[0].status, ItemStatus::Archived);
     }
 
     #[test]

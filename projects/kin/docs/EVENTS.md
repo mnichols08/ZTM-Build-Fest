@@ -189,3 +189,12 @@ through 99991231 must represent valid Gregorian dates; zero clears the date.
 The event has no timestamp semantics beyond the ordinary envelope and stores
 no time zone or reminder. Event updates remain replayable after archival when
 authored offline; UI command validation rejects new changes to archived Items.
+# Logical time bounds
+
+Event logical time is a positive integer no greater than `9,007,199,254,740,991`
+(the largest JavaScript safe integer). A replayed event may advance the current
+maximum by at most `1,000,000`. Rust replay, browser storage and the sync relay
+enforce the same ceiling; replay uses checked, deterministic integer arithmetic.
+This keeps canonical history interoperable and prevents one trusted device
+from exhausting the clock with a single event. Existing histories within these
+bounds remain valid.

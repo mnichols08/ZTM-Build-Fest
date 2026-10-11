@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 const root = KIN + "web/wasm/";
 const mod = await import(pathToFileURL(root + "kin-engine.js").href);
+const { reconcileRemoteEvents } = await import(pathToFileURL(KIN + "web/storage/event-store.js").href);
 const wasm = await readFile(root + "kin_engine.wasm");
 const engine = await mod.loadKinEngine(`data:application/wasm;base64,${wasm.toString("base64")}`);
 const hex = (v) => [...v].map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -20,8 +21,11 @@ const secret = new Uint8Array(16).fill(0x22);
 const local = [mod.encodeAddedRecord({ ...ctx(2, 0xb2, 2), itemId: secret, text: "x", classification: "need" })];
 const poison = engine.executeCommand({ type: "change-responsibility", targetKind: "item", targetId: hex(secret), memberId: hex(new Uint8Array(16).fill(0xee)) }, ctx(2, 0xb2, 3), local, asOf, null, day).encodedEvent;
 // Publish ONLY the poison event (validly signed/encrypted by attacker's own trusted device in real sync).
-try { engine.applyEvents([...honest, poison], asOf, null, day); console.log("A) honest device accepted poison event"); }
-catch (e) { console.log("A) honest device projection FAILS with poison event:", e.code, e.message); }
+// The receiving EventStore quarantines semantically invalid ciphertext before durable acceptance.
+const future = mod.encodeAddedRecord({ ...ctx(1, 0xa1, 6, 2n), itemId: new Uint8Array(16).fill(0x33), text: "Buy milk", classification: "need" });
+const quarantined = reconcileRemoteEvents({ rows: [], received: [{ encodedEvent: poison }, { encodedEvent: future }], engine, context: { last_looked_event_id: null }, asOf, civilDate: day });
+console.log("A) invalid remote poison quarantined:", quarantined.quarantined);
+console.log("A2) future valid event remains replayable:", engine.applyEvents(quarantined.candidateRows.map(row => row.encoded_event), asOf, null, day).items.length, "items OK");
 
 // B) Responsibility to arbitrary/removed member id accepted by replay
 const assignGhost = engine.executeCommand({ type: "change-responsibility", targetKind: "item", targetId: hex(honestItem), memberId: "ee".repeat(16) }, ctx(2, 0xb2, 4), honest, asOf, null, day);

@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.38.2 — Replay & Logical-Time Hardening
+
+- Stale cross-device Item completion/reopen and Responsibility assignment/clear events racing with archive now converge as terminal no-ops; same-device commands after archive remain rejected.
+- Remote malformed or replay-invalid events are quarantined before durable acceptance, the relay cursor advances, and later valid events remain replayable.
+- Logical time is bounded to positive JavaScript-safe integers; Rust, browser event encoding, storage, and server acceptance share the ceiling and one-million-step advance bound.
+- Added replay, quarantine, relay-bound, deterministic-order, and post-poison write regressions. Existing canonical event formats and legacy valid histories remain unchanged.
+
 ## v0.38.1 — Authenticated Member Self-Leave
 
 - Limited and Temporary members can leave their own household membership after fresh passkey authentication, while removal of other members remains Adult-only.

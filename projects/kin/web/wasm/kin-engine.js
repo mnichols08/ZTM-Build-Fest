@@ -6,6 +6,8 @@ const RESULT_HEADER_BYTES = 12;
 const ITEM_HEADER_BYTES = 48;
 const MAX_EVENT_COUNT = 10_000;
 const MAX_PROTOCOL_BYTES = 64 * 1024 * 1024;
+export const MAX_ARCHIVE_BYTES = 160 * 1024 * 1024;
+export const MAX_LOGICAL_TIME = 9_007_199_254_740_991n;
 const MAX_ITEM_TEXT_BYTES = 4096;
 const MAX_STEP_TEXT_BYTES = 256;
 const MAX_STEP_TEXT_CHARS = 80;
@@ -450,7 +452,7 @@ function encodeIntentPacket(command, identity) {
   assertTimestamp(identity.timestamp);
   view.setBigInt64(76, BigInt(identity.timestamp), true);
   const logicalTime = BigInt(identity.logicalTime);
-  if (logicalTime < 0n || logicalTime > 0xffffffffffffffffn)
+  if (logicalTime <= 0n || logicalTime > MAX_LOGICAL_TIME)
     throw new KinEngineError(2, "Kin received an invalid event order.");
   view.setBigUint64(84, logicalTime, true);
   if (![12, 13, 29].includes(kind)) {
@@ -625,13 +627,16 @@ function decodeMetadata(bytes) {
   const timestamp = Number(view.getBigInt64(72, true));
   if (!Number.isSafeInteger(timestamp))
     throw new KinEngineError(6, "Kin received an invalid event timestamp.");
+  const logicalTime = view.getBigUint64(80, true);
+  if (logicalTime > MAX_LOGICAL_TIME)
+    throw new KinEngineError(4, USER_MESSAGES.get(4));
   return {
     eventId: bytes.slice(8, 24),
     householdId: bytes.slice(24, 40),
     actorId: bytes.slice(40, 56),
     deviceId: bytes.slice(56, 72),
     timestamp,
-    logicalTime: view.getBigUint64(80, true),
+    logicalTime,
     eventVersion: view.getUint16(88, true),
     kind,
   };
@@ -723,7 +728,7 @@ function executeCommand(
 function encodeArchive(exports, metadata, ciphertext) {
   metadata = asBytes(metadata);
   ciphertext = asBytes(ciphertext);
-  if (metadata.length + ciphertext.length + 16 > MAX_PROTOCOL_BYTES)
+  if (metadata.length + ciphertext.length + 16 > MAX_ARCHIVE_BYTES)
     throw new KinEngineError(5, USER_MESSAGES.get(5));
   const lengths = new Uint8Array(8);
   const view = new DataView(lengths.buffer);
@@ -761,7 +766,7 @@ function planImport(exports, records, asOf, cursor, civilDate, syncIdentity) {
 }
 function decodeArchive(exports, bytes) {
   bytes = asBytes(bytes);
-  if (bytes.length > MAX_PROTOCOL_BYTES)
+  if (bytes.length > MAX_ARCHIVE_BYTES)
     throw new KinEngineError(5, USER_MESSAGES.get(5));
   if (bytes.length < 16)
     throw new KinEngineError(2, USER_MESSAGES.get(2));

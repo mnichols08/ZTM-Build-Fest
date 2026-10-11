@@ -2,6 +2,7 @@
 //! Web Crypto owns authentication; parsing alone never establishes authenticity.
 use crate::error::KinError;
 use crate::protocol::MAX_PROTOCOL_BYTES;
+pub const MAX_ARCHIVE_BYTES: usize = 160 * 1024 * 1024;
 
 pub const ARCHIVE_VERSION: u16 = 1;
 pub const MAX_ARCHIVE_METADATA: usize = 1024 * 1024;
@@ -41,7 +42,7 @@ fn validate_lengths(metadata: usize, ciphertext: usize) -> Result<(), KinError> 
         || metadata
             .checked_add(ciphertext)
             .and_then(|v| v.checked_add(16))
-            .is_none_or(|v| v > MAX_PROTOCOL_BYTES)
+            .is_none_or(|v| v > MAX_ARCHIVE_BYTES)
     {
         return Err(KinError::SizeLimit);
     }
@@ -179,7 +180,7 @@ mod tests {
             layout[16..].copy_from_slice(&total.to_le_bytes());
             assert_eq!(layout_request(&layout), Err(KinError::MalformedProtocol));
         }
-        let maximum_ciphertext = MAX_PROTOCOL_BYTES - MAX_ARCHIVE_METADATA - 16;
+        let maximum_ciphertext = MAX_ARCHIVE_BYTES - MAX_ARCHIVE_METADATA - 16;
         let mut maximum = (MAX_ARCHIVE_METADATA as u32).to_le_bytes().to_vec();
         maximum.extend_from_slice(&(maximum_ciphertext as u32).to_le_bytes());
         assert!(header_request(&maximum).is_ok());
