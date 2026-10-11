@@ -19,10 +19,13 @@ audit.
 
 ## Executive summary
 
-The **server-side authorization boundary is sound.** Every Adult-only route
-(pairing, device approval/revocation/replacement, member removal, recovery, key
+The **core Adult-only trust-management routes are enforced on the server, with
+one confirmed authorization gap: Limited and Temporary members can enable
+household sync (B-006).** The server-side authorization boundary is therefore
+not universally sound. Every audited trust-management route (pairing, device
+approval/revocation/replacement, member removal, recovery, key
 rotation/provisioning, household deletion) refuses Limited and Temporary members
-on the server. Authority always comes from the session/device cookie, never from
+on the server; `/api/sync/enable` does not. Authority always comes from the session/device cookie, never from
 the request body. Temporary expiry is enforced by the server clock on every
 request, and unknown member kinds fail closed. Removed and expired members cannot
 sync or re-pair. Recovery does not escalate a Limited member. No surveillance UI
@@ -34,8 +37,10 @@ confidentiality:
 
 - Replay is fail-closed with no quarantine. One replay-invalid event stops sync
   for every device, permanently. Honest offline use produces such an event
-  (B-001, B-002). Any member, including a Limited or Temporary member, can produce
-  one deliberately (B-003).
+  (B-001, B-002). The engine accepts a deliberately crafted event of this kind,
+  and the relay contract permits its shape, so any member's trusted device,
+  including a Limited or Temporary member's, could plausibly submit one (B-003;
+  engine-reproduced and relay-contract-confirmed, not a full relay round trip).
 - The household can be left with no usable Adult (B-004). Device revocation is
   one unlabeled click with no confirmation (B-005).
 - Two promises are broken in code. Non-Adults can enable sync (B-006). Installed
@@ -145,17 +150,38 @@ assumes a malicious member can only "create valid content as themselves".
 
 **Reproduction:** `post-v0.38-repro/b003-single-member-halts-sync.mjs`
 
-- **(A) Poison:** a Limited device creates an item locally, never publishes it,
-  and publishes only a `ResponsibilityChanged` for that item. Every honest
-  device's replay fails with code 4. The relay accepts the event because it is a
-  validly signed envelope from a trusted device. The event remains on the relay
-  after the member is removed or expires.
-- **(C) Logical-time exhaustion:** an event with `logicalTime = 2^64-2` passes
-  the relay (`server/sync-contract.mjs:38` checks only digits) and replay.
-  `commitRemoteBatch` then sets `next_logical_time` to the maximum, and every
-  later local write on every device fails at `event-store.js:480–484`: "Kin has
-  reached a supported event-order limit." The repro's C2 line shows the honest
-  follow-up rejected.
+**Evidence level: ENGINE-REPRODUCED + RELAY-CONTRACT-CONFIRMED.** The replay
+failures are reproduced directly in the shipped WASM engine. The relay's real
+envelope check is exercised separately and accepts the relevant input shape. The
+repro does **not** perform the full sign → encrypt → upload → pull → replay
+round trip through a live relay; the end-to-end attack is inferred from the
+implementation, as marked below.
+
+- **(A) Poison.**
+  - REPRODUCED (engine): a Limited actor's device creates an item locally and
+    emits a `ResponsibilityChanged` for it; replaying the honest history plus
+    only that event fails with code 4 ("That household change is not valid").
+  - INFERRED FROM IMPLEMENTATION: in real sync the event would reach every
+    device. The relay validates envelope shape and routing only
+    (`server/sync-contract.mjs` `isEventEnvelopeValid`; `sync-service.mjs`
+    `validateEventEnvelope`). It never decrypts or inspects the payload, so it
+    cannot reject a domain-invalid event from a trusted device. Receiving
+    devices verify the signer, not replay validity, before `commitRemoteBatch`.
+    Relay events are deleted only by whole-household purge
+    (`durable-store.mjs` `purgeHouseholdData`), not on member removal or expiry,
+    so the event would persist.
+- **(C) Logical-time exhaustion.**
+  - REPRODUCED (engine): an event with `logicalTime = 2^64-2` is accepted by
+    replay (line C). An honest follow-up at that logical time is rejected (line
+    C2, code 4).
+  - REPRODUCED (relay contract): line D shows the server's real
+    `isEventEnvelopeValid` accepting `logicalTime` of 2^64-2, 2^64-1 and a
+    2^128-scale value. The check is digits-only (`server/sync-contract.mjs:38`).
+  - INFERRED FROM IMPLEMENTATION: after such an event is committed,
+    `commitRemoteBatch` sets `next_logical_time` to the maximum. The next local
+    write would need `2^64-1`, which `event-store.js:480–484` refuses with "Kin
+    has reached a supported event-order limit." on every device. The repro does
+    not drive the IndexedDB event store.
 
 **Expected:** a participant without trust authority cannot deny service to the
 whole household. The impact of one member's malformed or hostile events is
@@ -654,7 +680,7 @@ four runners above. They are not separate gates and are not counted.
 | Gate | Result |
 |---|---|
 | Server suite on Node 22.21.1 (declared supported floor ≥ 22.13) | FAIL: 242/251; 9 failures, all from the SQLite `ExperimentalWarning` on child stderr (P-001) |
-| Audit reproductions | B-001 to B-008 and P-002/P-003 reproduce; see `post-v0.38-repro/` |
+| Audit reproductions | B-001 to B-008 and P-002/P-003 reproduce; see `post-v0.38-repro/`. B-003 is engine-reproduced plus relay-contract-confirmed; it does not include a live relay round trip |
 
 ### UNVERIFIED — ENVIRONMENT
 

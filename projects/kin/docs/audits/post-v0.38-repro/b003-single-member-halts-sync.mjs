@@ -40,3 +40,12 @@ try {
     console.log("C2) honest event at equal logical time; final mode =", s2.mode, "(tie broken by device id)");
   } catch (e) { console.log("C2) honest follow-up rejected:", e.code, e.message); }
 } catch (e) { console.log("C) high logical time rejected:", e.code, e.message); }
+
+// D) Relay contract: the server's real envelope-shape check (server/sync-contract.mjs) for the
+// logical times used above. This exercises only the relay's opaque acceptance rule; it does not
+// sign, encrypt, upload or pull an event (no real relay round trip is performed here).
+const { isEventEnvelopeValid } = await import(pathToFileURL(KIN + "server/sync-contract.mjs").href);
+const b64u = (n) => Buffer.alloc(n, 7).toString("base64url");
+const envelope = (logicalTime) => ({ protocolVersion: 1, envelopeVersion: 1, eventId: "ab".repeat(16), householdId: "aa".repeat(16), deviceId: "02".repeat(16), deviceSequence: 1, logicalTime, keyEpoch: 1, nonce: b64u(12), ciphertext: b64u(64), signature: b64u(64) });
+for (const lt of [String(MAX - 1n), String(MAX), "340282366920938463463374607431768211455"])
+  console.log(`D) relay envelope contract accepts logicalTime=${lt}:`, isEventEnvelopeValid(envelope(lt)));
