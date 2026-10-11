@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 
-async function worker({ failPath, offline = false } = {}) {
-  const listeners = new Map(); const stored = new Map([['kin-static-v0.28.0', new Map([['/index.html', new Response('old')]])]]);
+async function worker({ failPath, offline = false, release = '0.38.2' } = {}) {
+  const listeners = new Map(); const stored = new Map([['kin-static-v0.38.1', new Map([['/index.html', new Response('old')]])]]);
   const clients = [{ postMessage() {} }];
   const cacheApi = {
     async open(name) { if (!stored.has(name)) stored.set(name, new Map()); const entries = stored.get(name); return { async put(key, value) { entries.set(key, value); }, async match(key) { return entries.get(key); }, async delete(key) { return entries.delete(key); } }; },
     async keys() { return [...stored.keys()]; }, async delete(name) { return stored.delete(name); },
   };
-  const self = { registration: { active: true }, clients: { async matchAll() { return clients; }, async claim() {} }, location: { origin: 'https://kin.test' }, addEventListener(type, callback) { listeners.set(type, callback); }, async skipWaiting() {} };
+  const self = { registration: { active: true }, clients: { async matchAll() { return clients; }, async claim() {} }, location: { origin: 'https://kin.test', href: `https://kin.test/service-worker.js?v=${release}` }, addEventListener(type, callback) { listeners.set(type, callback); }, async skipWaiting() {} };
   const context = { self, caches: cacheApi, URL, Response, Promise, fetch: async (request) => { const path = typeof request === 'string' ? request : new URL(request.url).pathname; if (offline || path === failPath) throw new Error('offline'); return new Response(`asset:${path}`); } };
   vm.runInNewContext(await readFile(new URL('./service-worker.js', import.meta.url), 'utf8'), context);
   return { listeners, stored };
@@ -19,16 +19,17 @@ async function worker({ failPath, offline = false } = {}) {
 test('complete new shell stages all assets while retaining prior cache until activation', async () => {
   const { listeners, stored } = await worker(); let install;
   listeners.get('install')({ waitUntil(value) { install = value; } }); await install;
-  const next = stored.get('kin-static-v0.34.0'); assert.ok(next.has('/reminders.js')); assert.ok(next.has('/wasm/kin_engine.wasm'));
-  assert.ok(stored.has('kin-static-v0.28.0'));
+  const next = stored.get('kin-static-v0.38.2'); assert.ok(next.has('/reminders.js')); assert.ok(next.has('/wasm/kin_engine.wasm'));
+  assert.ok(stored.has('kin-static-v0.38.1'));
   let activation; listeners.get('activate')({ waitUntil(value) { activation = value; } }); await activation;
-  assert.deepEqual([...stored.keys()], ['kin-static-v0.34.0']);
+  assert.deepEqual([...stored.keys()], ['kin-static-v0.38.2']);
 });
 
 test('failed shell staging leaves the known-good cache available', async () => {
   const { listeners, stored } = await worker({ failPath: '/index.html' }); let install;
   listeners.get('install')({ waitUntil(value) { install = value; } }); await assert.rejects(install);
-  assert.ok(stored.has('kin-static-v0.28.0'));
+  assert.ok(stored.has('kin-static-v0.38.1'));
+  assert.ok(!stored.has('kin-static-v0.38.2'));
 });
 
 test('manifest declares an installable local app shell', async () => {
@@ -39,7 +40,7 @@ test('manifest declares an installable local app shell', async () => {
 
 test('offline navigation falls back to the shell and API requests bypass the worker', async () => {
   const { listeners, stored } = await worker({ offline: true });
-  stored.set('kin-static-v0.34.0', new Map([['/index.html', new Response('offline-shell')]]));
+  stored.set('kin-static-v0.38.2', new Map([['/index.html', new Response('offline-shell')]]));
   let response; let called = false;
   listeners.get('fetch')({ request: { method: 'GET', url: 'https://kin.test/', mode: 'navigate' }, respondWith(value) { called = true; response = value; } });
   assert.equal((await response).status, 200); assert.equal(await (await response).text(), 'offline-shell');

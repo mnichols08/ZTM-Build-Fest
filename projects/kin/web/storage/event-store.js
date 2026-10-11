@@ -6,6 +6,7 @@ import {
 } from "./encrypted-idb.js";
 import { projectionContext } from "../browser-time.js";
 import { rotateEventProtection, resumeEventProtection } from "./root-rotation.js";
+import { MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "../attachments/attachment-crypto.js";
 
 const DATABASE_NAME = "kin";
 const DATABASE_VERSION = 4;
@@ -26,7 +27,8 @@ const SYNC_OUTBOX_STORE = "sync_outbox";
 const SYNC_BINDING_STORE = "sync_bindings";
 const CONTEXT_KEY = "installation";
 const MAX_EVENT_COUNT = 10_000;
-const MAX_LOGICAL_TIME = (1n << 64n) - 1n;
+// Must match rust/src/state.rs and server/sync-contract.mjs.
+const MAX_LOGICAL_TIME = 9_007_199_254_740_991n;
 
 export class EventStoreError extends Error {
   constructor(message, cause) {
@@ -35,6 +37,78 @@ export class EventStoreError extends Error {
     this.userMessage = message;
     this.code = cause?.code;
   }
+}
+
+export function validateAttachmentAggregate(records, candidate) {
+  const existing = records.find((row) => row.attachment_id === candidate.attachment_id);
+  const count = records.length + (existing ? 0 : 1);
+  const bytes = records.reduce((total, row) => total +
+    (row.attachment_id === candidate.attachment_id ? 0 : row.ciphertext?.byteLength ?? 0), 0) +
+    (candidate.ciphertext?.byteLength ?? existing?.ciphertext?.byteLength ?? 0);
+  if (count > MAX_HOUSEHOLD_ATTACHMENTS || bytes > MAX_HOUSEHOLD_ATTACHMENT_BYTES)
+    throw new EventStoreError("Kin reached its 50 MiB encrypted attachment limit.");
+}
+
+/** Admit only replayable remote events; return rejected ciphertext as a count
+ * so callers can advance the relay cursor and explain the quarantine. */
+export function reconcileRemoteEvents({ rows, received, engine, context, asOf, civilDate }) {
+  const byId = new Map(rows.map((row) => [idToHex(row.event_id), row]));
+  const additions = [];
+  const candidateRows = [...rows];
+  let quarantined = 0;
+  const projection = projectionContext();
+  const candidates = [];
+  for (const item of received) {
+    let canonical;
+    let candidate;
+    try {
+      canonical = asBytes(item.encodedEvent).slice();
+      candidate = eventRowFromCanonical(canonical);
+    } catch {
+      quarantined += 1;
+      continue;
+    }
+    candidates.push({ candidate, canonical });
+  }
+  candidates.sort((left, right) =>
+    left.candidate.logical_time < right.candidate.logical_time ? -1 :
+      left.candidate.logical_time > right.candidate.logical_time ? 1 :
+        compareByteArrays(left.candidate.device_id, right.candidate.device_id) ||
+        compareByteArrays(left.candidate.event_id, right.candidate.event_id),
+  );
+  for (const { candidate, canonical } of candidates) {
+    const eventId = idToHex(candidate.event_id);
+    const existing = byId.get(eventId);
+    if (existing) {
+      if (!bytesEqual(existing.encoded_event, canonical))
+        throw new EventStoreError("Kin found conflicting synchronized bytes for an existing event ID.");
+      continue;
+    }
+    try {
+      engine.applyEvents(
+        [...candidateRows, candidate].map((row) => row.encoded_event),
+        asOf ?? projection.asOf,
+        context.last_looked_event_id === null ? null : idToHex(context.last_looked_event_id),
+        civilDate ?? projection.civilDate,
+        syncIdentityFromContext(context),
+      );
+    } catch (error) {
+      if (error?.code !== 4) throw error;
+      quarantined += 1;
+      continue;
+    }
+    candidate.local_sequence = (rows.at(-1)?.local_sequence ?? 0) + additions.length + 1;
+    additions.push(candidate);
+    candidateRows.push(candidate);
+    byId.set(eventId, candidate);
+  }
+  return { additions, candidateRows, quarantined };
+}
+
+function compareByteArrays(left, right) {
+  for (let index = 0; index < Math.min(left.length, right.length); index += 1)
+    if (left[index] !== right[index]) return left[index] - right[index];
+  return left.length - right.length;
 }
 
 export class EventStore {
@@ -324,7 +398,7 @@ export class EventStore {
         try {
           const current = validateAttachmentRows(request.result);
           const existing = current.find((row) => row.attachment_id === validated.attachment_id);
-          if (!existing && (current.length >= 64 || current.reduce((sum, row) => sum + (row.ciphertext?.byteLength ?? 0), 0) + (validated.ciphertext?.byteLength ?? 0) > 50 * 1024 * 1024)) throw new EventStoreError("Kin reached its local attachment storage limit.");
+          validateAttachmentAggregate(current, validated);
           if (existing?.ciphertext && validated.ciphertext && (!bytesEqual(existing.ciphertext, validated.ciphertext) || existing.digest !== validated.digest || existing.keyEpoch !== validated.keyEpoch)) throw new EventStoreError("Kin found conflicting encrypted content for this attachment.");
           const row = existing ? { ...existing, ...validated, state: validated.ciphertext ? validated.state : existing.state } : validated;
           const put = store.put(row);
@@ -478,7 +552,7 @@ export class EventStore {
             );
 
           const logicalTime = BigInt(context.next_logical_time);
-          if (logicalTime <= 0n || logicalTime >= MAX_LOGICAL_TIME) {
+          if (logicalTime <= 0n || logicalTime > MAX_LOGICAL_TIME) {
             throw new EventStoreError(
               "Kin has reached a supported event-order limit. Your saved information was not deleted.",
             );
@@ -1589,26 +1663,11 @@ export class EventStore {
           if (cursorValue(nextCursor) < cursorValue(syncState.cursorHighWater))
             throw new EventStoreError("Kin rejected a sync cursor rollback.");
           validateCursorBoundary(context, rows);
-          const byId = new Map(rows.map((row) => [idToHex(row.event_id), row]));
-          const additions = [];
-          for (const item of received) {
-            const canonical = asBytes(item.encodedEvent).slice();
-            const candidate = eventRowFromCanonical(canonical);
-            const eventId = idToHex(candidate.event_id);
-            const existing = byId.get(eventId);
-            if (existing) {
-              if (!bytesEqual(existing.encoded_event, canonical))
-                throw new EventStoreError(
-                  "Kin found conflicting synchronized bytes for an existing event ID.",
-                );
-              continue;
-            }
-            candidate.local_sequence =
-              (rows.at(-1)?.local_sequence ?? 0) + additions.length + 1;
-            additions.push(candidate);
-            byId.set(eventId, candidate);
-          }
-          const candidateRows = [...rows, ...additions];
+          // Validate each event independently. One poison event advances the
+          // relay cursor without entering durable canonical history.
+          const { additions, candidateRows, quarantined } = reconcileRemoteEvents({
+            rows, received, engine, context, asOf, civilDate,
+          });
           validateEventRows(candidateRows);
           const { asOf: projectionAsOf, civilDate: projectionDate } =
             projectionContext();
@@ -1646,6 +1705,8 @@ export class EventStore {
               ? context.next_logical_time
               : maximumLogicalTime + 1n;
           syncState.maxLogicalTime = maximumLogicalTime;
+          syncState.quarantinedEventCount =
+            (syncState.quarantinedEventCount ?? 0) + quarantined;
           syncState.syncCursor = nextCursor;
           syncState.cursorHighWater = nextCursor;
           const contextWrite = contextStore.put(context);
@@ -1658,6 +1719,7 @@ export class EventStore {
           finish({
             state,
             added: additions.length,
+            quarantined,
             snapshotBoundary: tail
               ? {
                   eventId: idToHex(tail.event_id),
@@ -1899,7 +1961,7 @@ function validateAttachmentRows(rows) {
       if (bytes.length < 29 || bytes.length > 4 * 1024 * 1024 + 4096 || !Number.isSafeInteger(row.keyEpoch) || row.keyEpoch < 1 || row.keyEpoch > 128 || !/^[a-f0-9]{64}$/.test(row.digest ?? "")) throw new EventStoreError("Kin found an attachment outside its supported size.");
       total += bytes.length;
     } else if (!row.localSealed || row.keyEpoch !== null || row.digest !== null) throw new EventStoreError("Kin found an attachment without protected local content.");
-    if (total > 50 * 1024 * 1024) throw new EventStoreError("Kin found attachment data above the household storage limit.");
+    if (total > MAX_HOUSEHOLD_ATTACHMENT_BYTES) throw new EventStoreError("Kin found attachment data above the 50 MiB household storage limit.");
     ids.add(row.attachment_id);
   }
   return rows;
@@ -2015,7 +2077,7 @@ function validateContext(context, { allowUninitialized = false } = {}) {
     !isId(context.device_id) ||
     typeof context.next_logical_time !== "bigint" ||
     context.next_logical_time < 1n ||
-    context.next_logical_time > MAX_LOGICAL_TIME
+    context.next_logical_time > MAX_LOGICAL_TIME + 1n
   ) {
     throw new EventStoreError(
       "Kin found invalid local household identity data. The stored data was preserved.",

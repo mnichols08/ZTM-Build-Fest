@@ -384,7 +384,7 @@ class KinSecurity extends HTMLElement {
       event.preventDefault();
       const selected = file.files[0]; const secret = recovery.value; recovery.value = "";
       void this.run(async (operation) => {
-        if (!selected || selected.size > 64 * 1024 * 1024) throw new Error("Choose a Kin archive smaller than 64 MiB.");
+        if (!selected || selected.size > 160 * 1024 * 1024) throw new Error("Choose a Kin archive no larger than 160 MiB.");
         const app = this.closest("kin-app");
         const engine = app.engine, vault = getActiveVault();
         const bytes = new Uint8Array(await selected.arrayBuffer());

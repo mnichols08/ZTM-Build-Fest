@@ -633,18 +633,41 @@ async function api(request, response, url, context) {
     json(response, 200, { devices: service.listDevices(session) });
     return;
   }
-  const deviceMatch = url.pathname.match(/^\/api\/devices\/([a-f0-9]{32})$/);
-  if (request.method === "DELETE" && deviceMatch) {
-    const target = service.devices.get(deviceMatch[1]);
+  const revokeOptionsMatch = url.pathname.match(/^\/api\/devices\/([a-f0-9]{32})\/revocation\/options$/);
+  if (request.method === "POST" && revokeOptionsMatch) {
+    const revocation = service.deviceRevocationContext(session, revokeOptionsMatch[1]);
+    const flow = createFlow({
+      purpose: "revoke-device",
+      targetDeviceId: revokeOptionsMatch[1],
+      memberId: revocation.memberId,
+      deviceId: revocation.deviceId,
+    }, context);
+    json(response, 200, { flow, publicKey: webauthn.authenticationOptions(flow, revocation.credentialIds) });
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/devices/revocation/finish") {
+    const flow = consumeFlow(body.flow, context);
+    if (flow.purpose !== "revoke-device") throw badRequest();
+    const auth = service.authorize(session);
+    if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id)
+      throw badRequest();
+    const credential = service.credentials.get(body.credential?.id);
+    if (!credential || credential.memberId !== auth.member.id)
+      throw new PairingError("passkey_member_mismatch", "Use this Adult's passkey to continue.", 401);
+    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    const target = service.devices.get(flow.targetDeviceId);
     const alreadyRevoked = Boolean(target?.revokedAt);
     const result = withTransaction(context, () => {
-      const revoked = service.revokeDevice(session, deviceMatch[1]);
-      if (target && !alreadyRevoked)
-        syncService.onAccessChange(target.householdId, [target.id]);
+      const revoked = service.revokeDevice(session, flow.targetDeviceId, auth.member.id);
+      if (target && !alreadyRevoked) syncService.onAccessChange(target.householdId, [target.id]);
       return revoked;
     });
     json(response, 200, result);
     return;
+  }
+  const deviceMatch = url.pathname.match(/^\/api\/devices\/([a-f0-9]{32})$/);
+  if (request.method === "DELETE" && deviceMatch) {
+    throw new PairingError("fresh_auth_required", "Authenticate with your passkey before revoking a device.", 401);
   }
   if (request.method === "POST" && url.pathname === "/api/sync/device-keys/successor") {
     const auth = service.authorize(session);

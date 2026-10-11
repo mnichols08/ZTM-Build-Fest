@@ -24,6 +24,8 @@ import {
   MAX_BINDINGS,
   MAX_HOUSEHOLD_EVENTS,
   MAX_KEY_EPOCHS,
+  MAX_LOGICAL_TIME,
+  MAX_LOGICAL_TIME_ADVANCE,
 } from "./sync-contract.mjs";
 import { MAX_ACTIVE_ADULTS, MAX_ACTIVE_LIMITED_MEMBERS, MAX_ACTIVE_MEMBERS, MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
 import {
@@ -1625,6 +1627,25 @@ export class DurableStore {
   eventCount(householdId) {
     this.assertAvailable();
     return this.statements.countEvents.get(householdId).count;
+  }
+
+  maxLogicalTime(householdId) {
+    this.assertAvailable();
+    if (!isId(householdId)) throw new DurableStoreError("Kin synchronization data is invalid.");
+    let maximum = 0n;
+    const rows = this.db.prepare(
+      "SELECT canonical_envelope FROM sync_events WHERE household_id = ? ORDER BY relay_sequence",
+    ).all(householdId);
+    for (const row of rows) {
+      const envelope = parseStoredJson(row.canonical_envelope);
+      if (typeof envelope?.logicalTime !== "string" || envelope.logicalTime.length > 16 || !/^(0|[1-9][0-9]*)$/.test(envelope.logicalTime)) continue;
+      const value = BigInt(envelope.logicalTime);
+      // Old relay rows that predate the bound remain readable, but never
+      // influence the clock used for new accepted events.
+      if (value === 0n || value > MAX_LOGICAL_TIME || value - maximum > MAX_LOGICAL_TIME_ADVANCE) continue;
+      if (value > maximum) maximum = value;
+    }
+    return maximum.toString();
   }
 
   commitEvents(

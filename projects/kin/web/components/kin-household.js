@@ -389,7 +389,10 @@ class KinHousehold extends HTMLElement {
       );
       this.button("Check sync", () => this.requestSync(), "secondary");
     } else {
-      this.button("Enable device sync", () => this.enableSync());
+      if (this.syncStatus?.memberKind === "adult")
+        this.button("Enable device sync", () => this.enableSync());
+      else
+        this.text("Device sync is off. Ask a household Adult to enable it.");
     }
     if (!this.pairing) {
       if (this.syncStatus?.memberKind === "adult" && !this.syncKeyError) {
@@ -921,14 +924,23 @@ class KinHousehold extends HTMLElement {
             );
           item.append(
             this.makeButton(
-              "Revoke device",
-              async () => {
-                await this.api(`/api/devices/${device.id}`, {
-                  method: "DELETE",
-                  body: "{}",
+              `Revoke ${device.label}`,
+              () => this.run(async () => {
+                if (!confirm(`Revoke ${device.label}? That device will lose future household access. Copies already saved there cannot be erased.`)) return;
+                const started = await this.api(`/api/devices/${device.id}/revocation/options`, {
+                  method: "POST", body: "{}",
+                });
+                this.message(`Confirm revoking ${device.label} with your passkey.`);
+                const credential = await navigator.credentials.get({
+                  publicKey: authenticationOptions(started.publicKey),
+                  signal: this.connectionAbort.signal,
+                });
+                await this.api("/api/devices/revocation/finish", {
+                  method: "POST",
+                  body: JSON.stringify({ flow: started.flow, credential: credentialJson(credential) }),
                 });
                 await this.showDevices();
-              },
+              }),
               "danger",
             ),
           );

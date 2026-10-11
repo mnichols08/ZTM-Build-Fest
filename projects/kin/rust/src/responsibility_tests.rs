@@ -121,6 +121,54 @@ fn item_and_routine_responsibility_take_handoff_clear_and_replay() {
 }
 
 #[test]
+fn responsibility_racing_with_archive_is_a_stable_noop() {
+    let date = CivilDate::from_encoded(20261009).unwrap();
+    let item_id = ItemId([0x44; 16]);
+    let base = vec![
+        execute(
+            &C::AddItem {
+                id: item_id,
+                text: "Bins".into(),
+                classification: ItemClassification::Need,
+            },
+            context(1, 1, 1),
+            request(vec![], PROTOCOL_V23),
+        )
+        .unwrap()
+        .event,
+    ];
+    let archive = execute(
+        &C::ArchiveItem(item_id),
+        context(2, 1, 2),
+        request(base.clone(), PROTOCOL_V23),
+    )
+    .unwrap()
+    .event;
+    let assignment = execute(
+        &C::ChangeResponsibility {
+            target_kind: ResponsibilityTargetKind::Item,
+            target_id: item_id.0,
+            member_id: Some(ActorId([3; 16])),
+        },
+        context(3, 2, 2),
+        request(base.clone(), PROTOCOL_V23),
+    )
+    .unwrap()
+    .event;
+    let events = [base[0].clone(), archive, assignment];
+    let forward = crate::state::rebuild_distributed_on(&events, 1_791_475_200_100, date).unwrap();
+    let reverse = crate::state::rebuild_distributed_on(
+        &events.into_iter().rev().collect::<Vec<_>>(),
+        1_791_475_200_100,
+        date,
+    )
+    .unwrap();
+    assert_eq!(forward, reverse);
+    assert_eq!(forward.items[0].status, crate::state::ItemStatus::Archived);
+    assert!(forward.responsibilities.is_empty());
+}
+
+#[test]
 fn responsibility_concurrent_assignments_converge_by_event_order_and_archive_rejects_commands() {
     let mut base = vec![];
     append(

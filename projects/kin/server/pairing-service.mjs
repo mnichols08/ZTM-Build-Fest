@@ -1442,11 +1442,7 @@ export class PairingService {
         "This household member is no longer active.",
         403,
       );
-    const hasTrustedAdult = [...household.members].some((memberId) => {
-      if (memberId === member.id) return false;
-      const other = this.members.get(memberId);
-      return other?.active && canManageTrust(other, this.now());
-    });
+    const hasTrustedAdult = this.hasOtherUsableTrustedAdult(household, member.id);
     if (!hasTrustedAdult)
       throw new PairingError(
         "last_adult",
@@ -1490,7 +1486,36 @@ export class PairingService {
     const household = this.households.get(
       this.members.get(context.memberId).householdId,
     );
+    const target = this.members.get(memberId);
+    if (canManageTrust(target, this.now()) && !this.hasOtherUsableTrustedAdult(household, memberId))
+      throw new PairingError("last_adult", "Keep another Adult with a usable trusted device and passkey before removing this Adult.", 409);
     return this.removeMembership(household, memberId, context.memberId);
+  }
+
+  hasUsableTrustedDevice(memberId) {
+    return [...this.devices.values()].some((device) =>
+      device.memberId === memberId && !device.revokedAt,
+    );
+  }
+
+  hasOtherUsableTrustedAdult(household, excludingMemberId) {
+    return [...household.members].some((memberId) => {
+      if (memberId === excludingMemberId) return false;
+      const other = this.members.get(memberId);
+      return other?.active && canManageTrust(other, this.now()) &&
+        other.credentials?.size > 0 && this.hasUsableTrustedDevice(other.id);
+    });
+  }
+
+  deviceRevocationContext(sessionToken, deviceId) {
+    const { member, household, device: actingDevice } = this.authorize(sessionToken);
+    requireTrustAuthority(member, "revoke a trusted device");
+    const target = this.devices.get(deviceId);
+    if (!target || target.householdId !== household.id)
+      throw new PairingError("not_found", "That device is unavailable.", 404);
+    if (target.id === actingDevice.id)
+      throw new PairingError("current_device", "Use another trusted device to revoke this device.", 409);
+    return { memberId: member.id, deviceId: actingDevice.id, credentialIds: [...member.credentials] };
   }
 
   removeMembership(household, memberId, actorId) {
@@ -1537,9 +1562,11 @@ export class PairingService {
     return { memberId, removed: true };
   }
 
-  revokeDevice(sessionToken, deviceId) {
+  revokeDevice(sessionToken, deviceId, reauthenticatedMemberId) {
     const { member, household, device: actingDevice } = this.authorize(sessionToken);
     requireTrustAuthority(member, "revoke a trusted device");
+    if (reauthenticatedMemberId !== member.id)
+      throw new PairingError("fresh_auth_required", "Authenticate with your passkey again before revoking a device.", 401);
     const device = this.devices.get(deviceId);
     if (!device || device.householdId !== household.id)
       throw new PairingError("not_found", "That device is unavailable.", 404);

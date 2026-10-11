@@ -1,7 +1,9 @@
 // Browser capabilities only. Canonical household interpretation remains in Rust.
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
-const MAX_VALUE_BYTES = 64 * 1024 * 1024;
+// Leaves bounded room for a full 50 MiB encrypted attachment set plus event
+// history and the archive's authenticated framing overhead.
+const MAX_VALUE_BYTES = 160 * 1024 * 1024;
 const MAX_WRAPPERS = 16;
 let activeVault = null;
 let nextGeneration = 1;
@@ -322,7 +324,7 @@ export function serializeProtectedValue(value) {
     throw new VaultError("The protected record contains an unsupported value.");
   }
   const bytes = encoder.encode(JSON.stringify(pack(value)));
-  if (bytes.length > MAX_VALUE_BYTES) throw new VaultError("The protected record is too large.");
+  if (bytes.length > MAX_VALUE_BYTES) throw new VaultError("This Kin archive exceeds the 160 MiB export limit.");
   return bytes;
 }
 

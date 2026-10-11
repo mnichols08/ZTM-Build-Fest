@@ -1,6 +1,10 @@
 // Only source-controlled static shell assets are eligible for this cache.
 // API, archives, projections, drafts and keys never pass through Cache.put.
-const CACHE = "kin-static-v0.34.0";
+// index.html supplies the current release in the registration URL. The old
+// active worker keeps its own version while the new worker stages separately.
+const RELEASE = new URL(self.location.href).searchParams.get("v");
+if (!/^\d+\.\d+\.\d+$/.test(RELEASE ?? "")) throw new Error("Kin service worker release is missing.");
+const CACHE = `kin-static-v${RELEASE}`;
 const SHELL = [
   "/", "/index.html", "/styles/app.css", "/manifest.webmanifest", "/icon.svg",
   "/browser-time.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin_engine.wasm",
@@ -16,7 +20,11 @@ self.addEventListener("install", (event) => {
   // Cache each public shell asset independently. A missing build artifact must
   // not leave the previous worker unusable or make online launch fail.
   const replacingWorker = Boolean(self.registration.active);
-  event.waitUntil(caches.open(CACHE).then(async (cache) => {
+  event.waitUntil((async () => {
+    if ((await caches.keys()).includes(CACHE))
+      throw new Error("Kin release cache already exists; a changed shell needs a new release version.");
+    const cache = await caches.open(CACHE);
+    try {
     const results = await Promise.allSettled(SHELL.map(async (path) => {
       const response = await fetch(path, { cache: "reload" });
       if (!response.ok || response.type === "opaque") throw new Error("Shell asset unavailable");
@@ -30,7 +38,11 @@ self.addEventListener("install", (event) => {
       for (const client of await self.clients.matchAll({ type: "window" }))
         client.postMessage({ type: "KIN_UPDATE_READY" });
     }
-  }));
+    } catch (error) {
+      await caches.delete(CACHE);
+      throw error;
+    }
+  })());
 });
 self.addEventListener("message", (event) => {
   if (event.data?.type === "KIN_SKIP_WAITING") void self.skipWaiting();

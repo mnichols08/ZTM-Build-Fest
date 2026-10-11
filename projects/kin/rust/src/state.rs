@@ -103,6 +103,11 @@ pub struct AttachmentState {
     pub removed: bool,
 }
 pub const MAX_ATTACHMENTS: usize = 256;
+/// Logical time is interoperable with JavaScript safe integers. A single event
+/// may advance the observed clock by at most this amount, so one authenticated
+/// event cannot strand future local writes near the protocol ceiling.
+pub const MAX_LOGICAL_TIME: u64 = 9_007_199_254_740_991;
+pub const MAX_LOGICAL_TIME_ADVANCE: u64 = 1_000_000;
 pub const MAX_MAINTENANCE_EVENTS_PER_RECORD: usize = 64;
 pub const MAX_MAINTENANCE_SUMMARY_BYTES: usize = 240;
 pub fn normalize_maintenance_summary(summary: &str) -> Result<String, KinError> {
@@ -514,7 +519,10 @@ fn rebuild_with_context(
             household_id = Some(event.household_id);
         }
 
-        if event.logical_time < last_logical_time
+        if event.logical_time == 0
+            || event.logical_time > MAX_LOGICAL_TIME
+            || event.logical_time.saturating_sub(last_logical_time) > MAX_LOGICAL_TIME_ADVANCE
+            || event.logical_time < last_logical_time
             || (!allow_equal_logical_time && event.logical_time == last_logical_time)
         {
             return Err(KinError::InvalidEvent);
@@ -1203,6 +1211,29 @@ fn rebuild_with_context(
                         .is_some_and(|i| !routines[*i].archived),
                 };
                 if !active {
+                    // An assignment racing with archive/removal is terminally
+                    // ignored. It must not poison replay on every device.
+                    let archived_target = match target_kind {
+                        ResponsibilityTargetKind::Item => item_positions
+                            .get(&crate::event::ItemId(*target_id))
+                            .is_some_and(|i| items[*i].status == ItemStatus::Archived),
+                        ResponsibilityTargetKind::Routine => routine_positions
+                            .get(&RoutineId(*target_id))
+                            .is_some_and(|i| routines[*i].archived),
+                    };
+                    let archived_by_another_device = match target_kind {
+                        ResponsibilityTargetKind::Item => item_archives
+                            .get(&crate::event::ItemId(*target_id))
+                            .is_some_and(|(_, device)| *device != event.device_id),
+                        ResponsibilityTargetKind::Routine => routine_archives
+                            .get(&RoutineId(*target_id))
+                            .is_some_and(|(_, device)| *device != event.device_id),
+                    };
+                    if archived_target && archived_by_another_device {
+                        last_logical_time = event.logical_time;
+                        event_bytes.insert(event.event_id, event.canonical_bytes.clone());
+                        continue;
+                    }
                     return Err(KinError::InvalidEvent);
                 }
                 if let Some(existing) = responsibilities.iter_mut().find(|entry| {
@@ -1334,11 +1365,13 @@ fn rebuild_with_context(
                     }
                     ItemStatus::Completed => {}
                     ItemStatus::Archived => {
-                        if !is_concurrent_terminal_conflict(
-                            allow_equal_logical_time,
-                            item_archives.get(item_id).copied(),
-                            event,
-                        ) {
+                        if item_archives
+                            .get(item_id)
+                            .is_some_and(|(_, device)| *device != event.device_id)
+                        {
+                            // A different device may have authored this while
+                            // offline; archive wins without poisoning replay.
+                        } else {
                             return Err(KinError::InvalidEvent);
                         }
                     }
@@ -1356,11 +1389,13 @@ fn rebuild_with_context(
                         items[position].last_changed_at = event.timestamp;
                     }
                     ItemStatus::Archived => {
-                        if !is_concurrent_terminal_conflict(
-                            allow_equal_logical_time,
-                            item_archives.get(item_id).copied(),
-                            event,
-                        ) {
+                        if item_archives
+                            .get(item_id)
+                            .is_some_and(|(_, device)| *device != event.device_id)
+                        {
+                            // A different device may have authored this while
+                            // offline; archive wins without poisoning replay.
+                        } else {
                             return Err(KinError::InvalidEvent);
                         }
                     }
@@ -2132,5 +2167,53 @@ mod tests {
             added(2, 2, 0x22, "Restock wipes"),
         ];
         assert_eq!(rebuild(&events), Err(KinError::InvalidEvent));
+    }
+
+    #[test]
+    fn archived_item_mutations_are_terminal_noops_and_replay_is_order_independent() {
+        let item_id = ItemId(id(0x11));
+        let mut archive = event(2, 2, EventKind::ItemArchived { item_id });
+        archive.device_id = DeviceId(id(1));
+        let mut add_other = added(3, 2, 0x22, "Buy milk");
+        add_other.device_id = DeviceId(id(2));
+        let mut stale_complete = event(4, 3, EventKind::ItemCompleted { item_id });
+        stale_complete.device_id = DeviceId(id(2));
+        let mut stale_reopen = event(5, 4, EventKind::ItemReopened { item_id });
+        stale_reopen.device_id = DeviceId(id(2));
+        let events = [
+            added(1, 1, 0x11, "Bins"),
+            archive,
+            add_other,
+            stale_complete,
+            stale_reopen,
+        ];
+        let forward =
+            rebuild_distributed_on(&events, 0, CivilDate::from_encoded(20261009).unwrap()).unwrap();
+        let reverse = rebuild_distributed_on(
+            &events.into_iter().rev().collect::<Vec<_>>(),
+            0,
+            CivilDate::from_encoded(20261009).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(forward, reverse);
+        assert_eq!(forward.items[0].status, ItemStatus::Archived);
+        assert_eq!(forward.items.len(), 2);
+    }
+
+    #[test]
+    fn logical_time_has_a_shared_ceiling_and_bounded_advance() {
+        let mut above = added(1, MAX_LOGICAL_TIME + 1, 0x11, "Milk");
+        assert_eq!(rebuild(&[above.clone()]), Err(KinError::InvalidEvent));
+        above.logical_time = MAX_LOGICAL_TIME_ADVANCE + 1;
+        assert_eq!(rebuild(&[above.clone()]), Err(KinError::InvalidEvent));
+        above.logical_time = MAX_LOGICAL_TIME_ADVANCE;
+        let mut next = added(2, MAX_LOGICAL_TIME_ADVANCE + 1, 0x22, "Bread");
+        next.device_id = DeviceId(id(2));
+        assert!(rebuild_distributed_on(
+            &[above, next],
+            0,
+            CivilDate::from_encoded(20261009).unwrap()
+        )
+        .is_ok());
     }
 }

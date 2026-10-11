@@ -96,7 +96,7 @@ test("too many non-revoked devices fail identity load and startup", (t) => {
   for (let index = 1; index < MAX_TRUSTED_DEVICES; index += 1)
     devices.push(f.joinMember(`device-${index}`, "device"));
   const revoked = devices[0];
-  f.pairing.revokeDevice(f.adult.sessionToken, revoked.deviceId);
+  f.pairing.revokeDevice(f.adult.sessionToken, revoked.deviceId, f.adult.memberId);
   f.joinMember("replacement-device", "device");
   assert.equal(f.store.validate(), true);
   f.store.db.exec("DROP TRIGGER devices_active_limit_update");
@@ -284,7 +284,7 @@ test(`retained approval certificates with ${noncanonicalSignature ? "noncanonica
     );
     f.pairing.transitionSyncPublicKeys(identity.sessionToken, transition);
   }
-  f.pairing.revokeDevice(recipient.sessionToken, f.adult.deviceId);
+  f.pairing.revokeDevice(recipient.sessionToken, f.adult.deviceId, recipient.memberId);
   assert.equal(f.store.validate(), true);
   const peer = new DurableStore(f.databasePath, { acquireProcessLock: false });
   try {

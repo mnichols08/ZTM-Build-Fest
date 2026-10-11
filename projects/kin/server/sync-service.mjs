@@ -10,6 +10,7 @@ import {
   MAX_BINDINGS,
   MAX_HOUSEHOLD_EVENTS,
   MAX_KEY_EPOCHS,
+  MAX_LOGICAL_TIME_ADVANCE,
   MAX_ROTATION_PACKAGES,
 } from "./sync-contract.mjs";
 
@@ -81,6 +82,7 @@ export class EncryptedSyncService {
 
   enable(sessionToken) {
     const auth = this.authorize(sessionToken);
+    requireTrustAuthority(auth.member, "enable household sync");
     const state = this.state(auth.household.id);
     state.enabled = true;
     auth.device.syncProvisionedEpochs ??= [state.currentEpoch];
@@ -111,6 +113,7 @@ export class EncryptedSyncService {
     const staged = [];
     const seen = new Map();
     const nextDeviceSequence = new Map(state.deviceSequence);
+    let maxLogicalTime = BigInt(state.maxLogicalTime ?? 0);
     let requestBytes = 0;
     for (const envelope of envelopes) {
       validateEventEnvelope(envelope, auth, state.currentEpoch);
@@ -135,6 +138,14 @@ export class EncryptedSyncService {
           );
         continue;
       }
+      const logicalTime = BigInt(envelope.logicalTime);
+      if (logicalTime - maxLogicalTime > MAX_LOGICAL_TIME_ADVANCE)
+        throw new PairingError(
+          "logical_time_invalid",
+          "That household change is outside Kin's supported event-order range.",
+          400,
+        );
+      if (logicalTime > maxLogicalTime) maxLogicalTime = logicalTime;
       const previousSequence = nextDeviceSequence.get(auth.device.id) ?? 0;
       if (envelope.deviceSequence !== previousSequence + 1)
         throw new PairingError(
@@ -188,6 +199,9 @@ export class EncryptedSyncService {
     state.nextSequence += staged.length;
     state.deviceSequence = nextDeviceSequence;
     state.eventCount += staged.length;
+    // Keep the cached clock serializable: household state is also inspected by
+    // diagnostics and tests that JSON-encode it.
+    state.maxLogicalTime = maxLogicalTime.toString();
     return {
       accepted: envelopes.length,
       latestCursor: encodeCursor(state.nextSequence - 1),
@@ -741,6 +755,15 @@ export class EncryptedSyncService {
             lastRotation: null,
             grantRequests: new Map(),
           };
+      if (state.maxLogicalTime == null) {
+        const maximum = this.store
+          ? this.store.maxLogicalTime(householdId)
+          : state.records.reduce((maximum, record) => {
+              const value = BigInt(record.envelope.logicalTime);
+              return value > maximum && value - maximum <= MAX_LOGICAL_TIME_ADVANCE ? value : maximum;
+            }, 0n);
+        state.maxLogicalTime = maximum.toString();
+      }
       this.households.set(householdId, state);
     }
     return state;

@@ -269,6 +269,7 @@ export class SyncCoordinator {
     await this.pushIdentityBindings();
     await this.pushPendingEvents();
     let passes = 0;
+    let quarantinedEvents = 0;
     let hasMore = true;
     while (hasMore && passes < MAX_PULL_PASSES) {
       const syncStateBefore = await this.store.getSyncState();
@@ -321,9 +322,12 @@ export class SyncCoordinator {
         nextCursor: page.nextCursor,
         engine: this.engine,
       });
+      quarantinedEvents += committed.quarantined ?? 0;
       this.onState({
         state: "syncing",
-        message: committed.added
+        message: committed.quarantined
+          ? "Some trusted-device changes could not be applied. Ask a household Adult to review this device."
+          : committed.added
           ? "Household changes received."
           : "Device sync is up to date.",
         projection: committed.state,
@@ -344,7 +348,9 @@ export class SyncCoordinator {
     this.onState({
       state: hasMore ? "syncing" : "ready",
       memberIds: activeResponsibilityMemberIds(devices),
-      message: hasMore
+      message: quarantinedEvents
+        ? "Some trusted-device changes could not be applied. Ask a household Adult to review this device."
+        : hasMore
         ? "Sync will continue in the background."
         : "Device sync is up to date.",
     });

@@ -118,11 +118,14 @@ test("HTTP sync operations require an active session and revoked devices cannot 
       envelope.eventId,
     );
 
-    const revoked = await call(`/api/devices/${other.deviceId}`, {
+    const sessionOnlyRevoke = await call(`/api/devices/${other.deviceId}`, {
       method: "DELETE",
       body: {},
     });
-    assert.equal(revoked.status, 200);
+    assert.equal(sessionOnlyRevoke.status, 401);
+    assert.equal(service.devices.get(other.deviceId).revokedAt, null);
+    service.revokeDevice(adult.sessionToken, other.deviceId, adult.memberId);
+    app.syncService.onAccessChange(adult.householdId, [other.deviceId]);
     const status = await (await call("/api/sync/status")).json();
     assert.equal(status.rotationPending, true);
     assert.equal(status.pendingEpoch, 2);

@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { PairingService } from "./pairing-service.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
+import { isEventEnvelopeValid } from "./sync-contract.mjs";
+import { MAX_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENT_BYTES } from "./durable-store.mjs";
 
 const credential = (id) => ({ id, publicKey: `key-${id}`, algorithm: -7 });
 
@@ -33,6 +35,45 @@ function makeEnvelope(adult, overrides = {}) {
   };
 }
 
+test("relay enforces bounded interoperable logical time", () => {
+  const { adult } = fixture();
+  const base = makeEnvelope(adult);
+  assert.equal(isEventEnvelopeValid(base), true);
+  assert.equal(isEventEnvelopeValid({ ...base, logicalTime: "9007199254740991" }), true);
+  for (const logicalTime of ["9007199254740992", "18446744073709551614", "340282366920938463463374607431768211455", "9".repeat(1000)])
+    assert.equal(isEventEnvelopeValid({ ...base, logicalTime }), false);
+});
+
+test("relay caps a single logical-time jump while permitting the next valid write", () => {
+  const { adult, sync } = fixture();
+  sync.enable(adult.sessionToken);
+  assert.throws(
+    () => sync.push(adult.sessionToken, [makeEnvelope(adult, { logicalTime: "1000001" })]),
+    (error) => error.code === "logical_time_invalid",
+  );
+  assert.equal(sync.push(adult.sessionToken, [makeEnvelope(adult, { logicalTime: "1000000" })]).accepted, 1);
+  assert.equal(sync.push(adult.sessionToken, [makeEnvelope(adult, {
+    eventId: "b".repeat(32), deviceSequence: 2, logicalTime: "1000001",
+  })]).accepted, 1);
+});
+
+test("only Adults may enable sync, while active Limited and Temporary members may participate", () => {
+  const { pairing, adult, sync } = fixture();
+  const admit = (kind, suffix, options = {}) => {
+    const invitation = pairing.createPairing(adult.sessionToken, { kind, ...options });
+    const claim = pairing.claimPairing({ code: invitation.code, credential: credential(suffix), deviceLabel: suffix });
+    pairing.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
+    return pairing.activateClaim(claim.claimToken);
+  };
+  const limited = admit("limited", "limited-enable");
+  const temporary = admit("temporary", "temporary-enable", { expiresAt: Date.now() + 60_000 });
+  assert.throws(() => sync.enable(limited.sessionToken), (error) => error.code === "adult_required");
+  assert.throws(() => sync.enable(temporary.sessionToken), (error) => error.code === "adult_required");
+  assert.deepEqual(sync.enable(adult.sessionToken), { enabled: true });
+  assert.equal(sync.status(limited.sessionToken).enabled, true);
+  assert.equal(sync.status(temporary.sessionToken).enabled, true);
+});
+
 test("attachment relay is opaque, authorized, idempotent, integrity checked, and removable", () => {
   const { adult, sync } = fixture();
   sync.enable(adult.sessionToken);
@@ -60,6 +101,26 @@ test("a queued attachment from a previously provisioned epoch can upload after k
   const row = { attachmentId: "d".repeat(32), keyEpoch: 1, ciphertext, digest };
   assert.deepEqual(sync.pushAttachment(adult.sessionToken, row), { accepted: true, size: 64, digest });
   assert.deepEqual(sync.pushAttachment(adult.sessionToken, row), { accepted: false, size: 64, digest });
+});
+
+test("relay accepts the exact bounded attachment aggregate and rejects the next byte", () => {
+  const { adult, sync } = fixture();
+  sync.enable(adult.sessionToken);
+  const sizes = [...Array(12).fill(MAX_ATTACHMENT_BYTES), MAX_HOUSEHOLD_ATTACHMENT_BYTES - 12 * MAX_ATTACHMENT_BYTES - 29, 29];
+  for (let index = 0; index < sizes.length; index += 1) {
+    const ciphertext = Buffer.alloc(sizes[index], index + 1);
+    const digest = createHash("sha256").update(ciphertext).digest("hex");
+    assert.equal(sync.pushAttachment(adult.sessionToken, {
+      attachmentId: (index + 1).toString(16).padStart(32, "0"), keyEpoch: 1, ciphertext, digest,
+    }).accepted, true);
+  }
+  assert.throws(() => {
+    const ciphertext = Buffer.alloc(29, 9);
+    sync.pushAttachment(adult.sessionToken, {
+      attachmentId: "f".repeat(32), keyEpoch: 1, ciphertext,
+      digest: createHash("sha256").update(ciphertext).digest("hex"),
+    });
+  }, (error) => error.code === "attachment_limit");
 });
 
 function makeBindings(adult, count, start = 1) {

@@ -130,7 +130,7 @@ test("the final trusted adult cannot leave when only limited or temporary member
       householdId,
       active: true,
       kind: "adult",
-      credentials: new Set(),
+      credentials: new Set(["credential-a"]),
     });
     service.devices.set(adultDeviceId, {
       id: adultDeviceId,
@@ -173,9 +173,13 @@ test("the final trusted adult cannot leave when only limited or temporary member
         householdId,
         active: true,
         kind: "adult",
-        credentials: new Set(),
+        credentials: new Set([`credential-${index}`]),
       });
       service.households.get(householdId).members.add(memberId);
+      service.devices.set(`device-${index}`.padStart(32, "0"), {
+        id: `device-${index}`.padStart(32, "0"), memberId, householdId,
+        label: "another Adult device", trustedAt: 1_000, revokedAt: null,
+      });
     }
 
     if (expected === "last_adult") {
@@ -187,6 +191,23 @@ test("the final trusted adult cannot leave when only limited or temporary member
       assert.equal(service.leaveHousehold(adultSessionToken, adultId).removed, true);
     }
   }
+});
+
+test("last Adult safety requires another active Adult with credentials and an unrevoked device", () => {
+  const { service, adult } = setup();
+  const invitation = service.createPairing(adult.sessionToken);
+  const claim = service.claimPairing({ code: invitation.code, credential: credential("last-adult-b"), deviceLabel: "B phone" });
+  service.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
+  const other = service.activateClaim(claim.claimToken);
+  service.revokeDevice(adult.sessionToken, other.deviceId, adult.memberId);
+  assert.throws(
+    () => service.leaveHousehold(adult.sessionToken, adult.memberId),
+    (error) => error.code === "last_adult",
+  );
+  assert.throws(
+    () => service.reauthenticate(other.deviceToken, "credential-last-adult-b"),
+    (error) => error.code === "device_not_trusted",
+  );
 });
 
 test("expired temporary members lose session access even when the device remains trusted", () => {
@@ -752,6 +773,35 @@ test("HTTP member removal requires fresh action-bound passkey proof", async () =
   } finally {
     await server.close();
   }
+});
+
+test("HTTP device revocation requires fresh Adult passkey proof and is target-bound", async () => {
+  const service = new PairingService({ secret: Buffer.alloc(32, 21) });
+  const adult = service.bootstrap({ credential: credential("revoke-adult"), deviceLabel: "Adult phone" });
+  const invitation = service.createPairing(adult.sessionToken);
+  const claim = service.claimPairing({ code: invitation.code, credential: credential("revoke-other"), deviceLabel: "Kitchen tablet" });
+  service.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
+  const other = service.activateClaim(claim.claimToken);
+  const server = await startTestServer({ service });
+  const cookie = `kin_session=${adult.sessionToken}`;
+  try {
+    const direct = await apiRequest(server, `/api/devices/${other.deviceId}`, { method: "DELETE", cookie, body: {} });
+    assert.equal(direct.status, 401);
+    assert.equal(service.devices.get(other.deviceId).revokedAt, null);
+
+    const optionsPath = `/api/devices/${other.deviceId}/revocation/options`;
+    const start = async () => apiRequest(server, optionsPath, { method: "POST", cookie, body: {} });
+    const finish = (flow, id) => apiRequest(server, "/api/devices/revocation/finish", {
+      method: "POST", cookie, body: { flow, credential: { id, flow } },
+    });
+    const wrong = await (await start()).json();
+    assert.equal((await finish(wrong.flow, "revoke-other")).status, 401);
+    assert.equal(service.devices.get(other.deviceId).revokedAt, null);
+    const valid = await (await start()).json();
+    assert.equal(service.devices.get(other.deviceId).revokedAt, null); // cancellation preserves access
+    assert.equal((await finish(valid.flow, "credential-revoke-adult")).status, 200);
+    assert.ok(service.devices.get(other.deviceId).revokedAt);
+  } finally { await server.close(); }
 });
 
 for (const adultCount of [2, 4]) {
@@ -1482,7 +1532,7 @@ test("Limited and Temporary direct HTTP trust-management calls are denied", asyn
         apiRequest(server, `/api/pairings/${invitation.pairingId}/approve/options`, { method: "POST", cookie, body: { expectedVersion: 1 } }),
         apiRequest(server, "/api/devices/pairings", { method: "POST", cookie, body: {} }),
         apiRequest(server, "/api/devices", { cookie }),
-        apiRequest(server, `/api/devices/${targetDeviceId}`, { method: "DELETE", cookie }),
+        apiRequest(server, `/api/devices/${targetDeviceId}/revocation/options`, { method: "POST", cookie, body: {} }),
         apiRequest(server, "/api/household/membership/remove/options", { method: "POST", cookie, body: { memberId: adult.memberId } }),
         apiRequest(server, "/api/household/recovery", { method: "POST", cookie, body: {} }),
         apiRequest(server, "/api/household/deletion/options", { method: "POST", cookie, body: {} }),
@@ -1692,6 +1742,7 @@ test("duplicate claims, stale approval, full households, and revoked devices fai
   service.revokeDevice(
     adult.sessionToken,
     confirmed.pairingId === "never" ? "" : activated.deviceId,
+    adult.memberId,
   );
   assert.throws(
     () => service.authorize(activated.sessionToken),
@@ -1960,7 +2011,7 @@ test("device revocation eagerly invalidates all of its sessions and is idempoten
   const joined = service.activateClaim(claim.claimToken);
   const second = service.issueSession(joined.memberId, joined.deviceId);
 
-  const firstResult = service.revokeDevice(adult.sessionToken, joined.deviceId);
+  const firstResult = service.revokeDevice(adult.sessionToken, joined.deviceId, adult.memberId);
   assert.ok(firstResult.revokedAt);
   for (const sessionToken of [joined.sessionToken, second.sessionToken])
     assert.throws(
@@ -1979,7 +2030,7 @@ test("device revocation eagerly invalidates all of its sessions and is idempoten
       event.type === "device_revoked" && event.deviceId === joined.deviceId,
   ).length;
   assert.deepEqual(
-    service.revokeDevice(adult.sessionToken, joined.deviceId),
+    service.revokeDevice(adult.sessionToken, joined.deviceId, adult.memberId),
     firstResult,
   );
   assert.equal(
@@ -2035,7 +2086,7 @@ test("reauthentication rejects unknown credentials, revoked devices, and removed
     claim.version,
   );
   const joined = service.activateClaim(claim.claimToken);
-  service.revokeDevice(adult.sessionToken, joined.deviceId);
+  service.revokeDevice(adult.sessionToken, joined.deviceId, adult.memberId);
   assert.throws(
     () => service.reauthenticate(joined.deviceToken, "credential-b"),
     (error) => error.code === "device_not_trusted",
