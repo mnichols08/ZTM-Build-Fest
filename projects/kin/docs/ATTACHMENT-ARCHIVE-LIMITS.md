@@ -1,0 +1,26 @@
+# Attachment and archive limits
+
+Kin keeps these existing bounded attachment limits aligned across the browser,
+local encrypted storage, relay, server storage, and archive validation:
+
+| Limit | Value |
+|---|---:|
+| Plain attachment | 4 MiB |
+| Ciphertext allowance per attachment | 4 MiB + 4096 bytes |
+| Attachments per parent | 5 |
+| Attachments per household | 64 |
+| Aggregate stored attachment ciphertext | 50 MiB |
+| Complete encrypted `.kin` archive, including manifest/framing | 160 MiB |
+| Protected snapshot serialization used during export/import | 160 MiB |
+
+The aggregate attachment allowance counts ciphertext bytes at the browser and
+relay. Archive serialization also accounts for event bytes, base64 representation
+of protected binary values, manifest and cryptographic framing. The 160 MiB
+archive limit is finite and enforced by both the Rust KARC parser/generator and
+the browser's archive and protected-value validation. Import applies the same
+framing bound before decrypting or restoring anything. A failed export or
+import leaves the existing household history unchanged.
+
+Oversized input is rejected before it can be stored or restored. A household
+within the 50 MiB attachment allowance has room for archive representation and
+overhead; Kin does not rely on a smaller hidden 64 MiB snapshot limit.

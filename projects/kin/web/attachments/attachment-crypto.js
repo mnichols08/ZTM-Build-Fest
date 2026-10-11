@@ -1,5 +1,7 @@
 export const MAX_ATTACHMENT_PLAINTEXT_BYTES = 4 * 1024 * 1024;
 export const MAX_ATTACHMENTS_PER_PARENT = 5;
+export const MAX_HOUSEHOLD_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+export const MAX_HOUSEHOLD_ATTACHMENTS = 64;
 export const ALLOWED_ATTACHMENT_TYPES = new Set([
   "image/jpeg",
   "image/png",

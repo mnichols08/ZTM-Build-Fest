@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.38.4 — PWA & Archive Preflight
+
+- Derive service-worker caches from the current release and stage complete shells before activation.
+- Align the finite 160 MiB archive cap with the documented 50 MiB encrypted-attachment household bound.
+
 ## v0.38.3 — Trust & Access Hardening
 
 - Require Adult authority to enable sync while preserving authorized Limited/Temporary participation.

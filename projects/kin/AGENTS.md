@@ -1490,4 +1490,4 @@ Kin should make family life require **less remembering, less repeating, and less
 
 If a proposed feature makes Kin harder to use than simply sending a text message, reconsider it.
 
-The candidate release name is `kin-v0.38.3`; no tag has been created.
+The candidate release name is `kin-v0.38.4`; no tag has been created.

@@ -2,6 +2,8 @@
 
 **Status:** v0.10.3 implements encrypted `.kin` backup and restore for local household history. v0.15.0 extends the validated household event corpus additively; KARC v1 framing and archive metadata remain unchanged. Rust owns framing, 64 MiB bounds, version validation and complete import planning. Browser crypto/files own authenticated encryption, file selection/download and explicit restore confirmation. Corrupt/unsupported archives never partially import. v0.11 separately adds SQLite service-database backup/restore; these two backup types protect different state. Earlier conceptual sections below are design history.
 
+Current attachment and export limits are in [ATTACHMENT-ARCHIVE-LIMITS](ATTACHMENT-ARCHIVE-LIMITS.md). The pre-v0.39 corrective line keeps attachment ciphertext at a 50 MiB household bound and permits a bounded 160 MiB complete `.kin` archive, including protected snapshot serialization and KARC framing. Rust and browser import/export validation share this archive ceiling; the earlier 64 MiB figure below is historical.
+
 ## v0.23.0 calendar export
 
 The Lists page can create a separate, unencrypted `.ics` convenience export
