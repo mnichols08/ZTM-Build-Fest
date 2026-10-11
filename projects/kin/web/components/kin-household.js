@@ -1152,7 +1152,7 @@ class KinHousehold extends HTMLElement {
   async leave() {
     if (
       !confirm(
-        "Leave this household and revoke this adult’s devices? This cannot be undone or recovered in this release.",
+        "Leave this household and revoke access for your devices? This cannot be undone or recovered in this release.",
       )
     )
       return;

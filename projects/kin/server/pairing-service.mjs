@@ -1458,7 +1458,8 @@ export class PairingService {
 
   removalContext(sessionToken, memberId, { allowSelf = false } = {}) {
     const { member, household, device } = this.authorize(sessionToken);
-    requireTrustAuthority(member, "remove a household member");
+    if (memberId !== member.id)
+      requireTrustAuthority(member, "remove a household member");
     if (memberId === member.id && !allowSelf)
       throw new PairingError(
         "use_leave",

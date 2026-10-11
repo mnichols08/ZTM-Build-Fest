@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.38.1 — Authenticated Member Self-Leave
+
+- Limited and Temporary members can leave their own household membership after fresh passkey authentication, while removal of other members remains Adult-only.
+- Self-leave revokes the member's devices and sessions and preserves transactional access-change/key-epoch handling. Last-Adult protection remains enforced.
+
 ## v0.38.0 — Modes & Member Context Polish (shipped on this branch)
 
 - Household settings present Adults, Limited Members, and Temporary Access as compact sections. Active Temporary access shows its absolute end time; ended access remains identifiable.

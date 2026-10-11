@@ -903,6 +903,95 @@ test("HTTP self-leave rolls back durable revocation if access-change persistence
   }
 });
 
+for (const kind of ["limited", "temporary"]) {
+  test(`HTTP ${kind} self-leave requires a fresh passkey and revokes its authority`, async () => {
+    const { service, adult } = setup();
+    const expiresAt = Math.max(service.now(), Date.now()) + 60_000;
+    const invitation = service.createPairing(adult.sessionToken, {
+      kind,
+      ...(kind === "temporary" ? { expiresAt } : {}),
+    });
+    const claim = service.claimPairing({
+      code: invitation.code,
+      credential: credential(`${kind}-member`),
+      deviceLabel: `${kind} device`,
+    });
+    service.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
+    const member = service.activateClaim(claim.claimToken);
+    const extraDevice = {
+      id: `extra-device-${kind}`,
+      memberId: member.memberId,
+      householdId: member.householdId,
+      label: `${kind} extra device`,
+      trustedAt: service.now(),
+      revokedAt: null,
+      tokenHash: null,
+    };
+    service.devices.set(extraDevice.id, extraDevice);
+    service.issueDeviceToken(extraDevice);
+    const extraSession = service.issueSession(member.memberId, extraDevice.id);
+    const server = await startTestServer({ service, now: () => service.now() });
+    const cookie = `kin_session=${member.sessionToken}; kin_device=${member.deviceToken}`;
+    const optionsPath = "/api/household/membership/remove/options";
+    const finishPath = "/api/household/membership/remove/finish";
+    try {
+      server.syncService.enable(adult.sessionToken);
+      const sessionOnly = await apiRequest(server, "/api/household/membership", {
+        method: "DELETE", cookie, body: { memberId: member.memberId },
+      });
+      assert.equal(sessionOnly.status, 401);
+      assert.equal((await sessionOnly.json()).error, "fresh_auth_required");
+
+      const otherMember = await apiRequest(server, optionsPath, {
+        method: "POST", cookie, body: { memberId: adult.memberId },
+      });
+      assert.equal(otherMember.status, 403);
+      assert.equal((await otherMember.json()).error, "adult_required");
+
+      const started = await apiRequest(server, optionsPath, {
+        method: "POST", cookie, body: { memberId: member.memberId },
+      });
+      assert.equal(started.status, 200);
+      const { flow } = await started.json();
+      assert.equal(server.flows.get(flow).targetMemberId, member.memberId);
+
+      const invalid = await apiRequest(server, finishPath, {
+        method: "POST", cookie, body: { flow, credential: { id: `credential-${kind}-member`, flow: "wrong" } },
+      });
+      assert.equal(invalid.status, 401);
+      assert.equal(service.members.get(member.memberId).active, true);
+      assert.equal(service.devices.get(member.deviceId).revokedAt, null);
+      assert.equal(service.devices.get(extraDevice.id).revokedAt, null);
+      assert.equal(service.authorize(member.sessionToken).member.id, member.memberId);
+      assert.equal(service.authorize(extraSession.sessionToken).member.id, member.memberId);
+
+      const valid = await apiRequest(server, optionsPath, {
+        method: "POST", cookie, body: { memberId: member.memberId },
+      });
+      const validFlow = await valid.json();
+      const removed = await apiRequest(server, finishPath, {
+        method: "POST", cookie,
+        body: { flow: validFlow.flow, credential: { id: `credential-${kind}-member`, flow: validFlow.flow } },
+      });
+      assert.equal(removed.status, 200);
+      assert.deepEqual(responseCookies(removed), ["kin_session=", "kin_device="]);
+      assert.equal(service.members.get(member.memberId).active, false);
+      if (kind === "temporary") assert.equal(service.members.get(member.memberId).expiresAt, expiresAt);
+      for (const deviceId of [member.deviceId, extraDevice.id])
+        assert.ok(service.devices.get(deviceId).revokedAt);
+      for (const token of [member.sessionToken, extraSession.sessionToken]) {
+        assert.throws(() => service.authorize(token), error => error.code === "authentication_required");
+        assert.equal((await apiRequest(server, "/api/sync/events?cursor=&limit=1", { cookie: `kin_session=${token}` })).status, 401);
+      }
+      assert.equal([...service.sessions.values()].some(session => session.memberId === member.memberId), false);
+      assert.equal(server.syncService.status(adult.sessionToken).pendingEpoch, 2);
+      assert.equal(server.store.loadSyncState(adult.householdId).rotationPending, true);
+    } finally {
+      await server.close();
+    }
+  });
+}
+
 test("HTTP pairing approval binds the assertion credential to the signed-in adult", async () => {
   const { service, adult } = setup();
   const other = service.bootstrap({
