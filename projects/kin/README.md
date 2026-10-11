@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.35.1` — Fresh Passkey Self-Removal, on `kin-v0.35-more-adults`.** Kin keeps household history in the existing local-first encrypted event store. Attachments persist encrypted locally before sync and portable archives include verified attachment payloads. Items and Routines support explicit, replayable responsibility assignment; ties resolve by canonical event order.
+**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.38.1` — Authenticated Member Self-Leave candidate on `kin-fast-track-v0.36-v0.38`.** Kin keeps household history in the existing local-first encrypted event store. Attachments persist encrypted locally before sync and portable archives include verified attachment payloads. Items and Routines support explicit, replayable responsibility assignment; ties resolve by canonical event order.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Archives are intentionally local-only history recovery and do not restore sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
@@ -111,14 +111,14 @@ The month targets a coherent, demoable pre-1.0 build at `v0.40.x`. The `v0.41.x`
 - Fast-track candidate: `v0.27.0` — Household Playbooks; see the `v0.27.0` release record.
 - Fast-track candidate: `v0.28.0` - Local Reminders; see the `v0.28.0` release record.
 - Fast-track candidates: `v0.31.0`–`v0.31.1` - Maintenance Records and concurrent archive correction; see their release records.
-- Current candidate: `v0.35.1` - Fresh Passkey Self-Removal; self-leave requires fresh passkey proof using the existing member-removal ceremony. Bounded household membership remains pending security and human review.
+- Current candidate: `v0.38.1` - Authenticated Member Self-Leave; Limited and Temporary members can leave their own membership after fresh passkey authentication, while removing others remains Adult-only.
 - Planned after October, undated: `v0.41.x`–`v0.45.x` — Recovery drills, broader platform validation, performance, and release-candidate readiness
 - Planned: `v1.0.0` — Stable Kin Platform, when readiness and human feedback support it
 - See the [changelog](CHANGELOG.md) for the completed release history.
 
 ## Install, build, and run
 
-Requirements: Rust/Cargo with the `wasm32-unknown-unknown` target, Node.js 22 or later, npm, and a modern browser with WebAssembly, Web Crypto, Web Locks, ES modules, Custom Elements and IndexedDB. Passkeys are needed for server identity/pairing; PRF support is optional because a user-held recovery secret is an explicit local unlock path. Use HTTPS outside localhost.
+Requirements: Rust/Cargo with the `wasm32-unknown-unknown` target, Node.js 22.13.0 or later, npm, and a modern browser with WebAssembly, Web Crypto, Web Locks, ES modules, Custom Elements and IndexedDB. Passkeys are needed for server identity/pairing; PRF support is optional because a user-held recovery secret is an explicit local unlock path. Use HTTPS outside localhost.
 
 From the repository root in PowerShell:
 
@@ -128,7 +128,7 @@ rustup target add wasm32-unknown-unknown
 ./projects/kin/run.ps1
 ```
 
-The script builds the WASM module and serves the web app at `http://localhost:8000`. On macOS/Linux, run `sh projects/kin/run.sh` from the repository root.
+The script builds the WASM module and serves the web app at `http://localhost:8000`. On Windows, if PATH selects Node.js older than 22.13.0, `run.ps1` uses the lowest compatible version already installed with fnm; it does not install Node.js. On macOS/Linux, run `sh projects/kin/run.sh` from the repository root with Node.js 22.13.0 or later on PATH.
 
 The service database defaults to `projects/kin/.kin-data/kin.sqlite`; set
 `KIN_DATA_DIR` or `KIN_DATABASE_PATH` to choose another location. Keep the data

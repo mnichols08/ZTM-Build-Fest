@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { DurableConflictError, MAX_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "./durable-store.mjs";
-import { PairingError } from "./pairing-service.mjs";
+import { canParticipate, PairingError, requireTrustAuthority } from "./pairing-service.mjs";
 import {
   canonicalEventEnvelope,
   canonicalJson,
@@ -41,6 +41,8 @@ export class EncryptedSyncService {
     const auth = this.authorize(sessionToken);
     const state = this.state(auth.household.id);
     return {
+      memberKind: auth.member.kind ?? "adult",
+      ...(auth.member.expiresAt == null ? {} : { memberExpiresAt: auth.member.expiresAt }),
       currentEpoch: state.currentEpoch,
       enabled: state.enabled,
       rotationPending: state.rotationPending,
@@ -56,19 +58,25 @@ export class EncryptedSyncService {
     const { household } = this.authorize(sessionToken);
     return [...this.pairingService.devices.values()]
       .filter((device) => device.householdId === household.id)
-      .map((device) => ({
-        householdId: household.id,
-        deviceId: device.id,
-        memberId: device.memberId,
-        publicKeys: device.syncPublicKeys ?? null,
-        fingerprint: device.syncKeyFingerprint ?? null,
-        certificate: device.deviceAuthorizationCertificate ?? null,
-        keyHistory: device.syncKeyHistory ?? undefined,
-        keyTransitions: device.syncKeyTransitions ?? [],
-        revokedAt: device.revokedAt,
-        historyFromEpoch: device.syncHistoryFromEpoch ?? 1,
-        provisionedEpochs: [...(device.syncProvisionedEpochs ?? [])],
-      }));
+      .map((device) => {
+        const member = this.pairingService.members.get(device.memberId);
+        return {
+          householdId: household.id,
+          deviceId: device.id,
+          memberId: device.memberId,
+          memberKind: member?.kind ?? "adult",
+          memberActive: canParticipate(member, this.now()),
+          ...(member?.expiresAt == null ? {} : { memberExpiresAt: member.expiresAt }),
+          publicKeys: device.syncPublicKeys ?? null,
+          fingerprint: device.syncKeyFingerprint ?? null,
+          certificate: device.deviceAuthorizationCertificate ?? null,
+          keyHistory: device.syncKeyHistory ?? undefined,
+          keyTransitions: device.syncKeyTransitions ?? [],
+          revokedAt: device.revokedAt,
+          historyFromEpoch: device.syncHistoryFromEpoch ?? 1,
+          provisionedEpochs: [...(device.syncProvisionedEpochs ?? [])],
+        };
+      });
   }
 
   enable(sessionToken) {
@@ -369,6 +377,7 @@ export class EncryptedSyncService {
     { recipientDeviceId, keyEpoch, requestId },
   ) {
     const auth = this.authorize(sessionToken);
+    requireTrustAuthority(auth.member, "provision household key access");
     const state = this.state(auth.household.id);
     const stableRequestId = requestId ?? randomBytes(16).toString("hex");
     if (!isSyncId(stableRequestId))
@@ -531,6 +540,7 @@ export class EncryptedSyncService {
 
   rotateEpoch(sessionToken, { expectedEpoch, packages, proposalId }) {
     const auth = this.authorize(sessionToken);
+    requireTrustAuthority(auth.member, "change household key access");
     const state = this.state(auth.household.id);
     const nextEpoch = expectedEpoch + 1;
     if (nextEpoch > MAX_KEY_EPOCHS)

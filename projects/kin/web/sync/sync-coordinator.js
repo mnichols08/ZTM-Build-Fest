@@ -17,6 +17,13 @@ import { SyncKeyStore } from "./key-store.js";
 import { idToHex } from "../wasm/kin-engine.js";
 import { reconcileAttachments } from "../attachments/attachment-lifecycle.js";
 
+export function activeResponsibilityMemberIds(devices, now = Date.now()) {
+  return [...new Set(devices
+    .filter((device) => !device.revokedAt && device.memberActive !== false &&
+      (device.memberExpiresAt === undefined || device.memberExpiresAt > now))
+    .map((device) => device.memberId))];
+}
+
 const MAX_PUSH_BATCH = 20;
 const MAX_PULL_PASSES = 5;
 const KEY_GRANT_TTL_MS = 10 * 60_000;
@@ -336,7 +343,7 @@ export class SyncCoordinator {
       await this.store.markSyncInitialized();
     this.onState({
       state: hasMore ? "syncing" : "ready",
-      memberIds: [...new Set(devices.filter((device) => !device.revokedAt).map((device) => device.memberId))],
+      memberIds: activeResponsibilityMemberIds(devices),
       message: hasMore
         ? "Sync will continue in the background."
         : "Device sync is up to date.",

@@ -232,7 +232,7 @@ main {
 }
 .page-intro p { margin: 7px 0 0; color: var(--ink-muted); }
 .calendar-export-button { margin-top: 12px; }
-.attachment-list { display: grid; gap: 8px; margin-block: 10px; min-width: 0; }
+.attachment-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-block: 10px; min-width: 0; }
 .attachment-list > label { font-weight: 600; }
 .attachment-list input[type="file"] { max-width: 100%; }
 .attachment-list ul { display: grid; gap: 8px; margin: 0; padding-inline-start: 20px; }
@@ -421,7 +421,7 @@ p { margin: 7px 0; }
 .routine-form input, .routine-form > label, .routine-form > p { grid-column: 1 / -1; }
 .routine-row { align-items: start; }
 .routine-row > div:first-child { min-width: 0; }
-kin-routines, kin-today, kin-compose, kin-catch-up, kin-handoff-list, kin-talk-list, kin-pulse,
+kin-item, kin-attachments, kin-routines, kin-today, kin-compose, kin-catch-up, kin-handoff-list, kin-talk-list, kin-pulse,
 kin-household, kin-security, kin-areas, kin-notes { display: block; min-width: 0; width: 100%; }
 .notes-section { min-width: 0; margin-block: 12px; }
 .notes-section form { display: grid; gap: 12px; min-width: 0; margin-block: 14px; }

@@ -155,8 +155,11 @@ async function connect(url) {
       });
     },
     async evaluate(expression) {
+      const source = typeof expression === "function"
+        ? `(${expression.toString()})()`
+        : expression;
       const result = await this.send("Runtime.evaluate", {
-        expression,
+        expression: source,
         awaitPromise: true,
         returnByValue: true,
       });
@@ -1440,6 +1443,7 @@ try {
   console.log("PASS recovery unlock/replay, draft disposal, keyboard submission");
 
   await visit(first, "handoff");
+  await first.evaluate('document.querySelector("#handoffs-tab").click()');
   assert.equal(
     await first.evaluate('document.querySelector("#handoff-text").value'),
     "",
