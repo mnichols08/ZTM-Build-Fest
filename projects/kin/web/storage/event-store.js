@@ -467,6 +467,46 @@ export class EventStore {
     return archive;
   }
 
+  async containsSameHouseholdArchive(snapshot, { engine, vault }) {
+    vault.assertUnlocked();
+    this.engine = engine;
+    const incomingContext = snapshot?.local_context?.[0];
+    const current = await this.snapshotForArchive();
+    const currentContext = current.local_context?.[0];
+    const incomingHousehold = incomingContext?.sync_household_id ?? incomingContext?.household_id;
+    const currentHousehold = currentContext?.sync_household_id ?? currentContext?.household_id;
+    if (!incomingHousehold || !currentHousehold || !bytesEqual(incomingHousehold, currentHousehold))
+      return false;
+    const currentEvents = new Map(current.events.map((row) => [idToHex(row.event_id), row.encoded_event]));
+    for (const row of snapshot.events ?? []) {
+      const existing = currentEvents.get(idToHex(row.event_id));
+      if (!existing || !bytesEqual(existing, row.encoded_event)) return false;
+    }
+    const currentAttachments = new Map((current.attachments ?? []).map((row) => [row.attachment_id, row]));
+    for (const row of snapshot.attachments ?? []) {
+      const existing = currentAttachments.get(row.attachment_id);
+      if (!existing) return false;
+      if (row.ciphertext || existing.ciphertext) {
+        if (!row.ciphertext || !existing.ciphertext || row.digest !== existing.digest ||
+            row.keyEpoch !== existing.keyEpoch || !bytesEqual(row.ciphertext, existing.ciphertext)) return false;
+        continue;
+      }
+      if (!row.localSealed || !existing.localSealed) return false;
+      const [incomingPayload, currentPayload] = await Promise.all([
+        vault.open(row.localSealed, { store: "attachment-file", id: row.attachment_id }),
+        vault.open(existing.localSealed, { store: "attachment-file", id: row.attachment_id }),
+      ]);
+      try {
+        if (!valuesEqual(incomingPayload, currentPayload)) return false;
+      } finally {
+        incomingPayload?.bytes?.fill?.(0);
+        currentPayload?.bytes?.fill?.(0);
+      }
+    }
+    vault.assertUnlocked();
+    return true;
+  }
+
   static async restoreEmpty({ vault, engine, snapshot, manifest, ownedSnapshot = false }) {
     vault.assertUnlocked();
     // Authenticated archive decoding can transfer its private result to this

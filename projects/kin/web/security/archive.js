@@ -126,13 +126,17 @@ export async function validateHouseholdArchive({ bytes, recoverySecret, engine, 
   }
 }
 
-export async function restoreValidatedHouseholdArchive({ stage, engine, vault }) {
+export async function restoreValidatedHouseholdArchive({ stage, engine, vault, store }) {
   await assertCurrentProtection(vault);
   const staged = stagedArchives.get(stage);
   if (!staged || staged.engine !== engine || staged.vault !== vault ||
       staged.vaultId !== vault.vaultId || staged.generation !== vault.generation)
     throw new VaultError("Check this Kin export again before restoring it.");
   try {
+    if (store && await store.containsSameHouseholdArchive(staged.snapshot, { engine, vault })) {
+      discardValidatedHouseholdArchive(stage);
+      return { eventCount: staged.snapshot.events.length, alreadyPresent: true };
+    }
     const result = await EventStore.restoreEmpty({
       vault, engine, snapshot: staged.snapshot, ownedSnapshot: true,
     });
@@ -151,9 +155,9 @@ export function discardValidatedHouseholdArchive(stage) {
   zeroByteValues(staged.snapshot, new Set());
 }
 
-export async function importHouseholdArchive({ bytes, recoverySecret, engine, vault }) {
+export async function importHouseholdArchive({ bytes, recoverySecret, engine, vault, store }) {
   const staged = await validateHouseholdArchive({ bytes, recoverySecret, engine, vault });
-  return restoreValidatedHouseholdArchive({ stage: staged.stage, engine, vault });
+  return restoreValidatedHouseholdArchive({ stage: staged.stage, engine, vault, store });
 }
 
 function validatePackageManifest(value) {

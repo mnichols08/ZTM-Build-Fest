@@ -610,20 +610,16 @@ async function browserUiChecks() {
   check(compactedOutbox.length === 1 && compactedOutbox[0].deviceSequence === 1 &&
       (await app.store.getSyncState()).nextDeviceSequence === 2,
     "stale event deduplication keeps new local changes on a contiguous device sequence");
-  denied = false;
-  try {
-    await importHouseholdArchive({
-      bytes: archive,
-      recoverySecret: sourceRecovery,
-      engine: app.engine,
-      vault: app.vault,
-    });
-  } catch {
-    denied = true;
-  }
+  const sameHouseholdRestore = await importHouseholdArchive({
+    bytes: archive,
+    recoverySecret: sourceRecovery,
+    engine: app.engine,
+    vault: app.vault,
+    store: app.store,
+  });
   check(
-    denied && (await app.store.loadEvents()).length === 2,
-    "restore cannot silently overwrite an existing household",
+    sameHouseholdRestore.alreadyPresent && (await app.store.loadEvents()).length === 2,
+    "same-household restore is idempotent and does not duplicate canonical events",
   );
 
   // This is a second same-origin browsing context with its own module state.

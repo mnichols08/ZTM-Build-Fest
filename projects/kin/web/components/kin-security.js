@@ -405,7 +405,7 @@ class KinSecurity extends HTMLElement {
         this.restoreStage = staged.stage;
         form.remove();
         const summary = document.createElement("p");
-        summary.textContent = `This export is ready to restore (${staged.eventCount} household changes, ${staged.attachmentCount} attachments). It can only be restored into an empty local household. Device approval and sync access are not included.`;
+        summary.textContent = `This export is ready to restore (${staged.eventCount} household changes, ${staged.attachmentCount} attachments). Restore works on an empty installation or as a no-duplicate check when this same household already contains the export. Device approval and sync access are not included.`;
         const confirm = document.createElement("button");
         confirm.id = "restore-confirm";
         confirm.type = "button";
@@ -414,14 +414,16 @@ class KinSecurity extends HTMLElement {
         cancel.type = "button";
         cancel.textContent = "Cancel";
         confirm.addEventListener("click", () => void this.run(async (confirmOperation) => {
-          await restoreValidatedHouseholdArchive({ stage: staged.stage, engine, vault });
+          const restored = await restoreValidatedHouseholdArchive({ stage: staged.stage, engine, vault, store: app.store });
           this.restoreStage = null;
           this.assertCurrentOperation(confirmOperation);
           await app.refreshFromEvents();
           this.assertCurrentOperation(confirmOperation);
           app.broadcastEventChange();
           this.render();
-          this.message.textContent = "Your household is restored on this device. This device still needs household approval before sync can resume.";
+          this.message.textContent = restored.alreadyPresent
+            ? "This household already contains the export's history and attachments. Nothing was duplicated."
+            : "Your household is restored on this device. This device still needs household approval before sync can resume.";
         }));
         cancel.addEventListener("click", () => {
           discardValidatedHouseholdArchive(staged.stage);

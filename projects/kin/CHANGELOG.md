@@ -11,10 +11,10 @@
 
 - Validate the complete package and show its event/attachment summary before the user confirms restore.
 - Stage validated data in memory; reload or cancellation discards incomplete staging, and IndexedDB promotion remains one transaction.
-- Refuse restore into a non-empty household without changing its data.
+- Permit same-household restore as an idempotent no-op when all package events and attachments already exist with matching content; refuse other non-empty targets without changing their data.
 - Keep device trust and server authorization separate from household data; after ordinary approval, encrypted sync catches up and deduplicates canonical history.
 - Temporary expiry and removed-member state remain data only and cannot reinstate access.
-- Restore into a non-empty local household, including same-household in-place reconciliation, is not supported; use a fresh local installation and ordinary approved-device sync for migration catch-up.
+- Same-household restore does not import missing archive rows into an existing installation. If any package event or attachment is absent from the populated target, restore refuses; use a fresh local installation and ordinary approved-device sync for migration catch-up.
 
 ## v0.38.4 — PWA & Archive Preflight
 
