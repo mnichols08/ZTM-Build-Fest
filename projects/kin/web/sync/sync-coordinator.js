@@ -24,7 +24,7 @@ export function activeResponsibilityMemberIds(devices, now = Date.now()) {
     .map((device) => device.memberId))];
 }
 
-export function portableMembershipFromDirectory(entries, now = Date.now()) {
+export function portableMembershipFromDirectory(entries) {
   if (!Array.isArray(entries) || entries.length > 12)
     throw new Error("Kin could not validate current household membership for export.");
   const members = new Map();
@@ -32,14 +32,14 @@ export function portableMembershipFromDirectory(entries, now = Date.now()) {
     const kind = member.memberKind;
     if (!/^[a-f0-9]{32}$/.test(member.memberId ?? "") ||
         !["adult", "limited", "temporary"].includes(kind) ||
-        typeof member.memberActive !== "boolean")
+        typeof member.memberActive !== "boolean" ||
+        !["active", "removed", "expired"].includes(member.memberStatus))
       throw new Error("Kin could not validate current household membership for export.");
     const expiresAt = member.memberExpiresAt;
     if ((kind === "temporary" && !Number.isSafeInteger(expiresAt)) ||
         (kind !== "temporary" && expiresAt !== undefined))
       throw new Error("Kin could not validate current household membership for export.");
-    const status = member.memberActive ? "active" :
-      kind === "temporary" && expiresAt <= now ? "expired" : "removed";
+    const status = member.memberStatus;
     const record = {
       memberId: member.memberId,
       memberKind: kind,

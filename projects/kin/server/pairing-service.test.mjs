@@ -1214,6 +1214,7 @@ test("HTTP same-member device pairing claims, approves, and activates without ad
       memberId: adult.memberId,
       memberKind: "adult",
       memberActive: true,
+      memberStatus: "active",
     }]);
     assert.equal(
       devices.find((device) => device.deviceId === adult.deviceId).certificate,

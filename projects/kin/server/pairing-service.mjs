@@ -600,6 +600,7 @@ export class PairingService {
       const household = this.households.get(member.householdId);
       if (!household) continue;
       member.active = false;
+      member.memberStatus = "expired";
       household.version += 1;
       const deviceIds = [];
       for (const device of this.devices.values())
@@ -1541,6 +1542,7 @@ export class PairingService {
       });
     }
     target.active = false;
+    target.memberStatus = "removed";
     household.version += 1;
     for (const device of this.devices.values())
       if (device.memberId === memberId && !device.revokedAt) {

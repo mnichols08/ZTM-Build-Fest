@@ -1,7 +1,7 @@
 import { LocalVault, serializeProtectedValue, deserializeProtectedValue, VaultError } from "./local-vault.js";
 import { EventStore } from "../storage/event-store.js";
 
-const KIN_VERSION = "0.40.0";
+const KIN_VERSION = "0.40.1";
 const MAX_ARCHIVE_BYTES = 160 * 1024 * 1024;
 const MAX_EVENT_COUNT = 10_000;
 const MAX_ATTACHMENT_COUNT = 64;
@@ -186,12 +186,12 @@ function hasExactKeys(value, keys) {
     Object.keys(value).sort().join(",") === [...keys].sort().join(",");
 }
 
-function normalizeExpiredPortableMembers(snapshot) {
+export function normalizeExpiredPortableMembers(snapshot, now = Date.now()) {
   const members = snapshot?.local_context?.[0]?.portable_membership;
   if (!Array.isArray(members)) return;
   for (const member of members) {
-    if (member?.memberKind === "temporary" && Number.isSafeInteger(member.expiresAt) &&
-        member.expiresAt <= Date.now()) member.status = "expired";
+    if (member?.memberKind === "temporary" && member.status === "active" && Number.isSafeInteger(member.expiresAt) &&
+        member.expiresAt <= now) member.status = "expired";
   }
 }
 

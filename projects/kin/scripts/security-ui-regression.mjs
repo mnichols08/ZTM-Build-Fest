@@ -264,6 +264,8 @@ async function browserUiChecks() {
     { memberId: "22222222222222222222222222222222", memberKind: "limited", status: "removed" },
     { memberId: "33333333333333333333333333333333", memberKind: "temporary", status: "active", expiresAt: Date.now() + 60_000 },
     { memberId: "44444444444444444444444444444444", memberKind: "temporary", status: "expired", expiresAt: Date.now() - 60_000 },
+    { memberId: "55555555555555555555555555555555", memberKind: "temporary", status: "removed", expiresAt: Date.now() - 60_000 },
+    { memberId: "66666666666666666666666666666666", memberKind: "temporary", status: "active", expiresAt: Date.now() - 60_000 },
   ];
   const archive = await exportHouseholdArchive({
     store: app.store,
@@ -574,7 +576,7 @@ async function browserUiChecks() {
   const restoredPortableSnapshot = await app.store.snapshotForArchive();
   check(
     JSON.stringify(restoredPortableSnapshot.local_context[0].portable_membership) ===
-      JSON.stringify(portableMembership.map((member) => member.memberKind === "temporary" && member.expiresAt <= Date.now()
+      JSON.stringify(portableMembership.map((member) => member.memberKind === "temporary" && member.status === "active" && member.expiresAt <= Date.now()
         ? { ...member, status: "expired" } : member)),
     "restored membership history retains kinds, removals, and absolute Temporary expiry",
   );

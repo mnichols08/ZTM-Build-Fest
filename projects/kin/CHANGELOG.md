@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.40.1 — Portable Membership Status Fidelity
+
+- Preserve explicitly removed Temporary members separately from naturally expired Temporary members in the authoritative server membership directory, package export, and restore normalization.
+- Only normalize active Temporary membership to expired when its absolute expiry has passed; removed remains removed after time passes.
+- Add a durable server membership-status field without changing access-control decisions.
+
 ## v0.39.0 — Portable Household Export v2
 
 - Introduce an authenticated package-v2 manifest with Kin/package versions, export time, canonical event count, attachment count and ciphertext-byte count while retaining KARC v1 framing.

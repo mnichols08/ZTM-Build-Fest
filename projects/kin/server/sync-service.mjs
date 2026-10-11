@@ -89,6 +89,7 @@ export class EncryptedSyncService {
         memberId: member.id,
         memberKind: member.kind ?? "adult",
         memberActive: canParticipate(member, now),
+        memberStatus: portableMemberStatus(member, now),
         ...(member.expiresAt == null ? {} : { memberExpiresAt: member.expiresAt }),
       }))
       .sort((left, right) => left.memberId < right.memberId ? -1 : left.memberId > right.memberId ? 1 : 0);
@@ -796,6 +797,14 @@ export class EncryptedSyncService {
             state.grantRequests.delete(requestKey);
       }
   }
+}
+
+function portableMemberStatus(member, now) {
+  const status = member.memberStatus ?? (member.active === false ? "removed" : "active");
+  if (status === "active" && member.kind === "temporary" &&
+      Number.isSafeInteger(member.expiresAt) && member.expiresAt <= now)
+    return "expired";
+  return status;
 }
 
 function validateEventEnvelope(envelope, auth, currentEpoch) {
