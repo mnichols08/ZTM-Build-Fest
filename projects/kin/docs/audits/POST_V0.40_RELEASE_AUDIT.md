@@ -177,15 +177,13 @@ None in the final rerun set.
 
 ### UNVERIFIED — ENVIRONMENT
 
-- Full requested real two-profile migration, stale-export catch-up, membership/recovery/deletion and populated offline reconciliation drills.
-- Chrome, Firefox, Safari/WebKit, mobile browsers, real installable PWA lifecycle, and real assistive technology.
+- Real separate browser/profile/device authority and recovery drills; Chrome/Chromium multi-profile use, Firefox, Safari/WebKit, mobile browsers, installed-PWA behavior, and manual assistive-technology/screen-reader testing remain outstanding.
 - Manual fresh-install first-action and complete ten-second loop usability timings.
-- Chrome, Firefox, Safari/WebKit, mobile browsers, real installable PWA lifecycle, and real assistive technology.
 
 ## Recommended Stabilization Plan
 
-1. Run the full server, durability, WebAuthn, member authority/expiry, deletion, and recovery test suites on the documented Node 22.13+ runtime; record exact runtime and results.
-2. Complete a synthetic two-profile Adult/Limited/Temporary migration and stale-export catch-up drill, including attachment integrity, revocation/removal/expiry non-resurrection, and device authorization after restore.
+1. Complete real multi-profile authority and recovery drills not covered by automated tests. Use separate live browser profiles/devices to exercise Adult admission, Limited admission, Temporary admission, Temporary expiry, manual Temporary revocation, member removal, device revocation, recovery, household deletion, stale-export migration, and new-device restore followed by re-authorization.
+2. In those migration/reconnect drills, verify attachment digests and deduplication, Responsibility convergence, and preservation of archives, Pins, Playbooks, Routines, and Shopping without rolling back removed members, revoked devices, or expired Temporary access.
 3. Complete the PWA lifecycle, Firefox, Chrome, Safari/WebKit/mobile where available, and manual screen-reader checks; classify unavailable platforms explicitly.
 4. Profile representative household size on a constrained device against the ten-second daily loop and compare it with P-003's synthetic maximum before deciding whether archive-memory or progress-feedback work is warranted.
 5. Reconcile stale roadmap/current-candidate documentation, then validate the More-page hierarchy with a first-use walkthrough before changing information architecture.
