@@ -118,7 +118,7 @@ The month targets a coherent, demoable pre-1.0 build at `v0.40.x`. The `v0.41.x`
 
 ## Install, build, and run
 
-Requirements: Rust/Cargo with the `wasm32-unknown-unknown` target, Node.js 22 or later, npm, and a modern browser with WebAssembly, Web Crypto, Web Locks, ES modules, Custom Elements and IndexedDB. Passkeys are needed for server identity/pairing; PRF support is optional because a user-held recovery secret is an explicit local unlock path. Use HTTPS outside localhost.
+Requirements: Rust/Cargo with the `wasm32-unknown-unknown` target, Node.js 22.13.0 or later, npm, and a modern browser with WebAssembly, Web Crypto, Web Locks, ES modules, Custom Elements and IndexedDB. Passkeys are needed for server identity/pairing; PRF support is optional because a user-held recovery secret is an explicit local unlock path. Use HTTPS outside localhost.
 
 From the repository root in PowerShell:
 
@@ -128,7 +128,7 @@ rustup target add wasm32-unknown-unknown
 ./projects/kin/run.ps1
 ```
 
-The script builds the WASM module and serves the web app at `http://localhost:8000`. On macOS/Linux, run `sh projects/kin/run.sh` from the repository root.
+The script builds the WASM module and serves the web app at `http://localhost:8000`. On Windows, if PATH selects Node.js older than 22.13.0, `run.ps1` uses the lowest compatible version already installed with fnm; it does not install Node.js. On macOS/Linux, run `sh projects/kin/run.sh` from the repository root with Node.js 22.13.0 or later on PATH.
 
 The service database defaults to `projects/kin/.kin-data/kin.sqlite`; set
 `KIN_DATA_DIR` or `KIN_DATABASE_PATH` to choose another location. Keep the data

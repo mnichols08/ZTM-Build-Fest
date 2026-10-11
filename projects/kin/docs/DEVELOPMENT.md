@@ -58,6 +58,8 @@ Windows developers should be able to use PowerShell and standard Rust tooling. m
 - Node.js 22.13.0 or later and npm for the same-origin application/API server and built-in tests; SQLite uses the built-in `node:sqlite` API, with no npm runtime dependencies
 - Python 3.11 or later for version checks and launcher smoke tests; it is not needed to serve the app
 
+On Windows, `run.ps1` uses Node.js from PATH when it meets the 22.13.0 minimum. If PATH selects an older version, it uses the lowest compatible version already installed through fnm. The script does not install runtimes. On macOS and Linux, put Node.js 22.13.0 or later on PATH before running `run.sh`.
+
 The current implementation has been exercised on Windows with Node 22.12 using its experimental SQLite flag. Node 22.13.0 or later is the supported runtime floor for using `node:sqlite` without that flag. Other operating-system and runtime/architecture combinations remain unverified.
 
 ## Browser capabilities
