@@ -38,7 +38,7 @@ def main() -> int:
 
     changelog = (PROJECT_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     if not re.search(
-        rf"^## (?:Unreleased — )?v{re.escape(version)}[ —]",
+        rf"^##(?:#)? (?:Unreleased — )?v{re.escape(version)}[ —]",
         changelog,
         re.MULTILINE,
     ):
@@ -66,6 +66,8 @@ def main() -> int:
 
     index = (PROJECT_ROOT / "web/index.html").read_text(encoding="utf-8")
     require_match("index release metadata", r'<meta name="kin-version" content="([0-9]+\.[0-9]+\.[0-9]+)"', index, version)
+    archive = (PROJECT_ROOT / "web/security/archive.js").read_text(encoding="utf-8")
+    require_match("portable archive metadata", r'^const KIN_VERSION = "([0-9]+\.[0-9]+\.[0-9]+)";', archive, version)
     worker = (PROJECT_ROOT / "web/service-worker.js").read_text(encoding="utf-8")
     if 'const CACHE = `kin-static-v${RELEASE}`;' not in worker:
         raise ValueError("service worker cache name must derive from the release registration URL")

@@ -1,5 +1,61 @@
 # Testing Contracts
 
+## Reproducible verification (v0.40.3 candidate)
+
+From either the repository root or `projects/kin/`, run `npm run verify
+--prefix projects/kin` at the repository root or `npm run verify` inside Kin.
+The gate requires Node `>=22.13.0`, the active pinned Rust toolchain from
+`rust-toolchain.toml`, Cargo, Git, Python `>=3.11` for the existing version
+check, and the `wasm32-unknown-unknown` target. It runs formatting,
+warnings-denied Clippy, version checks, Kin-only `git diff --check`, every
+`*.test.mjs` under `server/` and `web/`, all Rust tests,
+the release WASM build, and a hash comparison against the committed
+`web/wasm/kin_engine.wasm` when that artifact is tracked. This repository
+ignores the generated browser WASM, so that comparison is reported `NOT RUN`
+for the default gate. Browser mode compares the local browser asset with the
+fresh build and fails on a stale or missing file without replacing it.
+The Node suite sets the existing documented `NODE_NO_WARNINGS=1` setting to
+keep subprocess SQLite experimental warnings from corrupting exact CLI output
+assertions.
+
+Run the five existing browser suites with `npm run verify:browser`. Configure
+the browser by setting `KIN_BROWSER` to a Chromium-family executable, or run
+`node scripts/verify.mjs --browser "path/to/chromium"`. A missing executable
+fails the required browser mode. Prepare the ignored browser WASM with
+`./build-wasm.ps1` on Windows or `sh ./build-wasm.sh` on POSIX before browser
+mode. The normal verification command reports the browser stage as `NOT RUN`;
+it is not a pass. The browser suites require a
+CDP-capable browser; the existing storage and UI runners use PowerShell for
+Windows process cleanup, so cross-platform support for those suites is not
+claimed.
+
+The default mandatory local gate is `verify`; browser regressions are an
+explicit second command. `node --test scripts/verify.test.mjs` runs focused
+tests for the verification runner itself. The proposed workflow is documented
+at `docs/ci/kin-verification.workflow.yml`, but no active GitHub Actions
+integration exists because the Kin repository boundary does not permit a
+parent-level workflow. A root workflow requires separate authorization.
+
+Verification is fail-fast. When a mandatory command fails, later commands in
+that stage and dependent stages are reported `NOT RUN` with the reason; they
+are not counted as passing. The report retains completed results, identifies
+the first failing command, gives runtime and elapsed time, and exits nonzero.
+An environment prerequisite failure similarly prevents static, test, WASM,
+and browser checks. In the default mode the optional browser stage is always
+`NOT RUN`; use `verify:browser` to make those suites mandatory.
+
+While a child command is active, the runner handles SIGINT and SIGTERM,
+attempts to stop the active command tree, waits for cleanup to finish, and
+then exits unsuccessfully without scheduling later checks. POSIX commands run
+in an isolated process group and cleanup signals that group. Windows cleanup
+uses the built-in `taskkill /T /F` scoped to the child PID. A cleanup error is
+a verification failure and is included in the report. This terminates normal
+descendants within the isolated tree; detached descendants that deliberately
+leave that tree and hard process or host failures cannot be guaranteed to
+terminate. The process-tree regression is exercised on Windows here; POSIX
+process-group termination is implemented but was not exercised in this
+Windows environment. Browser runners retain their own cleanup behavior.
+
 The v0.16.0 gate adds Note lifecycle, validation, protocol-10 compatibility,
 prior-history, real-WASM, and browser create/edit/archive coverage to the
 existing Rust, encrypted-sync, storage, server, and browser regression suites.

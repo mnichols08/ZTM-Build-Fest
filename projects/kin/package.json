@@ -1,7 +1,7 @@
 {
   "name": "kin-server",
   "private": true,
-  "version": "0.40.2",
+  "version": "0.40.3",
   "type": "module",
   "engines": {
     "node": ">=22.13.0"
@@ -12,6 +12,8 @@
     "backup": "node server/admin.mjs backup",
     "restore": "node server/admin.mjs restore",
     "test:calendar": "node --test web/calendar-export.test.mjs",
-    "test:server": "node --test server/*.test.mjs"
+    "test:server": "node --test server/*.test.mjs",
+    "verify": "node scripts/verify.mjs",
+    "verify:browser": "node scripts/verify.mjs --browser"
   }
 }
