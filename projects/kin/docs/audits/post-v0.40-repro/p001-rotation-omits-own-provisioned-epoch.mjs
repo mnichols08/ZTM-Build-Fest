@@ -35,7 +35,8 @@ sync.rotateEpoch(a.sessionToken, { expectedEpoch: 1, packages: [{
   signature: Buffer.alloc(64).toString("base64url") }], proposalId: "2".repeat(32) });
 const entryA = sync.deviceDirectory(c.sessionToken).find((device) => device.deviceId === a.deviceId);
 console.log("current epoch:", sync.status(a.sessionToken).currentEpoch, "; rotating device A provisionedEpochs:", entryA.provisionedEpochs,
-  "(expected to include 2; the directory omits the epoch A itself created)");
+  entryA.provisionedEpochs.includes(2) ? "(fixed: includes the epoch A created)"
+    : "(defect: expected to include 2; the directory omits the epoch A itself created)");
 try {
   sync.createProvisioningGrant(c.sessionToken, { recipientDeviceId: a.deviceId, keyEpoch: 2 });
 } catch (error) {

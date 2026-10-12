@@ -4,6 +4,11 @@
 // talking to one real in-process Kin server and relay over loopback HTTP.
 // The server clock is injectable so Temporary expiry is deterministic.
 //
+// Evidence limits: pairing operates the real fingerprint checkboxes and
+// passkey buttons, but the "comparison" is automated equality between strings
+// rendered in two profiles. It does not count as a human verification
+// ceremony, and separate profiles on one machine are not separate devices.
+//
 // Usage: node scripts/household-authority-regression.mjs <browser executable>
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -87,25 +92,52 @@ async function pageBootstrap(deviceLabel) {
   return { identity: app.household.identity, prf: Boolean(wrapper) };
 }
 
+// Fingerprint verification. The helpers below read the fingerprint each
+// profile renders, compare it with what the *other* profile renders (the
+// drill passes those strings between processes), and only then operate the
+// product's real "I compared this fingerprint" checkbox and passkey button.
+// That proves the rendered values agree across independent clients and that
+// approval/activation stay gated until confirmation. It is still automated
+// string equality, not a person comparing two screens: it is protocol and UI
+// gating evidence, not a completed human verification ceremony.
+
+async function pageShownFingerprint(prompt) {
+  const household = document.querySelector("kin-app").household;
+  const paragraph = [...household.querySelectorAll(".pairing-fingerprint")]
+    .find((element) => element.textContent.startsWith(`${prompt}: `));
+  return paragraph?.querySelector("code")?.textContent.replaceAll(" ", "") ?? null;
+}
+
 async function pageClaim({ code, deviceLabel }) {
   const app = document.querySelector("kin-app");
   await app.household.register("claim", { code, deviceLabel });
   const claim = app.household.claim;
   if (!claim)
     throw new Error("Claim registration failed: " + (app.household.querySelector(".household-message")?.textContent ?? ""));
-  return { state: claim.state, fingerprint: app.household.localFingerprint };
+  const shown = (prompt) => [...app.household.querySelectorAll(".pairing-fingerprint")]
+    .find((element) => element.textContent.startsWith(`${prompt}: `))
+    ?.querySelector("code")?.textContent.replaceAll(" ", "") ?? null;
+  return {
+    state: claim.state,
+    fingerprint: app.household.localFingerprint,
+    shownOwnKey: shown("Compare this device key with the approving adult"),
+    shownApprovingKey: shown("Compare the approving device key"),
+  };
 }
 
 async function pageCreatePairing({ kind, expiresAt }) {
   const app = document.querySelector("kin-app");
   const h = app.household;
   await h.createPairing(kind, expiresAt);
-  if (!h.pairing?.code)
-    throw new Error(`Could not create ${kind} invitation: ` + (h.querySelector(".household-message")?.textContent ?? ""));
-  return { code: h.pairing.code, pairingId: h.pairing.pairingId, state: h.pairing.state };
+  // Require the code the user would read, not merely component state.
+  const shownCode = h.querySelector(".pairing-code")?.textContent;
+  const alert = h.querySelector('.household-message[role="alert"]');
+  if (!h.pairing?.code || alert || shownCode !== h.pairing.code)
+    throw new Error(`Could not create ${kind} invitation: ` + (alert?.textContent ?? "the code was not displayed"));
+  return { code: shownCode, pairingId: h.pairing.pairingId, state: h.pairing.state };
 }
 
-async function pageApprove() {
+async function pageApprove({ joiningKey }) {
   const app = document.querySelector("kin-app");
   const h = app.household;
   let latest;
@@ -116,21 +148,72 @@ async function pageApprove() {
   }
   if (latest.state !== "Claimed") throw new Error("Invitation was not claimed: " + latest.state);
   h.pairing = { ...h.pairing, ...latest };
-  h.verifiedFingerprint = h.pairing.syncKeyFingerprint;
-  await h.approve();
+  const controls = () => {
+    h.render();
+    const shownKey = [...h.querySelectorAll(".pairing-fingerprint")]
+      .find((element) => element.textContent.startsWith("Confirm this matches the joining device: "))
+      ?.querySelector("code")?.textContent.replaceAll(" ", "") ?? null;
+    const approve = [...h.querySelectorAll("button")].find((button) => button.textContent === "Approve with passkey");
+    const confirmation = [...h.querySelectorAll("label")]
+      .find((label) => label.textContent.includes("I compared this fingerprint on both devices."))
+      ?.querySelector('input[type="checkbox"]');
+    if (!approve || !confirmation) throw new Error("Approval verification controls are missing");
+    return { shownKey, approve, confirmation };
+  };
+  const idle = async () => {
+    for (let i = 0; i < 400 && h.busy; i++) await new Promise((r) => setTimeout(r, 25));
+  };
+  let { shownKey, approve, confirmation } = controls();
+  if (!shownKey || shownKey !== joiningKey)
+    throw new Error("The approver's displayed fingerprint differs from the joining device's own display");
+  // P-005: render() re-enables every button, so the visual disabled state is
+  // not reliable here. Record it, but assert the gate the handler enforces.
+  const visuallyGated = approve.disabled;
+  if (confirmation.checked) throw new Error("Approval fingerprint confirmation started checked");
+  const versionBefore = h.pairing.version;
+  approve.disabled = false;
+  approve.click();
+  await idle();
+  const refusal = h.querySelector('.household-message[role="alert"]')?.textContent ?? "";
+  const refusedBeforeConfirmation = /Compare the device fingerprint on both devices before approving/.test(refusal) &&
+    h.pairing.state === "Claimed" && h.pairing.version === versionBefore &&
+    (await h.api(`/api/pairings/${h.pairing.pairingId}`)).state === "Claimed";
+  ({ approve, confirmation } = controls());
+  confirmation.click();
+  if (approve.disabled) throw new Error("Approval stayed disabled after fingerprint confirmation");
+  approve.click();
+  for (let i = 0; i < 400 && (h.busy || h.pairing.state !== "Confirmed"); i++) {
+    const alert = h.querySelector(".household-message");
+    if (alert?.getAttribute("role") === "alert") throw new Error("Approval failed: " + alert.textContent);
+    await new Promise((r) => setTimeout(r, 25));
+  }
   if (h.pairing.state !== "Confirmed")
     throw new Error("Approval did not confirm: " + (h.querySelector(".household-message")?.textContent ?? h.pairing.state));
-  return { memberId: h.pairing.confirmedMemberId, deviceId: h.pairing.confirmedDeviceId };
+  return { memberId: h.pairing.confirmedMemberId, deviceId: h.pairing.confirmedDeviceId,
+    refusedBeforeConfirmation, visuallyGated, shownKey };
 }
 
-async function pageActivate() {
+async function pageActivate({ approvingKey }) {
   const app = document.querySelector("kin-app");
   const h = app.household;
   await h.load();
   if (h.claim?.state !== "Confirmed") throw new Error("Claim is not confirmed: " + JSON.stringify(h.claim));
-  h.verifiedInviterFingerprint = true;
-  // activateClaim navigates to "/" on success; do not await the navigation.
-  void h.activateClaim();
+  const shownKey = [...h.querySelectorAll(".pairing-fingerprint")]
+    .find((element) => element.textContent.startsWith("Compare the approving device key: "))
+    ?.querySelector("code")?.textContent.replaceAll(" ", "") ?? null;
+  if (!shownKey || shownKey !== approvingKey)
+    throw new Error("The joining device's displayed approver fingerprint differs from the approver's own display");
+  const activate = [...h.querySelectorAll("button")].find((button) => button.textContent === "Activate with passkey");
+  const confirmation = [...h.querySelectorAll("label")]
+    .find((label) => label.textContent.includes("I compared this fingerprint on both devices."))
+    ?.querySelector('input[type="checkbox"]');
+  if (!activate || !confirmation) throw new Error("Activation verification controls are missing");
+  if (!activate.disabled || confirmation.checked)
+    throw new Error("Activation was available before fingerprint confirmation");
+  confirmation.click();
+  if (activate.disabled) throw new Error("Activation stayed disabled after fingerprint confirmation");
+  // Activation navigates to "/" on success, destroying this context.
+  activate.click();
   for (let i = 0; i < 400; i++) {
     const alert = h.querySelector(".household-message");
     if (alert?.getAttribute("role") === "alert") throw new Error("Activation failed: " + alert.textContent);
@@ -536,13 +619,29 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     }
     return rows;
   };
-  const join = async ({ inviter, invitee, kind, expiresAt, deviceLabel }) => {
-    const invitation = await inviter.call(pageCreatePairing, { kind, expiresAt });
+  // Drives the real fingerprint controls on both sides of a pairing; see the
+  // evidence note above pageShownFingerprint().
+  const verifyAndApprove = async ({ inviter, invitee, invitation, deviceLabel }) => {
+    const approverKey = await inviter.call(pageShownFingerprint, "Compare this household device key");
     const claimed = await invitee.call(pageClaim, { code: invitation.code, deviceLabel });
     check(claimed.state === "Claimed" && claimed.fingerprint, `${deviceLabel} claim is recorded with its local device fingerprint`);
-    const approved = await inviter.call(pageApprove);
+    check(/^[a-f0-9]{64}$/.test(approverKey ?? "") && claimed.shownApprovingKey === approverKey &&
+      claimed.shownOwnKey === claimed.fingerprint,
+    `${deviceLabel} and its approver render matching fingerprints for both device keys`);
+    const approved = await inviter.call(pageApprove, { joiningKey: claimed.shownOwnKey });
+    check(approved.refusedBeforeConfirmation && approved.shownKey === claimed.fingerprint,
+      `${deviceLabel} approval is refused until the approver confirms the compared fingerprint`);
+    if (!approved.visuallyGated)
+      console.log(`NOTE ${deviceLabel}: Approve was not visually disabled before confirmation (P-005)`);
+    return { approved, approverKey };
+  };
+  const join = async ({ inviter, invitee, kind, expiresAt, deviceLabel }) => {
+    const invitation = await inviter.call(pageCreatePairing, { kind, expiresAt });
+    const { approved, approverKey } = await verifyAndApprove({ inviter, invitee, invitation, deviceLabel });
     check(/^[a-f0-9]{32}$/.test(approved.memberId) && /^[a-f0-9]{32}$/.test(approved.deviceId), `${deviceLabel} approval confirms member and device identities`);
-    const activation = await invitee.call(pageActivate).catch((error) => {
+    // pageActivate also refuses to continue unless activation is gated until
+    // the joining device confirms the approver fingerprint.
+    const activation = await invitee.call(pageActivate, { approvingKey: approverKey }).catch((error) => {
       // Successful activation destroys the execution context mid-wait.
       if (/Execution context was destroyed|Cannot find context|Inspected target navigated/i.test(error.message)) return "navigated";
       throw error;
@@ -780,16 +879,17 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     const invitation = await a.call(async () => {
       const app = document.querySelector("kin-app");
       await app.household.createDevicePairing();
-      if (!app.household.pairing?.code)
-        throw new Error("Device pairing failed: " + (app.household.querySelector(".household-message")?.textContent ?? ""));
-      return { code: app.household.pairing.code };
+      const shownCode = app.household.querySelector(".pairing-code")?.textContent;
+      const alert = app.household.querySelector('.household-message[role="alert"]');
+      if (!app.household.pairing?.code || alert || shownCode !== app.household.pairing.code)
+        throw new Error("Device pairing failed: " + (alert?.textContent ?? "the code was not displayed"));
+      return { code: shownCode };
     });
     await d.call(pageWaitHousehold);
-    const dClaim = await d.call(pageClaim, { code: invitation.code, deviceLabel: "Client D" });
-    check(dClaim.state === "Claimed", "restored profile D claims the same-member device invitation");
-    const dApproved = await a.call(pageApprove);
+    const { approved: dApproved, approverKey: dApproverKey } =
+      await verifyAndApprove({ inviter: a, invitee: d, invitation, deviceLabel: "Client D" });
     check(dApproved.memberId === aBoot.identity.memberId, "device pairing binds D to Adult A's membership");
-    const dActivation = await d.call(pageActivate).catch((error) => {
+    const dActivation = await d.call(pageActivate, { approvingKey: dApproverKey }).catch((error) => {
       if (/Execution context was destroyed|Cannot find context|Inspected target navigated/i.test(error.message)) return "navigated";
       throw error;
     });

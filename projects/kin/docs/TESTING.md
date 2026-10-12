@@ -50,11 +50,27 @@ server and relay on loopback. The server clock is injectable so Temporary
 expiry is enforced deterministically; the browsers keep real time. The drill
 covers Adult, Limited and Temporary admission through the real pairing
 ceremony, Limited/Temporary trust-management denials, member removal and
-device revocation while the affected client is offline, Temporary expiry,
-export through the product control, restore into a clean profile, same-member
-device re-authorization with catch-up, and two-client reconciliation after
-concurrent offline edits. It runs in about two minutes and leaves no data
-behind.
+device revocation while the affected client is offline, Temporary expiry, a
+rotation committed by an Adult that is revoked before the offline Adult
+receives it, export through the product control, restore into a clean
+profile, same-member device re-authorization with catch-up, and two-client
+reconciliation after concurrent offline edits. It runs in about two minutes and
+leaves no data behind.
+
+Pairing requires the displayed invitation code and operates the real "I
+compared this fingerprint" checkboxes and passkey buttons. The drill compares
+the fingerprint strings rendered in the two profiles and checks that approval
+is refused, and activation disabled, until confirmation. That is automated
+evidence for protocol and UI gating only. It is not a person comparing two
+screens and does not count as a manual fingerprint-verification test.
+
+B-002 committed-rotation recovery has focused service, cryptographic, and
+durable coverage in `server/rotation-recovery.test.mjs` and
+`server/durable-sync-integrity.test.mjs`: recipient authorization after
+revocation, removal, and Temporary expiry; tampered, forged, misaddressed, and
+superseded-key packages; historical sender keys; consecutive rotations; lost
+acknowledgements; capacity bounds; restart equivalence; corrupt durable
+markers; and pre-marker grants.
 
 ```powershell
 $kinBrowser = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'

@@ -50,7 +50,10 @@ pairing.revokeDevice(a.sessionToken, b.deviceId, a.memberId); // A revokes B bef
 sync.onAccessChange(a.householdId, [b.deviceId]);
 const status = sync.status(a.sessionToken);
 const holders = [...pairing.devices.values()].filter((device) => !device.revokedAt && device.syncProvisionedEpochs?.includes(status.currentEpoch));
+const waiting = grants(sync.pendingProvisioning(a.sessionToken));
 console.log("3. after revoking B: epoch", status.currentEpoch, "; rotationPending", status.rotationPending,
-  "; key packages waiting for A:", grants(sync.pendingProvisioning(a.sessionToken)).length,
+  "; key packages waiting for A:", waiting.length,
   "; active devices recorded as holding epoch", status.currentEpoch + ":", holders.length);
-console.log("Defect: no package and no active holder remain, and the client cannot rotate to epoch 4 without epoch 3.");
+console.log(waiting.some((grant) => grant.keyEpoch === status.currentEpoch && grant.committedRotation === true)
+  ? "Fixed: A's committed epoch-" + status.currentEpoch + " package survives B's revocation as recovery material."
+  : "Defect: no package and no active holder remain, and the client cannot rotate to epoch 4 without epoch 3.");

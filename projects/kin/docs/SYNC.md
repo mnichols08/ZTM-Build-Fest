@@ -131,6 +131,20 @@ the rotation required by the access change; it does not let that Adult skip a
 missing epoch or make its encrypted event history unreadable. Recovery packages
 contain only recipient-wrapped keys, not server-held household content keys.
 
+The recovery marker is assigned by the relay when it accepts the rotation;
+fields in a submitted package body cannot set or clear it. Clients relax only
+the expiry check, and only for a grant the relay marks this way; the expiry is
+part of the signed package metadata, so the marker cannot make a package
+verify that would not verify otherwise. Durable validation rejects a marker on
+an acknowledged, request-bound, or package-less grant. Grants stored before
+the marker existed load as ordinary grants and keep their normal expiry.
+Retained packages are bounded by `MAX_KEY_EPOCHS × MAX_ROTATION_PACKAGES`,
+which exceeds the most a supported household can accumulate (127 rotations ×
+at most 64 recipients), so retained recovery packages cannot block a
+legitimate rotation. They do not count against the ordinary 128-transfer
+limit. A recipient's own key migration still discards its outstanding
+packages, because they are bound to its previous fingerprint.
+
 Replacing pending packages compares the complete expected pending record in one
 encrypted IndexedDB transaction. Completion and removal match the proposal ID,
 so a stale tab cannot clear a newer proposal. Completion preserves the local

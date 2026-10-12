@@ -2,10 +2,14 @@
 
 ## Unreleased — Post-v0.40.1 release stabilization
 
+- Revoking the device that committed the latest key rotation no longer strands the remaining devices (B-002). The relay keeps each committed rotation package for a still-trusted recipient until that recipient acknowledges it, including after the package's original expiry, and removes it when the recipient is revoked, removed, expired, or changes its device key. Only packages from the relay's own committed rotation get this exception; ordinary key transfers still expire. Clients still check the recipient binding and the sender's signature against verified device-key history.
+- The rotating device is now recorded as holding the epoch it committed (P-001).
+- Inviting a member or another device from the household page now shows the invitation code. Previously the server's response omitted the inviting device's key fingerprint, so the client's local-key check failed with "This device's approved key does not match its local key." and no code was displayed (B-004).
+- `GET /api/household/lifecycle` answers again instead of always returning 500 (B-001).
 - Limited and Temporary devices no longer attempt Adult-only epoch rotation or key provisioning during sync. Previously a 403 from those steps paused their sync before pull and push, so non-Adult members could not participate after any epoch rotation.
 - The trusted-device list refreshes after a successful device revocation instead of showing the revoked device as still trusted until the page is reopened.
-- Add `scripts/household-authority-regression.mjs`, a live multi-profile household authority and recovery drill against the real server and relay, and record its evidence in `docs/audits/LIVE_HOUSEHOLD_VERIFICATION.md`.
-- No version bump, archive format, cryptographic or server access-control change.
+- Add `scripts/household-authority-regression.mjs`, a live multi-profile household authority and recovery drill against the real server and relay. It operates the real fingerprint-confirmation controls; its evidence and limits are recorded in `docs/audits/LIVE_HOUSEHOLD_VERIFICATION.md`.
+- No version bump, archive format, encryption format, package-signature format, or authorization-policy change. Server key-package retention and two pairing responses changed as described above.
 
 ## v0.40.1 — Portable Membership Status Fidelity
 

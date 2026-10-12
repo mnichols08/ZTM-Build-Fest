@@ -1,11 +1,13 @@
 # Kin Live Household Authority & Recovery Verification
 
-**Dates:** 2026-10-11 (server integration pass), 2026-10-12 (independent-profile and rotation-recovery drills)
+**Dates:** 2026-10-11 (server integration pass), 2026-10-12 (independent-profile
+drills, B-002 recovery hardening, and fingerprint-control evidence)
 **Base:** `kin-development` at `59c94a7` (PR #36 merged; v0.40.1 candidate)
-**Working branch:** `test/kin-live-household-verification` (PR #37)
-**Scope:** Verification evidence, three original drill fixes, and focused
-B-002/P-001 key-rotation recovery. No version bump, archive format, or
-package-signature format change.
+**Working branch:** `test/kin-live-household-verification` (PR #37); hardening
+applied on top of `6d04c10` and not yet committed
+**Scope:** Verification evidence, the defects that evidence found, and focused
+B-002/P-001 key-rotation recovery. No version bump, archive format, encryption
+format, package-signature format, or authorization-policy change.
 
 ## Summary
 
@@ -15,62 +17,104 @@ genuinely separate clients. This branch closes most of that gap with
 `scripts/household-authority-regression.mjs`: five independent headless
 browser profiles (separate `--user-data-dir`, cookies, IndexedDB, device keys,
 and CDP virtual authenticators) exercise one real in-process Kin server and
-relay over loopback through the product's own pairing, approval, activation,
+relay over loopback through the product's pairing, approval, activation,
 member-removal, device-revocation, export, and restore controls. The server
 clock is injectable, so Temporary expiry is enforced deterministically.
 
-The updated drill passes 94 assertions in Edge 155.0.4283.45 and Chrome
-154.0.8037.98 on Windows x64. The original run found three real defects; two
-were fixed with regression tests: the unauthenticated household lifecycle
-route always returned 500, and Limited/Temporary clients paused sync before
-pull and push because they tried Adult-only key provisioning. The third,
-**B-002**, stranded remaining devices when the Adult that committed a rotation
-was revoked before package delivery. The focused recovery patch retains
-committed packages for still-trusted recipients beyond their pre-commit TTL,
-removes packages to revoked recipients, and records the rotating device as an
-epoch holder (P-001). Service, cryptographic, durable-restart, and independent
-browser-profile race regressions now pass. The original drill also surfaced a
-stale device-list defect, fixed on this branch, and two polish findings.
+The drill now passes **102 assertions** in Edge 155.0.4283.45 and Chrome
+154.0.8037.98 on Windows. That is up from 94 because pairing now drives the real
+fingerprint controls. The drill and its follow-up found five defects, all fixed
+on this branch with regressions:
+
+- **B-001:** the household lifecycle route always returned 500.
+- **B-002:** revoking the Adult that committed a rotation stranded the other devices.
+- **B-003:** Limited and Temporary clients paused on Adult-only key steps.
+- **B-004:** invitations created from the household page never showed their code.
+- **P-002:** the trusted-device list stayed stale after revocation.
+
+**P-001** was fixed with B-002. Four findings remain open: polish issues
+P-003, P-004, and P-005, and nonblocking residual risks R-1 to R-4.
+
+B-002 and B-004 are **fixed in the branch, subject to independent review and
+CI on the final pushed commit**. No CI workflow exists for Kin in this
+repository, so every result below is local.
 
 Separate profiles on one machine are not physical devices, separate networks,
 or independent people. Those drills, installed-PWA behavior, Firefox,
 Safari/WebKit, and mobile remain **NOT RUN** and have manual instructions below.
 
+## Status Legend
+
+| Status | Meaning |
+|---|---|
+| **PASS** | Executed in the stated environment for this record and passed. |
+| **FAIL** | Executed and failed. (None outstanding.) |
+| **NOT RUN** | Not executed. Environment unavailable or out of scope. |
+| **NOT VERIFIED** | Partly exercised, but the evidence does not prove the claim as a user would experience it. |
+
 ## Evidence Levels
 
 | Level | What it is here | Evidence |
 |---|---|---|
-| Unit / service tests | Node tests of `PairingService`, `EncryptedSyncService`, components, and pure client helpers; Rust domain tests. | `npm run test:server`, `node --test server/*.test.mjs web/**/*.test.mjs`, `cargo test`. |
-| Integration tests | Real HTTP server and relay on loopback with scripted sessions (no browser). | `server/sync-http.test.mjs` two-client test (2026-10-11); `server/household-lifecycle.test.mjs` lifecycle route test (new). |
+| Unit / service tests | Node tests of `PairingService`, `EncryptedSyncService`, components, and pure client helpers; Rust domain tests. | Complete server + web Node suite, `cargo test`. |
+| Integration tests | Real HTTP server and relay on loopback with scripted sessions (no browser). | `server/sync-http.test.mjs` two-client test; `server/household-lifecycle.test.mjs` lifecycle route test. |
 | Browser automation, single profile | Existing Edge runners with a stubbed API or the real server in one profile. | `security-ui`, `security-storage`, `browser`, `passkey` regressions. |
-| Browser automation, independent profiles | **New.** Five separate browser processes/profiles against the real server, relay, and WebAuthn verifier. | `scripts/household-authority-regression.mjs`. |
+| Browser automation, independent profiles | Five separate browser processes/profiles against the real server, relay, and WebAuthn verifier. | `scripts/household-authority-regression.mjs`. |
 | Physical devices / humans / networks | Not run. | Manual instructions below. |
+
+## What the drill does and does not prove
+
+- **Real:** separate profiles, IndexedDB stores, device keys, virtual
+  authenticators and passkey ceremonies; real HTTP relay; product controls for
+  invitation, claim, approval, activation, removal, revocation, export, and
+  restore. Invitations must show their code in the page, not only in component
+  state (this is how B-004 was found).
+- **Fingerprint verification:** earlier revisions set `verifiedFingerprint`
+  and `verifiedInviterFingerprint` directly on the component, which skipped the
+  confirmation controls. The drill now reads the fingerprint each profile
+  renders and passes those strings between processes. It requires the joining
+  device's displayed key to match the approver's display, and the approver's
+  displayed key to match the joining device's display. It then checks that
+  approval is refused before the checkbox is ticked, with no server call (see
+  P-005). Next it ticks the real "I compared this fingerprint on both devices"
+  checkbox and clicks the real passkey button. Activation must be disabled until
+  its own checkbox is ticked.
+- **Not proven:** the comparison is automated string equality, not a person
+  reading two screens. **Human fingerprint verification is NOT VERIFIED** and
+  is not counted as a completed manual security test.
+- **Deterministic shortcuts that remain:**
+  - The server clock is injected. For the B-002 step, the server clock moves
+    forward 7 minutes and A's page clock 11 minutes past the package TTL. Both
+    are rewound afterward so later steps line up with real browser time.
+  - Network loss uses CDP emulation, not OS-level disconnection.
+  - For assertions, the drill inspects server and relay state in process and
+    issues its own inspection sessions. Every household action under test goes
+    through a browser profile.
 
 ## Verification Matrix
 
-Execution method for every "multi-profile drill" row:
-`household-authority-regression.mjs`, Node 22.12.0 with
-`--experimental-sqlite`, Windows 11 x64, Edge 155.0.4283.45 and Chrome
-154.0.8037.98, in-memory SQLite `DurableStore`, injectable server clock,
-synthetic households only. The latest run in each browser passed 94 assertions.
-Earlier runs of the same script surfaced the findings below before their fixes
-or ordering changes.
+Execution method for every "multi-profile drill" row: the drill run on
+2026-10-12 with Node 22.13.0 (`fnm exec --using v22.13.0`) on Windows 11
+(NT 10.0.26300) x64, in Edge 155.0.4283.45 and Chrome 154.0.8037.98. It used an
+in-memory SQLite `DurableStore`, an injectable server clock, and synthetic
+households only. Cumulative assertion counts are from the 102-assertion run.
 
 | Scenario | Expected outcome from current contract | Actual result | Environment / execution method | Evidence | Status |
 |---|---|---|---|---|---|
-| Adult joins household | Real pairing: invite → claim with fresh passkey → fingerprint-verified approval → activation. The new Adult has Adult trust authority and receives current and later key epochs only ([PAIRING](../PAIRING.md) "new/replacement adults receive only current/future epochs"). | Profile B joined through the product controls, reloaded, unlocked, held the approved identity, created and cancelled an invitation (201/200), received the event A created after admission, and did not receive the pre-join event. | Multi-profile drill (A, B). | "Adult admission assertions" (14 cumulative). | **PASS — multi-profile drill** |
-| Limited member joins | Member participates in sync but every trust-management route is denied with `403 adult_required`. | Profile C joined as Limited; seven trust routes (invitations, device pairing, sync enable, device list, member removal, provisioning grants, epoch rotation) returned 403; C synced after A provisioned it and A received C's event. | Multi-profile drill (A, C). | "Limited admission and restriction assertions" (28 cumulative); `server/pairing-service.test.mjs` HTTP denial cases. | **PASS — multi-profile drill** (after B-003 fix; before it, C's sync paused) |
-| Temporary member joins | Status and absolute expiry come only from the Adult's invitation; the member cannot manage trust; participates until expiry. | Profile C2 joined with the inviter-chosen expiry, was denied trust management, synced, and A received its event. | Multi-profile drill (A, C2). | "Temporary admission and expiry assertions". | **PASS — multi-profile drill** |
-| Temporary member expires | After expiry the server ends participation on the next request, revokes the member's devices, reserves a rotation, and reports `expired` (not `removed`). | Server clock advanced 4 min past expiry: A's household view showed the member ended, server status `expired`, C2's session was refused (401), C2's sync paused, C2's local history stayed intact, A's household page said "access ended", and A committed the reserved rotation. Browsers kept real time. | Multi-profile drill with injectable server clock. | "Temporary admission and expiry assertions" (52 cumulative). | **PASS — multi-profile drill (controlled server clock)** |
-| Member is revoked | Removal through the Adult UI revokes the member's devices and sessions; subsequent operations fail; nothing already shared is erased. | While C was offline with an unsent event, A removed C with a fresh passkey. Server marked C `removed`, revoked its device; on reconnect C's sync paused with an authorization code, status and push returned 401, C's local history and outbox were unchanged, A kept C's earlier event and never received the post-removal one, and the relay held exactly one envelope from C. | Multi-profile drill (A, C) with CDP network offline emulation. | "member removal during disconnection assertions" (37 cumulative). | **PASS — multi-profile drill** |
-| Device is revoked | Fresh-passkey revocation through the UI; the device's session and device cookie cannot regain access; membership itself persists; remaining Adult recovers any committed epoch before rotating. | B committed the expiry rotation while A was offline. A revoked B before receiving the package, advanced past its package TTL, recovered the signed epoch package, and committed the required following rotation. B's reconnect sync paused (`authentication_required`/`device_not_trusted`), push returned 401, login with B's device cookie was refused, B's local history and outbox were intact, and the relay held no envelope from B. | Multi-profile drill (A, B) with server and client clocks advanced deterministically. | "Temporary expiry and committed-rotation race assertions" (54 cumulative), "device revocation during disconnection assertions" (66 cumulative); `server/rotation-recovery.test.mjs`, `server/durable-sync-integrity.test.mjs`. | **PASS — Edge and Chrome** |
-| Household is exported | Export through the product control produces a package whose event count equals local history and whose membership snapshot carries authoritative `active`/`removed`/`expired` statuses. | A's export matched its local history and recorded A active, B active (device revoked, member not removed), C removed, C2 expired. | Multi-profile drill; `downloadArchive()` with the blob captured. | "export assertions" (65 cumulative). | **PASS — multi-profile drill** (P-003 clock-skew note) |
-| Household is restored | Validation stages without touching the target; restore imports exact history including removed/expired members' events; membership statuses survive; no identity, sync state, coordinator, or server authority results. | Clean profile D validated and restored A's archive: staged with zero events, imported the exact count, showed events from removed and expired members and nothing after the export, preserved the snapshot byte-for-byte, had no identity/sync state/coordinator, and `/api/sync/status` was 401. | Multi-profile drill (D) via the restore form and file input. | "clean-profile restore and re-authorization assertions" (81 cumulative). | **PASS — multi-profile drill** |
-| Restore to clean browser, then re-authorize | A restored device gains sync only through ordinary same-member device pairing; after approval it catches up and deduplicates. | A created a same-member device invitation; D claimed, A approved, D activated and bound to A's membership; A provisioned all epochs; D caught up with the post-export event and ended with the identical event-ID set as A; the relay gained no duplicate. | Multi-profile drill (A, D). | Same section. | **PASS — multi-profile drill** |
-| Revocation during disconnection | Stale offline state cannot override server revocation on reconnect; local unsent history is neither uploaded nor erased. | Covered by both the member-removal and device-revocation rows above (client offline through CDP network emulation while the Adult revoked). | Multi-profile drill. | Rows above; `server/sync-http.test.mjs`. | **PASS — multi-profile drill** (OS-level network loss NOT RUN) |
-| Two clients reconnect | Concurrent offline edits converge once on both clients with empty outboxes and no duplicates after repeated syncs. | A and D each added an item offline, reconnected, and after two sync rounds each held both items once, identical event-ID sets, empty outboxes; the relay gained exactly two events. | Multi-profile drill (A, D). | "two-client reconciliation assertions" (94 cumulative). | **PASS — multi-profile drill** |
-| Rotation committed by a later-revoked device | Remaining trusted devices can recover every committed epoch intended for them, even after package TTL, then complete the required next rotation. | B committed while A was offline; A revoked B before receiving the package, advanced beyond TTL, recovered and verified the package, then rotated again. A did not skip the missing epoch. | Multi-profile drill plus deterministic service, crypto, and durable-restart tests. | "Temporary expiry and committed-rotation race assertions"; `server/rotation-recovery.test.mjs`; `server/durable-sync-integrity.test.mjs`. | **PASS — B-002 fixed** |
-| Physical devices, separate networks, installed PWA, Firefox/Safari/mobile | — | Not exercised. | — | Manual instructions below. | **NOT RUN — ENVIRONMENTAL** |
+| Adult joins household | Real pairing: invite → claim with fresh passkey → fingerprint-confirmed approval → activation. The new Adult has Adult trust authority and receives current and later key epochs only ([PAIRING](../PAIRING.md) "new/replacement adults receive only current/future epochs"). | Profile B joined through the product controls, with the code displayed, fingerprints matching across profiles, approval refused before confirmation, and activation gated. B reloaded, unlocked, held the approved identity, created and cancelled an invitation (201/200), received A's post-admission event, and did not receive the pre-join event. | Multi-profile drill (A, B). | "Adult admission assertions" (16 cumulative). | **PASS — multi-profile drill** |
+| Fingerprint confirmation controls | Approval and activation require explicit fingerprint confirmation of matching displayed keys. | Matching displays and gating confirmed for B, C, C2, and D. The approval button is not visually disabled before confirmation (P-005), but the handler refuses. | Multi-profile drill. | Admission sections; console `NOTE … (P-005)`. | **PASS — automated gating**; **NOT VERIFIED — human comparison** |
+| Limited member joins | Member participates in sync but every trust-management route is denied with `403 adult_required`. | Profile C joined as Limited; seven trust routes (invitations, device pairing, sync enable, device list, member removal, provisioning grants, epoch rotation) returned 403; C synced after A provisioned it and A received C's event. | Multi-profile drill (A, C). | "Limited admission and restriction assertions" (32 cumulative); `server/pairing-service.test.mjs` HTTP denial cases. | **PASS — multi-profile drill** |
+| Temporary member joins | Status and absolute expiry come only from the Adult's invitation; the member cannot manage trust; participates until expiry. | Profile C2 joined with the inviter-chosen expiry, was denied trust management, synced, and A received its event. | Multi-profile drill (A, C2). | "Temporary expiry and committed-rotation race assertions". | **PASS — multi-profile drill** |
+| Temporary member expires | After expiry the server ends participation on the next request, revokes the member's devices, reserves a rotation, and reports `expired` (not `removed`). | Server clock advanced 4 min past expiry: B's household view showed the member ended, server status `expired`, C2's session was refused, C2's sync paused, C2's local history stayed intact, and B committed the reserved rotation. | Multi-profile drill with injectable server clock. | "Temporary expiry and committed-rotation race assertions" (60 cumulative). | **PASS — multi-profile drill (controlled server clock)** |
+| Member is removed | Removal through the Adult UI revokes the member's devices and sessions; subsequent operations fail; nothing already shared is erased. | While C was offline with an unsent event, A removed C with a fresh passkey. The server marked C `removed` and revoked its device. On reconnect C's sync paused with an authorization code, status and push returned 401, and C's local history and outbox were unchanged. A kept C's earlier event and never received the post-removal one; the relay held exactly one envelope from C. | Multi-profile drill (A, C) with CDP network offline emulation. | "member removal during disconnection assertions" (41 cumulative). | **PASS — multi-profile drill** |
+| Device is revoked | Fresh-passkey revocation through the UI; the device's session and device cookie cannot regain access; membership itself persists; the remaining Adult recovers any committed epoch before rotating. | B committed the expiry rotation while A was offline. A revoked B before receiving the package, advanced past its package TTL, recovered the signed epoch package, and committed the required following rotation. B's reconnect sync paused, push returned 401, and login with B's device cookie was refused. B's local history and outbox were intact, and the relay held no envelope from B. | Multi-profile drill (A, B) with server and client clocks advanced deterministically. | "device revocation during disconnection assertions" (72 cumulative). | **PASS — Edge and Chrome** |
+| Rotation committed by a later-revoked device (B-002) | Remaining trusted devices recover every committed epoch intended for them, even after package TTL, then complete the required next rotation; revoked, removed, and expired recipients cannot. | As above in the browser. Service tests add consecutive rotations, a lost acknowledgement, sender key succession, tampered, forged, and misaddressed packages, recipient revocation, removal, and expiry, capacity bounds, and restart equivalence. | Multi-profile drill plus deterministic service, crypto, and durable-restart tests. | Drill (60 and 72 cumulative); `server/rotation-recovery.test.mjs`; `server/durable-sync-integrity.test.mjs`. | **PASS — fixed in branch, pending independent review and final-head CI** |
+| Household is exported | Export through the product control produces a package whose event count equals local history and whose membership snapshot carries authoritative `active`/`removed`/`expired` statuses. | A's export matched its local history and recorded A active, B active (device revoked, member not removed), C removed, C2 expired. | Multi-profile drill; `downloadArchive()` with the blob captured. | "export assertions" (75 cumulative). | **PASS — multi-profile drill** (P-003 clock-skew note) |
+| Household is restored | Validation stages without touching the target; restore imports exact history including removed/expired members' events; membership statuses survive; no identity, sync state, coordinator, or server authority results. | Clean profile D validated and restored A's archive. It staged zero events and imported the exact count. It showed events from removed and expired members and nothing after the export, and preserved the snapshot byte for byte. It had no identity, sync state, or coordinator, and `/api/sync/status` returned 401. | Multi-profile drill (D) via the restore form and file input. | "clean-profile restore and re-authorization assertions" (93 cumulative). | **PASS — multi-profile drill** |
+| Restore to clean browser, then re-authorize | A restored device gains sync only through ordinary same-member device pairing; after approval it catches up and deduplicates. | A created a same-member device invitation (code displayed). D claimed with matching fingerprints, A approved after confirmation, and D activated and bound to A's membership. A provisioned all epochs; D caught up with the post-export event and ended with the same event-ID set as A. The relay gained no duplicate. | Multi-profile drill (A, D). | Same section. | **PASS — multi-profile drill** |
+| Revocation during disconnection | Stale offline state cannot override server revocation on reconnect; local unsent history is neither uploaded nor erased. | Covered by both the member-removal and device-revocation rows above (client offline through CDP network emulation while the Adult revoked). | Multi-profile drill. | Rows above; `server/sync-http.test.mjs`. | **PASS — multi-profile drill**; OS-level network loss **NOT RUN** |
+| Two clients reconnect | Concurrent offline edits converge once on both clients with empty outboxes and no duplicates after repeated syncs. | A and D each added an item offline, reconnected, and after two sync rounds each held both items once, identical event-ID sets, empty outboxes; the relay gained exactly two events. | Multi-profile drill (A, D). | "two-client reconciliation assertions" (102 cumulative). | **PASS — multi-profile drill** |
+| Physical devices, separate networks, installed PWA, Firefox/Safari/WebKit/mobile, human fingerprint comparison | — | Not exercised. | — | Manual instructions below. | **NOT RUN — ENVIRONMENTAL** |
 
 ## Findings
 
@@ -82,45 +126,73 @@ path a revoked or removed device uses to tell lost access from deletion).
 **Reproduction:** `node docs/audits/post-v0.40-repro/b001-lifecycle-route-500.mjs`
 (prints 200 now; before the fix every `GET /api/household/lifecycle?householdId=…`
 threw a `ReferenceError` because the route read a `store` binding that only
-exists in the server factory). The drill's server log showed `server_error`
-outcomes whenever a paused client asked for the lifecycle.
+exists in the server factory).
 **Fix:** `server/server.mjs` reads `context.store`. Regression:
 `server/household-lifecycle.test.mjs` "HTTP lifecycle lookup answers without a
 session…" (fails on the old code).
 
-### B-002 — Revoking the device that committed the latest rotation strands the household (FIXED)
+### B-002 — Revoking the device that committed the latest rotation strands the household (FIXED in branch)
 
 Area: Key rotation / revocation recovery. Severity: BLOCKER before the fix
 (permanent loss of household sync for every remaining device; no in-product
 recovery).
 
-**Reproduction:** `node docs/audits/post-v0.40-repro/b002-revoked-sender-rotation-strands-adult.mjs`.
-Two Adults; an access change reserves a rotation; B commits epoch 3 and its
-package for A sits in the relay; A revokes B before syncing.
-`EncryptedSyncService.onAccessChange` deletes every grant from the excluded
-sender, so A's package is gone, no active device is recorded as holding epoch
-3, and `rotationPending` is set for epoch 4. The client's `commitRotation`
-refuses to rotate without the current key ("The current household key is
-unavailable for rotation."), and `runOnce` throws "This device needs an
-authorized household key before sync can continue." on every cycle.
-**Live observation before the fix:** a Chrome run failed when B's 5-second
-background sync committed the expiry rotation before A did.
-**Fix:** the server marks packages created by the authorized, committed
-compare-and-advance operation as committed recovery material. It retains an
-unacknowledged package after sender revocation, including beyond the original
-package expiry, only while its recipient remains trusted. Packages for revoked
-or expired recipients are removed. The recipient still checks its device
-fingerprint and verifies the original package signature against the sender's
-verified key history; generic provisioning grants retain their normal TTL.
-Acknowledgement records the recipient's held epoch, and rotation commit records
-the sender's own epoch (P-001).
-**Regression evidence:** `server/rotation-recovery.test.mjs` recovers an expired
-package after sender revocation and completes the next rotation;
-`server/durable-sync-integrity.test.mjs` repeats retention across a database
-restart; `web/sync/crypto.test.mjs` checks expiry bypass only when explicitly
-authorized. The updated independent-profile drill reproduces the sequence in
-Edge and Chrome, verifies expiry, revocation, package recovery, and the next
-rotation. No epoch is skipped.
+**Reproduction:** `node docs/audits/post-v0.40-repro/b002-revoked-sender-rotation-strands-adult.mjs`
+(prints `Fixed:` now). Two Adults. An access change reserves a rotation, and B
+commits epoch 3 with A's package waiting in the relay. A revokes B before
+syncing. `onAccessChange` used to delete every grant from the excluded sender,
+so A could never obtain epoch 3. Without it, `commitRotation` refused to rotate
+to epoch 4.
+**Fix:** `rotateEpoch` marks packages from the authorized, committed
+compare-and-advance as `committedRotation`. Retention follows these rules:
+
+- The package is kept after sender revocation, including beyond its original
+  expiry, only while its recipient remains trusted.
+- `onAccessChange` removes it once the recipient is revoked, removed, or expired,
+  even without an explicit exclusion.
+- A recipient key transition removes it.
+- A sender key transition keeps it, because the original signature still
+  verifies against the sender's history.
+
+The client relaxes only the expiry check, and only when the relay marks the
+grant this way. The device ID, recipient fingerprint, and sender signature are
+still verified against verified device-key history. Acknowledgement clears the
+marker so normal pruning reclaims the grant. Rotation records the sender's own
+epoch (P-001).
+**Regression evidence (all PASS):**
+- `server/rotation-recovery.test.mjs`
+  - recovery after sender revocation and expiry, then the next rotation
+  - packages for revoked, removed, and expired recipients removed, and their
+    stale sessions refused
+  - an access change without exclusions drops packages for untrusted recipients
+  - tampered `wrappedKey`/`salt`/`nonce`/`signature`, a moved epoch, extended
+    expiry, a forged signer, and wrong-device or superseded-recipient-key
+    packages rejected even with the exception enabled
+  - neither a package body nor a rotating client can set or clear the marker,
+    and ordinary transfers still expire with 410
+  - two consecutive epochs from a later-revoked Adult recovered in order, a lost
+    acknowledgement redelivered idempotently, history byte-identical and never
+    duplicated, the revoked device unable to push or retry, and acknowledged
+    grants pruned
+  - sender key succession: the package fails with only the successor key, with
+    no local mutation, no acknowledgement, and the package retained; it succeeds
+    with the authentic history
+  - the retained-package bound is enforced atomically and never blocks the
+    largest supported history
+- `server/durable-sync-integrity.test.mjs`
+  - retention across restart
+  - sender revocation after restart matches revocation before it
+  - recipient revocation after restart removes the package
+  - the acknowledged grant reloads unmarked and prunes
+  - six corrupt-marker variants rejected at startup, including a marker injected
+    into an ordinary grant
+  - pre-marker rotation grants load and expire as ordinary grants
+- `web/sync/crypto.test.mjs`
+- The drill's committed-rotation race in Edge and Chrome.
+
+Mutation checks against the new tests caught each removed or weakened rule:
+trust check, expiry exception, marker source, sender-key retention, the pruning
+rule, the contract marker check, and sender-epoch recording.
 
 ### B-003 — Non-Adult clients paused sync on Adult-only steps (FIXED)
 
@@ -138,12 +210,30 @@ pull and push.
 `web/sync/sync-coordinator.test.mjs` for the helper and the drill's Limited and
 Temporary rows (which fail on the old code).
 
-### P-001 — Rotation does not record the rotating device's own epoch (FIXED with B-002)
+### B-004 — Invitations from the household page never showed their code (FIXED in branch)
 
-`EncryptedSyncService.rotateEpoch` now records the committed epoch on the
-rotating device in the same persisted state update. The focused
-`server/rotation-recovery.test.mjs` checks this for both the initial and
-recovery rotations.
+Area: Pairing / admission UX. Severity: BLOCKER (an Adult could not invite a
+member or add a device through the product UI). The defect predates this branch.
+Since v0.9.3, `kin-household.js` has checked the create response's
+`inviterKeyFingerprint` against the local device key. `POST /api/pairings` and
+`POST /api/devices/pairings` never returned that field, so every invitation
+failed with "This device's approved key does not match its local key.", and the
+code was never rendered. Earlier drill revisions missed it because they read the
+code from component state.
+**Reproduction:** `node docs/audits/post-v0.40-repro/b004-invitation-omits-inviter-key.mjs`
+(prints `defect` on the old server and `fixed` now). The drill fails at the first
+invitation on the old server.
+**Fix:** both create responses return `inviterDeviceId` and
+`inviterKeyFingerprint`, the same values `pairingView()` already gives the
+inviter. No cryptographic or authorization change. Regression:
+`server/pairing-service.test.mjs` "new invitations echo the inviter key…"
+(fails on the old code) and the drill's displayed-code checks.
+
+### P-001 — Rotation did not record the rotating device's own epoch (FIXED with B-002)
+
+`EncryptedSyncService.rotateEpoch` records the committed epoch on the rotating
+device in the same persisted update, after the capacity check. Covered by the
+service, durable-restart, and capacity tests above.
 
 ### P-002 — Trusted-device list stayed stale after revocation (FIXED)
 
@@ -161,32 +251,74 @@ Temporary member with the server's authoritative `expired` status when the
 browser's clock is still before `expiresAt`. With the drill's server clock 4
 minutes ahead, export failed with "Kin found invalid household membership in
 this export." A real client whose clock lags the server by Δ cannot export, or
-restore such an archive, during the Δ window after an expiry. v0.40.1 makes the
-server status authoritative; the local-clock check contradicts it. Not changed
-here because it alters archive validation semantics; the drill uses a short
-real expiry before exporting so both clocks agree.
+restore such an archive, during the Δ window after an expiry. Not changed here
+because it alters archive validation semantics; the drill uses a short real
+expiry before exporting so both clocks agree.
 
 ### P-004 — `leaveHousehold` ignores the injected service clock (OPEN, test-infra)
 
 `PairingService.leaveHousehold` calls `canParticipate(member)` with the real
 `Date.now()` rather than `this.now()`. Production clocks coincide, so no user
-impact, but fake-clock tests of Temporary self-leave behave differently from
-the rest of the service.
+impact, but fake-clock tests of Temporary self-leave behave differently.
+
+### P-005 — Approval button is not visually disabled before fingerprint confirmation (OPEN)
+
+`KinHousehold.render()` ends with `this.disabled = this.disabled`. When the
+component is enabled, that setter enables every button, which overrides the
+"Approve with passkey" gate set during rendering. Clicking it early is still
+refused by `approve()` ("Compare the device fingerprint on both devices before
+approving.") with no server call, so this is not an authorization bypass. The
+activation view returns before that line and stays correctly gated. Not changed
+here, to keep UI changes out of this PR. The drill asserts the enforced refusal
+and prints a `NOTE … (P-005)` line.
+
+### Residual risks (OPEN, nonblocking)
+
+- **R-1 — legacy key migration can still strand a device.** Severity: low.
+  Device key transitions happen only in the one-time legacy key-store migration,
+  and `runOnce` completes a pending transition before receiving provisioning. A
+  not-yet-migrated device that misses a committed rotation, while its sender is
+  revoked, loses that package on migration. The package is bound to the old
+  fingerprint, and the old private key is discarded. Another Adult holding the
+  epoch can still provision it. If none exists, the device needs re-pairing.
+  Fixing this would mean keeping the old agreement key or reordering migration,
+  which is a protocol-adjacent change outside this PR. Reproduction: as in the
+  "the expired-package exception never relaxes…" test, apply the recipient key
+  transition before receiving.
+- **R-2 — the client trusts the relay's marker.** Severity: low, within the
+  threat model's honest-but-curious relay. A relay that falsely marks a grant
+  can only make an expired but authentic, correctly addressed package
+  acceptable. Expiry is chosen and signed by the sender, and a conflicting key
+  for an epoch already held is refused (`saveEpoch`), so the impact is limited
+  to availability.
+- **R-3 — revoked senders' packages stay acceptable.** Severity: low;
+  pre-existing and required by B-002. Clients accept packages from revoked
+  senders because packages carry no signed creation time. A compromised relay
+  colluding with a compromised revoked device could inject a key. That attack
+  is outside the honest-relay assumption and needs a signed commit record to
+  close (protocol change, not attempted).
+- **R-4 — persistence cost grows with retained packages.** Severity: low.
+  `saveSyncState` rewrites every grant on each persist. With
+  `MAX_TRUSTED_DEVICES = 16`, a household can retain at most 127 × 15 committed
+  packages, so this costs performance in extreme histories, not correctness.
 
 ## Executed Checks
 
-All commands run from the repository root on Windows 11 x64 with the pinned
-Rust 1.93.0 toolchain and Node 22.13.0 selected through `fnm exec --using
-v22.13.0` (the declared minimum; PATH Node is 22.12.0). `NODE_NO_WARNINGS=1`
-suppresses the runtime's experimental SQLite warning.
+All commands run from the repository root on 2026-10-12, on Windows 11
+(NT 10.0.26300) x64. Toolchain: rustc/cargo 1.93.0 (pinned in
+`rust-toolchain.toml`), and Node 22.13.0 through `fnm exec --using v22.13.0`
+(the declared minimum; PATH Node is 22.12.0). Python 3.13.14. Browsers: Edge
+155.0.4283.45 and Chrome 154.0.8037.98. `NODE_NO_WARNINGS=1` suppresses the
+runtime's experimental SQLite warning.
 
 ```powershell
 cargo fmt --manifest-path projects/kin/Cargo.toml -- --check
-cargo test --manifest-path projects/kin/Cargo.toml
 cargo clippy --manifest-path projects/kin/Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path projects/kin/Cargo.toml
 cargo build --manifest-path projects/kin/Cargo.toml --target wasm32-unknown-unknown --release
 fnm exec --using v22.13.0 node --test (rg --files projects/kin/server projects/kin/web -g '*.test.mjs')
 fnm exec --using v22.13.0 npm.cmd run test:server --prefix projects/kin
+npm.cmd run test:server --prefix projects/kin   # PATH Node 22.12.0
 python projects/kin/scripts/check_version.py
 $kinBrowser = 'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe'
 fnm exec --using v22.13.0 node projects/kin/scripts/household-authority-regression.mjs $kinBrowser
@@ -195,32 +327,30 @@ fnm exec --using v22.13.0 node projects/kin/scripts/browser-regression.mjs $kinB
 fnm exec --using v22.13.0 node projects/kin/scripts/security-storage-regression.mjs $kinBrowser
 fnm exec --using v22.13.0 node projects/kin/scripts/security-ui-regression.mjs $kinBrowser
 fnm exec --using v22.13.0 node projects/kin/scripts/passkey-regression.mjs $kinBrowser
-node projects/kin/docs/audits/post-v0.40-repro/b001-lifecycle-route-500.mjs
-node projects/kin/docs/audits/post-v0.40-repro/b002-revoked-sender-rotation-strands-adult.mjs
-node projects/kin/docs/audits/post-v0.40-repro/p001-rotation-omits-own-provisioned-epoch.mjs
+fnm exec --using v22.13.0 node projects/kin/docs/audits/post-v0.40-repro/<script>.mjs   # each of the four
+git diff --check
 ```
 
 | Check | Result |
 |---|---|
-| Rust formatting, Clippy (warnings denied), release WASM build | Passed (no Rust changes). |
-| `cargo test` | 173 passed, 0 failed. |
-| Complete server + web Node suite (Node 22.13.0) | 399 passed, 0 failed (396 before the focused rotation-recovery regressions). |
-| `npm run test:server` | Under PATH Node 22.12.0: all 20 server files fail to load with `ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite` (runtime below the declared minimum). Under `fnm exec --using v22.13.0`: see the row below. |
-| `fnm exec --using v22.13.0` server Node test suite | 262 passed, 0 failed (259 before the three B-002/P-001 regressions). |
-| Version consistency | 0.40.1 consistent across client, server, and release metadata. |
-| `household-authority-regression.mjs`, Edge 155.0.4283.45 | 94 assertions, including the committed-rotation race, passed. |
-| `household-authority-regression.mjs`, Chrome 154.0.8037.98 | 94 assertions, including the committed-rotation race, passed. Earlier Chrome runs exposed B-002. |
-| `browser-regression.mjs`, Edge | Passed, including 10,000-event replay and sync storage. |
-| `security-storage-regression.mjs`, Edge | Passed, including page-reload and process-restart recovery. |
-| `security-ui-regression.mjs`, Edge | Passed: 36 household-leave, 17 root-rotation UI, 143 lock/recovery/peer-tab/offline assertions. |
-| `passkey-regression.mjs`, Edge | 32 virtual-authenticator assertions; PRF exercised. |
-| Reproduction scripts | Run as documented in `post-v0.40-repro/README.md`. |
-
-Note on `npm run test:server`: the package script runs under PATH Node. On this
-machine PATH Node is 22.12.0, where `node:sqlite` needs `--experimental-sqlite`;
-the suite was therefore executed under 22.13.0 through `fnm exec`, which is the
-declared minimum runtime. No CI workflow exists for Kin in this repository, so
-none of the above is a CI result.
+| `cargo fmt --check` | **PASS** |
+| `cargo clippy --all-targets -D warnings` | **PASS** |
+| `cargo test` | **PASS** — 173 passed, 0 failed (no Rust changes) |
+| Release WASM build | **PASS** — output byte-identical to committed `web/wasm/kin_engine.wasm` (SHA-256 `988b930b…bdb8f`), so not copied |
+| Complete server + web Node suite (22.13.0) | **PASS** — 416 passed, 0 failed, 0 skipped (399 at `6d04c10`; +17 regressions) |
+| `npm run test:server` (22.13.0) | **PASS** — 279 passed, 0 failed (262 at `6d04c10`) |
+| `npm run test:server` (PATH Node 22.12.0) | **FAIL — environment**: all 20 files fail to load with `ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite`; this runtime is below the declared `>=22.13.0`. Not a code failure. |
+| Version consistency | **PASS** — 0.40.1 consistent across client, server, and release metadata |
+| `household-authority-regression.mjs`, Edge | **PASS** — 102 assertions |
+| `household-authority-regression.mjs`, Chrome | **PASS** — 102 assertions |
+| `browser-regression.mjs`, Edge | **PASS** — complete runner, including 10,000-event replay, CSP/same-origin, and encrypted sync storage |
+| `security-storage-regression.mjs`, Edge | **PASS** — 47 + 37 + 12 + 158 + 22 + 29 + 4 + 4 assertions, including page-reload and process-restart recovery |
+| `security-ui-regression.mjs`, Edge | **PASS** — 56 core, 20 overlapping-operation, 7 lifecycle-cancellation, 36 household-leave, 17 root-rotation UI, 143 lock/recovery/peer-tab/offline assertions |
+| `passkey-regression.mjs`, Edge | **PASS** — 32 virtual-authenticator assertions; PRF supported and exercised |
+| Reproduction scripts (B-001, B-002, B-004, P-001) | **PASS** — each prints its fixed state |
+| `git diff --check` | **PASS** |
+| Firefox, Safari/WebKit, mobile browsers | **NOT RUN** — the runners drive Chromium over CDP |
+| CI on the final pushed head | **NOT RUN** — no Kin CI workflow exists in this repository, and these changes are uncommitted |
 
 ## Manual Reproduction for NOT RUN Scenarios
 
@@ -230,8 +360,10 @@ loopback relay. Never use production household data.
 1. **Physical devices / independent people.** Repeat the drill's sequence with
    two phones or laptops on different networks: Profile A creates the
    household; B (Adult), C (Limited), D (Temporary with a 10-minute expiry) join
-   through the invitation link and compare fingerprints in person. Verify each
-   role's controls and the HTTP denials from the browser devtools network tab.
+   through the invitation link. Confirm the invitation code appears (B-004), and
+   have two people **read the fingerprints aloud from both screens** before
+   ticking each confirmation box. Verify each role's controls and the HTTP
+   denials from the browser devtools network tab.
 2. **OS-level disconnection.** Put B in airplane mode, add an item, revoke B's
    device from A, reconnect B. Expect B's sync notice "no longer trusted", B's
    item still present locally, A never receiving it.
@@ -246,14 +378,17 @@ loopback relay. Never use production household data.
 6. **B-002 committed-rotation recovery (physical-device follow-up).** Two
    Adults online; let a Temporary member expire; take A offline before its
    next sync; wait for B to commit the rotation; revoke B before A receives its
-   package; then reconnect A. Expect A to recover the committed epoch, finish
-   the required next rotation, and sync without skipping the missing epoch.
+   package; wait more than 10 minutes; then reconnect A. Expect A to recover
+   the committed epoch, finish the required next rotation, and sync without
+   skipping the missing epoch.
 7. Record browser/OS versions, timestamps, and sanitized request outcomes. Do
    not record passkeys, recovery keys, cookies, or household text.
 
 ## Release Recommendation
 
-**NOT READY.** B-002 and P-001 now have focused implementation and regression
-coverage, including the deliberate independent-profile race in Edge and
-Chrome. Physical-device, cross-network, installed-PWA, and non-Chromium
-validation remain unrun. This patch does not claim production certification.
+**NOT RELEASE-READY; READY FOR REVIEW.** B-001 to B-004 and P-001/P-002 have
+focused fixes and regressions, and all locally executable gates pass. Merge
+still needs independent review and a fresh run of these gates on the final
+pushed commit. Physical-device, cross-network, installed-PWA, non-Chromium, and
+human fingerprint-verification testing remain NOT RUN or NOT VERIFIED. This
+branch does not claim production certification.

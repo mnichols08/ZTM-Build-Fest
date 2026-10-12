@@ -575,12 +575,16 @@ export class PairingService {
       inviterDeviceId: device.id,
       inviterKeyFingerprint: device.syncKeyFingerprint,
     });
+    // The inviting client checks this against its local key before showing
+    // the code; it is the same value pairingView() returns to the inviter.
     return {
       pairingId: pairing.id,
       code,
       state: pairing.state,
       expiresAt: pairing.expiresAt,
       memberKind: pairing.admissionKind,
+      inviterDeviceId: pairing.inviterDeviceId,
+      inviterKeyFingerprint: pairing.inviterKeyFingerprint,
       version: pairing.version,
     };
   }
@@ -672,6 +676,8 @@ export class PairingService {
       purpose: pairing.purpose,
       state: pairing.state,
       expiresAt: pairing.expiresAt,
+      inviterDeviceId: pairing.inviterDeviceId,
+      inviterKeyFingerprint: pairing.inviterKeyFingerprint,
       version: pairing.version,
     };
   }
