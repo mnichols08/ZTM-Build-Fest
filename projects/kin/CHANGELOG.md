@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased — v0.40.2 Clock & Archive Correctness
+## Unreleased — v0.40.x candidates
+
+### v0.40.3 — CI & Verification Infrastructure
+
+- Add `npm run verify` as the local release gate for pinned Node/Rust/WASM prerequisites, formatting, warnings-denied Clippy, version consistency, every discovered server/web Node test, Rust tests, release WASM and committed-artifact comparison.
+- Add `npm run verify:browser` for the five existing browser regression runners, with an explicit `KIN_BROWSER` executable and failing behavior when it is missing.
+- Document the local gate and provide a proposed Kin workflow for later root-level integration approval. No product behavior or persistent contract changes.
+- Compare generated WASM with a tracked reference when the repository commits one; this repository ignores its generated browser WASM and the runner never replaces it automatically.
+
+### v0.40.2 — Clock & Archive Correctness
 
 - Revoking the device that committed the latest key rotation no longer strands the remaining devices (B-002). The relay keeps each committed rotation package for a still-trusted recipient until that recipient acknowledges it, including after the package's original expiry, and removes it when the recipient is revoked, removed, expired, or changes its device key. Only packages from the relay's own committed rotation get this exception; ordinary key transfers still expire. Clients still check the recipient binding and the sender's signature against verified device-key history.
 - The rotating device is now recorded as holding the epoch it committed (P-001).
