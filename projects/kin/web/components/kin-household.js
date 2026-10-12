@@ -925,22 +925,28 @@ class KinHousehold extends HTMLElement {
           item.append(
             this.makeButton(
               `Revoke ${device.label}`,
-              () => this.run(async () => {
+              async () => {
                 if (!confirm(`Revoke ${device.label}? That device will lose future household access. Copies already saved there cannot be erased.`)) return;
-                const started = await this.api(`/api/devices/${device.id}/revocation/options`, {
-                  method: "POST", body: "{}",
+                let revoked = false;
+                await this.run(async () => {
+                  const started = await this.api(`/api/devices/${device.id}/revocation/options`, {
+                    method: "POST", body: "{}",
+                  });
+                  this.message(`Confirm revoking ${device.label} with your passkey.`);
+                  const credential = await navigator.credentials.get({
+                    publicKey: authenticationOptions(started.publicKey),
+                    signal: this.connectionAbort.signal,
+                  });
+                  await this.api("/api/devices/revocation/finish", {
+                    method: "POST",
+                    body: JSON.stringify({ flow: started.flow, credential: credentialJson(credential) }),
+                  });
+                  revoked = true;
                 });
-                this.message(`Confirm revoking ${device.label} with your passkey.`);
-                const credential = await navigator.credentials.get({
-                  publicKey: authenticationOptions(started.publicKey),
-                  signal: this.connectionAbort.signal,
-                });
-                await this.api("/api/devices/revocation/finish", {
-                  method: "POST",
-                  body: JSON.stringify({ flow: started.flow, credential: credentialJson(credential) }),
-                });
-                await this.showDevices();
-              }),
+                // showDevices() runs its own busy guard, so refresh only after
+                // the revocation operation has released it.
+                if (revoked) await this.showDevices();
+              },
               "danger",
             ),
           );

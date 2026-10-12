@@ -255,6 +255,155 @@ for (const [name, mutate] of [
   });
 }
 
+const COMMITTED_GRANT_ID = "e".repeat(32);
+
+for (const [name, mutate] of [
+  ["a non-boolean committed marker", (db) => {
+    mutateGrant(db, COMMITTED_GRANT_ID, (grant) => { grant.committedRotation = "yes"; });
+  }],
+  ["a false committed marker", (db) => {
+    mutateGrant(db, COMMITTED_GRANT_ID, (grant) => { grant.committedRotation = false; });
+  }],
+  ["a committed marker on an acknowledged grant", (db) => {
+    mutateGrant(db, COMMITTED_GRANT_ID, (grant) => { grant.state = "acknowledged"; });
+  }],
+  ["a committed marker without its package", (db) => {
+    mutateGrant(db, COMMITTED_GRANT_ID, (grant) => {
+      grant.package = null;
+      grant.canonicalPackage = null;
+    });
+  }],
+  ["a committed marker with a request identity", (db) => {
+    mutateGrant(db, COMMITTED_GRANT_ID, (grant) => { grant.requestId = "f".repeat(32); });
+    db.prepare("UPDATE provisioning_grants SET request_id = ? WHERE grant_id = ?").run("f".repeat(32), COMMITTED_GRANT_ID);
+  }],
+  ["a committed marker injected into an ordinary provisioning grant", (db, f) => {
+    mutateGrant(db, f.grant.grantId, (grant) => { grant.committedRotation = true; });
+  }],
+]) {
+  test(`startup rejects committed-rotation grant metadata with ${name}`, () => {
+    const f = fixture();
+    try {
+      f.rotate();
+      assert.equal(f.store.validate(), true);
+      f.store.close();
+      const db = openTestDatabase(f.databasePath);
+      try {
+        mutate(db, f);
+        assert.equal(sqlitePragma(db, "quick_check", { simple: true }), "ok");
+      } finally {
+        db.close();
+      }
+      assert.throws(() => new DurableStore(f.databasePath), DurableStoreError);
+    } finally {
+      f.close();
+    }
+  });
+}
+
+function reopen(f) {
+  const store = new DurableStore(f.databasePath);
+  const pairing = new PairingService({ store });
+  return { store, pairing, sync: new EncryptedSyncService(pairing, { store }) };
+}
+
+test("sender revocation after a restart preserves committed recovery and relay history", () => {
+  const f = fixture();
+  let first;
+  let second;
+  try {
+    f.rotate();
+    f.store.close();
+
+    first = reopen(f);
+    assert.ok(first.pairing.devices.get(f.adult.deviceId).syncProvisionedEpochs.includes(2),
+      "the rotating device's committed epoch is durable");
+    const recipient = first.pairing.reauthenticate(f.recipient.deviceToken, "recipient");
+    const historyBefore = first.sync.pull(recipient.sessionToken, "", "20");
+    first.pairing.revokeDevice(recipient.sessionToken, f.adult.deviceId, f.recipient.memberId);
+    first.sync.onAccessChange(f.adult.householdId, [f.adult.deviceId]);
+    // The reopened services use the real clock, well past the fixture's TTL.
+    const [recovery] = first.sync.pendingProvisioning(recipient.sessionToken);
+    assert.equal(recovery.grantId, COMMITTED_GRANT_ID);
+    assert.equal(recovery.committedRotation, true);
+    assert.ok(recovery.expiresAt < Date.now());
+    assert.equal(first.sync.acknowledgeProvisioning(recipient.sessionToken, recovery.grantId).acknowledged, true);
+    assert.equal(first.sync.acknowledgeProvisioning(recipient.sessionToken, recovery.grantId).acknowledged, true,
+      "a retried acknowledgement is idempotent");
+    assert.deepEqual(first.pairing.devices.get(f.recipient.deviceId).syncProvisionedEpochs
+      .filter((epoch) => epoch === 2), [2]);
+    assert.deepEqual(first.sync.pull(recipient.sessionToken, "", "20"), historyBefore);
+    assert.equal(first.store.eventCount(f.adult.householdId), 1);
+    assert.equal(first.store.validate(), true);
+    first.store.close();
+
+    // The acknowledged package reloads as ordinary state and its capacity is
+    // released by the next normal prune.
+    second = reopen(f);
+    const grant = second.store.loadSyncState(f.adult.householdId).grants.get(COMMITTED_GRANT_ID);
+    assert.equal(grant.state, "acknowledged");
+    assert.equal(grant.committedRotation, undefined);
+    // Reauthentication rotates the device token, so use the latest one.
+    const session = second.pairing.reauthenticate(recipient.deviceToken, "recipient");
+    assert.deepEqual(second.sync.pendingProvisioning(session.sessionToken), []);
+    assert.equal(second.store.loadSyncState(f.adult.householdId).grants.size, 0);
+    assert.deepEqual(second.sync.pull(session.sessionToken, "", "20"), historyBefore);
+  } finally {
+    second?.store.close();
+    first?.store.close();
+    f.close();
+  }
+});
+
+test("recipient revocation after a restart removes its committed package as it does before one", () => {
+  const f = fixture();
+  let reopened;
+  try {
+    f.rotate();
+    f.store.close();
+    reopened = reopen(f);
+    const adult = reopened.pairing.reauthenticate(f.adult.deviceToken, "sender");
+    reopened.pairing.revokeDevice(adult.sessionToken, f.recipient.deviceId, f.adult.memberId);
+    reopened.sync.onAccessChange(f.adult.householdId, [f.recipient.deviceId]);
+    assert.equal(reopened.sync.state(f.adult.householdId).grants.has(COMMITTED_GRANT_ID), false);
+    assert.throws(() => reopened.pairing.reauthenticate(f.recipient.deviceToken, "recipient"));
+    assert.equal(reopened.store.validate(), true);
+    reopened.store.close();
+    reopened = reopen(f);
+    assert.equal(reopened.store.loadSyncState(f.adult.householdId).grants.has(COMMITTED_GRANT_ID), false);
+  } finally {
+    reopened?.store.close();
+    f.close();
+  }
+});
+
+test("rotation grants stored before committed-recovery markers load and expire as ordinary grants", () => {
+  const f = fixture();
+  let reopened;
+  try {
+    f.rotate();
+    f.store.close();
+    const db = openTestDatabase(f.databasePath);
+    try {
+      // The pre-marker shape had neither the marker nor an explicit request ID.
+      mutateGrant(db, COMMITTED_GRANT_ID, (grant) => {
+        delete grant.committedRotation;
+        delete grant.requestId;
+      });
+    } finally {
+      db.close();
+    }
+    reopened = reopen(f);
+    assert.equal(reopened.store.validate(), true);
+    const recipient = reopened.pairing.reauthenticate(f.recipient.deviceToken, "recipient");
+    assert.deepEqual(reopened.sync.pendingProvisioning(recipient.sessionToken), []);
+    assert.equal(reopened.store.loadSyncState(f.adult.householdId).grants.has(COMMITTED_GRANT_ID), false);
+  } finally {
+    reopened?.store.close();
+    f.close();
+  }
+});
+
 test("valid expired grants survive validation and prune through the normal sync API", () => {
   const f = fixture();
   let reopened;
@@ -269,6 +418,45 @@ test("valid expired grants survive validation and prune through the normal sync 
     const sync = new EncryptedSyncService(pairing, { store: reopened });
     assert.deepEqual(sync.pendingProvisioning(session.sessionToken), []);
     assert.equal(reopened.loadSyncState(f.adult.householdId).grants.size, 0);
+  } finally {
+    reopened?.close();
+    f.close();
+  }
+});
+
+test("committed rotation recovery survives sender revocation, expiry, and restart", () => {
+  const f = fixture();
+  let reopened;
+  try {
+    f.rotate();
+    f.pairing.revokeDevice(
+      f.recipient.sessionToken,
+      f.adult.deviceId,
+      f.recipient.memberId,
+    );
+    f.sync.onAccessChange(f.adult.householdId, [f.adult.deviceId]);
+    f.expire();
+    assert.equal(f.store.validate(), true);
+    f.store.close();
+
+    reopened = new DurableStore(f.databasePath);
+    const pairing = new PairingService({ store: reopened });
+    const recipient = pairing.reauthenticate(
+      f.recipient.deviceToken,
+      "recipient",
+    );
+    const sync = new EncryptedSyncService(pairing, { store: reopened });
+    const [recovery] = sync.pendingProvisioning(recipient.sessionToken);
+    assert.equal(recovery.committedRotation, true);
+    assert.equal(recovery.keyEpoch, 2);
+    assert.equal(
+      sync.acknowledgeProvisioning(recipient.sessionToken, recovery.grantId)
+        .acknowledged,
+      true,
+    );
+    assert.ok(
+      pairing.devices.get(f.recipient.deviceId).syncProvisionedEpochs.includes(2),
+    );
   } finally {
     reopened?.close();
     f.close();

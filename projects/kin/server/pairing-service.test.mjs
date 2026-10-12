@@ -71,6 +71,23 @@ const setup = () => {
   };
 };
 
+test("new invitations echo the inviter key the inviting client verifies before showing the code", async () => {
+  const { service, adult } = setup();
+  const inviterKeys = await syncDeviceKeyPair();
+  service.registerSyncPublicKeys(adult.sessionToken, inviterKeys.publicKeys);
+  const fingerprint = await deviceKeyFingerprint(inviterKeys.publicKeys);
+  for (const created of [
+    service.createPairing(adult.sessionToken, { kind: "adult" }),
+    service.createPairing(adult.sessionToken, { kind: "limited" }),
+    service.createDevicePairing(adult.sessionToken),
+  ]) {
+    assert.equal(created.inviterDeviceId, adult.deviceId);
+    assert.equal(created.inviterKeyFingerprint, fingerprint);
+    const view = service.pairingView(service.pairings.get(created.pairingId));
+    assert.equal(created.inviterKeyFingerprint, view.inviterKeyFingerprint);
+  }
+});
+
 test("member trust rules keep limited and temporary participation separate from adult authority", () => {
   const now = 1_500_000;
   const limitedMember = { active: true, kind: "limited" };

@@ -153,3 +153,46 @@ test("successful self-leave completes the passkey mutation before local lock and
   assert.equal(component.identity, null);
   assert.equal(globalThis.location.href, "/");
 });
+
+test("device revocation refreshes the trusted-device list after the passkey operation releases the busy guard", async () => {
+  const component = new KinHousehold();
+  component.identity = { memberId: "adult", deviceId: "self" };
+  component.syncKeyError = "skip sync-key access";
+  component.assertConnection = () => {};
+  let revoked = false;
+  const calls = [];
+  component.api = async (path) => {
+    calls.push(path);
+    if (path === "/api/devices")
+      return { devices: [
+        { id: "self", label: "Adult phone", revokedAt: null },
+        { id: "other", label: "Kitchen tablet", revokedAt: revoked ? 1_700_000_000_000 : null },
+      ] };
+    if (path === "/api/devices/other/revocation/options")
+      return { flow: "flow", publicKey: { challenge: "YQ", allowCredentials: [{ id: "Yg" }] } };
+    if (path === "/api/devices/revocation/finish") { revoked = true; return { revoked: true }; }
+    throw new Error("unexpected call " + path);
+  };
+  globalThis.confirm = () => true;
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: { credentials: { get: async () => ({
+      id: "credential-adult", type: "public-key",
+      response: { clientDataJSON: new Uint8Array([1]), getTransports: () => [] },
+    }) } },
+  });
+  await component.showDevices();
+  const descendants = (items) => items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
+  const revoke = descendants(component.children).find((child) => child.textContent === "Revoke Kitchen tablet");
+  await revoke.listeners.click();
+  assert.deepEqual(calls, [
+    "/api/devices",
+    "/api/devices/other/revocation/options",
+    "/api/devices/revocation/finish",
+    "/api/devices",
+  ]);
+  const labels = descendants(component.children).map((child) => child.textContent);
+  assert.ok(labels.includes("Kitchen tablet — Revoked"), "list shows the revoked device after refresh");
+  assert.equal(labels.some((label) => label === "Revoke Kitchen tablet"), false, "revoked device offers no further revoke control");
+  assert.equal(component.busy, false);
+});

@@ -136,6 +136,11 @@ export function isDurableGrantValid(grant, row, currentEpoch, getDevice) {
     (grant.requestId ?? null) !== row.request_id ||
     grant.expiresAt !== row.expires_at ||
     (grant.requestId != null && !isSyncId(grant.requestId)) ||
+    (grant.committedRotation !== undefined &&
+      (grant.committedRotation !== true ||
+        grant.package === null ||
+        grant.requestId != null ||
+        grant.state !== "pending")) ||
     !["pending", "acknowledged"].includes(grant.state)
   )
     return false;

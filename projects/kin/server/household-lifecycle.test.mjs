@@ -478,3 +478,47 @@ test("HTTP deletion requires a passkey flow and exposes an explicit pending life
     fixture.close();
   }
 });
+
+test("HTTP lifecycle lookup answers without a session for active, pending, deleted, unknown, and malformed households", async () => {
+  const fixture = createFixture();
+  const app = createKinServer({
+    store: fixture.store,
+    service: fixture.service,
+    syncService: fixture.sync,
+    now: fixture.now,
+  });
+  try {
+    await new Promise((resolve, reject) => {
+      app.server.once("error", reject);
+      app.server.listen(0, "127.0.0.1", resolve);
+    });
+    const origin = `http://127.0.0.1:${app.server.address().port}`;
+    const lookup = async (householdId) => {
+      const response = await fetch(`${origin}/api/household/lifecycle?householdId=${householdId}`);
+      return { status: response.status, body: await response.json() };
+    };
+    const { householdId } = fixture.identity;
+    // A revoked or removed device keeps no session, so this lookup must work
+    // without one for the client to distinguish lost access from deletion.
+    assert.deepEqual(await lookup(householdId), {
+      status: 200,
+      body: { state: "active", finalizeAt: null, message: "This household is active." },
+    });
+    assert.equal((await lookup("f".repeat(32))).status, 404);
+    assert.equal((await lookup("not-a-household")).status, 400);
+    const requested = fixture.service.requestHouseholdDeletion(fixture.identity.sessionToken, fixture.identity.memberId);
+    const pending = await lookup(householdId);
+    assert.equal(pending.status, 200);
+    assert.equal(pending.body.state, "deletion_pending");
+    assert.equal(pending.body.finalizeAt, requested.finalizeAt);
+    fixture.setNow(requested.finalizeAt);
+    const deleted = await lookup(householdId);
+    assert.equal(deleted.status, 200);
+    assert.equal(deleted.body.state, "deleted");
+    assert.match(deleted.body.message, /deleted/);
+  } finally {
+    app.server.closeAllConnections();
+    await new Promise((resolve) => app.server.close(resolve));
+    fixture.close();
+  }
+});

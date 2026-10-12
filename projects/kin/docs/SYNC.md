@@ -110,6 +110,41 @@ active recipient set. Keep the proposal ID, sealed epoch key and fingerprint;
 only recipient packages and optional issuer-fingerprint retry metadata change.
 An older request accepted during this refresh still identifies the same key.
 
+## Committed rotation recovery
+
+A successfully committed rotation makes each package for an intended trusted
+recipient durable recovery material until that recipient acknowledges it or
+loses trust. The package remains bound to its original household, epoch,
+recipient fingerprint, grant ID, and sender signature; server metadata marks
+only packages created by the committed compare-and-advance operation as
+recoverable after their ordinary pre-commit expiry. The client still verifies
+the recipient binding and sender signature against the verified device-key
+history before saving the key. Generic provisioning grants continue to expire
+normally.
+
+When a sender is revoked after commit, packages for still-trusted recipients
+remain available, while packages addressed to a revoked, expired, or
+key-transitioned recipient are removed. Acknowledgement records the received
+epoch on that device. The rotating device records its own new epoch at commit.
+This allows a remaining Adult to recover the committed epoch before performing
+the rotation required by the access change; it does not let that Adult skip a
+missing epoch or make its encrypted event history unreadable. Recovery packages
+contain only recipient-wrapped keys, not server-held household content keys.
+
+The recovery marker is assigned by the relay when it accepts the rotation;
+fields in a submitted package body cannot set or clear it. Clients relax only
+the expiry check, and only for a grant the relay marks this way; the expiry is
+part of the signed package metadata, so the marker cannot make a package
+verify that would not verify otherwise. Durable validation rejects a marker on
+an acknowledged, request-bound, or package-less grant. Grants stored before
+the marker existed load as ordinary grants and keep their normal expiry.
+Retained packages are bounded by `MAX_KEY_EPOCHS × MAX_ROTATION_PACKAGES`,
+which exceeds the most a supported household can accumulate (127 rotations ×
+at most 64 recipients), so retained recovery packages cannot block a
+legitimate rotation. They do not count against the ordinary 128-transfer
+limit. A recipient's own key migration still discards its outstanding
+packages, because they are bound to its previous fingerprint.
+
 Replacing pending packages compares the complete expected pending record in one
 encrypted IndexedDB transaction. Completion and removal match the proposal ID,
 so a stale tab cannot clear a newer proposal. Completion preserves the local

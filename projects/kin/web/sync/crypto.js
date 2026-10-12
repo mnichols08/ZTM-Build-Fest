@@ -249,6 +249,7 @@ export async function unwrapEpochKey({
   deviceId,
   deviceFingerprint,
   senderSigningKey,
+  allowExpiredCommittedRotation = false,
   now = Date.now(),
 }) {
   validateProvisioningPackage(keyPackage);
@@ -262,7 +263,10 @@ export async function unwrapEpochKey({
       "This key transfer was not created for this trusted device.",
     );
   }
-  if (!Number.isSafeInteger(now) || keyPackage.expiresAt <= now) {
+  if (
+    !Number.isSafeInteger(now) ||
+    (keyPackage.expiresAt <= now && allowExpiredCommittedRotation !== true)
+  ) {
     throw new SyncCryptoError(
       "provisioning_expired",
       "This key transfer expired. Ask an active trusted device to try again.",
