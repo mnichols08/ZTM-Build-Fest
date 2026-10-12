@@ -1,7 +1,7 @@
 import { LocalVault, serializeProtectedValue, deserializeProtectedValue, VaultError } from "./local-vault.js";
 import { EventStore } from "../storage/event-store.js";
 
-const KIN_VERSION = "0.40.1";
+const KIN_VERSION = "0.40.2";
 const MAX_ARCHIVE_BYTES = 160 * 1024 * 1024;
 const MAX_EVENT_COUNT = 10_000;
 const MAX_ATTACHMENT_COUNT = 64;
@@ -85,8 +85,6 @@ export async function validateHouseholdArchive({ bytes, recoverySecret, engine, 
         throw new VaultError("This Kin export version is not supported.");
       snapshot = decoded.snapshot;
     }
-
-    normalizeExpiredPortableMembers(snapshot);
 
     const sourceSummary = await EventStore.validateArchiveSnapshot({
       snapshot, engine, vault: sourceVault,
@@ -184,15 +182,6 @@ function validatePackageManifest(value) {
 function hasExactKeys(value, keys) {
   return value && typeof value === "object" && !Array.isArray(value) &&
     Object.keys(value).sort().join(",") === [...keys].sort().join(",");
-}
-
-export function normalizeExpiredPortableMembers(snapshot, now = Date.now()) {
-  const members = snapshot?.local_context?.[0]?.portable_membership;
-  if (!Array.isArray(members)) return;
-  for (const member of members) {
-    if (member?.memberKind === "temporary" && member.status === "active" && Number.isSafeInteger(member.expiresAt) &&
-        member.expiresAt <= now) member.status = "expired";
-  }
 }
 
 async function rewrapLocalAttachments(snapshot, sourceVault, targetVault) {

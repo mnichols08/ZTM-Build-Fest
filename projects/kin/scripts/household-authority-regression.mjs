@@ -378,16 +378,19 @@ async function pageHouseholdText() {
   return app.household.textContent;
 }
 
-async function pageExportArchive() {
+async function pageExportArchive({ clockOffset = 0 } = {}) {
   const app = document.querySelector("kin-app");
   let blob = null;
   const originalClick = HTMLAnchorElement.prototype.click;
   const originalCreate = URL.createObjectURL;
   HTMLAnchorElement.prototype.click = function () {};
   URL.createObjectURL = (value) => { blob = value; return originalCreate.call(URL, value); };
+  const systemNow = Date.now;
+  Date.now = () => systemNow() + clockOffset;
   try {
     await app.security.run(() => app.security.downloadArchive());
   } finally {
+    Date.now = systemNow;
     HTMLAnchorElement.prototype.click = originalClick;
     URL.createObjectURL = originalCreate;
   }
@@ -402,7 +405,7 @@ async function pageExportArchive() {
     membership, message: app.security.message.textContent };
 }
 
-async function pageRestoreArchive({ base64, secret }) {
+async function pageRestoreArchive({ base64, secret, clockOffset = 0 }) {
   const app = document.querySelector("kin-app");
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
@@ -415,10 +418,13 @@ async function pageRestoreArchive({ base64, secret }) {
   transfer.items.add(new File([bytes], "kin-household.kin", { type: "application/octet-stream" }));
   file.files = transfer.files;
   app.security.querySelector("#archive-recovery").value = secret;
+  const systemNow = Date.now;
+  Date.now = () => systemNow() + clockOffset;
   file.form.requestSubmit();
   for (let i = 0; i < 800 && !(!app.security.busy && app.security.querySelector("#restore-confirm")); i++)
     await new Promise((r) => setTimeout(r, 25));
   const confirmation = app.security.querySelector("#restore-confirm");
+  Date.now = systemNow;
   if (!confirmation) throw new Error("Archive validation failed: " + app.security.alert.textContent);
   const stagedEvents = (await app.store.loadEvents()).length;
   confirmation.click();
@@ -750,15 +756,17 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
 
     // ---- Profile C2: Temporary member with deterministic expiry -------------
     const c2 = await launch("temporary-c2");
-    // Short real expiry: the server clock is advanced for instant enforcement,
-    // and the browsers' real clocks pass it before the later export step so the
-    // archive validator's own clock comparison sees a consistent snapshot.
+    // Short real expiry: the server clock is advanced for instant enforcement.
     const temporaryExpiry = clock.now() + 20_000;
     const c2Identity = await join({ inviter: a, invitee: c2, kind: "temporary", expiresAt: temporaryExpiry, deviceLabel: "Client C2" });
     household = await c2.call(pageHousehold);
     const c2Member = household.members.find((member) => member.current);
     check(c2Member?.kind === "temporary" && c2Member.active && c2Member.expiresAt === temporaryExpiry,
       "Temporary C2 carries the inviter-chosen absolute expiry");
+    const aheadClockExport = await a.call(pageExportArchive, { clockOffset: 10 * MINUTE });
+    check(aheadClockExport.bytes > 0 && aheadClockExport.membership?.some((member) =>
+      member.memberId === c2Identity.memberId && member.status === "active"),
+      "export preserves active Temporary status when the browser clock is ahead of the server");
     const c2Denied = await c2.call(pageFetch, { path: "/api/pairings", method: "POST", body: { kind: "adult" } });
     check(c2Denied.status === 403 && c2Denied.body?.error === "adult_required", "Temporary C2 cannot manage trust");
     result = await a.call(pageSync);
@@ -847,7 +855,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
 
     // ---- Export from A ------------------------------------------------------
     while (Date.now() <= temporaryExpiry + 1_000) await delay(250);
-    const exported = await a.call(pageExportArchive);
+    const exported = await a.call(pageExportArchive, { clockOffset: -10 * MINUTE });
     check(exported.bytes > 0 && exported.message.includes("export prepared"), "Adult A exports a household archive through the product control");
     const statuses = Object.fromEntries((exported.membership ?? []).map((member) => [member.memberId, `${member.memberKind}:${member.status}`]));
     check(statuses[aBoot.identity.memberId] === "adult:active" && statuses[bIdentity.memberId] === "adult:active" &&
@@ -862,7 +870,9 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
 
     // ---- Profile D: clean browser, restore, then re-authorize ---------------
     const d = await launch("restore-d");
-    const restored = await d.call(pageRestoreArchive, { base64: exported.base64, secret: a.recovery });
+    const restored = await d.call(pageRestoreArchive, {
+      base64: exported.base64, secret: a.recovery, clockOffset: 10 * MINUTE,
+    });
     check(restored.stagedEvents === 0, "validation stages the archive without touching the empty target");
     check(restored.events === exported.events, `restore imports the exact archive history (${restored.events} events)`);
     check(restored.items.includes("A1 before anyone joins") && restored.items.includes("C1 limited member item") &&

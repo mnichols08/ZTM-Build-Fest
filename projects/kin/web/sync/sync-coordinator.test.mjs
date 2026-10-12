@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { activeResponsibilityMemberIds, memberHasTrustAuthority, portableMembershipFromDirectory, SyncCoordinator } from "./sync-coordinator.js";
-import { normalizeExpiredPortableMembers } from "../security/archive.js";
 
 test("Responsibility participants include active member kinds and exclude removed or expired members", () => {
   const now = 5_000;
@@ -45,7 +44,7 @@ test("portable export requires authoritative status and never guesses from activ
   ]), /validate current household membership/);
 });
 
-test("removed Temporary status survives export and later restore normalization", () => {
+test("Temporary statuses survive archive restoration unchanged", () => {
   const id = "88".repeat(16);
   const expiredId = "99".repeat(16);
   const membership = portableMembershipFromDirectory([
@@ -53,8 +52,6 @@ test("removed Temporary status survives export and later restore normalization",
     { memberId: expiredId, memberKind: "temporary", memberActive: false, memberStatus: "expired", memberExpiresAt: 1_000 },
   ]);
   const packageSnapshot = { local_context: [{ portable_membership: membership }] };
-
-  normalizeExpiredPortableMembers(packageSnapshot, 2_000);
 
   assert.deepEqual(packageSnapshot.local_context[0].portable_membership, [
     { memberId: id, memberKind: "temporary", status: "removed", expiresAt: 1_000 },

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — Post-v0.40.1 release stabilization
+## Unreleased — v0.40.2 Clock & Archive Correctness
 
 - Revoking the device that committed the latest key rotation no longer strands the remaining devices (B-002). The relay keeps each committed rotation package for a still-trusted recipient until that recipient acknowledges it, including after the package's original expiry, and removes it when the recipient is revoked, removed, expired, or changes its device key. Only packages from the relay's own committed rotation get this exception; ordinary key transfers still expire. Clients still check the recipient binding and the sender's signature against verified device-key history.
 - The rotating device is now recorded as holding the epoch it committed (P-001).
@@ -8,8 +8,10 @@
 - `GET /api/household/lifecycle` answers again instead of always returning 500 (B-001).
 - Limited and Temporary devices no longer attempt Adult-only epoch rotation or key provisioning during sync. Previously a 403 from those steps paused their sync before pull and push, so non-Adult members could not participate after any epoch rotation.
 - The trusted-device list refreshes after a successful device revocation instead of showing the revoked device as still trusted until the page is reopened.
+- Archive membership validation now treats `active`, `removed`, and `expired` as server-authored historical statuses. Export and restore do not derive or rewrite those statuses from the browser clock; expiry metadata remains structurally validated and the snapshot grants no live authority (P-003).
+- `PairingService.leaveHousehold` evaluates Temporary participation using the injected service clock. Regression coverage confirms self-leave works before expiry and expired members and stale sessions remain denied (P-004).
 - Add `scripts/household-authority-regression.mjs`, a live multi-profile household authority and recovery drill against the real server and relay. It operates the real fingerprint-confirmation controls; its evidence and limits are recorded in `docs/audits/LIVE_HOUSEHOLD_VERIFICATION.md`.
-- No version bump, archive format, encryption format, package-signature format, or authorization-policy change. Server key-package retention and two pairing responses changed as described above.
+- No archive schema/version, encryption format, package-signature format, or authorization-policy change. KARC v1 and existing package-v1/v2 archives remain supported. Server key-package retention and two pairing responses changed as described above.
 
 ## v0.40.1 — Portable Membership Status Fidelity
 

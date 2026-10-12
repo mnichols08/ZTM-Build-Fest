@@ -576,9 +576,8 @@ async function browserUiChecks() {
   const restoredPortableSnapshot = await app.store.snapshotForArchive();
   check(
     JSON.stringify(restoredPortableSnapshot.local_context[0].portable_membership) ===
-      JSON.stringify(portableMembership.map((member) => member.memberKind === "temporary" && member.status === "active" && member.expiresAt <= Date.now()
-        ? { ...member, status: "expired" } : member)),
-    "restored membership history retains kinds, removals, and absolute Temporary expiry",
+      JSON.stringify(portableMembership),
+    "restored membership history preserves every authoritative status and absolute Temporary expiry",
   );
   const restoredHouseholdId = Array.from(restoredPortableSnapshot.local_context[0].sync_household_id,
     (byte) => byte.toString(16).padStart(2, "0")).join("");
