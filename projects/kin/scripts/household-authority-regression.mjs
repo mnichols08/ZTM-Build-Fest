@@ -154,6 +154,30 @@ async function pageFetch({ path, method = "GET", body }) {
   return { status: response.status, body: await response.json().catch(() => null) };
 }
 
+async function pagePauseAutomaticSync() {
+  const app = document.querySelector("kin-app");
+  app.syncCoordinator?.stop();
+  app.syncCoordinator = null;
+  app.configureSyncCoordinator = async () => {};
+}
+
+async function pageResumeAutomaticSync() {
+  const app = document.querySelector("kin-app");
+  delete app.configureSyncCoordinator;
+}
+
+async function pageShiftClock(offsetMs) {
+  const original = Date.now.bind(Date);
+  window.__kinOriginalDateNow = original;
+  Date.now = () => original() + offsetMs;
+}
+
+async function pageRestoreClock() {
+  if (!window.__kinOriginalDateNow) return;
+  Date.now = window.__kinOriginalDateNow;
+  delete window.__kinOriginalDateNow;
+}
+
 async function pageEnableSync() {
   const app = document.querySelector("kin-app");
   await app.household.enableSync();
@@ -646,15 +670,17 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     result = await a.call(pageSync);
     check(result.items.includes("T1 temporary member item"), "Adult A receives Temporary C2's event");
     const c2Local = await c2.call(pageLocal);
-    // Adult B goes offline first so that only Adult A can commit the epoch
-    // rotation the expiry reserves. If B's background sync committed it and B
-    // were then revoked before A received B's key package, A could never
-    // obtain that epoch (see LIVE_HOUSEHOLD_VERIFICATION.md, B-002).
-    await b.setOffline(true);
+    result = await b.call(pageSync);
+    check(result.last?.state !== "paused", "Adult B holds the current epoch before the expiry race: " + JSON.stringify(result.last));
+    const epochBeforeExpiry = syncService.status(
+      relaySession(bIdentity.memberId, bIdentity.deviceId),
+    ).currentEpoch;
+    await a.call(pagePauseAutomaticSync);
+    await a.setOffline(true);
     clock.offset += 4 * MINUTE; // Server time passes the expiry; browsers keep real time.
-    household = await a.call(pageHousehold);
+    household = await b.call(pageHousehold);
     const expiredView = household.members.find((member) => member.id === c2Identity.memberId);
-    check(expiredView && expiredView.active === false, "Adult A's household view shows Temporary C2 ended after expiry");
+    check(expiredView && expiredView.active === false, "Adult B's household view shows Temporary C2 ended after expiry");
     check(service.members.get(c2Identity.memberId).memberStatus === "expired", "server records natural expiry, not removal");
     const c2Status = await c2.call(pageFetch, { path: "/api/sync/status" });
     check([401, 403].includes(c2Status.status), `expired Temporary C2 cannot read sync status (${c2Status.status})`);
@@ -666,22 +692,38 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       c2After = await c2.call(pageLocal);
     }
     check(c2After.events === c2Local.events, "expiry leaves Temporary C2's local history intact");
-    const householdText = await a.call(pageHouseholdText);
-    check(householdText.includes("access ended"), "Adult A's household page labels the ended Temporary access");
-    result = await a.call(pageSync);
-    check(result.last?.state !== "paused", "Adult A commits the rotation reserved by the expiry: " + JSON.stringify(result.last));
-    pass(`${checks} Temporary admission and expiry assertions (profile C2)`);
+    result = await b.call(pageSync);
+    check(result.last?.state !== "paused", "Adult B commits the expiry rotation while Adult A is offline: " + JSON.stringify(result.last));
+    const committedEpoch = syncService.status(
+      relaySession(bIdentity.memberId, bIdentity.deviceId),
+    ).currentEpoch;
+    check(committedEpoch === epochBeforeExpiry + 1, "Adult B commits exactly the epoch reserved by Temporary expiry");
+    const waitingForA = [...syncService.state(aBoot.identity.householdId).grants.values()]
+      .find((grant) => grant.recipientDeviceId === aBoot.identity.deviceId && grant.keyEpoch === committedEpoch);
+    check(waitingForA?.committedRotation === true, "the committed epoch package remains queued for offline Adult A");
+    pass(`${checks} Temporary expiry and committed-rotation race assertions (profiles A, B, C2)`);
     await retire(c2);
 
-    // ---- Revoke Adult B's device while B is offline -------------------------
+    // ---- Revoke the rotation sender before A receives its package ----------
+    await b.setOffline(true);
     await b.call(pageAddItem, "B1 written offline before revocation");
     const bBefore = await b.call(pageLocal);
     check(bBefore.pendingOutbox >= 1, "Adult B holds an unsent outbox entry while offline");
+    await a.setOffline(false);
     await a.call(pageRevokeDeviceButton, "Client B");
     check(Boolean(service.devices.get(bIdentity.deviceId).revokedAt), "Adult A revokes B's device with a fresh passkey through the UI");
     check(service.members.get(bIdentity.memberId).active === true, "device revocation keeps B's membership (device ≠ member)");
+    check(syncService.state(aBoot.identity.householdId).grants.has(waitingForA.grantId),
+      "revoking the rotation sender preserves the package for still-trusted Adult A");
+    clock.offset += 7 * MINUTE;
+    await a.call(pageResumeAutomaticSync);
+    await a.call(pageShiftClock, 11 * MINUTE);
     result = await a.call(pageSync);
-    check(result.last?.state !== "paused", "Adult A rotates the household epoch after revocation: " + JSON.stringify(result.last));
+    await a.call(pageRestoreClock);
+    clock.offset -= 7 * MINUTE;
+    check(result.last?.state !== "paused", "Adult A recovers the expired committed package and rotates after revocation: " + JSON.stringify(result.last));
+    check(syncService.status(relaySession(aBoot.identity.memberId, aBoot.identity.deviceId)).currentEpoch === committedEpoch + 1,
+      "Adult A obtains the committed epoch before completing the required post-revocation rotation");
     await b.setOffline(false);
     result = await b.call(pageSync);
     check(result.last?.state === "paused" && ["authentication_required", "device_not_trusted"].includes(result.last.code),

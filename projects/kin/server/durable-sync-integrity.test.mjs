@@ -275,6 +275,45 @@ test("valid expired grants survive validation and prune through the normal sync 
   }
 });
 
+test("committed rotation recovery survives sender revocation, expiry, and restart", () => {
+  const f = fixture();
+  let reopened;
+  try {
+    f.rotate();
+    f.pairing.revokeDevice(
+      f.recipient.sessionToken,
+      f.adult.deviceId,
+      f.recipient.memberId,
+    );
+    f.sync.onAccessChange(f.adult.householdId, [f.adult.deviceId]);
+    f.expire();
+    assert.equal(f.store.validate(), true);
+    f.store.close();
+
+    reopened = new DurableStore(f.databasePath);
+    const pairing = new PairingService({ store: reopened });
+    const recipient = pairing.reauthenticate(
+      f.recipient.deviceToken,
+      "recipient",
+    );
+    const sync = new EncryptedSyncService(pairing, { store: reopened });
+    const [recovery] = sync.pendingProvisioning(recipient.sessionToken);
+    assert.equal(recovery.committedRotation, true);
+    assert.equal(recovery.keyEpoch, 2);
+    assert.equal(
+      sync.acknowledgeProvisioning(recipient.sessionToken, recovery.grantId)
+        .acknowledged,
+      true,
+    );
+    assert.ok(
+      pairing.devices.get(f.recipient.deviceId).syncProvisionedEpochs.includes(2),
+    );
+  } finally {
+    reopened?.close();
+    f.close();
+  }
+});
+
 test("accepted rotations retain valid historical keys, removed members and revoked devices", () => {
   const f = fixture();
   let reopened;

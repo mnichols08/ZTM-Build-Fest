@@ -143,6 +143,100 @@ test("access changes retain accepted proposal recovery while blocking event uplo
   assert.equal(f.sync.status(f.adult.sessionToken).currentEpoch, 3);
 });
 
+test("a revoked rotation sender's expired committed package restores the next rotation", async (t) => {
+  const f = await fixture(t);
+  await f.retry();
+  assert.ok(
+    f.pairing.devices.get(f.adult.deviceId).syncProvisionedEpochs.includes(2),
+    "the rotating device is recorded as holding its committed epoch",
+  );
+
+  const [packageForPartner] = f.sync.pendingProvisioning(
+    f.partner.sessionToken,
+  );
+  const initialKey = await unwrapEpochKey({
+    package: packageForPartner.package,
+    deviceKeys: f.partnerKeys,
+    householdId: f.adult.householdId,
+    deviceId: f.partner.deviceId,
+    deviceFingerprint: packageForPartner.recipientFingerprint,
+    senderSigningKey: f.keys.signingPublicKey,
+  });
+  assert.equal(initialKey.fingerprint, f.epochs.get(2).fingerprint);
+  f.sync.acknowledgeProvisioning(
+    f.partner.sessionToken,
+    packageForPartner.grantId,
+  );
+
+  f.sync.onAccessChange(f.adult.householdId);
+  const recipient = f.sync.deviceDirectory(f.partner.sessionToken).find(
+    (device) => device.deviceId === f.adult.deviceId,
+  );
+  const committed = await createProvisionedHouseholdEpoch({
+    householdId: f.adult.householdId,
+    keyEpoch: 3,
+    deviceKeys: f.partnerKeys,
+    senderDeviceId: f.partner.deviceId,
+    recipients: [recipient],
+    expiresAt: Date.now() + 600_000,
+  });
+  f.sync.rotateEpoch(f.partner.sessionToken, {
+    expectedEpoch: 2,
+    packages: committed.packages,
+    proposalId: "9".repeat(32),
+  });
+  assert.ok(
+    f.pairing.devices.get(f.partner.deviceId).syncProvisionedEpochs.includes(3),
+    "the second rotating device is recorded as holding its committed epoch",
+  );
+
+  f.pairing.revokeDevice(
+    f.adult.sessionToken,
+    f.partner.deviceId,
+    f.adult.memberId,
+  );
+  f.sync.onAccessChange(f.adult.householdId, [f.partner.deviceId]);
+  f.advance();
+
+  const [recovery] = f.sync.pendingProvisioning(f.adult.sessionToken);
+  assert.equal(recovery.committedRotation, true);
+  assert.equal(recovery.keyEpoch, 3);
+  const recovered = await unwrapEpochKey({
+    package: recovery.package,
+    deviceKeys: f.keys,
+    householdId: f.adult.householdId,
+    deviceId: f.adult.deviceId,
+    deviceFingerprint: f.coordinator.deviceKeys.fingerprint,
+    senderSigningKey: f.partnerKeys.signingPublicKey,
+    allowExpiredCommittedRotation: recovery.committedRotation,
+  });
+  assert.equal(recovered.fingerprint, committed.fingerprint);
+  f.epochs.set(3, { ...recovered, sealed: null });
+  f.sync.acknowledgeProvisioning(f.adult.sessionToken, recovery.grantId);
+  assert.ok(
+    f.pairing.devices.get(f.adult.deviceId).syncProvisionedEpochs.includes(3),
+  );
+
+  await f.retry();
+  assert.equal(f.sync.status(f.adult.sessionToken).currentEpoch, 4);
+});
+
+test("a committed rotation package is discarded when its recipient is revoked", async (t) => {
+  const f = await fixture(t);
+  await f.retry();
+  const before = f.sync.pendingProvisioning(f.partner.sessionToken);
+  assert.equal(before.length, 1);
+  assert.equal(before[0].committedRotation, true);
+
+  f.pairing.revokeDevice(
+    f.adult.sessionToken,
+    f.partner.deviceId,
+    f.adult.memberId,
+  );
+  f.sync.onAccessChange(f.adult.householdId, [f.partner.deviceId]);
+  assert.equal(f.sync.state(f.adult.householdId).grants.size, 0);
+});
+
 test("recipient key succession refreshes pending packages for the same epoch secret", async (t) => {
   const f = await fixture(t);
   const original = await interrupt(f);

@@ -511,6 +511,7 @@ export class SyncCoordinator {
           try {
             received = await unwrapEpochKey({ package: grant.package, deviceKeys: this.deviceKeys.keys,
               householdId: this.identity.householdId, deviceId: this.identity.deviceId,
+              allowExpiredCommittedRotation: grant.committedRotation === true,
               deviceFingerprint: this.deviceKeys.fingerprint, senderSigningKey: signer.signing });
             break;
           } catch (error) { if (error.code !== "provisioning_signature_invalid") throw error; }

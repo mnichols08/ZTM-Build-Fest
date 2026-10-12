@@ -18,6 +18,7 @@ const MAX_EVENTS_PER_BATCH = 20;
 const MAX_REQUEST_BYTES = 200_000;
 const MAX_PROVISIONING_GRANTS = 128;
 const MAX_PROVISIONING_BATCH = 20;
+const MAX_COMMITTED_ROTATION_GRANTS = MAX_KEY_EPOCHS * MAX_ROTATION_PACKAGES;
 const MAX_SYNC_RATE_BUCKETS = 4096;
 const SYNC_RATE_WINDOW_MS = 60_000;
 const SYNC_RATE_LIMIT = 256;
@@ -463,7 +464,10 @@ export class EncryptedSyncService {
         "That device cannot receive this household key.",
         403,
       );
-    if (state.grants.size >= MAX_PROVISIONING_GRANTS)
+    if (
+      [...state.grants.values()].filter((grant) => !grant.committedRotation)
+        .length >= MAX_PROVISIONING_GRANTS
+    )
       throw new PairingError(
         "provisioning_capacity",
         "Too many active key transfers.",
@@ -544,26 +548,33 @@ export class EncryptedSyncService {
 
   acknowledgeProvisioning(sessionToken, grantId) {
     const auth = this.authorize(sessionToken);
-    const grant = this.state(auth.household.id).grants.get(grantId);
+    const state = this.state(auth.household.id);
+    const grant = state.grants.get(grantId);
     if (!grant || grant.recipientDeviceId !== auth.device.id)
       throw new PairingError(
         "provisioning_device_mismatch",
         "That key transfer is unavailable.",
         403,
       );
-    if (!grant.package || grant.expiresAt <= this.now())
+    if (grant.state === "acknowledged")
+      return { acknowledged: true, grantId };
+    if (
+      !grant.package ||
+      (grant.expiresAt <= this.now() && !grant.committedRotation)
+    )
       throw new PairingError(
         "provisioning_expired",
         "That key transfer expired.",
         410,
       );
     grant.state = "acknowledged";
+    delete grant.committedRotation;
     const device = this.pairingService.devices.get(auth.device.id);
     device.syncProvisionedEpochs ??= [];
     if (!device.syncProvisionedEpochs.includes(grant.keyEpoch))
       device.syncProvisionedEpochs.push(grant.keyEpoch);
     device.syncProvisionedEpochs.sort((left, right) => left - right);
-    this.persistState(auth.household.id, this.state(auth.household.id));
+    this.persistState(auth.household.id, state);
     return { acknowledged: true, grantId };
   }
 
@@ -650,14 +661,31 @@ export class EncryptedSyncService {
       validateProvisioningPackage(keyPackage, grant, this.now());
       byRecipient.set(recipient.id, keyPackage);
     }
+    const retainedRotationGrants = [...state.grants.values()].filter(
+      (grant) => grant.committedRotation,
+    ).length;
+    if (
+      retainedRotationGrants + byRecipient.size >
+      MAX_COMMITTED_ROTATION_GRANTS
+    )
+      throw new PairingError(
+        "provisioning_capacity",
+        "Too many unacknowledged rotation key transfers.",
+        503,
+      );
     const canonical = canonicalJson(packages);
     const rotationId = randomBytes(16).toString("hex");
     state.currentEpoch = nextEpoch;
     state.rotationPending = false;
     state.lastRotation = { expectedEpoch, canonical, rotationId, proposalId };
+    auth.device.syncProvisionedEpochs ??= [];
+    if (!auth.device.syncProvisionedEpochs.includes(nextEpoch))
+      auth.device.syncProvisionedEpochs.push(nextEpoch);
+    auth.device.syncProvisionedEpochs.sort((left, right) => left - right);
     for (const [recipientDeviceId, keyPackage] of byRecipient) {
       state.grants.set(keyPackage.grantId, {
         ...keyPackage,
+        requestId: null,
         state: "pending",
         package: structuredClone(keyPackage),
         canonicalPackage: canonicalJson(keyPackage),
@@ -665,6 +693,7 @@ export class EncryptedSyncService {
         senderDeviceId: auth.device.id,
         householdId: auth.household.id,
         keyEpoch: nextEpoch,
+        committedRotation: true,
       });
     }
     this.persistState(auth.household.id, state);
@@ -679,9 +708,14 @@ export class EncryptedSyncService {
   onDeviceKeyTransition(householdId, deviceId) {
     const state = this.state(householdId);
     // Every package binds a recipient fingerprint or an issuer signing key.
-    // Remove obsolete packages and their retry mappings without altering events.
+    // A committed package can still be verified against the sender's historical
+    // signing key. A recipient key transition, however, makes it unusable.
     for (const [id, grant] of state.grants) {
-      if (grant.senderDeviceId !== deviceId && grant.recipientDeviceId !== deviceId) continue;
+      if (
+        grant.recipientDeviceId !== deviceId &&
+        (grant.senderDeviceId !== deviceId || grant.committedRotation)
+      )
+        continue;
       state.grants.delete(id);
       for (const [request, grantId] of state.grantRequests)
         if (grantId === id) state.grantRequests.delete(request);
@@ -692,18 +726,36 @@ export class EncryptedSyncService {
   onAccessChange(householdId, excludedDeviceIds = []) {
     const state = this.state(householdId);
     state.rotationPending = true;
-    // Keep the latest committed proposal recoverable after a lost response,
-    // even when an access change already requires the following rotation.
-    for (const [grantId, grant] of state.grants)
-      if (
-        excludedDeviceIds.includes(grant.senderDeviceId) ||
-        excludedDeviceIds.includes(grant.recipientDeviceId)
-      ) {
+    // Keep committed packages only for recipients who still hold trust.
+    for (const [grantId, grant] of state.grants) {
+      const recipient = this.pairingService.devices.get(
+        grant.recipientDeviceId,
+      );
+      const recipientMember = recipient &&
+        this.pairingService.members.get(recipient.memberId);
+      const recipientTrusted =
+        recipient &&
+        !recipient.revokedAt &&
+        canParticipate(recipientMember, this.now()) &&
+        !excludedDeviceIds.includes(recipient.id);
+      const senderExcluded = excludedDeviceIds.includes(
+        grant.senderDeviceId,
+      );
+      const recipientExcluded = excludedDeviceIds.includes(
+        grant.recipientDeviceId,
+      );
+      const shouldDelete =
+        recipientExcluded ||
+        (grant.committedRotation
+          ? !recipientTrusted
+          : senderExcluded);
+      if (shouldDelete) {
         state.grants.delete(grantId);
         for (const [requestKey, requestedGrantId] of state.grantRequests)
           if (requestedGrantId === grantId)
             state.grantRequests.delete(requestKey);
       }
+    }
     this.persistState(householdId, state);
     return state.currentEpoch + 1;
   }
@@ -790,7 +842,10 @@ export class EncryptedSyncService {
 
   pruneGrants(state) {
     for (const [grantId, grant] of state.grants)
-      if (grant.expiresAt <= this.now()) {
+      if (
+        grant.expiresAt <= this.now() &&
+        (!grant.committedRotation || grant.state === "acknowledged")
+      ) {
         state.grants.delete(grantId);
         for (const [requestKey, requestedGrantId] of state.grantRequests)
           if (requestedGrantId === grantId)
@@ -845,6 +900,7 @@ function publicGrant(grant) {
     recipientFingerprint: grant.recipientFingerprint,
     keyEpoch: grant.keyEpoch,
     expiresAt: grant.expiresAt,
+    ...(grant.committedRotation ? { committedRotation: true } : {}),
   };
 }
 
