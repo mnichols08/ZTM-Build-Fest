@@ -2312,6 +2312,31 @@ test("the last adult cannot leave, while a joined adult can leave without removi
   assert.equal(service.authorize(adult.sessionToken).member.id, adult.memberId);
 });
 
+test("Temporary self-leave follows the injected service clock and expires closed", () => {
+  let now = 1_000_000;
+  const service = new PairingService({ now: () => now, secret: Buffer.alloc(32, 12) });
+  const adult = service.bootstrap({ credential: credential("leave-clock-adult"), deviceLabel: "Adult device" });
+  const expiry = now + 10_000;
+  const invitation = service.createPairing(adult.sessionToken, { kind: "temporary", expiresAt: expiry });
+  const claim = service.claimPairing({ code: invitation.code, credential: credential("leave-clock-guest"), deviceLabel: "Guest device" });
+  service.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
+  const temporary = service.activateClaim(claim.claimToken);
+
+  // The host clock is far beyond expiry, but service authorization uses its injected clock.
+  assert.equal(service.leaveHousehold(temporary.sessionToken, temporary.memberId).removed, true);
+  assert.equal(service.members.get(temporary.memberId).active, false);
+  assert.throws(() => service.authorize(temporary.sessionToken), (error) => error.code === "authentication_required");
+
+  const second = service.createPairing(adult.sessionToken, { kind: "temporary", expiresAt: expiry + 20_000 });
+  const secondClaim = service.claimPairing({ code: second.code, credential: credential("leave-clock-guest-2"), deviceLabel: "Guest device 2" });
+  service.approvePairing(adult.sessionToken, second.pairingId, secondClaim.version);
+  const unexpired = service.activateClaim(secondClaim.claimToken);
+  now = expiry + 20_000;
+  assert.throws(() => service.leaveHousehold(unexpired.sessionToken, unexpired.memberId), (error) => error.code === "membership_removed");
+  assert.equal(service.members.get(unexpired.memberId).active, true);
+  assert.throws(() => service.authorize(unexpired.sessionToken), (error) => error.code === "membership_removed");
+});
+
 test("removing an invitation author revokes that adult's pending admission", () => {
   const { service, adult } = setup();
   const initial = service.createPairing(adult.sessionToken);

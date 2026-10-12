@@ -1443,7 +1443,7 @@ export class PairingService {
         "Authenticate with your passkey again before leaving the household.",
         401,
       );
-    if (!canParticipate(member))
+    if (!canParticipate(member, this.now()))
       throw new PairingError(
         "membership_not_active",
         "This household member is no longer active.",

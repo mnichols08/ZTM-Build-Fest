@@ -2535,7 +2535,7 @@ function validateArchiveSnapshot(snapshot, engine) {
   return plan;
 }
 
-function validatePortableMembership(members) {
+export function validatePortableMembership(members) {
   if (!Array.isArray(members) || members.length > 12)
     throw new EventStoreError("Kin found invalid household membership in this export.");
   const ids = new Set();
@@ -2548,8 +2548,7 @@ function validatePortableMembership(members) {
         ids.has(member.memberId) || !["adult", "limited", "temporary"].includes(member.memberKind) ||
         !["active", "removed", "expired"].includes(member.status) ||
         (member.memberKind === "temporary"
-          ? !Number.isSafeInteger(member.expiresAt) || Math.abs(member.expiresAt) > 8_640_000_000_000_000 ||
-            (member.status === "expired" && member.expiresAt > Date.now())
+          ? !Number.isSafeInteger(member.expiresAt) || Math.abs(member.expiresAt) > 8_640_000_000_000_000
           : member.expiresAt !== undefined || member.status === "expired"))
       throw new EventStoreError("Kin found invalid household membership in this export.");
     ids.add(member.memberId);

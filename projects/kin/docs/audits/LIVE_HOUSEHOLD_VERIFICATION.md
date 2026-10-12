@@ -424,6 +424,33 @@ loopback relay. Never use production household data.
 7. Record browser/OS versions, timestamps, and sanitized request outcomes. Do
    not record passkeys, recovery keys, cookies, or household text.
 
+## v0.40.2 Follow-up — P-003 and P-004
+
+The clock/archive follow-up fixes P-003 and P-004 without changing archive
+formats or the server authorization contract. `validatePortableMembership`
+now validates historical membership structure only; browser time cannot reject
+an authoritative `expired` status or rewrite an `active` status. Export and
+restore preserve `active`, `removed`, and `expired` exactly. Structural
+contradictions such as expiry on Adult/Limited members, missing or invalid
+Temporary expiry, unknown statuses, duplicate IDs, and oversized snapshots
+remain rejected. Legacy packages without a membership snapshot and package-v1
+archives remain supported.
+
+`PairingService.leaveHousehold` now evaluates participation with the injected
+service clock. Before-expiry Temporary self-leave succeeds; after-expiry access
+is denied, and a completed leave invalidates the session. Adult, Limited,
+removal, revocation, expiry, and lifecycle tests remain passing.
+
+Validation was re-run on the v0.40.2 branch in Windows x64 with Node 22.13.0,
+Rust 1.93.0, and Edge 155.0.4283.45. The complete Node server/web suite,
+173 Rust tests, formatting, Clippy, release WASM, household authority drill
+(103 assertions), browser, security storage, security UI, and passkey
+regressions passed. Detailed results and limitations are recorded in
+[`V0.40.2`](../releases/V0.40.2.md). No tag or release was created. Physical
+devices, human fingerprint comparison, non-Chromium/mobile environments, and
+CI on a pushed final head remain unverified; R-3's honest-relay assumption is
+unchanged.
+
 ## Release Recommendation
 
 **Ready to merge into `kin-development`; NOT RELEASE-READY.** B-001 to B-004
