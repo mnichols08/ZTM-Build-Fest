@@ -293,7 +293,7 @@ async function api(request, response, url, context) {
     if (!/^[a-f0-9]{32}$/.test(householdId)) throw badRequest();
     const knownHousehold = service.households.get(householdId);
     const lifecycle =
-      store?.lifecycleInfo(householdId) ??
+      context.store?.lifecycleInfo(householdId) ??
       (knownHousehold
         ? {
             state: knownHousehold.lifecycleState ?? "active",

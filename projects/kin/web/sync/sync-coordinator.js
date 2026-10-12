@@ -24,6 +24,12 @@ export function activeResponsibilityMemberIds(devices, now = Date.now()) {
     .map((device) => device.memberId))];
 }
 
+// Mirrors the server's requireTrustAuthority: only active Adults may rotate
+// epochs or provision keys. The sync status reports the session's member kind.
+export function memberHasTrustAuthority(status) {
+  return status?.memberKind === "adult";
+}
+
 export function portableMembershipFromDirectory(entries) {
   if (!Array.isArray(entries) || entries.length > 12)
     throw new Error("Kin could not validate current household membership for export.");
@@ -232,7 +238,11 @@ export class SyncCoordinator {
         "An existing trusted device needs to finish setting up household sync first.",
       );
     }
-    if (status.rotationPending && currentKey) {
+    // Only Adults may rotate epochs or provision keys (server 403 otherwise).
+    // A Limited or Temporary device must still pull and push with the keys it
+    // was granted instead of pausing on an authority it never had.
+    const trustAuthority = memberHasTrustAuthority(status);
+    if (status.rotationPending && currentKey && trustAuthority) {
       await this.commitRotation();
       status = await this.request("/api/sync/status");
       await this.store.updateSyncServerState(status);
@@ -296,7 +306,7 @@ export class SyncCoordinator {
       await this.store.installIdentityBindings(remoteBindings, this.identity);
     }
 
-    await this.provisionMemberHistory(status.currentEpoch, devices);
+    if (trustAuthority) await this.provisionMemberHistory(status.currentEpoch, devices);
     await this.pushIdentityBindings();
     let passes = 0;
     let quarantinedEvents = 0;

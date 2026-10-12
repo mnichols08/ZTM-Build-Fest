@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { activeResponsibilityMemberIds, portableMembershipFromDirectory, SyncCoordinator } from "./sync-coordinator.js";
+import { activeResponsibilityMemberIds, memberHasTrustAuthority, portableMembershipFromDirectory, SyncCoordinator } from "./sync-coordinator.js";
 import { normalizeExpiredPortableMembers } from "../security/archive.js";
 
 test("Responsibility participants include active member kinds and exclude removed or expired members", () => {
@@ -85,4 +85,12 @@ test("unreachable household sync reports a plain paused state without changing s
     coordinator.stop();
     globalThis.fetch = originalFetch;
   }
+});
+
+test("only Adult sessions attempt epoch rotation and key provisioning during sync", () => {
+  assert.equal(memberHasTrustAuthority({ memberKind: "adult" }), true);
+  assert.equal(memberHasTrustAuthority({ memberKind: "limited" }), false);
+  assert.equal(memberHasTrustAuthority({ memberKind: "temporary", memberExpiresAt: 1 }), false);
+  assert.equal(memberHasTrustAuthority({}), false);
+  assert.equal(memberHasTrustAuthority(null), false);
 });

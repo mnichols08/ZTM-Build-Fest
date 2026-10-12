@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — Post-v0.40.1 release stabilization
+
+- Limited and Temporary devices no longer attempt Adult-only epoch rotation or key provisioning during sync. Previously a 403 from those steps paused their sync before pull and push, so non-Adult members could not participate after any epoch rotation.
+- The trusted-device list refreshes after a successful device revocation instead of showing the revoked device as still trusted until the page is reopened.
+- Add `scripts/household-authority-regression.mjs`, a live multi-profile household authority and recovery drill against the real server and relay, and record its evidence in `docs/audits/LIVE_HOUSEHOLD_VERIFICATION.md`.
+- No version bump, archive format, cryptographic or server access-control change.
+
 ## v0.40.1 — Portable Membership Status Fidelity
 
 - Preserve explicitly removed Temporary members separately from naturally expired Temporary members in the authoritative server membership directory, package export, and restore normalization.
