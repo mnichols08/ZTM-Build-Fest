@@ -3,8 +3,8 @@
 **Dates:** 2026-10-11 (server integration pass), 2026-10-12 (independent-profile
 drills, B-002 recovery hardening, and fingerprint-control evidence)
 **Base:** `kin-development` at `59c94a7` (PR #36 merged; v0.40.1 candidate)
-**Working branch:** `test/kin-live-household-verification` (PR #37); hardening
-applied on top of `6d04c10` and not yet committed
+**Working branch:** `test/kin-live-household-verification` (PR #37). Results
+below were re-executed against head `db086ba` (hardening commit on `6d04c10`).
 **Scope:** Verification evidence, the defects that evidence found, and focused
 B-002/P-001 key-rotation recovery. No version bump, archive format, encryption
 format, package-signature format, or authorization-policy change.
@@ -291,12 +291,52 @@ and prints a `NOTE … (P-005)` line.
   acceptable. Expiry is chosen and signed by the sender, and a conflicting key
   for an epoch already held is refused (`saveEpoch`), so the impact is limited
   to availability.
-- **R-3 — revoked senders' packages stay acceptable.** Severity: low;
-  pre-existing and required by B-002. Clients accept packages from revoked
-  senders because packages carry no signed creation time. A compromised relay
-  colluding with a compromised revoked device could inject a key. That attack
-  is outside the honest-relay assumption and needs a signed commit record to
-  close (protocol change, not attempted).
+- **R-3 — revoked senders' packages stay acceptable.** Severity: low.
+  **Disposition: accepted limitation under the existing threat model; not
+  proof against a compromised relay.**
+
+  *Behavior.* Clients accept a key package from a sender the directory marks
+  revoked, as long as these checks pass:
+  - the package names this device and its current fingerprint;
+  - its signature verifies against a key in the sender's verified history
+    (certificate chain, pins, and signed key transitions).
+
+  B-002 recovery needs this behavior. The base branch (`59c94a7`) already
+  behaved this way: `receiveProvisioning` never checked sender revocation.
+  Packages carry no signed creation time, so a client cannot tell a package
+  signed before revocation from one signed after it.
+
+  *Why it holds under an honest relay* (THREAT-MODEL "Revoked trusted device":
+  "Service rejects its sessions and new epochs exclude it"):
+  - **No new material from a revoked device.** Revocation deletes the device's
+    sessions, so it cannot reach `rotateEpoch` or `submitProvisioning`.
+  - **No impersonation.** The relay binds every package's `senderDeviceId` to
+    the submitting session, so no other device can submit packages that name
+    the revoked device as sender.
+  - **The relay alone sets the recovery marker.** Only `rotateEpoch` sets it;
+    package bodies cannot set or clear it, and durable validation rejects
+    forged markers.
+  - **No new access for the revoked device.** A recovered epoch is one the
+    revoked device already legitimately held. Uploads stay blocked until a
+    remaining Adult commits the next rotation, and that rotation excludes the
+    revoked device.
+
+  All four points are covered by `server/rotation-recovery.test.mjs` and
+  `server/durable-sync-integrity.test.mjs`.
+
+  *Against a compromised relay* (outside that model): a relay that also holds a
+  revoked device's signing key could report a fabricated epoch and serve a
+  validly signed key the attacker chose. It can also replay authentic old
+  packages. Replay yields only keys originally sent to that device, and
+  `saveEpoch` refuses conflicting keys for epochs already held. A client-side
+  revocation check would not close the fabrication case. Revocation status
+  itself comes from the relay, and the same adversary could leave the device
+  unrevoked or restore its sessions directly. Resistance needs Adult-signed
+  revocation and rotation-commit records (a signed-commit mechanism), which is
+  a future protocol change and not attempted here. Similarly, offline events
+  written under the pre-revocation epoch may upload after the next rotation.
+  They are unreadable to the revoked device only while the relay honestly
+  refuses its sessions.
 - **R-4 — persistence cost grows with retained packages.** Severity: low.
   `saveSyncState` rewrites every grant on each persist. With
   `MAX_TRUSTED_DEVICES = 16`, a household can retain at most 127 × 15 committed
@@ -304,7 +344,7 @@ and prints a `NOTE … (P-005)` line.
 
 ## Executed Checks
 
-All commands run from the repository root on 2026-10-12, on Windows 11
+All commands run from the repository root on 2026-10-12 against `db086ba`, on Windows 11
 (NT 10.0.26300) x64. Toolchain: rustc/cargo 1.93.0 (pinned in
 `rust-toolchain.toml`), and Node 22.13.0 through `fnm exec --using v22.13.0`
 (the declared minimum; PATH Node is 22.12.0). Python 3.13.14. Browsers: Edge
@@ -350,7 +390,7 @@ git diff --check
 | Reproduction scripts (B-001, B-002, B-004, P-001) | **PASS** — each prints its fixed state |
 | `git diff --check` | **PASS** |
 | Firefox, Safari/WebKit, mobile browsers | **NOT RUN** — the runners drive Chromium over CDP |
-| CI on the final pushed head | **NOT RUN** — no Kin CI workflow exists in this repository, and these changes are uncommitted |
+| CI on the final pushed head | **CI NOT CONFIGURED** — no Kin GitHub Actions workflow exists; PR #37 at `db086ba` reports no status checks |
 
 ## Manual Reproduction for NOT RUN Scenarios
 
@@ -386,9 +426,16 @@ loopback relay. Never use production household data.
 
 ## Release Recommendation
 
-**NOT RELEASE-READY; READY FOR REVIEW.** B-001 to B-004 and P-001/P-002 have
-focused fixes and regressions, and all locally executable gates pass. Merge
-still needs independent review and a fresh run of these gates on the final
-pushed commit. Physical-device, cross-network, installed-PWA, non-Chromium, and
-human fingerprint-verification testing remain NOT RUN or NOT VERIFIED. This
-branch does not claim production certification.
+**Ready to merge into `kin-development`; NOT RELEASE-READY.** B-001 to B-004
+and P-001/P-002 have focused fixes and regressions. The final review of B-002
+found no defect, and R-3 is an accepted limitation under the honest-relay
+threat model. Every locally executable gate passed when re-run against
+`db086ba`.
+
+- **CI is not configured.** That local run is the only automated evidence for
+  this head.
+- **Not proven against a compromised relay.** R-3 needs a future
+  signed-commit mechanism for that.
+- **Not run or not verified:** physical-device, cross-network, installed-PWA,
+  non-Chromium, and human fingerprint-verification testing.
+- **No production certification** is claimed.
