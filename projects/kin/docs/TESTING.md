@@ -36,6 +36,26 @@ at `docs/ci/kin-verification.workflow.yml`, but no active GitHub Actions
 integration exists because the Kin repository boundary does not permit a
 parent-level workflow. A root workflow requires separate authorization.
 
+Verification is fail-fast. When a mandatory command fails, later commands in
+that stage and dependent stages are reported `NOT RUN` with the reason; they
+are not counted as passing. The report retains completed results, identifies
+the first failing command, gives runtime and elapsed time, and exits nonzero.
+An environment prerequisite failure similarly prevents static, test, WASM,
+and browser checks. In the default mode the optional browser stage is always
+`NOT RUN`; use `verify:browser` to make those suites mandatory.
+
+While a child command is active, the runner handles SIGINT and SIGTERM,
+attempts to stop the active command tree, waits for cleanup to finish, and
+then exits unsuccessfully without scheduling later checks. POSIX commands run
+in an isolated process group and cleanup signals that group. Windows cleanup
+uses the built-in `taskkill /T /F` scoped to the child PID. A cleanup error is
+a verification failure and is included in the report. This terminates normal
+descendants within the isolated tree; detached descendants that deliberately
+leave that tree and hard process or host failures cannot be guaranteed to
+terminate. The process-tree regression is exercised on Windows here; POSIX
+process-group termination is implemented but was not exercised in this
+Windows environment. Browser runners retain their own cleanup behavior.
+
 The v0.16.0 gate adds Note lifecycle, validation, protocol-10 compatibility,
 prior-history, real-WASM, and browser create/edit/archive coverage to the
 existing Rust, encrypted-sync, storage, server, and browser regression suites.
