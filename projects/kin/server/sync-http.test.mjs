@@ -158,6 +158,58 @@ test("HTTP sync operations require an active session and revoked devices cannot 
   }
 });
 
+test("independent HTTP clients retain relay history while revoked devices fail on reconnect", async () => {
+  const service = new PairingService();
+  const adultA = service.bootstrap({ credential: credential("live-a"), deviceLabel: "Client A" });
+  const invite = service.createPairing(adultA.sessionToken);
+  const claim = service.claimPairing({
+    code: invite.code,
+    credential: credential("live-b"),
+    deviceLabel: "Client B",
+  });
+  service.approvePairing(adultA.sessionToken, invite.pairingId, claim.version);
+  const adultB = service.activateClaim(claim.claimToken);
+  const app = await start(service);
+  const client = (session) => async (path, { method = "GET", body } = {}) =>
+    fetch(`${app.url}${path}`, {
+      method,
+      headers: {
+        Cookie: `kin_session=${session}`,
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  const clientA = client(adultA.sessionToken);
+  const clientB = client(adultB.sessionToken);
+  const event = eventEnvelope(adultA, { eventId: "c".repeat(32) });
+  try {
+    assert.equal((await clientA("/api/sync/events", { method: "POST", body: { events: [event] } })).status, 200);
+    const firstPull = await clientB("/api/sync/events?cursor=&limit=20");
+    assert.equal(firstPull.status, 200);
+    assert.deepEqual((await firstPull.json()).events.map((row) => row.envelope), [event]);
+
+    // Client B retains its old cursor and retryable upload. The relay accepts
+    // the exact retry once; revocation must invalidate the same session later.
+    const retry = eventEnvelope(adultB, { eventId: "d".repeat(32), deviceSequence: 1 });
+    assert.equal((await clientB("/api/sync/events", { method: "POST", body: { events: [retry] } })).status, 200);
+    assert.equal((await clientB("/api/sync/events", { method: "POST", body: { events: [retry] } })).status, 200);
+    service.revokeDevice(adultA.sessionToken, adultB.deviceId, adultA.memberId);
+    app.syncService.onAccessChange(adultA.householdId, [adultB.deviceId]);
+
+    assert.equal((await clientB("/api/sync/status")).status, 401);
+    assert.equal((await clientB("/api/sync/events?cursor=&limit=20")).status, 401);
+    assert.equal((await clientB("/api/sync/events", { method: "POST", body: { events: [retry] } })).status, 401);
+
+    // An authorized client still sees both distinct events exactly once and in
+    // the relay order; revocation changes access, not the event history.
+    const reconciled = await (await clientA("/api/sync/events?cursor=&limit=20")).json();
+    assert.deepEqual(reconciled.events.map((row) => row.envelope), [event, retry]);
+    assert.equal(reconciled.events.length, 2);
+  } finally {
+    await app.close();
+  }
+});
+
 test("HTTP attachment transfer requires an active synced session and returns only opaque bytes", async () => {
   const service = new PairingService();
   const adult = service.bootstrap({ credential: credential("attachment-http"), deviceLabel: "A" });
