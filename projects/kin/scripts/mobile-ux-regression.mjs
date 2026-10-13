@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 // Runs inside the browser against the real components, storage and WASM replay.
 // Covers the v0.41.0 capture defaults, list quick-add, item Details disclosure,
 // household get-started choices, human-readable state messages, security
@@ -175,15 +179,40 @@ export async function mobileUxRegressions(recovery) {
   autoLock.dispatchEvent(new Event("change", { bubbles: true }));
   check(app.autoLockMinutes === 5 && localStorage.getItem("kin.auto-lock-minutes") === "5" && app.autoLockTimer !== null,
     "an inactivity lock preference is stored as a plain number and starts a timer");
+  const previousActivity = app.lastActivityAt;
+  document.dispatchEvent(new Event("pointerdown"));
+  check(app.lastActivityAt >= previousActivity, "actual user activity resets the inactivity deadline");
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const pointerActivity = app.lastActivityAt;
+  document.dispatchEvent(new Event("scroll", { bubbles: true }));
+  check(app.lastActivityAt > pointerActivity, "scroll activity resets the inactivity deadline");
   autoLock.value = "0";
   autoLock.dispatchEvent(new Event("change", { bubbles: true }));
   check(app.autoLockMinutes === 0 && app.autoLockTimer === null, "turning the inactivity lock off clears the timer");
+  app.setAutoLockMinutes(5);
   const storageDump = [...Object.keys(localStorage), ...Object.keys(sessionStorage)]
     .map((key) => `${key}=${localStorage.getItem(key) ?? sessionStorage.getItem(key)}`).join("\n");
   check(!/[a-f0-9]{64}/i.test(storageDump) && !storageDump.includes(recovery), "no recovery or key material reaches web storage");
 
-  // 7. Locking returns to a recovery-first screen while no passkey is enrolled.
-  app.lockHousehold();
+  // 7. Time spent suspended counts toward the configured inactivity limit.
+  const visibilityDescriptor = Object.getOwnPropertyDescriptor(document, "visibilityState");
+  const realNow = Date.now;
+  try {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+    Date.now = () => realNow() + 6 * 60_000;
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  } finally {
+    Date.now = realNow;
+    if (visibilityDescriptor) Object.defineProperty(document, "visibilityState", visibilityDescriptor);
+    else delete document.visibilityState;
+  }
+  check(app.vault === null && app.state === null && app.autoLockTimer === null,
+    "resuming after the configured inactivity limit locks before continuing");
+  await app.lockBarrier;
+
+  // 8. Locking returns to a recovery-first screen while no passkey is enrolled.
   check(app.vault === null && app.security.heading.textContent === "Welcome back" &&
     app.security.querySelector(".recovery-form")?.hidden === false &&
     ![...app.security.querySelectorAll("button")].some((button) => button.textContent.startsWith("Unlock with passkey")),
@@ -193,6 +222,22 @@ export async function mobileUxRegressions(recovery) {
   await wait(() => app.store && !app.busy && !app.security.busy, "re-unlock");
   await wait(() => app.householdStatus !== null, "household status after unlock");
   visit("today");
+  check(app.vault && !app.vault.locked && app.state !== null, "recovery unlock restores the household state after background lock");
   check(app.onboarding.hidden === false, "Get started returns after unlocking a device without a household");
+  app.setAutoLockMinutes(0);
   return "PASS Today/Lists capture defaults, list quick-add, item Details disclosure, get-started choices, plain-language state messages, security settings and lock screen";
+}
+
+// The regression body runs inside the shared real-browser fixture. When run
+// directly, delegate to that fixture so this command cannot silently do nothing.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const executable = process.argv[2];
+  if (!executable) {
+    console.error("Usage: node scripts/mobile-ux-regression.mjs <browser executable>");
+    process.exitCode = 2;
+  } else {
+    const runner = join(dirname(fileURLToPath(import.meta.url)), "browser-regression.mjs");
+    const result = spawnSync(process.execPath, [runner, executable], { stdio: "inherit", windowsHide: true });
+    process.exitCode = result.status ?? 1;
+  }
 }

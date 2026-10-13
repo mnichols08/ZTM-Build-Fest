@@ -3,12 +3,16 @@
 ## v0.41.0 Mobile Experience & Passkey-First UX coverage
 
 The browser regression runs `scripts/mobile-ux-regression.mjs` inside the
-page after the planning-date suite. It covers the Today capture default and
+page after the planning-date suite. Running that script directly delegates to
+the same shared browser fixture, so the documented direct command exercises
+the mobile assertions instead of exiting without a browser. It covers the Today capture default and
 sticky destination, per-list quick-add on Lists, the item `Details`
 disclosure, the Today "Get started" card and household chooser, plain-language
 sync/offline/attachment messages, the security settings panel (passkey state,
 inactivity lock preference, no secrets in web storage), and the recovery-first
 lock screen. The passkey suite adds passkey-first lock-screen assertions and
+proves that a server-accepted WebAuthn assertion with the wrong local PRF
+output cannot unlock the vault or change encrypted event bytes. It also
 exercises the real attachment capture path: lazy thumbnail decode only after
 the tile scrolls into view, the in-app viewer, object-URL revocation on close
 and lock, document tiles, and the plain failure message. The security UI
@@ -18,6 +22,12 @@ PRF wrapper. `web/attachments/attachment-preview.test.mjs` and the new
 error paths. Planning-date and Area tests expand `Details` before using the
 controls, and a 320px Today layout check asserts no overflow, 48px targets,
 fixed bottom navigation, and collapsed details.
+The same mobile suite checks that time spent with the page hidden counts toward
+the configured inactivity limit and that an expired limit locks before the
+person can continue; pointer and scroll activity reset the deadline. Closing or
+reloading always locks immediately. First-run
+copy explains that passkey-first describes everyday unlock; initial encryption
+setup still starts with the recovery key.
 
 ## Reproducible verification (v0.41.0 candidate)
 

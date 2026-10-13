@@ -178,7 +178,8 @@ async function browserUiChecks() {
   check(
     app.security.heading.textContent === "Welcome to Kin" &&
       [...app.security.querySelectorAll("button")].some((button) => button.textContent === "Set up protection") &&
-      !app.security.querySelector("#recovery-unlock"),
+      !app.security.querySelector("#recovery-unlock") &&
+      app.security.textContent.includes("Passkey unlock is for everyday use"),
     "first visit explains setup instead of asking for a key: " + app.security.heading.textContent,
   );
   app.security.showSetup();

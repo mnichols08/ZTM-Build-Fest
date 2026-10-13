@@ -93,6 +93,7 @@ class KinApp extends HTMLElement {
     this.onSecurityChanged = () => this.renderOnboarding();
     this.autoLockMinutes = readAutoLockPreference();
     this.autoLockTimer = null;
+    this.lastActivityAt = null;
     this.onActivity = () => { if (this.autoLockTimer) this.scheduleAutoLock(); };
     this.onRetryAttachments = () => { if (this.syncCoordinator) void this.syncCoordinator.syncNow(); else void this.configureSyncCoordinator(); };
     this.onChangeResponsibility = (event) => this.handleChangeResponsibility(event);
@@ -206,6 +207,12 @@ class KinApp extends HTMLElement {
       if (document.visibilityState === "hidden") return;
       const vault = this.vault;
       const generation = this.securityGeneration;
+      if (this.autoLockMinutes && this.lastActivityAt !== null &&
+        Date.now() - this.lastActivityAt >= this.autoLockMinutes * 60_000) {
+        this.lockHousehold();
+        this.setStatus("Kin locked after inactivity. Unlock to continue.");
+        return;
+      }
       // The vault becomes visible just before EventStore.open binds its durable
       // epoch. A focus/visibility event in that window must not compare an
       // unbound vault against storage and revoke an otherwise valid unlock.
@@ -270,6 +277,8 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:security-changed", this.onSecurityChanged);
     document.addEventListener("pointerdown", this.onActivity, { passive: true });
     document.addEventListener("keydown", this.onActivity, { passive: true });
+    document.addEventListener("scroll", this.onActivity, { passive: true, capture: true });
+    document.addEventListener("wheel", this.onActivity, { passive: true });
     this.addEventListener("kin:retry-attachments", this.onRetryAttachments);
     this.addEventListener("kin:change-responsibility", this.onChangeResponsibility);
     this.addEventListener("kin:replenish-staple", this.onReplenishStaple);
@@ -643,7 +652,11 @@ class KinApp extends HTMLElement {
   scheduleAutoLock() {
     clearTimeout(this.autoLockTimer);
     this.autoLockTimer = null;
-    if (!this.vault || this.vault.locked || !this.autoLockMinutes) return;
+    if (!this.vault || this.vault.locked || !this.autoLockMinutes) {
+      this.lastActivityAt = null;
+      return;
+    }
+    this.lastActivityAt = Date.now();
     const vault = this.vault;
     const generation = this.securityGeneration;
     this.autoLockTimer = setTimeout(() => {
@@ -905,6 +918,8 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:security-changed", this.onSecurityChanged);
     document.removeEventListener("pointerdown", this.onActivity);
     document.removeEventListener("keydown", this.onActivity);
+    document.removeEventListener("scroll", this.onActivity, true);
+    document.removeEventListener("wheel", this.onActivity);
     this.removeEventListener("kin:retry-attachments", this.onRetryAttachments);
     this.removeEventListener("kin:change-responsibility", this.onChangeResponsibility);
     this.removeEventListener("kin:replenish-staple", this.onReplenishStaple);

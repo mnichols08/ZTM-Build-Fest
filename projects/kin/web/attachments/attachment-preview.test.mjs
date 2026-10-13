@@ -65,3 +65,31 @@ test("the preview cache dedupes in-flight work, revokes on forget and clear, and
     URL.revokeObjectURL = originalRevoke;
   }
 });
+
+test("a stale request cannot replace or clear a newer request for the same attachment", async () => {
+  const revoked = [];
+  const originalRevoke = URL.revokeObjectURL;
+  URL.revokeObjectURL = (url) => { revoked.push(url); return originalRevoke.call(URL, url); };
+  let resolveOld;
+  let loads = 0;
+  const cache = new AttachmentPreviewCache(async () => {
+    loads++;
+    if (loads === 1) return new Promise((resolve) => { resolveOld = resolve; });
+    return new Blob(["new"], { type: "image/jpeg" });
+  });
+  const record = { attachmentId: "b".repeat(32), type: "image/jpeg", name: "b.jpg" };
+  try {
+    const oldRequest = cache.get(record);
+    cache.forget(record.attachmentId);
+    const newRequest = cache.get(record);
+    const current = await newRequest;
+    resolveOld(new Blob(["old"], { type: "image/jpeg" }));
+    assert.equal(await oldRequest, null);
+    assert.equal(cache.peek(record.attachmentId), current);
+    assert.deepEqual(revoked, [], "the rejected stale request had not created a preview URL");
+    cache.clear();
+    assert.deepEqual(revoked, [current.url]);
+  } finally {
+    URL.revokeObjectURL = originalRevoke;
+  }
+});

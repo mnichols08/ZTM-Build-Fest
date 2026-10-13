@@ -72,16 +72,16 @@ export class AttachmentPreviewCache {
     const work = (async () => {
       try {
         const blob = await this.loadBlob(record);
-        if (!this.pending.has(id)) { return null; }
+        if (this.pending.get(id) !== work) return null;
         const preview = await createThumbnail(blob);
-        if (!this.pending.has(id)) { URL.revokeObjectURL(preview.url); return null; }
+        if (this.pending.get(id) !== work) { URL.revokeObjectURL(preview.url); return null; }
         this.entries.set(id, preview);
         return preview;
       } catch {
-        this.entries.set(id, null);
+        if (this.pending.get(id) === work) this.entries.set(id, null);
         return null;
       } finally {
-        this.pending.delete(id);
+        if (this.pending.get(id) === work) this.pending.delete(id);
       }
     })();
     this.pending.set(id, work);

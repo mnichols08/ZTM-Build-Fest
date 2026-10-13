@@ -78,7 +78,7 @@ class KinSecurity extends HTMLElement {
   }
 
   renderWelcome() {
-    this.text("Kin keeps your household's lists, notes, and photos encrypted on this device. Nothing is readable until it is unlocked.");
+    this.text("Kin keeps your household's lists, notes, and photos encrypted on this device. Passkey unlock is for everyday use; first, set up this device's encryption with a recovery key.");
     const steps = document.createElement("ol");
     steps.className = "setup-steps";
     for (const step of [
@@ -229,11 +229,11 @@ class KinSecurity extends HTMLElement {
       app?.setAutoLockMinutes(Number(lockSelect.value));
       this.message.textContent = Number(lockSelect.value)
         ? "Kin will lock after that much inactivity. Closing or reloading always locks it."
-        : "Kin locks whenever it closes or reloads.";
+        : "Kin locks whenever you close or reload.";
     });
     const lockHint = document.createElement("p");
     lockHint.className = "security-note";
-    lockHint.textContent = "Closing, reloading, or switching away from Kin always locks it. This adds an inactivity timer on top.";
+    lockHint.textContent = "Closing or reloading always locks it. If you switch away for longer than this setting, Kin locks before you continue.";
     lockLabel.append(lockSelect);
     lockSection.append(lockLabel, lockHint);
 

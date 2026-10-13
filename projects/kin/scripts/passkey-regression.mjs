@@ -40,6 +40,7 @@ export async function passkeyRegressions(client, service, syncService) {
       checks += await client.evaluate(`(${lockScreenChecks.toString()})()`);
       checks += await client.evaluate(`(${unlockPasskey.toString()})(true)`);
       checks += await client.evaluate(`(${attachmentUiChecks.toString()})(${JSON.stringify(setup.recovery)})`);
+      checks += await client.evaluate(`(${wrongPrfFailsClosed.toString()})()`);
       await client.send("WebAuthn.setResponseOverrideBits", {
         authenticatorId,
         isBadUV: true,
@@ -423,6 +424,50 @@ async function unlockPasskey(success) {
   if (!app.security.alert.textContent)
     throw Error("Rejected assertion has no feedback");
   return 2;
+}
+
+// A valid server-verified WebAuthn assertion is insufficient if the PRF output
+// cannot unwrap this device's local vault. The encrypted event corpus must be
+// byte-for-byte unchanged after that failed local unlock.
+async function wrongPrfFailsClosed() {
+  const app = document.querySelector("kin-app");
+  const wrapper = app.security.manifest.wrappers.find((value) => value.type === "prf");
+  if (!wrapper) throw new Error("wrong-PRF check requires the enrolled PRF wrapper");
+  const originalSalt = wrapper.prfSalt;
+  const before = await persistedEvents();
+  let wrongSalt;
+  do {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    wrongSalt = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  } while (wrongSalt === originalSalt);
+  wrapper.prfSalt = wrongSalt;
+  try {
+    await app.security.run(() => app.security.unlockPasskey(wrapper));
+    const after = await persistedEvents();
+    if (app.vault !== null || app.state !== null || app.engine !== null)
+      throw new Error("a valid assertion with incorrect PRF output exposed the local vault");
+    if (!app.security.alert.textContent)
+      throw new Error("a valid assertion with incorrect PRF output did not explain the failed unlock");
+    if (after !== before)
+      throw new Error("a failed wrong-PRF unlock changed encrypted local event bytes");
+    return 3;
+  } finally {
+    wrapper.prfSalt = originalSalt;
+  }
+
+  async function persistedEvents() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open("kin");
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const database = request.result;
+        const transaction = database.transaction("events");
+        const rows = transaction.objectStore("events").getAll();
+        transaction.oncomplete = () => { database.close(); resolve(JSON.stringify(rows.result)); };
+        transaction.onabort = () => { database.close(); reject(transaction.error); };
+      };
+    });
+  }
 }
 
 async function cancelPasskey() {
