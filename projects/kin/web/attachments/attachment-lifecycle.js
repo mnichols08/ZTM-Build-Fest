@@ -1,33 +1,62 @@
-import { decryptAttachment, encryptAttachment, validateAttachmentFile } from "./attachment-crypto.js";
+import { ALLOWED_ATTACHMENT_TYPES, MAX_ATTACHMENT_PLAINTEXT_BYTES, decryptAttachment, encryptAttachment, validateAttachmentFile } from "./attachment-crypto.js";
 import { SyncKeyStore } from "../sync/key-store.js";
 
 const MAX_CIPHERTEXT = 4 * 1024 * 1024 + 4096;
 
+// Explains why a chosen file cannot be attached, or returns null when it can.
+// The wording names the actual problem so a person can pick a different file.
+export function attachmentFileProblem(file) {
+  if (!(file instanceof Blob)) return "Choose a photo or PDF to attach.";
+  if (file.size < 1) return "That file is empty. Choose a photo or PDF that has content.";
+  if (!ALLOWED_ATTACHMENT_TYPES.has(file.type)) {
+    const kind = typeof file.type === "string" && file.type ? ` (${file.type})` : "";
+    return `Kin can't attach this kind of file${kind}. Choose a JPEG, PNG or WebP photo, or a PDF.`;
+  }
+  if (file.size > MAX_ATTACHMENT_PLAINTEXT_BYTES)
+    return `This file is ${(file.size / (1024 * 1024)).toFixed(1)} MB. Photos and PDFs must be 4 MB or smaller.`;
+  return null;
+}
+
+// Capture failures are tagged with the step that failed ("validation",
+// "storage" or "binding") so the UI can say what actually happened: protected
+// bytes that never got a binding are cleaned up by a later reconciliation.
 export async function captureAttachment({ file, parentKind, parentId, identity, store, keyStore, append }) {
+  const problem = attachmentFileProblem(file);
+  if (problem) throw stage(new Error(problem), "validation");
   validateAttachmentFile(file);
-  if (!identity || !store) throw new Error("Unlock Kin before attaching a file.");
+  if (!store) throw stage(new Error("Unlock Kin before attaching a file."), "storage");
   const attachmentId = randomId();
   let record;
   try {
+    if (!identity) throw new Error("no household identity");
     const { keyEpoch, householdKey } = await currentEpoch(identity, keyStore, store);
     const encrypted = await encryptAttachment(file, { householdId: identity.householdId, attachmentId, keyEpoch, householdKey, parentKind, parentId });
     record = { attachment_id: attachmentId, ciphertext: encrypted.ciphertext, localSealed: null, keyEpoch, digest: encrypted.digest, state: "local" };
   } catch {
+    // No provisioned household key yet (or no household at all): keep the file
+    // sealed under this device's vault root. Reconciliation re-encrypts it with
+    // the household key once one is available.
     const bytes = new Uint8Array(await file.arrayBuffer());
     try {
       const localSealed = await store.sealAttachmentData(attachmentId, { bytes, name: file.name.slice(0, 240), type: file.type, parentKind, parentId });
       record = { attachment_id: attachmentId, ciphertext: null, localSealed, keyEpoch: null, digest: null, state: "local" };
-    } finally { bytes.fill(0); }
+    } catch (error) { throw stage(error, "storage"); }
+    finally { bytes.fill(0); }
   }
-  await store.saveAttachment(record);
+  try { await store.saveAttachment(record); } catch (error) { throw stage(error, "storage"); }
   try {
     await append({ type: "bind-attachment", id: attachmentId, parentKind, parentId });
     await store.updateAttachmentState(attachmentId, "queued");
   } catch (error) {
     // Ciphertext stays protected locally. A later reconciliation sees no canonical binding and removes it.
-    throw error;
+    throw stage(error, "binding");
   }
   return { attachmentId, name: file.name, size: file.size, type: file.type, state: "queued" };
+}
+
+function stage(error, value) {
+  if (error && typeof error === "object" && !error.stage) error.stage = value;
+  return error;
 }
 
 export async function removeAttachment({ attachmentId, append, store }) {
@@ -36,7 +65,7 @@ export async function removeAttachment({ attachmentId, append, store }) {
   await store.updateAttachmentState(attachmentId, "removed");
 }
 
-export async function reconcileAttachments({ identity, store, keyStore, state, signal }) {
+export async function reconcileAttachments({ identity, store, keyStore, state, signal, suspectedOrphans = null }) {
   const bindings = Array.isArray(state?.attachments) ? state.attachments : [];
   const localRows = await store.loadAttachments();
   const local = new Map(localRows.map((row) => [row.attachment_id, row]));
@@ -47,8 +76,18 @@ export async function reconcileAttachments({ identity, store, keyStore, state, s
   const remoteById = new Map(remote.filter(validRemoteRecord).map((row) => [row.attachmentId, row]));
   const bindingById = new Map(bindings.map((row) => [row.attachmentId, row]));
 
-  // Local orphans can result from a crash between ciphertext persistence and event commit.
-  for (const row of localRows) if (!bindingById.has(row.attachment_id)) await store.deleteAttachment(row.attachment_id);
+  // Local orphans can result from a crash between ciphertext persistence and
+  // event commit. A capture in progress looks the same for a moment: its bytes
+  // are saved before its binding event commits. When the caller tracks
+  // suspects across passes, an unbound "local" row is deleted only if it is
+  // still unbound on the next pass, so a sync tick cannot discard a photo that
+  // is being attached right now.
+  for (const row of localRows) {
+    if (bindingById.has(row.attachment_id)) { suspectedOrphans?.delete(row.attachment_id); continue; }
+    if (row.state === "local" && suspectedOrphans && !suspectedOrphans.has(row.attachment_id)) { suspectedOrphans.add(row.attachment_id); continue; }
+    suspectedOrphans?.delete(row.attachment_id);
+    await store.deleteAttachment(row.attachment_id);
+  }
 
   for (const binding of bindings) {
     let localRow = local.get(binding.attachmentId);

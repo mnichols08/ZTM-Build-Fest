@@ -1,4 +1,5 @@
 import { attachmentKindLabel, formatAttachmentSize, isImageAttachment } from "../attachments/attachment-preview.js";
+import { attachmentProgressKey, getAttachmentProgress, subscribeAttachmentProgress } from "../attachments/attachment-progress.js";
 
 const OPENABLE = new Set(["local", "queued", "synced"]);
 const DOCUMENT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/></svg>';
@@ -9,12 +10,21 @@ class KinAttachments extends HTMLElement {
     super();
     this.parent = null;
     this.records = [];
-    // "full" shows the attach control and the tiles; "tiles" shows only saved
-    // files; "input" shows only the attach control. Items split them so photos
-    // stay visible while the file control sits under Details.
+    // "full" shows the attach button and the tiles (notes, references,
+    // maintenance); "tiles" shows saved files and capture progress only, for
+    // item rows whose own Add photo button sits on the row.
     this.mode = "full";
     this.previewProvider = null;
     this.observer = null;
+    this.unsubscribeProgress = null;
+  }
+  connectedCallback() {
+    // Progress lives outside this element because rows are rebuilt on every
+    // refresh; re-rendering on change keeps the text current without props.
+    this.unsubscribeProgress ??= subscribeAttachmentProgress((key) => {
+      if (this.parent && key === attachmentProgressKey(this.parent.kind, this.parent.id)) this.render();
+    });
+    this.render();
   }
   set parentRecord(value) { this.parent = value; this.render(); }
   set attachments(value) { this.records = Array.isArray(value) ? value : []; this.render(); }
@@ -22,26 +32,41 @@ class KinAttachments extends HTMLElement {
   get ownRecords() {
     return this.records.filter((item) => item.parentKind === this.parent?.kind && item.parentId === this.parent?.id);
   }
-  disconnectedCallback() { this.observer?.disconnect(); this.observer = null; }
+  disconnectedCallback() {
+    this.observer?.disconnect(); this.observer = null;
+    this.unsubscribeProgress?.(); this.unsubscribeProgress = null;
+  }
   render() {
     if (!this.parent) return;
     this.observer?.disconnect();
     this.observer = null;
-    const id = `attachment-${this.parent.kind}-${this.parent.id}`;
     const section = document.createElement("section");
     section.className = "attachment-list";
     const readonly = Boolean(this.parent.readonly);
-    const showInput = this.mode !== "tiles" && !readonly;
-    const showTiles = this.mode !== "input";
-    if (showInput) {
-      const label = document.createElement("label"); label.htmlFor = id; label.className = "attachment-add"; label.textContent = "Add a photo or file";
-      const input = document.createElement("input"); input.id = id; input.type = "file"; input.accept = "image/jpeg,image/png,image/webp,application/pdf"; input.setAttribute("aria-label", `Add a photo or file to ${this.parent.label}`);
-      const status = document.createElement("p"); status.setAttribute("role", "status"); status.setAttribute("aria-live", "polite"); status.className = "attachment-status";
-      input.addEventListener("change", () => { const file = input.files?.[0]; if (file) { status.textContent = `${file.name} selected. Saving on this device…`; this.dispatch("add-attachment", { file, parentKind: this.parent.kind, parentId: this.parent.id, status }); } input.value = ""; });
-      section.append(label, input, status);
+    if (this.mode !== "tiles" && !readonly) {
+      // A real button: the file input itself is owned by <kin-app> and opened
+      // synchronously from this click, so a list refresh while the native
+      // picker is open cannot detach the control that receives the file.
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "attachment-add";
+      add.textContent = "Add a photo or file";
+      add.setAttribute("aria-label", `Add a photo or file to ${this.parent.label}`);
+      add.addEventListener("click", () => this.dispatch("pick-attachment", { parentKind: this.parent.kind, parentId: this.parent.id, label: this.parent.label, opener: add }));
+      section.append(add);
+    }
+    const progress = getAttachmentProgress(this.parent.kind, this.parent.id);
+    if (progress) {
+      const status = document.createElement("p");
+      status.className = "attachment-status";
+      status.dataset.phase = progress.phase;
+      status.setAttribute("role", progress.phase === "error" ? "alert" : "status");
+      status.setAttribute("aria-live", progress.phase === "error" ? "assertive" : "polite");
+      status.textContent = progress.message;
+      section.append(status);
     }
     const own = this.ownRecords;
-    if (showTiles && own.length) {
+    if (own.length) {
       const list = document.createElement("ul");
       list.className = "attachment-tiles";
       for (const record of own) list.append(this.renderTile(record, readonly));
@@ -136,7 +161,7 @@ class KinAttachments extends HTMLElement {
 }
 
 function statusLabel(state) {
-  return ({ local: "On this device", queued: "Saved here, waiting to sync", uploading: "Uploading", synced: "Synced", "download-needed": "Not downloaded yet", failed: "Couldn't be opened", removed: "Removed" })[state] ?? "Couldn't be opened";
+  return ({ local: "Saved on this device", queued: "Saved here, waiting to sync", uploading: "Syncing", synced: "Synced", "download-needed": "Not downloaded yet", failed: "Couldn't sync or open", removed: "Removed" })[state] ?? "Couldn't be opened";
 }
 
 customElements.define("kin-attachments", KinAttachments);

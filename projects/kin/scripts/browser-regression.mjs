@@ -16,6 +16,7 @@ import {
 import { shoppingRegressions } from "./shopping-regression.mjs";
 import { planningDateRegressions } from "./planning-date-regression.mjs";
 import { mobileUxRegressions } from "./mobile-ux-regression.mjs";
+import { attachmentUploadRegressions } from "./attachment-upload-regression.mjs";
 import {
   handoffRegressions,
   handoffPeerRegressions,
@@ -117,8 +118,11 @@ async function connect(url) {
   });
   let id = 0;
   const pending = new Map();
+  const eventListeners = new Map();
   socket.onmessage = ({ data }) => {
     const message = JSON.parse(data);
+    if (message.method)
+      for (const listener of [...(eventListeners.get(message.method) ?? [])]) listener(message.params);
     if (message.id) {
       const task = pending.get(message.id);
       pending.delete(message.id);
@@ -170,6 +174,18 @@ async function connect(url) {
         JSON.stringify(result.exceptionDetails),
       );
       return result.result.value;
+    },
+    on(method, listener) {
+      if (!eventListeners.has(method)) eventListeners.set(method, new Set());
+      eventListeners.get(method).add(listener);
+      return () => eventListeners.get(method)?.delete(listener);
+    },
+    // Resolves with the next event of this kind, or rejects after the timeout.
+    once(method, timeoutMs = 10_000) {
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => { stop(); reject(new Error(`Timed out waiting for ${method}`)); }, timeoutMs);
+        const stop = this.on(method, (params) => { clearTimeout(timer); stop(); resolve(params); });
+      });
     },
     close: () => socket.close(),
   };
@@ -1315,6 +1331,7 @@ try {
   console.log(await first.evaluate(`(${planningDateRegressions.toString()})()`));
   await visit(first, "today");
   console.log(await first.evaluate(`(${mobileUxRegressions.toString()})(${JSON.stringify(recoverySecret)})`));
+  console.log(await attachmentUploadRegressions(first, { recovery: recoverySecret, visit: (id) => visit(first, id), scratch: profile }));
   await visit(first, "routines");
   console.log(await first.evaluate(`(${routineRegressions.toString()})()`));
   const playbookResult = await first.evaluate(async () => {
@@ -2143,9 +2160,9 @@ try {
     title.value='Wi-Fi details';body.value='<img src=x onerror=alert(1)>'+String.fromCharCode(10)+'Router location';form.requestSubmit();await idle();
     let note=app.state.notes.at(-1);const stableId=note.noteId;
     const safeText=app.notes.querySelector('.note-body').textContent===body.value&&!app.notes.querySelector('.note-body img');
-    app.notes.querySelector('.note-row button').click();const editForm=app.notes.querySelector('form');const editTitle=editForm.querySelector('input'),editBody=editForm.querySelector('textarea');editTitle.value='Home Wi-Fi';editBody.value='Router location';editForm.requestSubmit();await idle();
+    app.notes.querySelector('.note-row [data-focus-id^="edit-"]').click();const editForm=app.notes.querySelector('form');const editTitle=editForm.querySelector('input'),editBody=editForm.querySelector('textarea');editTitle.value='Home Wi-Fi';editBody.value='Router location';editForm.requestSubmit();await idle();
     note=app.state.notes.find(row=>row.noteId===stableId);const updated=note.title==='Home Wi-Fi'&&note.body==='Router location';
-    app.notes.querySelector('.note-row button:last-child').click();await idle();
+    app.notes.querySelector('.note-row [data-focus-id^="archive-"]').click();await idle();
     note=app.state.notes.find(row=>row.noteId===stableId);
     return {created:!!note,stableId,areaLinked:note.areaId===area.areaId,updated,archived:note.archived,safeText,invalidNoAppend,status:app.status.textContent,alert:app.alert.textContent};
   })()`);
@@ -2468,9 +2485,10 @@ try {
     requests.length > 0 &&
       requests.every((url) =>
         url.startsWith(origin + "/") ||
+        url.startsWith(`blob:${origin}/`) ||
         url.startsWith("data:image/svg+xml;base64,")
       ),
-    `All page requests stay same-origin or use browser-native SVG data: ${requests.filter((url) => !url.startsWith(origin + "/") && !url.startsWith("data:image/svg+xml;base64,")).join(", ")}`,
+    `All page requests stay same-origin (including the page's own blob: previews) or use browser-native SVG data: ${requests.filter((url) => !url.startsWith(origin + "/") && !url.startsWith(`blob:${origin}/`) && !url.startsWith("data:image/svg+xml;base64,")).join(", ")}`,
   );
   console.log(
     "PASS CSP/console and same-origin requests (favicon 404 excluded)",

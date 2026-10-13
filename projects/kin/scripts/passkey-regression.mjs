@@ -322,15 +322,32 @@ async function attachmentUiChecks(recovery) {
   // A real 2x2 PNG so the thumbnail pipeline decodes genuine image bytes.
   const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DwHwqY/j9/j8EBABRiB/GKvM3kAAAAAElFTkSuQmCC"), (c) => c.charCodeAt(0));
   const file = new File([png], "fridge.png", { type: "image/png" });
-  const toolsToggle = app.today.querySelector(`.item-tools-toggle[data-item-id="${item.itemId}"]`);
-  toolsToggle.click();
-  const input = app.today.querySelector(`#attachment-item-${item.itemId}`);
-  check(Boolean(input) && !input.closest("[hidden]"), "the attach control is revealed under Details");
-  const status = input.closest(".attachment-list").querySelector("[role=status]");
-  app.dispatchEvent(new CustomEvent("kin:add-attachment", { detail: { file, parentKind: "item", parentId: item.itemId, status }, bubbles: true }));
+  const attach = app.today.querySelector(`.item-attach-button[data-item-id="${item.itemId}"]`);
+  check(Boolean(attach) && !attach.closest("[hidden]") && app.today.querySelector(`#tools-${item.itemId}`).hidden === true,
+    "Add photo is on the row itself; Details stays closed");
+  // The tap must open the app-owned input synchronously (user activation) and
+  // remember which item asked.
+  let clicked = null;
+  const nativeClick = HTMLInputElement.prototype.click;
+  HTMLInputElement.prototype.click = function () { clicked = this; };
+  try { attach.click(); } finally { HTMLInputElement.prototype.click = nativeClick; }
+  check(clicked === app.attachmentInput && app.attachmentTarget?.parentId === item.itemId, "tapping Add photo opens the shared file input for that item");
+  const transfer = new DataTransfer();
+  transfer.items.add(file);
+  app.attachmentInput.files = transfer.files;
+  app.attachmentInput.dispatchEvent(new Event("change", { bubbles: true }));
   await wait(() => !app.busy && app.attachmentRows.some((row) => row.parentId === item.itemId), "attachment capture");
   const row = app.attachmentRows.find((entry) => entry.parentId === item.itemId);
   check(row.name === "fridge.png" && row.type === "image/png" && row.state === "queued", "captured row carries name, type and state: " + JSON.stringify(row));
+  const rowStatus = () => [...app.today.querySelectorAll("kin-item")].find((node) => node.record?.itemId === item.itemId)?.querySelector(".attachment-status");
+  check(rowStatus()?.textContent.startsWith("fridge.png is saved on this device") && rowStatus().dataset.phase === "saved",
+    "the row confirms the save after re-rendering: " + rowStatus()?.textContent);
+  const encryptedRow = (await app.store.loadAttachments()).find((entry) => entry.attachment_id === row.attachmentId);
+  // This fixture registers a household but never enables sync, so the capture
+  // takes the vault-sealed path; with a provisioned key it is household-key
+  // ciphertext. Either way nothing is stored in the clear.
+  check(Boolean(encryptedRow) && (encryptedRow.ciphertext ? encryptedRow.keyEpoch >= 1 && !encryptedRow.localSealed : Boolean(encryptedRow.localSealed)) && encryptedRow.state === "queued",
+    "the stored record is protected at rest (household-key ciphertext or vault-sealed) and queued for sync");
   const thumb = () => app.today.querySelector(`kin-item .attachment-thumb[aria-label="View fridge.png"]`);
   check(Boolean(thumb()) && !thumb().closest("[hidden]"), "an image thumbnail tile renders in the item's main area");
   const diagnose = () => JSON.stringify({

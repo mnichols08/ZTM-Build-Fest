@@ -26,7 +26,7 @@ Render one item: its text, a short context line (area, planned date, responsibil
 
 ### `<kin-attachments>`
 
-Render attachment tiles for one parent record. `mode` is `full` (file control plus tiles; notes and references), `tiles` (photos and documents only; the item's main area), or `input` (file control only; the item's Details). Image tiles request a bounded preview from the `previews` provider only when the tile intersects the viewport and dispatch `kin:view-attachment`; document tiles show kind, size, status, Open and Save. The component never stores decrypted bytes; `<kin-app>` owns the session preview cache and the viewer dialog and revokes every object URL on lock.
+Render attachment tiles for one parent record. `mode` is `full` (an "Add a photo or file" button plus tiles; notes, references, maintenance) or `tiles` (saved files and capture progress; the item's main area, where `<kin-item>` renders its own visible `Add photo` button). The component owns no file input: a tap on either button dispatches `kin:pick-attachment`, and `<kin-app>` opens its single hidden file input synchronously inside that tap, so a list refresh while the native picker is open cannot detach the control that receives the file. Capture progress ("Preparing photo…", "Saving securely…", saved, or a specific error) is read from `web/attachments/attachment-progress.js` on every render so it survives re-rendering. Image tiles request a bounded preview from the `previews` provider only when the tile intersects the viewport and dispatch `kin:view-attachment`; document tiles show kind, size, status, Open and Save. The component never stores decrypted bytes; `<kin-app>` owns the session preview cache and the viewer dialog and revokes every object URL on lock.
 
 ### `<kin-routines>`
 
@@ -43,6 +43,7 @@ Only create the components needed for these responsibilities; do not componentiz
 | ------------------- | --------------------- | ---------------------------------------- | --------- | ---------- | ------------ | ------- |
 | `kin:add-item`      | `<kin-compose>`       | `{ text: string, classification: "today" | "need" | "shopping" | "staple", composer: KinCompose }` | `true`     | `true`       | `false` |
 | `kin:toggle-item-tools` | `<kin-item>`      | `{ itemId: string }` (presentation only; handled by `<kin-today>`) | `true` | `true` | `false` |
+| `kin:pick-attachment` | `<kin-item>`, `<kin-attachments>` | `{ parentKind, parentId, label, opener }` (presentation only; `<kin-app>` opens its file input synchronously) | `true` | `true` | `false` |
 | `kin:view-attachment` | `<kin-attachments>` | `{ attachmentId, parentKind, parentId, name, opener }` | `true` | `true` | `false` |
 | `kin:household-status` | `<kin-household>` | `{ identity: boolean, claimState, memberKind, lifecycle }` (presentation only) | `true` | `true` | `false` |
 | `kin:security-changed` | `<kin-security>` | none (passkey wrapper added) | `true` | `true` | `false` |

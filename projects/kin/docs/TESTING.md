@@ -1,5 +1,30 @@
 # Testing Contracts
 
+## v0.41.1 Mobile Attachment Upload coverage
+
+The browser regression runs `scripts/attachment-upload-regression.mjs` right
+after the mobile UX suite. Unlike the in-page suites it is driven from Node
+over CDP so that it exercises the real control rather than the handler: the
+viewport is a 390×844 phone, `Add photo` on a Shopping row is tapped with a
+synthesized touch, the browser's own `Page.fileChooserOpened` must name the
+app-owned input and the tapped item, the list is re-rendered while the picker
+is "open" (the sync-tick condition that lost files on phones), and a genuine
+JPEG encoded by the browser is supplied with `DOM.setFileInputFiles`. It then
+asserts the preparing → saving → saved feedback on the row, the sealed stored
+record and canonical binding, the tile with name/kind/state under the right
+item and nothing under another item, the bounded thumbnail, the viewer with
+focus return, Today/Lists navigation, Details open/close, a stale sync refresh
+that must not drop the row, lock/unlock restore with a fresh thumbnail, a
+`text/plain` refusal with its reason kept visible, and a cancelled picker that
+creates nothing. Running the script directly delegates to the shared browser
+fixture. The passkey suite attaches through the same row button and shared
+input with a real household identity and checks that the stored record is
+household-key ciphertext. Node tests: `web/attachments/attachment-progress.test.mjs`,
+`web/attachments/attachment-lifecycle.test.mjs` (file-problem messages,
+failure stages, orphan grace), and `web/components/kin-attachments.test.mjs`.
+Installed-PWA and camera-capture behaviour cannot run headless and remain on
+the manual device checklist in the v0.41.1 release record.
+
 ## v0.41.0 Mobile Experience & Passkey-First UX coverage
 
 The browser regression runs `scripts/mobile-ux-regression.mjs` inside the
@@ -29,7 +54,7 @@ reloading always locks immediately. First-run
 copy explains that passkey-first describes everyday unlock; initial encryption
 setup still starts with the recovery key.
 
-## Reproducible verification (v0.41.0 candidate)
+## Reproducible verification (v0.41.1 candidate)
 
 From either the repository root or `projects/kin/`, run `npm run verify
 --prefix projects/kin` at the repository root or `npm run verify` inside Kin.

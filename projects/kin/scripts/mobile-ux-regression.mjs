@@ -86,8 +86,15 @@ export async function mobileUxRegressions(recovery) {
   check(visible(eggsRow.querySelector(".complete-button")) && toggle()?.getAttribute("aria-expanded") === "false" && tools()?.hidden === true,
     "a list row shows Complete and a collapsed Details disclosure");
   check(!visible(eggsRow.querySelector(".item-area-select")) && !visible(eggsRow.querySelector(".item-planning-date-input")) &&
-    !visible(eggsRow.querySelector(".pin-button")) && !visible(eggsRow.querySelector('input[type="file"]')),
-    "area, planned date, pin and file controls are not visible until requested");
+    !visible(eggsRow.querySelector(".pin-button")) && !eggsRow.querySelector('input[type="file"]'),
+    "area, planned date and pin controls are not visible until requested and the row owns no file input");
+  const attachButton = eggsRow.querySelector(".item-attach-button");
+  check(visible(attachButton) && attachButton.textContent === "Add photo" && attachButton.getAttribute("aria-label") === "Add a photo or file to Eggs" &&
+    attachButton.getBoundingClientRect().height >= 44,
+    "Add photo is visible on the collapsed row as a labelled 44px button");
+  check(app.attachmentInput?.type === "file" && app.attachmentInput.accept === "image/jpeg,image/png,image/webp,application/pdf" &&
+    app.querySelectorAll('input[type="file"]').length === 1,
+    "one app-owned file input accepts photos and PDFs");
   toggle().focus();
   toggle().click();
   check(toggle()?.getAttribute("aria-expanded") === "true" && tools()?.hidden === false && toggle().textContent === "Hide details",
@@ -96,8 +103,8 @@ export async function mobileUxRegressions(recovery) {
   const expandedRow = [...app.shopping.querySelectorAll("kin-item")].find((node) => node.record?.itemId === eggs.itemId);
   check(visible(expandedRow.querySelector(".item-area-select")) && visible(expandedRow.querySelector(".item-planning-date-input")) &&
     visible(expandedRow.querySelector(".pin-button")) && visible(expandedRow.querySelector(".archive-button")) &&
-    visible(expandedRow.querySelector(`#attachment-item-${eggs.itemId}`)),
-    "expanded Details reveals area, planned date, pin, archive and the file control");
+    !expandedRow.querySelector(`#tools-${eggs.itemId} kin-attachments`),
+    "expanded Details reveals area, planned date, pin and archive without a second attach control");
   expandedRow.querySelector(".complete-button").click();
   await idle();
   const completedRow = [...app.shopping.querySelectorAll("kin-item")].find((node) => node.record?.itemId === eggs.itemId);
