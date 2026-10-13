@@ -84,6 +84,31 @@ class KinHousehold extends HTMLElement {
     this.connectionVault = null;
     this.connectionGeneration = null;
     this.connectionAbort = new AbortController();
+    // Presentation only: which "get started" path the person chose. The server
+    // decides the real purpose of a code; this just selects the explanation.
+    this.intent = null;
+  }
+
+  startIntent(kind) {
+    this.intent = ["create", "join", "device"].includes(kind) ? kind : null;
+    this.render();
+    requestAnimationFrame(() => {
+      const target = this.querySelector("form input, button");
+      target?.focus();
+      this.scrollIntoView?.({ block: "start" });
+    });
+  }
+
+  notifyStatus() {
+    this.dispatchEvent(new CustomEvent("kin:household-status", {
+      bubbles: true, composed: true,
+      detail: {
+        identity: Boolean(this.identity),
+        claimState: this.claim?.state ?? null,
+        memberKind: this.syncStatus?.memberKind ?? null,
+        lifecycle: this.householdLifecycle?.state ?? null,
+      },
+    }));
   }
 
   connectedCallback() {
@@ -188,7 +213,9 @@ class KinHousehold extends HTMLElement {
       }
       if (this.claim?.state === "Claimed") this.schedulePoll();
       else clearTimeout(this.poll);
+      if (this.identity) this.intent = null;
       this.render();
+      this.notifyStatus();
     } catch (error) {
       this.renderError(error);
     }
@@ -218,11 +245,62 @@ class KinHousehold extends HTMLElement {
   }
 
   renderSetup() {
+    if (this.intent === "create") return this.renderCreate();
+    if (this.intent === "join" || this.intent === "device") return this.renderJoin();
     this.text(
-      "Set up this adult and device with a passkey before pairing another adult.",
+      "Your recovery key and passkey protect this device's copy of Kin. Household membership is separate: an existing member approves this device, and then it syncs with theirs.",
     );
-    this.button("Set up household", () => this.register("bootstrap", {}));
+    const prompt = this.text("How would you like to get started?");
+    prompt.className = "household-prompt";
+    const choices = document.createElement("div");
+    choices.className = "household-choices";
+    for (const [label, description, action, className] of [
+      ["Create a household", "Start a brand-new household on this device. Only one person in a household does this.", () => this.startIntent("create"), "primary-action"],
+      ["Join an existing household", "Someone in your household sends you an invitation code and approves this device.", () => this.startIntent("join"), ""],
+      ["Add this device to my existing membership", "You already use Kin on another device and want this one too.", () => this.startIntent("device"), ""],
+    ]) {
+      const choice = document.createElement("div");
+      choice.className = "household-choice";
+      const button = this.makeButton(label, action, className);
+      const text = document.createElement("p");
+      text.className = "household-choice-hint";
+      text.textContent = description;
+      choice.append(button, text);
+      choices.append(choice);
+    }
+    this.append(choices);
+    const note = this.text("Already a member on this device but logged out?");
+    note.className = "household-choice-hint";
     this.button("Log in with passkey", () => this.login(), "secondary");
+  }
+
+  renderCreate() {
+    this.text(
+      "This starts a brand-new household with you as its first adult. If someone in your household already uses Kin, go back and join theirs instead; a phone that joins never creates a second household.",
+    );
+    this.text(
+      "Kin creates a passkey for this household on this device. Your face, fingerprint, or screen lock then confirms household actions and can unlock Kin.",
+    );
+    const form = document.createElement("form");
+    const deviceLabel = document.createElement("label");
+    deviceLabel.textContent = "Name this device";
+    const device = document.createElement("input");
+    device.name = "deviceLabel";
+    device.required = true;
+    device.maxLength = 48;
+    device.value = "This device";
+    deviceLabel.append(device);
+    const submit = document.createElement("button");
+    submit.type = "submit";
+    submit.className = "primary-action";
+    submit.textContent = "Create household with passkey";
+    form.append(deviceLabel, submit);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      this.register("bootstrap", { deviceLabel: device.value });
+    });
+    this.append(form);
+    this.button("Back", () => this.startIntent(null), "secondary");
   }
 
   renderDeletionPending() {
@@ -334,8 +412,16 @@ class KinHousehold extends HTMLElement {
       this.claim = null;
       this.prefilledCode = "";
     }
+    if (this.intent === "device")
+      this.text(
+        "On a device where you're already in the household, open More → Household → Add another device. Enter the code it shows here, then approve this device from there after comparing the device keys.",
+      );
+    else if (this.intent === "join")
+      this.text(
+        "Ask an adult in the household to open Kin → More → Household access and add you as an Adult or Limited Member. Enter the code they get here. They approve this device after you both compare the device keys.",
+      );
     this.text(
-      "A code starts a short-lived invitation or recovery request. You must create a fresh passkey, and an existing trusted adult must still approve this device. No household details or encryption keys are shown before approval.",
+      "A code starts a short-lived invitation or recovery request. You must create a fresh passkey, and an existing trusted adult must still approve this device. No household details or encryption keys are shown before approval. Entering a code never creates a second household.",
     );
     const form = document.createElement("form");
     const codeLabel = document.createElement("label");
@@ -372,6 +458,8 @@ class KinHousehold extends HTMLElement {
       this.register("claim", { code: code.value, deviceLabel: device.value });
     });
     this.append(form);
+    if (this.intent && location.pathname !== "/pair")
+      this.button("Back", () => this.startIntent(null), "secondary");
     requestAnimationFrame(() => code.focus());
   }
 

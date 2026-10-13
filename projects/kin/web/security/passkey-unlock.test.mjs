@@ -72,3 +72,35 @@ test("credential-bound wrapper rejects a different authorized credential", async
     assert.equal(request(), undefined);
   });
 });
+
+test("an unreachable identity service is reported as a connection problem, not a credential failure", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCredential = Object.getOwnPropertyDescriptor(globalThis, "PublicKeyCredential");
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "PublicKeyCredential", { value: class {}, configurable: true });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { credentials: { get: async () => { throw new Error("must not reach the authenticator"); } } } });
+  globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+  try {
+    await assert.rejects(authenticatePrf(), (error) => error.code === "connection_unavailable" && /recovery key/.test(error.userMessage));
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator); else delete globalThis.navigator;
+    if (originalCredential) Object.defineProperty(globalThis, "PublicKeyCredential", originalCredential); else delete globalThis.PublicKeyCredential;
+  }
+});
+
+test("a device without a household credential gets an enrollment explanation", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalCredential = Object.getOwnPropertyDescriptor(globalThis, "PublicKeyCredential");
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "PublicKeyCredential", { value: class {}, configurable: true });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { credentials: { get: async () => { throw new Error("must not reach the authenticator"); } } } });
+  globalThis.fetch = async () => ({ ok: false, status: 401, json: async () => ({ message: "device_not_trusted" }) });
+  try {
+    await assert.rejects(authenticatePrf(), (error) => error.code === "credential_unavailable" && /create or join your household/.test(error.userMessage) && !/device_not_trusted/.test(error.userMessage));
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator); else delete globalThis.navigator;
+    if (originalCredential) Object.defineProperty(globalThis, "PublicKeyCredential", originalCredential); else delete globalThis.PublicKeyCredential;
+  }
+});

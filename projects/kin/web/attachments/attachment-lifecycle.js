@@ -27,7 +27,7 @@ export async function captureAttachment({ file, parentKind, parentId, identity, 
     // Ciphertext stays protected locally. A later reconciliation sees no canonical binding and removes it.
     throw error;
   }
-  return { attachmentId, name: file.name, size: file.size, state: "queued" };
+  return { attachmentId, name: file.name, size: file.size, type: file.type, state: "queued" };
 }
 
 export async function removeAttachment({ attachmentId, append, store }) {
@@ -152,18 +152,20 @@ async function describeLocal(bindings, local, identity, keyStore, store, remote 
   const rows = [];
   for (const binding of bindings.filter((item) => !item.removed)) {
     const row = local.get(binding.attachmentId);
-    if (!row) { rows.push({ ...binding, name: "Attachment", size: null, state: remote.has(binding.attachmentId) ? "download-needed" : "failed" }); continue; }
+    // Rows carry the validated MIME type so presentation can choose a thumbnail
+    // or document tile without re-decrypting; the bytes themselves stay sealed.
+    if (!row) { rows.push({ ...binding, name: "Attachment", size: null, type: null, state: remote.has(binding.attachmentId) ? "download-needed" : "failed" }); continue; }
     if (!row.ciphertext && row.localSealed) {
       const saved = await store.openAttachmentData(binding.attachmentId, row.localSealed).catch(() => null);
       const valid = saved && saved.parentKind === binding.parentKind && saved.parentId === binding.parentId;
-      rows.push({ ...binding, name: valid ? saved.name : "Attachment", size: valid ? saved.bytes.length : null, state: valid ? row.state : "failed" });
+      rows.push({ ...binding, name: valid ? saved.name : "Attachment", size: valid ? saved.bytes.length : null, type: valid ? saved.type ?? null : null, state: valid ? row.state : "failed" });
       saved?.bytes?.fill(0);
       continue;
     }
     const epoch = await keyStore?.getEpoch(identity?.householdId, row.keyEpoch);
-    if (!epoch) { rows.push({ ...binding, name: "Attachment", size: null, state: "failed" }); continue; }
+    if (!epoch) { rows.push({ ...binding, name: "Attachment", size: null, type: null, state: "failed" }); continue; }
     const opened = await decryptAttachment(row.ciphertext, { householdId: identity.householdId, attachmentId: binding.attachmentId, keyEpoch: row.keyEpoch, householdKey: epoch.householdKey, digest: row.digest }).catch(() => null);
-    rows.push({ ...binding, name: opened?.name ?? "Attachment", size: opened?.size ?? null, state: opened ? row.state : "failed" });
+    rows.push({ ...binding, name: opened?.name ?? "Attachment", size: opened?.size ?? null, type: opened?.type ?? null, state: opened ? row.state : "failed" });
   }
   return rows;
 }

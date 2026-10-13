@@ -763,6 +763,11 @@ Default:
 
 Only text is required.
 
+Capture is context-sensitive (Adopted, v0.41.0): the Today form defaults to
+Today and keeps the destination the person last chose; Needs, Shopping, and
+Staples each carry a single-field capture fixed to that list, so adding eggs
+from Shopping creates a Shopping item. The confirmation names the destination.
+
 Later editing may add:
 
 - date;
@@ -842,6 +847,17 @@ Prefer:
 Not:
 
 > Perform WebAuthn assertion.
+
+### Passkey-first unlock — Adopted (v0.41.0)
+
+Once a device holds a passkey that can unlock Kin, the lock screen reads
+"Welcome back" with `Unlock with passkey` as the only primary action and
+`Use recovery key` as a secondary control that reveals the recovery form. The
+recovery key is a backup, never the everyday login. Offline, the screen says
+plainly that passkey unlock needs a connection and shows recovery directly.
+First run is a welcome, a "Save your recovery key" step, then create/join
+choices; passkey unlock is offered as soon as the device holds a household
+credential. Security settings state whether passkey unlock is on.
 
 ---
 

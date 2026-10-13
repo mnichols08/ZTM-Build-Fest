@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.40.3` — CI and verification infrastructure on `kin-development`.** Kin keeps household history in the existing local-first encrypted event store. Versioned portable packages preserve canonical history and validated protected attachment records without restoring device trust. Items and Routines support explicit, replayable responsibility assignment; ties resolve by canonical event order.
+**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.41.0` — Mobile Experience & Passkey-First UX candidate on `feat/kin-v0.41.0-mobile-experience`.** Kin keeps household history in the existing local-first encrypted event store. Versioned portable packages preserve canonical history and validated protected attachment records without restoring device trust. Items and Routines support explicit, replayable responsibility assignment; ties resolve by canonical event order.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Exports are encrypted history recovery and do not restore server membership, device trust, credentials, or sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
@@ -111,14 +111,15 @@ The month targets a coherent, demoable pre-1.0 build at `v0.40.x`. The `v0.41.x`
 - Fast-track candidate: `v0.27.0` — Household Playbooks; see the `v0.27.0` release record.
 - Fast-track candidate: `v0.28.0` - Local Reminders; see the `v0.28.0` release record.
 - Fast-track candidates: `v0.31.0`–`v0.31.1` - Maintenance Records and concurrent archive correction; see their release records.
-- Current candidate: `v0.40.3` — Reproducible CI and verification infrastructure; no application feature changes.
-- Planned after October, undated: `v0.41.x`–`v0.45.x` — Recovery drills, broader platform validation, performance, and release-candidate readiness
+- Candidate: `v0.40.3` — Reproducible CI and verification infrastructure; no application feature changes.
+- Current candidate: `v0.41.0` — Mobile Experience & Passkey-First UX: passkey-first unlock with the recovery key as a secondary fallback, a welcome/setup flow, create/join/add-device household choices, context-sensitive capture on Today and each list, image thumbnails with an in-app viewer, document tiles, phone-first item rows with a Details disclosure, an optional inactivity lock, and plain-language sync/attachment messages. No cryptographic, event, storage, or authorization contract changed. See the [release record](docs/releases/V0.41.0.md).
+- Planned after October, undated: `v0.42.x`–`v0.45.x` plus the deferred Backup Safety & Disaster Drills proposal — recovery drills, broader platform validation, performance, and release-candidate readiness
 - Planned: `v1.0.0` — Stable Kin Platform, when readiness and human feedback support it
 - See the [changelog](CHANGELOG.md) for the completed release history.
 
 ## Install, build, and run
 
-Requirements: Rust/Cargo with the `wasm32-unknown-unknown` target, Node.js 22.13.0 or later, npm, and a modern browser with WebAssembly, Web Crypto, Web Locks, ES modules, Custom Elements and IndexedDB. Passkeys are needed for server identity/pairing; PRF support is optional because a user-held recovery secret is an explicit local unlock path. Use HTTPS outside localhost.
+Requirements: Rust/Cargo with the `wasm32-unknown-unknown` target, Node.js 22.13.0 or later, npm, and a modern browser with WebAssembly, Web Crypto, Web Locks, ES modules, Custom Elements and IndexedDB. Passkeys are needed for server identity/pairing. Where the passkey supports the PRF extension, it becomes the everyday unlock on that device; the user-held recovery key remains the explicit backup unlock and the only unlock while offline. Use HTTPS outside localhost.
 
 From the repository root in PowerShell:
 

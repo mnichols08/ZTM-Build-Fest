@@ -69,7 +69,6 @@ test("admin permits verified backup and restore outside the web root", () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
-
 test("admin explains why restore over pending deletion is refused", async () => {
   const directory = mkdtempSync(join(tmpdir(), "kin-admin-pending-"));
   const databasePath = join(directory, "kin.sqlite");

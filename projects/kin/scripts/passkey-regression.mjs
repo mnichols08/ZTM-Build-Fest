@@ -37,7 +37,10 @@ export async function passkeyRegressions(client, service, syncService) {
     assert.equal(credentials.credentials.length, 1);
     let checks = setup.checks + 1;
     if (setup.prfSupported) {
+      checks += await client.evaluate(`(${lockScreenChecks.toString()})()`);
       checks += await client.evaluate(`(${unlockPasskey.toString()})(true)`);
+      checks += await client.evaluate(`(${attachmentUiChecks.toString()})(${JSON.stringify(setup.recovery)})`);
+      checks += await client.evaluate(`(${wrongPrfFailsClosed.toString()})()`);
       await client.send("WebAuthn.setResponseOverrideBits", {
         authenticatorId,
         isBadUV: true,
@@ -251,6 +254,155 @@ async function setupPasskey() {
   return { checks, recovery, prfSupported: true };
 }
 
+// The locked shell is passkey-first once a PRF wrapper exists: one primary
+// passkey action, recovery behind a secondary control, no plaintext anywhere.
+async function lockScreenChecks() {
+  let checks = 0;
+  const check = (value, message) => {
+    if (!value) throw Error(message);
+    checks++;
+  };
+  const app = document.querySelector("kin-app");
+  check(app.vault === null && app.security.phase === "locked", "lock screen checks start locked");
+  check(app.security.heading.textContent === "Welcome back", "returning users are welcomed back: " + app.security.heading.textContent);
+  const primary = app.security.querySelector("button.primary-action");
+  check(primary?.textContent === "Unlock with passkey", "passkey unlock is the primary action: " + primary?.textContent);
+  const recoveryForm = app.security.querySelector(".recovery-form");
+  check(recoveryForm?.hidden === true && Boolean(app.security.querySelector("#recovery-unlock")),
+    "recovery entry stays available but secondary");
+  const reveal = [...app.security.querySelectorAll("button")].find((button) => button.textContent === "Use recovery key");
+  check(Boolean(reveal), "recovery key is offered as a secondary action");
+  reveal.click();
+  check(!recoveryForm.hidden && document.activeElement === app.security.querySelector("#recovery-unlock"),
+    "choosing recovery reveals and focuses the recovery form");
+  const storage = [...Object.keys(localStorage), ...Object.keys(sessionStorage)]
+    .map((key) => `${key}=${localStorage.getItem(key) ?? sessionStorage.getItem(key)}`).join("\n");
+  check(!/[a-f0-9]{64}/i.test(storage) && !storage.includes("prfSalt"), "no secret material in web storage: " + storage);
+  app.security.render();
+  check(app.security.querySelector(".recovery-form").hidden === false,
+    "a revealed recovery form stays revealed across re-render");
+  app.security.recoveryExpanded = false;
+  app.security.render();
+  return checks;
+}
+
+// Photos attached through the real capture path render as thumbnails, open in
+// the in-app viewer, survive lock/unlock, and report retrieval failures plainly.
+async function attachmentUiChecks(recovery) {
+  let checks = 0;
+  const check = (value, message) => {
+    if (!value) throw Error(message);
+    checks++;
+  };
+  const wait = async (condition, label) => {
+    for (let i = 0; i < 400; i++) {
+      if (condition()) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    const app = document.querySelector("kin-app");
+    throw Error(`Attachment UI wait timed out: ${label}; alert=${app?.alert?.textContent} status=${app?.status?.textContent}`);
+  };
+  const app = document.querySelector("kin-app");
+  if (!app.vault) {
+    await app.security.run(() => app.security.unlockRecovery(recovery));
+    await wait(() => app.store && !app.busy, "unlock for attachments");
+  }
+  // Capture binds the file to this device's household identity, which the
+  // household component loads asynchronously after unlock.
+  await wait(() => Boolean(app.household?.identity), "household identity");
+  location.hash = "#today";
+  app.showPageFromLocation();
+  app.compose.classification.value = "today";
+  app.compose.input.value = "Photo of the fridge";
+  app.compose.form.requestSubmit();
+  await wait(() => !app.busy && app.state.items.some((item) => item.text === "Photo of the fridge"), "item add");
+  const item = app.state.items.find((entry) => entry.text === "Photo of the fridge");
+  check(item.classification === "today" && app.today.querySelector(`.item-text[data-item-id="${item.itemId}"]`),
+    "Today capture creates a visible Today item");
+  // A real 2x2 PNG so the thumbnail pipeline decodes genuine image bytes.
+  const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DwHwqY/j9/j8EBABRiB/GKvM3kAAAAAElFTkSuQmCC"), (c) => c.charCodeAt(0));
+  const file = new File([png], "fridge.png", { type: "image/png" });
+  const toolsToggle = app.today.querySelector(`.item-tools-toggle[data-item-id="${item.itemId}"]`);
+  toolsToggle.click();
+  const input = app.today.querySelector(`#attachment-item-${item.itemId}`);
+  check(Boolean(input) && !input.closest("[hidden]"), "the attach control is revealed under Details");
+  const status = input.closest(".attachment-list").querySelector("[role=status]");
+  app.dispatchEvent(new CustomEvent("kin:add-attachment", { detail: { file, parentKind: "item", parentId: item.itemId, status }, bubbles: true }));
+  await wait(() => !app.busy && app.attachmentRows.some((row) => row.parentId === item.itemId), "attachment capture");
+  const row = app.attachmentRows.find((entry) => entry.parentId === item.itemId);
+  check(row.name === "fridge.png" && row.type === "image/png" && row.state === "queued", "captured row carries name, type and state: " + JSON.stringify(row));
+  const thumb = () => app.today.querySelector(`kin-item .attachment-thumb[aria-label="View fridge.png"]`);
+  check(Boolean(thumb()) && !thumb().closest("[hidden]"), "an image thumbnail tile renders in the item's main area");
+  const diagnose = () => JSON.stringify({
+    tile: thumb()?.outerHTML.slice(0, 240),
+    rect: thumb()?.getBoundingClientRect().toJSON(),
+    viewport: [innerWidth, innerHeight],
+    loader: typeof thumb()?.__kinLoadPreview,
+    cache: app.attachmentPreviews ? [app.attachmentPreviews.entries.size, app.attachmentPreviews.pending.size, [...app.attachmentPreviews.entries.values()]] : null,
+    provider: typeof app.today.previewProvider,
+    itemProvider: typeof [...app.today.querySelectorAll("kin-item")].find((node) => node.record?.itemId === item.itemId)?.previewProvider,
+  });
+  // Thumbnails decode lazily: nothing is decrypted or decoded while the tile is
+  // below the fold. Scrolling it into view is what triggers the preview.
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  check(!thumb().querySelector("img").getAttribute("src") && app.attachmentPreviews.entries.size === 0 && app.attachmentPreviews.pending.size === 0,
+    "an off-screen thumbnail is not decoded ahead of time: " + diagnose());
+  thumb().scrollIntoView({ block: "center" });
+  try {
+    await wait(() => thumb()?.querySelector("img")?.src.startsWith("blob:"), "thumbnail decode");
+  } catch (error) {
+    throw Error(`${error.message}; ${diagnose()}`);
+  }
+  const img = thumb().querySelector("img");
+  await wait(() => img.complete && img.naturalWidth > 0, "thumbnail load");
+  check(img.naturalWidth <= 192 && img.naturalHeight <= 192 && img.alt === "", "thumbnail is bounded and decorative");
+  check(getComputedStyle(thumb()).height.replace("px", "") >= 48, "thumbnail is a comfortable touch target");
+  check(app.attachmentPreviews.peek(row.attachmentId)?.url === img.src, "preview object URL is cached per session");
+  const metaText = app.today.querySelector(`kin-item .attachment-tile .attachment-meta`)?.textContent ?? "";
+  check(metaText.includes("Photo") && metaText.includes("B"), "tile shows kind and size: " + metaText);
+  thumb().click();
+  await wait(() => app.viewer.open, "viewer open");
+  check(app.viewer.viewerImage.src.startsWith("blob:") && app.viewer.viewerTitle.textContent === "fridge.png",
+    "tapping the thumbnail opens the full image with its name");
+  check(document.activeElement === app.viewer.querySelector(".attachment-viewer-close"), "viewer focuses its close control");
+  const viewerUrl = app.viewerUrl;
+  app.viewer.querySelector(".attachment-viewer-close").click();
+  // The dialog's close event is delivered asynchronously; release follows it.
+  await wait(() => !app.viewer.open && app.viewerUrl === null, "viewer close");
+  check(!app.viewer.viewerImage.getAttribute("src"), "closing the viewer releases its object URL");
+  let revoked = false;
+  try { await fetch(viewerUrl); } catch { revoked = true; }
+  check(revoked, "the viewer blob URL is revoked after close");
+  check(document.activeElement === thumb(), "closing the viewer returns focus to the thumbnail");
+  const pdf = new File([new TextEncoder().encode("%PDF-1.4\n% synthetic\n%%EOF")], "warranty.pdf", { type: "application/pdf" });
+  app.dispatchEvent(new CustomEvent("kin:add-attachment", { detail: { file: pdf, parentKind: "item", parentId: item.itemId }, bubbles: true }));
+  await wait(() => !app.busy && app.attachmentRows.filter((entry) => entry.parentId === item.itemId).length === 2, "pdf capture");
+  const pdfTile = [...app.today.querySelectorAll("kin-item .attachment-tile")].find((tile) => tile.textContent.includes("warranty.pdf"));
+  check(pdfTile?.classList.contains("attachment-tile-document") && pdfTile.querySelector(".attachment-meta").textContent.includes("PDF") &&
+    pdfTile.querySelector('button[aria-label="Open warranty.pdf"]') && pdfTile.querySelector('button[aria-label="Save warranty.pdf"]') &&
+    !pdfTile.querySelector(".attachment-thumb"), "documents render as a recognizable tile with Open and Save");
+  app.clearAlert();
+  await app.handleViewAttachment({ detail: { attachmentId: "00".repeat(16), parentKind: "item", parentId: item.itemId } });
+  check(app.alert.textContent === "We couldn't open this attachment. Your existing household information hasn't been deleted." && !app.viewer.open,
+    "a failed retrieval is explained without claiming data loss");
+  app.clearAlert();
+  app.lockHousehold();
+  check(app.attachmentPreviews === null && !app.viewer.open, "locking drops every cached preview");
+  let previewRevoked = false;
+  try { await fetch(img.src); } catch { previewRevoked = true; }
+  check(previewRevoked, "thumbnail object URLs are revoked on lock");
+  await app.security.run(() => app.security.unlockRecovery(recovery));
+  await wait(() => app.store && !app.busy && app.attachmentRows.some((entry) => entry.parentId === item.itemId), "re-unlock");
+  location.hash = "#today";
+  app.showPageFromLocation();
+  await wait(() => Boolean(thumb()), "tile after unlock");
+  thumb().scrollIntoView({ block: "center" });
+  await wait(() => thumb()?.querySelector("img")?.src.startsWith("blob:"), "thumbnail after unlock");
+  check(thumb().querySelector("img").src !== img.src, "a fresh session derives a fresh preview rather than reusing a revoked one");
+  app.lockHousehold();
+  return checks;
+}
+
 async function unlockPasskey(success) {
   const app = document.querySelector("kin-app");
   const wrapper = app.security.manifest.wrappers.find(
@@ -272,6 +424,50 @@ async function unlockPasskey(success) {
   if (!app.security.alert.textContent)
     throw Error("Rejected assertion has no feedback");
   return 2;
+}
+
+// A valid server-verified WebAuthn assertion is insufficient if the PRF output
+// cannot unwrap this device's local vault. The encrypted event corpus must be
+// byte-for-byte unchanged after that failed local unlock.
+async function wrongPrfFailsClosed() {
+  const app = document.querySelector("kin-app");
+  const wrapper = app.security.manifest.wrappers.find((value) => value.type === "prf");
+  if (!wrapper) throw new Error("wrong-PRF check requires the enrolled PRF wrapper");
+  const originalSalt = wrapper.prfSalt;
+  const before = await persistedEvents();
+  let wrongSalt;
+  do {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    wrongSalt = btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  } while (wrongSalt === originalSalt);
+  wrapper.prfSalt = wrongSalt;
+  try {
+    await app.security.run(() => app.security.unlockPasskey(wrapper));
+    const after = await persistedEvents();
+    if (app.vault !== null || app.state !== null || app.engine !== null)
+      throw new Error("a valid assertion with incorrect PRF output exposed the local vault");
+    if (!app.security.alert.textContent)
+      throw new Error("a valid assertion with incorrect PRF output did not explain the failed unlock");
+    if (after !== before)
+      throw new Error("a failed wrong-PRF unlock changed encrypted local event bytes");
+    return 3;
+  } finally {
+    wrapper.prfSalt = originalSalt;
+  }
+
+  async function persistedEvents() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open("kin");
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const database = request.result;
+        const transaction = database.transaction("events");
+        const rows = transaction.objectStore("events").getAll();
+        transaction.oncomplete = () => { database.close(); resolve(JSON.stringify(rows.result)); };
+        transaction.onabort = () => { database.close(); reject(transaction.error); };
+      };
+    });
+  }
 }
 
 async function cancelPasskey() {
