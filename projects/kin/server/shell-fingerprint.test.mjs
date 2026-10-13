@@ -1,24 +1,31 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createKinServer, fingerprintedShell, shellFingerprint } from "./server.mjs";
 import { DurableStore } from "./durable-store.mjs";
 
-test("the shell fingerprint changes when a served file changes and ignores test files", () => {
+test("the shell fingerprint hashes served content deterministically and ignores test files", () => {
   const root = mkdtempSync(join(tmpdir(), "kin-shell-"));
   try {
     mkdirSync(join(root, "components"));
     writeFileSync(join(root, "index.html"), "<html>");
-    writeFileSync(join(root, "components", "kin-compose.js"), "old");
+    const shellFile = join(root, "components", "kin-compose.js");
+    writeFileSync(shellFile, "old");
+    utimesSync(shellFile, new Date(0), new Date(0));
     const first = shellFingerprint(root);
     assert.match(first, /^[a-f0-9]{12}$/);
     assert.equal(shellFingerprint(root), first, "stable while nothing changes");
     writeFileSync(join(root, "components", "kin-compose.test.mjs"), "test only");
     assert.equal(shellFingerprint(root), first, "test files do not affect the shell");
-    writeFileSync(join(root, "components", "kin-compose.js"), "new content");
+    writeFileSync(shellFile, "new");
+    utimesSync(shellFile, new Date(0), new Date(0));
+    utimesSync(shellFile, new Date(0), new Date(0));
     assert.notEqual(shellFingerprint(root), first, "a changed shell file changes the fingerprint");
+    const changed = shellFingerprint(root);
+    utimesSync(shellFile, new Date(1_000_000), new Date(1_000_000));
+    assert.equal(shellFingerprint(root), changed, "touching a file without changing its content does not churn the cache");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

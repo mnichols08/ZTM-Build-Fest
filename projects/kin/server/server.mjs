@@ -1170,8 +1170,11 @@ export function shellFingerprint(root = webRoot) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) visit(path);
       else if (entry.isFile() && !entry.name.endsWith(".test.mjs")) {
-        const info = statSync(path);
-        hash.update(`${relative(root, path).replaceAll("\\", "/")}\0${info.size}\0${Math.floor(info.mtimeMs)}\n`);
+        const name = relative(root, path).replaceAll("\\", "/");
+        const content = readFileSync(path);
+        hash.update(`${name.length}:${name}:${content.length}:`);
+        hash.update(content);
+        hash.update("\n");
       }
     }
   };
