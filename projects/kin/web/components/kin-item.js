@@ -141,6 +141,26 @@ class KinItem extends HTMLElement {
       });
       secondary.append(toggle, stepSummary);
     }
+    if (this.record.status !== "archived") {
+      // Attaching is a common phone task, so it lives on the row rather than
+      // behind Details. <kin-app> owns the file input and opens it from this tap.
+      const attach = document.createElement("button");
+      attach.type = "button";
+      attach.className = "item-attach-button";
+      attach.textContent = "Add photo";
+      attach.setAttribute("aria-label", `Add a photo or file to ${this.record.text}`);
+      attach.dataset.itemId = this.record.itemId;
+      attach.dataset.itemAction = "attach";
+      attach.disabled = this.isDisabled;
+      attach.addEventListener("click", () => {
+        this.dispatchEvent(new CustomEvent("kin:pick-attachment", {
+          detail: { parentKind: "item", parentId: this.record.itemId, label: this.record.text, opener: attach },
+          bubbles: true,
+          composed: true,
+        }));
+      });
+      secondary.append(attach);
+    }
     const tools = document.createElement("button");
     tools.type = "button";
     tools.className = "item-tools-toggle";
@@ -212,11 +232,6 @@ class KinItem extends HTMLElement {
     panel.id = `tools-${this.record.itemId}`;
     panel.hidden = !this.showTools;
     panel.setAttribute("aria-label", `Details for ${this.record.text}`);
-    const attachments = document.createElement("kin-attachments");
-    attachments.mode = "input";
-    attachments.parentRecord = { kind: "item", id: this.record.itemId, label: this.record.text, readonly: this.record.status === "archived" };
-    attachments.attachments = this.attachmentRecords;
-    panel.append(attachments);
     if (this.record.status !== "archived") {
       const responsibility = document.createElement("kin-responsibility");
       responsibility.record = { targetKind: "item", targetId: this.record.itemId, text: this.record.text, ownerId: this.responsibilities?.find((entry) => entry.targetKind === "item" && entry.targetId === this.record.itemId)?.memberId ?? null, memberId: this.memberId, memberIds: this.memberIds };

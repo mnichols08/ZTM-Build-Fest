@@ -391,7 +391,7 @@ export class SyncCoordinator {
     const pendingOutbox = await this.store.getPendingOutbox(1);
     const pendingBindings = await this.store.getPendingBindings();
     try {
-      const attachmentResult = await reconcileAttachments({ identity: this.identity, store: this.store, keyStore: this.keyStore, state: await this.store.projectCurrent(), signal: this.abortController.signal });
+      const attachmentResult = await reconcileAttachments({ identity: this.identity, store: this.store, keyStore: this.keyStore, state: await this.store.projectCurrent(), signal: this.abortController.signal, suspectedOrphans: (this.suspectedOrphans ??= new Set()) });
       this.onState({ state: "syncing", attachmentRows: attachmentResult.rows });
     } catch { /* Attachment transport retries independently; household event sync remains available. */ }
     if (!hasMore && pendingOutbox.length === 0 && pendingBindings.length === 0)

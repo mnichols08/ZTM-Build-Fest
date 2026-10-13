@@ -1,7 +1,8 @@
 import { projectionContext } from "../browser-time.js";
 import { LocalReminders } from "../reminders.js";
 import { createCalendarExport } from "../calendar-export.js";
-import { captureAttachment, loadLocalAttachmentRows, openAttachment, removeAttachment } from "../attachments/attachment-lifecycle.js";
+import { attachmentFileProblem, captureAttachment, loadLocalAttachmentRows, openAttachment, removeAttachment } from "../attachments/attachment-lifecycle.js";
+import { clearAttachmentProgress, setAttachmentProgress } from "../attachments/attachment-progress.js";
 import { AttachmentPreviewCache, isImageAttachment } from "../attachments/attachment-preview.js";
 import { CLASSIFICATION_LABELS } from "./kin-compose.js";
 import { passkeyUnlockSupported } from "../security/passkey-unlock.js";
@@ -78,6 +79,12 @@ class KinApp extends HTMLElement {
     this.retryRefresh = () => this.refreshFromEvents();
     this.onAddItem = (event) => this.handleAddItem(event);
     this.onAddAttachment = (event) => this.handleAddAttachment(event);
+    this.onPickAttachment = (event) => this.handlePickAttachment(event);
+    // One file input for the whole app: it is never re-rendered, so a list
+    // refresh while the native picker is open cannot lose the chosen file.
+    this.attachmentInput = null;
+    this.attachmentTarget = null;
+    this.attachmentProgressTimers = new Map();
     this.onOpenAttachment = (event) => this.handleOpenAttachment(event);
     this.onViewAttachment = (event) => this.handleViewAttachment(event);
     this.onRemoveAttachment = (event) => this.handleRemoveAttachment(event);
@@ -270,6 +277,7 @@ class KinApp extends HTMLElement {
     }
     this.addEventListener("kin:add-item", this.onAddItem);
     this.addEventListener("kin:add-attachment", this.onAddAttachment);
+    this.addEventListener("kin:pick-attachment", this.onPickAttachment);
     this.addEventListener("kin:open-attachment", this.onOpenAttachment);
     this.addEventListener("kin:view-attachment", this.onViewAttachment);
     this.addEventListener("kin:remove-attachment", this.onRemoveAttachment);
@@ -500,7 +508,43 @@ class KinApp extends HTMLElement {
     this.retryButton.addEventListener("click", () => this.retryAction?.());
     this.viewer = this.buildAttachmentViewer();
     this.append(this.viewer);
+    this.attachmentInput = this.buildAttachmentInput();
+    this.append(this.attachmentInput);
     this.showPageFromLocation();
+  }
+
+  buildAttachmentInput() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/jpeg,image/png,image/webp,application/pdf";
+    input.className = "attachment-input";
+    input.tabIndex = -1;
+    input.setAttribute("aria-hidden", "true");
+    input.hidden = true;
+    input.addEventListener("change", () => this.handleAttachmentChosen());
+    input.addEventListener("cancel", () => { this.attachmentTarget = null; });
+    return input;
+  }
+
+  // Runs synchronously inside the tap on an Add photo button, which is what
+  // lets the browser open its native picker.
+  handlePickAttachment(event) {
+    const { parentKind, parentId, label } = event.detail ?? {};
+    if (!parentKind || !parentId || !this.attachmentInput) return;
+    if (!this.vault || this.vault.locked || !this.store) { this.showAlert("Unlock Kin before attaching a file."); return; }
+    this.clearAlert();
+    this.attachmentTarget = { parentKind, parentId, label: label ?? "" };
+    this.attachmentInput.value = "";
+    this.attachmentInput.click();
+  }
+
+  handleAttachmentChosen() {
+    const target = this.attachmentTarget;
+    this.attachmentTarget = null;
+    const file = this.attachmentInput?.files?.[0] ?? null;
+    if (this.attachmentInput) this.attachmentInput.value = "";
+    if (!target || !file) return;
+    void this.saveChosenAttachment(file, target);
   }
 
   showUpdateNotice() {
@@ -911,6 +955,7 @@ class KinApp extends HTMLElement {
     window.removeEventListener("online", this.onOnline);
     this.removeEventListener("kin:add-item", this.onAddItem);
     this.removeEventListener("kin:add-attachment", this.onAddAttachment);
+    this.removeEventListener("kin:pick-attachment", this.onPickAttachment);
     this.removeEventListener("kin:open-attachment", this.onOpenAttachment);
     this.removeEventListener("kin:view-attachment", this.onViewAttachment);
     this.removeEventListener("kin:remove-attachment", this.onRemoveAttachment);
@@ -1197,7 +1242,7 @@ class KinApp extends HTMLElement {
       }
     }
     if (Array.isArray(value.attachmentRows)) {
-      this.attachmentRows = value.attachmentRows;
+      this.attachmentRows = this.mergeAttachmentRows(value.attachmentRows);
       this.renderState();
     }
     if (Array.isArray(value.memberIds)) {
@@ -1723,24 +1768,77 @@ class KinApp extends HTMLElement {
     this.pulseTimer = setTimeout(this.onTimeWake, delay);
   }
 
-  async handleAddAttachment(event) {
-    if (this.busy || !this.store || !this.engine) return;
+  // Programmatic entry (tests, future callers) that goes through the same
+  // feedback and persistence path as a file chosen in the picker.
+  handleAddAttachment(event) {
+    const { file, parentKind, parentId } = event.detail ?? {};
+    if (!file || !parentKind || !parentId) return;
+    return this.saveChosenAttachment(file, { parentKind, parentId });
+  }
+
+  reportAttachmentProgress(target, phase, message) {
+    const key = `${target.parentKind}:${target.parentId}`;
+    clearTimeout(this.attachmentProgressTimers.get(key));
+    this.attachmentProgressTimers.delete(key);
+    setAttachmentProgress(target.parentKind, target.parentId, { phase, message });
+    if (phase === "saved") {
+      // Success text stays long enough to read; the tile itself carries the state.
+      this.attachmentProgressTimers.set(key, setTimeout(() => {
+        this.attachmentProgressTimers.delete(key);
+        clearAttachmentProgress(target.parentKind, target.parentId);
+      }, 8_000));
+    }
+  }
+
+  async untilIdle(limitMs = 10_000) {
+    const deadline = Date.now() + limitMs;
+    while (this.busy && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
+    return !this.busy;
+  }
+
+  async saveChosenAttachment(file, target) {
+    const kind = isImageAttachment({ type: file?.type, name: file?.name }) ? "photo" : "file";
+    const problem = attachmentFileProblem(file);
+    if (problem) { this.reportAttachmentProgress(target, "error", problem); this.showAlert(problem); return; }
+    const lockedMessage = `Unlock Kin before attaching a ${kind}.`;
+    if (!this.vault || this.vault.locked || !this.store || !this.engine) {
+      this.reportAttachmentProgress(target, "error", lockedMessage); this.showAlert(lockedMessage); return;
+    }
+    this.reportAttachmentProgress(target, "preparing", `Preparing ${kind}…`);
+    if (!(await this.untilIdle())) {
+      const message = `Kin is still saving another change. Try adding the ${kind} again in a moment.`;
+      this.reportAttachmentProgress(target, "error", message); this.showAlert(message); return;
+    }
+    if (!this.vault || this.vault.locked || !this.store || !this.engine) {
+      this.reportAttachmentProgress(target, "error", lockedMessage); return;
+    }
     const session = this.captureSession();
-    const { file, parentKind, parentId, status } = event.detail;
+    const { parentKind, parentId } = target;
     this.setBusy(true); this.clearAlert();
+    this.reportAttachmentProgress(target, "saving", "Saving securely…");
     try {
       const saved = await captureAttachment({ file, parentKind, parentId, identity: this.syncCoordinator?.identity ?? this.household?.identity, store: session.store, keyStore: this.syncCoordinator?.keyStore, append: (command) => this.appendCommand(command) });
       this.assertCurrentSession(session);
       this.attachmentRows = [...this.attachmentRows.filter((row) => row.attachmentId !== saved.attachmentId), { ...saved, parentKind, parentId }];
       this.renderState(); this.broadcastEventChange();
-      if (status) status.textContent = this.syncCoordinator
-        ? `${saved.name} is saved on this device and will sync to your household.`
-        : `${saved.name} is saved on this device.`;
+      this.reportAttachmentProgress(target, "saved", this.syncCoordinator
+        ? `${saved.name} is saved on this device and waiting to sync to your household.`
+        : `${saved.name} is saved on this device.`);
       void this.syncCoordinator?.syncNow();
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
-      this.showAlert(error.userMessage ?? error.message ?? "Kin could not save this attachment on this device.");
-      if (status) status.textContent = "Kin couldn't save this attachment. Nothing else was changed.";
+      if (error.code === "locked" || !this.isCurrentSession(session)) {
+        clearAttachmentProgress(parentKind, parentId);
+        return;
+      }
+      const message = error.stage === "binding"
+        ? `The ${kind} was protected but couldn't be linked to this record. Nothing else was changed; try again.`
+        : error.stage === "validation"
+        ? error.message
+        : error.userMessage ?? (error.stage === "storage"
+          ? `Kin couldn't save this ${kind} on this device. Check free storage space and try again.`
+          : error.message || `Kin couldn't save this ${kind} on this device.`);
+      this.reportAttachmentProgress(target, "error", message);
+      this.showAlert(message);
     } finally { if (this.isCurrentSession(session)) this.setBusy(false); }
   }
 
@@ -1774,6 +1872,22 @@ class KinApp extends HTMLElement {
       this.renderState(); this.broadcastEventChange(); void this.syncCoordinator?.syncNow();
     } catch (error) { if (error.code !== "locked" && this.isCurrentSession(session)) this.showAlert(error.userMessage ?? SAVE_ERROR); }
     finally { if (this.isCurrentSession(session)) this.setBusy(false); }
+  }
+
+  // A sync pass describes attachments from the projection it started with. A
+  // photo attached while that pass ran is missing from its rows, and one
+  // removed meanwhile is still present; neither may override the newer local
+  // state, so rows are reconciled against the current bindings.
+  mergeAttachmentRows(incoming) {
+    const bindings = this.state?.attachments ?? [];
+    const bound = new Map(bindings.map((binding) => [binding.attachmentId, binding]));
+    const rows = incoming.filter((row) => !bound.get(row.attachmentId)?.removed);
+    const seen = new Set(rows.map((row) => row.attachmentId));
+    for (const row of this.attachmentRows) {
+      const binding = bound.get(row.attachmentId);
+      if (!seen.has(row.attachmentId) && binding && !binding.removed) rows.push(row);
+    }
+    return rows;
   }
 
   async refreshAttachmentRows() {
@@ -2426,6 +2540,10 @@ class KinApp extends HTMLElement {
     this.closeViewer();
     this.attachmentPreviews?.clear();
     this.attachmentPreviews = null;
+    this.attachmentTarget = null;
+    for (const timer of this.attachmentProgressTimers.values()) clearTimeout(timer);
+    this.attachmentProgressTimers.clear();
+    clearAttachmentProgress();
     this.householdStatus = null;
     this.passkeyPromptDismissed = false;
     if (this.onboarding) { this.onboarding.hidden = true; this.onboarding.replaceChildren(); }
