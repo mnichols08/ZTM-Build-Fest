@@ -8,9 +8,13 @@ class KinItem extends HTMLElement {
     this.record = null;
     this.isDisabled = false;
     this.showSteps = false;
+    // Secondary controls (area, dates, reminders, pins, responsibility, files)
+    // stay behind one Details disclosure so a phone row shows text + one action.
+    this.showTools = false;
     this.isPinned = false;
     this.pinLimitReached = false;
     this.attachmentRecords = [];
+    this.previewProvider = null;
   }
 
   set item(value) {
@@ -28,8 +32,14 @@ class KinItem extends HTMLElement {
     this.render();
   }
 
+  set toolsExpanded(value) {
+    this.showTools = Boolean(value);
+    this.render();
+  }
+
   set pinned(value) { this.isPinned = Boolean(value); this.render(); }
   set attachments(value) { this.attachmentRecords = Array.isArray(value) ? value : []; this.render(); }
+  set previews(provider) { this.previewProvider = typeof provider === "function" ? provider : null; this.render(); }
   set responsibilityContext(value) { this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.memberIds = value?.memberIds ?? []; this.render(); }
 
   set disabled(value) {
@@ -53,72 +63,15 @@ class KinItem extends HTMLElement {
     const details = document.createElement("div");
     details.className = "item-details";
     details.append(text);
-    const attachments = document.createElement("kin-attachments");
-    attachments.parentRecord = { kind: "item", id: this.record.itemId, label: this.record.text, readonly: this.record.status === "archived" };
-    attachments.attachments = this.attachmentRecords;
-    details.append(attachments);
-    if (this.record.status !== "archived") {
-      const responsibility = document.createElement("kin-responsibility");
-      responsibility.record = { targetKind: "item", targetId: this.record.itemId, text: this.record.text, ownerId: this.responsibilities?.find((entry) => entry.targetKind === "item" && entry.targetId === this.record.itemId)?.memberId ?? null, memberId: this.memberId, memberIds: this.memberIds };
-      details.append(responsibility);
-    }
-    if (this.record.status !== "archived") details.append(this.createReminderControl());
-    if (this.record.status !== "archived") {
-      const label = document.createElement("label");
-      label.className = "item-area-label";
-      const select = document.createElement("select");
-      select.className = "item-area-select";
-      select.setAttribute("aria-label", `Area for ${this.record.text}`);
-      select.dataset.itemId = this.record.itemId;
-      const none = document.createElement("option");
-      none.value = "";
-      none.textContent = "No area";
-      select.append(none);
-      for (const area of this.areas ?? []) {
-        if (area.archived && area.areaId !== this.record.areaId) continue;
-        const option = document.createElement("option");
-        option.value = area.areaId;
-        const duplicates = (this.areas ?? []).filter((candidate) => candidate.name.toLowerCase() === area.name.toLowerCase());
-        option.textContent = `${area.name}${duplicates.length > 1 ? ` · ${area.areaId.slice(-4)}` : ""}${area.archived ? " (archived)" : ""}`;
-        select.append(option);
-      }
-      select.value = this.record.areaId ?? "";
-      select.disabled = this.isDisabled;
-      select.addEventListener("change", () => this.dispatchEvent(new CustomEvent("kin:change-item-area", {
-        detail: { itemId: this.record.itemId, areaId: select.value || null }, bubbles: true, composed: true,
-      })));
-      label.append(select);
-      details.append(label);
-    } else if (this.record.areaId) {
-      const area = (this.areas ?? []).find((candidate) => candidate.areaId === this.record.areaId);
-      if (area) {
-        const context = document.createElement("span");
-        context.className = "area-archived-label";
-        context.textContent = `Area: ${area.name}${area.archived ? " (archived)" : ""}`;
-        details.append(context);
-      }
-    }
-    if (this.record.status !== "archived") {
-      details.append(this.createPlanningDateEditor());
-    } else if (this.record.planningDate) {
-      const planned = document.createElement("span");
-      planned.className = "item-planning-date-label";
-      planned.textContent = `Planned for ${formatPlanningDate(this.record.planningDate)}`;
-      details.append(planned);
-    }
-    if (
-      Number.isSafeInteger(this.record.lastChangedAt) &&
-      Number.isFinite(new Date(this.record.lastChangedAt).getTime())
-    ) {
-      const lastChanged = document.createElement("span");
-      lastChanged.className = "item-last-changed";
-      const date = new Date(this.record.lastChangedAt).toLocaleDateString(
-        undefined,
-        { dateStyle: "medium" },
-      );
-      lastChanged.textContent = `Last changed ${date}`;
-      details.append(lastChanged);
-    }
+    const meta = this.createMetaLine();
+    if (meta) details.append(meta);
+    const tiles = document.createElement("kin-attachments");
+    tiles.mode = "tiles";
+    tiles.previews = this.previewProvider;
+    tiles.parentRecord = { kind: "item", id: this.record.itemId, label: this.record.text, readonly: this.record.status === "archived" };
+    tiles.attachments = this.attachmentRecords;
+    details.append(tiles);
+
     const action = document.createElement("div");
     action.className = "item-action";
     const isStaple = this.record.classification === "staple";
@@ -142,7 +95,27 @@ class KinItem extends HTMLElement {
         }));
       });
       action.append(replenish);
+      if (this.record.status !== "active") {
+        const unavailable = document.createElement("span");
+        unavailable.className = "completed-label";
+        unavailable.textContent = "Unavailable";
+        action.append(unavailable);
+      }
+    } else if (this.record.status === "active") {
+      action.append(
+        this.createAction("Complete", "complete", "complete-button"),
+      );
     } else {
+      const completed = document.createElement("span");
+      completed.className = "completed-label";
+      completed.textContent = "Completed";
+      action.append(completed);
+      action.append(this.createAction("Reopen", "reopen", "reopen-button"));
+    }
+
+    const secondary = document.createElement("div");
+    secondary.className = "item-secondary";
+    if (!isStaple) {
       const stepSummary = document.createElement("span");
       stepSummary.className = "step-summary";
       stepSummary.textContent = `${completedSteps} of ${activeSteps.length} steps`;
@@ -166,33 +139,134 @@ class KinItem extends HTMLElement {
           composed: true,
         }));
       });
-      action.append(stepSummary, toggle);
+      secondary.append(toggle, stepSummary);
     }
+    const tools = document.createElement("button");
+    tools.type = "button";
+    tools.className = "item-tools-toggle";
+    tools.textContent = this.showTools ? "Hide details" : "Details";
+    tools.setAttribute("aria-expanded", String(this.showTools));
+    tools.setAttribute("aria-controls", `tools-${this.record.itemId}`);
+    tools.setAttribute("aria-label", `${this.showTools ? "Hide" : "Show"} details for ${this.record.text}`);
+    tools.dataset.itemId = this.record.itemId;
+    tools.dataset.itemAction = "toggle-tools";
+    tools.disabled = this.isDisabled;
+    tools.addEventListener("click", () => {
+      this.dispatchEvent(new CustomEvent("kin:toggle-item-tools", {
+        detail: { itemId: this.record.itemId },
+        bubbles: true,
+        composed: true,
+      }));
+    });
+    secondary.append(tools);
 
-    if (isStaple) {
-      if (this.record.status !== "active") {
-        const unavailable = document.createElement("span");
-        unavailable.className = "completed-label";
-        unavailable.textContent = "Unavailable";
-        action.append(unavailable);
-      }
-    } else if (this.record.status === "active") {
-      action.append(
-        this.createAction("Complete", "complete", "complete-button"),
-      );
-    } else {
-      const completed = document.createElement("span");
-      completed.className = "completed-label";
-      completed.textContent = "Completed";
-      action.append(completed);
-      action.append(this.createAction("Reopen", "reopen", "reopen-button"));
+    row.append(details, action, secondary);
+    if (!isStaple && this.showSteps) {
+      row.append(this.createChecklist(steps));
     }
-    action.append(this.createAction("Archive", "archive", "archive-button"));
+    row.append(this.createTools());
+    this.replaceChildren(row);
+  }
+
+  createMetaLine() {
+    const parts = [];
+    const area = (this.areas ?? []).find((candidate) => candidate.areaId === this.record.areaId);
+    if (area) parts.push(`${area.name}${area.archived ? " (archived)" : ""}`);
+    if (this.record.planningDate) parts.push(`Planned for ${formatPlanningDate(this.record.planningDate)}`);
+    const owner = this.responsibilities?.find((entry) => entry.targetKind === "item" && entry.targetId === this.record.itemId)?.memberId ?? null;
+    if (owner) {
+      const index = (this.memberIds ?? []).indexOf(owner);
+      parts.push(owner === this.memberId ? "You" : index >= 0 ? `Household adult ${index + 1}` : "Former household adult");
+    }
+    if (
+      Number.isSafeInteger(this.record.lastChangedAt) &&
+      Number.isFinite(new Date(this.record.lastChangedAt).getTime())
+    ) {
+      const date = new Date(this.record.lastChangedAt).toLocaleDateString(
+        undefined,
+        { dateStyle: "medium" },
+      );
+      const lastChanged = document.createElement("span");
+      lastChanged.className = "item-last-changed";
+      lastChanged.textContent = `Last changed ${date}`;
+      const line = document.createElement("p");
+      line.className = "item-meta";
+      if (parts.length) {
+        const context = document.createElement("span");
+        context.textContent = `${parts.join(" · ")} · `;
+        line.append(context);
+      }
+      line.append(lastChanged);
+      return line;
+    }
+    if (!parts.length) return null;
+    const line = document.createElement("p");
+    line.className = "item-meta";
+    line.textContent = parts.join(" · ");
+    return line;
+  }
+
+  createTools() {
+    const panel = document.createElement("section");
+    panel.className = "item-tools";
+    panel.id = `tools-${this.record.itemId}`;
+    panel.hidden = !this.showTools;
+    panel.setAttribute("aria-label", `Details for ${this.record.text}`);
+    const attachments = document.createElement("kin-attachments");
+    attachments.mode = "input";
+    attachments.parentRecord = { kind: "item", id: this.record.itemId, label: this.record.text, readonly: this.record.status === "archived" };
+    attachments.attachments = this.attachmentRecords;
+    panel.append(attachments);
+    if (this.record.status !== "archived") {
+      const responsibility = document.createElement("kin-responsibility");
+      responsibility.record = { targetKind: "item", targetId: this.record.itemId, text: this.record.text, ownerId: this.responsibilities?.find((entry) => entry.targetKind === "item" && entry.targetId === this.record.itemId)?.memberId ?? null, memberId: this.memberId, memberIds: this.memberIds };
+      panel.append(this.field("Responsibility", responsibility));
+    }
+    if (this.record.status !== "archived") {
+      const label = document.createElement("label");
+      label.className = "item-area-label";
+      label.append(document.createTextNode("Area"));
+      const select = document.createElement("select");
+      select.className = "item-area-select";
+      select.setAttribute("aria-label", `Area for ${this.record.text}`);
+      select.dataset.itemId = this.record.itemId;
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = "No area";
+      select.append(none);
+      for (const area of this.areas ?? []) {
+        if (area.archived && area.areaId !== this.record.areaId) continue;
+        const option = document.createElement("option");
+        option.value = area.areaId;
+        const duplicates = (this.areas ?? []).filter((candidate) => candidate.name.toLowerCase() === area.name.toLowerCase());
+        option.textContent = `${area.name}${duplicates.length > 1 ? ` · ${area.areaId.slice(-4)}` : ""}${area.archived ? " (archived)" : ""}`;
+        select.append(option);
+      }
+      select.value = this.record.areaId ?? "";
+      select.disabled = this.isDisabled;
+      select.addEventListener("change", () => this.dispatchEvent(new CustomEvent("kin:change-item-area", {
+        detail: { itemId: this.record.itemId, areaId: select.value || null }, bubbles: true, composed: true,
+      })));
+      label.append(select);
+      panel.append(label);
+      panel.append(this.createPlanningDateEditor());
+      panel.append(this.field("Reminder on this device", this.createReminderControl()));
+    } else if (this.record.areaId) {
+      const area = (this.areas ?? []).find((candidate) => candidate.areaId === this.record.areaId);
+      if (area) {
+        const context = document.createElement("span");
+        context.className = "area-archived-label";
+        context.textContent = `Area: ${area.name}${area.archived ? " (archived)" : ""}`;
+        panel.append(context);
+      }
+    }
+    const actions = document.createElement("div");
+    actions.className = "item-tools-actions";
     if (this.record.status !== "archived") {
       const pin = document.createElement("button");
       pin.type = "button";
       pin.className = "pin-button";
-      pin.textContent = this.isPinned ? "Unpin" : "Pin";
+      pin.textContent = this.isPinned ? "Unpin" : "Pin to Today";
       pin.setAttribute("aria-pressed", String(this.isPinned));
       pin.setAttribute("aria-label", `${this.isPinned ? "Unpin" : "Pin"} ${this.record.text}${!this.isPinned && this.pinLimitReached ? "; pin limit reached" : ""}`);
       pin.dataset.itemId = this.record.itemId;
@@ -202,14 +276,21 @@ class KinItem extends HTMLElement {
         detail: { targetKind: "item", targetId: this.record.itemId, pinned: !this.isPinned },
         bubbles: true, composed: true,
       })));
-      action.append(pin);
+      actions.append(pin);
     }
+    actions.append(this.createAction("Archive", "archive", "archive-button"));
+    panel.append(actions);
+    return panel;
+  }
 
-    row.append(details, action);
-    if (!isStaple && this.showSteps) {
-      row.append(this.createChecklist(steps));
-    }
-    this.replaceChildren(row);
+  field(labelText, control) {
+    const wrap = document.createElement("div");
+    wrap.className = "item-field";
+    const label = document.createElement("span");
+    label.className = "item-field-label";
+    label.textContent = labelText;
+    wrap.append(label, control);
+    return wrap;
   }
 
   createChecklist(steps) {
@@ -411,7 +492,7 @@ class KinItem extends HTMLElement {
     input.dataset.itemId = this.record.itemId;
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = "Remind me about this";
+    button.textContent = "Remind me";
     button.setAttribute("aria-label", `Set reminder for ${this.record.text}`);
     button.dataset.itemId = this.record.itemId;
     button.disabled = this.isDisabled || this.record.status !== "active";

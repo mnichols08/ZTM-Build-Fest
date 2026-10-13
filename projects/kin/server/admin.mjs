@@ -45,8 +45,29 @@ export async function runAdminCommand(args) {
     );
     return;
   }
+  if (command === "clear") {
+    // `npm run clear` may already carry the flag; repeating it is harmless.
+    if (!parameters.length || parameters.some((parameter) => parameter !== "--delete-all-households"))
+      throw new DurableStoreError(
+        "Clearing every household requires the explicit --delete-all-households flag. Stop the Kin service first; a verified pre-clear copy is kept next to the database.",
+      );
+    const databasePath = resolveDurablePath(defaultDatabasePath);
+    const result = await DurableStore.clearAllHouseholds(databasePath, {
+      acknowledgeDeleteAllHouseholds: true,
+    });
+    const { removed } = result;
+    console.log(
+      [
+        `Kin database cleared at ${result.databasePath}.`,
+        `Removed ${removed.households} household(s), ${removed.members} member(s), ${removed.devices} device(s), ${removed.events} relay event(s) and ${removed.attachments} attachment(s). Schema and migration metadata were kept.`,
+        `A verified copy of the database before clearing was preserved at ${result.preservedDatabasePath}; restore it with the restore command or delete it once it is no longer needed.`,
+        "Clearing the service cannot erase encrypted household copies in browsers, exported archives, or other backups. Those devices will need fresh household approval to sync again.",
+      ].join("\n"),
+    );
+    return;
+  }
   throw new DurableStoreError(
-    "Usage: node server/admin.mjs backup <destination> | restore <backup-file> --acknowledge-deletion-history",
+    "Usage: node server/admin.mjs backup <destination> | restore <backup-file> --acknowledge-deletion-history | clear --delete-all-households",
   );
 }
 

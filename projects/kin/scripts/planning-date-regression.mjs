@@ -25,9 +25,18 @@ export async function planningDateRegressions() {
       "new Items begin without a planning date and record their creation date",
     );
     app.navLinks.get("lists").click();
+    // Planning controls live under the item's Details disclosure on every viewport.
+    const toolsToggle = app.needs.querySelector(`.item-tools-toggle[data-item-id="${item.itemId}"]`);
+    check(toolsToggle?.getAttribute("aria-expanded") === "false", "item details start collapsed");
+    toolsToggle.click();
+    check(
+      toolsToggle.getAttribute("aria-expanded") === "true" || app.needs.querySelector(`.item-tools-toggle[data-item-id="${item.itemId}"]`)?.getAttribute("aria-expanded") === "true",
+      "Details disclosure expands the planning controls",
+    );
     const dateInput = () => app.needs.querySelector(
       `.item-planning-date-input[data-item-id="${item.itemId}"]`,
     );
+    check(!dateInput().closest("[hidden]"), "expanded details reveal the planning date editor");
     check(
       dateInput()?.getAttribute("aria-label") === `Planned date for ${text}`,
       "native date input has an item-specific accessible name",

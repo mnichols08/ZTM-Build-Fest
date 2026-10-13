@@ -25,6 +25,7 @@ class KinNotes extends HTMLElement {
   set areas(value) { this.areaRecords = Array.isArray(value) ? value : []; this.render(); }
   set maintenance(value) { this.maintenanceEvents = Array.isArray(value) ? value : []; this.render(); }
   set attachments(value) { this.attachmentRecords = Array.isArray(value) ? value : []; this.render(); }
+  set previews(provider) { this.previewProvider = typeof provider === "function" ? provider : null; this.render(); }
   set routines(value) { this.routineRecords = Array.isArray(value) ? value : []; this.render(); }
   set disabled(value) { this.disabledState = Boolean(value); this.render(); }
 
@@ -414,6 +415,7 @@ class KinNotes extends HTMLElement {
 
   makeAttachmentControl(kind, parentId, label) {
     const control = document.createElement("kin-attachments");
+    control.previews = this.previewProvider ?? null;
     control.parentRecord = { kind, id: parentId, label };
     control.attachments = this.attachmentRecords;
     return control;

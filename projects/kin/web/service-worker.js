@@ -2,13 +2,15 @@
 // API, archives, projections, drafts and keys never pass through Cache.put.
 // index.html supplies the current release in the registration URL. The old
 // active worker keeps its own version while the new worker stages separately.
+// The release may carry semver build metadata (a fingerprint of the served
+// shell files added by the Kin server) so a changed shell gets a new cache.
 const RELEASE = new URL(self.location.href).searchParams.get("v");
-if (!/^\d+\.\d+\.\d+$/.test(RELEASE ?? "")) throw new Error("Kin service worker release is missing.");
+if (!/^\d+\.\d+\.\d+(\+[a-z0-9]{1,32})?$/.test(RELEASE ?? "")) throw new Error("Kin service worker release is missing.");
 const CACHE = `kin-static-v${RELEASE}`;
 const SHELL = [
   "/", "/index.html", "/styles/app.css", "/manifest.webmanifest", "/icon.svg",
   "/browser-time.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin_engine.wasm",
-  "/attachments/attachment-crypto.js", "/attachments/attachment-lifecycle.js",
+  "/attachments/attachment-crypto.js", "/attachments/attachment-lifecycle.js", "/attachments/attachment-preview.js",
   "/storage/event-store.js", "/storage/encrypted-idb.js", "/storage/root-rotation.js",
   "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js",
   "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js",

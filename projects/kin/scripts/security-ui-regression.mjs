@@ -175,9 +175,20 @@ async function browserUiChecks() {
     "startup has no projection/engine/store/key",
   );
   check(app.main.hidden, "locked startup shell only");
+  check(
+    app.security.heading.textContent === "Welcome to Kin" &&
+      [...app.security.querySelectorAll("button")].some((button) => button.textContent === "Set up protection") &&
+      !app.security.querySelector("#recovery-unlock"),
+    "first visit explains setup instead of asking for a key: " + app.security.heading.textContent,
+  );
   app.security.showSetup();
   let recovery = app.security.querySelector(".recovery-key").textContent;
   check(recovery.length === 64, "setup displays user-held recovery secret");
+  check(
+    app.security.heading.textContent === "Save your recovery key" &&
+      app.security.querySelector("#confirm-recovery")?.labels?.[0]?.textContent.includes("confirm"),
+    "setup asks the person to save and confirm the key",
+  );
   const confirm = app.security.querySelector("#confirm-recovery");
   confirm.value = recovery;
   const started = performance.now();
@@ -244,6 +255,32 @@ async function browserUiChecks() {
     denied = true;
   }
   check(denied, "old store capability rejected after lock");
+  check(
+    app.security.heading.textContent === "Welcome back" &&
+      app.security.querySelector(".recovery-form")?.hidden === false &&
+      ![...app.security.querySelectorAll("button")].some((button) => button.textContent.startsWith("Unlock with passkey")),
+    "without a passkey the lock screen shows recovery directly and no passkey button",
+  );
+  {
+    // Presentation-only probe: a synthetic PRF wrapper must switch the lock
+    // screen to passkey-first without any unlock attempt or persistence.
+    const realManifest = app.security.manifest;
+    app.security.manifest = { ...realManifest, wrappers: [...realManifest.wrappers,
+      { version: 1, id: "ab".repeat(16), type: "prf", credentialId: "AQID", prfSalt: "AAAA", sealed: {} }] };
+    app.security.render();
+    const primary = app.security.querySelector("button.primary-action");
+    const form = app.security.querySelector(".recovery-form");
+    check(primary?.textContent === "Unlock with passkey" && form?.hidden === true &&
+      Boolean(app.security.querySelector("#recovery-unlock")),
+      "a saved passkey makes passkey unlock primary and recovery secondary");
+    [...app.security.querySelectorAll("button")].find((button) => button.textContent === "Use recovery key").click();
+    check(form.hidden === false && document.activeElement === app.security.querySelector("#recovery-unlock"),
+      "recovery stays one tap away and receives focus");
+    app.security.manifest = realManifest;
+    app.security.recoveryExpanded = false;
+    app.security.render();
+    check(app.security.querySelector(".recovery-form")?.hidden === false, "lock screen returns to recovery-first without a wrapper");
+  }
   await app.security.run(() => app.security.unlockRecovery("f".repeat(64)));
   check(
     app.state === null &&

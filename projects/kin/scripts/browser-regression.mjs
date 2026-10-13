@@ -15,6 +15,7 @@ import {
 } from "./routine-regression.mjs";
 import { shoppingRegressions } from "./shopping-regression.mjs";
 import { planningDateRegressions } from "./planning-date-regression.mjs";
+import { mobileUxRegressions } from "./mobile-ux-regression.mjs";
 import {
   handoffRegressions,
   handoffPeerRegressions,
@@ -1262,10 +1263,10 @@ try {
   const stateRegression = await first.evaluate(`(()=>{
     const app=document.querySelector('kin-app');
     window.dispatchEvent(new Event('offline'));
-    const offline=app.stateNotice.isConnected && !app.stateNotice.hidden && app.stateNotice.textContent.startsWith('Offline —') &&
-      app.stateNotice.getAttribute('role')==='status';
+    const offline=app.stateNotice.isConnected && !app.stateNotice.hidden && app.stateNotice.textContent.startsWith("You're offline. Your changes are saved on this device") &&
+      !app.stateNotice.textContent.includes('sync') && app.stateNotice.getAttribute('role')==='status';
     app.handleSyncState({state:'paused',code:'device_not_trusted',message:'device_not_trusted'});
-    const revoked=app.stateNotice.textContent.startsWith('This device is no longer trusted') &&
+    const revoked=app.stateNotice.textContent.startsWith('This device no longer has access to household updates') &&
       !app.stateNotice.textContent.includes('device_not_trusted');
     const status=app.status.textContent;
     app.handleSyncState({state:'ready',message:'Device sync is up to date.'});
@@ -1312,6 +1313,8 @@ try {
   console.log(await first.evaluate(`(${shoppingRegressions.toString()})()`));
   await visit(first, "today");
   console.log(await first.evaluate(`(${planningDateRegressions.toString()})()`));
+  await visit(first, "today");
+  console.log(await first.evaluate(`(${mobileUxRegressions.toString()})(${JSON.stringify(recoverySecret)})`));
   await visit(first, "routines");
   console.log(await first.evaluate(`(${routineRegressions.toString()})()`));
   const playbookResult = await first.evaluate(async () => {
@@ -1418,8 +1421,8 @@ try {
   );
   assert.equal(
     await first.evaluate('document.querySelector("select").value'),
-    "need",
-    "reload defaults ephemeral draft classification to Needs",
+    "today",
+    "reload defaults ephemeral draft classification to Today",
   );
   await first.evaluate(`(()=>{const input=document.querySelector('kin-compose input');input.value='Keyboard after unlock';input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();})()`);
   await first.send("Input.dispatchKeyEvent", {
@@ -1604,7 +1607,7 @@ try {
       a.engine.applyEvents=(...args)=>{window.peerReplays++;return replay(...args);};
       a.channel.addEventListener('message',e=>window.peerMessages.push(e.data)); }`);
   await first.evaluate(
-    `{const a=document.querySelector('kin-app');a.compose.input.value='Peer addition';a.compose.saveDraft();a.compose.form.requestSubmit();}`,
+    `{const a=document.querySelector('kin-app');a.compose.input.value='Peer addition';a.compose.classification.value='need';a.compose.saveDraft();a.compose.form.requestSubmit();}`,
   );
   await until(() =>
     second.evaluate(
@@ -1878,11 +1881,15 @@ try {
     `{const a=document.querySelector('kin-app');a.remove();document.body.append(a);}`,
   );
   await ready(first);
-  assert.equal(
-    await first.evaluate(
-      'document.querySelectorAll("kin-compose .compose-form").length',
-    ),
-    1,
+  // Reconnecting must not duplicate capture forms: one Today form plus one
+  // fixed-destination form per list (Needs, Shopping, Staples).
+  assert.deepEqual(
+    await first.evaluate(`(()=>({
+      total:document.querySelectorAll("kin-compose .compose-form").length,
+      today:document.querySelectorAll("#today kin-compose .compose-form:not(.compose-form-compact)").length,
+      lists:[...document.querySelectorAll("#lists kin-compose")].map(node=>node.fixedClassification).join(","),
+    }))()`),
+    { total: 4, today: 1, lists: "need,shopping,staple" },
   );
   await visit(first, "today");
   await first.send("Emulation.setDeviceMetricsOverride", {
@@ -2098,6 +2105,7 @@ try {
     app.state=added.state;app.renderState();
     let item=app.state.items.at(-1);
     app.nav.querySelector('a[href="#lists"]').click();
+    [...app.querySelectorAll('.item-tools-toggle')].find(node=>node.dataset.itemId===item.itemId).click();
     let select=[...app.querySelectorAll('.item-area-select')].find(node=>node.dataset.itemId===item.itemId);
     const hasNoArea=select?.options[0]?.textContent==='No area';
     select.focus();select.value=area.areaId;select.dispatchEvent(new Event('change',{bubbles:true}));await idle();
@@ -2364,6 +2372,28 @@ try {
     width:innerWidth,targets:[...document.querySelectorAll('kin-areas button,kin-areas input,.item-area-select')]
       .filter(node=>node.getClientRects().length).every(node=>node.getBoundingClientRect().height>=48)}))()`);
   assert.deepEqual(narrowAreaLayout,{overflow:false,width:320,targets:true});
+  await visit(first, "today");
+  const narrowTodayLayout = await first.evaluate(`(()=>{
+    const app=document.querySelector('kin-app');
+    const visibleControls=[...app.main.querySelectorAll('button,select,input:not([type=checkbox]),a')].filter(node=>node.getClientRects().length);
+    const row=app.today.querySelector('kin-item .item-row');
+    const nav=getComputedStyle(app.nav);
+    const header=app.header.getBoundingClientRect();
+    const viewport=document.querySelector('meta[name="viewport"]').content;
+    return {
+      overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth,
+      targets:visibleControls.every(node=>node.getBoundingClientRect().height>=48),
+      rowFits:!row||row.getBoundingClientRect().width<=innerWidth,
+      bottomNav:nav.position==='fixed'&&nav.bottom==='0px',
+      headerFits:header.width<=innerWidth,
+      safeArea:viewport.includes('viewport-fit=cover')&&viewport.includes('interactive-widget=resizes-content'),
+      detailsCollapsed:[...app.today.querySelectorAll('.item-tools')].every(panel=>panel.hidden),
+      primaryVisible:[...app.today.querySelectorAll('kin-item')].every(item=>item.querySelector('.complete-button,.reopen-button,.replenish-button')?.getClientRects().length>0),
+    };
+  })()`);
+  assert.deepEqual(narrowTodayLayout,{overflow:false,targets:true,rowFits:true,bottomNav:true,headerFits:true,safeArea:true,detailsCollapsed:true,primaryVisible:true},
+    `Today at 320px keeps every control reachable: ${JSON.stringify(narrowTodayLayout)}`);
+  await visit(first, "more");
   await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"none"},{name:"prefers-reduced-motion",value:"no-preference"},{name:"prefers-color-scheme",value:"dark"}]});
   assert.equal(await first.evaluate("matchMedia('(prefers-color-scheme: dark)').matches"),true,"Area manager follows dark mode");
   await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"active"},{name:"prefers-reduced-motion",value:"reduce"}]});

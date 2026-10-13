@@ -14,15 +14,19 @@ It restores the selected value if local persistence fails.
 
 ### `<kin-today>`
 
-Display the selected Today, Needs, Shopping, or Staples classification using the projection supplied by `<kin-app>`. Group active/completed items and omit archived tombstones. Staples remain active reusable entries and expose a manual add-to-Shopping action instead of completion. Do not rank people or add calendar-like features.
+Display the selected Today, Needs, Shopping, or Staples classification using the projection supplied by `<kin-app>`. Group active/completed items and omit archived tombstones. Staples remain active reusable entries and expose a manual add-to-Shopping action instead of completion. Do not rank people or add calendar-like features. Each section carries a one-line hint. Since v0.41.0 a Needs, Shopping, or Staples list owns one compact `<kin-compose>` fixed to its own classification, and the list remembers which items have their Details disclosure open across re-renders.
 
 ### `<kin-compose>`
 
-Provide a labeled, short item-entry form that defaults classification to Needs. On valid submission, dispatch `kin:add-item` with the submitted text and classification snapshot. It does not create event IDs, write storage, or mutate authoritative state.
+Provide a labeled, short item-entry form. The Today page form defaults classification to Today (`default-classification`) and keeps whichever destination the person last chose; a list form sets `fixed-classification` and `scope`, hides the selector, and labels the field "Add to <list>". On valid submission, dispatch `kin:add-item` with the submitted text, classification snapshot, and a `composer` reference so `<kin-app>` clears and refocuses the form that submitted. It does not create event IDs, write storage, or mutate authoritative state.
 
 ### `<kin-item>`
 
-Render one item and expose semantic complete, reopen, and archive controls as appropriate. Dispatch the corresponding command with the item ID. It does not decide or persist transitions.
+Render one item: its text, a short context line (area, planned date, responsibility, last changed), visible photo tiles, and one primary action (Complete/Reopen or Add to Shopping). Checklist and `Details` are secondary disclosures; Details holds the file control, responsibility, area, planned date, reminder, pin, and archive controls and dispatches `kin:toggle-item-tools` (handled by `<kin-today>`). It does not decide or persist transitions.
+
+### `<kin-attachments>`
+
+Render attachment tiles for one parent record. `mode` is `full` (file control plus tiles; notes and references), `tiles` (photos and documents only; the item's main area), or `input` (file control only; the item's Details). Image tiles request a bounded preview from the `previews` provider only when the tile intersects the viewport and dispatch `kin:view-attachment`; document tiles show kind, size, status, Open and Save. The component never stores decrypted bytes; `<kin-app>` owns the session preview cache and the viewer dialog and revokes every object URL on lock.
 
 ### `<kin-routines>`
 
@@ -37,7 +41,11 @@ Only create the components needed for these responsibilities; do not componentiz
 
 | Event               | Dispatching component | `detail`                                 | `bubbles` | `composed` | `cancelable` |
 | ------------------- | --------------------- | ---------------------------------------- | --------- | ---------- | ------------ | ------- |
-| `kin:add-item`      | `<kin-compose>`       | `{ text: string, classification: "today" | "need" | "shopping" | "staple" }` | `true`     | `true`       | `false` |
+| `kin:add-item`      | `<kin-compose>`       | `{ text: string, classification: "today" | "need" | "shopping" | "staple", composer: KinCompose }` | `true`     | `true`       | `false` |
+| `kin:toggle-item-tools` | `<kin-item>`      | `{ itemId: string }` (presentation only; handled by `<kin-today>`) | `true` | `true` | `false` |
+| `kin:view-attachment` | `<kin-attachments>` | `{ attachmentId, parentKind, parentId, name, opener }` | `true` | `true` | `false` |
+| `kin:household-status` | `<kin-household>` | `{ identity: boolean, claimState, memberKind, lifecycle }` (presentation only) | `true` | `true` | `false` |
+| `kin:security-changed` | `<kin-security>` | none (passkey wrapper added) | `true` | `true` | `false` |
 | `kin:replenish-staple` | `<kin-item>`       | `{ itemId: string }`                     | `true`    | `true`     | `false`      |
 | `kin:complete-item` | `<kin-item>`          | `{ itemId: string }`                     | `true`    | `true`     | `false`      |
 | `kin:reopen-item`   | `<kin-item>`          | `{ itemId: string }`                     | `true`    | `true`     | `false`      |

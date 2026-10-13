@@ -10,7 +10,7 @@ async function worker({ failPath, offline = false, release = '0.38.2' } = {}) {
     async open(name) { if (!stored.has(name)) stored.set(name, new Map()); const entries = stored.get(name); return { async put(key, value) { entries.set(key, value); }, async match(key) { return entries.get(key); }, async delete(key) { return entries.delete(key); } }; },
     async keys() { return [...stored.keys()]; }, async delete(name) { return stored.delete(name); },
   };
-  const self = { registration: { active: true }, clients: { async matchAll() { return clients; }, async claim() {} }, location: { origin: 'https://kin.test', href: `https://kin.test/service-worker.js?v=${release}` }, addEventListener(type, callback) { listeners.set(type, callback); }, async skipWaiting() {} };
+  const self = { registration: { active: true }, clients: { async matchAll() { return clients; }, async claim() {} }, location: { origin: 'https://kin.test', href: `https://kin.test/service-worker.js?v=${encodeURIComponent(release)}` }, addEventListener(type, callback) { listeners.set(type, callback); }, async skipWaiting() {} };
   const context = { self, caches: cacheApi, URL, Response, Promise, fetch: async (request) => { const path = typeof request === 'string' ? request : new URL(request.url).pathname; if (offline || path === failPath) throw new Error('offline'); return new Response(`asset:${path}`); } };
   vm.runInNewContext(await readFile(new URL('./service-worker.js', import.meta.url), 'utf8'), context);
   return { listeners, stored };
@@ -47,4 +47,12 @@ test('offline navigation falls back to the shell and API requests bypass the wor
   called = false;
   listeners.get('fetch')({ request: { method: 'GET', url: 'https://kin.test/api/status', mode: 'cors' }, respondWith() { called = true; } });
   assert.equal(called, false);
+});
+
+test('a fingerprinted release stages its own cache and rejects malformed metadata', async () => {
+  const { listeners, stored } = await worker({ release: '0.38.2+abc123def456' }); let install;
+  await listeners.get('install')({ waitUntil(promise) { install = promise; } }); await install;
+  assert.ok(stored.has('kin-static-v0.38.2+abc123def456'), 'cache name carries the build fingerprint');
+  await assert.rejects(worker({ release: '0.38.2+not valid!' }), /release is missing/);
+  await assert.rejects(worker({ release: '0.38.2-rc1' }), /release is missing/);
 });

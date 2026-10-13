@@ -1,9 +1,9 @@
-import { createReadStream, realpathSync, statSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { createReadStream, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { extname, join, relative, resolve } from "node:path";
 import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 import { createServer } from "node:http";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { PairingError, PairingService, requireTrustAuthority } from "./pairing-service.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
 import {
@@ -1158,6 +1158,34 @@ function setHeaders(response) {
     "camera=(), microphone=(), geolocation=()",
   );
 }
+// The service worker keys its shell cache by the release in the registration
+// URL and refuses to re-stage an existing cache name. Appending a fingerprint
+// of the served files as semver build metadata means any changed shell gets a
+// new cache instead of leaving browsers on a frozen snapshot. Static test
+// servers serve the raw file, so the plain release still works.
+export function shellFingerprint(root = webRoot) {
+  const hash = createHash("sha256");
+  const visit = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) visit(path);
+      else if (entry.isFile() && !entry.name.endsWith(".test.mjs")) {
+        const info = statSync(path);
+        hash.update(`${relative(root, path).replaceAll("\\", "/")}\0${info.size}\0${Math.floor(info.mtimeMs)}\n`);
+      }
+    }
+  };
+  visit(root);
+  return hash.digest("hex").slice(0, 12);
+}
+
+export function fingerprintedShell(html, fingerprint) {
+  return html.replace(
+    /(<meta name="kin-version" content="\d+\.\d+\.\d+)(")/,
+    (_, prefix, quote) => `${prefix}+${fingerprint}${quote}`,
+  );
+}
+
 function serve(response, pathname) {
   const requested =
     pathname === "/" || pathname === "/pair"
@@ -1190,6 +1218,23 @@ function serve(response, pathname) {
     ".webmanifest": "application/manifest+json",
     ".svg": "image/svg+xml",
   };
+  if (requested === "index.html") {
+    let body;
+    try {
+      body = Buffer.from(fingerprintedShell(readFileSync(path, "utf8"), shellFingerprint()), "utf8");
+    } catch {
+      response.writeHead(500);
+      response.end("Kin could not prepare its application shell.");
+      return;
+    }
+    response.writeHead(200, {
+      "Content-Type": types[".html"],
+      "Content-Length": body.length,
+      "Cache-Control": "no-cache",
+    });
+    response.end(body);
+    return;
+  }
   response.writeHead(200, {
     "Content-Type": types[extname(path)] ?? "application/octet-stream",
     "Cache-Control": "no-cache",

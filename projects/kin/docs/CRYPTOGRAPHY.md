@@ -95,7 +95,11 @@ secret supports profile-loss recovery; a secret alone cannot restore absent data
 
 PRF enrollment/unlock verifies an assertion with the same-origin identity server;
 it requires connectivity and surviving server identity. Recovery unlock works
-offline. New registration requests opt into PRF, but existing credentials may not
+offline. The v0.41.0 passkey-first presentation does not change this contract:
+the lock screen leads with the passkey where a PRF wrapper exists, explains the
+connectivity requirement when offline, and keeps the recovery wrapper as the
+fallback. A local-challenge offline PRF unlock was considered and deferred; it
+would be a documented contract change rather than a presentation change. New registration requests opt into PRF, but existing credentials may not
 support it. Actual 32-byte PRF output is required, is never sent to the server and
 is discarded after wrapping/unwrapping. Multiple supported adult credentials may
 independently wrap this installation's root. Each installation has its own local

@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — v0.41.0 — Mobile Experience & Passkey-First UX
+
+Implementation candidate on `feat/kin-v0.41.0-mobile-experience`; no tag, release, or production certification.
+
+- First run opens with a welcome that explains on-device encryption and the three setup steps, then a "Save your recovery key" step with copy and confirmation. Returning users see "Welcome back" with `Unlock with passkey` as the primary action when a PRF wrapper exists; `Use recovery key` reveals the recovery form. Without a passkey, recovery is shown directly with a hint to turn passkey unlock on.
+- Passkey unlock keeps its server-verified PRF contract. Network failures are reported as a connection problem that points to the recovery key; a device without a household credential is told to create or join a household first. Offline, the lock screen explains that recovery is the only unlock.
+- Security settings show whether passkey unlock is on, offer `Turn on passkey unlock` / `Add another passkey`, keep per-passkey removal (the recovery wrapper can never be removed), add recovery guidance, group backup/restore, and add an optional inactivity lock (5/15/60 minutes) stored as a plain preference. Lock-on-close is unchanged.
+- Today shows a "Get started" card for a protected device without a household (create / join / add this device) and an "Unlock faster next time" prompt once the device holds a household credential but no passkey wrapper.
+- The household panel asks "How would you like to get started?" with create, join, and add-device choices, explains device protection versus membership in plain language, names the device when creating, and states that entering a code never creates a second household. Joining still uses the existing pairing, fingerprint comparison, approval, and activation flows.
+- The Today capture form defaults to Today and keeps the chosen destination; each list on Lists has its own single-field capture fixed to that list. Confirmations name the destination ("Added to Shopping."). Rust classification values and `kin:add-item` are unchanged.
+- Images attached to items, notes, references, and maintenance records render as lazily decoded, bounded thumbnails; tapping opens an in-app viewer with Close and Save. PDFs render as document tiles with kind, size, status, Open and Save. Previews are in-memory object URLs revoked on removal, viewer close, and lock. Attachment rows now carry the validated MIME type; CSP `img-src` adds `blob:`.
+- Item rows show the text, a short context line, visible photos, and one primary action. Area, planned date, reminder, responsibility, pin, archive, and the file control sit behind a per-item `Details` disclosure.
+- Mobile layout: `viewport-fit=cover` and `interactive-widget=resizes-content`, header top safe-area padding, errors shown as a fixed card above the bottom navigation, full-width security actions on narrow screens.
+- Sync pauses, offline notices, and attachment failures use plain language and never claim data was synced or deleted; error codes stay on the state object.
+- The server serves `index.html` with the release plus a 12-hex fingerprint of the served shell files as semver build metadata (`0.41.0+abc123def456`); the service worker accepts build metadata in its registration release, so a changed shell always gets a new cache name and an update prompt instead of a frozen mix of old and new modules. The static file keeps the plain release.
+- Add `npm run clear` (`node server/admin.mjs clear --delete-all-households`): empties the service database of every household and household-scoped row while the service is stopped, after writing a verified `.pre-clear-...` copy; keeps schema/migration metadata, vacuums the file, and explains that browser copies and exports are untouched. Refuses without the flag or while a service/maintenance lock exists.
+- Catch up names the list an item was actually added to ("added to Shopping", "added to Staples") instead of reporting every non-Today item as added to Needs; the copy now shares the compose destination labels. Covered by `web/components/kin-catch-up.test.mjs`.
+- Tests: new `scripts/mobile-ux-regression.mjs` (run inside the browser regression), passkey-first lock-screen and attachment viewer checks in the passkey suite, welcome/lock-screen checks in the security UI suite, planning-date and area tests expand Details, a 320px Today layout check, Node tests for the preview cache and the new passkey error paths.
+
 ## Unreleased — v0.40.x candidates
 
 ### v0.40.3 — CI & Verification Infrastructure

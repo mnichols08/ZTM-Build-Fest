@@ -1,3 +1,12 @@
+import "./kin-compose.js";
+
+const SECTIONS = [
+  ["today", "Today", "Things that need attention today.", "Nothing for today yet. Add something above, or check Lists."],
+  ["need", "Needs", "Things someone needs to handle.", "Nothing to handle right now."],
+  ["shopping", "Shopping", "Things to buy.", "Nothing to buy right now. Staples can be added here with one tap."],
+  ["staple", "Staples", "Household essentials you re-add to Shopping whenever they run low.", "No staples yet. Add the things you buy again and again."],
+];
+
 class KinToday extends HTMLElement {
   constructor() {
     super();
@@ -8,6 +17,9 @@ class KinToday extends HTMLElement {
     this.isDisabled = false;
     this.display = "all";
     this.expandedSteps = new Set();
+    this.expandedTools = new Set();
+    this.previewProvider = null;
+    this.composer = null;
     this.onToggleSteps = (event) => {
       const { itemId } = event.detail;
       if (this.expandedSteps.has(itemId)) this.expandedSteps.delete(itemId);
@@ -15,15 +27,24 @@ class KinToday extends HTMLElement {
       this.pendingFocus = this.captureFocus();
       this.render();
     };
+    this.onToggleTools = (event) => {
+      const { itemId } = event.detail;
+      if (this.expandedTools.has(itemId)) this.expandedTools.delete(itemId);
+      else this.expandedTools.add(itemId);
+      this.pendingFocus = this.captureFocus();
+      this.render();
+    };
   }
 
   connectedCallback() {
     this.addEventListener("kin:toggle-item-steps", this.onToggleSteps);
+    this.addEventListener("kin:toggle-item-tools", this.onToggleTools);
     this.render();
   }
 
   disconnectedCallback() {
     this.removeEventListener("kin:toggle-item-steps", this.onToggleSteps);
+    this.removeEventListener("kin:toggle-item-tools", this.onToggleTools);
   }
 
   set items(value) {
@@ -42,6 +63,7 @@ class KinToday extends HTMLElement {
   }
 
   set attachments(value) { this.attachmentRecords = Array.isArray(value) ? value : []; this.render(); }
+  set previews(provider) { this.previewProvider = typeof provider === "function" ? provider : null; this.render(); }
   set responsibilityContext(value) { this.ownerContext = value ?? {}; this.render(); }
 
   set disabled(value) {
@@ -49,7 +71,9 @@ class KinToday extends HTMLElement {
     for (const item of this.querySelectorAll("kin-item")) {
       item.disabled = this.isDisabled;
     }
+    if (this.composer) this.composer.disabled = this.isDisabled;
     for (const control of this.querySelectorAll("button, input, select")) {
+      if (control.closest("kin-compose")) continue;
       control.disabled = this.isDisabled || control.dataset.domainDisabled === "true";
     }
     if (!this.isDisabled && this.deferredFocus?.isConnected) {
@@ -57,6 +81,26 @@ class KinToday extends HTMLElement {
       this.deferredFocus = null;
       target.focus();
     }
+  }
+
+  // Lists other than Today own a compact capture form with a fixed destination,
+  // so adding from Shopping always creates a Shopping item.
+  get quickAdd() {
+    return ["need", "shopping", "staple"].includes(this.display);
+  }
+
+  ensureComposer() {
+    if (this.composer) return this.composer;
+    const composer = document.createElement("kin-compose");
+    composer.setAttribute("scope", this.display);
+    composer.setAttribute("fixed-classification", this.display);
+    composer.setAttribute("label", `Add to ${SECTIONS.find(([key]) => key === this.display)?.[1] ?? "list"}`);
+    this.composer = composer;
+    return composer;
+  }
+
+  focusInput() {
+    this.composer?.focusInput();
   }
 
   render() {
@@ -67,19 +111,25 @@ class KinToday extends HTMLElement {
       const quick = this.createQuickAccess();
       if (quick) sections.push(quick);
     }
-    sections.push(...[
-      ["today", "Today"],
-      ["need", "Needs"],
-      ["shopping", "Shopping"],
-      ["staple", "Staples"],
-    ].filter(([classification]) => this.display === "all" || classification === this.display)
-      .map(([classification, title]) => {
+    sections.push(...SECTIONS
+      .filter(([classification]) => this.display === "all" || classification === this.display)
+      .map(([classification, title, hint, emptyCopy]) => {
       const section = document.createElement("section");
       section.className = "today-section";
+      section.dataset.classification = classification;
       const heading = document.createElement("h2");
       heading.textContent = title;
       heading.tabIndex = -1;
       section.append(heading);
+      const description = document.createElement("p");
+      description.className = "section-hint";
+      description.textContent = hint;
+      section.append(description);
+      if (this.quickAdd && classification === this.display) {
+        const composer = this.ensureComposer();
+        composer.disabled = this.isDisabled;
+        section.append(composer);
+      }
 
       const records = this.records.filter(
         (record) =>
@@ -102,7 +152,7 @@ class KinToday extends HTMLElement {
       if (records.length === 0) {
         const empty = document.createElement("p");
         empty.className = "empty-state";
-        empty.textContent = "Nothing here yet.";
+        empty.textContent = emptyCopy;
         section.append(empty);
       }
       return section;
@@ -173,7 +223,7 @@ class KinToday extends HTMLElement {
 
   restoreFocus(focus) {
     if (!focus) return;
-    if (focus.control.isConnected) {
+    if (focus.control.isConnected && !focus.control.closest("[hidden]")) {
       focus.control.focus();
       return;
     }
@@ -185,7 +235,7 @@ class KinToday extends HTMLElement {
         return;
       }
     }
-    const controls = [...this.querySelectorAll("kin-item [data-item-id]")];
+    const controls = [...this.querySelectorAll("kin-item [data-item-id]")].filter((control) => !control.closest("[hidden]"));
     const sameItem = controls.filter((control) => control.dataset.itemId === focus.itemId);
     const replacementAction = {
       complete: "reopen",
@@ -199,6 +249,7 @@ class KinToday extends HTMLElement {
         ? sameItem.find((control) => control.dataset.itemAction === replacementAction)
         : null)
       ?? sameItem.find((control) => control.dataset.itemAction === "add-step")
+      ?? sameItem.find((control) => control.dataset.itemAction === "toggle-tools")
       ?? sameItem[0]
       ?? controls[Math.min(Math.max(0, focus.index), controls.length - 1)];
     const next = target ?? this.querySelector(".today-section h2");
@@ -212,13 +263,15 @@ class KinToday extends HTMLElement {
     for (const record of records) {
       const listItem = document.createElement("li");
       const item = document.createElement("kin-item");
+      item.previews = this.previewProvider;
       item.item = record;
       item.attachments = this.attachmentRecords;
-    item.responsibilityContext = this.ownerContext;
+      item.responsibilityContext = this.ownerContext;
       item.areaOptions = this.areaRecords;
       item.pinned = this.pinRecords.some((pin) => pin.targetKind === "item" && pin.targetId === record.itemId);
       item.pinLimitReached = this.pinRecords.length >= 10;
       item.checklistExpanded = this.expandedSteps.has(record.itemId);
+      item.toolsExpanded = this.expandedTools.has(record.itemId);
       item.disabled = this.isDisabled;
       listItem.append(item);
       list.append(listItem);

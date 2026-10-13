@@ -1,3 +1,5 @@
+import { CLASSIFICATION_LABELS } from "./kin-compose.js";
+
 class KinCatchUp extends HTMLElement {
   connectedCallback() {
     if (this.initialized) return;
@@ -95,7 +97,7 @@ function entryCopy(entry) {
     case "routine-occurrence-reopened": return `${entry.text} occurrence reopened`;
     case "routine-archived": return `${entry.text} archived`;
     case "item-added":
-      return `${entry.text} added to ${entry.classification === "today" ? "Today" : "Needs"}`;
+      return `${entry.text} added to ${CLASSIFICATION_LABELS[entry.classification] ?? "your lists"}`;
     case "item-completed":
       return `${entry.text} handled`;
     case "item-reopened":

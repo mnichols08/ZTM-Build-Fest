@@ -2,6 +2,9 @@ import { projectionContext } from "../browser-time.js";
 import { LocalReminders } from "../reminders.js";
 import { createCalendarExport } from "../calendar-export.js";
 import { captureAttachment, loadLocalAttachmentRows, openAttachment, removeAttachment } from "../attachments/attachment-lifecycle.js";
+import { AttachmentPreviewCache, isImageAttachment } from "../attachments/attachment-preview.js";
+import { CLASSIFICATION_LABELS } from "./kin-compose.js";
+import { passkeyUnlockSupported } from "../security/passkey-unlock.js";
 import "./kin-routines.js";
 import "./kin-areas.js";
 import "./kin-notes.js";
@@ -29,6 +32,25 @@ const START_ERROR =
   "Kin could not start its household engine or local storage. Your saved information was not intentionally deleted.";
 const SAVE_ERROR =
   "Kin could not save that change locally. Your existing information was not intentionally deleted.";
+const ATTACHMENT_OPEN_ERROR =
+  "We couldn't open this attachment. Your existing household information hasn't been deleted.";
+const AUTO_LOCK_KEY = "kin.auto-lock-minutes";
+
+// Plain-language explanations for sync pauses. The code is kept on the state
+// object for debugging and tests; only the wording changes here.
+const SYNC_PAUSE_MESSAGES = {
+  device_not_trusted: "This device no longer has access to household updates. Everything already saved here stays on this device.",
+  membership_removed: "This device no longer has access to household updates. Everything already saved here stays on this device.",
+  authentication_required: "Sign in to your household again to keep syncing. Your changes are saved on this device until then.",
+  connection_unavailable: "Your changes are saved on this device and will sync when you're connected.",
+};
+
+function readAutoLockPreference() {
+  try {
+    const value = Number(localStorage.getItem(AUTO_LOCK_KEY));
+    return [0, 5, 15, 60].includes(value) ? value : 0;
+  } catch { return 0; }
+}
 
 class KinApp extends HTMLElement {
   constructor() {
@@ -57,19 +79,34 @@ class KinApp extends HTMLElement {
     this.onAddItem = (event) => this.handleAddItem(event);
     this.onAddAttachment = (event) => this.handleAddAttachment(event);
     this.onOpenAttachment = (event) => this.handleOpenAttachment(event);
+    this.onViewAttachment = (event) => this.handleViewAttachment(event);
     this.onRemoveAttachment = (event) => this.handleRemoveAttachment(event);
+    // Thumbnails are session-scoped object URLs; the cache is created on unlock
+    // and emptied on lock so no decrypted preview outlives the vault.
+    this.attachmentPreviews = null;
+    this.previewProvider = (record, options) => this.provideAttachmentPreview(record, options);
+    this.viewerUrl = null;
+    this.viewerOpener = null;
+    this.householdStatus = null;
+    this.passkeyPromptDismissed = false;
+    this.onHouseholdStatus = (event) => { this.householdStatus = event.detail; this.renderOnboarding(); };
+    this.onSecurityChanged = () => this.renderOnboarding();
+    this.autoLockMinutes = readAutoLockPreference();
+    this.autoLockTimer = null;
+    this.onActivity = () => { if (this.autoLockTimer) this.scheduleAutoLock(); };
     this.onRetryAttachments = () => { if (this.syncCoordinator) void this.syncCoordinator.syncNow(); else void this.configureSyncCoordinator(); };
     this.onChangeResponsibility = (event) => this.handleChangeResponsibility(event);
     this.onReplenishStaple = (event) => this.handleReplenishStaple(event);
     this.onOffline = () => {
-      this.stateNotice.textContent =
-        "Offline — saved changes stay on this device. Household sync needs a connection.";
+      this.stateNotice.textContent = this.syncCoordinator || this.householdStatus?.identity
+        ? "You're offline. Your changes are saved on this device and will sync when you're connected."
+        : "You're offline. Your changes are saved on this device.";
       this.stateNotice.hidden = false;
     };
     this.onOnline = () => {
       this.stateNotice.hidden = true;
       if (!this.vault || this.vault.locked || !this.store) return;
-      this.setStatus("Connection available.");
+      this.setStatus(this.syncCoordinator ? "Back online. Syncing…" : "Back online.");
       if (this.syncCoordinator) void this.syncCoordinator.syncNow();
       else void this.configureSyncCoordinator();
     };
@@ -227,7 +264,12 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:add-item", this.onAddItem);
     this.addEventListener("kin:add-attachment", this.onAddAttachment);
     this.addEventListener("kin:open-attachment", this.onOpenAttachment);
+    this.addEventListener("kin:view-attachment", this.onViewAttachment);
     this.addEventListener("kin:remove-attachment", this.onRemoveAttachment);
+    this.addEventListener("kin:household-status", this.onHouseholdStatus);
+    this.addEventListener("kin:security-changed", this.onSecurityChanged);
+    document.addEventListener("pointerdown", this.onActivity, { passive: true });
+    document.addEventListener("keydown", this.onActivity, { passive: true });
     this.addEventListener("kin:retry-attachments", this.onRetryAttachments);
     this.addEventListener("kin:change-responsibility", this.onChangeResponsibility);
     this.addEventListener("kin:replenish-staple", this.onReplenishStaple);
@@ -447,11 +489,209 @@ class KinApp extends HTMLElement {
     this.updateNotice.hidden = true;
     this.prepend(this.updateNotice);
     this.retryButton.addEventListener("click", () => this.retryAction?.());
+    this.viewer = this.buildAttachmentViewer();
+    this.append(this.viewer);
     this.showPageFromLocation();
   }
 
   showUpdateNotice() {
     if (this.updateNotice) this.updateNotice.hidden = false;
+  }
+
+  buildAttachmentViewer() {
+    const dialog = document.createElement("dialog");
+    dialog.className = "attachment-viewer";
+    dialog.setAttribute("aria-labelledby", "attachment-viewer-title");
+    const bar = document.createElement("div");
+    bar.className = "attachment-viewer-bar";
+    const title = document.createElement("h2");
+    title.id = "attachment-viewer-title";
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "attachment-viewer-close";
+    close.textContent = "Close";
+    close.addEventListener("click", () => dialog.close());
+    bar.append(title, close);
+    const figure = document.createElement("div");
+    figure.className = "attachment-viewer-figure";
+    const image = document.createElement("img");
+    image.alt = "";
+    image.decoding = "async";
+    figure.append(image);
+    const actions = document.createElement("div");
+    actions.className = "attachment-viewer-actions";
+    const save = document.createElement("button");
+    save.type = "button";
+    save.textContent = "Save file";
+    save.addEventListener("click", () => {
+      if (!this.viewerDetail) return;
+      void this.handleOpenAttachment({ detail: { ...this.viewerDetail, download: true } });
+    });
+    actions.append(save);
+    dialog.append(bar, figure, actions);
+    dialog.addEventListener("close", () => this.releaseViewer());
+    dialog.addEventListener("click", (event) => { if (event.target === dialog) dialog.close(); });
+    dialog.viewerTitle = title;
+    dialog.viewerImage = image;
+    return dialog;
+  }
+
+  releaseViewer() {
+    if (this.viewerUrl) URL.revokeObjectURL(this.viewerUrl);
+    this.viewerUrl = null;
+    this.viewerDetail = null;
+    if (this.viewer) {
+      this.viewer.viewerImage.removeAttribute("src");
+      this.viewer.viewerTitle.textContent = "";
+    }
+    const opener = this.viewerOpener;
+    this.viewerOpener = null;
+    if (opener?.isConnected) opener.focus();
+  }
+
+  closeViewer() {
+    if (this.viewer?.open) this.viewer.close();
+    else this.releaseViewer();
+  }
+
+  // The onboarding card on Today explains the next step until the device has a
+  // household and a passkey; every action it offers is the ordinary flow.
+  renderOnboarding() {
+    const card = this.onboarding;
+    if (!card || !this.vault || this.vault.locked) return;
+    card.replaceChildren();
+    const status = this.householdStatus;
+    const passkeys = this.security?.passkeyWrappers?.length ?? 0;
+    const heading = document.createElement("h2");
+    const goTo = (intent) => {
+      history.pushState(null, "", "#more");
+      this.showPageFromLocation();
+      this.household?.startIntent?.(intent);
+    };
+    if (status && !status.identity && !status.claimState && status.lifecycle !== "deleted" && status.lifecycle !== "deletion_pending") {
+      heading.textContent = "Get started";
+      const intro = document.createElement("p");
+      intro.textContent = "This device is protected. Next, connect it to your household so it can sync with other people and devices.";
+      const choices = document.createElement("div");
+      choices.className = "household-choices";
+      for (const [label, intent, className] of [
+        ["Create a household", "create", "primary-action"],
+        ["Join an existing household", "join", ""],
+        ["Add this device to my existing membership", "device", ""],
+      ]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = label;
+        if (className) button.className = className;
+        button.addEventListener("click", () => goTo(intent));
+        choices.append(button);
+      }
+      const note = document.createElement("p");
+      note.className = "section-hint";
+      note.textContent = "You can keep using Kin on this device meanwhile; everything stays encrypted here.";
+      card.append(heading, intro, choices, note);
+      card.hidden = false;
+      return;
+    }
+    if (status?.claimState === "Claimed" || status?.claimState === "Confirmed") {
+      heading.textContent = status.claimState === "Confirmed" ? "Almost there" : "Waiting for approval";
+      const intro = document.createElement("p");
+      intro.textContent = status.claimState === "Confirmed"
+        ? "Your device was approved. Open More → Household to compare the device key and finish activating this device."
+        : "This device needs approval from an existing household member. Keep Kin open on both devices and compare the device keys together.";
+      const open = document.createElement("button");
+      open.type = "button";
+      open.textContent = "Open household";
+      open.addEventListener("click", () => { history.pushState(null, "", "#more"); this.showPageFromLocation(); this.household?.scrollIntoView?.({ block: "start" }); });
+      card.append(heading, intro, open);
+      card.hidden = false;
+      return;
+    }
+    if (status?.identity && passkeys === 0 && passkeyUnlockSupported() && !this.passkeyPromptDismissed) {
+      heading.textContent = "Unlock faster next time";
+      const intro = document.createElement("p");
+      intro.textContent = "Turn on passkey unlock so your face, fingerprint, or screen lock opens Kin on this device. Your recovery key stays as a backup.";
+      const turnOn = document.createElement("button");
+      turnOn.type = "button";
+      turnOn.className = "primary-action";
+      turnOn.textContent = "Turn on passkey unlock";
+      turnOn.addEventListener("click", async () => {
+        turnOn.disabled = true;
+        try {
+          await this.security.run(() => this.security.addPasskey());
+          if (this.security.alert.textContent) this.showAlert(this.security.alert.textContent);
+          else this.setStatus("Passkey unlock is on for this device.");
+        } finally { this.renderOnboarding(); }
+      });
+      const later = document.createElement("button");
+      later.type = "button";
+      later.textContent = "Not now";
+      later.addEventListener("click", () => { this.passkeyPromptDismissed = true; this.renderOnboarding(); });
+      card.append(heading, intro, turnOn, later);
+      card.hidden = false;
+      return;
+    }
+    card.hidden = true;
+  }
+
+  setAutoLockMinutes(minutes) {
+    this.autoLockMinutes = [0, 5, 15, 60].includes(minutes) ? minutes : 0;
+    try { localStorage.setItem(AUTO_LOCK_KEY, String(this.autoLockMinutes)); } catch { /* Preference only; lock-on-close still applies. */ }
+    this.scheduleAutoLock();
+  }
+
+  scheduleAutoLock() {
+    clearTimeout(this.autoLockTimer);
+    this.autoLockTimer = null;
+    if (!this.vault || this.vault.locked || !this.autoLockMinutes) return;
+    const vault = this.vault;
+    const generation = this.securityGeneration;
+    this.autoLockTimer = setTimeout(() => {
+      this.autoLockTimer = null;
+      if (vault !== this.vault || generation !== this.securityGeneration || vault.locked) return;
+      this.lockHousehold();
+      this.setStatus("Kin locked after inactivity. Unlock to continue.");
+    }, this.autoLockMinutes * 60_000);
+  }
+
+  // Synchronous on purpose: a peek must return the cached entry itself, not a
+  // promise, so tiles can paint immediately after a re-render.
+  provideAttachmentPreview(record, { peek = false } = {}) {
+    if (!this.attachmentPreviews || !isImageAttachment(record)) return null;
+    if (peek) return this.attachmentPreviews.peek(record.attachmentId);
+    return this.attachmentPreviews.get(record);
+  }
+
+  async loadAttachmentForView(detail, session) {
+    const binding = this.state?.attachments?.find((item) => item.attachmentId === detail.attachmentId && !item.removed);
+    if (!binding || binding.parentKind !== detail.parentKind || binding.parentId !== detail.parentId) throw new Error(ATTACHMENT_OPEN_ERROR);
+    const syncState = await session.store.getSyncState();
+    const opened = await openAttachment({ attachmentId: detail.attachmentId, binding, identity: this.syncCoordinator?.identity ?? (syncState ? { householdId: syncState.householdId } : null), store: session.store, keyStore: this.syncCoordinator?.keyStore });
+    this.assertCurrentSession(session);
+    return opened;
+  }
+
+  async handleViewAttachment(event) {
+    if (!this.store || !this.viewer) { this.showAlert(ATTACHMENT_OPEN_ERROR); return; }
+    const session = this.captureSession();
+    const detail = event.detail;
+    try {
+      const opened = await this.loadAttachmentForView(detail, session);
+      if (!isImageAttachment({ type: opened.type, name: opened.name })) {
+        return this.handleOpenAttachment({ detail });
+      }
+      this.closeViewer();
+      this.viewerUrl = URL.createObjectURL(opened.blob);
+      this.viewerDetail = { attachmentId: detail.attachmentId, parentKind: detail.parentKind, parentId: detail.parentId };
+      this.viewerOpener = detail.opener ?? (this.contains(document.activeElement) ? document.activeElement : null);
+      this.viewer.viewerTitle.textContent = opened.name;
+      this.viewer.viewerImage.alt = opened.name;
+      this.viewer.viewerImage.src = this.viewerUrl;
+      this.viewer.showModal();
+      this.viewer.querySelector(".attachment-viewer-close")?.focus();
+    } catch (error) {
+      if (error.code !== "locked" && this.isCurrentSession(session)) this.showAlert(ATTACHMENT_OPEN_ERROR);
+    }
   }
 
   buildViews(main) {
@@ -479,9 +719,13 @@ class KinApp extends HTMLElement {
     const today = page("today", "A little less to carry.", "A place for what needs doing, remembering, or a little conversation.");
     this.catchUp.setAttribute("aria-label", "Catch up since you last looked");
     this.today.display = "today";
-    today.append(this.catchUp, this.compose, this.today);
+    this.today.previews = this.previewProvider;
+    this.onboarding = document.createElement("section");
+    this.onboarding.className = "today-section onboarding-card";
+    this.onboarding.hidden = true;
+    today.append(this.catchUp, this.onboarding, this.compose, this.today);
 
-    const lists = page("lists", "Lists", "Capture first. Sort later.");
+    const lists = page("lists", "Lists", "Needs, Shopping, and Staples. Add to a list right where it lives.");
     this.calendarExportButton = document.createElement("button");
     this.calendarExportButton.type = "button";
     this.calendarExportButton.className = "calendar-export-button";
@@ -502,6 +746,7 @@ class KinApp extends HTMLElement {
     this.needs.display = "need";
     this.shopping.display = "shopping";
     this.staples.display = "staple";
+    for (const list of [this.needs, this.shopping, this.staples]) list.previews = this.previewProvider;
     lists.append(this.needs, this.shopping, this.staples);
 
     const search = page("search", "Search", "Find household context without sending your search outside this device.");
@@ -598,6 +843,7 @@ class KinApp extends HTMLElement {
     more.append(this.moreSecurity);
     more.insertBefore(this.areas, this.moreSecurity);
     this.notes = document.createElement("kin-notes");
+    this.notes.previews = this.previewProvider;
     more.insertBefore(this.notes, this.moreSecurity);
 
     for (const section of [today, lists, search, routines, handoff, more]) {
@@ -653,7 +899,12 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:add-item", this.onAddItem);
     this.removeEventListener("kin:add-attachment", this.onAddAttachment);
     this.removeEventListener("kin:open-attachment", this.onOpenAttachment);
+    this.removeEventListener("kin:view-attachment", this.onViewAttachment);
     this.removeEventListener("kin:remove-attachment", this.onRemoveAttachment);
+    this.removeEventListener("kin:household-status", this.onHouseholdStatus);
+    this.removeEventListener("kin:security-changed", this.onSecurityChanged);
+    document.removeEventListener("pointerdown", this.onActivity);
+    document.removeEventListener("keydown", this.onActivity);
     this.removeEventListener("kin:retry-attachments", this.onRetryAttachments);
     this.removeEventListener("kin:change-responsibility", this.onChangeResponsibility);
     this.removeEventListener("kin:replenish-staple", this.onReplenishStaple);
@@ -912,11 +1163,7 @@ class KinApp extends HTMLElement {
   handleSyncState(value) {
     if (!this.vault || this.vault.locked) return;
     if (value.state === "paused") {
-      const attention = value.code === "device_not_trusted"
-        ? "This device is no longer trusted for household sync. Its saved information remains on this device."
-        : value.code === "membership_removed"
-          ? "This device no longer has access to household sync. Its saved information remains on this device."
-          : value.message;
+      const attention = SYNC_PAUSE_MESSAGES[value.code] ?? value.message;
       if (attention) {
         this.stateNotice.textContent = attention;
         this.stateNotice.hidden = false;
@@ -963,6 +1210,9 @@ class KinApp extends HTMLElement {
         : {}),
     });
     const sourceList = submittedDraft.sourceStapleId ? this.staples : null;
+    // The capture form that submitted owns clearing and focus; the Today form
+    // is the default for retries that carry no composer.
+    const composer = event.detail.composer?.isConnected ? event.detail.composer : this.compose;
     this.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
@@ -977,14 +1227,15 @@ class KinApp extends HTMLElement {
       await this.appendCommand(command);
       this.assertCurrentSession(session);
       this.renderState();
-      if (!sourceList) this.compose.clearIfMatches(submittedDraft);
-      this.setStatus(sourceList ? "Added to Shopping." : "Added.");
+      if (!sourceList) composer.clearIfMatches(submittedDraft);
+      const destination = CLASSIFICATION_LABELS[submittedDraft.classification] ?? "your lists";
+      this.setStatus(`Added to ${destination}.${this.offlineSyncSuffix()}`);
       this.broadcastEventChange();
       restoreComposeFocus = !sourceList;
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
       this.showAlert(error.userMessage ?? SAVE_ERROR, () =>
-        this.handleAddItem({ detail: submittedDraft }),
+        this.handleAddItem({ detail: { ...submittedDraft, composer } }),
       );
       this.setStatus("");
       restoreComposeFocus = !sourceList;
@@ -997,11 +1248,17 @@ class KinApp extends HTMLElement {
           );
           (focusTarget ?? sourceList.querySelector(".today-section h2"))?.focus();
         } else if (restoreComposeFocus) {
-          this.compose.focusInput();
+          composer.focusInput();
         }
         this.flushPeerRefresh();
       }
     }
+  }
+
+  // Only promise a later sync when this device actually syncs; otherwise a
+  // change is simply saved here.
+  offlineSyncSuffix() {
+    return navigator.onLine === false && this.syncCoordinator ? " It will sync when you're connected." : "";
   }
 
   async handleAddHandoff(event) {
@@ -1461,33 +1718,33 @@ class KinApp extends HTMLElement {
       this.assertCurrentSession(session);
       this.attachmentRows = [...this.attachmentRows.filter((row) => row.attachmentId !== saved.attachmentId), { ...saved, parentKind, parentId }];
       this.renderState(); this.broadcastEventChange();
-      if (status) status.textContent = `${saved.name} is saved on this device. Waiting to sync.`;
+      if (status) status.textContent = this.syncCoordinator
+        ? `${saved.name} is saved on this device and will sync to your household.`
+        : `${saved.name} is saved on this device.`;
       void this.syncCoordinator?.syncNow();
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
       this.showAlert(error.userMessage ?? error.message ?? "Kin could not save this attachment on this device.");
-      if (status) status.textContent = "Kin couldn't save this attachment.";
+      if (status) status.textContent = "Kin couldn't save this attachment. Nothing else was changed.";
     } finally { if (this.isCurrentSession(session)) this.setBusy(false); }
   }
 
   async handleOpenAttachment(event) {
-    if (!this.store) { this.showAlert("This attachment is unavailable on this device."); return; }
+    if (!this.store) { this.showAlert(ATTACHMENT_OPEN_ERROR); return; }
     const session = this.captureSession();
     const detail = event.detail;
     const binding = this.state?.attachments?.find((item) => item.attachmentId === detail.attachmentId && !item.removed);
-    if (!binding || binding.parentKind !== detail.parentKind || binding.parentId !== detail.parentId) { this.showAlert("This attachment is unavailable."); return; }
+    if (!binding || binding.parentKind !== detail.parentKind || binding.parentId !== detail.parentId) { this.showAlert(ATTACHMENT_OPEN_ERROR); return; }
     const tab = detail.download ? null : window.open("about:blank", "_blank");
     if (tab) tab.opener = null;
     try {
-      const syncState = await session.store.getSyncState();
-      const opened = await openAttachment({ attachmentId: detail.attachmentId, binding, identity: this.syncCoordinator?.identity ?? (syncState ? { householdId: syncState.householdId } : null), store: session.store, keyStore: this.syncCoordinator?.keyStore });
-      this.assertCurrentSession(session);
+      const opened = await this.loadAttachmentForView(detail, session);
       const url = URL.createObjectURL(opened.blob);
       if (detail.download) { const link = document.createElement("a"); link.href = url; link.download = opened.name; link.hidden = true; document.body.append(link); link.click(); link.remove(); }
       else if (tab) tab.location.href = url;
       else { const link = document.createElement("a"); link.href = url; link.target = "_blank"; link.rel = "noopener"; link.click(); }
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (error) { tab?.close(); if (error.code !== "locked") this.showAlert("This attachment is unavailable on this device."); }
+    } catch (error) { tab?.close(); if (error.code !== "locked") this.showAlert(ATTACHMENT_OPEN_ERROR); }
   }
 
   async handleRemoveAttachment(event) {
@@ -1496,6 +1753,8 @@ class KinApp extends HTMLElement {
     try {
       await removeAttachment({ attachmentId: event.detail.attachmentId, append: (command) => this.appendCommand(command), store: session.store });
       this.assertCurrentSession(session);
+      this.attachmentPreviews?.forget(event.detail.attachmentId);
+      if (this.viewerDetail?.attachmentId === event.detail.attachmentId) this.closeViewer();
       this.attachmentRows = this.attachmentRows.filter((row) => row.attachmentId !== event.detail.attachmentId);
       this.renderState(); this.broadcastEventChange(); void this.syncCoordinator?.syncNow();
     } catch (error) { if (error.code !== "locked" && this.isCurrentSession(session)) this.showAlert(error.userMessage ?? SAVE_ERROR); }
@@ -2048,6 +2307,7 @@ class KinApp extends HTMLElement {
     this.updateCalendarExportButton();
     this.main.setAttribute("aria-busy", String(isBusy));
     this.compose.disabled = isBusy || !this.store;
+    for (const button of this.onboarding?.querySelectorAll("button") ?? []) button.disabled = isBusy;
     this.today.disabled = isBusy || !this.store;
     this.needs.disabled = isBusy || !this.store;
     this.shopping.disabled = isBusy || !this.store;
@@ -2100,12 +2360,23 @@ class KinApp extends HTMLElement {
     this.removeLockListener?.();
     this.removeLockListener = vault.onLock(() => this.lockHousehold(false));
     const generation = this.securityGeneration;
+    this.attachmentPreviews?.clear();
+    this.attachmentPreviews = new AttachmentPreviewCache((record) => this.loadPreviewBlob(record));
     await this.initialize();
     this.assertCurrentSession({ vault, generation });
     vault.assertUnlocked();
     if (!this.store)
       throw new Error("Kin could not verify the household store.");
+    this.scheduleAutoLock();
+    this.renderOnboarding();
     this.main.focus();
+  }
+
+  async loadPreviewBlob(record) {
+    const session = this.captureSession();
+    this.assertCurrentSession(session);
+    const opened = await this.loadAttachmentForView(record, session);
+    return opened.blob;
   }
 
   lockHousehold(broadcast = true, { preserveSecurityOperation = false } = {}) {
@@ -2135,6 +2406,14 @@ class KinApp extends HTMLElement {
     const vault = this.vault ?? getActiveVault();
     this.vault = null;
     vault?.lock();
+    clearTimeout(this.autoLockTimer);
+    this.autoLockTimer = null;
+    this.closeViewer();
+    this.attachmentPreviews?.clear();
+    this.attachmentPreviews = null;
+    this.householdStatus = null;
+    this.passkeyPromptDismissed = false;
+    if (this.onboarding) { this.onboarding.hidden = true; this.onboarding.replaceChildren(); }
     this.syncCoordinator?.stop();
     this.syncCoordinator = null;
     this.store?.close();

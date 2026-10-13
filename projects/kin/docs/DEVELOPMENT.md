@@ -66,9 +66,26 @@ The current implementation has been exercised on Windows with Node 22.12 using i
 
 The application requires WebAssembly, ES modules, Custom Elements, IndexedDB, Web Locks, `BroadcastChannel`, `CustomEvent`, text encoders/decoders and Web Crypto. WebAuthn is used for server identity and pairing. Credential-bound local unlock additionally requires actual PRF output; the independently held recovery key remains the explicit fallback and works offline. Web Locks are required for safe v0.9.3 migration. The service worker caches only an allowlisted static shell. Browser validation is recorded per release and does not certify the full support target.
 
+## Application shell updates while developing
+
+The service worker caches the complete static shell under a name derived from
+the release in its registration URL and never re-stages an existing cache
+name. The Kin server therefore serves `index.html` with the release plus
+semver build metadata, `0.41.0+<12-hex fingerprint>`, where the fingerprint
+hashes the path, size and modification time of every served file under
+`web/` (test files excluded). Any edit to a shell file yields a new cache
+name, so an open browser is offered "A new Kin version is ready" on its next
+load instead of keeping a frozen mix of old and new modules. The static
+`index.html` keeps the plain release for version checks, and the test-suite
+static servers (which serve the raw file) keep the plain cache name. Accept
+the update prompt after changing shell files; if a browser was captured on a
+stale cache before this fingerprint existed, unregister its service worker
+once (DevTools → Application → Service Workers) and reload. Never "clear site
+data" for the origin, which deletes the local encrypted household database.
+
 ## Development data
 
-Use synthetic household text only. Never copy private family messages, health details, credentials, or real household history into test fixtures, screenshots, bug reports, or logs. Local test data can be removed through the browser's site-data controls for the local origin. Kin does not include a reset command that could accidentally remove household data.
+Use synthetic household text only. Never copy private family messages, health details, credentials, or real household history into test fixtures, screenshots, bug reports, or logs. Local test data can be removed through the browser's site-data controls for the local origin. The service database can be emptied with the guarded `clear` command below; it cannot run by accident because it requires an explicit flag and a stopped service, and it preserves a verified copy first.
 
 The service database defaults to `projects/kin/.kin-data/kin.sqlite`, outside
 the static web root. `KIN_DATA_DIR` or `KIN_DATABASE_PATH` can select another
@@ -103,7 +120,24 @@ Backups are sensitive and must be stored outside the static web root:
 ```powershell
 npm run backup -- C:\private\kin-backups\kin.sqlite
 npm run restore -- C:\private\kin-backups\kin.sqlite --acknowledge-deletion-history
+npm run clear
 ```
+
+The `clear` npm script already passes `--delete-all-households`; when calling
+`node server/admin.mjs clear` directly, pass that flag yourself.
+
+`clear` removes every household and all household-scoped rows (members,
+credentials, trusted devices, relay ciphertext, attachments, provisioning
+grants, lifecycle tombstones, security audit) from the configured database,
+then checkpoints and vacuums it so deleted rows do not linger. Schema and
+migration metadata are kept, so the service starts again empty. It takes the
+maintenance and service locks, so it refuses while Kin is running, and it
+first writes a verified `<database-path>.pre-clear-...` copy that `restore`
+can bring back. It cannot erase encrypted copies in browsers, exported
+archives, or other backups; devices that still hold data need fresh household
+approval before they can sync again. Use it for development and test
+databases; for a real household use in-app deletion, which keeps the 30-day
+cancellation window and anti-resurrection tombstones.
 
 Restore requires an explicit acknowledgement that the backup may predate
 household deletions. It requires the service to be stopped and refuses restore

@@ -389,7 +389,8 @@ Keep these contracts as post-October proposals, outside the daily commitment. Pr
 
 | Proposed release / contract | Follow-up purpose |
 |---|---|
-| [`v0.41.x`](releases/V0.41.0.md) | **Backup Safety & Disaster Drills** — Turn recovery claims into routinely tested product behavior. |
+| [`v0.41.x`](releases/V0.41.0.md) | **Mobile Experience & Passkey-First UX** — Implementation candidate: passkey-first unlock with recovery as the fallback, clear create/join/add-device onboarding, context-sensitive capture, attachment previews, and phone-first item rows. Authorized after real-world mobile testing; not a published release. |
+| [Backup Safety & Disaster Drills](releases/BACKUP-SAFETY-DRILLS-PROPOSAL.md) | Deferred proposal (formerly numbered v0.41.0) — Turn recovery claims into routinely tested product behavior. Renumber after the feedback gate. |
 | [`v0.42.x`](releases/V0.42.0.md) | **Cross-Browser & Mobile Hardening** — Broaden confidence beyond the primary desktop development environment. |
 | [`v0.43.x`](releases/V0.43.0.md) | **Performance & Scale Closure** — Make the full feature set responsive within explicit household-scale bounds. |
 | [`v0.44.x`](releases/V0.44.0.md) | **Release-Candidate Stabilization** — Freeze feature scope and remove known correctness, accessibility, migration, and documentation gaps. |

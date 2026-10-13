@@ -1,6 +1,25 @@
 # Testing Contracts
 
-## Reproducible verification (v0.40.3 candidate)
+## v0.41.0 Mobile Experience & Passkey-First UX coverage
+
+The browser regression runs `scripts/mobile-ux-regression.mjs` inside the
+page after the planning-date suite. It covers the Today capture default and
+sticky destination, per-list quick-add on Lists, the item `Details`
+disclosure, the Today "Get started" card and household chooser, plain-language
+sync/offline/attachment messages, the security settings panel (passkey state,
+inactivity lock preference, no secrets in web storage), and the recovery-first
+lock screen. The passkey suite adds passkey-first lock-screen assertions and
+exercises the real attachment capture path: lazy thumbnail decode only after
+the tile scrolls into view, the in-app viewer, object-URL revocation on close
+and lock, document tiles, and the plain failure message. The security UI
+suite checks the welcome and save-key steps and a presentation-only synthetic
+PRF wrapper. `web/attachments/attachment-preview.test.mjs` and the new
+`passkey-unlock` cases cover the preview cache and the offline/unenrolled
+error paths. Planning-date and Area tests expand `Details` before using the
+controls, and a 320px Today layout check asserts no overflow, 48px targets,
+fixed bottom navigation, and collapsed details.
+
+## Reproducible verification (v0.41.0 candidate)
 
 From either the repository root or `projects/kin/`, run `npm run verify
 --prefix projects/kin` at the repository root or `npm run verify` inside Kin.
