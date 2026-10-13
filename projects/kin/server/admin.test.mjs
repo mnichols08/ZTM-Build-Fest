@@ -69,7 +69,6 @@ test("admin permits verified backup and restore outside the web root", () => {
     rmSync(directory, { recursive: true, force: true });
   }
 });
-
 test("admin explains why restore over pending deletion is refused", async () => {
   const directory = mkdtempSync(join(tmpdir(), "kin-admin-pending-"));
   const databasePath = join(directory, "kin.sqlite");
@@ -223,60 +222,6 @@ test("static routes cannot serve durable state through traversal or symlink alia
     releaseMaintenanceLock?.();
     app.store.close();
     rmSync(linkDirectory, { recursive: true, force: true });
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
-test("admin clear removes every household only with the explicit flag and a stopped service", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "kin-admin-clear-"));
-  const databasePath = join(directory, "kin.sqlite");
-  const store = new DurableStore(databasePath);
-  let identity;
-  try {
-    const service = new PairingService({ store });
-    identity = service.bootstrap({
-      credential: { id: "clear-admin-passkey", publicKey: "clear-admin-key", algorithm: -7 },
-      deviceLabel: "Clear fixture",
-    });
-    // Running service: the clear command must refuse while the service lock is held.
-    const refusedRunning = admin(databasePath, "clear", "--delete-all-households");
-    assert.ifError(refusedRunning.error);
-    assert.equal(refusedRunning.status, 1);
-    assert.match(refusedRunning.stderr, /lock already exists/);
-    assert.equal(store.lifecycleInfo(identity.householdId).state, "active");
-  } finally {
-    store.close();
-  }
-  try {
-    const refusedFlag = admin(databasePath, "clear");
-    assert.ifError(refusedFlag.error);
-    assert.equal(refusedFlag.status, 1);
-    assert.match(refusedFlag.stderr, /--delete-all-households/);
-    const cleared = admin(databasePath, "clear", "--delete-all-households");
-    assert.ifError(cleared.error);
-    assert.equal(cleared.status, 0, cleared.stderr);
-    assert.match(cleared.stdout, /Removed 1 household\(s\), 1 member\(s\), 1 device\(s\)/);
-    const preserved = /preserved at (.+?);/.exec(cleared.stdout)?.[1];
-    assert.ok(preserved && existsSync(preserved), "a pre-clear copy is preserved");
-    const verification = new DurableStore(databasePath);
-    try {
-      assert.equal(verification.validate(), true);
-      for (const table of ["households", "members", "credentials", "devices", "sync_households", "sync_events", "sync_attachments", "security_audit"])
-        assert.equal(verification.db.prepare(`SELECT COUNT(*) AS total FROM ${table}`).get().total, 0, `${table} is empty`);
-      assert.equal(verification.db.prepare("SELECT COUNT(*) AS total FROM server_migrations").get().total > 0, true, "migrations are kept");
-      assert.equal(verification.loadIdentity().households.size, 0);
-    } finally {
-      verification.close();
-    }
-    const copy = new DurableStore(preserved, { acquireProcessLock: false, readonly: true });
-    try {
-      assert.equal(copy.lifecycleInfo(identity.householdId).state, "active", "the preserved copy still holds the household");
-    } finally {
-      copy.close();
-    }
-    assert.equal(existsSync(`${databasePath}.service.lock`), false, "clear releases the service lock");
-    assert.equal(existsSync(`${databasePath}.maintenance.lock`), false, "clear releases the maintenance lock");
-  } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 });

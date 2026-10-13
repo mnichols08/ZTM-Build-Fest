@@ -152,10 +152,7 @@ service is stopped using `npm run restore -- <backup-file>`; restore validates
 the backup and preserves the replaced database and WAL sidecars with a
 `.pre-restore-...` suffix. A stale service lock after a crash is not removed
 automatically: verify the process is stopped before deleting
-`<database-path>.service.lock`. `npm run clear` (which passes
-`--delete-all-households`) empties the service database of every household while the service is stopped,
-after preserving a verified `.pre-clear-...` copy; it is meant for development
-databases and cannot erase browser copies or exports. Backups and preserved database copies contain
+`<database-path>.service.lock`. Backups and preserved database copies contain
 sensitive identity/routing metadata and encrypted envelopes; stale restores can
 roll back revocations or key epochs. See [V0.11.0](docs/V0.11.0.md) for the
 full operational and privacy boundaries.

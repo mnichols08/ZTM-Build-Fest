@@ -187,21 +187,6 @@ function validateEventRow(row, householdId) {
   };
 }
 
-// Deletion order respects foreign keys; `server_migrations` is never cleared.
-const HOUSEHOLD_SCOPED_TABLES = [
-  "sync_attachments",
-  "provisioning_grants",
-  "sync_events",
-  "sync_bindings",
-  "sync_device_sequences",
-  "sync_households",
-  "security_audit",
-  "devices",
-  "credentials",
-  "members",
-  "households",
-];
-
 export class DurableStore {
   static async createBackup(databasePath, destination) {
     const source = resolve(databasePath);
@@ -356,68 +341,6 @@ export class DurableStore {
               }
             }
           }
-        }
-      }
-    }
-  }
-
-  // Removes every household and all household-scoped rows (members,
-  // credentials, devices, relay ciphertext, attachments, grants, lifecycle
-  // tombstones, audit). The schema and migration metadata stay intact, so the
-  // service starts again on an empty database. Requires the explicit flag,
-  // requires the service to be stopped (service lock), and preserves a
-  // verified copy of the database first so the operation is reversible by
-  // `restore`. It cannot erase browser copies, exports, or backups elsewhere.
-  static async clearAllHouseholds(
-    databasePath,
-    { acknowledgeDeleteAllHouseholds = false } = {},
-  ) {
-    if (!acknowledgeDeleteAllHouseholds)
-      throw new DurableStoreError(
-        "Clearing every household requires the explicit --delete-all-households flag.",
-      );
-    const target = resolve(databasePath);
-    if (!exists(target) || !statSync(target).isFile())
-      throw new DurableStoreError("The Kin database does not exist.");
-    const releaseMaintenanceLock = acquireDatabaseMaintenanceLock(target, "clear");
-    let releaseServiceLock;
-    let store;
-    const preserved = `${target}.pre-clear-${Date.now()}-${randomBytes(4).toString("hex")}`;
-    try {
-      releaseServiceLock = acquireDatabaseProcessLock(target, { operation: "clear" });
-      store = new DurableStore(target, { acquireProcessLock: false });
-      await store.backup(preserved, { maintenanceLockHeld: true });
-      const count = (table) =>
-        store.db.prepare(`SELECT COUNT(*) AS total FROM ${table}`).get().total;
-      const removed = store.transaction(() => {
-        const totals = {
-          households: count("households"),
-          members: count("members"),
-          devices: count("devices"),
-          events: count("sync_events"),
-          attachments: count("sync_attachments"),
-        };
-        for (const table of HOUSEHOLD_SCOPED_TABLES)
-          store.db.prepare(`DELETE FROM ${table}`).run();
-        return totals;
-      });
-      // Deleted rows must not linger in free pages or the WAL.
-      sqlitePragma(store.db, "wal_checkpoint(TRUNCATE)");
-      store.db.exec("VACUUM");
-      if (!store.validate())
-        throw new DurableStoreError("The cleared Kin database failed validation.");
-      return { databasePath: target, preservedDatabasePath: preserved, removed };
-    } catch (error) {
-      if (error instanceof DurableStoreError) throw error;
-      throw new DurableStoreError("Kin could not clear its households.", { cause: error });
-    } finally {
-      try {
-        store?.close();
-      } finally {
-        try {
-          releaseServiceLock?.();
-        } finally {
-          releaseMaintenanceLock();
         }
       }
     }
