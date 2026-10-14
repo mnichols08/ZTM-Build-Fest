@@ -30,6 +30,35 @@ unrelated open editor draft, forced colours and reduced motion.
 one section per item, counts, all-done, empty projections, month/year and DST
 civil-date boundaries, and deterministic ordering.
 
+## Bulk actions and undo coverage
+
+`web/bulk-actions.test.mjs` covers eligibility, planning (skipped, archived,
+staple, and unknown ids), selection reconciliation, undo conflict rules, and
+outcome wording. The `command_tests.rs` test
+`item_completion_and_reopening_must_change_status` covers the Rust
+precondition and the idempotent replay of historical duplicates.
+
+`scripts/bulk-actions-regression.mjs` runs inside `browser-regression.mjs`
+after the keyboard suite, through the real store and WASM. It covers:
+
+- Keyboard-only selection with Enter and Space on native checkboxes, Select
+  all, Clear selection, and focus continuity.
+- Bulk complete by keyboard with exact event counts, and the polite outcome.
+- Undo appending new events, and repeated undo.
+- Rapid repeats completing each item once.
+- Partial failure with retry and carried undo, and partial undo with retry.
+- Undo leaving an item alone after a change written only to the encrypted
+  log, plus Rust rejecting a stale completion with code 4.
+- Mixed selections, Select all including open completed items, and
+  ineligible ids never reaching the store.
+- Remote archive reconciliation.
+- Quick add, the palette, and Details from selection mode.
+- Navigating mid-batch, and Shopping.
+- A 25-item performance sample (`METRIC bulk-complete`).
+- 320px, forced colours, and reduced motion.
+- Offline completion, reload persistence, and no Web Storage leakage.
+- Lock during a batch, and refusal of an undo from a previous session.
+
 ## Keyboard shortcuts and command palette coverage
 
 `web/keyboard-commands.test.mjs` covers the command allowlist against the

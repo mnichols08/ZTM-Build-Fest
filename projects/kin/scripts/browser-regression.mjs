@@ -21,6 +21,7 @@ import { syncMotionRegressions, workspaceUxRegressions, workspaceViewportRegress
 import { quickAddRegressions } from "./quick-add-regression.mjs";
 import { todayActionableRegressions, todayLifecycleRegressions } from "./today-actionable-regression.mjs";
 import { keyboardCommandRegressions } from "./keyboard-commands-regression.mjs";
+import { bulkActionRegressions } from "./bulk-actions-regression.mjs";
 import {
   handoffRegressions,
   handoffPeerRegressions,
@@ -1357,6 +1358,7 @@ try {
     typeof entry.url === "string" && new URL(entry.url).origin === origin && new URL(entry.url).pathname === "/api/status";
   problems.push(...problems.splice(offlineWindowStart).filter((entry) => !offlineStatusProbe(entry)));
   console.log(await keyboardCommandRegressions(first, { visit: (id) => visit(first, id), ready }));
+  console.log(await bulkActionRegressions(first, { visit: (id) => visit(first, id), ready }));
   await visit(first, "routines");
   console.log(await first.evaluate(`(${routineRegressions.toString()})()`));
   const playbookResult = await first.evaluate(async () => {

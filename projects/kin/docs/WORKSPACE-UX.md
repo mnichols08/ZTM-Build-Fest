@@ -359,6 +359,61 @@ browser." The underlying `LocalReminders` model is unchanged.
   is reconnected. The palette persists nothing, and the visible Quick add
   and Search controls advertise their keys through `aria-keyshortcuts`.
 
+### 5.4 Bulk complete, reopen, and undo
+
+- **Where.** To do and Shopping each have a **Select** button. Staples are
+  replenished rather than completed, so they have none. Today keeps its
+  one-click row completion and has no selection mode.
+- **Selection.** Selection mode replaces each row's completion control with a
+  native checkbox inside a 48px label named "Select <item>". Details and Add
+  photo stay available, so normal navigation is unchanged. The ids live only
+  in that list element, keyed by canonical Item id. They are pruned whenever
+  the projection changes, so an item that is archived, removed, or moved
+  elsewhere drops out. Lock, logout, and household changes replace the
+  element, which discards the selection.
+- **Select all** selects the eligible rows a person can see: open items, plus
+  completed ones only while the Completed disclosure is open.
+- **Toolbar.** A labelled group holds a polite count ("2 items selected"), Select
+  all, Complete N, Reopen N, Clear selection, and Done selecting. Each action
+  appears only when the selection contains items it applies to, and it submits
+  only those items.
+- **Mutation.** A batch is a sequence of the existing `complete` and `reopen`
+  commands, run one at a time through `appendCommand`. Each command is its own
+  encrypted IndexedDB transaction, validated by Rust against the full local
+  history, and queued for sync like any single change. The busy guard and
+  disabled controls block repeated activation. A progress line ("Completing 3
+  of 10…") shows during the batch.
+- **Partial success.** Batches are not atomic. Committed changes stay
+  committed. The outcome counts successes, failures, and skipped items
+  separately, for example "3 items completed. 2 could not be completed.".
+  Failed items stay selected, and **Try failed items again** retries only
+  them. Saving on the device is never described as synced.
+- **Undo.** **Undo** issues the inverse existing command (reopen for completed
+  items, complete for reopened items) as new events. History is never deleted
+  or rewritten. Only items that changed successfully are in the undo set.
+  - **Conflict check:** before compensating, undo replays the encrypted log
+    afresh. An item is skipped and reported ("changed since then, so it was
+    left as it is") unless it is still in the status this device left it in
+    and still carries the same Rust-derived `lastChangedAt`.
+  - **Atomic status check:** Rust then re-checks the status inside the append
+    transaction (see [EVENTS](EVENTS.md), "Item completion and reopening
+    preconditions").
+  - **Partial undo:** undo can partially fail. **Try undo again** retries only
+    the failures.
+  - **Lifetime:** undo is available until it runs, until the next bulk action
+    or Dismiss, for at most ten minutes, and never across lock, logout, a
+    household change, or reload. It is kept in memory only.
+- **Concurrency limit.** The domain has no expected-version field. The
+  `lastChangedAt` check plus Rust's atomic status check cannot see a change
+  that another device authored but that has not yet synced to this one. Such
+  a change is ordered by normal sync replay when it arrives. Undo therefore
+  never knowingly overwrites a newer change, but it cannot guarantee
+  conditional updates across devices.
+- **Focus.** After a batch or undo, focus moves to Undo, Try again, or Dismiss.
+  A toolbar control that hides while focused hands focus to Select all or
+  Select. Lock or session changes discard results from the old session
+  without touching the new interface.
+
 ---
 
 ## 6. Acceptance tests

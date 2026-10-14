@@ -2,6 +2,7 @@ import "./kin-compose.js";
 import "./kin-item.js";
 import { composeToday, ROUTINE_PERIOD_LABELS } from "../today-view.js";
 import { CLASSIFICATION_LABELS } from "./kin-compose.js";
+import { isBulkEligible, reconcileSelection } from "../bulk-actions.js";
 
 // A list view over the Rust projection. `display` selects one list
 // ("need" — To do, which also lists legacy `today` records — "shopping",
@@ -48,9 +49,28 @@ class KinToday extends HTMLElement {
     this.previewProvider = null;
     this.composer = null;
     this.completedOpen = false;
+    // Bulk selection (To do and Shopping only). Ids live only in this element
+    // while unlocked; lock replaces the element, which drops them.
+    this.selectionMode = false;
+    this.selectedIds = new Set();
+    this.bulkResult = null;
+    this.bulkBar = null;
+    this.onItemSelection = (event) => {
+      if (!this.selectionMode) return;
+      event.stopPropagation();
+      const { itemId, checked } = event.detail ?? {};
+      if (checked) this.selectedIds.add(itemId);
+      else this.selectedIds.delete(itemId);
+      this.updateBulkBar();
+    };
   }
 
-  connectedCallback() { this.render(); }
+  connectedCallback() {
+    this.addEventListener("kin:item-selection", this.onItemSelection);
+    this.render();
+  }
+
+  disconnectedCallback() { this.removeEventListener("kin:item-selection", this.onItemSelection); }
 
   // Assigns several inputs and renders once; setters stay for single changes.
   update(props) {
@@ -88,6 +108,186 @@ class KinToday extends HTMLElement {
   }
 
   get quickAdd() { return Object.hasOwn(LISTS, this.display); }
+
+  // Lists whose Items complete and reopen; Staples and Today do not select.
+  get isBulkList() { return this.display === "need" || this.display === "shopping"; }
+
+  get selectedItemIds() { return [...this.selectedIds]; }
+
+  selectedWithStatus(status) {
+    return this.listRecords().filter((record) => record.status === status && this.selectedIds.has(record.itemId)).map((record) => record.itemId);
+  }
+
+  listRecords() {
+    const config = LISTS[this.display];
+    return config ? this.records.filter((record) => config.includes(record) && record.status !== "archived") : [];
+  }
+
+  setSelectionMode(on) {
+    this.selectionMode = Boolean(on) && this.isBulkList;
+    if (!this.selectionMode) this.selectedIds.clear();
+    this.render();
+  }
+
+  // Select all applies to eligible rows a person can see: open items, plus
+  // completed ones only while the Completed disclosure is open.
+  selectAllVisible() {
+    const visible = this.listRecords().filter((record) => isBulkEligible(record) && (record.status === "active" || this.completedOpen));
+    for (const record of visible) this.selectedIds.add(record.itemId);
+    this.syncChecks();
+    this.updateBulkBar();
+  }
+
+  clearSelection() {
+    this.selectedIds.clear();
+    this.syncChecks();
+    this.updateBulkBar();
+  }
+
+  deselect(itemIds) {
+    for (const itemId of itemIds) this.selectedIds.delete(itemId);
+    this.syncChecks();
+    this.updateBulkBar();
+  }
+
+  syncChecks() {
+    for (const row of this.querySelectorAll("kin-item")) row.checked = this.selectedIds.has(row.record?.itemId);
+  }
+
+  // Outcome of the last bulk action or undo, from <kin-app>. The message is a
+  // polite status; Undo and Retry are ordinary buttons outside the live text.
+  setBulkResult(result) {
+    this.bulkResult = result ?? null;
+    this.updateBulkBar();
+  }
+
+  setBulkProgress(text) {
+    if (!this.bulkBar) return;
+    this.bulkBar.progress.textContent = text ?? "";
+    this.bulkBar.progress.hidden = !text;
+  }
+
+  focusBulkResult() {
+    const bar = this.bulkBar;
+    if (!bar) return;
+    const target = [bar.undo, bar.retry, bar.dismiss].find((button) => !button.hidden && button.isConnected) ??
+      (this.selectionMode ? bar.selectMode : null);
+    if (!target) return;
+    if (target.disabled) this.deferredFocus = target;
+    else target.focus();
+  }
+
+  bulkAction(type, detail = {}) {
+    this.dispatchEvent(new CustomEvent(`kin:${type}`, { detail, bubbles: true, composed: true }));
+  }
+
+  ensureBulkBar() {
+    if (this.bulkBar) return this.bulkBar;
+    const label = LISTS[this.display]?.title ?? "list";
+    const button = (text, action, onClick) => {
+      const element = document.createElement("button");
+      element.type = "button";
+      element.textContent = text;
+      element.dataset.action = action;
+      element.addEventListener("click", onClick);
+      return element;
+    };
+    const container = document.createElement("div");
+    container.className = "bulk-area";
+    const selectMode = button("Select", "select-mode", () => {
+      this.setSelectionMode(!this.selectionMode);
+      this.bulkBar.selectMode.focus();
+    });
+    selectMode.className = "bulk-select-mode";
+    const toolbar = document.createElement("div");
+    toolbar.className = "bulk-toolbar";
+    toolbar.setAttribute("role", "group");
+    toolbar.setAttribute("aria-label", `Selected ${label} items`);
+    const count = document.createElement("p");
+    count.className = "bulk-count";
+    count.id = `bulk-count-${this.display}`;
+    count.setAttribute("role", "status");
+    count.setAttribute("aria-live", "polite");
+    const actions = document.createElement("div");
+    actions.className = "bulk-actions";
+    const selectAll = button("Select all", "select-all", () => this.selectAllVisible());
+    // Each action submits only the selected items it applies to as shown;
+    // <kin-app> re-plans against the projection before writing anything.
+    const complete = button("Complete", "bulk-complete", () => this.bulkAction("bulk-item-action", { action: "complete", itemIds: this.selectedWithStatus("active") }));
+    const reopen = button("Reopen", "bulk-reopen", () => this.bulkAction("bulk-item-action", { action: "reopen", itemIds: this.selectedWithStatus("completed") }));
+    const clear = button("Clear selection", "clear-selection", () => this.clearSelection());
+    for (const control of [complete, reopen]) control.setAttribute("aria-describedby", count.id);
+    actions.append(selectAll, complete, reopen, clear);
+    const progress = document.createElement("p");
+    progress.className = "bulk-progress";
+    progress.hidden = true;
+    toolbar.append(count, actions, progress);
+    const result = document.createElement("div");
+    result.className = "bulk-result";
+    const message = document.createElement("p");
+    message.className = "bulk-result-message";
+    message.setAttribute("role", "status");
+    message.setAttribute("aria-live", "polite");
+    const resultActions = document.createElement("div");
+    resultActions.className = "bulk-actions";
+    const undo = button("Undo", "bulk-undo", () => this.bulkAction("bulk-undo"));
+    const retry = button("Try failed items again", "bulk-retry", () => this.bulkAction("bulk-retry"));
+    const dismiss = button("Dismiss", "bulk-dismiss", () => {
+      this.setBulkResult(null);
+      this.bulkAction("bulk-dismiss");
+      this.bulkBar.selectMode.focus();
+    });
+    resultActions.append(undo, retry, dismiss);
+    result.append(message, resultActions);
+    container.append(selectMode, toolbar, result);
+    this.bulkBar = { container, selectMode, toolbar, count, selectAll, complete, reopen, clear, progress, result, message, undo, retry, dismiss };
+    return this.bulkBar;
+  }
+
+  // Updates only the bar's text and visibility; rows are left untouched.
+  updateBulkBar() {
+    const bar = this.bulkBar;
+    if (!bar) return;
+    // Read focus before any control hides: the browser drops focus from a
+    // control the moment it is hidden.
+    const controls = [bar.selectMode, bar.selectAll, bar.complete, bar.reopen, bar.clear, bar.undo, bar.retry, bar.dismiss];
+    const focused = controls.find((control) => control === document.activeElement || control === this.deferredFocus);
+    const records = this.listRecords();
+    const selected = records.filter((record) => this.selectedIds.has(record.itemId));
+    const open = selected.filter((record) => record.status === "active").length;
+    const done = selected.filter((record) => record.status === "completed").length;
+    const visible = records.filter((record) => isBulkEligible(record) && (record.status === "active" || this.completedOpen)).length;
+    bar.selectMode.hidden = !records.length && !this.selectionMode;
+    bar.selectMode.textContent = this.selectionMode ? "Done selecting" : "Select";
+    bar.selectMode.setAttribute("aria-pressed", String(this.selectionMode));
+    bar.toolbar.hidden = !this.selectionMode;
+    const n = selected.length;
+    bar.count.textContent = n ? `${n} ${n === 1 ? "item" : "items"} selected` : "No items selected";
+    bar.selectAll.hidden = !visible;
+    bar.selectAll.setAttribute("aria-label", `Select all ${visible} visible ${visible === 1 ? "item" : "items"}`);
+    bar.complete.hidden = !open;
+    bar.complete.textContent = `Complete ${open}`;
+    bar.complete.setAttribute("aria-label", `Complete ${open} selected ${open === 1 ? "item" : "items"}`);
+    bar.reopen.hidden = !done;
+    bar.reopen.textContent = `Reopen ${done}`;
+    bar.reopen.setAttribute("aria-label", `Reopen ${done} selected ${done === 1 ? "item" : "items"}`);
+    bar.clear.hidden = !n;
+    const result = this.bulkResult;
+    bar.result.hidden = !result;
+    bar.result.classList.toggle("bulk-result-error", Boolean(result?.error));
+    bar.message.textContent = result?.message ?? "";
+    bar.undo.hidden = !result?.canUndo;
+    bar.undo.textContent = result?.undoLabel ?? "Undo";
+    bar.retry.hidden = !result?.canRetry;
+    for (const control of controls) control.disabled = this.isDisabled;
+    // A focused control that just hid (Clear selection after clearing, Undo
+    // after it ran) hands focus to the nearest control that is still shown.
+    if (focused && (focused.hidden || focused.closest("[hidden]"))) {
+      const fallback = [bar.selectAll, bar.selectMode].find((control) => !control.hidden && !control.closest("[hidden]"));
+      if (fallback?.disabled) this.deferredFocus = fallback;
+      else fallback?.focus();
+    }
+  }
 
   ensureComposer() {
     if (this.composer) return this.composer;
@@ -127,7 +327,12 @@ class KinToday extends HTMLElement {
     const composer = this.ensureComposer();
     composer.disabled = this.isDisabled;
     section.append(composer);
-    const records = this.records.filter((record) => config.includes(record) && record.status !== "archived");
+    const records = this.listRecords();
+    if (this.isBulkList) {
+      this.selectedIds = reconcileSelection(this.selectedIds, records, config.includes);
+      section.append(this.ensureBulkBar().container);
+      this.updateBulkBar();
+    }
     const active = records.filter((record) => record.status === "active");
     const completed = records.filter((record) => record.status === "completed");
     if (active.length) section.append(this.createList(active));
@@ -207,7 +412,7 @@ class KinToday extends HTMLElement {
     details.className = `${kind}-disclosure today-disclosure`;
     details.dataset.section = kind;
     details.open = this.completedOpen;
-    details.addEventListener("toggle", () => { this.completedOpen = details.open; });
+    details.addEventListener("toggle", () => { this.completedOpen = details.open; this.updateBulkBar(); });
     const summary = document.createElement("summary");
     summary.textContent = summaryText;
     details.append(summary, content);
@@ -555,6 +760,10 @@ class KinToday extends HTMLElement {
       item.areaOptions = this.areaRecords;
       item.pinned = this.pinRecords.some((pin) => pin.targetKind === "item" && pin.targetId === record.itemId);
       item.selected = this.selectedItemId === record.itemId;
+      if (this.selectionMode) {
+        item.checked = this.selectedIds.has(record.itemId);
+        item.selectable = true;
+      }
       item.disabled = this.isDisabled;
       listItem.append(item);
       list.append(listItem);

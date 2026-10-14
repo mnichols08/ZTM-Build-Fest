@@ -160,6 +160,18 @@ date-only “Last changed” text label. It receives no actor/device identity an
 does not expose a read receipt, exact time, or timeline. It adds no command or
 event. See [V0.24.0](releases/V0.24.0.md).
 
+## Bulk actions
+
+`<kin-today>` (To do and Shopping only) owns selection mode, the selected ids,
+the toolbar, and the outcome area. These are persistent nodes, so focus
+survives list re-renders. `<kin-item>` renders a native checkbox when
+`selectable` is set and dispatches `kin:item-selection`. The list dispatches
+`kin:bulk-item-action`, `kin:bulk-undo`, `kin:bulk-retry`, and
+`kin:bulk-dismiss`. `<kin-app>` plans with `web/bulk-actions.js`, appends the
+existing commands one at a time, and keeps the undo and retry sets in memory
+under the current session generation. See [WORKSPACE-UX](WORKSPACE-UX.md)
+§5.4.
+
 ## Keyboard shortcuts and command palette
 
 `<kin-command-palette>` owns two native modal dialogs: the command palette,
