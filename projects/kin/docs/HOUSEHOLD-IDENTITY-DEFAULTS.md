@@ -5,11 +5,25 @@
 
 ## Authority
 
-The member created by household bootstrap is recorded as `owner_member_id`. The service derives ownership from the authenticated session's durable member and device records; request fields such as `ownerId`, role, display name, or `isOwner` are ignored. Reads require an active household member on a trusted device. Writes require that same authorization plus an exact match to the recorded owner member. Removal, expiry, device revocation, deletion state, and session expiry therefore fail before the owner check.
+The member created by household bootstrap is recorded as `owner_member_id` (the founder) and is the household's first **household admin**. Admin status is a server-recorded flag (`members.household_admin`) that only an active Adult can hold. The service derives it from the authenticated session's durable member and device records; request fields such as `ownerId`, `isOwner`, `admin`, `householdAdmin`, role, or display name are ignored.
 
-Migration deliberately leaves existing households ownerless. Kin does not infer an owner from member ordering, activity, device possession, or adult status. Ownerless legacy households remain usable but shared-setting writes fail closed. Ownership claim/transfer and owner recovery are deferred for explicit security review.
+An admin can make another active Adult an admin or remove admin status, using the same fresh-passkey ceremony as member removal (`POST /api/household/admins/options` and `/finish`). Children/Limited members and babysitters/guests (Temporary members) can never be admins. Kin refuses to demote, remove, or let leave the last admin who still has a passkey and a usable trusted device, so a household with a recorded admin always keeps one. Demoting an admin revokes any member invitations they had pending. Grants and revocations are audited as `household_admin_granted` / `household_admin_revoked`.
 
-The Identity & defaults management panel is absent from the rendered and accessibility trees unless the authenticated settings response identifies the current member as the owner. Other members retain their personal appearance controls. Kin has no designated household-administrator role in this release; a future role must be authoritative and server-issued rather than inferred by the client.
+| Action | Household with an admin | Legacy household with no admin |
+|---|---|---|
+| Invite or approve a new member (Adult, Child/Limited, Babysitter/Guest) | Admin | Any Adult |
+| Remove another member, revoke another member's device | Admin | Any Adult |
+| Request or cancel household deletion | Admin | Any Adult |
+| Recover an admin's identity | Admin | n/a |
+| Recover a non-admin member, manage own devices, key provisioning and rotation | Any Adult | Any Adult |
+| Change shared household settings | Admin | Nobody (fails closed) |
+| Grant or remove admin status | Admin | Nobody (fails closed) |
+
+Settings reads require an active household member on a trusted device. Writes require that same authorization plus admin status. Removal, expiry, device revocation, deletion state, and session expiry therefore fail before the admin check.
+
+Schema migration 8 makes each recorded founder-owner an admin. It deliberately leaves ownerless legacy households without one. Kin does not infer an admin from member ordering, activity, device possession, or adult status. Those households keep the earlier Adult-level management so they remain usable, but shared-setting writes and admin grants fail closed. Claiming admin status in a legacy household is deferred for explicit security review.
+
+The Identity & defaults management panel is absent from the rendered and accessibility trees unless the authenticated settings response identifies the current member as an admin. The Household access screen shows admin, invitation, and removal controls only when the server's household view reports `canManageMembers`. The server enforces every one of these rules independently. Other members keep their personal appearance controls.
 
 ## Protected contract
 
@@ -31,6 +45,7 @@ The ciphertext records its epoch and is readable only by devices entitled to tha
 
 ## Known limitations
 
-- Secure legacy ownership initialization, transfer, and inheritance are deferred.
+- Claiming admin status in a legacy household is deferred.
 - The relay accepts and serves the encrypted revision; recipient receipt is not implied by write acceptance.
-- An unavailable owner does not cause automatic promotion. Authorized members retain read-only use of the last settings.
+- An unavailable admin does not cause automatic promotion. If the only admin loses every device, other Adults cannot recover them, and admin actions stay unavailable. Households should keep a second admin. Authorized members retain read-only use of the last settings.
+- "Child" is presented as the existing Limited member class and "babysitter" as the existing Temporary class. Kin adds no separate child or babysitter permission tier.

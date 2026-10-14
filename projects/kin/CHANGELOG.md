@@ -5,6 +5,10 @@
 - Record the household founder as durable owner for new households while leaving legacy ownership unresolved and fail-closed.
 - Add owner-authorized, revision-checked opaque encrypted shared settings with household-scoped reads and deletion cleanup.
 - Add household name validation, shared appearance/background editing, preview/reset/cancel, member read-only guidance, authenticated titles, and per-property personal override inheritance.
+- Add household admins. The founder is the first admin, and admins can promote or demote other Adults after a fresh passkey assertion (`/api/household/admins/options|finish`). The last usable admin cannot be demoted, removed, or leave. Demotion revokes that admin's pending member invitations.
+- Require an admin to invite, approve, or remove members, revoke another member's device, request or cancel household deletion, recover an admin, or change shared settings. Legacy households with no admin keep Adult-level management, and their settings and admin grants stay fail-closed.
+- Server schema 8 adds `members.household_admin` and promotes only recorded founder-owners. Load validation rejects admin rows on non-Adult members.
+- Household access shows admin badges and admin controls, and labels Limited members as "Children & Limited Members" and Temporary access as "Babysitters, Caregivers & Guests". Settings responses report `admin`/`adminRecorded` instead of `owner`/`ownerRecorded`.
 
 ## v0.46.0 — Personal Appearance
 
