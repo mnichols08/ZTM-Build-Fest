@@ -14,7 +14,7 @@ import "./kin-areas.js";
 import "./kin-notes.js";
 import { loadKinEngine, randomId } from "../wasm/kin-engine.js";
 import { EventStore } from "../storage/event-store.js";
-import { SyncCoordinator } from "../sync/sync-coordinator.js";
+import { loadCachedHouseholdSettings, SyncCoordinator } from "../sync/sync-coordinator.js";
 import "./kin-compose.js";
 import "./kin-item.js";
 import "./kin-item-detail.js";
@@ -29,9 +29,11 @@ import "./kin-catch-up.js";
 import "./kin-household.js";
 import "./kin-security.js";
 import "./kin-appearance.js";
+import "./kin-household-defaults.js";
 import { clearLegacyDrafts } from "./kin-security.js";
 import { paletteCss, paletteForSeed } from "../appearance/palette.js";
-import { loadAppearance, saveAppearance } from "../appearance/store.js";
+import { DEFAULT_APPEARANCE, loadAppearance, saveAppearance } from "../appearance/store.js";
+import { DEFAULT_HOUSEHOLD_NAME, resolveAppearance } from "../appearance/household.js";
 import {
   getActiveVault,
   setActiveVault,
@@ -275,6 +277,11 @@ class KinApp extends HTMLElement {
     this.onLockRequest = () => this.lockHousehold();
     this.onAppearancePreview = (event) => this.applyAppearance(event.detail.value);
     this.onSaveAppearance = (event) => this.handleSaveAppearance(event);
+    this.onUseHouseholdAppearance = (event) => this.handleUseHouseholdAppearance(event);
+    this.onInheritAppearanceProperty = (event) => this.handleInheritAppearanceProperty(event);
+    this.onHouseholdDefaultsPreview = (event) => { this.setHouseholdIdentity(event.detail.name); this.applyAppearance(event.detail.appearance); };
+    this.onHouseholdDefaultsCancel = () => this.applyEffectiveAppearance();
+    this.onSaveHouseholdDefaults = (event) => this.handleSaveHouseholdDefaults(event);
     this.systemAppearance = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : null;
     this.onSystemAppearance = () => { if (this.currentAppearance?.mode === "system") this.applyAppearance(this.currentAppearance); };
     this.onPageHide = () => this.lockHousehold(false);
@@ -365,6 +372,11 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:lock", this.onLockRequest);
     this.addEventListener("kin:appearance-preview", this.onAppearancePreview);
     this.addEventListener("kin:save-appearance", this.onSaveAppearance);
+    this.addEventListener("kin:use-household-appearance", this.onUseHouseholdAppearance);
+    this.addEventListener("kin:inherit-appearance-property", this.onInheritAppearanceProperty);
+    this.addEventListener("kin:household-defaults-preview", this.onHouseholdDefaultsPreview);
+    this.addEventListener("kin:household-defaults-cancel", this.onHouseholdDefaultsCancel);
+    this.addEventListener("kin:save-household-defaults", this.onSaveHouseholdDefaults);
     this.addEventListener("keydown", this.onDetailKeydown);
     window.addEventListener("hashchange", this.onHashChange);
     window.addEventListener("popstate", this.onHashChange);
@@ -438,6 +450,7 @@ class KinApp extends HTMLElement {
     const title = document.createElement("span");
     title.textContent = "Kin";
     title.className = "brand-name";
+    this.brandTitle = title;
     brand.append(mark, title);
     brand.addEventListener("click", this.onNavigationClick);
     // Header tools exist only while unlocked: search entry, truthful sync
@@ -1064,7 +1077,9 @@ class KinApp extends HTMLElement {
     appearancePage.className = "household-subpage appearance-page";
     appearancePage.setAttribute("aria-label", "Personal appearance");
     this.appearance = document.createElement("kin-appearance");
-    appearancePage.append(this.appearance);
+    this.householdDefaults = document.createElement("kin-household-defaults");
+    this.householdDefaults.hidden = true;
+    appearancePage.append(this.householdDefaults, this.appearance);
 
     household.append(hub, notesPage, areasPage, peoplePage, privacyPage, appearancePage);
     this.segmentPanels.set("household", new Map([["hub", hub], ["notes", notesPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));
@@ -1097,7 +1112,7 @@ class KinApp extends HTMLElement {
     this.route = route;
     this.activePage = route.page;
     this.dataset.route = route.canonical;
-    document.title = `${route.title} — Kin`;
+    document.title = this.vault && !this.vault.locked && this.householdName ? `${this.householdName} — Kin` : `${route.title} — Kin`;
     if (changed && this.routeAnnouncement) this.routeAnnouncement.textContent = `${route.title} view`;
     for (const [id, section] of this.pages) section.hidden = id !== route.page;
     for (const [id, link] of this.navLinks) {
@@ -1334,6 +1349,11 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:lock", this.onLockRequest);
     this.removeEventListener("kin:appearance-preview", this.onAppearancePreview);
     this.removeEventListener("kin:save-appearance", this.onSaveAppearance);
+    this.removeEventListener("kin:use-household-appearance", this.onUseHouseholdAppearance);
+    this.removeEventListener("kin:inherit-appearance-property", this.onInheritAppearanceProperty);
+    this.removeEventListener("kin:household-defaults-preview", this.onHouseholdDefaultsPreview);
+    this.removeEventListener("kin:household-defaults-cancel", this.onHouseholdDefaultsCancel);
+    this.removeEventListener("kin:save-household-defaults", this.onSaveHouseholdDefaults);
     window.removeEventListener("pagehide", this.onPageHide);
     window.removeEventListener("hashchange", this.onHashChange);
     window.removeEventListener("popstate", this.onHashChange);
@@ -1494,6 +1514,7 @@ class KinApp extends HTMLElement {
       const snapshot = await store.getCatchUpState();
       this.assertCurrentSession(session);
       this.applyCatchUpSnapshot(snapshot);
+      await this.restoreCachedHouseholdDefaults(snapshot.syncIdentity, session);
       this.renderState();
       void this.refreshAttachmentRows();
       this.main.hidden = false;
@@ -1597,6 +1618,7 @@ class KinApp extends HTMLElement {
     this.updateSyncChip();
     try {
       await coordinator.start();
+      if (this.isCurrentSession(session) && this.syncCoordinator === coordinator) await this.refreshHouseholdDefaults();
     } catch (error) {
       if (
         this.isCurrentSession(session) &&
@@ -1628,6 +1650,7 @@ class KinApp extends HTMLElement {
       }
     } else if (["ready", "disabled"].includes(value.state)) {
       this.stateNotice.hidden = true;
+      if (value.state === "ready") void this.refreshHouseholdDefaults();
     }
     if (value.projection && value.added > 0) {
       if (this.busy) {
@@ -2946,6 +2969,7 @@ class KinApp extends HTMLElement {
     if (this.modeSelect) this.modeSelect.disabled = isBusy || !this.store;
     this.household.disabled = isBusy || !this.store;
     if (this.appearance) this.appearance.disabled = isBusy || !this.store;
+    if (this.householdDefaults) this.householdDefaults.disabled = isBusy || !this.store;
     if (this.installButton) this.installButton.disabled = isBusy;
     for (const button of this.main.querySelectorAll("kin-responsibility button"))
       button.disabled = isBusy;
@@ -2998,8 +3022,10 @@ class KinApp extends HTMLElement {
     try {
       const appearance = await loadAppearance(this.store, vault);
       this.assertCurrentSession(session);
-      this.appearance.initialize(appearance);
-      this.applyAppearance(appearance);
+      this.personalAppearance = appearance;
+      const editorValue = appearance.version === 2 ? { ...DEFAULT_APPEARANCE, owner: appearance.owner } : appearance;
+      this.appearance.initialize(editorValue);
+      this.applyEffectiveAppearance();
     } catch (error) {
       this.assertCurrentSession(session);
       this.appearance.initialize({ version: 1, owner: null, mode: "system", colorSource: "default", seed: "#984D38", manual: null, image: null });
@@ -3048,15 +3074,98 @@ class KinApp extends HTMLElement {
     try {
       const saved = await saveAppearance(session.store, session.vault, value);
       this.assertCurrentSession(session);
-      this.currentAppearance = structuredClone(saved);
+      this.personalAppearance = structuredClone(saved);
+      this.applyEffectiveAppearance();
       complete(saved, null);
     } catch (error) {
       if (this.isCurrentSession(session)) complete(null, new Error("Kin couldn't save your appearance. Your previous saved appearance is unchanged."));
     }
   }
 
+  async handleUseHouseholdAppearance(event) {
+    const session = this.captureSession();
+    try {
+      this.personalAppearance = await saveAppearance(session.store, session.vault, event.detail.value);
+      this.assertCurrentSession(session);
+      const effective = resolveAppearance(this.personalAppearance, this.householdSettings);
+      this.appearance.initialize(effective);
+      this.applyAppearance(effective);
+      this.setStatus("Now following the household appearance on this device.");
+    } catch { if (this.isCurrentSession(session)) this.setStatus("Kin couldn't update your appearance. Your previous choice is unchanged."); }
+  }
+
+  async handleInheritAppearanceProperty(event) {
+    const session = this.captureSession();
+    const next = { ...this.personalAppearance, version: 2 };
+    if (event.detail.property === "mode") delete next.mode;
+    if (event.detail.property === "color") { delete next.colorSource; delete next.seed; delete next.manual; }
+    if (event.detail.property === "background") {
+      delete next.image;
+      if (next.colorSource === "background") { delete next.colorSource; delete next.seed; delete next.manual; }
+    }
+    try {
+      this.personalAppearance = await saveAppearance(session.store, session.vault, next);
+      this.assertCurrentSession(session);
+      const effective = resolveAppearance(this.personalAppearance, this.householdSettings);
+      this.appearance.initialize(effective);
+      this.applyAppearance(effective);
+      this.setStatus(`Now following the household ${event.detail.property} on this device.`);
+    } catch { if (this.isCurrentSession(session)) this.setStatus("Kin couldn't update your appearance. Your previous choice is unchanged."); }
+  }
+
+  applyEffectiveAppearance() {
+    const effective = resolveAppearance(this.personalAppearance, this.householdSettings);
+    this.applyAppearance(effective);
+    this.setHouseholdIdentity(this.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME);
+  }
+
+  setHouseholdIdentity(name) {
+    this.householdName = name;
+    if (this.brandTitle) this.brandTitle.textContent = name;
+    if (this.vault && !this.vault.locked) document.title = `${name} — Kin`;
+  }
+
+  async refreshHouseholdDefaults() {
+    if (!this.syncCoordinator || !this.vault || this.vault.locked) return;
+    try {
+      const result = await this.syncCoordinator.loadHouseholdSettings();
+      if (result.value && (this.householdSettings?.revision ?? -1) <= result.value.revision) this.householdSettings = result.value;
+      this.householdDefaults.initialize({ ...result, value: this.householdSettings });
+      this.applyEffectiveAppearance();
+    } catch { this.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded."); }
+  }
+
+  async restoreCachedHouseholdDefaults(identity, session = this.captureSession()) {
+    if (!identity) return;
+    try {
+      const value = await loadCachedHouseholdSettings(identity);
+      this.assertCurrentSession(session);
+      if (value && (this.householdSettings?.revision ?? -1) <= value.revision) this.householdSettings = value;
+      this.householdDefaults.initialize({ owner: false, ownerRecorded: false, value: this.householdSettings });
+      this.applyEffectiveAppearance();
+    } catch {
+      if (this.isCurrentSession(session)) this.setStatus("Kin couldn't restore the last shared appearance. Local household information is still available.");
+    }
+  }
+
+  async handleSaveHouseholdDefaults(event) {
+    const { value, complete } = event.detail;
+    if (!this.syncCoordinator) { complete(null, new Error("Connect household sync before changing shared settings.")); return; }
+    try {
+      const saved = await this.syncCoordinator.saveHouseholdSettings(value);
+      this.householdSettings = saved;
+      this.applyEffectiveAppearance();
+      complete(saved, null);
+    } catch (error) { complete(null, error); }
+  }
+
   clearAppliedAppearance() {
     this.currentAppearance = null;
+    this.personalAppearance = null;
+    this.householdSettings = null;
+    this.householdName = null;
+    if (this.brandTitle) this.brandTitle.textContent = "Kin";
+    document.title = "Kin";
     delete document.documentElement.dataset.kinAppearance;
     document.querySelector('meta[name="theme-color"]')?.setAttribute("content", "#684033");
     if (this.appearanceSheet) this.appearanceSheet.replaceSync("");

@@ -14,16 +14,18 @@ import { encryptedDatabase, snapshotStores, protectRows, replaceStores, protectR
   unprotectRecord, recordIdentity, valuesEqual } from "../storage/encrypted-idb.js";
 
 const DATABASE_NAME = "kin-crypto-keys";
-const DATABASE_VERSION = 4;
+const DATABASE_VERSION = 5;
 const SECURITY_STORE = "security_state";
 const KEY_DEFINITIONS = {
   devices: { keyPath: "deviceId" },
   epochs: { keyPath: "key", indexes: { household_id: "householdId" } },
   trusted_devices: { keyPath: "key" },
+  household_settings: { keyPath: "householdId" },
 };
 const DEVICE_STORE = "devices";
 const EPOCH_STORE = "epochs";
 const TRUSTED_DEVICE_STORE = "trusted_devices";
+const HOUSEHOLD_SETTINGS_STORE = "household_settings";
 const PENDING_DEVICE_ID = "pending";
 const MAX_KEY_EPOCHS = 128;
 
@@ -287,6 +289,43 @@ export class SyncKeyStore {
     }).then(records => Promise.all(records.map(record => this.hydrateEpoch(record))));
   }
 
+  cacheHouseholdSettings(record) {
+    validateSettingsCache(record);
+    const transaction = this.database.transaction(HOUSEHOLD_SETTINGS_STORE, "readwrite");
+    const store = transaction.objectStore(HOUSEHOLD_SETTINGS_STORE);
+    const request = store.get(record.householdId);
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => {
+        const existing = request.result;
+        if (existing && existing.revision > record.revision) return finish(existing);
+        if (existing && existing.revision === record.revision) {
+          if (existing.keyEpoch !== record.keyEpoch || existing.digest !== record.digest || existing.ciphertext !== record.ciphertext)
+            return abortWith(transaction, new SyncKeyStoreError("Kin found conflicting cached household settings."));
+          return finish(existing);
+        }
+        store.put(structuredClone(record));
+        finish(record);
+      };
+      request.onerror = () => abortWith(transaction, request.error);
+    });
+  }
+
+  getCachedHouseholdSettings(householdId) {
+    if (!/^[a-f0-9]{32}$/.test(householdId ?? "")) throw new SyncKeyStoreError("Kin could not identify the cached household settings.");
+    const transaction = this.database.transaction(HOUSEHOLD_SETTINGS_STORE, "readonly");
+    const request = transaction.objectStore(HOUSEHOLD_SETTINGS_STORE).get(householdId);
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => {
+        try {
+          const record = request.result ?? null;
+          if (record) validateSettingsCache(record, householdId);
+          finish(record);
+        } catch (error) { abortWith(transaction, error); }
+      };
+      request.onerror = () => abortWith(transaction, request.error);
+    });
+  }
+
   async hydrateEpoch(record) {
     if (!record) return null;
     const tx = this.database.transaction(DEVICE_STORE, "readonly");
@@ -405,6 +444,7 @@ async function openRawDatabase() {
         epochs.createIndex("household_id", "householdId", { unique: false });
       }
       if (!db.objectStoreNames.contains(TRUSTED_DEVICE_STORE)) db.createObjectStore(TRUSTED_DEVICE_STORE, { keyPath: "key" });
+      if (!db.objectStoreNames.contains(HOUSEHOLD_SETTINGS_STORE)) db.createObjectStore(HOUSEHOLD_SETTINGS_STORE, { keyPath: "householdId" });
       if (!db.objectStoreNames.contains(SECURITY_STORE)) db.createObjectStore(SECURITY_STORE, { keyPath: "key" });
     };
     request.onsuccess = () => { if (settled) request.result.close(); else { settled = true; resolve(request.result); } };
@@ -413,6 +453,15 @@ async function openRawDatabase() {
   });
   database.onversionchange = () => database.close();
   return database;
+}
+
+function validateSettingsCache(record, expectedHouseholdId = record?.householdId) {
+  if (!record || !/^[a-f0-9]{32}$/.test(record.householdId ?? "") || record.householdId !== expectedHouseholdId ||
+      !Number.isSafeInteger(record.revision) || record.revision < 1 || !Number.isSafeInteger(record.keyEpoch) ||
+      record.keyEpoch < 1 || record.keyEpoch > MAX_KEY_EPOCHS || typeof record.ciphertext !== "string" ||
+      !/^[A-Za-z0-9_-]+$/.test(record.ciphertext) || !/^[a-f0-9]{64}$/.test(record.digest ?? ""))
+    throw new SyncKeyStoreError("Kin found invalid cached household settings.");
+  return record;
 }
 
 async function securityRecord(database) {
@@ -435,7 +484,8 @@ export async function migrateSyncKeys(vault, { prepareOnly = true, check = async
     if (marker?.phase === "preparing") {
       staged = await vault.open(marker.staging, { store: "sync-key-migration", id: "staged" });
     } else {
-      staged = { devices: [], epochs: [], trusted_devices: legacy.trusted_devices };
+      staged = { devices: [], epochs: [], trusted_devices: legacy.trusted_devices,
+        household_settings: legacy.household_settings };
       for (const old of legacy.devices) {
         await assertLive();
         if (!old.keys || old.serializedKeys) throw new SyncKeyStoreError("Unexpected legacy device-key format.");
@@ -686,6 +736,10 @@ async function verifyProtectedKeyRows(rows, check) {
     await check();
     if (pin.key !== `${pin.householdId}:${pin.deviceId}` || await deviceKeyFingerprint(pin.publicKeys) !== pin.fingerprint)
       throw new SyncKeyStoreError("A replacement trusted-device pin is inconsistent.");
+  }
+  for (const settings of rows.household_settings) {
+    await check();
+    validateSettingsCache(settings);
   }
   await check();
   return devices;

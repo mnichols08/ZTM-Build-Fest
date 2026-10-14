@@ -185,6 +185,7 @@ export class PairingService {
       deletionRequestedAt: null,
       deletionFinalizeAt: null,
       deletedAt: null,
+      ownerMemberId: memberId,
     });
     this.members.set(memberId, {
       id: memberId,

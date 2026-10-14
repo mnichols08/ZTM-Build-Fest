@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased — v0.46.0 — Personal Appearance
+## Unreleased — v0.47.0 — Household Identity & Shared Appearance
+
+- Record the household founder as durable owner for new households while leaving legacy ownership unresolved and fail-closed.
+- Add owner-authorized, revision-checked opaque encrypted shared settings with household-scoped reads and deletion cleanup.
+- Add household name validation, shared appearance/background editing, preview/reset/cancel, member read-only guidance, authenticated titles, and per-property personal override inheritance.
+
+## v0.46.0 — Personal Appearance
 
 Implementation candidate on `feat/kin-personal-appearance`, stacked from the
 open workspace PR #42 at `dadd92b`. Adds protected member-bound, device-local

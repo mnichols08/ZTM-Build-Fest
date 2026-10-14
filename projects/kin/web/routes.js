@@ -32,7 +32,7 @@ export const SEGMENTS = Object.freeze({
     Object.freeze({ id: "areas", label: "Areas & status" }),
     Object.freeze({ id: "people", label: "People & devices" }),
     Object.freeze({ id: "privacy", label: "Privacy & recovery" }),
-    Object.freeze({ id: "appearance", label: "Appearance" }),
+    Object.freeze({ id: "appearance", label: "Identity & appearance" }),
   ]),
 });
 

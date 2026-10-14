@@ -35,6 +35,65 @@ function makeEnvelope(adult, overrides = {}) {
   };
 }
 
+test("founder alone can replace encrypted household settings with revision checks", () => {
+  const { pairing, adult, sync } = fixture();
+  sync.enable(adult.sessionToken);
+  const invitation = pairing.createPairing(adult.sessionToken, { kind: "adult" });
+  const claim = pairing.claimPairing({ code: invitation.code, credential: credential("second"), deviceLabel: "Second" });
+  pairing.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
+  const second = pairing.activateClaim(claim.claimToken);
+  const ciphertext = Buffer.alloc(40, 7);
+  const value = { expectedRevision: 0, keyEpoch: 1, ciphertext: ciphertext.toString("base64url"), digest: createHash("sha256").update(ciphertext).digest("hex"), ownerId: second.memberId, isOwner: true };
+  assert.equal(pairing.households.get(adult.householdId).ownerMemberId, adult.memberId);
+  assert.throws(() => sync.updateHouseholdSettings(second.sessionToken, value), (error) => error.code === "household_owner_required");
+  assert.deepEqual(sync.updateHouseholdSettings(adult.sessionToken, value), { revision: 1, accepted: true });
+  assert.equal(sync.householdSettings(second.sessionToken).settings.revision, 1);
+  assert.throws(() => sync.updateHouseholdSettings(adult.sessionToken, value), (error) => error.code === "household_settings_stale");
+});
+
+test("household settings require the active provisioned epoch and preserve accepted bytes on rejection", () => {
+  const { pairing, adult, sync } = fixture();
+  sync.enable(adult.sessionToken);
+  const ciphertext = Buffer.alloc(40, 5);
+  const value = { expectedRevision: 0, keyEpoch: 1, ciphertext, digest: createHash("sha256").update(ciphertext).digest("hex") };
+  assert.deepEqual(sync.updateHouseholdSettings(adult.sessionToken, value), { revision: 1, accepted: true });
+  const accepted = sync.householdSettings(adult.sessionToken).settings;
+
+  for (const keyEpoch of [0, 2]) {
+    assert.throws(() => sync.updateHouseholdSettings(adult.sessionToken, { ...value, expectedRevision: 1, keyEpoch }),
+      (error) => ["household_settings_invalid", "household_settings_key_unavailable"].includes(error.code));
+  }
+  const state = sync.state(adult.householdId);
+  state.currentEpoch = 2;
+  for (const keyEpoch of [1, 3])
+    assert.throws(() => sync.updateHouseholdSettings(adult.sessionToken, { ...value, expectedRevision: 1, keyEpoch }),
+      (error) => error.code === "household_settings_key_unavailable");
+  adultDevice(pairing, adult).syncProvisionedEpochs = [];
+  assert.throws(() => sync.updateHouseholdSettings(adult.sessionToken, { ...value, expectedRevision: 1, keyEpoch: 2 }),
+    (error) => error.code === "household_settings_key_unavailable");
+  adultDevice(pairing, adult).syncProvisionedEpochs = [2];
+  state.rotationPending = true;
+  assert.throws(() => sync.updateHouseholdSettings(adult.sessionToken, { ...value, expectedRevision: 1, keyEpoch: 2 }),
+    (error) => error.code === "household_settings_key_unavailable");
+
+  const retained = sync.householdSettings(adult.sessionToken).settings;
+  assert.equal(retained.revision, accepted.revision);
+  assert.equal(retained.digest, accepted.digest);
+  assert.deepEqual(retained.ciphertext, accepted.ciphertext);
+});
+
+function adultDevice(pairing, adult) { return pairing.devices.get(adult.deviceId); }
+
+test("legacy households without trustworthy ownership fail closed", () => {
+  const { pairing, adult, sync } = fixture();
+  sync.enable(adult.sessionToken);
+  pairing.households.get(adult.householdId).ownerMemberId = null;
+  const ciphertext = Buffer.alloc(40, 9);
+  const value = { expectedRevision: 0, keyEpoch: 1, ciphertext: ciphertext.toString("base64url"), digest: createHash("sha256").update(ciphertext).digest("hex") };
+  assert.equal(sync.householdSettings(adult.sessionToken).ownerRecorded, false);
+  assert.throws(() => sync.updateHouseholdSettings(adult.sessionToken, value), (error) => error.code === "household_owner_required");
+});
+
 test("relay enforces bounded interoperable logical time", () => {
   const { adult } = fixture();
   const base = makeEnvelope(adult);

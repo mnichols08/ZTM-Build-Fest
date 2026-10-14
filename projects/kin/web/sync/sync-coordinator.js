@@ -16,6 +16,7 @@ import {
 import { SyncKeyStore } from "./key-store.js";
 import { idToHex } from "../wasm/kin-engine.js";
 import { reconcileAttachments } from "../attachments/attachment-lifecycle.js";
+import { decryptHouseholdSettings, encryptHouseholdSettings } from "../appearance/household.js";
 
 export function activeResponsibilityMemberIds(devices, now = Date.now()) {
   return [...new Set(devices
@@ -40,6 +41,25 @@ export function committedBatchUpdate(committed) {
     update.snapshotBoundary = committed.snapshotBoundary;
   }
   return update;
+}
+
+export async function loadCachedHouseholdSettings(identity, { keyStore = null } = {}) {
+  if (![identity?.householdId, identity?.memberId, identity?.deviceId].every((value) => /^[a-f0-9]{32}$/.test(value ?? "")))
+    throw new Error("Kin could not identify the local household settings cache.");
+  const ownedStore = !keyStore;
+  const store = keyStore ?? await SyncKeyStore.open();
+  try {
+    const device = await store.getDevice(identity.deviceId);
+    if (!device || device.householdId !== identity.householdId || device.memberId !== identity.memberId)
+      throw new Error("Kin could not match the local household settings cache to this device.");
+    const cached = await store.getCachedHouseholdSettings(identity.householdId);
+    if (!cached) return null;
+    const epoch = await store.getEpoch(identity.householdId, cached.keyEpoch);
+    if (!epoch) throw new Error("This device does not have the key needed to read the shared appearance.");
+    return decryptHouseholdSettings(cached, { householdId: identity.householdId, householdKey: epoch.householdKey });
+  } finally {
+    if (ownedStore) store.close();
+  }
 }
 
 export function portableMembershipFromDirectory(entries) {
@@ -874,6 +894,45 @@ export class SyncCoordinator {
     if (this.stopped) throw new Error("Device sync was stopped.");
     this.keyStore?.vault.assertUnlocked();
     return result;
+  }
+
+  async loadHouseholdSettings() {
+    let response;
+    try {
+      response = await this.request("/api/household/settings");
+    } catch (error) {
+      if (error.code !== "connection_unavailable" && navigator.onLine !== false) throw error;
+      const value = await this.loadCachedHouseholdSettings();
+      return { owner: false, ownerRecorded: false, value, offline: true };
+    }
+    if (!response.settings) return { owner: response.owner, ownerRecorded: response.ownerRecorded, value: null };
+    const candidate = { householdId: this.identity.householdId, ...response.settings };
+    const value = await this.decryptCachedHouseholdSettings(candidate);
+    const cached = await this.keyStore.cacheHouseholdSettings(candidate);
+    return { owner: response.owner, ownerRecorded: response.ownerRecorded,
+      value: cached.revision === candidate.revision ? value : await this.decryptCachedHouseholdSettings(cached) };
+  }
+
+  loadCachedHouseholdSettings() {
+    return loadCachedHouseholdSettings(this.identity, { keyStore: this.keyStore });
+  }
+
+  async decryptCachedHouseholdSettings(settings) {
+    const epoch = await this.keyStore.getEpoch(this.identity.householdId, settings.keyEpoch);
+    if (!epoch) throw new Error("This device does not have the key needed to read the shared appearance.");
+    return decryptHouseholdSettings(settings, { householdId: this.identity.householdId, householdKey: epoch.householdKey });
+  }
+
+  async saveHouseholdSettings(value) {
+    if (navigator.onLine === false) throw new Error("Connect to the household before changing shared settings.");
+    const status = await this.request("/api/sync/status");
+    const epoch = await this.keyStore.getEpoch(this.identity.householdId, status.currentEpoch);
+    if (!epoch) throw new Error("This device is not ready to protect shared settings.");
+    const encrypted = await encryptHouseholdSettings(value, { householdId: this.identity.householdId, keyEpoch: status.currentEpoch, householdKey: epoch.householdKey });
+    const result = await this.request("/api/household/settings", { method: "PUT", body: encrypted.ciphertext,
+      headers: { "Content-Type": "application/octet-stream", "X-Household-Settings-Revision": String(value.revision),
+        "X-Household-Settings-Key-Epoch": String(status.currentEpoch), "X-Household-Settings-SHA256": encrypted.digest } });
+    return { ...value, revision: result.revision };
   }
 
   stop() {

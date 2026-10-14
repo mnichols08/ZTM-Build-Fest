@@ -34,7 +34,7 @@ import {
   validStoredDevice,
 } from "./durable-identity.mjs";
 
-const SERVER_SCHEMA_VERSION = 6;
+const SERVER_SCHEMA_VERSION = 7;
 export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024 + 4096;
 export const MAX_HOUSEHOLD_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 export const MAX_HOUSEHOLD_ATTACHMENTS = 64;
@@ -785,6 +785,31 @@ export class DurableStore {
         throw new DurableStoreError("Kin could not complete the authoritative membership-status migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 6) {
+      try {
+        this.transaction(() => {
+          this.db.exec(`
+            ALTER TABLE households ADD COLUMN owner_member_id TEXT;
+            CREATE TABLE household_settings (
+              household_id TEXT PRIMARY KEY REFERENCES households(id) ON DELETE CASCADE,
+              revision INTEGER NOT NULL CHECK (revision >= 1),
+              key_epoch INTEGER NOT NULL CHECK (key_epoch BETWEEN 1 AND 128),
+              ciphertext BLOB NOT NULL CHECK (length(ciphertext) BETWEEN 29 AND 4198400),
+              digest TEXT NOT NULL CHECK (length(digest) = 64),
+              updated_by_member_id TEXT NOT NULL,
+              updated_by_device_id TEXT NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(7, Date.now());
+          sqlitePragma(this.db, "user_version = 7");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the household owner/settings migration.", { cause: error });
+      }
+    }
   }
 
   verify() {
@@ -927,6 +952,7 @@ export class DurableStore {
           deletionRequestedAt: row.deletion_requested_at,
           deletionFinalizeAt: row.deletion_finalize_at,
           deletedAt: row.deleted_at,
+          ownerMemberId: row.owner_member_id ?? null,
         });
       }
       for (const row of this.db.prepare("SELECT * FROM members").all()) {
@@ -972,6 +998,12 @@ export class DurableStore {
             throw new DurableStoreError("Kin server membership data is invalid.");
           activeKindCounts.set(`${household.id}:${member.kind}`, kindCount + 1);
         }
+      }
+      for (const household of households.values()) {
+        if (household.ownerMemberId === null) continue;
+        const owner = members.get(household.ownerMemberId);
+        if (!isId(household.ownerMemberId) || !owner || owner.householdId !== household.id || owner.kind !== "adult")
+          throw new DurableStoreError("Kin server household ownership data is invalid.");
       }
       for (const row of this.db.prepare("SELECT * FROM credentials").all()) {
         const credential = parseStoredJson(row.credential_json);
@@ -1043,9 +1075,9 @@ export class DurableStore {
     this.transaction(() => {
       this.db
         .prepare(
-          "INSERT INTO households(id, version) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET version = excluded.version",
+          "INSERT INTO households(id, version, owner_member_id) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET version = excluded.version, owner_member_id = excluded.owner_member_id",
         )
-        .run(household.id, household.version);
+        .run(household.id, household.version, household.ownerMemberId ?? null);
 
       for (const memberId of household.members) {
         const member = service.members.get(memberId);
@@ -1123,6 +1155,27 @@ export class DurableStore {
           "DELETE FROM security_audit WHERE sequence <= COALESCE((SELECT MAX(sequence) - ? FROM security_audit), 0)",
         )
         .run(MAX_AUDIT_ROWS);
+    });
+  }
+
+  getHouseholdSettings(householdId) {
+    const row = this.db.prepare("SELECT * FROM household_settings WHERE household_id = ?").get(householdId);
+    return row ? { revision: row.revision, keyEpoch: row.key_epoch, ciphertext: Buffer.from(row.ciphertext), digest: row.digest, updatedAt: row.updated_at } : null;
+  }
+
+  putHouseholdSettings(householdId, expectedRevision, value) {
+    return this.transaction(() => {
+      const current = this.getHouseholdSettings(householdId);
+      if ((current?.revision ?? 0) !== expectedRevision)
+        throw new DurableConflictError("household_settings_stale", "Household settings changed on another device. Reload and try again.");
+      this.db.prepare(`INSERT INTO household_settings
+        (household_id, revision, key_epoch, ciphertext, digest, updated_by_member_id, updated_by_device_id, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(household_id) DO UPDATE SET revision=excluded.revision, key_epoch=excluded.key_epoch,
+          ciphertext=excluded.ciphertext, digest=excluded.digest, updated_by_member_id=excluded.updated_by_member_id,
+          updated_by_device_id=excluded.updated_by_device_id, updated_at=excluded.updated_at`)
+        .run(householdId, expectedRevision + 1, value.keyEpoch, value.ciphertext, value.digest, value.memberId, value.deviceId, value.updatedAt);
+      return expectedRevision + 1;
     });
   }
 
@@ -2063,6 +2116,8 @@ function isTimestamp(value) {
 }
 
 function purgeHouseholdData(database, householdId) {
+  database.prepare("UPDATE households SET owner_member_id = NULL WHERE id = ?").run(householdId);
+  database.prepare("DELETE FROM household_settings WHERE household_id = ?").run(householdId);
   database.prepare("DELETE FROM sync_attachments WHERE household_id = ?").run(householdId);
   database
     .prepare("DELETE FROM provisioning_grants WHERE household_id = ?")

@@ -1,6 +1,9 @@
 import { APPEARANCE_PRESETS, KIN_DEFAULT_SEED, normalizeHex } from "../appearance/palette.js";
 import { DEFAULT_APPEARANCE } from "../appearance/store.js";
 import { processBackground } from "../appearance/image.js";
+import { useHouseholdAppearance } from "../appearance/household.js";
+
+let appearanceInstance = 0;
 
 export class KinAppearance extends HTMLElement {
   constructor() {
@@ -8,6 +11,7 @@ export class KinAppearance extends HTMLElement {
     this.saved = null;
     this.draft = null;
     this.generation = 0;
+    this.instanceId = ++appearanceInstance;
   }
 
   connectedCallback() { if (!this.firstElementChild) this.build(); }
@@ -26,10 +30,11 @@ export class KinAppearance extends HTMLElement {
     this.modeControls = new Map();
     for (const [value, label] of [["system", "System"], ["light", "Light"], ["dark", "Dark"]]) {
       const wrapper = document.createElement("label"); wrapper.className = "appearance-option";
-      const input = document.createElement("input"); input.type = "radio"; input.name = "appearance-mode"; input.value = value;
+      const input = document.createElement("input"); input.type = "radio"; input.name = `appearance-mode-${this.instanceId}`; input.value = value;
       input.addEventListener("change", () => { if (input.checked) this.change({ mode: value }); });
       wrapper.append(input, label); mode.body.append(wrapper); this.modeControls.set(value, input);
     }
+    mode.body.append(this.followButton("mode", "Follow household mode"));
 
     const colors = this.group("Theme color");
     this.swatches = document.createElement("div"); this.swatches.className = "appearance-swatches"; this.swatches.setAttribute("role", "radiogroup"); this.swatches.setAttribute("aria-label", "Theme color presets");
@@ -50,29 +55,32 @@ export class KinAppearance extends HTMLElement {
     this.hex.addEventListener("input", () => { const value = normalizeHex(this.hex.value); this.setHexValidity(Boolean(value)); if (value) { this.picker.value = value; this.chooseCustom(value); } });
     hexLabel.append(this.hex);
     this.hexError = document.createElement("p"); this.hexError.className = "field-error"; this.hexError.textContent = "Enter a color as #RRGGBB."; this.hexError.hidden = true;
-    this.hexError.id = "appearance-hex-error"; this.hex.setAttribute("aria-describedby", this.hexError.id);
+    this.hexError.id = `appearance-hex-error-${this.instanceId}`; this.hex.setAttribute("aria-describedby", this.hexError.id);
     customRow.append(pickerLabel, hexLabel);
     this.useBackground = document.createElement("button"); this.useBackground.type = "button"; this.useBackground.textContent = "Use background colors"; this.useBackground.addEventListener("click", () => { if (this.draft.image) { this.syncHex(this.draft.image.seed); this.change({ colorSource: "background", seed: this.draft.image.seed }); } });
     this.source = document.createElement("p"); this.source.className = "appearance-source";
-    colors.body.append(this.swatches, customRow, this.hexError, this.useBackground, this.source);
+    colors.body.append(this.swatches, customRow, this.hexError, this.useBackground, this.source, this.followButton("color", "Follow household color"));
 
     const background = this.group("Background");
     this.choose = document.createElement("button"); this.choose.type = "button"; this.choose.textContent = "Choose image"; this.choose.addEventListener("click", () => this.openImagePicker());
     this.remove = document.createElement("button"); this.remove.type = "button"; this.remove.textContent = "Remove background"; this.remove.addEventListener("click", () => this.removeImage());
     this.imageStatus = document.createElement("p"); this.imageStatus.className = "section-hint"; this.imageStatus.setAttribute("role", "status");
-    background.body.append(this.choose, this.remove, this.imageStatus);
+    background.body.append(this.choose, this.remove, this.imageStatus, this.followButton("background", "Follow household background"));
 
     const actions = document.createElement("div"); actions.className = "appearance-actions";
     this.save = document.createElement("button"); this.save.type = "submit"; this.save.className = "primary-action"; this.save.textContent = "Save changes";
     this.cancel = document.createElement("button"); this.cancel.type = "button"; this.cancel.textContent = "Cancel"; this.cancel.addEventListener("click", () => this.restoreSaved("Changes canceled."));
     this.reset = document.createElement("button"); this.reset.type = "button"; this.reset.textContent = "Reset to Kin default"; this.reset.addEventListener("click", () => { this.generation++; this.draft = { ...DEFAULT_APPEARANCE, owner: this.saved?.owner ?? null }; this.update("Kin defaults are previewed. Save changes to keep them."); });
+    this.inherit = document.createElement("button"); this.inherit.type = "button"; this.inherit.textContent = "Use household appearance"; this.inherit.addEventListener("click", () => this.dispatchEvent(new CustomEvent("kin:use-household-appearance", { bubbles: true, detail: { value: useHouseholdAppearance(this.saved?.owner ?? null) } })));
     this.feedback = document.createElement("p"); this.feedback.className = "appearance-feedback"; this.feedback.setAttribute("role", "status"); this.feedback.setAttribute("aria-live", "polite");
-    actions.append(this.save, this.cancel, this.reset);
+    actions.append(this.save, this.cancel, this.reset, this.inherit);
     this.form.append(mode.fieldset, colors.fieldset, background.fieldset, actions, this.feedback);
     this.append(heading, scope, this.form);
   }
 
   group(legendText) { const fieldset = document.createElement("fieldset"), legend = document.createElement("legend"), body = document.createElement("div"); body.className = "appearance-group"; legend.textContent = legendText; fieldset.append(legend, body); return { fieldset, body }; }
+
+  followButton(property, label) { const button = document.createElement("button"); button.type = "button"; button.className = "appearance-follow"; button.textContent = label; button.addEventListener("click", () => this.dispatchEvent(new CustomEvent("kin:inherit-appearance-property", { bubbles: true, detail: { property } }))); return button; }
 
   initialize(value) { this.generation++; this.saved = structuredClone(value); this.draft = structuredClone(value); this.disabled = false; this.update(""); }
   clear() { this.generation++; this.saved = null; this.draft = null; this.feedback.textContent = ""; this.replaceChildren(); this.build(); }

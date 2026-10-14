@@ -278,8 +278,9 @@ async function api(request, response, url, context) {
   });
   for (const householdId of service.finalizeExpiredDeletions(context.now()))
     syncService.forgetHousehold(householdId);
-  const attachmentUpload = request.method === "POST" && /^\/api\/sync\/attachments\/[a-f0-9]{32}$/.test(url.pathname);
-  const body = attachmentUpload
+  const binaryUpload = (request.method === "POST" && /^\/api\/sync\/attachments\/[a-f0-9]{32}$/.test(url.pathname)) ||
+    (request.method === "PUT" && url.pathname === "/api/household/settings");
+  const body = binaryUpload
     ? await readBinary(request)
     : ["POST", "PUT", "DELETE"].includes(request.method)
     ? await readJson(request)
@@ -701,6 +702,18 @@ async function api(request, response, url, context) {
   }
   if (request.method === "GET" && url.pathname === "/api/sync/status") {
     json(response, 200, syncService.status(session));
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/api/household/settings") {
+    json(response, 200, syncService.householdSettings(session));
+    return;
+  }
+  if (request.method === "PUT" && url.pathname === "/api/household/settings") {
+    const expectedRevision = request.headers["x-household-settings-revision"];
+    const keyEpoch = request.headers["x-household-settings-key-epoch"];
+    const digest = request.headers["x-household-settings-sha256"];
+    if (!/^\d+$/.test(expectedRevision ?? "") || !/^[1-9]\d{0,2}$/.test(keyEpoch ?? "") || typeof digest !== "string") throw badRequest();
+    json(response, 200, syncService.updateHouseholdSettings(session, { expectedRevision: Number(expectedRevision), keyEpoch: Number(keyEpoch), digest, ciphertext: body }));
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/sync/enable") {

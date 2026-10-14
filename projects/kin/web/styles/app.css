@@ -750,6 +750,13 @@ mark { background: color-mix(in srgb, var(--warm) 28%, transparent); color: inhe
 /* ---------- Household ---------- */
 .appearance-page { max-width: 760px; }
 kin-appearance { display: block; }
+kin-household-defaults { display: grid; gap: 14px; margin-bottom: 32px; padding-bottom: 28px; border-bottom: 1px solid var(--line); }
+kin-household-defaults > fieldset { margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--r-card); background: color-mix(in srgb, var(--surface) 94%, transparent); }
+kin-household-defaults > fieldset label { display: grid; gap: 6px; font-weight: 650; }
+kin-household-defaults > fieldset input { width: min(100%, 34rem); min-height: var(--tap); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
+kin-household-defaults kin-appearance > h2, kin-household-defaults kin-appearance > .section-hint,
+kin-household-defaults kin-appearance .appearance-actions,
+kin-household-defaults kin-appearance .appearance-follow { display: none; }
 .appearance-form { display: grid; gap: 18px; margin-block: 18px; }
 .appearance-form fieldset { min-width: 0; margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--r-card); background: color-mix(in srgb, var(--surface) 94%, transparent); }
 .appearance-form legend { padding-inline: 6px; font-weight: 700; }
