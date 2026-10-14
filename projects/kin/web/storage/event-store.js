@@ -9,7 +9,7 @@ import { rotateEventProtection, resumeEventProtection } from "./root-rotation.js
 import { MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "../attachments/attachment-crypto.js";
 
 const DATABASE_NAME = "kin";
-const DATABASE_VERSION = 4;
+const DATABASE_VERSION = 5;
 const SECURITY_STORE = "security_state";
 const SECURITY_KEY = "vault";
 export const EVENT_STORE_DEFINITIONS = {
@@ -19,6 +19,9 @@ export const EVENT_STORE_DEFINITIONS = {
   sync_outbox: { keyPath: "event_id" },
   sync_bindings: { keyPath: "legacy_key" },
   attachment_records: { keyPath: "attachment_id" },
+  // Protected, member-bound, device-local presentation. Never enters events,
+  // the sync outbox, attachment records, catch-up, or portable exports.
+  personal_appearance: { keyPath: "owner" },
 };
 const EVENT_STORE = "events";
 const CONTEXT_STORE = "local_context";

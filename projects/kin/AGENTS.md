@@ -1496,4 +1496,7 @@ Kin should make family life require **less remembering, less repeating, and less
 
 If a proposed feature makes Kin harder to use than simply sending a text message, reconsider it.
 
-The candidate release name is `kin-v0.38.4`; no tag has been created.
+The user-authorized Personal Appearance candidate is `kin-v0.46.0` on
+`feat/kin-personal-appearance`, stacked from open PR #42 at `dadd92b`; no tag
+has been created. It is member-bound and device-local and adds no household
+event, sync, attachment, activity, or portable-export contract.

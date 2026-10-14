@@ -10,7 +10,7 @@
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --bg: #f5f1e9;
+  --bg: #f3f1e9;
   --surface: #fffdfa;
   --surface-secondary: #f1e8de;
   --ink: #342d29;
@@ -43,15 +43,19 @@
   background: var(--bg);
 }
 
+:root[data-kin-appearance="light"] { color-scheme: light; }
+:root[data-kin-appearance="dark"] { color-scheme: dark; }
+:root[data-kin-appearance="system"] { color-scheme: light dark; }
+
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #211c19;
-    --surface: #2c2521;
-    --surface-secondary: #3b302a;
+  :root:not([data-kin-appearance="light"]) {
+    --bg: #171d19;
+    --surface: #242b26;
+    --surface-secondary: #303a33;
     --ink: #f3eae2;
     --ink-muted: #c3b3a7;
-    --line: #514139;
-    --line-strong: #917765;
+    --line: #475149;
+    --line-strong: #879589;
     --accent: #e19a7e;
     --accent-ink: #281b17;
     --accent-soft: #49332b;
@@ -59,7 +63,7 @@
     --warm-soft: #443329;
     --danger: #ef9292;
     --danger-soft: #432727;
-    --header-bg: #3e2922;
+    --header-bg: #29352d;
     --header-ink: #fff4eb;
     --header-muted: #e0bda9;
   }
@@ -136,7 +140,28 @@ a { color: var(--accent); }
 }
 [hidden] { display: none !important; }
 
-kin-app { display: block; min-height: 100vh; }
+/* Own stacking context so the negative z-index background and scrim paint
+   above body's opaque background instead of behind it. */
+kin-app { display: block; min-height: 100vh; isolation: isolate; }
+.personal-background {
+  position: fixed;
+  z-index: -2;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  pointer-events: none;
+  user-select: none;
+}
+kin-app[data-personal-background]::before {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg) 76%, transparent);
+  pointer-events: none;
+}
 /* Projection reconciliation also happens during automatic sync. Avoid making
    the entire workspace appear to move when data refreshes in the background. */
 kin-app[data-quiet-render],
@@ -723,6 +748,28 @@ kin-household, kin-security, kin-areas, kin-notes, kin-search, kin-item, kin-att
 mark { background: color-mix(in srgb, var(--warm) 28%, transparent); color: inherit; border-radius: 3px; }
 
 /* ---------- Household ---------- */
+.appearance-page { max-width: 760px; }
+kin-appearance { display: block; }
+.appearance-form { display: grid; gap: 18px; margin-block: 18px; }
+.appearance-form fieldset { min-width: 0; margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--r-card); background: color-mix(in srgb, var(--surface) 94%, transparent); }
+.appearance-form legend { padding-inline: 6px; font-weight: 700; }
+.appearance-group { display: grid; gap: 12px; }
+.appearance-option { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; margin-right: 16px; }
+.appearance-option input { width: 20px; height: 20px; accent-color: var(--accent); }
+.appearance-swatches { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 8px; }
+.appearance-swatch { display: grid; grid-template-columns: 22px 1fr auto; align-items: center; gap: 8px; text-align: left; }
+.appearance-swatch.selected::after { content: "✓"; font-weight: 800; }
+.swatch-chip { width: 22px; height: 22px; border: 2px solid var(--line-strong); border-radius: 50%; }
+.swatch-default { background: #984d38; } .swatch-forest { background: #397052; } .swatch-ocean { background: #256a91; }
+.swatch-teal { background: #16756f; } .swatch-plum { background: #74507d; } .swatch-rose { background: #a14f68; }
+.swatch-amber { background: #9a6418; } .swatch-slate { background: #596675; }
+.appearance-custom-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.appearance-custom-row label { display: grid; gap: 5px; font-weight: 620; }
+.appearance-custom-row input[type="color"] { width: 64px; height: 48px; padding: 3px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); }
+.appearance-custom-row input[type="text"] { width: 9em; min-height: 48px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font-family: ui-monospace, monospace; text-transform: uppercase; }
+.appearance-source, .appearance-feedback { min-height: 1.5em; color: var(--ink-muted); }
+.appearance-feedback[data-saved="true"] { color: var(--accent); font-weight: 650; }
+.appearance-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .household-hub { display: grid; gap: 14px; }
 .household-glance { margin: 0; color: var(--ink-muted); font-size: 15px; }
 .hub-links { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }

@@ -32,6 +32,7 @@ export const SEGMENTS = Object.freeze({
     Object.freeze({ id: "areas", label: "Areas & status" }),
     Object.freeze({ id: "people", label: "People & devices" }),
     Object.freeze({ id: "privacy", label: "Privacy & recovery" }),
+    Object.freeze({ id: "appearance", label: "Appearance" }),
   ]),
 });
 
@@ -57,6 +58,7 @@ const ALIASES = Object.freeze({
   "more/people": "household/people",
   "more/privacy": "household/privacy",
   "more/security": "household/privacy",
+  "more/appearance": "household/appearance",
   "more/household": "household/people",
   needs: "lists/todo",
   "lists/needs": "lists/todo",

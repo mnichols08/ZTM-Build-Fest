@@ -1,14 +1,14 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.41.1 (a correctness patch to the presentation-only v0.41.0 candidate; no persistent, transport, or cryptographic contract changed); the last published product release remains v0.10.3. Household membership is bounded to 12 total participants (four Adults and eight Limited Members); Temporary Members require expiry. Member kind, expiry, and authoritative active/removed/expired state are persisted in server schema v6 and remain server authority, not archive authority. Candidate milestones are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.46.0 (Personal Appearance; a protected member-bound device-local preference store, not a household protocol); the last published product release remains v0.10.3. Household membership is bounded to 12 total participants (four Adults and eight Limited Members); Temporary Members require expiry. Candidate milestones are not production certification. Earlier version sections preserve historical data contracts.
 
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.41.1 | Governs |
+| Version axis | Last published v0.10.3 / current candidate v0.46.0 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.41.1` | PWA updates, authenticated package-v2 metadata, staged restore, archive limits, portable membership fidelity, verification infrastructure, the v0.41.0 mobile/passkey-first presentation, and the v0.41.1 attachment-upload correction (service-worker cache name advances with the release) |
+| Application | Last published `0.10.3`; candidate `0.46.0` | Existing application capabilities plus member-bound device-local personal appearance; the service-worker cache name advances with the release |
 | Server database schema | `6` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination, lifecycle, encrypted attachment records, member kind, Temporary expiry, and authoritative membership status |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v23; writes v23 for local and synchronized requests | Request context and projection semantics |

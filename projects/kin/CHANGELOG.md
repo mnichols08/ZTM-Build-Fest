@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — v0.46.0 — Personal Appearance
+
+Implementation candidate on `feat/kin-personal-appearance`, stacked from the
+open workspace PR #42 at `dadd92b`. Adds protected member-bound, device-local
+appearance modes, palette seeds, and processed backgrounds without adding a
+household event, shared attachment, sync, activity, or export contract.
+
 ## Unreleased — Household Workspace UX (unversioned implementation candidate)
 
 Desktop-first UX revision on `feat/kin-workspace-ux` (base `d27bf48`); no version number, tag, release, or production certification. Presentation, navigation and browser-side composition only: Rust/WASM domain rules, events, storage, sync, authorization and cryptography are unchanged. Contract: [docs/WORKSPACE-UX.md](docs/WORKSPACE-UX.md).
