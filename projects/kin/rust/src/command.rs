@@ -518,6 +518,25 @@ pub fn execute(
             return Err(KinError::InvalidEvent);
         }
     }
+    // A new completion or reopening must change the Item's status. The check
+    // runs against the full local history inside the adapter's append
+    // transaction, so a stale or repeated intent (a bulk action, its undo, or
+    // a second tab) is rejected instead of recording a redundant fact. Replay
+    // of historical duplicates stays idempotent.
+    let item_intent = match command {
+        HouseholdCommand::CompleteItem(id) => Some((id, ItemStatus::Active)),
+        HouseholdCommand::ReopenItem(id) => Some((id, ItemStatus::Completed)),
+        _ => None,
+    };
+    if let Some((id, required)) = item_intent {
+        if !current
+            .items
+            .iter()
+            .any(|item| item.item_id == *id && item.status == required)
+        {
+            return Err(KinError::InvalidEvent);
+        }
+    }
     if let HouseholdCommand::SetItemPlanningDate {
         item_id,
         planning_date,

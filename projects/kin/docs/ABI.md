@@ -353,7 +353,8 @@ fields, reserved bytes, schema/enum/date/length values and strict UTF-8 are
 validated. The native `HouseholdCommand` separates household intent from browser
 identity/pairing operations. `execute` validates the existing corpus first,
 requires a new event ID and logical time greater than observed history, checks
-household context, rejects stale Routine occurrence intent, then rebuilds and
+household context, rejects stale Routine occurrence intent and an Item completion
+or reopening that would not change the Item's status, then rebuilds and
 serializes the complete candidate. Persistence occurs only in the adapter's
 successful transaction. Historic repeated completion facts retain prior replay
 semantics.

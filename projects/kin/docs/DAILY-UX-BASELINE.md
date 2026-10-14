@@ -81,6 +81,15 @@ and Search reachable without a pointer. Pressing N from any workspace page is
 palette adds no new save path: completion and capture interaction counts are
 unchanged.
 
+## Bulk actions follow-up
+
+Completing N selected items is **N + 2 interactions** with a pointer (Select,
+N checkboxes, Complete N), or fewer with Select all. Undo is one more. The
+browser suite prints `METRIC bulk-complete` for a 25-item batch: total and
+per-item milliseconds through the real encrypted store and WASM. Commands run
+one at a time and yield to the event loop between IndexedDB transactions. This
+is a diagnostic sample, not a budget.
+
 ## Known gaps
 
 - Timings are local end-to-end samples, not statistically rigorous benchmarks

@@ -181,6 +181,16 @@ existing protocol-15 distributed ordering tuple; exact duplicate event
 delivery is idempotent. The event has no entity ID, schedule, duration, or
 automatic actor.
 
+## Item completion and reopening preconditions
+
+A new `complete-item` command requires the Item to be active, and `reopen-item`
+requires it to be completed. Rust checks this against the full local history
+inside the adapter's append transaction and rejects a stale intent with code 4,
+so repeated or stale intents (a second tab, a bulk action, its undo) append
+nothing. Replay is unchanged: historical duplicate `ITEM_COMPLETED` or
+`ITEM_REOPENED` facts from older clients or other devices remain idempotent
+no-ops. No event layout, protocol version, or storage format changes.
+
 ## v0.22.0 Lightweight Planning Dates
 
 `ITEM_PLANNING_DATE_CHANGED` is schema 1, event kind 30, with a 20-byte

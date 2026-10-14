@@ -23,6 +23,8 @@ class KinItem extends HTMLElement {
     this.civilDate = null;
     this.showKind = false;
     this.areas = [];
+    this.isSelectable = false;
+    this.isChecked = false;
   }
 
   set item(value) { this.record = value; this.render(); }
@@ -34,6 +36,15 @@ class KinItem extends HTMLElement {
   set responsibilityContext(value) { this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.memberIds = value?.memberIds ?? []; this.render(); }
   set today(value) { this.civilDate = Number.isSafeInteger(value) ? value : null; this.render(); }
   set kindVisible(value) { this.showKind = Boolean(value); this.render(); }
+  // Selection mode swaps the completion control for a native checkbox.
+  // Checking only updates the box in place, so a long list is not rebuilt.
+  set selectable(value) { this.isSelectable = Boolean(value); this.render(); }
+  set checked(value) {
+    this.isChecked = Boolean(value);
+    const box = this.querySelector(".select-control");
+    if (box) box.checked = this.isChecked;
+    else this.render();
+  }
 
   set disabled(value) {
     this.isDisabled = Boolean(value);
@@ -53,7 +64,26 @@ class KinItem extends HTMLElement {
     // Completion: a restrained check control, never a large call to action.
     const control = document.createElement("div");
     control.className = "item-control";
-    if (isStaple) {
+    if (this.isSelectable && !isStaple && record.status !== "archived") {
+      const target = document.createElement("label");
+      target.className = "select-target";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.className = "select-control";
+      box.checked = this.isChecked;
+      box.dataset.itemId = record.itemId;
+      box.dataset.itemAction = "select";
+      box.disabled = this.isDisabled;
+      box.addEventListener("change", () => {
+        this.isChecked = box.checked;
+        this.dispatch("item-selection", { itemId: record.itemId, checked: box.checked });
+      });
+      const name = document.createElement("span");
+      name.className = "visually-hidden";
+      name.textContent = `Select ${record.text}${record.status === "completed" ? " (completed)" : ""}`;
+      target.append(box, name);
+      control.append(target);
+    } else if (isStaple) {
       const replenish = document.createElement("button");
       replenish.type = "button";
       replenish.className = "replenish-button";

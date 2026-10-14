@@ -65,6 +65,58 @@ fn commands_emit_canonical_events_and_project_full_lifecycle() {
 }
 
 #[test]
+fn item_completion_and_reopening_must_change_status() {
+    let id = ItemId([4; 16]);
+    let added = execute(&add(), context(1), request(vec![])).unwrap().event;
+    // Reopening an open Item is a stale intent.
+    assert_eq!(
+        execute(&C::ReopenItem(id), context(2), request(vec![added.clone()])).err(),
+        Some(KinError::InvalidEvent)
+    );
+    let completed = execute(
+        &C::CompleteItem(id),
+        context(2),
+        request(vec![added.clone()]),
+    )
+    .unwrap()
+    .event;
+    // A second completion (another tab, a repeated bulk action) is rejected.
+    assert_eq!(
+        execute(
+            &C::CompleteItem(id),
+            context(3),
+            request(vec![added.clone(), completed.clone()])
+        )
+        .err(),
+        Some(KinError::InvalidEvent)
+    );
+    let reopened = execute(
+        &C::ReopenItem(id),
+        context(3),
+        request(vec![added.clone(), completed.clone()]),
+    )
+    .unwrap();
+    assert_eq!(reopened.projection.items[0].status, ItemStatus::Active);
+    assert_eq!(
+        execute(
+            &C::ReopenItem(id),
+            context(4),
+            request(vec![
+                added.clone(),
+                completed.clone(),
+                reopened.event.clone()
+            ])
+        )
+        .err(),
+        Some(KinError::InvalidEvent)
+    );
+    // Historical duplicate facts from older clients still replay as no-ops.
+    let duplicate = create_event(&C::CompleteItem(id), context(4)).unwrap();
+    let replayed = crate::core::project(&request(vec![added, completed, duplicate])).unwrap();
+    assert_eq!(replayed.items[0].status, ItemStatus::Completed);
+}
+
+#[test]
 fn every_command_has_a_lossless_canonical_roundtrip() {
     let commands = [
         add(),

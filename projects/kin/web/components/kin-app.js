@@ -19,6 +19,7 @@ import "./kin-compose.js";
 import "./kin-quick-add.js";
 import "./kin-command-palette.js";
 import { isTypingContext, shortcutForKey } from "../keyboard-commands.js";
+import { BULK_ACTIONS, describeBulkOutcome, planBulk, undoCommand, undoStatus } from "../bulk-actions.js";
 import "./kin-item.js";
 import "./kin-item-detail.js";
 import "./kin-today.js";
@@ -77,6 +78,8 @@ function readAutoLockPreference() {
     return [0, 5, 15, 60].includes(value) ? value : 0;
   } catch { return 0; }
 }
+
+const BULK_UNDO_WINDOW_MS = 10 * 60_000;
 
 class KinApp extends HTMLElement {
   constructor() {
@@ -238,6 +241,15 @@ class KinApp extends HTMLElement {
       }
     };
     this.onShortcutKeydown = (event) => this.handleShortcutKeydown(event);
+    // Bulk actions: the last outcome's undo and retry sets, in memory only.
+    this.bulkRunning = false;
+    this.bulkUndo = null;
+    this.bulkRetry = null;
+    this.bulkUndoTimer = null;
+    this.onBulkItemAction = (event) => this.handleBulkItemAction(event);
+    this.onBulkUndo = (event) => this.handleBulkUndo(event);
+    this.onBulkRetry = (event) => this.handleBulkRetry(event);
+    this.onBulkDismiss = () => this.clearBulkOutcome();
     const platform = typeof navigator === "undefined" ? "" : navigator.userAgentData?.platform ?? navigator.platform ?? "";
     this.macShortcuts = /mac|iphone|ipad|ipod/i.test(platform);
     this.commandGeneration = null;
@@ -362,6 +374,10 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:pin-intent", this.onPinIntent);
     this.addEventListener("kin:open-pin", this.onOpenPin);
     this.addEventListener("kin:open-quick-add", this.onOpenQuickAdd);
+    this.addEventListener("kin:bulk-item-action", this.onBulkItemAction);
+    this.addEventListener("kin:bulk-undo", this.onBulkUndo);
+    this.addEventListener("kin:bulk-retry", this.onBulkRetry);
+    this.addEventListener("kin:bulk-dismiss", this.onBulkDismiss);
     this.addEventListener("kin:open-item", this.onOpenItem);
     this.addEventListener("kin:close-item-detail", this.onCloseItemDetail);
     this.addEventListener("kin:open-search-result", this.onOpenSearchResult);
@@ -1480,6 +1496,10 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:pin-intent", this.onPinIntent);
     this.removeEventListener("kin:open-pin", this.onOpenPin);
     this.removeEventListener("kin:open-quick-add", this.onOpenQuickAdd);
+    this.removeEventListener("kin:bulk-item-action", this.onBulkItemAction);
+    this.removeEventListener("kin:bulk-undo", this.onBulkUndo);
+    this.removeEventListener("kin:bulk-retry", this.onBulkRetry);
+    this.removeEventListener("kin:bulk-dismiss", this.onBulkDismiss);
     this.removeEventListener("kin:open-item", this.onOpenItem);
     this.removeEventListener("kin:close-item-detail", this.onCloseItemDetail);
     this.removeEventListener("kin:open-search-result", this.onOpenSearchResult);
@@ -2547,6 +2567,189 @@ class KinApp extends HTMLElement {
     return this.handleItemAction("archive", event.detail.itemId);
   }
 
+  // --- Bulk complete / reopen and undo ------------------------------------
+  //
+  // A batch is a sequence of ordinary complete-item / reopen-item commands,
+  // one IndexedDB transaction each, so Rust validates every Item against the
+  // full local history (including synced remote events) at the moment it is
+  // written. Batches are not atomic: each committed change stays committed,
+  // and the outcome reports successes, failures, and skips separately.
+
+  bulkListFrom(event) {
+    const list = event.target?.closest?.("kin-today");
+    return list && [this.needs, this.shopping].includes(list) && list.isBulkList ? list : null;
+  }
+
+  clearBulkOutcome() {
+    clearTimeout(this.bulkUndoTimer);
+    this.bulkUndoTimer = null;
+    this.bulkUndo = null;
+    this.bulkRetry = null;
+  }
+
+  // Undo is offered for ten minutes, until it runs, until the next bulk action
+  // or Dismiss, or until lock, logout, or a household change ends the session.
+  armBulkUndo(record) {
+    clearTimeout(this.bulkUndoTimer);
+    this.bulkUndo = record;
+    this.bulkUndoTimer = setTimeout(() => {
+      if (this.bulkUndo !== record) return;
+      this.bulkUndo = null;
+      if (record.list.isConnected && record.list.bulkResult) record.list.setBulkResult({ ...record.list.bulkResult, canUndo: false });
+    }, BULK_UNDO_WINDOW_MS);
+  }
+
+  async handleBulkItemAction(event) {
+    const list = this.bulkListFrom(event);
+    const { action, itemIds } = event.detail ?? {};
+    if (!list || !BULK_ACTIONS[action] || !Array.isArray(itemIds)) return;
+    if (this.busy || this.bulkRunning || !this.store || !this.engine || !this.state) return;
+    this.clearBulkOutcome();
+    const plan = planBulk(action, itemIds, this.state.items);
+    await this.runBulk({ list, action, targets: plan.targets, skipped: plan.skipped.length });
+  }
+
+  async handleBulkRetry(event) {
+    const list = this.bulkListFrom(event);
+    const record = this.bulkRetry;
+    if (!list || !record || record.list !== list || record.generation !== this.securityGeneration) return;
+    if (this.busy || this.bulkRunning || !this.store || !this.state) return;
+    this.bulkRetry = null;
+    const plan = planBulk(record.action, record.itemIds, this.state.items);
+    // Earlier successes of the same action stay undoable alongside the retry.
+    const carried = this.bulkUndo?.list === list && this.bulkUndo.action === record.action ? this.bulkUndo.changes : [];
+    await this.runBulk({ list, action: record.action, targets: plan.targets, skipped: plan.skipped.length, carried });
+  }
+
+  async runBulk({ list, action, targets, skipped, carried = [] }) {
+    const spec = BULK_ACTIONS[action];
+    const session = this.captureSession();
+    const succeeded = [];
+    const failed = [];
+    const started = performance.now();
+    this.bulkRunning = true;
+    this.setBusy(true);
+    this.clearAlert();
+    this.setStatus("");
+    list.setBulkResult(null);
+    try {
+      for (const [index, itemId] of targets.entries()) {
+        list.setBulkProgress(`${action === "complete" ? "Completing" : "Reopening"} ${index + 1} of ${targets.length}…`);
+        try {
+          await this.appendCommand({ type: spec.command, itemId });
+          const record = this.state.items.find((item) => item.itemId === itemId);
+          succeeded.push({ itemId, to: spec.to, changedAt: record?.lastChangedAt ?? null });
+          if (action === "complete") this.localReminders.cancel(`item:${itemId}`);
+        } catch (error) {
+          // Changes committed before a lock stay committed; nothing from the
+          // old session may touch the new interface.
+          if (error.code === "locked" || !this.isCurrentSession(session)) return;
+          if (error.code === 4) this.pendingRefresh = true;
+          failed.push(itemId);
+        }
+      }
+    } finally {
+      this.bulkRunning = false;
+      if (this.isCurrentSession(session)) {
+        this.lastBulkMetric = { action, count: targets.length, ms: performance.now() - started };
+        list.setBulkProgress("");
+        if (succeeded.length) { this.renderState(); this.broadcastEventChange(); }
+        list.deselect(succeeded.map((change) => change.itemId));
+        const changes = [...carried, ...succeeded];
+        if (changes.length) this.armBulkUndo({ list, action, changes, generation: session.generation });
+        if (failed.length) this.bulkRetry = { list, action, itemIds: failed, generation: session.generation };
+        list.setBulkResult({
+          message: describeBulkOutcome(action, { succeeded: succeeded.length, failed: failed.length, skipped }),
+          error: failed.length > 0,
+          canUndo: changes.length > 0,
+          undoLabel: action === "complete" ? "Undo: reopen these" : "Undo: complete these",
+          canRetry: failed.length > 0,
+        });
+        this.setBusy(false);
+        list.focusBulkResult();
+        this.flushPeerRefresh();
+      }
+    }
+  }
+
+  // Undo is a new, authorized compensating command per Item, never a rewrite
+  // of history. Before each one the Item must still be in the status this
+  // device left it in and carry the same Rust-derived lastChangedAt; Rust then
+  // re-checks the status atomically inside the append. The remaining gap: a
+  // change authored elsewhere that has not reached this device yet cannot be
+  // seen, and is reconciled by normal sync ordering afterwards.
+  async handleBulkUndo(event) {
+    const list = this.bulkListFrom(event);
+    const record = this.bulkUndo;
+    if (!list || !record || record.list !== list || record.generation !== this.securityGeneration) return;
+    if (this.busy || this.bulkRunning || !this.store || !this.engine) return;
+    this.clearBulkOutcome();
+    const session = this.captureSession();
+    const undone = [];
+    const conflicts = [];
+    const failed = [];
+    this.bulkRunning = true;
+    this.setBusy(true);
+    this.clearAlert();
+    list.setBulkResult(null);
+    try {
+      let items;
+      try {
+        items = (await this.readAuthoritativeState(session)).items;
+      } catch (error) {
+        if (error.code === "locked" || !this.isCurrentSession(session)) return;
+        items = this.state.items;
+      }
+      for (const [index, change] of record.changes.entries()) {
+        list.setBulkProgress(`Undoing ${index + 1} of ${record.changes.length}…`);
+        if (undoStatus(change, items) !== "ready") { conflicts.push(change); continue; }
+        try {
+          await this.appendCommand({ type: undoCommand(change), itemId: change.itemId });
+          items = this.state.items;
+          undone.push(change);
+        } catch (error) {
+          if (error.code === "locked" || !this.isCurrentSession(session)) return;
+          // Rust rejected the status precondition: the Item changed in between.
+          if (error.code === 4) { this.pendingRefresh = true; conflicts.push(change); }
+          else failed.push(change);
+        }
+      }
+    } finally {
+      this.bulkRunning = false;
+      if (this.isCurrentSession(session)) {
+        list.setBulkProgress("");
+        if (undone.length) { this.renderState(); this.broadcastEventChange(); }
+        // Items failed for a local reason (not a conflict) can be undone again.
+        if (failed.length) this.armBulkUndo({ ...record, changes: failed, generation: session.generation });
+        list.setBulkResult({
+          message: describeBulkOutcome(record.action, { succeeded: undone.length, conflicts: conflicts.length, failed: failed.length, undo: true }),
+          error: failed.length > 0 || conflicts.length > 0,
+          canUndo: failed.length > 0,
+          undoLabel: "Try undo again",
+          canRetry: false,
+        });
+        this.setBusy(false);
+        list.focusBulkResult();
+        this.flushPeerRefresh();
+      }
+    }
+  }
+
+  // A fresh replay of the encrypted local log, without touching the rendered
+  // projection, so undo checks the newest state including synced events.
+  async readAuthoritativeState(session) {
+    const snapshot = await session.store.getCatchUpState();
+    this.assertCurrentSession(session);
+    const { asOf, civilDate } = projectionContext();
+    return session.engine.applyEvents(
+      snapshot.events.map((event) => event.encoded_event),
+      asOf,
+      snapshot.cursor.eventId,
+      civilDate,
+      snapshot.syncIdentity,
+    );
+  }
+
   async handleItemAction(type, itemId) {
     if (this.busy || !this.store || !this.engine) {
       return;
@@ -3314,6 +3517,7 @@ class KinApp extends HTMLElement {
     this.closeItemDetail({ restoreFocus: false });
     this.commandPalette?.dismiss();
     this.commandGeneration = null;
+    this.clearBulkOutcome();
     this.pendingCapture = null;
     this.attachmentPreviews?.clear();
     this.attachmentPreviews = null;

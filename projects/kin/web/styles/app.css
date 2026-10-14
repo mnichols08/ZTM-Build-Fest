@@ -525,6 +525,23 @@ span.today-summary-entry { color: var(--ink-muted); }
   padding: 10px 2px;
 }
 .item-row.item-selected { background: color-mix(in srgb, var(--accent-soft) 60%, var(--surface)); border-radius: var(--r-row); margin-inline: -8px; padding-inline: 10px; }
+/* Bulk selection: a 48px label around a native checkbox replaces the
+   completion control; the toolbar and result wrap instead of overflowing. */
+.select-target { display: inline-grid; place-items: center; width: var(--tap); height: var(--tap); border-radius: var(--r-control); cursor: pointer; }
+.select-target:hover { background: var(--surface-secondary); }
+.select-control { width: 22px; height: 22px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.select-control:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.item-row:has(.select-control:checked) { background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface)); border-radius: var(--r-row); }
+.bulk-area { display: grid; gap: 10px; margin: 12px 0 4px; }
+.bulk-select-mode { justify-self: start; }
+.bulk-select-mode[aria-pressed="true"] { border-color: var(--accent); }
+.bulk-toolbar, .bulk-result { display: grid; gap: 8px; min-width: 0; padding: 12px; border: 1px solid var(--line-strong); border-radius: var(--r-row); background: var(--surface); }
+.bulk-result-error { border-color: var(--danger); }
+.bulk-count, .bulk-result-message, .bulk-progress { margin: 0; overflow-wrap: anywhere; }
+.bulk-count { font-weight: 640; }
+.bulk-progress { color: var(--ink-muted); font-size: 14px; }
+.bulk-actions { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.bulk-actions button { min-width: 0; max-width: 100%; white-space: normal; }
 .item-control { grid-area: control; display: flex; align-items: center; min-height: var(--tap); }
 .item-body { grid-area: body; display: grid; gap: 2px; min-width: 0; }
 .item-row-actions { grid-area: actions; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-width: 0; }
@@ -1124,6 +1141,9 @@ kin-app > .security-panel {
   .complete-control[aria-pressed="true"]::before { background: Highlight; }
   .sync-chip { border-color: CanvasText; }
   .today-summary-entry { border: 1px solid CanvasText; }
+  .bulk-toolbar, .bulk-result { border: 1px solid CanvasText; }
+  .item-row:has(.select-control:checked) { outline: 2px solid Highlight; outline-offset: -2px; }
+  .select-control:focus-visible { outline: 3px solid Highlight; }
   .command-dialog, .command-dialog kbd { border: 1px solid CanvasText; }
   .command-option[aria-selected="true"] { outline: 3px solid Highlight; outline-offset: -3px; }
   button:focus-visible, input:focus-visible, select:focus-visible,
