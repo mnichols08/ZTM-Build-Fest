@@ -140,7 +140,9 @@ a { color: var(--accent); }
 }
 [hidden] { display: none !important; }
 
-kin-app { display: block; min-height: 100vh; }
+/* Own stacking context so the negative z-index background and scrim paint
+   above body's opaque background instead of behind it. */
+kin-app { display: block; min-height: 100vh; isolation: isolate; }
 .personal-background {
   position: fixed;
   z-index: -2;
@@ -160,8 +162,6 @@ kin-app[data-personal-background]::before {
   background: color-mix(in srgb, var(--bg) 76%, transparent);
   pointer-events: none;
 }
-kin-app[data-personal-background] .application-shell { background: color-mix(in srgb, var(--bg) 88%, transparent); }
-kin-app[data-personal-background] main { background: color-mix(in srgb, var(--bg) 72%, transparent); }
 /* Projection reconciliation also happens during automatic sync. Avoid making
    the entire workspace appear to move when data refreshes in the background. */
 kin-app[data-quiet-render],
