@@ -35,7 +35,7 @@ worktree of `087c537`.
 | --- | --- | --- | --- |
 | D1 | High (privacy) | **Routine reminders survived lock.** Lock never cancelled local reminder timers, and `LocalReminders.cancelAll` had no callers. A `routine:*` reminder's delivery check was always true. So a reminder set before lock showed an OS notification with the decrypted routine title while Kin was locked. On base, the suite observed a second notification after lock. | `lockHousehold` cancels every reminder. A reminder notifies only while its session is current and its item or routine is live. |
 | D2 | Medium | **A notification-permission prompt answered after lock** registered the reminder and replaced "Household locked." with "Reminder set on this device…". `handleLocalReminder` had no session capture. | Capture the session. After the await, a stale result cancels its own timer and reports nothing. |
-| D3 | Medium (privacy) | **Household settings settling after lock wrote into the locked header.** `refreshHouseholdDefaults` awaited the network and IndexedDB without a session check. A late success put the decrypted household name in the locked header. On base the suite saw `brand: "Secret Household Name"`. A late failure replaced "Household locked." with an appearance error. `handleSaveHouseholdDefaults` had the same gap. | Assert the session after the load and the save. Gate the error status on the session too. |
+| D3 | Medium (privacy) | **Household settings settling after lock wrote into the locked header.** `refreshHouseholdDefaults` awaited the network and IndexedDB without a session check. A late success put the decrypted household name in the locked header. On base the suite saw `brand: "Secret Household Name"`. A late failure replaced "Household locked." with an appearance error. `handleSaveHouseholdDefaults` had the same gap. | Assert the session after the load and the save. Gate the error status on the session too. Review follow-up: the save's `catch` also checks the session before calling the editor's `complete`. Previously a save settling after lock or a household re-open (including the stale-session assert itself) still reported to the editor, and a re-open keeps that editor for the new session. |
 | D4 | Medium (data) | **A lock between the two schedule-change commands created a duplicate repeating task on retry.** The change is create-replacement, then archive-original. Lock cleared the in-memory resume token. After unlock, choosing the same schedule minted a new replacement id, which left the original archived and **two weekly replacements active**. This was observed on base. | The resume token holds only random ids and a cadence. It now survives lock, bound to the vault that created it, so unlocking the same vault resumes the change. A different vault never sees it. |
 | D5 | Medium (a11y) | **The phone-width Quick add trigger was named "AddQuick add".** CSS generated content (`::before { content: "Add" }`) joined the accessible name. This was confirmed in Edge's accessibility tree. | `content: "Add" / ""` gives the decorative label empty alt text. A plain `content: "Add"` fallback is declared first for engines without the syntax. |
 | D6 | Low (a11y) | **The repeating-task Schedule and Repeat disclosures had no open/closed marker.** Only accent color showed the state, and forced colors removes it. | Both join the existing chevron rule, which draws with `currentColor` and rotates on `[open]`. |
@@ -46,7 +46,7 @@ Production files changed: `web/components/kin-app.js` (D1–D4),
 
 ## 3. Regression coverage added
 
-### Browser: `scripts/daily-ux-hardening-regression.mjs` (29 checks)
+### Browser: `scripts/daily-ux-hardening-regression.mjs` (41 checks)
 
 This suite runs inside `browser-regression.mjs` after the repeating-tasks
 suite. It uses the real encrypted store and the WASM engine.
@@ -69,6 +69,14 @@ suite. It uses the real encrypted store and the WASM engine.
   registers nothing and announces nothing.
 - **D3.** A household-settings load that resolves, or rejects, after lock
   leaves the locked brand, title and status untouched.
+- **D3 save path.** These checks drive the real editor's Save button against
+  a deferred save.
+  - A save that resolves or rejects after lock, or after a household re-open,
+    never calls the old completion, and nothing reaches the locked or new
+    view.
+  - A failure in the current session reports through the editor's live status
+    and leaves Save available to retry.
+  - The retried save completes once and applies the saved name.
 - **D5.** Accessible name, read from the CDP accessibility tree at 375px.
 - **D6.** Disclosure markers, with forced colors off and on.
 - **D7.** Bulk outcome descriptions.

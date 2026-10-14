@@ -3563,7 +3563,12 @@ class KinApp extends HTMLElement {
       this.householdSettings = saved;
       this.applyEffectiveAppearance();
       complete(saved, null);
-    } catch (error) { complete(null, error); }
+    } catch (error) {
+      // A save settling after lock or a household re-open (including the
+      // stale-session assert above) reports nothing: a re-open keeps the same
+      // editor for the new session. A committed server write is unaffected.
+      if (this.isCurrentSession(session)) complete(null, error);
+    }
   }
 
   clearAppliedAppearance() {

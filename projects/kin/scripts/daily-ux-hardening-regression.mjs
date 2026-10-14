@@ -288,6 +288,90 @@ export async function dailyUxHardeningRegressions(client, { visit, ready }) {
       await unlock();
     }
 
+    // --- Household settings save settling after lock or re-open -----------
+    // The real editor and its Save button; the coordinator's save is a
+    // deferred promise. Every completion the editor receives is recorded. Lock
+    // rebuilds the editor, but a household re-open keeps it, so a stale
+    // completion there lands in the new session's editor.
+    const SECRET = "Secret Saved Household";
+    await page(() => { window.__settingsCoordinator = document.querySelector("kin-app").syncCoordinator ?? null; });
+    const startSave = () => page(() => {
+      const app = document.querySelector("kin-app"), editor = app.householdDefaults;
+      window.__save = { calls: [] };
+      window.__save.promise = new Promise((resolve, reject) => { window.__save.resolve = resolve; window.__save.reject = reject; });
+      app.syncCoordinator = { saveHouseholdSettings: (value) => { window.__save.value = value; return window.__save.promise; }, stop() {} };
+      if (!editor.__recording) {
+        editor.__recording = true;
+        editor.addEventListener("kin:save-household-defaults", (event) => {
+          const complete = event.detail.complete;
+          event.detail.complete = (saved, error) => { window.__save.calls.push({ saved: saved?.name ?? null, error: error?.message ?? null }); complete(saved, error); };
+        });
+      }
+      if (!editor.admin) editor.initialize({ admin: true, adminRecorded: true, value: null });
+      editor.feedback.textContent = "";
+      [...editor.querySelectorAll("button")].find((button) => button.textContent === "Save household settings").click();
+      return Boolean(window.__save.value);
+    });
+    // Settles the deferred save, then crosses one task boundary so the app's
+    // continuation (and any completion) has run.
+    const settleSave = (outcome) => page(async (outcome, secret) => {
+      if (outcome === "resolve") window.__save.resolve({ ...window.__save.value, name: secret, revision: window.__save.value.revision + 1 });
+      else window.__save.reject(new Error("Shared settings could not be saved."));
+      await window.__save.promise.catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }, outcome, SECRET);
+    const editorView = () => page((secret) => {
+      const app = document.querySelector("kin-app"), editor = app.householdDefaults;
+      return { calls: window.__save.calls, feedback: editor.feedback.textContent, name: editor.nameInput.value, brand: app.brandTitle?.textContent,
+        status: app.status.textContent, leaked: document.body.innerText.includes(secret) || editor.nameInput.value === secret || app.householdSettings?.name === secret };
+    }, SECRET);
+
+    for (const outcome of ["reject", "resolve"]) {
+      check(await startSave(), `settings save (${outcome} after lock) is pending`);
+      await lockAndSettle();
+      await settleSave(outcome);
+      const locked = await editorView();
+      check(locked.calls.length === 0 && !locked.feedback && locked.brand === "Kin" && locked.status === "Household locked." && !locked.leaked,
+        `a household settings save that ${outcome}s after lock never calls the old editor's completion or changes the locked view`, locked);
+      await unlock();
+      const reopened = await editorView();
+      check(reopened.calls.length === 0 && !reopened.feedback && !reopened.leaked,
+        `after unlocking, nothing from the save that settled (${outcome}) after lock reaches the editor`, reopened);
+    }
+
+    check(await startSave(), "settings save during a household re-open is pending");
+    await page(async () => { const app = document.querySelector("kin-app"); await app.openUnlockedHousehold(app.vault); });
+    await idle();
+    await settleSave("resolve");
+    const replaced = await editorView();
+    check(replaced.calls.length === 0 && !replaced.feedback && !replaced.leaked,
+      "a save started before the household was re-opened cannot complete into the same editor serving the new session", replaced);
+
+    check(await startSave(), "settings save in a valid session is pending");
+    await settleSave("reject");
+    const failed = await page(() => {
+      const editor = document.querySelector("kin-app").householdDefaults;
+      const save = [...editor.querySelectorAll("button")].find((button) => button.textContent === "Save household settings");
+      return { calls: window.__save.calls, feedback: editor.feedback.textContent, live: editor.feedback.getAttribute("role"), retry: Boolean(save) && !save.disabled && save.isConnected };
+    });
+    check(failed.calls.length === 1 && failed.calls[0].error === "Shared settings could not be saved." && failed.feedback === "Shared settings could not be saved." && failed.live === "status" && failed.retry,
+      "a save failing in the current session reports its error through the editor's live status and leaves Save available to retry", failed);
+    check(await startSave(), "retry dispatches a new save");
+    await settleSave("resolve");
+    const succeeded = await editorView();
+    check(succeeded.calls.length === 1 && succeeded.calls[0].saved === SECRET && succeeded.name === SECRET && succeeded.brand === SECRET &&
+      succeeded.feedback.startsWith("Household settings saved."),
+      "the retried save succeeds in the current session: completion runs once and the saved name is applied", succeeded);
+    await page(() => {
+      const app = document.querySelector("kin-app");
+      app.syncCoordinator = window.__settingsCoordinator;
+      delete window.__settingsCoordinator;
+      app.householdSettings = null;
+      app.applyEffectiveAppearance();
+      app.householdDefaults.initialize({ admin: false, adminRecorded: false, value: null });
+      app.householdDefaults.feedback.textContent = "";
+    });
+
     // --- Accessibility -----------------------------------------------------
     await client.send("Accessibility.enable");
     const axName = async (expression) => {
