@@ -345,7 +345,7 @@ export async function handoffRegressions() {
     "mixed deterministic replay",
   );
   check(
-    app.store.database.version === 4,
+    app.store.database.version === 5,
     "encrypted stores retain canonical event compatibility",
   );
   return "PASS Handoff add/acknowledge/archive, tombstones, invalid references, inert Unicode, retry draft ownership and mixed replay";

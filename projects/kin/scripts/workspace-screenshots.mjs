@@ -200,6 +200,37 @@ try {
     await viewport(1440, 960, false);
     await visit("#today");
   }
+  // Personal Appearance evidence uses only synthetic pixels and the editor's
+  // real preview/application path. It never touches household events.
+  await viewport(1440, 960, false);
+  await scheme("light");
+  await visit("#household/appearance");
+  await shot("appearance-1440-default");
+  await client.evaluate(`(() => { const a=document.querySelector('kin-app').appearance; a.choosePreset({id:'plum',name:'Plum',seed:'#74507D'}); })()`);
+  await shot("appearance-1440-plum-light");
+  await client.evaluate(`(() => { const a=document.querySelector('kin-app').appearance; a.change({mode:'dark'}); })()`);
+  await shot("appearance-1440-plum-dark");
+  await viewport(768, 1024, false);
+  await client.evaluate(`(() => { const a=document.querySelector('kin-app').appearance; a.chooseCustom('#16756F'); })()`);
+  await shot("appearance-768-custom");
+  await client.evaluate(`(async () => {
+    const a=document.querySelector('kin-app').appearance;
+    const canvas=document.createElement('canvas');canvas.width=640;canvas.height=400;
+    const c=canvas.getContext('2d');const g=c.createLinearGradient(0,0,640,400);g.addColorStop(0,'#174f86');g.addColorStop(1,'#e58a35');c.fillStyle=g;c.fillRect(0,0,640,400);
+    const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/webp',.85));
+    const image={bytes:new Uint8Array(await blob.arrayBuffer()),type:blob.type,width:640,height:400,seed:'#276A91'};
+    a.draft={...a.draft,image,colorSource:'background',seed:image.seed};a.update('Image ready. Save changes to keep it.');
+  })()`);
+  await shot("appearance-768-image-derived");
+  await viewport(390, 844, true);
+  await shot("appearance-390-image-derived");
+  await client.evaluate(`(() => { const a=document.querySelector('kin-app').appearance; a.choosePreset({id:'plum',name:'Plum',seed:'#74507D'}); })()`);
+  await shot("appearance-390-manual-override-background");
+  await client.evaluate(`(() => { const a=document.querySelector('kin-app').appearance; a.hex.value='#12';a.hex.dispatchEvent(new Event('input')); })()`);
+  await shot("appearance-390-invalid-color");
+  await client.evaluate(`document.querySelector('kin-app').lockHousehold(false)`);
+  await delay(80);
+  await shot("appearance-390-locked-cleared");
   await scheme("light");
   assert.deepEqual(problems, [], "Uncaught errors or console errors");
   console.log(`PASS screenshots written to ${outDir}`);

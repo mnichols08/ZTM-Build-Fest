@@ -1923,6 +1923,28 @@ try {
     }))()`),
     { total: 4, today: 1, lists: "need,shopping,staple" },
   );
+  assert.deepEqual(await first.evaluate(`(async()=>{
+    const app=document.querySelector('kin-app');
+    const {loadAppearance,saveAppearance}=await import('/appearance/store.js');
+    const originalActor=app.store.actorId;
+    const otherActor='ab'.repeat(16);
+    const count=store=>new Promise((resolve,reject)=>{const request=app.store.database.transaction(store).objectStore(store).count();request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
+    const before={events:await count('events'),outbox:await count('sync_outbox')};
+    const a=await saveAppearance(app.store,app.vault,{version:1,mode:'dark',colorSource:'preset',seed:'#74507D',manual:{source:'preset',name:'Plum',seed:'#74507D'},image:null});
+    app.store.actorId=otherActor;
+    const bInitial=await loadAppearance(app.store,app.vault);
+    await saveAppearance(app.store,app.vault,{version:1,mode:'light',colorSource:'custom',seed:'#16756F',manual:{source:'custom',name:'Custom color',seed:'#16756F'},image:null});
+    const b=await loadAppearance(app.store,app.vault);
+    app.store.actorId=originalActor;
+    const restoredA=await loadAppearance(app.store,app.vault);
+    const archive=await app.store.snapshotForArchive();
+    const after={events:await count('events'),outbox:await count('sync_outbox')};
+    return {aSeed:a.seed,bInitial:bInitial.colorSource,bSeed:b.seed,restoredA:restoredA.seed,pipelineUnchanged:before.events===after.events&&before.outbox===after.outbox,archiveFields:Object.keys(archive).sort()};
+  })()`), {
+    aSeed: "#74507D", bInitial: "default", bSeed: "#16756F", restoredA: "#74507D",
+    pipelineUnchanged: true, archiveFields: ["attachments", "events", "formatVersion", "local_context"],
+  }, "personal appearance stays member-bound and absent from events, relay outbox, and portable snapshots");
+  console.log("PASS personal appearance member isolation and household-pipeline exclusion");
   await visit(first, "today");
   await first.send("Emulation.setDeviceMetricsOverride", {
     width: 320,
