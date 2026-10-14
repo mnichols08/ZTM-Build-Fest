@@ -79,7 +79,7 @@ test("failed v0-to-v1 migration rolls back and permits a clean retry", () => {
   }
 });
 
-test("server schema v1 upgrades transactionally through household owner/settings schema v7", () => {
+test("server schema v1 upgrades transactionally through household admin schema v8", () => {
   const directory = temporaryDirectory();
   const databasePath = join(directory, "kin.sqlite");
   try {
@@ -87,6 +87,8 @@ test("server schema v1 upgrades transactionally through household owner/settings
     const legacy = openTestDatabase(databasePath);
     try {
       legacy.exec(`
+        ALTER TABLE members DROP COLUMN household_admin;
+        DELETE FROM server_migrations WHERE version = 8;
         DROP TABLE household_settings;
         ALTER TABLE households DROP COLUMN owner_member_id;
         DELETE FROM server_migrations WHERE version = 7;
@@ -118,13 +120,13 @@ test("server schema v1 upgrades transactionally through household owner/settings
     }
     const migrated = new DurableStore(databasePath);
     try {
-      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 7);
+      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 8);
       assert.deepEqual(
         migrated.db
           .prepare("SELECT version FROM server_migrations ORDER BY version")
           .all()
           .map(({ version }) => version),
-        [1, 2, 3, 4, 5, 6, 7],
+        [1, 2, 3, 4, 5, 6, 7, 8],
       );
       assert.equal(migrated.validate(), true);
     } finally {
@@ -181,7 +183,7 @@ test("a database with a newer schema fails closed without modification", () => {
   const databasePath = join(directory, "kin.sqlite");
   try {
     const database = openTestDatabase(databasePath);
-    sqlitePragma(database, "user_version = 8");
+    sqlitePragma(database, "user_version = 9");
     database.close();
 
     assert.throws(
@@ -189,7 +191,7 @@ test("a database with a newer schema fails closed without modification", () => {
       /newer server version/,
     );
     const inspection = openTestDatabase(databasePath, { readonly: true });
-    assert.equal(sqlitePragma(inspection, "user_version", { simple: true }), 8);
+    assert.equal(sqlitePragma(inspection, "user_version", { simple: true }), 9);
     inspection.close();
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -419,5 +421,70 @@ test("service lock is exclusive, released by its owner, and path-scoped", () => 
     otherRelease();
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("household admins persist across restart and the v8 migration promotes only a recorded owner", () => {
+  const directory = temporaryDirectory();
+  const databasePath = join(directory, "kin.sqlite");
+  try {
+    const store = new DurableStore(databasePath);
+    const first = new PairingService({ store });
+    const owned = first.bootstrap({ credential: { id: "admin-owner", publicKey: "key-owner", algorithm: -7 }, deviceLabel: "Owner" });
+    const ownerless = first.bootstrap({ credential: { id: "admin-legacy", publicKey: "key-legacy", algorithm: -7 }, deviceLabel: "Legacy" });
+    store.close();
+
+    // Simulate a v7 database: the admin column is absent and one household
+    // predates recorded ownership.
+    const legacy = openTestDatabase(databasePath);
+    try {
+      legacy.exec(`
+        ALTER TABLE members DROP COLUMN household_admin;
+        DELETE FROM server_migrations WHERE version = 8;
+      `);
+      legacy.prepare("UPDATE households SET owner_member_id = NULL WHERE id = ?").run(ownerless.householdId);
+      sqlitePragma(legacy, "user_version = 7");
+    } finally {
+      legacy.close();
+    }
+
+    const migrated = new DurableStore(databasePath);
+    try {
+      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 8);
+      const reloaded = new PairingService({ store: migrated });
+      assert.equal(reloaded.members.get(owned.memberId).householdAdmin, true);
+      assert.equal(reloaded.members.get(ownerless.memberId).householdAdmin, undefined);
+      assert.equal(reloaded.hasHouseholdAdmin(reloaded.households.get(ownerless.householdId)), false);
+    } finally {
+      migrated.close();
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("granted household admin authority is durable and non-adult admin rows fail closed", () => {
+  const store = new DurableStore(":memory:");
+  try {
+    const first = new PairingService({ store });
+    const founder = first.bootstrap({ credential: { id: "durable-founder", publicKey: "key-founder", algorithm: -7 }, deviceLabel: "Founder" });
+    const admit = (suffix, options) => {
+      const invitation = first.createPairing(founder.sessionToken, options);
+      const claim = first.claimPairing({ code: invitation.code, credential: { id: suffix, publicKey: `key-${suffix}`, algorithm: -7 }, deviceLabel: suffix });
+      first.approvePairing(founder.sessionToken, invitation.pairingId, claim.version);
+      return first.activateClaim(claim.claimToken);
+    };
+    const second = admit("durable-second");
+    const child = admit("durable-child", { kind: "limited" });
+    first.setHouseholdAdmin(founder.sessionToken, second.memberId, true, founder.memberId);
+
+    const reloaded = new PairingService({ store });
+    assert.equal(reloaded.members.get(second.memberId).householdAdmin, true);
+    assert.equal(reloaded.members.get(child.memberId).householdAdmin, undefined);
+
+    store.db.prepare("UPDATE members SET household_admin = 1 WHERE id = ?").run(child.memberId);
+    assert.throws(() => new PairingService({ store }), /membership data is invalid/);
+  } finally {
+    store.close();
   }
 });

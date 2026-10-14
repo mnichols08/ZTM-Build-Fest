@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { DurableConflictError, MAX_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "./durable-store.mjs";
-import { canParticipate, PairingError, requireTrustAuthority } from "./pairing-service.mjs";
+import { canParticipate, isHouseholdAdmin, PairingError, requireTrustAuthority } from "./pairing-service.mjs";
 import {
   canonicalEventEnvelope,
   canonicalJson,
@@ -99,13 +99,14 @@ export class EncryptedSyncService {
   householdSettings(sessionToken) {
     const auth = this.authorize(sessionToken);
     const row = this.store?.getHouseholdSettings(auth.household.id) ?? auth.household.settings ?? null;
-    return { owner: auth.household.ownerMemberId === auth.member.id, ownerRecorded: Boolean(auth.household.ownerMemberId), settings: row ? { ...row, ciphertext: Buffer.from(row.ciphertext).toString("base64url") } : null };
+    return { admin: isHouseholdAdmin(auth.member, this.now()), adminRecorded: this.pairingService.hasHouseholdAdmin(auth.household), settings: row ? { ...row, ciphertext: Buffer.from(row.ciphertext).toString("base64url") } : null };
   }
 
   updateHouseholdSettings(sessionToken, value) {
     const auth = this.authorize(sessionToken);
-    if (!auth.household.ownerMemberId || auth.household.ownerMemberId !== auth.member.id)
-      throw new PairingError("household_owner_required", "Only the recorded household owner can change shared settings.", 403);
+    // Unlike member management, shared settings have no legacy Adult fallback.
+    if (!isHouseholdAdmin(auth.member, this.now()))
+      throw new PairingError("household_admin_required", "Only household admins can change shared settings.", 403);
     const expectedRevision = value?.expectedRevision;
     const keyEpoch = value?.keyEpoch;
     const ciphertext = Buffer.isBuffer(value?.ciphertext) ? value.ciphertext : typeof value?.ciphertext === "string" ? Buffer.from(value.ciphertext, "base64url") : null;

@@ -5,6 +5,7 @@ import {
   canManageTrust,
   canParticipate,
   CLAIM_TTL_MS,
+  isHouseholdAdmin,
   isTemporaryMember,
   normalizeMemberKind,
   PAIRING_CODE_ALPHABET,
@@ -835,6 +836,7 @@ for (const adultCount of [2, 4]) {
       return service.activateClaim(claim.claimToken);
     };
     const departing = add(service.createPairing(adult.sessionToken), "departing");
+    service.setHouseholdAdmin(adult.sessionToken, departing.memberId, true, adult.memberId);
     for (let index = 2; index < adultCount; index++)
       add(service.createPairing(adult.sessionToken), `adult-${index}`);
     const extraDevice = add(service.createDevicePairing(departing.sessionToken), "extra-device", departing);
@@ -1776,9 +1778,10 @@ test("duplicate claims, stale approval, full households, and revoked devices fai
   const thirdClaim = service.claimPairing({ code: thirdInvite.code, credential: credential("c"), deviceLabel: "C" });
   service.approvePairing(adult.sessionToken, thirdInvite.pairingId, thirdClaim.version);
   const third = service.activateClaim(thirdClaim.claimToken);
-  const fourthInvite = service.createPairing(third.sessionToken);
+  assert.throws(() => service.createPairing(third.sessionToken), (error) => error.code === "household_admin_required");
+  const fourthInvite = service.createPairing(adult.sessionToken);
   const fourthClaim = service.claimPairing({ code: fourthInvite.code, credential: credential("d"), deviceLabel: "D" });
-  service.approvePairing(third.sessionToken, fourthInvite.pairingId, fourthClaim.version);
+  service.approvePairing(adult.sessionToken, fourthInvite.pairingId, fourthClaim.version);
   service.activateClaim(fourthClaim.claimToken);
   assert.equal(service.activeMemberCount(service.households.get(adult.householdId)), 4);
   assert.throws(() => service.createPairing(adult.sessionToken), (error) => error.code === "household_full");
@@ -2343,6 +2346,7 @@ test("removing an invitation author revokes that adult's pending admission", () 
   const initialClaim = service.claimPairing({ code: initial.code, credential: credential("member-b"), deviceLabel: "B" });
   service.approvePairing(adult.sessionToken, initial.pairingId, initialClaim.version);
   const memberB = service.activateClaim(initialClaim.claimToken);
+  service.setHouseholdAdmin(adult.sessionToken, memberB.memberId, true, adult.memberId);
   const invitation = service.createPairing(memberB.sessionToken);
   const claim = service.claimPairing({ code: invitation.code, credential: credential("member-c"), deviceLabel: "C" });
 
@@ -2353,12 +2357,13 @@ test("removing an invitation author revokes that adult's pending admission", () 
   assert.equal(service.activeMemberCount(service.households.get(adult.householdId)), 1);
 });
 
-test("trusted adults share one live admission slot and only the inviter approves", () => {
+test("household admins share one live admission slot and only the inviter approves", () => {
   const { service, adult } = setup();
   const initial = service.createPairing(adult.sessionToken);
   const initialClaim = service.claimPairing({ code: initial.code, credential: credential("member-b"), deviceLabel: "B" });
   service.approvePairing(adult.sessionToken, initial.pairingId, initialClaim.version);
   const memberB = service.activateClaim(initialClaim.claimToken);
+  service.setHouseholdAdmin(adult.sessionToken, memberB.memberId, true, adult.memberId);
 
   const firstInvite = service.createPairing(adult.sessionToken);
   const secondInvite = service.createPairing(memberB.sessionToken);
@@ -2370,4 +2375,151 @@ test("trusted adults share one live admission slot and only the inviter approves
   );
   service.approvePairing(memberB.sessionToken, secondInvite.pairingId, claim.version);
   assert.equal(service.activeMemberCount(service.households.get(adult.householdId)), 3);
+});
+
+const admit = (service, inviter, suffix, options) => {
+  const invitation = service.createPairing(inviter.sessionToken, options);
+  const claim = service.claimPairing({ code: invitation.code, credential: credential(suffix), deviceLabel: suffix, rateKey: suffix });
+  service.approvePairing(inviter.sessionToken, invitation.pairingId, claim.version);
+  return service.activateClaim(claim.claimToken);
+};
+
+test("the household founder is the first admin and the household view reports admin authority", () => {
+  const { service, adult } = setup();
+  const second = admit(service, adult, "second");
+  const child = admit(service, adult, "child", { kind: "limited" });
+  assert.equal(isHouseholdAdmin(service.members.get(adult.memberId)), true);
+  assert.equal(isHouseholdAdmin(service.members.get(second.memberId)), false);
+  const founderView = service.householdView(adult.sessionToken);
+  assert.equal(founderView.adminRecorded, true);
+  assert.equal(founderView.canManageMembers, true);
+  assert.deepEqual(founderView.members.map(({ id, admin }) => [id, admin]), [
+    [adult.memberId, true], [second.memberId, false], [child.memberId, false],
+  ]);
+  const secondView = service.householdView(second.sessionToken);
+  assert.equal(secondView.adminRecorded, true);
+  assert.equal(secondView.canManageMembers, false);
+});
+
+test("non-admin adults cannot manage membership, other members' devices, or household lifecycle", () => {
+  const { service, adult } = setup();
+  const second = admit(service, adult, "second");
+  const child = admit(service, adult, "child", { kind: "limited" });
+  const denied = (error) => error.code === "household_admin_required";
+  assert.throws(() => service.createPairing(second.sessionToken), denied);
+  assert.throws(() => service.createPairing(second.sessionToken, { kind: "limited" }), denied);
+  assert.throws(() => service.removeOtherAdult(second.sessionToken, child.memberId, second.memberId), denied);
+  assert.throws(() => service.deviceRevocationContext(second.sessionToken, adult.deviceId), denied);
+  assert.throws(() => service.revokeDevice(second.sessionToken, adult.deviceId, second.memberId), denied);
+  assert.throws(() => service.requestHouseholdDeletion(second.sessionToken, second.memberId), denied);
+  assert.throws(() => service.setHouseholdAdmin(second.sessionToken, second.memberId, true, second.memberId), denied);
+  assert.equal(isHouseholdAdmin(service.members.get(second.memberId)), false);
+  assert.equal(service.members.get(child.memberId).active, true);
+  assert.ok(!service.devices.get(adult.deviceId).revokedAt);
+
+  // Everyday Adult authority over their own devices remains.
+  assert.ok(service.createDevicePairing(second.sessionToken).code);
+});
+
+test("an admin can promote and demote adults but never children, guests, or the last admin", () => {
+  const { service, adult } = setup();
+  const second = admit(service, adult, "second");
+  const child = admit(service, adult, "child", { kind: "limited" });
+  const sitter = admit(service, adult, "sitter", { kind: "temporary", expiresAt: service.now() + 86_400_000 });
+
+  assert.throws(() => service.setHouseholdAdmin(adult.sessionToken, second.memberId, true, second.memberId), (error) => error.code === "fresh_auth_required");
+  assert.throws(() => service.setHouseholdAdmin(adult.sessionToken, second.memberId, "yes", adult.memberId), (error) => error.code === "household_admin_invalid");
+  for (const target of [child, sitter])
+    assert.throws(() => service.setHouseholdAdmin(adult.sessionToken, target.memberId, true, adult.memberId), (error) => error.code === "household_admin_adult_required");
+  assert.throws(() => service.setHouseholdAdmin(adult.sessionToken, adult.memberId, false, adult.memberId), (error) => error.code === "last_household_admin");
+  assert.throws(() => service.leaveHousehold(adult.sessionToken, adult.memberId), (error) => error.code === "last_household_admin");
+
+  const version = service.households.get(adult.householdId).version;
+  assert.deepEqual(service.setHouseholdAdmin(adult.sessionToken, second.memberId, true, adult.memberId), { memberId: second.memberId, admin: true, changed: true });
+  assert.deepEqual(service.setHouseholdAdmin(adult.sessionToken, second.memberId, true, adult.memberId), { memberId: second.memberId, admin: true, changed: false });
+  assert.equal(service.households.get(adult.householdId).version, version + 1);
+  assert.ok(service.events.some((event) => event.type === "household_admin_granted" && event.memberId === second.memberId && event.actorId === adult.memberId));
+  assert.ok(admit(service, second, "invited-by-second"));
+
+  // With two admins either may step down, but not both.
+  service.setHouseholdAdmin(second.sessionToken, adult.memberId, false, second.memberId);
+  assert.equal(isHouseholdAdmin(service.members.get(adult.memberId)), false);
+  assert.throws(() => service.createPairing(adult.sessionToken), (error) => error.code === "household_admin_required");
+  assert.throws(() => service.setHouseholdAdmin(second.sessionToken, second.memberId, false, second.memberId), (error) => error.code === "last_household_admin");
+  assert.ok(service.events.some((event) => event.type === "household_admin_revoked" && event.memberId === adult.memberId));
+});
+
+test("demoting an admin revokes that admin's pending admissions", () => {
+  const { service, adult } = setup();
+  const second = admit(service, adult, "second");
+  service.setHouseholdAdmin(adult.sessionToken, second.memberId, true, adult.memberId);
+  const invitation = service.createPairing(second.sessionToken, { kind: "limited" });
+  const claim = service.claimPairing({ code: invitation.code, credential: credential("pending-child"), deviceLabel: "Child" });
+  service.setHouseholdAdmin(adult.sessionToken, second.memberId, false, adult.memberId);
+  assert.equal(service.pairings.get(invitation.pairingId).state, "Revoked");
+  assert.throws(() => service.pairingForClaim(claim.claimToken), (error) => error.code === "claim_unavailable");
+  assert.throws(() => service.approvePairing(second.sessionToken, invitation.pairingId, claim.version), (error) => error.code === "household_admin_required");
+});
+
+test("an admin cannot be removed while they are the only usable admin, and removing a second admin succeeds", () => {
+  const { service, adult } = setup();
+  const second = admit(service, adult, "second");
+  service.setHouseholdAdmin(adult.sessionToken, second.memberId, true, adult.memberId);
+  service.removeOtherAdult(adult.sessionToken, second.memberId, adult.memberId);
+  assert.equal(service.members.get(second.memberId).active, false);
+  assert.equal(isHouseholdAdmin(service.members.get(adult.memberId)), true);
+});
+
+test("recovering an admin requires an admin approver", () => {
+  const { service, adult } = setup();
+  const second = admit(service, adult, "second");
+  assert.throws(() => service.createMemberRecoveryPairing(second.sessionToken, adult.memberId), (error) => error.code === "household_admin_required");
+  assert.ok(service.createMemberRecoveryPairing(adult.sessionToken, second.memberId).code);
+  service.setHouseholdAdmin(adult.sessionToken, second.memberId, true, adult.memberId);
+  assert.ok(service.createMemberRecoveryPairing(second.sessionToken, adult.memberId).code);
+});
+
+test("legacy households without a recorded admin keep Adult management but cannot self-promote", () => {
+  const { service, adult } = setup();
+  const second = admit(service, adult, "second");
+  delete service.members.get(adult.memberId).householdAdmin;
+  service.households.get(adult.householdId).ownerMemberId = null;
+  const view = service.householdView(second.sessionToken);
+  assert.equal(view.adminRecorded, false);
+  assert.equal(view.canManageMembers, true);
+  assert.ok(admit(service, second, "legacy-invite"));
+  assert.throws(() => service.setHouseholdAdmin(second.sessionToken, second.memberId, true, second.memberId), (error) => error.code === "household_admin_required");
+});
+
+test("HTTP household admin changes require a fresh passkey assertion from the acting admin", async () => {
+  const { service, adult } = setup();
+  const second = admit(service, adult, "second");
+  const server = await startTestServer({ service, now: () => service.now() });
+  const founderCookie = `kin_session=${adult.sessionToken}`;
+  const secondCookie = `kin_session=${second.sessionToken}`;
+  const options = (cookie, body) => apiRequest(server, "/api/household/admins/options", { method: "POST", cookie, body });
+  const finish = (cookie, flow, id) => apiRequest(server, "/api/household/admins/finish", { method: "POST", cookie, body: { flow, credential: { id, flow } } });
+  try {
+    assert.equal((await options(founderCookie, { memberId: second.memberId, admin: "true" })).status, 400);
+    const forbidden = await options(secondCookie, { memberId: second.memberId, admin: true });
+    assert.equal(forbidden.status, 403);
+    assert.equal((await forbidden.json()).error, "household_admin_required");
+
+    const wrongPasskey = await (await options(founderCookie, { memberId: second.memberId, admin: true })).json();
+    assert.equal((await finish(founderCookie, wrongPasskey.flow, "credential-second")).status, 401);
+    assert.equal(isHouseholdAdmin(service.members.get(second.memberId)), false);
+
+    const wrongSession = await (await options(founderCookie, { memberId: second.memberId, admin: true })).json();
+    assert.equal((await finish(secondCookie, wrongSession.flow, "credential-second")).status, 400);
+    assert.equal(isHouseholdAdmin(service.members.get(second.memberId)), false);
+
+    const granted = await (await options(founderCookie, { memberId: second.memberId, admin: true })).json();
+    const response = await finish(founderCookie, granted.flow, "credential-a");
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { memberId: second.memberId, admin: true, changed: true });
+    assert.equal(isHouseholdAdmin(service.members.get(second.memberId)), true);
+    assert.equal((await finish(founderCookie, granted.flow, "credential-a")).status, 410);
+  } finally {
+    await server.close();
+  }
 });

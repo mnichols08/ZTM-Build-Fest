@@ -123,7 +123,7 @@ test("offline household settings load only from the matching protected cache", a
   const originalNavigator = globalThis.navigator;
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { onLine: false } });
   try {
-    assert.deepEqual(await coordinator.loadHouseholdSettings(), { owner: false, ownerRecorded: false,
+    assert.deepEqual(await coordinator.loadHouseholdSettings(), { admin: false, adminRecorded: false,
       value: { version: 1, revision: 4, name: "Cached Home" }, offline: true });
   } finally {
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: originalNavigator });
@@ -150,7 +150,7 @@ test("household settings are cached only after validation and newer protected re
   const newer = { householdId, revision: 5, keyEpoch: 2, ciphertext: "Ag", digest: "c".repeat(64) };
   const calls = [];
   const coordinator = new SyncCoordinator({ store: {}, engine: {}, identity: { householdId, deviceId: "device" } });
-  coordinator.request = async () => ({ owner: true, ownerRecorded: true, settings: server });
+  coordinator.request = async () => ({ admin: true, adminRecorded: true, settings: server });
   coordinator.keyStore = { cacheHouseholdSettings: async (record) => { calls.push(record); return newer; } };
   coordinator.decryptCachedHouseholdSettings = async (record) => {
     calls.push(`decrypt:${record.revision}`);

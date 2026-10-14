@@ -903,13 +903,13 @@ export class SyncCoordinator {
     } catch (error) {
       if (error.code !== "connection_unavailable" && navigator.onLine !== false) throw error;
       const value = await this.loadCachedHouseholdSettings();
-      return { owner: false, ownerRecorded: false, value, offline: true };
+      return { admin: false, adminRecorded: false, value, offline: true };
     }
-    if (!response.settings) return { owner: response.owner, ownerRecorded: response.ownerRecorded, value: null };
+    if (!response.settings) return { admin: response.admin, adminRecorded: response.adminRecorded, value: null };
     const candidate = { householdId: this.identity.householdId, ...response.settings };
     const value = await this.decryptCachedHouseholdSettings(candidate);
     const cached = await this.keyStore.cacheHouseholdSettings(candidate);
-    return { owner: response.owner, ownerRecorded: response.ownerRecorded,
+    return { admin: response.admin, adminRecorded: response.adminRecorded,
       value: cached.revision === candidate.revision ? value : await this.decryptCachedHouseholdSettings(cached) };
   }
 

@@ -284,6 +284,8 @@ test(`retained approval certificates with ${noncanonicalSignature ? "noncanonica
     );
     f.pairing.transitionSyncPublicKeys(identity.sessionToken, transition);
   }
+  // Revoking another member's device is household-admin authority.
+  f.pairing.members.get(recipient.memberId).householdAdmin = true;
   f.pairing.revokeDevice(recipient.sessionToken, f.adult.deviceId, recipient.memberId);
   assert.equal(f.store.validate(), true);
   const peer = new DurableStore(f.databasePath, { acquireProcessLock: false });
