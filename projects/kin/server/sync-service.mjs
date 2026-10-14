@@ -96,6 +96,36 @@ export class EncryptedSyncService {
       .sort((left, right) => left.memberId < right.memberId ? -1 : left.memberId > right.memberId ? 1 : 0);
   }
 
+  householdSettings(sessionToken) {
+    const auth = this.authorize(sessionToken);
+    const row = this.store?.getHouseholdSettings(auth.household.id) ?? auth.household.settings ?? null;
+    return { owner: auth.household.ownerMemberId === auth.member.id, ownerRecorded: Boolean(auth.household.ownerMemberId), settings: row ? { ...row, ciphertext: Buffer.from(row.ciphertext).toString("base64url") } : null };
+  }
+
+  updateHouseholdSettings(sessionToken, value) {
+    const auth = this.authorize(sessionToken);
+    if (!auth.household.ownerMemberId || auth.household.ownerMemberId !== auth.member.id)
+      throw new PairingError("household_owner_required", "Only the recorded household owner can change shared settings.", 403);
+    const expectedRevision = value?.expectedRevision;
+    const keyEpoch = value?.keyEpoch;
+    const ciphertext = Buffer.isBuffer(value?.ciphertext) ? value.ciphertext : typeof value?.ciphertext === "string" ? Buffer.from(value.ciphertext, "base64url") : null;
+    const digest = value?.digest;
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !Number.isSafeInteger(keyEpoch) || keyEpoch < 1 || keyEpoch > 128 || !ciphertext || ciphertext.length < 29 || ciphertext.length > 4_198_400 || !/^[a-f0-9]{64}$/.test(digest ?? "") || createHash("sha256").update(ciphertext).digest("hex") !== digest)
+      throw new PairingError("household_settings_invalid", "Those household settings could not be verified.", 400);
+    const record = { keyEpoch, ciphertext, digest, memberId: auth.member.id, deviceId: auth.device.id, updatedAt: this.now() };
+    let revision;
+    if (this.store) revision = this.store.putHouseholdSettings(auth.household.id, expectedRevision, record);
+    else {
+      const current = auth.household.settings;
+      if ((current?.revision ?? 0) !== expectedRevision) throw new PairingError("household_settings_stale", "Household settings changed on another device. Reload and try again.", 409);
+      revision = expectedRevision + 1;
+      auth.household.settings = { ...record, revision };
+    }
+    this.pairingService.audit("household_settings_updated", { householdId: auth.household.id, memberId: auth.member.id, deviceId: auth.device.id, revision });
+    this.pairingService.persistHousehold(auth.household.id);
+    return { revision, accepted: true };
+  }
+
   enable(sessionToken) {
     const auth = this.authorize(sessionToken);
     requireTrustAuthority(auth.member, "enable household sync");

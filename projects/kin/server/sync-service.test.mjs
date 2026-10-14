@@ -35,6 +35,30 @@ function makeEnvelope(adult, overrides = {}) {
   };
 }
 
+test("founder alone can replace encrypted household settings with revision checks", () => {
+  const { pairing, adult, sync } = fixture();
+  const invitation = pairing.createPairing(adult.sessionToken, { kind: "adult" });
+  const claim = pairing.claimPairing({ code: invitation.code, credential: credential("second"), deviceLabel: "Second" });
+  pairing.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
+  const second = pairing.activateClaim(claim.claimToken);
+  const ciphertext = Buffer.alloc(40, 7);
+  const value = { expectedRevision: 0, keyEpoch: 1, ciphertext: ciphertext.toString("base64url"), digest: createHash("sha256").update(ciphertext).digest("hex"), ownerId: second.memberId, isOwner: true };
+  assert.equal(pairing.households.get(adult.householdId).ownerMemberId, adult.memberId);
+  assert.throws(() => sync.updateHouseholdSettings(second.sessionToken, value), (error) => error.code === "household_owner_required");
+  assert.deepEqual(sync.updateHouseholdSettings(adult.sessionToken, value), { revision: 1, accepted: true });
+  assert.equal(sync.householdSettings(second.sessionToken).settings.revision, 1);
+  assert.throws(() => sync.updateHouseholdSettings(adult.sessionToken, value), (error) => error.code === "household_settings_stale");
+});
+
+test("legacy households without trustworthy ownership fail closed", () => {
+  const { pairing, adult, sync } = fixture();
+  pairing.households.get(adult.householdId).ownerMemberId = null;
+  const ciphertext = Buffer.alloc(40, 9);
+  const value = { expectedRevision: 0, keyEpoch: 1, ciphertext: ciphertext.toString("base64url"), digest: createHash("sha256").update(ciphertext).digest("hex") };
+  assert.equal(sync.householdSettings(adult.sessionToken).ownerRecorded, false);
+  assert.throws(() => sync.updateHouseholdSettings(adult.sessionToken, value), (error) => error.code === "household_owner_required");
+});
+
 test("relay enforces bounded interoperable logical time", () => {
   const { adult } = fixture();
   const base = makeEnvelope(adult);
