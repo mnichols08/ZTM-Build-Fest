@@ -34,6 +34,9 @@ export class KinHouseholdDefaults extends HTMLElement {
     this.note.textContent = "Set the name and default appearance shared by your household.";
     this.identity.disabled = false; this.editor.disabled = false;
     this.installActions();
+    // Busy state may have been applied before admin authority arrived and
+    // left the name input disabled; recompute control state now.
+    this.disabled = this.busy;
   }
   installActions() {
     this.actions?.remove(); this.actions = document.createElement("div"); this.actions.className = "appearance-actions";
