@@ -618,7 +618,8 @@ p.item-text { padding: 8px 0; }
   list-style: none;
 }
 summary::-webkit-details-marker { display: none; }
-.today-disclosure > summary::before, .list-actions > summary::before, .completed-disclosure > summary::before, .search-filters-disclosure > summary::before, .security-guidance summary::before {
+.today-disclosure > summary::before, .list-actions > summary::before, .completed-disclosure > summary::before, .search-filters-disclosure > summary::before, .security-guidance summary::before,
+.routine-schedule > summary::before, .quick-add-repeat > summary::before {
   content: "";
   width: 7px;
   height: 7px;
@@ -1011,7 +1012,8 @@ kin-app > .security-panel {
   .nav-link svg { width: 20px; height: 20px; }
   .header-search span, .header-lock span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   .quick-add-trigger { min-width: var(--tap); padding-inline: 8px; font-size: 0; }
-  .quick-add-trigger::before { content: "Add"; font-size: 14px; }
+  /* The visible short label is decorative; the name stays "Quick add". */
+  .quick-add-trigger::before { content: "Add"; content: "Add" / ""; font-size: 14px; }
   .header-search, .header-lock { padding: 0 12px; }
   .sync-chip { max-width: 44vw; }
   .site-tools { gap: 6px; }

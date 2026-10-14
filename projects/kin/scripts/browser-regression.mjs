@@ -23,6 +23,7 @@ import { todayActionableRegressions, todayLifecycleRegressions } from "./today-a
 import { keyboardCommandRegressions } from "./keyboard-commands-regression.mjs";
 import { bulkActionRegressions } from "./bulk-actions-regression.mjs";
 import { recurringTaskRegressions } from "./recurring-tasks-regression.mjs";
+import { dailyUxHardeningRegressions } from "./daily-ux-hardening-regression.mjs";
 import {
   handoffRegressions,
   handoffPeerRegressions,
@@ -1361,6 +1362,10 @@ try {
   console.log(await keyboardCommandRegressions(first, { visit: (id) => visit(first, id), ready }));
   console.log(await bulkActionRegressions(first, { visit: (id) => visit(first, id), ready }));
   console.log(await recurringTaskRegressions(first, { visit: (id) => visit(first, id), ready }));
+  // The hardening suite also unlocks offline; the same probe filter applies.
+  const hardeningOfflineStart = problems.length;
+  console.log(await dailyUxHardeningRegressions(first, { visit: (id) => visit(first, id), ready }));
+  problems.push(...problems.splice(hardeningOfflineStart).filter((entry) => !offlineStatusProbe(entry)));
   await visit(first, "routines");
   console.log(await first.evaluate(`(${routineRegressions.toString()})()`));
   const playbookResult = await first.evaluate(async () => {

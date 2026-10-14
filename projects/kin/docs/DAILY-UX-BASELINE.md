@@ -99,6 +99,13 @@ from Today is **1 interaction**, the same row control as any task. Changing or
 stopping a schedule is Schedule, choose, confirm (**3 interactions**). Today
 shows one row per repeating task, never its future occurrences.
 
+## Hardening follow-up
+
+[DAILY-UX-HARDENING](DAILY-UX-HARDENING.md) records the release-readiness
+audit, its fixes, and repeated samples (median and p95) for Quick add commit,
+Today render, replay, palette open/filter, and bulk completion of 10 and 50
+items. Interaction counts are unchanged.
+
 ## Known gaps
 
 - Timings are local end-to-end samples, not statistically rigorous benchmarks

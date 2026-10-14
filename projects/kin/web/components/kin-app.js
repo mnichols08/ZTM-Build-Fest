@@ -2126,9 +2126,11 @@ class KinApp extends HTMLElement {
   async changeRoutineSchedule(detail) {
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
-    const pending = this.pendingScheduleChange;
+    const vaultId = this.vault?.vaultId ?? null;
+    const pending = this.pendingScheduleChange?.vaultId === vaultId ? this.pendingScheduleChange : null;
     const resume = pending?.routineId === detail.routineId && pending.cadence === detail.cadence;
     const change = Object.freeze({
+      vaultId,
       routineId: detail.routineId,
       cadence: detail.cadence,
       replacementId: resume ? pending.replacementId : crypto.randomUUID().replaceAll("-", ""),
@@ -2305,15 +2307,24 @@ class KinApp extends HTMLElement {
 
   async handleLocalReminder({ id, title, at }) {
     const itemId = id.startsWith("item:") ? id.slice(5) : null;
-    const currentItem = () => !itemId || this.state?.items?.some((item) => item.itemId === itemId && item.status === "active");
+    const routineId = id.startsWith("routine:") ? id.slice(8) : null;
+    // A reminder carries its decrypted title, so it may only notify while its
+    // record is live in this unlocked session (lock also cancels every timer).
+    const session = this.captureSession();
+    const currentItem = () => this.isCurrentSession(session) && (itemId
+      ? this.state?.items?.some((item) => item.itemId === itemId && item.status === "active")
+      : !routineId || this.state?.routines?.some((routine) => routine.routineId === routineId && routine.status !== "archived"));
     try {
       const result = await this.localReminders.schedule({ id, title, at, isCurrent: currentItem });
+      // The permission prompt can outlast the session; never register a timer
+      // or report success into a locked or different household.
+      if (!this.isCurrentSession(session)) { this.localReminders.cancel(id); return; }
       this.renderReminders();
       for (const control of this.querySelectorAll("kin-reminder")) if (control.targetRecord?.id === id) control.saved(result === "granted" ? at : null);
       if (itemId) this.detail?.reminderDrafts?.delete(itemId);
       this.setStatus(result === "granted" ? "Reminder set on this device while Kin is open." : result === "denied" ? "Notifications are blocked in browser settings. Kin still works normally." : "Reminders are unavailable in this browser. Kin still works normally.");
     } catch (error) {
-      this.showAlert(error.message ?? "Choose a future reminder time.");
+      if (this.isCurrentSession(session)) this.showAlert(error.message ?? "Choose a future reminder time.");
     }
   }
 
@@ -3517,12 +3528,16 @@ class KinApp extends HTMLElement {
 
   async refreshHouseholdDefaults() {
     if (!this.syncCoordinator || !this.vault || this.vault.locked) return;
+    // The load spans the network and IndexedDB; a lock or re-open meanwhile
+    // must not write the household name or a status into the next session.
+    const session = this.captureSession();
     try {
       const result = await this.syncCoordinator.loadHouseholdSettings();
+      this.assertCurrentSession(session);
       if (result.value && (this.householdSettings?.revision ?? -1) <= result.value.revision) this.householdSettings = result.value;
       this.householdDefaults.initialize({ ...result, value: this.householdSettings });
       this.applyEffectiveAppearance();
-    } catch { this.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded."); }
+    } catch { if (this.isCurrentSession(session)) this.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded."); }
   }
 
   async restoreCachedHouseholdDefaults(identity, session = this.captureSession()) {
@@ -3541,8 +3556,10 @@ class KinApp extends HTMLElement {
   async handleSaveHouseholdDefaults(event) {
     const { value, complete } = event.detail;
     if (!this.syncCoordinator) { complete(null, new Error("Connect household sync before changing shared settings.")); return; }
+    const session = this.captureSession();
     try {
       const saved = await this.syncCoordinator.saveHouseholdSettings(value);
+      this.assertCurrentSession(session);
       this.householdSettings = saved;
       this.applyEffectiveAppearance();
       complete(saved, null);
@@ -3611,7 +3628,11 @@ class KinApp extends HTMLElement {
     this.commandGeneration = null;
     this.clearBulkOutcome();
     this.pendingCapture = null;
-    this.pendingScheduleChange = null;
+    // Reminder timers hold decrypted titles; none may fire once locked.
+    this.localReminders.cancelAll();
+    // pendingScheduleChange holds only random ids and a cadence. It survives
+    // a lock so that unlocking the same vault can finish a half-saved change
+    // instead of starting a second replacement; other vaults never see it.
     this.attachmentPreviews?.clear();
     this.attachmentPreviews = null;
     this.attachmentTarget = null;

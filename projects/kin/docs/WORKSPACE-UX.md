@@ -475,7 +475,10 @@ plans which existing commands a request still needs.
   changed. Review the current routine."
 - **Concurrency limit.** Two devices that change the same schedule before
   syncing each create a replacement; both remain visible and either can be
-  stopped. Identical completions converge on one occurrence.
+  stopped. If the two devices' clocks differ, the later archive of the
+  original is quarantined on sync and the device shows the generic
+  "could not be applied" notice ([DAILY-UX-HARDENING](DAILY-UX-HARDENING.md)
+  F1). Identical completions converge on one occurrence.
 
 ---
 
