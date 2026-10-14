@@ -137,6 +137,15 @@ a { color: var(--accent); }
 [hidden] { display: none !important; }
 
 kin-app { display: block; min-height: 100vh; }
+/* Projection reconciliation also happens during automatic sync. Avoid making
+   the entire workspace appear to move when data refreshes in the background. */
+kin-app[data-quiet-render],
+kin-app[data-quiet-render] *,
+kin-app[data-quiet-render] *::before,
+kin-app[data-quiet-render] *::after {
+  animation: none !important;
+  transition: none !important;
+}
 
 /* Kin's warm, calm visual language. Motion stays short and positional so the
    interface feels responsive without competing with household content. */
@@ -428,10 +437,6 @@ kin-segment-nav { display: block; margin: 0 0 16px; }
   gap: 4px 12px;
   padding: 10px 2px;
 }
-.item-list > li { animation: row-arrive .24s ease both; }
-.item-list > li:nth-child(2) { animation-delay: 25ms; }
-.item-list > li:nth-child(3) { animation-delay: 45ms; }
-.item-list > li:nth-child(4) { animation-delay: 65ms; }
 .item-row.item-selected { background: color-mix(in srgb, var(--accent-soft) 60%, var(--surface)); border-radius: var(--r-row); margin-inline: -8px; padding-inline: 10px; }
 .item-control { grid-area: control; display: flex; align-items: center; min-height: var(--tap); }
 .item-body { grid-area: body; display: grid; gap: 2px; min-width: 0; }
@@ -971,10 +976,6 @@ kin-app > .security-panel {
 
 @keyframes view-arrive {
   from { opacity: 0; transform: translateY(7px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@keyframes row-arrive {
-  from { opacity: .55; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
 @keyframes sheet-arrive {

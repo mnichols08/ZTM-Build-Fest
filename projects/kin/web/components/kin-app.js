@@ -2786,6 +2786,24 @@ class KinApp extends HTMLElement {
 
   renderState() {
     if (!this.vault || this.vault.locked || !this.state) return;
+    // Rendering reconciles the whole unlocked workspace and is also used for
+    // background sync. Suppress motion during that pass; navigation and
+    // explicitly opened detail sheets keep their separate entrance effects.
+    const renderToken = (this.quietRenderToken ?? 0) + 1;
+    this.quietRenderToken = renderToken;
+    this.setAttribute("data-quiet-render", "");
+    try {
+      this.renderStateContents();
+    } finally {
+      const clearQuietRender = () => {
+        if (this.quietRenderToken === renderToken) this.removeAttribute("data-quiet-render");
+      };
+      if (typeof globalThis.requestAnimationFrame === "function") globalThis.requestAnimationFrame(clearQuietRender);
+      else setTimeout(clearQuietRender, 0);
+    }
+  }
+
+  renderStateContents() {
     const mode = this.state.mode ?? "normal";
     this.modeSelect.value = mode;
     this.routines.householdMode = mode;
