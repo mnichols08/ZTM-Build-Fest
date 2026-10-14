@@ -12,9 +12,9 @@ class ElementStub {
     this.hidden = false;
   }
   get firstElementChild() { return this.children[0] ?? null; }
-  append(...children) { this.children.push(...children); }
-  insertBefore(child) { this.children.push(child); }
-  remove() {}
+  append(...children) { for (const child of children) { child.parent = this; this.children.push(child); } }
+  insertBefore(child) { this.append(child); }
+  remove() { this.parent?.children.splice(this.parent.children.indexOf(this), 1); this.parent = null; }
   addEventListener(name, listener) { this.listeners[name] = listener; }
   setAttribute(name, value) { this.attributes[name] = value; }
   contains() { return true; }
@@ -65,4 +65,23 @@ test("household defaults stay hidden and locked for non-admins", () => {
   panel.disabled = false;
   assert.equal(panel.hidden, true);
   assert.equal(panel.nameInput.disabled, true);
+});
+
+test("withdrawn admin authority removes shared actions and locks the household name", () => {
+  const panel = new KinHouseholdDefaults();
+  panel.connectedCallback();
+  panel.initialize({ admin: true, adminRecorded: true, value: null });
+  assert.ok(panel.querySelectorAll("button").some((control) => control.textContent === "Save household settings"));
+
+  for (const admin of [false, undefined, null, "true"]) {
+    panel.initialize({ admin, adminRecorded: true, value: null });
+    assert.equal(panel.hidden, true, `${admin}: panel hidden`);
+    assert.equal(panel.nameInput.disabled, true, `${admin}: name locked`);
+    assert.equal(panel.querySelectorAll("button").some((control) => control.textContent === "Save household settings"), false,
+      `${admin}: no stale save action`);
+    panel.disabled = false;
+    assert.equal(panel.nameInput.disabled, true, `${admin}: a later idle pass keeps it locked`);
+    panel.initialize({ admin: true, adminRecorded: true, value: null });
+    assert.equal(panel.nameInput.disabled, false, "re-granted authority restores editing");
+  }
 });

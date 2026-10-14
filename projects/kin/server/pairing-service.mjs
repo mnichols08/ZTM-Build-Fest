@@ -1619,6 +1619,29 @@ export class PairingService {
     });
   }
 
+  // Usable admin access needs a recorded admin with a passkey and an
+  // unrevoked trusted device; the admin flag alone is not enough.
+  hasUsableAdminAccess(household, excludingDeviceIds = []) {
+    return [...household.members].some((memberId) => {
+      const admin = this.members.get(memberId);
+      return isHouseholdAdmin(admin, this.now()) && admin.credentials?.size > 0 &&
+        [...this.devices.values()].some((device) =>
+          device.memberId === memberId && !device.revokedAt &&
+          !excludingDeviceIds.includes(device.id));
+    });
+  }
+
+  // A household that records admins must keep one who can still act.
+  // Legacy households without an admin are unaffected.
+  requireAdminAccessAfterRevocation(household, deviceId) {
+    if (this.hasHouseholdAdmin(household) && !this.hasUsableAdminAccess(household, [deviceId]))
+      throw new PairingError(
+        "last_household_admin",
+        "Keep a household admin with a usable trusted device and passkey before revoking this device.",
+        409,
+      );
+  }
+
   hasOtherUsableTrustedAdult(household, excludingMemberId) {
     return [...household.members].some((memberId) => {
       if (memberId === excludingMemberId) return false;
@@ -1638,6 +1661,7 @@ export class PairingService {
       throw new PairingError("current_device", "Use another trusted device to revoke this device.", 409);
     if (target.memberId !== member.id)
       this.requireManagementAuthority(member, household, "revoke another member's device");
+    if (!target.revokedAt) this.requireAdminAccessAfterRevocation(household, target.id);
     return { memberId: member.id, deviceId: actingDevice.id, credentialIds: [...member.credentials] };
   }
 
@@ -1708,6 +1732,8 @@ export class PairingService {
     if (device.memberId !== member.id)
       this.requireManagementAuthority(member, household, "revoke another member's device");
     if (!device.revokedAt) {
+      // Recheck at mutation time; state may have changed since the options step.
+      this.requireAdminAccessAfterRevocation(household, device.id);
       device.revokedAt = this.now();
       this.audit("device_revoked", {
         householdId: household.id,

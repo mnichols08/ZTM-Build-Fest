@@ -1010,9 +1010,9 @@ class KinHousehold extends HTMLElement {
                 "secondary",
               ),
             );
-          // The server enforces this too; only household admins (or any Adult
-          // in a household with no recorded admin) revoke others' devices.
-          if (device.memberId === this.identity.memberId || canManageMembers !== false) item.append(
+          // Fail closed: show another member's revoke control only when the
+          // server explicitly grants management authority. It enforces this too.
+          if (device.memberId === this.identity.memberId || canManageMembers === true) item.append(
             this.makeButton(
               `Revoke ${device.label}`,
               async () => {

@@ -23,11 +23,17 @@ export class KinHouseholdDefaults extends HTMLElement {
     this.append(heading, this.note, this.identity, this.editor, this.warning, this.feedback);
   }
   initialize({ admin, adminRecorded, value }) {
-    this.admin = admin; this.adminRecorded = adminRecorded;
+    this.admin = admin === true; this.adminRecorded = adminRecorded;
     // Shared mutation controls must not enter the rendered or accessibility
     // tree without authority established by the authenticated server response.
-    this.hidden = !admin;
-    if (!admin) return;
+    this.hidden = !this.admin;
+    if (!this.admin) {
+      // Authority can be withdrawn after it was granted; drop the privileged
+      // actions and lock the remaining controls rather than only hiding them.
+      this.actions?.remove(); this.actions = null;
+      this.disabled = this.busy;
+      return;
+    }
     this.saved = value ?? { version: 1, revision: 0, name: DEFAULT_HOUSEHOLD_NAME, appearance: { ...DEFAULT_APPEARANCE, owner: "household" } };
     this.nameInput.value = this.saved.name; this.draftAppearance = structuredClone(this.saved.appearance);
     this.initializing = true; this.editor.initialize(this.draftAppearance); this.initializing = false;

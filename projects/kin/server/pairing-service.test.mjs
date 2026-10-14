@@ -2523,3 +2523,131 @@ test("HTTP household admin changes require a fresh passkey assertion from the ac
     await server.close();
   }
 });
+
+const addOwnDevice = (service, member, suffix) => {
+  const invitation = service.createDevicePairing(member.sessionToken);
+  const claim = service.claimPairing({ code: invitation.code, credential: credential(suffix), deviceLabel: suffix, rateKey: suffix });
+  service.approvePairing(member.sessionToken, invitation.pairingId, claim.version);
+  return service.activateClaim(claim.claimToken);
+};
+
+const revocationSnapshot = (service, deviceId) => ({
+  revokedAt: service.devices.get(deviceId).revokedAt ?? null,
+  sessions: [...service.sessions.values()].filter((session) => session.deviceId === deviceId).length,
+  events: service.events.length,
+});
+
+test("a sole admin may revoke a redundant device but never their final usable device", () => {
+  const { service, adult } = setup();
+  const second = addOwnDevice(service, adult, "admin-second-device");
+  const partner = admit(service, adult, "partner");
+
+  assert.equal(service.revokeDevice(adult.sessionToken, second.deviceId, adult.memberId).id, second.deviceId);
+  assert.ok(service.devices.get(second.deviceId).revokedAt);
+
+  // The remaining device is the acting device, and no other member may revoke it.
+  for (const attempt of [
+    () => service.deviceRevocationContext(adult.sessionToken, adult.deviceId),
+    () => service.revokeDevice(adult.sessionToken, adult.deviceId, adult.memberId),
+  ]) assert.throws(attempt, (error) => error.code === "current_device");
+  for (const attempt of [
+    () => service.deviceRevocationContext(partner.sessionToken, adult.deviceId),
+    () => service.revokeDevice(partner.sessionToken, adult.deviceId, partner.memberId),
+  ]) assert.throws(attempt, (error) => error.code === "household_admin_required");
+  assert.ok(!service.devices.get(adult.deviceId).revokedAt);
+  assert.equal(service.hasUsableAdminAccess(service.households.get(adult.householdId)), true);
+});
+
+test("an admin's final device may be revoked while another usable admin remains", () => {
+  const { service, adult } = setup();
+  const partner = admit(service, adult, "partner");
+  service.setHouseholdAdmin(adult.sessionToken, partner.memberId, true, adult.memberId);
+  service.deviceRevocationContext(adult.sessionToken, partner.deviceId);
+  service.revokeDevice(adult.sessionToken, partner.deviceId, adult.memberId);
+  assert.ok(service.devices.get(partner.deviceId).revokedAt);
+  assert.equal(service.hasUsableAdminAccess(service.households.get(adult.householdId)), true);
+});
+
+test("revocation that would leave no usable admin fails closed without mutating state", () => {
+  let now = 1_000_000;
+  const store = new DurableStore(":memory:");
+  try {
+    const service = new PairingService({ now: () => now, secret: Buffer.alloc(32, 7), store });
+    const adult = service.bootstrap({ credential: credential("a"), deviceLabel: "A phone" });
+    const partner = admit(service, adult, "partner");
+    service.setHouseholdAdmin(adult.sessionToken, partner.memberId, true, adult.memberId);
+    const household = service.households.get(adult.householdId);
+    // The acting admin keeps a session but no longer has a passkey, so the
+    // admin flag alone does not make them usable.
+    service.members.get(adult.memberId).credentials.clear();
+    assert.equal(isHouseholdAdmin(service.members.get(adult.memberId)), true);
+
+    const before = revocationSnapshot(service, partner.deviceId);
+    const stored = () => store.db.prepare("SELECT revoked_at FROM devices WHERE id = ?").get(partner.deviceId).revoked_at;
+    assert.equal(stored(), null);
+    for (const attempt of [
+      () => service.deviceRevocationContext(adult.sessionToken, partner.deviceId),
+      () => service.revokeDevice(adult.sessionToken, partner.deviceId, adult.memberId),
+    ]) assert.throws(attempt, (error) => error.code === "last_household_admin" && error.status === 409);
+    assert.deepEqual(revocationSnapshot(service, partner.deviceId), before);
+    assert.equal(stored(), null);
+    assert.equal(service.authorize(partner.sessionToken).member.id, partner.memberId);
+    assert.equal(service.hasUsableAdminAccess(household), true);
+  } finally {
+    store.close();
+  }
+});
+
+test("revoked devices do not count as usable admin access", () => {
+  const { service, adult } = setup();
+  const partner = admit(service, adult, "partner");
+  service.setHouseholdAdmin(adult.sessionToken, partner.memberId, true, adult.memberId);
+  const partnerSecond = addOwnDevice(service, partner, "partner-second-device");
+  service.revokeDevice(partnerSecond.sessionToken, partner.deviceId, partner.memberId);
+  service.members.get(adult.memberId).credentials.clear();
+  const household = service.households.get(adult.householdId);
+  assert.equal(service.hasUsableAdminAccess(household), true);
+  assert.equal(service.hasUsableAdminAccess(household, [partnerSecond.deviceId]), false);
+  assert.throws(
+    () => service.revokeDevice(adult.sessionToken, partnerSecond.deviceId, adult.memberId),
+    (error) => error.code === "last_household_admin",
+  );
+  assert.ok(!service.devices.get(partnerSecond.deviceId).revokedAt);
+});
+
+test("legacy households without a recorded admin keep Adult device management", () => {
+  const { service, adult } = setup();
+  const partner = admit(service, adult, "partner");
+  delete service.members.get(adult.memberId).householdAdmin;
+  service.households.get(adult.householdId).ownerMemberId = null;
+  service.deviceRevocationContext(partner.sessionToken, adult.deviceId);
+  service.revokeDevice(partner.sessionToken, adult.deviceId, partner.memberId);
+  assert.ok(service.devices.get(adult.deviceId).revokedAt);
+});
+
+test("HTTP device revocation revalidates usable admin access after the options step", async () => {
+  const { service, adult } = setup();
+  const partner = admit(service, adult, "partner");
+  service.setHouseholdAdmin(adult.sessionToken, partner.memberId, true, adult.memberId);
+  const server = await startTestServer({ service, now: () => service.now() });
+  const cookie = `kin_session=${adult.sessionToken}`;
+  try {
+    const optionsResponse = await apiRequest(server, `/api/devices/${partner.deviceId}/revocation/options`, { method: "POST", cookie, body: {} });
+    assert.equal(optionsResponse.status, 200);
+    const { flow } = await optionsResponse.json();
+    // Authorized at the options step; by the final mutation the acting admin's
+    // passkey is no longer on the member, so revoking the partner's only
+    // device would leave the household without usable admin access.
+    service.members.get(adult.memberId).credentials.clear();
+    const before = revocationSnapshot(service, partner.deviceId);
+    const finish = await apiRequest(server, "/api/devices/revocation/finish", {
+      method: "POST", cookie, body: { flow, credential: { id: "credential-a", flow } },
+    });
+    assert.equal(finish.status, 409);
+    assert.equal((await finish.json()).error, "last_household_admin");
+    assert.deepEqual(revocationSnapshot(service, partner.deviceId), before);
+    assert.equal(server.store.db.prepare("SELECT COUNT(*) AS count FROM devices WHERE revoked_at IS NOT NULL").get().count, 0);
+  } finally {
+    await server.close();
+  }
+});

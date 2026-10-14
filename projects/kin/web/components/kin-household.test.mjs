@@ -73,7 +73,7 @@ test("device revocation control names its target", async () => {
   component.identity = { memberId: "adult", deviceId: "self" };
   component.syncKeyError = "skip sync-key access";
   component.run = async (action) => action();
-  component.api = async () => ({ devices: [
+  component.api = async () => ({ canManageMembers: true, devices: [
     { id: "self", label: "Adult phone", revokedAt: null },
     { id: "other", label: "Kitchen tablet", revokedAt: null },
   ] });
@@ -164,7 +164,7 @@ test("device revocation refreshes the trusted-device list after the passkey oper
   component.api = async (path) => {
     calls.push(path);
     if (path === "/api/devices")
-      return { devices: [
+      return { canManageMembers: true, devices: [
         { id: "self", label: "Adult phone", revokedAt: null },
         { id: "other", label: "Kitchen tablet", revokedAt: revoked ? 1_700_000_000_000 : null },
       ] };
@@ -226,4 +226,33 @@ test("household admins see admin, invitation, and removal controls; other Adults
   assert.equal(adult.some((label) => label.startsWith("Authorize recovery for Adult 1")), false, "non-admins cannot recover an admin");
   assert.ok(adult.includes("Authorize recovery for Limited member 1"));
   assert.ok(adult.includes("Leave household"));
+});
+
+test("another member's device revocation control fails closed unless the server grants management", async () => {
+  const devices = [
+    { id: "self", memberId: "adult", label: "Adult phone", revokedAt: null },
+    { id: "own-laptop", memberId: "adult", label: "Adult laptop", revokedAt: null },
+    { id: "partner-phone", memberId: "partner", label: "Partner phone", revokedAt: null },
+  ];
+  const cases = [
+    ["true", { canManageMembers: true }, true],
+    ["false", { canManageMembers: false }, false],
+    ["undefined", { canManageMembers: undefined }, false],
+    ["null", { canManageMembers: null }, false],
+    ["missing", {}, false],
+    ["truthy non-boolean", { canManageMembers: "true" }, false],
+  ];
+  for (const [name, permission, othersVisible] of cases) {
+    const component = new KinHousehold();
+    component.identity = { memberId: "adult", deviceId: "self" };
+    component.syncKeyError = "skip sync-key access";
+    component.run = async (action) => action();
+    component.api = async () => ({ ...permission, devices });
+    await component.showDevices();
+    const descendants = (items) => items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
+    const labels = descendants(component.children).filter((child) => child.tagName === "button").map((button) => button.textContent);
+    assert.equal(labels.includes("Revoke Adult laptop"), true, `${name}: own device stays manageable`);
+    assert.equal(labels.includes("Revoke Partner phone"), othersVisible, `${name}: another member's device`);
+    assert.equal(labels.includes("Revoke Adult phone"), false, `${name}: the current device is never offered`);
+  }
 });
