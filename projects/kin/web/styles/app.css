@@ -465,8 +465,21 @@ kin-segment-nav { display: block; margin: 0 0 16px; }
   line-height: 1.45;
 }
 .empty-state { margin: 8px 0 0; padding: 12px 0 2px; color: var(--ink-muted); }
-.list-view, .today-list, .today-routines, .quick-access, .today-updates { margin: 0 0 22px; }
-.list-view h2, .today-list h2, .today-routines h2, .quick-access h2 { margin-bottom: 4px; }
+.list-view, .today-list, .today-agenda, .today-routines, .quick-access, .today-updates { margin: 0 0 22px; }
+.list-view h2, .today-list h2, .today-agenda h2, .today-routines h2, .quick-access h2 { margin-bottom: 4px; }
+/* Today task summary: neutral counts (never alarm colours) that wrap to a
+   single column at 320px and move focus to their section. */
+.today-summary { margin: 0 0 18px; }
+.today-summary-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9.5rem), 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.today-summary-entry {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: var(--tap); padding: 6px 12px;
+  border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface);
+  color: var(--ink); font: inherit; font-size: 14px; line-height: 1.3; text-align: left; overflow-wrap: anywhere;
+}
+span.today-summary-entry { color: var(--ink-muted); }
+.today-summary-count { flex: none; min-width: 1.6em; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.today-empty p { margin: 0 0 10px; }
+.today-quick-add { min-height: var(--tap); }
 .routine-period { margin: 10px 0 2px; color: var(--ink-muted); font-size: 13px; font-weight: 640; text-transform: uppercase; letter-spacing: .05em; }
 .item-list { margin: 0; padding: 0; list-style: none; }
 .item-list > li + li { border-top: 1px solid var(--line); }
@@ -1018,13 +1031,19 @@ kin-app > .security-panel {
       "capture quick"
       "catchup routines"
       "onboarding updates"
+      "summary summary"
+      "earlier earlier"
       "today today"
+      "upcoming upcoming"
       "extras extras";
     align-items: start;
     gap: 0 22px;
     max-width: 1080px;
   }
   #today > .page-intro { grid-area: intro; }
+  #today [data-section="summary"] { grid-area: summary; }
+  #today [data-section="earlier"] { grid-area: earlier; }
+  #today [data-section="upcoming"] { grid-area: upcoming; }
   #today > kin-compose { grid-area: capture; min-width: 0; }
   #today > kin-catch-up { grid-area: catchup; min-width: 0; }
   #today > .onboarding-card { grid-area: onboarding; }
@@ -1033,7 +1052,7 @@ kin-app > .security-panel {
   #today [data-section="routines"] { grid-area: routines; }
   #today [data-section="updates"] { grid-area: updates; }
   #today [data-section="today"] { grid-area: today; }
-  #today [data-section="earlier"], #today [data-section="completed"] { grid-area: extras; }
+  #today [data-section="completed"] { grid-area: extras; }
   #today .today-section, #today .quick-access, #today .today-routines {
     padding: 20px 22px;
     border: 1px solid var(--line);
@@ -1071,6 +1090,7 @@ kin-app > .security-panel {
   .complete-control::before { border-color: ButtonText; }
   .complete-control[aria-pressed="true"]::before { background: Highlight; }
   .sync-chip { border-color: CanvasText; }
+  .today-summary-entry { border: 1px solid CanvasText; }
   button:focus-visible, input:focus-visible, select:focus-visible,
   a:focus-visible, main:focus-visible { outline: 3px solid Highlight; }
 }

@@ -48,7 +48,6 @@ class KinToday extends HTMLElement {
     this.previewProvider = null;
     this.composer = null;
     this.completedOpen = false;
-    this.earlierOpen = false;
   }
 
   connectedCallback() { this.render(); }
@@ -106,9 +105,7 @@ class KinToday extends HTMLElement {
     if (this.suspended) return;
     const focus = this.pendingFocus ?? this.captureFocus();
     this.pendingFocus = null;
-    const open = { completed: this.querySelector(".completed-disclosure")?.open ?? this.completedOpen, earlier: this.querySelector(".earlier-disclosure")?.open ?? this.earlierOpen };
-    this.completedOpen = open.completed;
-    this.earlierOpen = open.earlier;
+    this.completedOpen = this.querySelector(".completed-disclosure")?.open ?? this.completedOpen;
     const sections = this.display === "today" ? this.renderToday() : this.renderList();
     this.replaceChildren(...sections);
     this.restoreFocus(focus);
@@ -150,45 +147,52 @@ class KinToday extends HTMLElement {
   }
 
   renderToday() {
-    if (this.civilDate == null) return [];
+    if (this.civilDate == null) {
+      // Before the first local projection there is nothing to compose; say so
+      // without implying anything was removed.
+      const pending = document.createElement("section");
+      pending.className = "today-list today-unavailable";
+      pending.dataset.section = "today";
+      const heading = document.createElement("h2");
+      heading.textContent = "Today";
+      heading.tabIndex = -1;
+      const note = document.createElement("p");
+      note.className = "empty-state";
+      note.textContent = "Today's tasks aren't available yet. They appear as soon as Kin finishes opening this household on this device.";
+      pending.append(heading, note);
+      return [pending];
+    }
     const view = composeToday({ items: this.records, routines: this.routineRecords, pins: this.pinRecords, handoffs: this.handoffRecords, mode: this.householdMode, civilDate: this.civilDate });
     const sections = [];
+    if (view.hasItems) sections.push(this.createSummary(view.counts));
+
+    // Most time-sensitive first: plans still open from earlier days, today's
+    // plans, then later plans. The copy stays calm on purpose (no "overdue").
+    if (view.earlier.length) {
+      sections.push(this.createAgendaSection("earlier", "Earlier plans", view.earlier, "Still open from earlier. They stay in their lists too."));
+    }
+
+    const today = this.createAgendaSection("today", "Today", view.today);
+    today.className = "today-list";
+    if (!view.today.length) today.append(this.createTodayEmpty(view));
+    sections.push(today);
+
+    if (view.hasItems) {
+      const upcoming = this.createAgendaSection("upcoming", "Coming up", view.upcoming, view.upcoming.length ? "Planned for the coming days, soonest first." : null);
+      if (!view.upcoming.length) {
+        const empty = document.createElement("p");
+        empty.className = "empty-state";
+        empty.textContent = "Nothing is planned for the coming days.";
+        upcoming.append(empty);
+      }
+      sections.push(upcoming);
+    }
+
     // Keep the shortcut area visible when it's empty so first-time users can
     // discover how pins work instead of having the whole feature disappear.
     sections.push(this.createQuickAccess(view.quickAccess));
-
-    const today = document.createElement("section");
-    today.className = "today-list";
-    today.dataset.section = "today";
-    const heading = document.createElement("h2");
-    heading.textContent = "Today";
-    heading.tabIndex = -1;
-    today.append(heading);
-    if (view.today.length) today.append(this.createList(view.today, { kindVisible: true }));
-    else {
-      const empty = document.createElement("p");
-      empty.className = "empty-state";
-      empty.append(document.createTextNode(view.isEmpty
-        ? "Nothing planned for today. Start with "
-        : "Nothing planned for today. Browse "));
-      const todoLink = document.createElement("a");
-      todoLink.href = "#lists/todo";
-      todoLink.textContent = "To do";
-      const separator = document.createTextNode(" or ");
-      const shoppingLink = document.createElement("a");
-      shoppingLink.href = "#lists/shopping";
-      shoppingLink.textContent = "Shopping";
-      empty.append(todoLink, separator, shoppingLink, document.createTextNode(" to see what's there."));
-      today.append(empty);
-    }
-    sections.push(today);
-
     sections.push(this.createRoutines(view));
     if (view.waitingHandoffs) sections.push(this.createUpdatesContext(view.waitingHandoffs));
-    if (view.earlier.length) {
-      const earlier = this.disclosure("earlier", `Earlier plans (${view.earlier.length})`, this.createList(view.earlier, { kindVisible: true }), "Still open from earlier. They stay in their lists too.");
-      sections.push(earlier);
-    }
     if (view.completed.length || view.completedRoutines.length) {
       const body = document.createDocumentFragment();
       if (view.completed.length) body.append(this.createList(view.completed, { kindVisible: true }));
@@ -198,23 +202,118 @@ class KinToday extends HTMLElement {
     return sections;
   }
 
-  disclosure(kind, summaryText, content, hint = null) {
+  disclosure(kind, summaryText, content) {
     const details = document.createElement("details");
     details.className = `${kind}-disclosure today-disclosure`;
     details.dataset.section = kind;
-    details.open = kind === "completed" ? this.completedOpen : this.earlierOpen;
-    details.addEventListener("toggle", () => { if (kind === "completed") this.completedOpen = details.open; else this.earlierOpen = details.open; });
+    details.open = this.completedOpen;
+    details.addEventListener("toggle", () => { this.completedOpen = details.open; });
     const summary = document.createElement("summary");
     summary.textContent = summaryText;
-    details.append(summary);
+    details.append(summary, content);
+    return details;
+  }
+
+  createAgendaSection(kind, title, records, hint = null) {
+    const section = document.createElement("section");
+    section.className = `today-agenda today-${kind}`;
+    section.dataset.section = kind;
+    const heading = document.createElement("h2");
+    heading.textContent = title;
+    heading.tabIndex = -1;
+    section.append(heading);
     if (hint) {
       const note = document.createElement("p");
       note.className = "section-hint";
       note.textContent = hint;
-      details.append(note);
+      section.append(note);
     }
-    details.append(content);
-    return details;
+    if (records.length) section.append(this.createList(records, { kindVisible: true }));
+    return section;
+  }
+
+  // Task counts from the same composition that renders the sections below,
+  // so they can never drift from what is listed. Each non-zero count is a
+  // native button that moves focus to its section; like every other control
+  // here it is disabled while a change is saving.
+  createSummary(counts) {
+    const section = document.createElement("section");
+    section.className = "today-summary";
+    section.dataset.section = "summary";
+    const heading = document.createElement("h2");
+    heading.className = "visually-hidden";
+    heading.textContent = "Task summary";
+    const list = document.createElement("ul");
+    list.className = "today-summary-list";
+    const entries = [
+      ["earlier", counts.earlier, "still open from earlier"],
+      ["today", counts.today, "planned for today"],
+      ["upcoming", counts.upcoming, "coming up"],
+      ["completed", counts.completed, "done today"],
+    ].filter(([kind, count]) => kind !== "earlier" || count > 0);
+    for (const [kind, count, label] of entries) {
+      const entry = document.createElement("li");
+      entry.dataset.count = kind;
+      const content = count > 0 ? document.createElement("button") : document.createElement("span");
+      content.className = "today-summary-entry";
+      if (count > 0) {
+        content.type = "button";
+        content.dataset.summary = kind;
+        content.disabled = this.isDisabled;
+        content.addEventListener("click", () => this.revealSection(kind));
+      }
+      const number = document.createElement("span");
+      number.className = "today-summary-count";
+      number.textContent = String(count);
+      content.append(number, document.createTextNode(` ${count === 1 ? "task" : "tasks"} ${label}`));
+      entry.append(content);
+      list.append(entry);
+    }
+    section.append(heading, list);
+    return section;
+  }
+
+  revealSection(kind) {
+    const section = this.querySelector(`[data-section="${kind}"]`);
+    if (!section) return;
+    if (section.tagName === "DETAILS") section.open = true;
+    const target = section.tagName === "DETAILS" ? section.querySelector("summary") : section.querySelector("h2");
+    target?.scrollIntoView?.({ block: "start" });
+    target?.focus({ preventScroll: true });
+  }
+
+  createTodayEmpty(view) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state today-empty";
+    const message = document.createElement("p");
+    if (view.allDone) {
+      message.textContent = "Everything planned for today is done. Completed tasks are listed below.";
+      empty.append(message);
+      return empty;
+    }
+    if (!view.hasItems) {
+      message.textContent = "No household tasks yet. Add the first thing that needs handling, and plan it for today or another day.";
+    } else {
+      message.append(document.createTextNode("Nothing planned for today. Browse "));
+      const todoLink = document.createElement("a");
+      todoLink.href = "#lists/todo";
+      todoLink.textContent = "To do";
+      const shoppingLink = document.createElement("a");
+      shoppingLink.href = "#lists/shopping";
+      shoppingLink.textContent = "Shopping";
+      message.append(todoLink, document.createTextNode(" or "), shoppingLink, document.createTextNode(" to see what's there."));
+    }
+    // Reuses the universal Quick add (and its partial-capture recovery); this
+    // button only asks <kin-app> to open it from here.
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "today-quick-add";
+    add.textContent = "Add a task for today";
+    add.dataset.action = "open-quick-add";
+    add.disabled = this.isDisabled;
+    add.addEventListener("click", () => this.dispatchEvent(new CustomEvent("kin:open-quick-add", { detail: { opener: add }, bubbles: true, composed: true })));
+    empty.append(message, add);
+    return empty;
   }
 
   createRoutines(view) {
@@ -367,12 +466,28 @@ class KinToday extends HTMLElement {
     const control = this.contains(document.activeElement) ? document.activeElement : this.deferredFocus?.isConnected ? this.deferredFocus : null;
     if (!this.contains(control)) return null;
     const row = control.closest("kin-item");
+    const section = control.closest("[data-section]");
     return {
       control,
       itemId: control.dataset.itemId ?? control.dataset.routineId,
       action: control.dataset.itemAction ?? control.dataset.action,
+      summary: control.dataset.summary,
       index: row ? [...this.querySelectorAll("kin-item")].indexOf(row) : -1,
+      section: section?.dataset.section ?? null,
+      sectionIndex: row && section ? [...section.querySelectorAll("kin-item")].indexOf(row) : -1,
     };
+  }
+
+  // When a row leaves its Today section (an earlier or later plan that was
+  // completed), keep the person where they were: the row that took its place,
+  // else the previous one, else the section heading.
+  sectionFallback(focus) {
+    if (!focus.section || focus.sectionIndex < 0) return null;
+    const section = this.querySelector(`[data-section="${focus.section}"]`);
+    if (!section) return this.querySelector('[data-section="today"] h2');
+    const rows = [...section.querySelectorAll("kin-item")];
+    const row = rows[Math.min(focus.sectionIndex, rows.length - 1)];
+    return row?.querySelector(".complete-control, .item-open") ?? section.querySelector("h2");
   }
 
   rememberFocus() { this.pendingFocus = this.captureFocus(); }
@@ -383,6 +498,12 @@ class KinToday extends HTMLElement {
     if (focus.control.isConnected && !focus.control.closest("[hidden]")) {
       reveal(focus.control);
       focus.control.focus();
+      return;
+    }
+    if (focus.summary) {
+      const summary = this.querySelector(`[data-summary="${focus.summary}"]`);
+      if (summary?.disabled) this.deferredFocus = summary;
+      else (summary ?? this.querySelector('[data-section="today"] h2'))?.focus();
       return;
     }
     const controls = [...this.querySelectorAll("[data-item-id], [data-routine-id]")].filter((control) => !control.closest("[hidden]") && control.matches("button, input, select"));
@@ -399,6 +520,7 @@ class KinToday extends HTMLElement {
       ?? (replacementAction ? sameItem.find((control) => (control.dataset.itemAction ?? control.dataset.action) === replacementAction) : null)
       ?? sameItem.find((control) => control.dataset.itemAction === "details")
       ?? sameItem[0]
+      ?? this.sectionFallback(focus)
       ?? controls[Math.min(Math.max(0, focus.index), controls.length - 1)];
     const next = target ?? this.querySelector("h2");
     if (!next) return;
