@@ -3029,11 +3029,13 @@ class KinApp extends HTMLElement {
     this.appearanceSheet?.replaceSync(rules);
     document.documentElement.dataset.kinAppearance = value.mode;
     document.querySelector('meta[name="theme-color"]')?.setAttribute("content", tokens["header-bg"]);
-    const signature = value.image ? `${value.image.type}:${value.image.bytes.length}:${value.image.seed}` : null;
-    if (signature !== this.appearanceImageSignature) {
+    const imageUnchanged = value.image && this.appearanceImageBytes && value.image.type === this.appearanceImageType &&
+      value.image.bytes.length === this.appearanceImageBytes.length && value.image.bytes.every((byte, index) => byte === this.appearanceImageBytes[index]);
+    if (!imageUnchanged && (value.image || this.appearanceImageBytes)) {
       if (this.appearanceObjectUrl) URL.revokeObjectURL(this.appearanceObjectUrl);
       this.appearanceObjectUrl = value.image ? URL.createObjectURL(new Blob([value.image.bytes], { type: value.image.type })) : null;
-      this.appearanceImageSignature = signature;
+      this.appearanceImageBytes = value.image ? value.image.bytes.slice() : null;
+      this.appearanceImageType = value.image?.type ?? null;
       this.appearanceBackground.src = this.appearanceObjectUrl ?? "";
       this.appearanceBackground.hidden = !this.appearanceObjectUrl;
       this.toggleAttribute("data-personal-background", Boolean(this.appearanceObjectUrl));
@@ -3060,7 +3062,8 @@ class KinApp extends HTMLElement {
     if (this.appearanceSheet) this.appearanceSheet.replaceSync("");
     if (this.appearanceObjectUrl) URL.revokeObjectURL(this.appearanceObjectUrl);
     this.appearanceObjectUrl = null;
-    this.appearanceImageSignature = null;
+    this.appearanceImageBytes = null;
+    this.appearanceImageType = null;
     if (this.appearanceBackground) { this.appearanceBackground.removeAttribute("src"); this.appearanceBackground.hidden = true; }
     this.removeAttribute("data-personal-background");
     this.appearance?.clear();

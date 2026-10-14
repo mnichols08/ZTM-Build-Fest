@@ -43,15 +43,16 @@ export class KinAppearance extends HTMLElement {
     const customRow = document.createElement("div"); customRow.className = "appearance-custom-row";
     const pickerLabel = document.createElement("label"); pickerLabel.textContent = "Custom color";
     this.picker = document.createElement("input"); this.picker.type = "color"; this.picker.value = KIN_DEFAULT_SEED; this.picker.setAttribute("aria-label", "Choose a custom theme color");
-    this.picker.addEventListener("input", () => { this.hex.value = this.picker.value.toUpperCase(); this.chooseCustom(this.picker.value); });
+    this.picker.addEventListener("input", () => { this.syncHex(this.picker.value); this.chooseCustom(this.picker.value); });
     pickerLabel.append(this.picker);
     const hexLabel = document.createElement("label"); hexLabel.textContent = "Hex color";
     this.hex = document.createElement("input"); this.hex.type = "text"; this.hex.inputMode = "text"; this.hex.maxLength = 7; this.hex.autocomplete = "off"; this.hex.spellcheck = false;
-    this.hex.addEventListener("input", () => { const value = normalizeHex(this.hex.value); this.hexError.hidden = Boolean(value); if (value) { this.picker.value = value; this.chooseCustom(value); } });
+    this.hex.addEventListener("input", () => { const value = normalizeHex(this.hex.value); this.setHexValidity(Boolean(value)); if (value) { this.picker.value = value; this.chooseCustom(value); } });
     hexLabel.append(this.hex);
     this.hexError = document.createElement("p"); this.hexError.className = "field-error"; this.hexError.textContent = "Enter a color as #RRGGBB."; this.hexError.hidden = true;
+    this.hexError.id = "appearance-hex-error"; this.hex.setAttribute("aria-describedby", this.hexError.id);
     customRow.append(pickerLabel, hexLabel);
-    this.useBackground = document.createElement("button"); this.useBackground.type = "button"; this.useBackground.textContent = "Use background colors"; this.useBackground.addEventListener("click", () => { if (this.draft.image) this.change({ colorSource: "background", seed: this.draft.image.seed }); });
+    this.useBackground = document.createElement("button"); this.useBackground.type = "button"; this.useBackground.textContent = "Use background colors"; this.useBackground.addEventListener("click", () => { if (this.draft.image) { this.syncHex(this.draft.image.seed); this.change({ colorSource: "background", seed: this.draft.image.seed }); } });
     this.source = document.createElement("p"); this.source.className = "appearance-source";
     colors.body.append(this.swatches, customRow, this.hexError, this.useBackground, this.source);
 
@@ -79,9 +80,12 @@ export class KinAppearance extends HTMLElement {
 
   choosePreset(preset) {
     const manual = preset.id === "default" ? null : { source: "preset", name: preset.name, seed: preset.seed };
+    this.syncHex(preset.seed);
     this.change({ colorSource: preset.id === "default" ? "default" : "preset", seed: preset.seed, manual });
   }
   chooseCustom(seed) { this.change({ colorSource: "custom", seed: normalizeHex(seed), manual: { source: "custom", name: "Custom color", seed: normalizeHex(seed) } }); }
+  setHexValidity(valid) { this.hexError.hidden = valid; this.hex.setAttribute("aria-invalid", String(!valid)); }
+  syncHex(seed) { this.hex.value = normalizeHex(seed) ?? ""; this.setHexValidity(true); }
   change(patch) {
     if (!this.draft) return;
     // A manual choice invalidates late automatic extraction without freezing
@@ -111,6 +115,7 @@ export class KinAppearance extends HTMLElement {
       if (generation !== this.generation || !this.draft) return;
       const automatic = ["default", "background"].includes(this.draft.colorSource);
       this.draft = { ...this.draft, image, ...(automatic ? { colorSource: "background", seed: image.seed } : {}) };
+      if (automatic) this.syncHex(image.seed);
       this.update("Image ready. Save changes to keep it.");
     } catch (error) { if (generation === this.generation) { this.imageStatus.textContent = error.message; this.feedback.textContent = "The previous saved background is unchanged."; } }
     finally { /* Temporary bitmap and canvas resources are released by the processor. */ }
@@ -126,7 +131,12 @@ export class KinAppearance extends HTMLElement {
 
   restoreSaved(message) { this.generation++; this.draft = structuredClone(this.saved); this.update(message); }
   async requestSave() {
-    if (!this.draft || !normalizeHex(this.hex.value)) { this.hexError.hidden = false; return; }
+    if (!this.draft) return;
+    if (this.draft.colorSource === "custom") {
+      const custom = normalizeHex(this.hex.value);
+      if (!custom) { this.setHexValidity(false); return; }
+      this.draft = { ...this.draft, seed: custom, manual: { source: "custom", name: "Custom color", seed: custom } };
+    }
     this.generation++;
     this.disabled = true; this.feedback.textContent = "Saving…";
     this.dispatchEvent(new CustomEvent("kin:save-appearance", { bubbles: true, detail: { value: structuredClone(this.draft), complete: (result, error) => {
@@ -139,7 +149,7 @@ export class KinAppearance extends HTMLElement {
     if (!this.draft) return;
     for (const [value, input] of this.modeControls) input.checked = value === this.draft.mode;
     for (const button of this.swatches.children) { const selected = (this.draft.colorSource === "default" && button.dataset.preset === "default") || (this.draft.colorSource === "preset" && APPEARANCE_PRESETS.find((item) => item.id === button.dataset.preset)?.seed === this.draft.seed); button.setAttribute("aria-checked", String(selected)); button.classList.toggle("selected", selected); }
-    this.picker.value = this.draft.seed; if (document.activeElement !== this.hex) this.hex.value = this.draft.seed;
+    this.picker.value = this.draft.seed; if (this.draft.colorSource !== "custom") this.syncHex(this.draft.seed); else if (document.activeElement !== this.hex) this.hex.value = this.draft.seed;
     this.useBackground.hidden = !this.draft.image; this.remove.hidden = !this.draft.image; this.choose.textContent = this.draft.image ? "Replace image" : "Choose image";
     this.imageStatus.textContent = this.draft.image ? `Processed locally (${this.draft.image.width} × ${this.draft.image.height}).` : "No personal background selected.";
     const preset = APPEARANCE_PRESETS.find((item) => item.seed === this.draft.seed);

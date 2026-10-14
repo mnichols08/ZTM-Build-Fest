@@ -34,15 +34,25 @@ export async function processBackground(file) {
       throw new Error("Choose an image no larger than 32 megapixels.");
     const scale = Math.min(1, BACKGROUND_LIMITS.longestEdge / Math.max(bitmap.width, bitmap.height));
     const width = Math.max(1, Math.round(bitmap.width * scale)), height = Math.max(1, Math.round(bitmap.height * scale));
-    const canvas = new OffscreenCanvas(width, height), context = canvas.getContext("2d", { alpha: false });
+    const canvas = new OffscreenCanvas(width, height), context = canvas.getContext("2d", { alpha: true });
     context.drawImage(bitmap, 0, 0, width, height);
+    let blob = await canvas.convertToBlob({ type: "image/webp", quality: .86 });
+    let finalCanvas = canvas;
+    if (blob.size > BACKGROUND_LIMITS.storedBytes) {
+      // JPEG has no alpha channel. Flatten explicitly against Kin's light
+      // canvas color so transparent pixels never acquire a browser-dependent color.
+      finalCanvas = new OffscreenCanvas(width, height);
+      const finalContext = finalCanvas.getContext("2d", { alpha: false });
+      finalContext.fillStyle = "#F3F1E9";
+      finalContext.fillRect(0, 0, width, height);
+      finalContext.drawImage(canvas, 0, 0);
+      blob = await finalCanvas.convertToBlob({ type: "image/jpeg", quality: .8 });
+    }
+    if (!blob.size || blob.size > BACKGROUND_LIMITS.storedBytes) throw new Error("Kin couldn't make this image small enough. Choose a simpler or smaller image.");
     const sample = new OffscreenCanvas(32, 32), sampleContext = sample.getContext("2d", { willReadFrequently: true });
-    sampleContext.drawImage(bitmap, 0, 0, 32, 32);
+    sampleContext.drawImage(finalCanvas, 0, 0, 32, 32);
     const seed = dominantColorFromPixels(sampleContext.getImageData(0, 0, 32, 32).data);
     if (!seed) throw new Error("That image has no visible color to use. Kin kept the current theme.");
-    let blob = await canvas.convertToBlob({ type: "image/webp", quality: .86 });
-    if (blob.size > BACKGROUND_LIMITS.storedBytes) blob = await canvas.convertToBlob({ type: "image/jpeg", quality: .8 });
-    if (!blob.size || blob.size > BACKGROUND_LIMITS.storedBytes) throw new Error("Kin couldn't make this image small enough. Choose a simpler or smaller image.");
     return { bytes: new Uint8Array(await blob.arrayBuffer()), type: blob.type, width, height, seed };
   } finally { bitmap.close?.(); }
 }
