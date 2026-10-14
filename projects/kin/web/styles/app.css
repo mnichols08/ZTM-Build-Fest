@@ -10,58 +10,58 @@
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --bg: #f3f1e9;
-  --surface: #fffefa;
-  --surface-secondary: #e9eee7;
-  --ink: #26352e;
-  --ink-muted: #66736b;
-  --line: #d9dfd7;
-  --line-strong: #89968d;
-  --accent: #285c49;
-  --accent-ink: #f8fffb;
-  --accent-soft: #e1eee6;
-  --warm: #91502e;
-  --warm-soft: #f4e7d8;
+  --bg: #f5f1e9;
+  --surface: #fffdfa;
+  --surface-secondary: #f1e8de;
+  --ink: #342d29;
+  --ink-muted: #766b63;
+  --line: #e2d1c4;
+  --line-strong: #b99d8b;
+  --accent: #984d38;
+  --accent-ink: #fffaf6;
+  --accent-soft: #f1ded2;
+  --warm: #89501f;
+  --warm-soft: #f3e7d9;
   --danger: #9c3232;
   --danger-soft: #f2dddd;
-  --header-bg: #285c49;
-  --header-ink: #f7fbf6;
-  --header-muted: #d7e8dc;
+  --header-bg: #684033;
+  --header-ink: #fff9f3;
+  --header-muted: #ead2c2;
   --r-control: 11px;
   --r-row: 13px;
-  --r-card: 17px;
+  --r-card: 19px;
   --tap: 48px;
   --space-1: 6px;
   --space-2: 12px;
   --space-3: 20px;
   --space-4: 32px;
-  --content-width: 720px;
-  --nav-width: 224px;
-  --detail-width: 420px;
-  --header-height: 64px;
+  --content-width: 1024px;
+  --nav-width: 206px;
+  --detail-width: 390px;
+  --header-height: 68px;
   color: var(--ink);
   background: var(--bg);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #171d19;
-    --surface: #202923;
-    --surface-secondary: #29372f;
-    --ink: #edf2eb;
-    --ink-muted: #b2beb5;
-    --line: #39483e;
-    --line-strong: #77897c;
-    --accent: #9bc9ad;
-    --accent-ink: #16241e;
-    --accent-soft: #293b32;
-    --warm: #e2a27c;
-    --warm-soft: #403027;
+    --bg: #211c19;
+    --surface: #2c2521;
+    --surface-secondary: #3b302a;
+    --ink: #f3eae2;
+    --ink-muted: #c3b3a7;
+    --line: #514139;
+    --line-strong: #917765;
+    --accent: #e19a7e;
+    --accent-ink: #281b17;
+    --accent-soft: #49332b;
+    --warm: #efb283;
+    --warm-soft: #443329;
     --danger: #ef9292;
     --danger-soft: #432727;
-    --header-bg: #1d3b2f;
-    --header-ink: #f1f7f2;
-    --header-muted: #b9d1c1;
+    --header-bg: #3e2922;
+    --header-ink: #fff4eb;
+    --header-muted: #e0bda9;
   }
 }
 
@@ -138,6 +138,22 @@ a { color: var(--accent); }
 
 kin-app { display: block; min-height: 100vh; }
 
+/* Kin's warm, calm visual language. Motion stays short and positional so the
+   interface feels responsive without competing with household content. */
+button, a, input, textarea, select, summary, .today-section, .household-panel,
+.security-panel, .hub-link, .item-row, .segment-link {
+  transition: color .18s ease, background-color .18s ease, border-color .18s ease,
+    box-shadow .2s ease, transform .2s ease;
+}
+button:hover:not(:disabled), .hub-link:hover, .attachment-tile:hover {
+  transform: translateY(-1px);
+}
+button:active:not(:disabled), .hub-link:active { transform: translateY(0) scale(.985); }
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
 h1 { margin: 0; font-size: 28px; font-weight: 640; letter-spacing: -.03em; line-height: 1.2; }
 h2 { margin: 0 0 6px; font-size: 19px; font-weight: 640; line-height: 1.3; letter-spacing: -.015em; }
 h3 { margin: 0; font-size: 15px; font-weight: 640; }
@@ -170,8 +186,8 @@ p { margin: 6px 0; }
   justify-content: space-between;
   gap: 12px;
   min-height: var(--header-height);
-  padding: calc(6px + env(safe-area-inset-top)) 16px 6px;
-  --header-height: 64px;
+  padding: calc(8px + env(safe-area-inset-top)) clamp(16px, 2.6vw, 36px) 8px;
+  --header-height: 68px;
   border-bottom: 1px solid color-mix(in srgb, var(--header-ink) 12%, var(--header-bg));
   background: var(--header-bg);
   color: var(--header-ink);
@@ -185,7 +201,8 @@ p { margin: 6px 0; }
   text-decoration: none;
 }
 .brand-mark { width: 32px; height: 32px; flex: none; }
-.brand-name { font-size: 20px; font-weight: 720; letter-spacing: -.02em; line-height: 1; }
+.brand-mark { border-radius: 9px; box-shadow: 0 2px 10px rgba(27, 12, 7, .12); }
+.brand-name { font-family: Georgia, "Times New Roman", serif; font-size: 20px; font-weight: 720; letter-spacing: -.02em; line-height: 1; }
 .site-tools { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .header-search, .header-lock {
   display: inline-flex;
@@ -243,6 +260,7 @@ kin-sync-status { display: inline-flex; min-width: 0; }
 }
 .nav-link svg { width: 20px; height: 20px; flex: none; }
 .nav-link[aria-current="page"] { background: var(--accent-soft); color: var(--accent); font-weight: 680; }
+.nav-link[aria-current="page"] { box-shadow: inset 3px 0 var(--accent); }
 .nav-link:hover { background: var(--surface-secondary); color: var(--ink); }
 
 main {
@@ -251,9 +269,11 @@ main {
   padding: 18px 16px 112px;
 }
 .app-view { min-width: 0; max-width: var(--content-width); }
+.app-view:not([hidden]) { animation: view-arrive .28s cubic-bezier(.2,.75,.25,1) both; }
 .page-intro { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 4px 0 16px; }
 .page-lead { margin: 0; color: var(--ink-muted); font-size: 15px; flex-basis: 100%; }
 .today-date { font-size: 16px; }
+#today > .page-intro h1 { font-family: Georgia, "Times New Roman", serif; font-size: clamp(30px, 3vw, 36px); font-weight: 600; letter-spacing: -.035em; }
 
 /* ---------- Segment navigation (lists, updates, household) ---------- */
 kin-segment-nav { display: block; margin: 0 0 16px; }
@@ -319,6 +339,8 @@ kin-segment-nav { display: block; margin: 0 0 16px; }
   box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
 }
 .retry-button { justify-self: start; }
+.item-detail-feedback { display: grid; justify-items: start; gap: 10px; margin-block: 16px; }
+.item-detail-feedback .error-message { box-shadow: none; }
 
 /* ---------- Capture forms ---------- */
 .compose-form {
@@ -327,10 +349,11 @@ kin-segment-nav { display: block; margin: 0 0 16px; }
   gap: 8px 10px;
   align-items: start;
   margin: 0 0 16px;
-  padding: 12px;
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
+  padding: 20px 22px;
+  border: 1px solid var(--line);
   border-radius: var(--r-card);
   background: var(--surface);
+  box-shadow: 0 2px 6px rgba(58, 37, 26, .025);
 }
 .compose-form > label:first-child { grid-column: 1 / -1; font-size: 14px; font-weight: 640; }
 .compose-form-today > label:first-child { font-size: 15px; }
@@ -383,6 +406,7 @@ kin-segment-nav { display: block; margin: 0 0 16px; }
   border: 1px solid var(--line);
   border-radius: var(--r-card);
   background: var(--surface);
+  box-shadow: 0 2px 8px rgba(58, 37, 26, .025);
 }
 .section-hint, .security-note, .household-choice-hint, .item-meta, .search-hint, .reminder-note {
   margin: 2px 0 8px;
@@ -404,6 +428,10 @@ kin-segment-nav { display: block; margin: 0 0 16px; }
   gap: 4px 12px;
   padding: 10px 2px;
 }
+.item-list > li { animation: row-arrive .24s ease both; }
+.item-list > li:nth-child(2) { animation-delay: 25ms; }
+.item-list > li:nth-child(3) { animation-delay: 45ms; }
+.item-list > li:nth-child(4) { animation-delay: 65ms; }
 .item-row.item-selected { background: color-mix(in srgb, var(--accent-soft) 60%, var(--surface)); border-radius: var(--r-row); margin-inline: -8px; padding-inline: 10px; }
 .item-control { grid-area: control; display: flex; align-items: center; min-height: var(--tap); }
 .item-body { grid-area: body; display: grid; gap: 2px; min-width: 0; }
@@ -448,6 +476,8 @@ p.item-text { padding: 8px 0; }
 .complete-control:hover:not(:disabled) { background: transparent; }
 .complete-control:hover:not(:disabled)::before { border-color: var(--accent); }
 .complete-control[aria-pressed="true"]::before { border-color: var(--accent); background: var(--accent); }
+.complete-control::before { transition: background-color .2s, border-color .2s, transform .2s; }
+.complete-control[aria-pressed="true"]::before { transform: scale(1.06); }
 .complete-control[aria-pressed="true"] svg { opacity: 1; }
 .step-summary { color: var(--ink-muted); font-size: 13px; }
 .item-row-actions button, .item-action button, .item-secondary button {
@@ -604,6 +634,7 @@ kin-reminder { display: block; min-width: 0; }
   overflow: auto;
 }
 .detail-sheet::backdrop { background: rgba(10, 16, 12, .5); }
+.detail-sheet[open] { animation: sheet-arrive .24s cubic-bezier(.2,.75,.25,1) both; }
 
 /* ---------- Routines ---------- */
 kin-routines, kin-today, kin-compose, kin-catch-up, kin-handoff-list, kin-talk-list, kin-pulse,
@@ -898,6 +929,57 @@ kin-app > .security-panel {
     background: var(--surface);
   }
   .has-detail-side .app-view { max-width: 680px; }
+}
+
+@media (min-width: 960px) {
+  main { padding: 34px clamp(32px, 5vw, 72px) 72px; }
+  .app-view#today {
+    display: grid;
+    grid-template-columns: minmax(0, 1.62fr) minmax(280px, 1fr);
+    grid-template-areas:
+      "intro intro"
+      "capture quick"
+      "catchup routines"
+      "onboarding updates"
+      "today today"
+      "extras extras";
+    align-items: start;
+    gap: 0 22px;
+    max-width: 1080px;
+  }
+  #today > .page-intro { grid-area: intro; }
+  #today > kin-compose { grid-area: capture; min-width: 0; }
+  #today > kin-catch-up { grid-area: catchup; min-width: 0; }
+  #today > .onboarding-card { grid-area: onboarding; }
+  #today > kin-today { display: contents; }
+  #today [data-section="quick-access"] { grid-area: quick; }
+  #today [data-section="routines"] { grid-area: routines; }
+  #today [data-section="updates"] { grid-area: updates; }
+  #today [data-section="today"] { grid-area: today; }
+  #today [data-section="earlier"], #today [data-section="completed"] { grid-area: extras; }
+  #today .today-section, #today .quick-access, #today .today-routines {
+    padding: 20px 22px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-card);
+    background: var(--surface);
+    box-shadow: 0 3px 12px rgba(58, 37, 26, .035);
+  }
+  #today .today-routines { align-self: start; }
+  #today .today-list { margin-top: 4px; }
+  #today .quick-access h2, #today .today-routines h2 { font-size: 22px; }
+}
+
+@keyframes view-arrive {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes row-arrive {
+  from { opacity: .55; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes sheet-arrive {
+  from { opacity: .8; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @media (prefers-reduced-motion: reduce) {

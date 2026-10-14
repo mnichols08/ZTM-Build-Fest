@@ -153,7 +153,9 @@ class KinToday extends HTMLElement {
     if (this.civilDate == null) return [];
     const view = composeToday({ items: this.records, routines: this.routineRecords, pins: this.pinRecords, handoffs: this.handoffRecords, mode: this.householdMode, civilDate: this.civilDate });
     const sections = [];
-    if (view.quickAccess.length) sections.push(this.createQuickAccess(view.quickAccess));
+    // Keep the shortcut area visible when it's empty so first-time users can
+    // discover how pins work instead of having the whole feature disappear.
+    sections.push(this.createQuickAccess(view.quickAccess));
 
     const today = document.createElement("section");
     today.className = "today-list";
@@ -166,14 +168,22 @@ class KinToday extends HTMLElement {
     else {
       const empty = document.createElement("p");
       empty.className = "empty-state";
-      empty.textContent = view.isEmpty
-        ? "Nothing planned for today. Lists hold everything else; routines and updates have their own pages."
-        : "Nothing planned for today.";
+      empty.append(document.createTextNode(view.isEmpty
+        ? "Nothing planned for today. Start with "
+        : "Nothing planned for today. Browse "));
+      const todoLink = document.createElement("a");
+      todoLink.href = "#lists/todo";
+      todoLink.textContent = "To do";
+      const separator = document.createTextNode(" or ");
+      const shoppingLink = document.createElement("a");
+      shoppingLink.href = "#lists/shopping";
+      shoppingLink.textContent = "Shopping";
+      empty.append(todoLink, separator, shoppingLink, document.createTextNode(" to see what's there."));
       today.append(empty);
     }
     sections.push(today);
 
-    if (view.hasRoutines) sections.push(this.createRoutines(view));
+    sections.push(this.createRoutines(view));
     if (view.waitingHandoffs) sections.push(this.createUpdatesContext(view.waitingHandoffs));
     if (view.earlier.length) {
       const earlier = this.disclosure("earlier", `Earlier plans (${view.earlier.length})`, this.createList(view.earlier, { kindVisible: true }), "Still open from earlier. They stay in their lists too.");
@@ -220,6 +230,17 @@ class KinToday extends HTMLElement {
       paused.className = "section-hint";
       paused.textContent = `Routines are paused during ${MODE_LABELS[this.householdMode] ?? "this"} mode. Change the mode under Household › Areas & status.`;
       section.append(paused);
+      return section;
+    }
+    if (!view.hasRoutines) {
+      const empty = document.createElement("p");
+      empty.className = "empty-state";
+      empty.append(document.createTextNode("No routines yet. Set up a small household rhythm in "));
+      const link = document.createElement("a");
+      link.href = "#routines";
+      link.textContent = "Routines";
+      empty.append(link, document.createTextNode(" when one would help."));
+      section.append(empty);
       return section;
     }
     if (!view.routineGroups.length) {
@@ -305,6 +326,12 @@ class KinToday extends HTMLElement {
     section.append(heading, hint);
     const list = document.createElement("ul");
     list.className = "item-list quick-access-list";
+    if (!targets.length) {
+      const empty = document.createElement("p");
+      empty.className = "empty-state quick-access-empty";
+      empty.textContent = "Pin a task from its details to keep it close.";
+      section.append(empty);
+    }
     for (const item of targets) {
       const row = document.createElement("li");
       const entry = document.createElement("div");
@@ -332,7 +359,7 @@ class KinToday extends HTMLElement {
       row.append(entry);
       list.append(row);
     }
-    section.append(list);
+    if (targets.length) section.append(list);
     return section;
   }
 
