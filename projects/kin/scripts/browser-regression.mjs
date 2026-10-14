@@ -18,6 +18,7 @@ import { planningDateRegressions } from "./planning-date-regression.mjs";
 import { mobileUxRegressions } from "./mobile-ux-regression.mjs";
 import { attachmentUploadRegressions } from "./attachment-upload-regression.mjs";
 import { syncMotionRegressions, workspaceUxRegressions, workspaceViewportRegressions } from "./workspace-ux-regression.mjs";
+import { quickAddRegressions } from "./quick-add-regression.mjs";
 import {
   handoffRegressions,
   handoffPeerRegressions,
@@ -1336,6 +1337,8 @@ try {
   console.log(await first.evaluate(`(${shoppingRegressions.toString()})()`));
   await visit(first, "today");
   console.log(await first.evaluate(`(${planningDateRegressions.toString()})()`));
+  await visit(first, "today");
+  console.log(await first.evaluate(`(${quickAddRegressions.toString()})()`));
   await visit(first, "today");
   console.log(await first.evaluate(`(${mobileUxRegressions.toString()})(${JSON.stringify(recoverySecret)})`));
   console.log(await attachmentUploadRegressions(first, { recovery: recoverySecret, visit: (id) => visit(first, id), scratch: profile }));
