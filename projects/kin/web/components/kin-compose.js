@@ -1,15 +1,33 @@
+import { localCivilDateOffset, projectionContext } from "../browser-time.js";
+
 const MAX_ITEM_TEXT_BYTES = 4096;
 const textEncoder = new TextEncoder();
 
+// Presentation labels for the unchanged canonical classification values.
 export const CLASSIFICATION_LABELS = {
   today: "Today",
-  need: "Needs",
+  need: "To do",
   shopping: "Shopping",
   staple: "Staples",
 };
 
-// Presentation only. Canonical values are the Rust classification names.
 export const CLASSIFICATIONS = Object.keys(CLASSIFICATION_LABELS);
+
+// What a new item is, as offered by the Today capture. New captures never
+// create a `today`-classified record; Today is a view over dated items.
+const KIND_OPTIONS = [
+  ["need", "Task"],
+  ["shopping", "Shopping item"],
+];
+
+const PLAN_OPTIONS = [
+  ["today", "Today"],
+  ["tomorrow", "Tomorrow"],
+  ["date", "Pick a date"],
+  ["none", "No date"],
+];
+
+export const TOO_LONG = "That's too long for one item. Shorten it to roughly 4,000 characters or fewer.";
 
 class KinCompose extends HTMLElement {
   constructor() {
@@ -18,35 +36,34 @@ class KinCompose extends HTMLElement {
     this.initialized = false;
     // "scope" keeps control ids unique when several capture forms are mounted.
     this.scope = "";
-    // A fixed destination (list capture) hides the selector; the page default
-    // only seeds the selector and never overrides a destination the person chose.
+    // A fixed destination (list capture) hides every selector; the Today
+    // capture ("today" mode) asks what the item is and when it matters.
     this.fixedClassification = null;
-    this.defaultClassification = "today";
-    this.labelText = "What should we remember?";
+    this.mode = "list";
+    this.labelText = "Add something";
   }
 
   static get observedAttributes() {
-    return ["scope", "fixed-classification", "default-classification", "label"];
+    return ["scope", "fixed-classification", "mode", "label"];
   }
 
   attributeChangedCallback(name, _old, value) {
     if (name === "scope") this.scope = value ?? "";
     else if (name === "fixed-classification") this.fixedClassification = CLASSIFICATIONS.includes(value) ? value : null;
-    else if (name === "default-classification") this.defaultClassification = CLASSIFICATIONS.includes(value) ? value : "today";
+    else if (name === "mode") this.mode = value === "today" ? "today" : "list";
     else if (name === "label" && value) this.labelText = value;
   }
 
   connectedCallback() {
-    if (this.initialized) {
-      return;
-    }
+    if (this.initialized) return;
     this.initialized = true;
     const suffix = this.scope ? `-${this.scope}` : "";
     this.form = document.createElement("form");
-    this.form.className = this.fixedClassification ? "compose-form compose-form-compact" : "compose-form";
+    this.form.className = this.mode === "today" ? "compose-form compose-form-today" : "compose-form compose-form-compact";
+    this.form.noValidate = true;
     this.label = document.createElement("label");
     this.label.htmlFor = `item-text${suffix}`;
-    this.label.textContent = this.labelText;
+    this.label.textContent = this.mode === "today" ? "What needs attention?" : this.labelText;
     this.input = document.createElement("input");
     this.input.id = `item-text${suffix}`;
     this.input.name = "item";
@@ -55,13 +72,16 @@ class KinCompose extends HTMLElement {
     this.input.maxLength = MAX_ITEM_TEXT_BYTES;
     this.input.required = true;
     this.input.setAttribute("aria-describedby", `compose-message${suffix}`);
+
+    // The kind selector doubles as the classification control so existing
+    // callers keep reading `classification.value`.
     this.classificationLabel = document.createElement("label");
     this.classificationLabel.htmlFor = `item-classification${suffix}`;
-    this.classificationLabel.textContent = "Add to";
+    this.classificationLabel.textContent = "What it is";
     this.classification = document.createElement("select");
     this.classification.id = `item-classification${suffix}`;
     this.classification.name = "classification";
-    for (const [value, text] of Object.entries(CLASSIFICATION_LABELS)) {
+    for (const [value, text] of KIND_OPTIONS) {
       const option = document.createElement("option");
       option.value = value;
       option.textContent = text;
@@ -69,10 +89,47 @@ class KinCompose extends HTMLElement {
     }
     this.classificationField = document.createElement("div");
     this.classificationField.className = "classification-field";
-    this.classificationField.append(
-      this.classificationLabel,
-      this.classification,
-    );
+    this.classificationField.append(this.classificationLabel, this.classification);
+
+    this.planLabel = document.createElement("label");
+    this.planLabel.htmlFor = `item-plan${suffix}`;
+    this.planLabel.textContent = "When it matters";
+    this.plan = document.createElement("select");
+    this.plan.id = `item-plan${suffix}`;
+    this.plan.name = "plan";
+    for (const [value, text] of PLAN_OPTIONS) {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = text;
+      this.plan.append(option);
+    }
+    this.planField = document.createElement("div");
+    this.planField.className = "classification-field plan-field";
+    this.planField.append(this.planLabel, this.plan);
+    this.planDateLabel = document.createElement("label");
+    this.planDateLabel.htmlFor = `item-plan-date${suffix}`;
+    this.planDateLabel.textContent = "Date";
+    this.planDate = document.createElement("input");
+    this.planDate.type = "date";
+    this.planDate.id = `item-plan-date${suffix}`;
+    this.planDate.name = "planDate";
+    this.planDateField = document.createElement("div");
+    this.planDateField.className = "classification-field plan-date-field";
+    this.planDateField.append(this.planDateLabel, this.planDate);
+    this.planDateField.hidden = true;
+    this.plan.addEventListener("change", () => {
+      this.planDateField.hidden = this.plan.value !== "date";
+      if (this.plan.value === "date") this.planDate.focus();
+    });
+
+    this.pinLabel = document.createElement("label");
+    this.pinLabel.className = "pin-field";
+    this.pin = document.createElement("input");
+    this.pin.type = "checkbox";
+    this.pin.id = `item-pin${suffix}`;
+    this.pin.name = "pin";
+    this.pinLabel.append(this.pin, document.createTextNode(" Pin for quick access"));
+
     this.button = document.createElement("button");
     this.button.className = "add-button";
     this.button.type = "submit";
@@ -81,90 +138,137 @@ class KinCompose extends HTMLElement {
     this.message.id = `compose-message${suffix}`;
     this.message.className = "compose-message";
     this.message.setAttribute("aria-live", "polite");
+    // Save results are announced once by the app's status/alert regions; this
+    // line simply repeats them next to the field without a second live region.
+    this.result = document.createElement("p");
+    this.result.className = "compose-result";
+    this.result.hidden = true;
     this.restoreDraft();
-    this.input.addEventListener("input", () => this.saveDraft());
     this.form.append(this.label, this.input);
-    if (this.fixedClassification) {
-      this.classification.value = this.fixedClassification;
+    if (this.mode === "today") {
+      const options = document.createElement("div");
+      options.className = "compose-options";
+      options.append(this.classificationField, this.planField, this.planDateField, this.pinLabel);
+      this.form.append(options);
+    } else {
+      const destination = CLASSIFICATION_LABELS[this.fixedClassification] ?? "list";
+      this.classification.value = this.fixedClassification ?? "need";
       this.classification.hidden = true;
       this.classificationField.hidden = true;
-      this.input.placeholder = `Add to ${CLASSIFICATION_LABELS[this.fixedClassification]}`;
-      this.input.setAttribute("aria-label", `Add to ${CLASSIFICATION_LABELS[this.fixedClassification]}`);
+      this.input.placeholder = `Add to ${destination}`;
+      this.input.setAttribute("aria-label", `Add to ${destination}`);
       this.label.className = "visually-hidden";
-    } else {
-      this.form.append(this.classificationField);
     }
-    this.form.append(this.button, this.message);
+    this.form.append(this.button, this.message, this.result);
     this.replaceChildren(this.form);
     this.form.addEventListener("submit", (event) => this.submit(event));
-    this.classification.addEventListener("change", () => this.saveDraft());
+    this.input.addEventListener("input", () => { if (!this.result.hidden && this.result.dataset.kind === "error") this.clearResult(); });
   }
 
   set disabled(value) {
     this.isDisabled = Boolean(value);
     if (!this.input) return;
-    this.input.disabled = this.isDisabled;
-    this.classification.disabled = this.isDisabled;
-    this.button.disabled = this.isDisabled;
+    for (const control of [this.input, this.classification, this.plan, this.planDate, this.pin, this.button]) control.disabled = this.isDisabled;
+    for (const retry of this.result?.querySelectorAll("button") ?? []) retry.disabled = this.isDisabled;
   }
 
   get currentClassification() {
     return this.fixedClassification ?? this.classification.value;
   }
 
-  clearIfMatches(submittedDraft) {
-    // Completion belongs to the submitted draft, not a newer edit. The chosen
-    // destination stays selected so a second item lands where the person expects.
-    if (
-      this.input.value !== submittedDraft.text ||
-      this.currentClassification !== submittedDraft.classification
-    ) {
-      return;
+  // Resolves the chosen plan to a fixed local civil date, or null for no date.
+  currentPlanningDate() {
+    if (this.mode !== "today") return null;
+    switch (this.plan.value) {
+      case "today": return projectionContext().civilDate;
+      case "tomorrow": return localCivilDateOffset(1);
+      case "date": return this.planDate.value ? Number(this.planDate.value.replaceAll("-", "")) : null;
+      default: return null;
     }
-    this.input.value = "";
-    this.message.textContent = "";
   }
 
-  focusInput() {
-    this.input.focus();
+  clearIfMatches(submittedDraft) {
+    // Completion belongs to the submitted draft, not a newer edit. The chosen
+    // kind and plan stay selected so a second item lands where the person expects.
+    if (this.input.value !== submittedDraft.text || this.currentClassification !== submittedDraft.classification) return;
+    this.input.value = "";
+    this.message.textContent = "";
+    if (this.mode === "today") this.pin.checked = false;
   }
+
+  focusInput() { this.input.focus(); }
 
   restoreDraft() {
     this.input.value = "";
-    this.classification.value = this.fixedClassification ?? this.defaultClassification;
+    this.classification.value = this.fixedClassification ?? "need";
+    this.plan.value = "today";
+    this.planDate.value = "";
+    this.pin.checked = false;
   }
 
   saveDraft() {
     // Drafts remain in the unlocked input only; lock replaces the component.
   }
 
+  showResult(text, { kind = "saved", retry = null } = {}) {
+    this.result.replaceChildren();
+    this.result.dataset.kind = kind;
+    this.result.append(document.createTextNode(text));
+    if (typeof retry === "function") {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "compose-retry";
+      button.textContent = "Try again";
+      button.disabled = this.isDisabled;
+      button.addEventListener("click", retry);
+      this.result.append(" ", button);
+    }
+    this.result.hidden = false;
+    clearTimeout(this.resultTimer);
+    if (kind === "saved") this.resultTimer = setTimeout(() => { if (this.result.dataset.kind === "saved") this.clearResult(); }, 6_000);
+  }
+
+  clearResult() {
+    clearTimeout(this.resultTimer);
+    this.result.replaceChildren();
+    this.result.hidden = true;
+    delete this.result.dataset.kind;
+  }
+
   submit(event) {
     event.preventDefault();
-    if (this.isDisabled) {
-      return;
-    }
+    if (this.isDisabled) return;
     const text = this.input.value;
     const classification = this.currentClassification;
-    const textLength = textEncoder.encode(text).length;
     if (!text.trim()) {
       this.message.textContent = "Add a few words first.";
       this.input.focus();
       return;
     }
-    if (textLength > MAX_ITEM_TEXT_BYTES) {
-      this.message.textContent = "Keep the item under 4096 UTF-8 bytes.";
+    if (textEncoder.encode(text).length > MAX_ITEM_TEXT_BYTES) {
+      this.message.textContent = TOO_LONG;
       this.input.focus();
       return;
     }
+    if (this.mode === "today" && this.plan.value === "date" && !this.planDate.value) {
+      this.message.textContent = "Pick a date, or choose No date.";
+      this.planDate.focus();
+      return;
+    }
     this.message.textContent = "";
-    this.dispatchEvent(
-      new CustomEvent("kin:add-item", {
-        detail: { text, classification, composer: this },
-        bubbles: true,
-        composed: true,
-        cancelable: false,
-      }),
-    );
+    this.clearResult();
+    this.dispatchEvent(new CustomEvent("kin:add-item", {
+      detail: {
+        text,
+        classification,
+        planningDate: this.currentPlanningDate(),
+        pinned: this.mode === "today" && this.pin.checked,
+        composer: this,
+      },
+      bubbles: true,
+      composed: true,
+      cancelable: false,
+    }));
   }
 }
 

@@ -17,6 +17,7 @@ import { shoppingRegressions } from "./shopping-regression.mjs";
 import { planningDateRegressions } from "./planning-date-regression.mjs";
 import { mobileUxRegressions } from "./mobile-ux-regression.mjs";
 import { attachmentUploadRegressions } from "./attachment-upload-regression.mjs";
+import { workspaceUxRegressions, workspaceViewportRegressions } from "./workspace-ux-regression.mjs";
 import {
   handoffRegressions,
   handoffPeerRegressions,
@@ -210,7 +211,13 @@ async function regressions() {
     compose.classification.dispatchEvent(
       new Event("change", { bubbles: true }),
     );
+    // These checks count events one by one, so capture without a planning date.
+    compose.plan.value = "none";
   };
+  // Row-level controls are deliberately few; everything else lives in the
+  // shared detail view, opened here by canonical id.
+  const details = (itemId) => { app.openItemDetail(itemId); return app.detail; };
+  const detailsFor = (text) => details(app.state.items.find((item) => item.text === text).itemId);
   const idle = async () => {
     for (let i = 0; app.busy && i < 200; i++)
       await new Promise((r) => setTimeout(r, 10));
@@ -242,50 +249,52 @@ async function regressions() {
   check(app.status.textContent === "Ready.", "startup");
   check(
     [...app.nav.querySelectorAll("a")].map((link) => link.textContent.trim()).join(",") ===
-      "Today,Lists,Routines,Handoff,More" && app.nav.querySelectorAll("a").length <= 5 &&
+      "Today,Lists,Routines,Updates,Household" && app.nav.querySelectorAll("a").length === 5 &&
       app.nav.querySelectorAll('[aria-current="page"]').length === 1 &&
       app.nav.querySelector('[aria-current="page"]').dataset.page === "today",
-    "the unlocked shell exposes at most five primary destinations and marks Today as current",
+    "the unlocked shell exposes five primary destinations and marks Today as current",
   );
   check(
-    getComputedStyle(app.shell).display !== "grid" &&
-      app.shell.getBoundingClientRect().width <= 680 &&
-      getComputedStyle(app.nav).flexDirection === "row",
-    "wide screens retain a centered primary column without a permanent side rail",
+    getComputedStyle(app.shell).display === "grid" &&
+      getComputedStyle(app.nav).position === "sticky" &&
+      app.nav.getBoundingClientRect().left < app.main.getBoundingClientRect().left &&
+      app.pages.get("today").getBoundingClientRect().width <= 720 &&
+      !app.siteTools.hidden && app.searchLink.getAttribute("href") === "#search" && app.lockButton.textContent.trim() === "Lock",
+    "wide screens use a persistent left navigation, a readable content column, and header search/lock",
   );
   check(
     getComputedStyle(app.household).display === "block" &&
       getComputedStyle(app.areas).display === "block" &&
       getComputedStyle(app.security).display === "block",
-    "Areas, household, and security custom elements retain block card flow in More",
+    "Areas, household, and security custom elements retain block card flow under Household",
   );
-  app.nav.querySelector('a[href="#lists"]').click();
+  app.nav.querySelector('a[href="#lists/todo"]').click();
   await new Promise((resolve) => setTimeout(resolve, 0));
   check(
-    location.hash === "#lists" && !app.pages.get("lists").hidden &&
+    location.hash === "#lists/todo" && !app.pages.get("lists").hidden &&
       app.nav.querySelector('[aria-current="page"]').dataset.page === "lists" &&
       app.pages.get("today").hidden && app.routeAnnouncement.textContent === "Lists view" &&
-      document.title === "Lists — Kin",
+      document.title === "Lists — Kin" && app.dataset.route === "lists/todo",
     "navigation changes the URL, current destination, and visible page together",
   );
   app.nav.querySelector('a[href="#today"]').click();
   await new Promise((resolve) => setTimeout(resolve, 0));
   check(
     app.today.display === "today" && app.needs.display === "need" &&
-      app.pages.get("more").contains(app.household) &&
-      app.pages.get("more").contains(app.security),
-    "Today and Lists remain views over existing records and More owns household/security controls",
+      app.pages.get("household").contains(app.household) &&
+      app.pages.get("household").contains(app.security),
+    "Today and Lists remain views over existing records and Household owns household/security controls",
   );
   const search = app.search;
-  app.nav.querySelector('a[href="#more"]').click();
+  app.nav.querySelector('a[href="#household"]').click();
   await new Promise((resolve) => setTimeout(resolve, 0));
-  app.pages.get("more").querySelector('a[href="#search"]').click();
+  app.pages.get("household").querySelector('a[href="#search"]').click();
   await new Promise((resolve) => setTimeout(resolve, 0));
   check(
     !app.pages.get("search").hidden &&
-      app.nav.querySelector('[aria-current="page"]').dataset.page === "more" &&
+      app.nav.querySelectorAll('[aria-current="page"]').length === 0 &&
       app.routeAnnouncement.textContent === "Search view",
-    "Search remains reachable from More with its route announcement and More destination current",
+    "Search remains reachable from Household and the header with its route announcement and no primary destination current",
   );
   search.household = {
     items: [
@@ -553,7 +562,7 @@ async function regressions() {
 
   // Fail an actual IndexedDB transaction after a successful add request.
   // Quota injection separately verifies the actionable storage-full path.
-  async function failOnce(mode, operation = submit) {
+  async function failOnce(mode, operation = submit, focused = () => document.activeElement === compose.input) {
     const original = IDBObjectStore.prototype.add;
     IDBObjectStore.prototype.add = function (...args) {
       if (this.name !== "events") return original.apply(this, args);
@@ -586,7 +595,7 @@ async function regressions() {
       !app.retryButton.hidden && !app.alert.hidden,
       "failure exposes retry",
     );
-    check(document.activeElement === compose.input, "failure focus");
+    check(focused(), "failure focus");
     if (mode.includes("quota"))
       check(
         app.alert.textContent.includes("storage is full"),
@@ -606,7 +615,7 @@ async function regressions() {
       (await app.store.ensureContext()).next_logical_time === logicalTimeBefore,
       "failed append must not advance logical time",
     );
-    if (changed) edit("Buy bread", "today");
+    if (changed) edit("Buy bread", "shopping");
     if (changed) {
       const retry = app.retryAction;
       const load = app.store.getCatchUpState.bind(app.store);
@@ -630,7 +639,7 @@ async function regressions() {
         !app.retryButton.hidden,
         "peer refresh must retain failed-command retry",
       );
-      draft("Buy bread", "today");
+      draft("Buy bread", "shopping");
     }
     app.retryButton.click();
     app.retryButton.click();
@@ -653,7 +662,7 @@ async function regressions() {
       app.state.items.at(-1).classification === "need",
       "retry preserves original classification",
     );
-    draft(changed ? "Buy bread" : "", changed ? "today" : "need");
+    draft(changed ? "Buy bread" : "", changed ? "shopping" : "need");
     check(
       app.retryAction === null && app.retryButton.hidden,
       "retry lifecycle",
@@ -701,9 +710,9 @@ async function regressions() {
     await gate;
     return append(...args);
   };
-  edit("Pending original", "today");
+  edit("Pending original", "shopping");
   const event = {
-    detail: { text: "Pending original", classification: "today" },
+    detail: { text: "Pending original", classification: "shopping" },
   };
   const operation = app.handleAddItem(event);
   check(app.busy, "pending operation is busy");
@@ -719,7 +728,7 @@ async function regressions() {
     "submission snapshot",
   );
   check(
-    app.state.items.at(-1).classification === "today",
+    app.state.items.at(-1).classification === "shopping",
     "classification submission snapshot",
   );
   draft("Newer pending draft");
@@ -789,7 +798,8 @@ async function regressions() {
     for (const selector of [
       ".complete-button",
       ".reopen-button",
-      ".archive-button",
+      ".item-details-button",
+      ".item-attach-button",
     ]) {
       const buttons = [...app.querySelectorAll(`kin-item ${selector}`)];
       check(buttons.length > 0, `fixture must expose ${selector}`);
@@ -842,7 +852,7 @@ async function regressions() {
     "pending retry restores compose focus",
   );
   passed.push(
-    "pending retry disables Complete, Reopen, every Archive, compose input/select/Add and retry; controls and focus recover",
+    "pending retry disables Complete, Reopen, every Details and Add photo, compose input/select/Add and retry; controls and focus recover",
   );
   check(
     app.state.items.find((item) => item.text === actionText).status ===
@@ -854,9 +864,9 @@ async function regressions() {
   actionItem = findItem(actionText);
   actionEventCount = await count();
   await failOnce("quota", async () => {
-    actionItem.querySelector(".archive-button").click();
+    details(app.state.items.find((item) => item.text === actionText).itemId).querySelector(".archive-button").click();
     await idle();
-  });
+  }, () => app.detail.contains(document.activeElement));
   check(
     app.state.items.find((item) => item.text === actionText).status ===
       "active",
@@ -875,6 +885,11 @@ async function regressions() {
     !findItem(actionText),
     "archived action control disappears after state transition",
   );
+  check(app.detail.contains(document.activeElement) && app.detail.textContent.includes("archived") && !app.detail.querySelector(".archive-button"),
+    "after the archive retry the detail explains the archived record and keeps focus nearby");
+  app.closeItemDetail({ restoreFocus: true });
+  check(document.activeElement?.matches("h1, h2") && !document.activeElement.closest("[hidden]"), "closing details for a record that is gone falls back to the visible heading");
+  compose.focusInput();
   check(document.activeElement === compose.input, "lifecycle retry focus");
   passed.push(
     "complete/reopen/archive write failures, abort retry, exactly-once action transitions, focus",
@@ -920,8 +935,10 @@ async function regressions() {
     (item) => item.querySelector(".item-text")?.textContent === unicode,
   );
   const beforeArchive = await count();
-  reopenedItem.querySelector(".archive-button").click();
+  detailsFor(unicode).querySelector(".archive-button").click();
   await idle();
+  app.closeItemDetail({ restoreFocus: false });
+  compose.focusInput();
   check(
     app.state.items.find((item) => item.text === unicode).status === "archived",
     "archive tombstone",
@@ -938,16 +955,14 @@ async function regressions() {
   );
   check(document.activeElement === compose.input, "archive focus destination");
   const checklistInitialCount = await count();
-  edit("Checklist item", "today");
+  edit("Checklist item", "need");
   await submit();
-  let checklistItem = [...app.querySelectorAll("kin-item")].find(
+  let checklistRow = [...app.querySelectorAll("kin-item")].find(
     (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
   );
-  check(checklistItem, "checklist parent Item is created");
-  checklistItem.querySelector(".step-toggle-button").click();
-  checklistItem = [...app.querySelectorAll("kin-item")].find(
-    (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
-  );
+  check(checklistRow && !checklistRow.querySelector(".step-summary"), "checklist parent Item is created and a row shows no step count before steps exist");
+  // Steps live in the shared detail view; the detail re-renders in place.
+  let checklistItem = detailsFor("Checklist item");
   const addStep = async (text) => {
     const form = checklistItem.querySelector(".step-compose");
     const input = form.querySelector("input");
@@ -955,19 +970,18 @@ async function regressions() {
     input.focus();
     form.requestSubmit();
     await idle();
-    checklistItem = [...app.querySelectorAll("kin-item")].find(
-      (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
-    );
+    checklistItem = app.detail;
   };
   await addStep("Clear counters");
   await addStep("Wipe stove");
   let checklist = app.state.items.find((item) => item.text === "Checklist item");
+  const rowSummary = () => [...app.querySelectorAll("kin-item")].find((item) => item.querySelector(".item-text")?.textContent === "Checklist item")?.querySelector(".step-summary")?.textContent;
   check(
     checklist.status === "active" &&
       checklist.steps.map((step) => step.text).join(",") === "Clear counters,Wipe stove" &&
-      checklistItem.querySelector(".step-summary").textContent === "0 of 2 steps" &&
+      rowSummary() === "0 of 2 steps" &&
       document.activeElement === checklistItem.querySelector(".step-compose input"),
-    "steps append in stable order without changing or losing the parent Item",
+    "steps append in stable order without changing or losing the parent Item, and the row shows progress only once steps exist",
   );
   const stepArchiveNames = [
     ...checklistItem.querySelectorAll(".step-archive-button"),
@@ -982,45 +996,35 @@ async function regressions() {
     checklistItem.querySelectorAll('.step-row input[type="checkbox"]')[index];
   stepCheckbox(0).click();
   await idle();
-  checklistItem = [...app.querySelectorAll("kin-item")].find(
-    (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
-  );
+  checklistItem = app.detail;
   stepCheckbox(1).click();
   await idle();
   checklist = app.state.items.find((item) => item.text === "Checklist item");
-  checklistItem = [...app.querySelectorAll("kin-item")].find(
-    (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
-  );
+  checklistItem = app.detail;
   check(
     checklist.status === "active" &&
       checklist.steps.every((step) => step.completed) &&
-      checklistItem.querySelector(".step-summary").textContent === "2 of 2 steps",
+      rowSummary() === "2 of 2 steps",
     "completing every Step does not complete the parent Item",
   );
   stepCheckbox(0).click();
   await idle();
-  checklistItem = [...app.querySelectorAll("kin-item")].find(
-    (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
-  );
+  checklistItem = app.detail;
   checklistItem.querySelector(".step-archive-button").click();
   await idle();
   checklist = app.state.items.find((item) => item.text === "Checklist item");
-  checklistItem = [...app.querySelectorAll("kin-item")].find(
-    (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
-  );
+  checklistItem = app.detail;
   check(
     checklist.status === "active" &&
       checklist.steps[0].archived &&
       checklist.steps[1].completed &&
       checklistItem.querySelectorAll(".step-row").length === 1 &&
-      checklistItem.querySelector(".step-summary").textContent === "1 of 1 steps",
+      rowSummary() === "1 of 1 steps",
     "reopen and terminal Step archive preserve history and update the visible summary",
   );
   checklistItem.querySelector(".complete-button").click();
   await idle();
-  checklistItem = [...app.querySelectorAll("kin-item")].find(
-    (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
-  );
+  checklistItem = app.detail;
   check(
     checklistItem.querySelector('.step-row input[type="checkbox"]').disabled &&
       checklistItem.querySelector(".step-compose input").disabled,
@@ -1028,15 +1032,14 @@ async function regressions() {
   );
   checklistItem.querySelector(".reopen-button").click();
   await idle();
-  checklistItem = [...app.querySelectorAll("kin-item")].find(
-    (item) => item.querySelector(".item-text")?.textContent === "Checklist item",
-  );
+  checklistItem = app.detail;
   check(
     !checklistItem.querySelector('.step-row input[type="checkbox"]').disabled &&
       !checklistItem.querySelector(".step-compose input").disabled &&
       (await count()) === checklistInitialCount + 9,
     "reopening the parent restores Step controls",
   );
+  app.closeItemDetail({ restoreFocus: false });
   passed.push(
     "checklist Step add/order/complete/reopen/archive, parent independence, lifecycle gating and focus",
   );
@@ -1050,11 +1053,14 @@ async function regressions() {
       "completed",
     "completion works in Today",
   );
-  const completedTodayItem = [...app.querySelectorAll("kin-item")].find(
-    (item) => item.querySelector(".item-text")?.textContent === legacyText,
+  check(
+    app.today.querySelector(`.item-text[data-item-id="${app.state.items.find((item) => item.text === legacyText).itemId}"]`) &&
+      app.needs.querySelector(`.item-text[data-item-id="${app.state.items.find((item) => item.text === legacyText).itemId}"]`),
+    "an undated legacy Today item stays on Today and is also listed under To do",
   );
-  completedTodayItem.querySelector(".archive-button").click();
+  detailsFor(legacyText).querySelector(".archive-button").click();
   await idle();
+  app.closeItemDetail({ restoreFocus: false });
   check(
     app.state.items.find((item) => item.text === legacyText).status ===
       "archived",
@@ -1213,10 +1219,11 @@ try {
   const first = await tab();
   async function visit(client, id) {
     const hash = `#${id}`;
+    const page = id.split("/")[0];
     await client.evaluate(`location.hash=${JSON.stringify(hash)}`);
     await until(() =>
       client.evaluate(
-        `location.hash===${JSON.stringify(hash)}&&!document.querySelector('kin-app').pages.get(${JSON.stringify(id)}).hidden`,
+        `location.hash===${JSON.stringify(hash)}&&!document.querySelector('kin-app').pages.get(${JSON.stringify(page)}).hidden`,
       ),
     );
   }
@@ -1231,7 +1238,7 @@ try {
       await first.send("Emulation.setDeviceMetricsOverride", {
         width, height, deviceScaleFactor: 1, mobile,
       });
-      for (const id of ["today", "lists", "routines", "handoff", "more"]) {
+      for (const id of ["today", "lists", "routines", "updates", "household"]) {
         await visit(first, id);
         await first.evaluate("window.scrollTo(0,0)");
         await delay(80);
@@ -1252,8 +1259,7 @@ try {
           ),
         );
       }
-      await visit(first, "handoff");
-      await first.evaluate('document.querySelector("#talk-tab").click()');
+      await visit(first, "updates/talk");
       await first.evaluate("window.scrollTo(0,0)");
       await delay(80);
       await writeFile(
@@ -1308,30 +1314,33 @@ try {
     "keyboard Enter activates a primary destination and retains navigation focus",
   );
   await visit(first, "today");
-  await visit(first, "handoff");
+  await visit(first, "updates/handoffs");
   console.log(await first.evaluate(`(${handoffRegressions.toString()})()`));
   assert.equal(await first.evaluate(`(()=>{
-    const tabs=[...document.querySelectorAll('#handoff [role="tab"]')];
-    tabs[0].focus();
-    tabs[0].dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));
-    return document.activeElement===tabs[1] && tabs[1].getAttribute('aria-selected')==='true' &&
-      document.querySelector('#handoffs-panel').hidden && !document.querySelector('#talk-panel').hidden;
-  })()`), true, "Handoff/Talk tabs switch accessibly and keep the concepts distinct");
+    const app=document.querySelector('kin-app');
+    const links=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
+    links[1].click();
+    return location.hash==='#updates/talk' && links[1].getAttribute('aria-current')==='true' && !links[0].hasAttribute('aria-current') &&
+      document.querySelector('#handoffs-panel').hidden && !document.querySelector('#talk-panel').hidden &&
+      app.talks.querySelector('.talk-hint').textContent.includes('Topics to discuss');
+  })()`), true, "Handoffs/Talk segments switch by route and keep the concepts distinct");
   console.log(await first.evaluate(`(${talkRegressions.toString()})()`));
-  await visit(first, "more");
+  await visit(first, "household/areas");
   console.log(await first.evaluate(`(${pulseRegressions.toString()})()`));
   console.log(
     await first.evaluate(`(${pulseResilienceRegressions.toString()})()`),
   );
   await visit(first, "today");
   console.log(await first.evaluate(`(${catchUpRegressions.toString()})()`));
-  await visit(first, "lists");
+  await visit(first, "lists/shopping");
   console.log(await first.evaluate(`(${shoppingRegressions.toString()})()`));
   await visit(first, "today");
   console.log(await first.evaluate(`(${planningDateRegressions.toString()})()`));
   await visit(first, "today");
   console.log(await first.evaluate(`(${mobileUxRegressions.toString()})(${JSON.stringify(recoverySecret)})`));
   console.log(await attachmentUploadRegressions(first, { recovery: recoverySecret, visit: (id) => visit(first, id), scratch: profile }));
+  console.log(await first.evaluate(`(${workspaceUxRegressions.toString()})(${JSON.stringify(recoverySecret)})`));
+  console.log(await workspaceViewportRegressions(first, { visit: (id) => visit(first, id) }));
   await visit(first, "routines");
   console.log(await first.evaluate(`(${routineRegressions.toString()})()`));
   const playbookResult = await first.evaluate(async () => {
@@ -1342,7 +1351,7 @@ try {
     ui.playbookTitle.value = "界".repeat(43);
     ui.playbookEntries.value = "A valid step";
     form.requestSubmit();
-    const invalidCreateTitle = ui.playbookTitle.getAttribute("aria-invalid") === "true" && titleErrorId === ui.playbookTitleError.id && ui.playbookTitleError.textContent === "This Playbook title is too long." && !ui.playbookTitleError.hidden && !app.busy;
+    const invalidCreateTitle = ui.playbookTitle.getAttribute("aria-invalid") === "true" && titleErrorId === ui.playbookTitleError.id && ui.playbookTitleError.textContent === "This checklist name is too long." && !ui.playbookTitleError.hidden && !app.busy;
     ui.playbookTitle.value = "A valid title";
     ui.playbookEntries.value = "界".repeat(86);
     form.requestSubmit();
@@ -1368,7 +1377,7 @@ try {
     [...ui.playbookList.querySelectorAll("button")].find(button => button.textContent === "Edit").click();
     ui.playbookTitle.value = "P".repeat(129); ui.playbookEntries.value = "Changed later";
     form.requestSubmit();
-    const invalidEditTitle = ui.playbookTitle.getAttribute("aria-invalid") === "true" && ui.playbookTitleError.textContent === "This Playbook title is too long." && app.state.playbooks.find(value => value.playbookId === record.playbookId).title === "Regression playbook" && !app.busy;
+    const invalidEditTitle = ui.playbookTitle.getAttribute("aria-invalid") === "true" && ui.playbookTitleError.textContent === "This checklist name is too long." && app.state.playbooks.find(value => value.playbookId === record.playbookId).title === "Regression playbook" && !app.busy;
     ui.playbookTitle.value = "Edited template"; ui.playbookEntries.value = "Changed later\n";
     form.requestSubmit();
     const emptyEditStepId = ui.playbookEntries.getAttribute("aria-describedby").split(/\s+/).find(id => id.includes("entry-error"));
@@ -1437,9 +1446,9 @@ try {
     "reload discards unsaved plaintext drafts",
   );
   assert.equal(
-    await first.evaluate('document.querySelector("select").value'),
-    "today",
-    "reload defaults ephemeral draft classification to Today",
+    await first.evaluate('(()=>{const c=document.querySelector("kin-app").compose;return `${c.classification.value}/${c.plan.value}/${c.pin.checked}`;})()'),
+    "need/today/false",
+    "reload defaults the ephemeral Today capture to a task planned for today, not pinned",
   );
   await first.evaluate(`(()=>{const input=document.querySelector('kin-compose input');input.value='Keyboard after unlock';input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();})()`);
   await first.send("Input.dispatchKeyEvent", {
@@ -1462,14 +1471,17 @@ try {
   );
   console.log("PASS recovery unlock/replay, draft disposal, keyboard submission");
 
-  await visit(first, "handoff");
-  await first.evaluate('document.querySelector("#handoffs-tab").click()');
+  await visit(first, "updates/handoffs");
+  await first.evaluate('document.querySelector("kin-app").navigate("#updates/handoffs")');
   assert.equal(
     await first.evaluate('document.querySelector("#handoff-text").value'),
     "",
     "Handoff draft is discarded on reload",
   );
   await first.evaluate(`(()=>{const input=document.querySelector('#handoff-text');input.value='Newer handoff draft';input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();})()`);
+  // A background refresh (routine timers) may briefly disable the field; hold
+  // focus on it before the keystroke so Enter cannot land on the body.
+  await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');const input=document.querySelector('#handoff-text');if(app.busy||input.disabled)return false;if(document.activeElement!==input)input.focus();return document.activeElement===input;})()`));
   for (const type of ["keyDown", "keyUp"])
     await first.send("Input.dispatchKeyEvent", {
       type,
@@ -1513,7 +1525,7 @@ try {
   console.log(
     "PASS Handoff draft disposal, keyboard capture/acknowledgement, focus restoration",
   );
-  await first.evaluate('document.querySelector("#talk-tab").click()');
+  await first.evaluate('document.querySelector("kin-app").navigate("#updates/talk")');
   assert.equal(
     await first.evaluate('document.querySelector("#talk-text").value'),
     "",
@@ -1689,11 +1701,11 @@ try {
   })()`);
   await first.evaluate(`(async()=>{
     const app=document.querySelector('kin-app');
-    [...app.querySelectorAll('kin-item')]
-      .find(element=>element.record?.itemId==='${raceItemId}')
-      .querySelector('.archive-button').click();
+    app.openItemDetail('${raceItemId}');
+    app.detail.querySelector('.archive-button').click();
     for(let index=0;app.busy&&index<200;index++)
       await new Promise(resolve=>setTimeout(resolve,10));
+    app.closeItemDetail({ restoreFocus: false });
   })()`);
   await until(() =>
     second.evaluate(
@@ -1706,7 +1718,7 @@ try {
       return {
         status:app.state.items.find(item=>item.itemId==='${raceItemId}').status,
         retryHidden:app.retryButton.hidden,
-        focusRestored:document.activeElement===app.compose.input,
+        focusRestored:document.activeElement===app.compose.input||document.activeElement?.getAttribute('aria-label')==='Complete Peer addition',
         itemVisible:[...app.querySelectorAll('kin-item')]
           .some(item=>item.record?.itemId==='${raceItemId}'),
         eventCount:(await app.store.loadEvents()).length,
@@ -1763,11 +1775,11 @@ try {
   assert.equal(noSignalFailedAction, true);
   await first.evaluate(`(async()=>{
     const app=document.querySelector('kin-app');
-    [...app.querySelectorAll('kin-item')]
-      .find(element=>element.record?.itemId==='${noSignalItemId}')
-      .querySelector('.archive-button').click();
+    app.openItemDetail('${noSignalItemId}');
+    app.detail.querySelector('.archive-button').click();
     for(let index=0;app.busy&&index<200;index++)
       await new Promise(resolve=>setTimeout(resolve,10));
+    app.closeItemDetail({ restoreFocus: false });
   })()`);
   await second.evaluate(
     "document.querySelector('kin-app').retryButton.click()",
@@ -1800,25 +1812,25 @@ try {
     "PASS two tabs, content-free invalidation, canonical IndexedDB reload, Rust replay",
   );
 
-  await visit(first, "handoff");
-  await visit(second, "handoff");
+  await visit(first, "updates/handoffs");
+  await visit(second, "updates/handoffs");
   await handoffPeerRegressions(first, second, until);
-  await first.evaluate('document.querySelector("#talk-tab").click()');
-  await second.evaluate('document.querySelector("#talk-tab").click()');
+  await first.evaluate('document.querySelector("kin-app").navigate("#updates/talk")');
+  await second.evaluate('document.querySelector("kin-app").navigate("#updates/talk")');
   await talkPeerRegressions(first, second, until);
-  await visit(first, "more");
-  await visit(second, "more");
+  await visit(first, "household/areas");
+  await visit(second, "household/areas");
   await pulsePeerRegressions(first, second, until, ready);
   await visit(first, "today");
   await visit(second, "today");
   await catchUpPeerRegressions(first, second, until);
-  await visit(first, "more");
+  await visit(first, "household/areas");
   await pulseKeyboardRegressions(first, until);
   await visit(first, "routines");
   await visit(second, "routines");
   await routinePeerRegressions(first, second, until);
   await routineKeyboardRegressions(first, until);
-  await visit(first, "more");
+  await visit(first, "household/areas");
   await first.evaluate(`(()=>{
     const app=document.querySelector('kin-app');
     app.modeSelect.value='vacation';
@@ -1860,10 +1872,12 @@ try {
   console.log("PASS household mode replay, local persistence, and routine pause");
   await visit(first, "today");
   await visit(second, "today");
-  await visit(first, "lists");
+  await visit(first, "lists/todo");
   await first.evaluate(`(()=>{
     const app=document.querySelector('kin-app');
-    const item=[...app.querySelectorAll('kin-item')]
+    // The item is planned for today and therefore also listed on the hidden
+    // Today page; use the visible To do list.
+    const item=[...app.needs.querySelectorAll('kin-item')]
       .find(element=>element.querySelector('.item-text')?.textContent==='Peer addition');
     item.querySelector('.complete-button').focus();
   })()`);
@@ -1954,7 +1968,7 @@ try {
         focusWidth:getComputedStyle(select).outlineWidth,
       };
     })()`),
-    { label: "Add to", targetHeight: 48, focusWidth: "3px" },
+    { label: "What it is", targetHeight: 48, focusWidth: "3px" },
   );
   await first.send("Emulation.setEmulatedMedia", {
     features: [
@@ -1982,7 +1996,7 @@ try {
       overflow: false,
     },
   );
-  await visit(first, "handoff");
+  await visit(first, "updates/handoffs");
   assert.equal(
     await first.evaluate(`(()=>{
     const app=document.querySelector('kin-app');
@@ -1998,7 +2012,7 @@ try {
     true,
     "Handoff semantics, announcements, focus and targets in forced colors",
   );
-  await first.evaluate('document.querySelector("#talk-tab").click()');
+  await first.evaluate('document.querySelector("kin-app").navigate("#updates/talk")');
   assert.equal(
     await first.evaluate(`(()=>{
     const app=document.querySelector('kin-app'),capture=app.talks;
@@ -2014,7 +2028,7 @@ try {
     true,
     "Talk semantics, announcements, focus and targets in forced colors",
   );
-  await visit(first, "more");
+  await visit(first, "household/areas");
   assert.equal(
     await first.evaluate(`(()=>{
     const p=document.querySelector('kin-app').pulse;p.valueSelect.focus();
@@ -2030,12 +2044,12 @@ try {
   await visit(first, "routines");
   assert.equal(
     await first.evaluate(`(()=>{
-      const app=document.querySelector('kin-app'),ui=app.routines;ui.cadence.focus();
+      const app=document.querySelector('kin-app'),ui=app.routines;ui.openCreate();ui.cadence.focus();
       return ui.querySelector('h2').textContent==='Routines' && ui.input.labels.length===1 && ui.cadence.labels[0].textContent==='Repeat' &&
         ui.querySelectorAll('ul > li').length>0 && ui.textContent.includes('today') &&
         ui.input.getBoundingClientRect().width >= ui.querySelector('.routine-form').getBoundingClientRect().width * .7 &&
         getComputedStyle(ui.cadence).outlineWidth==='3px' &&
-        [...ui.querySelectorAll('button,select,input')].every(control=>control.getBoundingClientRect().height>=48) &&
+        [...ui.querySelectorAll('button,select,input')].filter(control=>control.getClientRects().length>0).every(control=>control.getBoundingClientRect().height>=48) &&
         app.status.getAttribute('aria-live')==='polite' && app.alert.getAttribute('role')==='alert';
     })()`),
     true,
@@ -2107,7 +2121,7 @@ try {
   console.log(
     "PASS malformed row and metadata preservation, canonical-byte integrity, refresh recovery",
   );
-  await visit(first, "more");
+  await visit(first, "household/areas");
   const areasResult = await first.evaluate(`(async()=>{
     const app=document.querySelector('kin-app');
     const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh);i++)await new Promise(r=>setTimeout(r,10));if(app.busy||app.refreshing)throw Error('Area action did not settle');};
@@ -2121,14 +2135,15 @@ try {
     const added=await app.store.append({type:'add',text:'Wipe counter',classification:'need'},app.engine);
     app.state=added.state;app.renderState();
     let item=app.state.items.at(-1);
-    app.nav.querySelector('a[href="#lists"]').click();
-    [...app.querySelectorAll('.item-tools-toggle')].find(node=>node.dataset.itemId===item.itemId).click();
+    app.nav.querySelector('a[href="#lists/todo"]').click();
+    app.openItemDetail(item.itemId);
     let select=[...app.querySelectorAll('.item-area-select')].find(node=>node.dataset.itemId===item.itemId);
     const hasNoArea=select?.options[0]?.textContent==='No area';
     select.focus();select.value=area.areaId;select.dispatchEvent(new Event('change',{bubbles:true}));await idle();
     item=app.state.items.find(row=>row.itemId===item.itemId);
     const assigned=item.areaId===area.areaId;
     const assignmentFocus=document.activeElement?.classList.contains('item-area-select');
+    app.closeItemDetail({ restoreFocus: false });
     return {areaId:area.areaId,createdFocused,hasNoArea,assigned,assignmentFocus,status:app.status.textContent,alert:app.alert.textContent,selected:select.value,itemId:item.itemId};
   })()`);
   assert.equal(areasResult.createdFocused, true, "Area create returns focus to capture");
@@ -2152,7 +2167,7 @@ try {
   assert.deepEqual(noteValidation, {scalarBoundary:true,scalarOverflow:true,unicodeByteBoundary:true,unicodeByteOverflow:true,bodyByteBoundary:true,bodyByteOverflow:true,titleControls:true,bodyControls:true,bodyWhitespace:true}, 'browser Note validation matches Rust scalar, byte, and control-character rules');
   const notesResult = await first.evaluate(`(async()=>{
     const app=document.querySelector('kin-app');
-    app.nav.querySelector('a[href="#more"]').click();
+    app.navigate('#household/notes');
     const idle=async()=>{for(let i=0;i<300&&(app.busy||app.refreshing||app.pendingRefresh);i++)await new Promise(r=>setTimeout(r,10));if(app.busy||app.refreshing)throw Error('Note action did not settle');};
     const form=app.notes.querySelector('form');
     const [title,body]=form.querySelectorAll('input,textarea');const area=app.state.areas.find(row=>row.name==='Kitchen');const areaSelect=form.querySelector('select');areaSelect.value=area.areaId;
@@ -2173,6 +2188,7 @@ try {
   assert.equal(notesResult.safeText, true, "Note body displays as plain text without creating markup");
   assert.equal(notesResult.invalidNoAppend, true, "invalid Note text is explained in the browser and appends no event");
   assert.equal(notesResult.alert, "", "Note lifecycle completes without an app error");
+  await visit(first, "household/notes");
   const referenceResult = await first.evaluate(async () => {
     const app = document.querySelector("kin-app"), ui = app.notes;
     const idle = async () => { for (let i = 0; i < 300 && (app.busy || app.refreshing || app.pendingRefresh); i++) await new Promise(resolve => setTimeout(resolve, 10)); };
@@ -2241,6 +2257,7 @@ try {
   assert.equal(referenceResult.edited, true, "Reference Record edit preserves its stable identity");
   assert.equal(referenceResult.archived, true, "Reference Record archive remains terminal");
   console.log("PASS Reference Record byte/count validation, accessible messages, create/edit/archive");
+  await visit(first, "household/notes");
   await first.send("Network.emulateNetworkConditions",{offline:true,latency:0,downloadThroughput:0,uploadThroughput:0});
   const noteSemantics = await first.evaluate(`(()=>{
     const app=document.querySelector('kin-app');
@@ -2329,7 +2346,7 @@ try {
     return {ascii48,ascii49Rejected,multibyte48,bytesRejected,trimmed,emptyRejected,controlRejected,uniqueIds,allDescriptionsResolve,labeledRename,ownRenameError,ownCreateError,renameRejected,renameTrimmed};
   })()`);
   assert.deepEqual(areaNameValidation,{ascii48:true,ascii49Rejected:true,multibyte48:true,bytesRejected:true,trimmed:true,emptyRejected:true,controlRejected:true,uniqueIds:true,allDescriptionsResolve:true,labeledRename:true,ownRenameError:true,ownCreateError:true,renameRejected:true,renameTrimmed:true});
-  await visit(first, "more");
+  await visit(first, "household/areas");
   const areaEnter = async () => {
     await first.send("Input.dispatchKeyEvent", {
       type: "keyDown", key: "Enter", code: "Enter", text: "\r", windowsVirtualKeyCode: 13,
@@ -2378,12 +2395,13 @@ try {
   assert.deepEqual(archivePrompt,{copy:true,focused:true});
   assert.deepEqual(postArchive,{archived:true,retained:true,headingFocus:true});
   assert.deepEqual(areaLifecycle,areaLifecycleExpected);
-  await visit(first, "lists");
-  const archivedAreaContext = await first.evaluate(`(()=>{const select=[...document.querySelectorAll('.item-area-select')]
-    .find(node=>node.dataset.itemId==='${areasResult.itemId}');
-    return {label:select?.getAttribute('aria-label'),selected:select?.selectedOptions[0]?.textContent};})()`);
+  await visit(first, "lists/todo");
+  const archivedAreaContext = await first.evaluate(`(()=>{const app=document.querySelector('kin-app');app.openItemDetail('${areasResult.itemId}');
+    const select=[...document.querySelectorAll('.item-area-select')].find(node=>node.dataset.itemId==='${areasResult.itemId}');
+    const result={label:select?.getAttribute('aria-label'),selected:select?.selectedOptions[0]?.textContent};
+    app.closeItemDetail({ restoreFocus: false });return result;})()`);
   assert.deepEqual(archivedAreaContext,{label:"Area for Wipe counter",selected:"Food prep (archived)"});
-  await visit(first, "more");
+  await visit(first, "household/areas");
   await first.send("Emulation.setDeviceMetricsOverride", {width:320,height:900,deviceScaleFactor:1,mobile:true});
   const narrowAreaLayout=await first.evaluate(`(()=>({overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth,
     width:innerWidth,targets:[...document.querySelectorAll('kin-areas button,kin-areas input,.item-area-select')]
@@ -2410,7 +2428,7 @@ try {
   })()`);
   assert.deepEqual(narrowTodayLayout,{overflow:false,targets:true,rowFits:true,bottomNav:true,headerFits:true,safeArea:true,detailsCollapsed:true,primaryVisible:true},
     `Today at 320px keeps every control reachable: ${JSON.stringify(narrowTodayLayout)}`);
-  await visit(first, "more");
+  await visit(first, "household/areas");
   await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"none"},{name:"prefers-reduced-motion",value:"no-preference"},{name:"prefers-color-scheme",value:"dark"}]});
   assert.equal(await first.evaluate("matchMedia('(prefers-color-scheme: dark)').matches"),true,"Area manager follows dark mode");
   await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"active"},{name:"prefers-reduced-motion",value:"reduce"}]});

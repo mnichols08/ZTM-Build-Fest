@@ -474,9 +474,22 @@ Pulse
 
 will not scale indefinitely.
 
-## 5.1 Target navigation model — Directional for 0.45.x
+## 5.1 Target navigation model — Adopted (household workspace candidate)
 
-The long-term primary navigation should converge toward:
+The primary navigation is now:
+
+```text
+Today
+Lists      (To do · Shopping · Staples)
+Routines   (Routines · Reusable checklists)
+Updates    (Handoffs · Talk)
+Household  (Overview · Notes & reference · Areas & status · People & devices · Privacy & recovery)
+```
+
+"Updates" is the presentation label for the former Handoff destination and
+"Household" for the former More page; `#handoff`, `#more`, `#lists` and
+`#search` keep working as aliases (see [WORKSPACE-UX](WORKSPACE-UX.md) §2).
+The original directional wording follows for history:
 
 ```text
 Today
@@ -763,10 +776,16 @@ Default:
 
 Only text is required.
 
-Capture is context-sensitive (Adopted, v0.41.0): the Today form defaults to
-Today and keeps the destination the person last chose; Needs, Shopping, and
-Staples each carry a single-field capture fixed to that list, so adding eggs
-from Shopping creates a Shopping item. The confirmation names the destination.
+Capture is context-sensitive (Adopted, v0.41.0, revised by the household
+workspace candidate): the Today capture asks *what* the item is (Task or
+Shopping item), *when* it matters (Today by default, Tomorrow, a date, or no
+date) and whether to pin it; it creates an ordinary `need` or `shopping`
+record and sets the planning date explicitly, never a new classification.
+To do, Shopping, and Staples each carry a single-field capture fixed to that
+list, so adding eggs from Shopping creates a Shopping item. The confirmation
+names the destination and an inline result says "Saved on this device." or
+"Saved here. Waiting to sync."; a failure says "Couldn't save. Your text is
+still here." with Try again beside the field.
 
 Later editing may add:
 
@@ -1278,25 +1297,17 @@ Bottom navigation.
 
 ---
 
-## Wide screens — Adopted through current roadmap
+## Wide screens — Adopted (household workspace candidate)
 
-Do not immediately turn Kin into a desktop dashboard.
-
-Prefer:
+Kin is still not a desktop dashboard. Wide screens get:
 
 ```text
-centered, comfortable column
+left navigation  |  readable content column (≤ 720px)  |  detail column only while an item is open
 ```
 
-that may grow wider than the original prototype's roughly 480px when richer content benefits.
-
-Directional content width:
-
-```text
-~600–680px
-```
-
-Before introducing permanent multi-pane layouts, require a real usability need.
+There are no permanent information rails, widgets or statistics. The detail
+column is conditional; closing the item removes it. See UX-D4 and
+[WORKSPACE-UX](WORKSPACE-UX.md) §4.
 
 ---
 
@@ -1525,14 +1536,18 @@ Do not ship comparative partner completion bars.
 
 ## UX-D4 — Desktop layout
 
-**Adopted for now:** centered primary column.
+**Adopted (household workspace candidate):** persistent left navigation with
+a readable content column and a *conditional* detail column.
 
-The wide-screen application keeps the same five primary destinations in a
-compact horizontal navigation row above a centered 600–680px content column.
-It does not use a permanent desktop side rail. Mobile keeps the five-item
-bottom navigation.
-
-Revisit only when real workflows demonstrate that simultaneous panes reduce friction.
+From 720px the five primary destinations sit in a left rail beside a content
+column of at most 720px; the header carries Search, a truthful sync chip and
+Lock. From 1180px, opening an item adds a detail column beside the list; at
+720–1179px the detail replaces the list with a Back control; below 720px it
+is a full-height sheet. The column exists only while an item is selected,
+and one `<kin-item-detail>` element is re-homed between the three
+presentations so drafts survive resizing. Mobile keeps the five-item bottom
+navigation with five equal tracks. The contract is
+[WORKSPACE-UX](WORKSPACE-UX.md).
 
 ---
 

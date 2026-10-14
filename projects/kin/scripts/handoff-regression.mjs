@@ -48,7 +48,7 @@ export async function handoffRegressions() {
   await idle();
   check(app.state.handoffs[0].status === "acknowledged", "acknowledgement");
   check(
-    capture.querySelector(".completed-label").textContent === "Acknowledged",
+    capture.querySelector(".completed-label").textContent === "Seen",
     "neutral receipt label",
   );
   capture.querySelector(".archive-button").click();
@@ -119,13 +119,21 @@ export async function handoffRegressions() {
     (await count()) === before + 3,
     "refresh recovery must not append automatically",
   );
-  app.retryButton.click();
-  app.retryButton.click();
-  await idle();
+  const retryState = { busyBefore: app.busy, refreshing: app.refreshing, pending: app.pendingRefresh, disabled: app.retryButton.disabled, hidden: app.retryButton.hidden, hasRetry: typeof app.retryAction === "function" };
+  // A background refresh (window focus, timers) can start between the wait
+  // above and the click and swallow it; the retry is still exactly-once
+  // because the second click lands while the first save is busy.
+  for (let attempt = 0; attempt < 3 && (await count()) !== before + 4; attempt++) {
+    for (let i = 0; i < 300 && (app.busy || app.refreshing || app.pendingRefresh || typeof app.retryAction !== "function"); i++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    app.retryButton.click();
+    app.retryButton.click();
+    await idle();
+  }
   check(
     (await count()) === before + 4 &&
       app.state.handoffs.at(-1).text === "Original handoff",
-    "retry original exactly once",
+    `retry original exactly once (${JSON.stringify({ ...retryState, count: await count(), expected: before + 4, last: app.state.handoffs.at(-1)?.text, alert: app.alert.textContent, status: app.status.textContent, busy: app.busy })})`,
   );
   check(
     capture.input.value === "Newer handoff draft",

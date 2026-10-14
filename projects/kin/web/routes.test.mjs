@@ -1,0 +1,69 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { listSegmentForClassification, PRIMARY_DESTINATIONS, resolveRoute, routeHash, SEGMENTS } from "./routes.js";
+
+test("five primary destinations in a fixed order", () => {
+  assert.deepEqual(PRIMARY_DESTINATIONS.map((entry) => entry.id), ["today", "lists", "routines", "updates", "household"]);
+  assert.deepEqual(PRIMARY_DESTINATIONS.map((entry) => entry.label), ["Today", "Lists", "Routines", "Updates", "Household"]);
+});
+
+test("an empty or unknown hash resolves to Today", () => {
+  assert.deepEqual(resolveRoute({ hash: "" }).canonical, "today");
+  assert.deepEqual(resolveRoute({ hash: "#" }).canonical, "today");
+  assert.equal(resolveRoute({ hash: "#nowhere" }).canonical, "today");
+  assert.equal(resolveRoute({ hash: "#invite" }).canonical, "today");
+  assert.equal(resolveRoute({ hash: "#recover" }).canonical, "today");
+  assert.equal(resolveRoute({ hash: "#today" }).destination, "today");
+});
+
+test("lists default to To do and accept each list segment", () => {
+  assert.equal(resolveRoute({ hash: "#lists" }).canonical, "lists/todo");
+  assert.equal(resolveRoute({ hash: "#lists/shopping" }).canonical, "lists/shopping");
+  assert.equal(resolveRoute({ hash: "#lists/staples" }).segment, "staples");
+  assert.equal(resolveRoute({ hash: "#lists/unknown" }).segment, "todo");
+  assert.equal(resolveRoute({ hash: "#LISTS/Shopping/" }).canonical, "lists/shopping");
+});
+
+test("legacy Handoff, More, Needs and tab hashes alias onto Updates, Household and Lists", () => {
+  assert.equal(resolveRoute({ hash: "#handoff" }).canonical, "updates/handoffs");
+  assert.equal(resolveRoute({ hash: "#handoff/talk" }).canonical, "updates/talk");
+  assert.equal(resolveRoute({ hash: "#talk" }).canonical, "updates/talk");
+  assert.equal(resolveRoute({ hash: "#more" }).canonical, "household/hub");
+  assert.equal(resolveRoute({ hash: "#more/security" }).canonical, "household/privacy");
+  assert.equal(resolveRoute({ hash: "#needs" }).canonical, "lists/todo");
+  assert.equal(resolveRoute({ hash: "#routines/playbooks" }).canonical, "routines/checklists");
+});
+
+test("search keeps its route and marks no primary destination", () => {
+  const route = resolveRoute({ hash: "#search" });
+  assert.equal(route.page, "search");
+  assert.equal(route.destination, null);
+  assert.equal(route.segment, null);
+  assert.equal(route.title, "Search");
+  assert.equal(route.hash, "#search");
+});
+
+test("the invitation path opens People & devices when no hash is present", () => {
+  assert.equal(resolveRoute({ hash: "", pathname: "/pair" }).canonical, "household/people");
+  assert.equal(resolveRoute({ hash: "#today", pathname: "/pair" }).canonical, "today");
+});
+
+test("routeHash produces the short form for page defaults and the segment form otherwise", () => {
+  assert.equal(routeHash("household"), "#household");
+  assert.equal(routeHash("household", "privacy"), "#household/privacy");
+  assert.equal(routeHash("lists"), "#lists/todo");
+  assert.equal(routeHash("updates", "talk"), "#updates/talk");
+  assert.equal(routeHash("routines"), "#routines");
+  assert.equal(routeHash("routines", "checklists"), "#routines/checklists");
+  assert.equal(routeHash("search"), "#search");
+  assert.equal(resolveRoute({ hash: routeHash("household", "notes") }).canonical, "household/notes");
+});
+
+test("classification maps to its list segment, legacy Today items live under To do", () => {
+  assert.equal(listSegmentForClassification("need"), "todo");
+  assert.equal(listSegmentForClassification("today"), "todo");
+  assert.equal(listSegmentForClassification("shopping"), "shopping");
+  assert.equal(listSegmentForClassification("staple"), "staples");
+  assert.equal(listSegmentForClassification(undefined), "todo");
+  assert.equal(SEGMENTS.lists[0].classification, "need");
+});

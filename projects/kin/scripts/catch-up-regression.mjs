@@ -247,9 +247,9 @@ export async function catchUpRegressions() {
   );
   check(
     app.catchUp.list.firstElementChild.textContent ===
-      "Bounded change 2 added to Needs" &&
+      "Bounded change 2 added to To do" &&
       app.catchUp.list.lastElementChild.textContent ===
-        "Bounded change 9 added to Needs" &&
+        "Bounded change 9 added to To do" &&
       app.catchUp.omitted.textContent === "2 earlier changes",
     "bounded entries preserve order and report omitted earlier changes",
   );

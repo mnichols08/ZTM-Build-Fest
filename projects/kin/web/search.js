@@ -2,7 +2,7 @@ export const MAX_SEARCH_RESULTS = 100;
 
 const CLASSIFICATION_LABELS = {
   today: "Today",
-  need: "Needs",
+  need: "To do",
   shopping: "Shopping",
   staple: "Staples",
 };

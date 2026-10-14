@@ -67,17 +67,17 @@ export function validatePlaybook(titleValue, entryValues) {
   );
   const errors = {
     title: !title
-      ? "Enter a Playbook title."
+      ? "Enter a name for this checklist."
       : isControl(title)
-        ? "This Playbook title can't contain control characters."
+        ? "This checklist name can't contain control characters."
         : byteLength(title) > MAX_PLAYBOOK_TITLE_BYTES
-          ? "This Playbook title is too long."
+          ? "This checklist name is too long."
           : "",
     count:
       entries.length === 0
         ? "Add at least one step."
         : entries.length > MAX_PLAYBOOK_ENTRIES
-          ? `Playbooks can have up to ${MAX_PLAYBOOK_ENTRIES} steps.`
+          ? `A reusable checklist can have up to ${MAX_PLAYBOOK_ENTRIES} steps.`
           : "",
     entries: entries.map((entry) =>
       !entry

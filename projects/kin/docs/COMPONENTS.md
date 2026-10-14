@@ -2,6 +2,39 @@
 
 **Status:** Current through v0.25.0 Search & Filters; earlier version sections are historical contracts.
 
+## Household workspace candidate (unversioned)
+
+The desktop-first workspace revision keeps every boundary below and changes
+presentation only. `<kin-app>` owns the route (`web/routes.js`), the header
+tools, the five primary destinations and their segments, the single
+`<kin-item-detail>` instance and where it is mounted (sheet, inline column or
+side column), per-route scroll memory, and the multi-step Today capture
+(`web/capture-plan.js`). `<kin-today>` composes Today from the projection
+through `web/today-view.js` (pure filtering/grouping; no recurrence or
+validity logic) and renders one list at a time for Lists. `<kin-item>` is a
+simplified row that dispatches `kin:open-item`; `<kin-item-detail>` holds
+checklist, photos/files, planned date, responsibility, Area, reminder, pin,
+archive and history for one canonical item id and dispatches the existing
+item intents plus `kin:close-item-detail`. `<kin-reminder>` replaces the
+`window.prompt` reminder with labelled date/time inputs
+(`web/reminder-time.js`) and dispatches the unchanged
+`kin:set-local-reminder` / `kin:cancel-local-reminder`. `<kin-search>` results
+are buttons that dispatch `kin:open-search-result` with canonical ids only.
+`<kin-segment-nav>` renders secondary destinations as hash links;
+`<kin-sync-status>` renders the header chip from states the app knows.
+`<kin-attachments>` adds a `compact` mode (progress plus a thumbnail strip)
+for rows; `full` tiles live in the detail view and under notes. See
+[WORKSPACE-UX](WORKSPACE-UX.md).
+
+| Event | Dispatching component | `detail` |
+| --- | --- | --- |
+| `kin:add-item` | `<kin-compose>` | `{ text, classification, planningDate: number \| null, pinned: boolean, composer }` |
+| `kin:open-item` | `<kin-item>` | `{ itemId, opener }` |
+| `kin:close-item-detail` | `<kin-item-detail>` | none |
+| `kin:open-search-result` | `<kin-search>` | `{ kind: "item" \| "step" \| "handoff" \| "talk" \| "note" \| "reference-record" \| "maintenance", id, itemId?, stepId?, opener }` |
+
+All bubble and are composed; none carries derived business state.
+
 ## Component responsibilities
 
 ### `<kin-app>`

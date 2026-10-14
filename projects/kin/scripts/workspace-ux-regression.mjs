@@ -1,0 +1,434 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Household workspace UX journeys (docs/WORKSPACE-UX.md §6). The first part
+// runs inside the page against the real components, storage and WASM replay;
+// the second part drives the viewport over CDP for the responsive checks and
+// writes screenshot evidence to target/ux-screenshots/.
+export async function workspaceUxRegressions(recovery) {
+  const app = document.querySelector("kin-app");
+  const passed = [];
+  const check = (condition, message) => { if (!condition) throw new Error(message); passed.push(message); };
+  const idle = async () => {
+    for (let index = 0; (app.busy || app.refreshing || app.pendingRefresh) && index < 400; index++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    check(!app.busy && !app.refreshing, "workspace work returns idle");
+  };
+  const wait = async (condition, label) => {
+    for (let index = 0; index < 400; index++) {
+      if (condition()) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`workspace wait timed out: ${label}`);
+  };
+  const frame = () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  const visible = (node) => Boolean(node) && !node.closest("[hidden]") && node.getClientRects().length > 0;
+  const rowIn = (list, itemId) => [...list.querySelectorAll("kin-item")].find((node) => node.record?.itemId === itemId) ?? null;
+  const rowsIn = (list, itemId) => [...list.querySelectorAll("kin-item")].filter((node) => node.record?.itemId === itemId);
+  const addVia = async (composer, text) => {
+    composer.input.value = text;
+    composer.form.requestSubmit();
+    await idle();
+    return app.state.items.find((item) => item.text === text);
+  };
+  const today = app.currentCivilDate();
+  const shift = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
+  const stamp = crypto.randomUUID().slice(0, 6);
+
+  // 1. Add a task in To do; it stays findable.
+  app.navigate("#lists/todo");
+  const task = await addVia(app.needs.composer, `Fix the gate latch ${stamp}`);
+  check(task?.classification === "need" && visible(rowIn(app.needs, task.itemId)) && app.needs.composer.result.textContent === "Saved on this device.",
+    "1. a task added from To do is listed there with an inline local-save confirmation");
+  app.search.queryInput.value = stamp;
+  app.search.queryInput.dispatchEvent(new Event("input"));
+  check([...app.search.resultsList.querySelectorAll("[data-result-id]")].some((node) => node.dataset.resultId === task.itemId), "1. the task is found by search by its canonical id");
+
+  // 2. Add a shopping item; it stays a shopping item.
+  app.navigate("#lists/shopping");
+  const eggs = await addVia(app.shopping.composer, `Eggs ${stamp}`);
+  check(eggs?.classification === "shopping" && visible(rowIn(app.shopping, eggs.itemId)) && !rowIn(app.needs, eggs.itemId),
+    "2. a shopping item lives only in Shopping");
+
+  // 3. Plan it for today from its details; Today shows the same canonical record.
+  app.openItemDetail(eggs.itemId);
+  check(app.selection?.itemId === eggs.itemId && app.detail.querySelector(".item-detail-title").textContent === eggs.text, "3. details open for the shopping item");
+  [...app.detail.querySelectorAll(".item-planning-date-shortcut")].find((node) => node.textContent === "Today").click();
+  await idle();
+  check(app.state.items.find((item) => item.itemId === eggs.itemId).planningDate === today, "3. the planned date is set through the existing command");
+  app.closeItemDetail({ restoreFocus: false });
+  app.navigate("#today");
+  const todayRows = rowsIn(app.today, eggs.itemId);
+  check(todayRows.length === 1 && todayRows[0].closest("[data-section]")?.dataset.section === "today" &&
+    todayRows[0].querySelector(".item-meta").textContent.startsWith("Shopping item · Planned for today"),
+    "3. Today lists the same record once, still labelled as a shopping item");
+  check(app.state.items.filter((item) => item.text === eggs.text).length === 1, "3. no duplicate record was created for Today");
+
+  // 4. Complete it from Today; Shopping reflects it, and the reverse.
+  rowIn(app.today, eggs.itemId).querySelector(".complete-button").click();
+  await idle();
+  check(app.state.items.find((item) => item.itemId === eggs.itemId).status === "completed", "4. completing from Today completes the canonical record");
+  check(rowIn(app.today, eggs.itemId)?.closest("details")?.classList.contains("completed-disclosure") &&
+    rowIn(app.shopping, eggs.itemId)?.closest("details")?.classList.contains("completed-disclosure"),
+    "4. both Today and Shopping show it under their Completed disclosure");
+  app.navigate("#lists/shopping");
+  rowIn(app.shopping, eggs.itemId).querySelector(".reopen-button").click();
+  await idle();
+  check(app.state.items.find((item) => item.itemId === eggs.itemId).status === "active" && rowIn(app.today, eggs.itemId).closest("[data-section]").dataset.section === "today",
+    "4. reopening from Shopping returns the same record to Today");
+
+  // 5. A legacy Today-classified item stays accessible without migration.
+  const eventsBefore = (await app.store.loadEvents()).length;
+  await app.appendCommand({ type: "add", text: `Legacy today ${stamp}`, classification: "today" });
+  await idle();
+  const legacy = app.state.items.find((item) => item.text === `Legacy today ${stamp}`);
+  app.renderState();
+  check(legacy.classification === "today" && legacy.planningDate === null &&
+    rowIn(app.today, legacy.itemId)?.closest("[data-section]")?.dataset.section === "today" && visible(rowIn(app.needs, legacy.itemId) ?? null) === false && rowIn(app.needs, legacy.itemId),
+    "5. an undated legacy Today item appears on Today and is listed under To do");
+  await app.appendCommand({ type: "set-item-planning-date", itemId: legacy.itemId, planningDate: shift(1) });
+  await idle();
+  app.renderState();
+  check(!rowIn(app.today, legacy.itemId) && rowIn(app.needs, legacy.itemId)?.querySelector(".item-meta")?.textContent.includes("Planned for tomorrow"),
+    "5. an explicit date takes precedence over the legacy classification");
+  await app.appendCommand({ type: "set-item-planning-date", itemId: legacy.itemId, planningDate: null });
+  await idle();
+  app.renderState();
+  check(rowIn(app.today, legacy.itemId) && (await app.store.loadEvents()).length === eventsBefore + 3 &&
+    app.state.items.find((item) => item.itemId === legacy.itemId).classification === "today",
+    "5. clearing the date restores legacy behaviour; only the explicit commands were appended and the classification is untouched");
+
+  // 6. Future plans are not today's work.
+  const forms = await addVia(app.needs.composer, `School forms ${stamp}`);
+  await app.appendCommand({ type: "set-item-planning-date", itemId: forms.itemId, planningDate: shift(5) });
+  await idle();
+  app.renderState();
+  check(!rowIn(app.today, forms.itemId) && rowIn(app.needs, forms.itemId).querySelector(".item-meta").textContent.startsWith("Planned for ") &&
+    !rowIn(app.needs, forms.itemId).querySelector(".item-meta").textContent.includes("today"),
+    "6. a future-dated item stays off Today and is labelled with its date in To do");
+
+  // 7. Earlier plans and paused routines.
+  const bins = await addVia(app.needs.composer, `Bins ${stamp}`);
+  await app.appendCommand({ type: "set-item-planning-date", itemId: bins.itemId, planningDate: shift(-2) });
+  await idle();
+  app.renderState();
+  const earlierRow = rowIn(app.today, bins.itemId);
+  check(earlierRow?.closest("details")?.classList.contains("earlier-disclosure") && app.today.querySelector(".earlier-disclosure summary").textContent.startsWith("Earlier plans") &&
+    /still open/.test(earlierRow.querySelector(".item-meta").textContent) && !/overdue|late|behind/i.test(app.today.textContent),
+    "7. an unfinished earlier plan sits under a calm Earlier plans disclosure and stays in To do");
+  await app.appendCommand({ type: "create-routine", text: `Water plants ${stamp}`, cadence: "daily", createdOn: today });
+  await idle();
+  app.renderState();
+  const routine = app.state.routines.find((record) => record.text === `Water plants ${stamp}`);
+  check(app.today.querySelector(`.today-routines [data-routine-id="${routine.routineId}"] .complete-button`) &&
+    app.today.querySelector(".today-routines .routine-period").textContent === "Today",
+    "7. an open daily routine appears on Today under its period");
+  await app.appendCommand({ type: "set-household-mode", mode: "vacation" });
+  await idle();
+  app.renderState();
+  check(!app.today.querySelector(".today-routines .complete-button") && app.today.querySelector(".today-routines").textContent.includes("paused") &&
+    !app.routines.querySelector('[data-action="complete-routine-occurrence"]') && app.routines.hint.textContent.includes("paused"),
+    "7. a non-Normal mode pauses routine occurrences everywhere without hiding the routines");
+  await app.appendCommand({ type: "set-household-mode", mode: "normal" });
+  await idle();
+  app.renderState();
+
+  // 8. Open and close details without losing list position or drafts.
+  app.navigate("#lists/todo");
+  for (let index = 0; index < 10; index++) await addVia(app.needs.composer, `Filler ${index} ${stamp}`);
+  app.needs.composer.input.value = "unsent quick-add draft";
+  window.scrollTo(0, 320);
+  await frame();
+  const detailsButton = rowIn(app.needs, bins.itemId).querySelector(".item-details-button");
+  // Focusing scrolls the row into view the way a person would have it on
+  // screen; the position to restore is the one at the moment of opening.
+  detailsButton.focus();
+  await frame();
+  const scrolledTo = window.scrollY;
+  check(scrolledTo > 0, "8. the list is scrolled before opening details");
+  detailsButton.click();
+  await frame();
+  check(app.selection?.itemId === bins.itemId && document.activeElement === app.detail.querySelector(".item-detail-title"), "8. details open from the row and focus the heading");
+  app.detail.stepInput.value = "unsent step draft";
+  app.renderState();
+  check(app.detail.stepInput.value === "unsent step draft" && app.needs.composer.input.value === "unsent quick-add draft",
+    "8. a background refresh keeps the step draft and the quick-add draft");
+  app.detail.querySelector(".item-detail-close").click();
+  await frame();
+  await frame();
+  check(app.selection === null && Math.abs(window.scrollY - scrolledTo) <= 2 && document.activeElement === rowIn(app.needs, bins.itemId).querySelector(".item-details-button") &&
+    app.needs.composer.input.value === "unsent quick-add draft",
+    `8. closing restores the list position (${window.scrollY} vs ${scrolledTo}) and focus, and keeps the quick-add draft`);
+  app.needs.composer.input.value = "";
+  window.scrollTo(0, 0);
+
+  // 9. Search opens the real targets.
+  const trip = await addVia(app.needs.composer, `Pack for the trip ${stamp}`);
+  await app.appendCommand({ type: "add-item-step", itemId: trip.itemId, stepId: crypto.randomUUID().replaceAll("-", ""), text: `Chargers ${stamp}` });
+  await idle();
+  const step = app.state.items.find((item) => item.itemId === trip.itemId).steps[0];
+  const noteId = crypto.randomUUID().replaceAll("-", "");
+  await app.appendCommand({ type: "create-note", noteId, id: noteId, title: `Wi-Fi ${stamp}`, body: "Password in the drawer", areaId: null });
+  await idle();
+  app.renderState();
+  app.navigate("#search");
+  app.search.queryInput.value = stamp;
+  app.search.queryInput.dispatchEvent(new Event("input"));
+  const result = (kind, id) => [...app.search.resultsList.querySelectorAll("[data-result-id]")].find((node) => node.dataset.resultKind === kind && node.dataset.resultId === id);
+  check(result("Item", trip.itemId) && result("Checklist Step", `${trip.itemId}:${step.stepId}`) && result("Note", noteId) &&
+    app.search.resultsList.querySelector("mark")?.textContent.toLowerCase() === stamp.toLowerCase() && !app.search.resultsList.innerHTML.includes("<script"),
+    "9. results carry canonical ids and highlight matches with safe mark elements");
+  result("Item", trip.itemId).click();
+  await frame();
+  check(app.dataset.route === "lists/todo" && app.selection?.itemId === trip.itemId && app.detail.querySelector(".item-detail-close").textContent === "Back to search",
+    "9. an item result opens that record's details in its list");
+  app.detail.querySelector(".item-detail-close").click();
+  await frame();
+  await frame();
+  check(app.dataset.route === "search" && app.search.queryInput.value === stamp && result("Item", trip.itemId) && document.activeElement === result("Item", trip.itemId),
+    "10. Back to search returns with the query, results and focused result intact");
+  result("Checklist Step", `${trip.itemId}:${step.stepId}`).click();
+  await frame();
+  check(app.selection?.itemId === trip.itemId && document.activeElement?.dataset.stepId === step.stepId && app.detail.querySelector(".step-row-highlight"),
+    "9. a checklist step result opens the parent item with that step focused");
+  app.closeItemDetail({ restoreFocus: false });
+  app.navigate("#search");
+  result("Note", noteId).click();
+  await frame();
+  await frame();
+  check(app.dataset.route === "household/notes" && app.notes.contains(document.activeElement) && document.activeElement.closest(`[data-note-id="${noteId}"]`),
+    "9. a note result opens Notes & reference with that note focused");
+  app.navigate("#search");
+  check(app.search.queryInput.value === stamp && app.search.resultsList.childElementCount > 0, "10. search state survives navigating away and back within the session");
+  await app.appendCommand({ type: "archive-note", noteId, id: noteId });
+  await idle();
+  app.handleOpenSearchResult({ kind: "note", id: noteId });
+  check(app.status.textContent.startsWith("That record is no longer available"), "9. an archived target is explained instead of opened");
+
+  // 13. Routine reminders through the in-app date/time control.
+  app.navigate("#routines");
+  app.localReminders.notification = class { static permission = "granted"; constructor() {} };
+  const reminder = [...app.routines.querySelectorAll("kin-reminder")].find((node) => node.targetRecord?.id === `routine:${routine.routineId}`);
+  check(reminder && !reminder.querySelector("form") && reminder.querySelector('[data-reminder-action="open"]').textContent === "Remind me", "13. a routine offers Remind me without a prompt");
+  reminder.querySelector('[data-reminder-action="open"]').click();
+  const reminderForm = reminder.querySelector("form");
+  const dateInput = reminderForm.querySelector('input[type="date"]');
+  const timeInput = reminderForm.querySelector('input[type="time"]');
+  check(dateInput.labels[0].textContent === "Date" && timeInput.labels[0].textContent === "Time" && reminder.textContent.includes("On this device only"),
+    "13. the reminder editor has labelled date and time inputs and explains the device-only limit");
+  reminderForm.requestSubmit();
+  check(reminder.querySelector(".reminder-error").textContent === "Choose a date and a time." && app.localReminders.entries.size === 0, "13. an empty reminder is refused with plain language");
+  const past = new Date(Date.now() - 3_600_000);
+  dateInput.value = `${past.getFullYear()}-${String(past.getMonth() + 1).padStart(2, "0")}-${String(past.getDate()).padStart(2, "0")}`;
+  timeInput.value = `${String(past.getHours()).padStart(2, "0")}:${String(past.getMinutes()).padStart(2, "0")}`;
+  reminderForm.requestSubmit();
+  check(reminder.querySelector(".reminder-error").textContent === "Choose a time that hasn't passed yet.", "13. a past time is refused");
+  [...reminderForm.querySelectorAll(".reminder-shortcut")].find((node) => node.textContent === "Tomorrow morning").click();
+  check(reminder.querySelector(".reminder-preview").textContent.startsWith("Reminds ") && dateInput.value && timeInput.value === "09:00",
+    "13. a shortcut fills the inputs and shows the resolved local time");
+  reminderForm.requestSubmit();
+  await wait(() => app.localReminders.entries.has(`routine:${routine.routineId}`), "reminder scheduled");
+  check(!reminder.querySelector("form") && reminder.querySelector(".reminder-status").textContent.startsWith("Reminds ") && app.status.textContent.includes("on this device"),
+    "13. setting the reminder uses the existing local model and confirms on this device");
+  reminder.querySelector('[data-reminder-action="cancel"]').click();
+  check(!app.localReminders.entries.has(`routine:${routine.routineId}`) && reminder.querySelector('[data-reminder-action="open"]').textContent === "Remind me",
+    "13. cancelling clears the reminder");
+  check(!app.routines.querySelector(".routine-list [data-action='archive-routine']") || typeof window.prompt === "function", "13. no prompt() path remains in the reminder flow");
+
+  // 14. Offline and failed saves produce truthful, contextual feedback.
+  app.navigate("#lists/todo");
+  window.dispatchEvent(new Event("offline"));
+  check(app.syncChip.state === "offline" && app.syncChip.textContent === "Offline — saved here", "14. the header chip reports offline without promising sync on a device that has none");
+  const offlineItem = await addVia(app.needs.composer, `Offline add ${stamp}`);
+  check(offlineItem && app.needs.composer.result.textContent === "Saved on this device." && app.status.textContent === "Added to To do.",
+    "14. an offline save is confirmed as saved on this device");
+  window.dispatchEvent(new Event("online"));
+  check(app.syncChip.state === "local" && app.syncChip.textContent === "On this device", "14. back online, the chip reports local-only truthfully");
+  const realAppend = app.store.append.bind(app.store);
+  app.store.append = async () => { const error = new Error("Synthetic storage failure"); error.code = 5; error.userMessage = "Kin could not save that change locally."; throw error; };
+  app.needs.composer.input.value = `Failing add ${stamp}`;
+  app.needs.composer.form.requestSubmit();
+  await idle();
+  app.store.append = realAppend;
+  check(app.needs.composer.input.value === `Failing add ${stamp}` && app.needs.composer.result.textContent.startsWith("Couldn't save. Your text is still here.") &&
+    app.needs.composer.querySelector(".compose-retry") && !app.alert.hidden && app.feedback.classList.contains("app-feedback-inline"),
+    "14. a failed save keeps the text, explains inline with a retry, and does not show a second floating card");
+  app.needs.composer.querySelector(".compose-retry").click();
+  await idle();
+  check(app.state.items.filter((item) => item.text === `Failing add ${stamp}`).length === 1 && app.needs.composer.input.value === "" && app.needs.composer.result.textContent === "Saved on this device." && app.alert.hidden,
+    "14. the inline retry saves exactly once and clears the draft");
+  // Partial success on the Today capture: the item saves, the date does not.
+  app.navigate("#today");
+  app.store.append = async (command, engine) => { if (command.type === "set-item-planning-date") { const error = new Error("Synthetic date failure"); error.code = 5; throw error; } return realAppend(command, engine); };
+  app.compose.classification.value = "shopping";
+  app.compose.plan.value = "today";
+  app.compose.input.value = `Partial milk ${stamp}`;
+  app.compose.form.requestSubmit();
+  await idle();
+  app.store.append = realAppend;
+  const partial = app.state.items.filter((item) => item.text === `Partial milk ${stamp}`);
+  check(partial.length === 1 && partial[0].planningDate === null && app.compose.result.textContent.startsWith("Saved to Shopping. Couldn't set the date.") && app.compose.input.value === `Partial milk ${stamp}`,
+    "14. partial success says what saved and what did not, without claiming completion");
+  app.compose.querySelector(".compose-retry").click();
+  await idle();
+  const resumed = app.state.items.filter((item) => item.text === `Partial milk ${stamp}`);
+  check(resumed.length === 1 && resumed[0].planningDate === today && app.compose.input.value === "" && app.compose.result.textContent === "Saved on this device.",
+    `14. retrying resumes against the same record instead of creating a duplicate (${JSON.stringify({ count: resumed.length, planningDate: resumed[0]?.planningDate, today, input: app.compose.input.value, result: app.compose.result.textContent, alert: app.alert.textContent, status: app.status.textContent })})`);
+  app.compose.classification.value = "need";
+
+  // 15. Legacy routes, back and forward.
+  for (const [requested, expected] of [["#more", "household/hub"], ["#handoff", "updates/handoffs"], ["#handoff/talk", "updates/talk"], ["#lists", "lists/todo"], ["#search", "search"], ["#nowhere", "today"], ["#household/privacy", "household/privacy"]]) {
+    app.navigate(requested);
+    check(app.dataset.route === expected && !app.pages.get(expected.split("/")[0]).hidden, `15. ${requested} resolves to ${expected}`);
+  }
+  check(app.nav.querySelectorAll('[aria-current="page"]').length === 1 && app.nav.querySelector('[aria-current="page"]').dataset.page === "household" &&
+    app.segmentNavs.get("household").querySelector('[aria-current="true"]').dataset.segment === "privacy" && !app.privacyPage.hidden && app.privacyPage.contains(app.security),
+    "15. the current destination and segment are programmatically identifiable and Privacy & recovery holds the security settings");
+  app.navigate("#updates/talk");
+  history.back();
+  await wait(() => app.dataset.route === "household/privacy", "back navigation");
+  history.forward();
+  await wait(() => app.dataset.route === "updates/talk", "forward navigation");
+  check(location.hash === "#updates/talk" && !document.querySelector("#talk-panel").hidden, "15. Back and Forward restore the previous routes and panels");
+
+  // 12. Lock during details, search and the viewer clears protected content.
+  app.navigate("#lists/todo");
+  app.openItemDetail(trip.itemId);
+  app.detail.stepInput.value = "secret step draft";
+  app.navigate("#search");
+  app.search.queryInput.value = "secret query";
+  app.search.queryInput.dispatchEvent(new Event("input"));
+  app.navigate("#lists/todo");
+  app.openItemDetail(trip.itemId);
+  const detailBefore = app.detail;
+  const searchBefore = app.search;
+  app.lockHousehold();
+  await app.lockBarrier;
+  check(app.vault === null && app.state === null && app.selection === null && !detailBefore.isConnected && app.detail !== detailBefore && app.search !== searchBefore &&
+    !searchBefore.isConnected && app.detailSheet.open === false && app.siteTools.hidden && app.main.hidden && !document.body.textContent.includes("secret step draft"),
+    "12. locking closes details and search, replaces their components, hides header tools and leaves no protected text in the page");
+  await app.security.run(() => app.security.unlockRecovery(recovery));
+  await wait(() => app.store && !app.busy && !app.security.busy, "re-unlock");
+  await wait(() => app.state !== null, "state after unlock");
+  check(app.selection === null && (app.search.queryInput?.value ?? "") === "" && !app.siteTools.hidden, "12. after unlocking, no previous selection or search query returns");
+  app.navigate("#today");
+  return `PASS household workspace journeys (${passed.length} checks): To do/Shopping capture, Today composition and legacy items, earlier/future plans, paused routines, details drafts and position, search targets, reminders, offline/failed/partial saves, legacy routes, lock`;
+}
+
+// CDP-driven: five equal mobile tracks, one detail editor re-homed across
+// widths with its draft intact, no horizontal overflow, and screenshots.
+export async function workspaceViewportRegressions(client, { visit }) {
+  const page = (fn, ...args) => client.evaluate(`(${fn.toString()})(${args.map((value) => JSON.stringify(value)).join(",")})`);
+  const passed = [];
+  let state = null;
+  const check = (condition, message) => { assert.ok(condition, `${message} ${state ? JSON.stringify(state) : ""}`); passed.push(message); };
+  const outDir = join(dirname(fileURLToPath(import.meta.url)), "../target/ux-screenshots");
+  await mkdir(outDir, { recursive: true });
+  const shot = async (name) => {
+    await page(() => window.scrollTo(0, 0));
+    const { data } = await client.send("Page.captureScreenshot", { format: "png" });
+    await writeFile(join(outDir, `regression-${name}.png`), Buffer.from(data, "base64"));
+  };
+  const viewport = async (width, height, mobile) => {
+    await client.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
+    // Media-query change events arrive after the next layout.
+    await page(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  };
+  const layout = () => page(() => {
+    const app = document.querySelector("kin-app");
+    const nav = getComputedStyle(app.nav);
+    return {
+      width: innerWidth,
+      tracks: nav.display === "grid" ? nav.gridTemplateColumns.split(" ").length : null,
+      navFixed: nav.position === "fixed",
+      navLinks: app.nav.querySelectorAll(".nav-link").length,
+      overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      editors: document.querySelectorAll("kin-item-detail").length,
+      detailMode: app.detailMode,
+      sheetOpen: app.detailSheet.open,
+      detailInSheet: app.detailSheet.contains(app.detail),
+      detailInPanel: app.detailPanel.contains(app.detail),
+      listVisible: !app.pages.get("lists").hidden && getComputedStyle(app.pages.get("lists")).display !== "none",
+      draft: app.detail.stepInput?.value ?? null,
+      undersized: [...app.querySelectorAll("button, a.nav-link, a.segment-link, select, input:not([type=checkbox])")].filter((node) => node.getClientRects().length > 0 && !node.closest("dialog:not([open])")).filter((node) => node.getBoundingClientRect().height < 44).map((node) => `${node.tagName}.${node.className}`).slice(0, 5),
+      shellGrid: getComputedStyle(app.shell).display,
+      focusedInSheet: app.detailSheet.contains(document.activeElement),
+    };
+  });
+  try {
+    await visit("lists/todo");
+    const itemId = await page(async () => {
+      const app = document.querySelector("kin-app");
+      const composer = app.needs.composer;
+      composer.input.value = "Viewport fixture item";
+      composer.form.requestSubmit();
+      for (let i = 0; (app.busy || app.refreshing) && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
+      return app.state.items.find((item) => item.text === "Viewport fixture item").itemId;
+    });
+    await viewport(360, 780, true);
+    state = await layout();
+    check(state.tracks === 5 && state.navLinks === 5 && state.navFixed && !state.overflow && state.undersized.length === 0,
+      `360px: five equal bottom-navigation tracks, no overflow, no undersized target (${JSON.stringify(state.undersized)})`);
+    await shot("360-todo");
+    await page((id) => { const app = document.querySelector("kin-app"); [...app.needs.querySelectorAll(".item-details-button")].find((node) => node.dataset.itemId === id).click(); }, itemId);
+    state = await layout();
+    check(state.detailMode === "sheet" && state.sheetOpen && state.detailInSheet && state.editors === 1 && state.focusedInSheet,
+      "360px: details open as a modal sheet hosting the single editor, with focus inside it");
+    await page(() => { document.querySelector("kin-app").detail.stepInput.value = "draft across widths"; });
+    await shot("360-detail-sheet");
+    await viewport(768, 1024, false);
+    state = await layout();
+    check(state.detailMode === "inline" && !state.sheetOpen && state.detailInPanel && !state.listVisible && state.editors === 1 && state.draft === "draft across widths" && !state.overflow,
+      "768px: the same editor moves inline in place of the list, keeping its draft");
+    await shot("768-detail-inline");
+    await viewport(1024, 800, false);
+    state = await layout();
+    check(state.detailMode === "inline" && state.shellGrid === "grid" && state.draft === "draft across widths" && !state.overflow, "1024px: side navigation with the inline detail and the draft intact");
+    await shot("1024-detail-inline");
+    await viewport(1440, 960, false);
+    state = await layout();
+    check(state.detailMode === "side" && state.listVisible && state.detailInPanel && state.editors === 1 && state.draft === "draft across widths" && !state.overflow,
+      "1440px: the detail sits beside the visible list as a conditional column");
+    await shot("1440-detail-side");
+    await viewport(1920, 1080, false);
+    state = await layout();
+    check(state.detailMode === "side" && state.listVisible && !state.overflow && state.draft === "draft across widths", "1920px: the layout stays a readable column plus detail without stretching");
+    await shot("1920-detail-side");
+    await viewport(390, 844, true);
+    state = await layout();
+    check(state.detailMode === "sheet" && state.sheetOpen && state.detailInSheet && state.editors === 1 && state.draft === "draft across widths" && state.tracks === 5,
+      "390px: returning to phone width re-homes the same editor into the sheet with the draft intact");
+    await client.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    await client.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    state = await layout();
+    check(!state.sheetOpen && state.detailMode === null && (await page(() => document.querySelector("kin-app").selection)) === null, "390px: Escape closes the sheet");
+    const closedPanel = await page(() => { const app = document.querySelector("kin-app"); return app.detailPanel.hidden && !app.detail.isConnected; });
+    check(closedPanel, "the detail column is conditional: nothing remains when no item is selected");
+    await viewport(1440, 960, false);
+    state = await layout();
+    check(state.detailMode === null && state.listVisible && !state.overflow, "1440px without a selection: no empty third column");
+    await visit("today");
+    await shot("1440-today");
+    return `PASS responsive workspace (${passed.length} checks): five mobile tracks, one editor re-homed sheet → inline → side → sheet with its draft, Escape, no empty column, screenshots in ${outDir}`;
+  } finally {
+    await client.send("Emulation.clearDeviceMetricsOverride").catch(() => {});
+    await page(() => { const app = document.querySelector("kin-app"); app.closeItemDetail({ restoreFocus: false }); window.scrollTo(0, 0); });
+  }
+}
+
+// When run directly, delegate to the shared real-browser fixture so this
+// command cannot silently do nothing.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const executable = process.argv[2];
+  if (!executable) {
+    console.error("Usage: node scripts/workspace-ux-regression.mjs <browser executable>");
+    process.exitCode = 2;
+  } else {
+    const runner = join(dirname(fileURLToPath(import.meta.url)), "browser-regression.mjs");
+    const result = spawnSync(process.execPath, [runner, executable], { stdio: "inherit", windowsHide: true });
+    process.exitCode = result.status ?? 1;
+  }
+}

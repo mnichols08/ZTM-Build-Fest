@@ -1,7 +1,10 @@
 // Browser-local, foreground reminders. These are intentionally ephemeral: the
 // browser may suspend timers or terminate the page, so this is not a scheduler.
 export class LocalReminders {
-  constructor({ notification = globalThis.Notification, setTimer = setTimeout, clearTimer = clearTimeout, now = Date.now } = {}) {
+  // Browser timer functions must be called with the global as `this`; storing
+  // them as instance methods and calling `this.setTimer(...)` would throw
+  // "Illegal invocation", so the defaults are wrapped.
+  constructor({ notification = globalThis.Notification, setTimer = (...args) => globalThis.setTimeout(...args), clearTimer = (...args) => globalThis.clearTimeout(...args), now = () => Date.now() } = {}) {
     this.notification = notification;
     this.setTimer = setTimer;
     this.clearTimer = clearTimer;

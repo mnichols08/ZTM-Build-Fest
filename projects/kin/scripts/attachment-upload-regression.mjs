@@ -39,7 +39,7 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
     const textPath = join(scratch, "notes.txt");
     await writeFile(textPath, "not a photo\n");
 
-    await visit("lists");
+    await visit("lists/shopping");
     const { itemId, otherId } = await page(async () => {
       const app = document.querySelector("kin-app");
       const idle = async () => { for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh) && i < 400; i++) await new Promise((r) => setTimeout(r, 10)); };
@@ -64,7 +64,7 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
       const x = rect.x + rect.width / 2, y = rect.y + rect.height / 2;
       return {
         x, y, height: rect.height, hidden: Boolean(button.closest("[hidden]")), label: button.getAttribute("aria-label"), text: button.textContent,
-        detailsHidden: app.shopping.querySelector(`#tools-${itemId}`)?.hidden, topmost: document.elementFromPoint(x, y) === button,
+        detailsHidden: app.selection?.itemId !== itemId, topmost: document.elementFromPoint(x, y) === button,
         rowInputs: app.shopping.querySelectorAll('kin-item input[type="file"]').length, appInputs: app.querySelectorAll('input[type="file"]').length,
         disabled: button.disabled,
       };
@@ -99,6 +99,13 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
       const app = document.querySelector("kin-app");
       for (let i = 0; i < 400 && !(app.attachmentRows.some((row) => row.parentId === itemId) && !app.busy); i++) await new Promise((r) => setTimeout(r, 25));
       const row = app.attachmentRows.find((entry) => entry.parentId === itemId) ?? null;
+      // The row carries a compact thumbnail strip; name, kind and state are in
+      // the detail view's full tile. Open and close it first: closing re-renders
+      // the list, so row elements are queried afterwards.
+      app.openItemDetail(itemId);
+      const fullTile = app.detail.querySelector(".attachment-tile") ?? null;
+      const detailResult = { name: fullTile?.querySelector(".attachment-name")?.textContent ?? null, meta: fullTile?.querySelector(".attachment-meta")?.textContent ?? null };
+      app.closeItemDetail({ restoreFocus: false });
       const item = [...app.shopping.querySelectorAll("kin-item")].find((node) => node.record?.itemId === itemId);
       const other = [...app.shopping.querySelectorAll("kin-item")].find((node) => node.record?.itemId === otherId);
       const tile = item?.querySelector(".attachment-tile") ?? null;
@@ -108,8 +115,9 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
         row, phases: window.__kinProgressLog.map(([, phase]) => phase), messages: window.__kinProgressLog.map(([, , message]) => message),
         status: item?.querySelector(".attachment-status")?.textContent ?? null, statusPhase: item?.querySelector(".attachment-status")?.dataset.phase ?? null,
         tileVisible: Boolean(tile) && !tile.closest("[hidden]") && tile.getClientRects().length > 0,
-        name: tile?.querySelector(".attachment-name")?.textContent ?? null, meta: tile?.querySelector(".attachment-meta")?.textContent ?? null,
-        thumb: Boolean(tile?.querySelector(".attachment-thumb")), otherTiles: other?.querySelectorAll(".attachment-tile").length ?? -1,
+        name: detailResult.name, meta: detailResult.meta,
+        thumb: Boolean(tile?.querySelector(".attachment-thumb")), thumbLabel: tile?.querySelector(".attachment-thumb")?.getAttribute("aria-label") ?? null,
+        otherTiles: other?.querySelectorAll(".attachment-tile").length ?? -1,
         otherRows: app.attachmentRows.filter((entry) => entry.parentId === otherId).length, alert: app.alert.hidden ? null : app.alert.textContent,
         stored: stored ? { state: stored.state, sealed: Boolean(stored.localSealed), ciphertext: Boolean(stored.ciphertext) } : null,
         binding: binding ? { parentKind: binding.parentKind, parentId: binding.parentId, removed: binding.removed } : null,
@@ -124,8 +132,10 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
       `the row shows the saved confirmation after the list re-rendered: ${saved.status}`);
     check(saved.stored?.state === "queued" && saved.stored.sealed && !saved.stored.ciphertext && saved.binding?.parentKind === "item" && saved.binding.parentId === itemId && saved.binding.removed === false,
       `protected bytes are stored under this device's vault and a canonical binding names the item: ${JSON.stringify([saved.stored, saved.binding])}`);
-    check(saved.tileVisible && saved.name === "fridge-shelf.jpg" && saved.meta.includes("Photo") && saved.meta.includes("Saved here") && saved.thumb,
-      `the tile appears under the item with its name, kind and local/sync state: ${saved.meta}`);
+    check(saved.tileVisible && saved.thumb && saved.thumbLabel === "View fridge-shelf.jpg (Photo, Saved here, waiting to sync)",
+      `a compact thumbnail appears under the item on the row, named and stated for assistive technology: ${saved.thumbLabel}`);
+    check(saved.name === "fridge-shelf.jpg" && saved.meta.includes("Photo") && saved.meta.includes("Saved here"),
+      `the detail view's full tile shows the name, kind and local/sync state: ${saved.meta}`);
     check(saved.otherTiles === 0 && saved.otherRows === 0 && saved.alert === null, "the unrelated item receives nothing and no error is shown");
 
     // 2. Thumbnail decode and the viewer.
@@ -139,17 +149,21 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
       const img = thumb().querySelector("img");
       const loaded = await wait(() => img.complete && img.naturalWidth > 0);
       const bounded = img.naturalWidth <= 192 && img.naturalHeight <= 192 && img.naturalWidth > 0;
+      const tilesHost = item().querySelector("kin-attachments");
+      const diagnostics = { src: img.src.slice(0, 12), hidden: img.hidden, natural: [img.naturalWidth, img.naturalHeight], connected: img.isConnected, tiles: item().querySelectorAll(".attachment-tile").length, previewCache: Boolean(app.attachmentPreviews), alert: app.alert.textContent, unavailable: thumb().classList.contains("attachment-thumb-unavailable"), pending: app.attachmentPreviews?.pending.size, entries: [...(app.attachmentPreviews?.entries.entries() ?? [])].map(([key, value]) => [key.slice(0, 6), value === null ? "failed" : Boolean(value?.url)]), hostProvider: typeof tilesHost?.previewProvider, lazy: tilesHost?.lazyViews?.size, loader: typeof thumb().__kinLoadPreview, rect: thumb().getBoundingClientRect().toJSON(), inner: [innerWidth, innerHeight] };
       thumb().click();
       const opened = await wait(() => app.viewer.open);
       const viewerSrc = app.viewer.viewerImage.src, title = app.viewer.viewerTitle.textContent;
       const closeFocused = document.activeElement === app.viewer.querySelector(".attachment-viewer-close");
       app.viewer.querySelector(".attachment-viewer-close").click();
       const closed = await wait(() => !app.viewer.open && app.viewerUrl === null);
-      return { decoded, loaded, bounded, opened, viewerSrc: viewerSrc.startsWith("blob:"), title, closeFocused, closed, focusBack: document.activeElement === thumb() };
+      const focusBack = document.activeElement === thumb();
+      const focusInfo = focusBack ? null : { active: document.activeElement?.outerHTML?.slice(0, 160) ?? null, thumbConnected: thumb()?.isConnected, sameTile: document.activeElement?.dataset?.attachmentId === thumb()?.dataset?.attachmentId, viewerOpener: app.viewerOpener === null, progress: item().querySelector(".attachment-status")?.textContent ?? null };
+      return { decoded, loaded, bounded, diagnostics, opened, viewerSrc: viewerSrc.startsWith("blob:"), title, closeFocused, closed, focusBack, focusInfo };
     }, itemId);
-    check(viewer.decoded && viewer.loaded && viewer.bounded, "the JPEG renders as a bounded thumbnail once the tile is on screen");
+    check(viewer.decoded && viewer.loaded && viewer.bounded, `the JPEG renders as a bounded thumbnail once the tile is on screen: ${JSON.stringify(viewer)}`);
     check(viewer.opened && viewer.viewerSrc && viewer.title === "fridge-shelf.jpg" && viewer.closeFocused, "tapping the thumbnail opens the image viewer with the file name and focuses Close");
-    check(viewer.closed && viewer.focusBack, "closing the viewer releases the image and returns focus to the thumbnail");
+    check(viewer.closed && viewer.focusBack, `closing the viewer releases the image and returns focus to the thumbnail: ${JSON.stringify(viewer.focusInfo)}`);
 
     // 3. Details toggling, navigation, a stale sync refresh, and lock/unlock keep the attachment.
     await visit("today");
@@ -159,16 +173,16 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
       const item = () => [...app.shopping.querySelectorAll("kin-item")].find((node) => node.record?.itemId === itemId);
       const tile = () => item()?.querySelector(".attachment-tile");
       const afterNavigation = Boolean(tile());
-      const toggle = () => app.shopping.querySelector(`.item-tools-toggle[data-item-id="${itemId}"]`);
-      toggle().click(); const whileOpen = Boolean(tile()) && app.shopping.querySelector(`#tools-${itemId}`).hidden === false && !app.shopping.querySelector(`#tools-${itemId} kin-attachments`);
-      toggle().click(); const afterClose = Boolean(tile()) && app.shopping.querySelector(`#tools-${itemId}`).hidden === true;
+      const toggle = () => app.shopping.querySelector(`.item-details-button[data-item-id="${itemId}"]`);
+      toggle().click(); const whileOpen = Boolean(tile()) && app.selection?.itemId === itemId && app.detail.querySelectorAll(".attachment-add").length === 1 && app.querySelectorAll('input[type="file"]').length === 1;
+      app.detail.querySelector(".item-detail-close").click(); const afterClose = Boolean(tile()) && app.selection === null;
       const before = app.attachmentRows.length;
       app.handleSyncState({ state: "syncing", attachmentRows: [] });
       const afterStale = app.attachmentRows.length === before && Boolean(tile());
       return { afterNavigation, whileOpen, afterClose, afterStale };
     }, itemId);
     check(kept.afterNavigation, "navigating to Today and back keeps the tile");
-    check(kept.whileOpen && kept.afterClose, "opening and closing Details neither hides the tile nor duplicates the file control");
+    check(kept.whileOpen && kept.afterClose, "opening and closing details neither hides the row thumbnail nor duplicates the file control");
     check(kept.afterStale, "a sync refresh computed before the save cannot drop the newer attachment row");
     const relocked = await page(async (itemId, recovery) => {
       const app = document.querySelector("kin-app");
@@ -178,7 +192,7 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
       await app.security.run(() => app.security.unlockRecovery(recovery));
       const wait = async (condition) => { for (let i = 0; i < 400 && !condition(); i++) await new Promise((r) => setTimeout(r, 25)); return condition(); };
       await wait(() => app.store && !app.busy && app.attachmentRows.some((row) => row.parentId === itemId));
-      location.hash = "#lists"; app.showPageFromLocation();
+      location.hash = "#lists/shopping"; app.showPageFromLocation();
       const item = () => [...app.shopping.querySelectorAll("kin-item")].find((node) => node.record?.itemId === itemId);
       const thumb = () => item()?.querySelector(".attachment-thumb");
       const tileBack = await wait(() => Boolean(thumb()));

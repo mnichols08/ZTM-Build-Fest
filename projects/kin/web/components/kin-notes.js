@@ -56,7 +56,7 @@ class KinNotes extends HTMLElement {
     title.dataset.focusId = "title";
     const titleHelp = document.createElement("small");
     titleHelp.id = id("title-help");
-    titleHelp.textContent = "Up to 80 characters and 256 UTF-8 bytes.";
+    titleHelp.textContent = "A short title, up to 80 characters.";
     const titleError = this.makeError(id("title-error"));
     title.setAttribute("aria-describedby", `${titleHelp.id} ${titleError.id}`);
 
@@ -71,7 +71,7 @@ class KinNotes extends HTMLElement {
     body.dataset.focusId = "body";
     const bodyHelp = document.createElement("small");
     bodyHelp.id = id("body-help");
-    bodyHelp.textContent = "Plain text, up to 4096 UTF-8 bytes.";
+    bodyHelp.textContent = "Plain text. Roughly 4,000 characters fit.";
     const bodyError = this.makeError(id("body-error"));
     body.setAttribute("aria-describedby", `${bodyHelp.id} ${bodyError.id}`);
 
@@ -144,6 +144,8 @@ class KinNotes extends HTMLElement {
     for (const note of activeNotes) {
       const row = document.createElement("li");
       row.className = "note-row";
+      row.dataset.noteId = note.noteId;
+      row.tabIndex = -1;
       const name = document.createElement("h3");
       name.textContent = note.title;
       const text = document.createElement("p");
@@ -337,6 +339,9 @@ class KinNotes extends HTMLElement {
     const referenceList = document.createElement("ul");
     for (const record of this.referenceRecords.filter((item) => !item.archived)) {
       const row = document.createElement("li");
+      row.className = "reference-row";
+      row.dataset.recordId = record.recordId;
+      row.tabIndex = -1;
       const title = document.createElement("h3");
       title.textContent = record.title;
       row.append(title);
@@ -354,6 +359,8 @@ class KinNotes extends HTMLElement {
       const history = document.createElement("ul");
       for (const event of this.maintenanceEvents.filter((entry) => entry.recordId === record.recordId && !entry.archived).sort((a, b) => b.performedOn - a.performedOn || a.maintenanceId.localeCompare(b.maintenanceId))) {
         const entry = document.createElement("li");
+        entry.dataset.maintenanceId = event.maintenanceId;
+        entry.tabIndex = -1;
         const date = String(event.performedOn); const next = event.nextOn ? ` · Next around ${String(event.nextOn).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3")}` : "";
         entry.textContent = `${event.summary} · ${date.slice(4,6)}/${date.slice(6,8)}/${date.slice(0,4)}${next}`;
         entry.append(this.makeAttachmentControl("maintenance", event.maintenanceId, event.summary));
@@ -447,8 +454,8 @@ class KinNotes extends HTMLElement {
     if (!title) return { title, body, field: "title", error: "Enter a title." };
     if (Array.from(title).some((character) => /\p{Cc}/u.test(character))) return { title, body, field: "title", error: "Titles can't contain control characters." };
     if (Array.from(title).length > 80) return { title, body, field: "title", error: "Titles can be up to 80 characters." };
-    if (bytes(title) > 256) return { title, body, field: "title", error: "Titles can be up to 256 UTF-8 bytes." };
-    if (bytes(body) > 4096) return { title, body, field: "body", error: "Note bodies can be up to 4096 UTF-8 bytes." };
+    if (bytes(title) > 256) return { title, body, field: "title", error: "That title is too long. Shorten it a little." };
+    if (bytes(body) > 4096) return { title, body, field: "body", error: "That note is too long. Roughly 4,000 characters fit." };
     if (Array.from(body).some((character) => /\p{Cc}/u.test(character) && !"\n\r\t".includes(character))) return { title, body, field: "body", error: "Note bodies can contain line breaks and tabs, but no other control characters." };
     return { title, body, field: null, error: null };
   }
