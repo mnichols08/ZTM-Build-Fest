@@ -1,7 +1,7 @@
 import { LocalVault, serializeProtectedValue, deserializeProtectedValue, VaultError } from "./local-vault.js";
 import { EventStore } from "../storage/event-store.js";
 
-const KIN_VERSION = "0.41.1";
+const KIN_VERSION = "0.46.0";
 const MAX_ARCHIVE_BYTES = 160 * 1024 * 1024;
 const MAX_EVENT_COUNT = 10_000;
 const MAX_ATTACHMENT_COUNT = 64;

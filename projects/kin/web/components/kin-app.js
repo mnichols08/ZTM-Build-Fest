@@ -28,7 +28,10 @@ import "./kin-pulse.js";
 import "./kin-catch-up.js";
 import "./kin-household.js";
 import "./kin-security.js";
+import "./kin-appearance.js";
 import { clearLegacyDrafts } from "./kin-security.js";
+import { paletteCss, paletteForSeed } from "../appearance/palette.js";
+import { loadAppearance, saveAppearance } from "../appearance/store.js";
 import {
   getActiveVault,
   setActiveVault,
@@ -270,6 +273,10 @@ class KinApp extends HTMLElement {
     };
     this.onPeerMessage = (event) => this.handlePeerMessage(event);
     this.onLockRequest = () => this.lockHousehold();
+    this.onAppearancePreview = (event) => this.applyAppearance(event.detail.value);
+    this.onSaveAppearance = (event) => this.handleSaveAppearance(event);
+    this.systemAppearance = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : null;
+    this.onSystemAppearance = () => { if (this.currentAppearance?.mode === "system") this.applyAppearance(this.currentAppearance); };
     this.onPageHide = () => this.lockHousehold(false);
     this.updateRegistration = null;
     this.updateRequested = false;
@@ -356,6 +363,8 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:sync-now", this.onSyncNow);
     this.addEventListener("kin:sync-stop", this.onSyncStop);
     this.addEventListener("kin:lock", this.onLockRequest);
+    this.addEventListener("kin:appearance-preview", this.onAppearancePreview);
+    this.addEventListener("kin:save-appearance", this.onSaveAppearance);
     this.addEventListener("keydown", this.onDetailKeydown);
     window.addEventListener("hashchange", this.onHashChange);
     window.addEventListener("popstate", this.onHashChange);
@@ -364,6 +373,7 @@ class KinApp extends HTMLElement {
     window.addEventListener("pagehide", this.onPageHide);
     this.phoneQuery?.addEventListener("change", this.onLayoutChange);
     this.wideQuery?.addEventListener("change", this.onLayoutChange);
+    this.systemAppearance?.addEventListener("change", this.onSystemAppearance);
     window.addEventListener("resize", this.onLayoutChange);
     for (const action of [
       "create-routine",
@@ -453,6 +463,11 @@ class KinApp extends HTMLElement {
     header.append(brand, tools);
     this.header = header;
 
+    this.appearanceBackground = document.createElement("img");
+    this.appearanceBackground.className = "personal-background";
+    this.appearanceBackground.alt = "";
+    this.appearanceBackground.setAttribute("aria-hidden", "true");
+
     const shell = document.createElement("div");
     shell.className = "application-shell";
     this.shell = shell;
@@ -529,7 +544,7 @@ class KinApp extends HTMLElement {
     this.security = document.createElement("kin-security");
     this.security.onUnlocked = (vault) => this.openUnlockedHousehold(vault);
     this.security.onLockRequested = () => this.lockHousehold();
-    this.replaceChildren(header, this.security, shell, feedback, this.routeAnnouncement);
+    this.replaceChildren(this.appearanceBackground, header, this.security, shell, feedback, this.routeAnnouncement);
     this.updateNotice = document.createElement("section");
     this.updateNotice.className = "update-notice";
     this.updateNotice.setAttribute("aria-label", "Application update");
@@ -933,7 +948,8 @@ class KinApp extends HTMLElement {
     updates.append(updatesNav, handoffPanel, talkPanel);
     this.segmentPanels.set("updates", new Map([["handoffs", handoffPanel], ["talk", talkPanel]]));
 
-    // Household: an overview plus four secondary destinations.
+    // Household: an overview plus secondary destinations. Appearance remains
+    // personal while the five primary destinations stay unchanged.
     const household = page("household", "Household");
     const householdNav = segmentNav("household", "Household");
     this.segmentNavs.set("household", householdNav);
@@ -950,6 +966,7 @@ class KinApp extends HTMLElement {
       ["areas", "Areas, household mode, and Pulse."],
       ["people", "Members, pairing, trusted devices, and access."],
       ["privacy", "Lock, passkeys, recovery key, export, and restore."],
+      ["appearance", "Your colors and optional background on this device."],
     ]) {
       const entry = SEGMENTS.household.find((candidate) => candidate.id === segment);
       const item = document.createElement("li");
@@ -1043,8 +1060,14 @@ class KinApp extends HTMLElement {
     // Kept for callers that still address the former More security block.
     this.moreSecurity = privacyPage;
 
-    household.append(hub, notesPage, areasPage, peoplePage, privacyPage);
-    this.segmentPanels.set("household", new Map([["hub", hub], ["notes", notesPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage]]));
+    const appearancePage = document.createElement("section");
+    appearancePage.className = "household-subpage appearance-page";
+    appearancePage.setAttribute("aria-label", "Personal appearance");
+    this.appearance = document.createElement("kin-appearance");
+    appearancePage.append(this.appearance);
+
+    household.append(hub, notesPage, areasPage, peoplePage, privacyPage, appearancePage);
+    this.segmentPanels.set("household", new Map([["hub", hub], ["notes", notesPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));
 
     for (const section of [today, lists, search, routines, updates, household]) {
       this.pages.set(section.id, section);
@@ -1309,6 +1332,8 @@ class KinApp extends HTMLElement {
     navigator.serviceWorker?.removeEventListener("message", this.onServiceWorkerMessage);
     navigator.serviceWorker?.removeEventListener("controllerchange", this.onControllerChange);
     this.removeEventListener("kin:lock", this.onLockRequest);
+    this.removeEventListener("kin:appearance-preview", this.onAppearancePreview);
+    this.removeEventListener("kin:save-appearance", this.onSaveAppearance);
     window.removeEventListener("pagehide", this.onPageHide);
     window.removeEventListener("hashchange", this.onHashChange);
     window.removeEventListener("popstate", this.onHashChange);
@@ -1348,6 +1373,7 @@ class KinApp extends HTMLElement {
     this.removeEventListener("keydown", this.onDetailKeydown);
     this.phoneQuery?.removeEventListener("change", this.onLayoutChange);
     this.wideQuery?.removeEventListener("change", this.onLayoutChange);
+    this.systemAppearance?.removeEventListener("change", this.onSystemAppearance);
     window.removeEventListener("resize", this.onLayoutChange);
     this.removeEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.removeEventListener(`kin:${action}`, this.onNoteIntent);
@@ -2919,6 +2945,7 @@ class KinApp extends HTMLElement {
     this.notes.disabled = isBusy || !this.store;
     if (this.modeSelect) this.modeSelect.disabled = isBusy || !this.store;
     this.household.disabled = isBusy || !this.store;
+    if (this.appearance) this.appearance.disabled = isBusy || !this.store;
     if (this.installButton) this.installButton.disabled = isBusy;
     for (const button of this.main.querySelectorAll("kin-responsibility button"))
       button.disabled = isBusy;
@@ -2952,6 +2979,7 @@ class KinApp extends HTMLElement {
   }
 
   async openUnlockedHousehold(vault) {
+    this.clearAppliedAppearance();
     vault.assertUnlocked();
     this.vault = vault;
     this.securityGeneration++;
@@ -2966,9 +2994,76 @@ class KinApp extends HTMLElement {
     vault.assertUnlocked();
     if (!this.store)
       throw new Error("Kin could not verify the household store.");
+    const session = this.captureSession();
+    try {
+      const appearance = await loadAppearance(this.store, vault);
+      this.assertCurrentSession(session);
+      this.appearance.initialize(appearance);
+      this.applyAppearance(appearance);
+    } catch (error) {
+      this.assertCurrentSession(session);
+      this.appearance.initialize({ version: 1, owner: null, mode: "system", colorSource: "default", seed: "#984D38", manual: null, image: null });
+      this.setStatus("Kin couldn't load your saved appearance, so the default is in use.");
+    }
     this.scheduleAutoLock();
     this.renderOnboarding();
     this.main.focus();
+  }
+
+  resolvedAppearanceMode(mode) {
+    return mode === "system" ? (this.systemAppearance?.matches ? "dark" : "light") : mode;
+  }
+
+  applyAppearance(value) {
+    if (!value || !this.vault || this.vault.locked) return;
+    this.currentAppearance = structuredClone(value);
+    const resolvedMode = this.resolvedAppearanceMode(value.mode);
+    const tokens = paletteForSeed(value.seed, resolvedMode);
+    if (!this.appearanceSheet && typeof CSSStyleSheet === "function") {
+      this.appearanceSheet = new CSSStyleSheet();
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, this.appearanceSheet];
+    }
+    const rules = value.mode === "system"
+      ? `${paletteCss(paletteForSeed(value.seed, "light"))}@media (prefers-color-scheme:dark){${paletteCss(paletteForSeed(value.seed, "dark"))}}`
+      : paletteCss(tokens);
+    this.appearanceSheet?.replaceSync(rules);
+    document.documentElement.dataset.kinAppearance = value.mode;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", tokens["header-bg"]);
+    const signature = value.image ? `${value.image.type}:${value.image.bytes.length}:${value.image.seed}` : null;
+    if (signature !== this.appearanceImageSignature) {
+      if (this.appearanceObjectUrl) URL.revokeObjectURL(this.appearanceObjectUrl);
+      this.appearanceObjectUrl = value.image ? URL.createObjectURL(new Blob([value.image.bytes], { type: value.image.type })) : null;
+      this.appearanceImageSignature = signature;
+      this.appearanceBackground.src = this.appearanceObjectUrl ?? "";
+      this.appearanceBackground.hidden = !this.appearanceObjectUrl;
+      this.toggleAttribute("data-personal-background", Boolean(this.appearanceObjectUrl));
+    }
+  }
+
+  async handleSaveAppearance(event) {
+    const { value, complete } = event.detail;
+    const session = this.captureSession();
+    try {
+      const saved = await saveAppearance(session.store, session.vault, value);
+      this.assertCurrentSession(session);
+      this.currentAppearance = structuredClone(saved);
+      complete(saved, null);
+    } catch (error) {
+      if (this.isCurrentSession(session)) complete(null, new Error("Kin couldn't save your appearance. Your previous saved appearance is unchanged."));
+    }
+  }
+
+  clearAppliedAppearance() {
+    this.currentAppearance = null;
+    delete document.documentElement.dataset.kinAppearance;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", "#684033");
+    if (this.appearanceSheet) this.appearanceSheet.replaceSync("");
+    if (this.appearanceObjectUrl) URL.revokeObjectURL(this.appearanceObjectUrl);
+    this.appearanceObjectUrl = null;
+    this.appearanceImageSignature = null;
+    if (this.appearanceBackground) { this.appearanceBackground.removeAttribute("src"); this.appearanceBackground.hidden = true; }
+    this.removeAttribute("data-personal-background");
+    this.appearance?.clear();
   }
 
   async loadPreviewBlob(record) {
@@ -3000,6 +3095,7 @@ class KinApp extends HTMLElement {
         });
     }
     this.securityGeneration++;
+    this.clearAppliedAppearance();
     this.removeLockListener?.();
     this.removeLockListener = null;
     const vault = this.vault ?? getActiveVault();
