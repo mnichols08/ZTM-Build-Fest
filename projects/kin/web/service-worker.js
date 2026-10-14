@@ -16,7 +16,7 @@ const SHELL = [
   "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js",
   "/appearance/palette.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js",
   "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js",
-  ...["app", "appearance", "household-defaults", "security", "household", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility"].map((name) => `/components/kin-${name}.js`),
+  ...["app", "appearance", "household-defaults", "security", "household", "quick-add", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility"].map((name) => `/components/kin-${name}.js`),
 ];
 const ALLOWED = new Set(SHELL);
 

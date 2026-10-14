@@ -20,6 +20,7 @@ test('complete new shell stages all assets while retaining prior cache until act
   const { listeners, stored } = await worker(); let install;
   listeners.get('install')({ waitUntil(value) { install = value; } }); await install;
   const next = stored.get('kin-static-v0.38.2'); assert.ok(next.has('/reminders.js')); assert.ok(next.has('/wasm/kin_engine.wasm'));
+  assert.ok(next.has('/components/kin-quick-add.js'), 'the complete imported application shell is cached');
   assert.ok(stored.has('kin-static-v0.38.1'));
   let activation; listeners.get('activate')({ waitUntil(value) { activation = value; } }); await activation;
   assert.deepEqual([...stored.keys()], ['kin-static-v0.38.2']);

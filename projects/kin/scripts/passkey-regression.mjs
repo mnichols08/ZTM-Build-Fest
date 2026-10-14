@@ -73,6 +73,19 @@ export async function passkeyRegressions(client, service, syncService) {
     service.approvePairing(token, invitation.pairingId, claim.version);
     const remaining = service.activateClaim(claim.claimToken);
     syncService.enable(remaining.sessionToken);
+    assert.throws(
+      () => service.leaveHousehold(token, departing.id),
+      (error) => error.code === "last_household_admin",
+      "the server rejects departure by the last household admin",
+    );
+    assert.equal(service.members.get(departing.id).active, true);
+    assert.equal(service.devices.get(device.id).revokedAt, null);
+    service.setHouseholdAdmin(token, remaining.memberId, true, departing.id);
+    assert.equal(
+      service.householdView(token).members.find((member) => member.id === remaining.memberId)?.admin,
+      true,
+    );
+    checks += 4;
     for (const override of [{ isBadUV: true }, { isBogusSignature: true }]) {
       await client.send("WebAuthn.setResponseOverrideBits", { authenticatorId, ...override });
       checks += await client.evaluate(`(${rejectedLeave.toString()})()`);
