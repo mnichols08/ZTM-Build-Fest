@@ -1,6 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { activeResponsibilityMemberIds, memberHasTrustAuthority, portableMembershipFromDirectory, SyncCoordinator } from "./sync-coordinator.js";
+import { activeResponsibilityMemberIds, committedBatchUpdate, memberHasTrustAuthority, portableMembershipFromDirectory, SyncCoordinator } from "./sync-coordinator.js";
+
+test("empty sync polls do not publish a projection or snapshot boundary", () => {
+  const state = { items: [] };
+  const snapshotBoundary = { eventId: "ab", localSequence: 4 };
+  assert.deepEqual(committedBatchUpdate({ added: 0, quarantined: 0, state, snapshotBoundary }), {
+    added: 0,
+    quarantined: 0,
+  });
+  assert.deepEqual(committedBatchUpdate({ added: 1, quarantined: 0, state, snapshotBoundary }), {
+    added: 1,
+    quarantined: 0,
+    projection: state,
+    snapshotBoundary,
+  });
+});
 
 test("Responsibility participants include active member kinds and exclude removed or expired members", () => {
   const now = 5_000;

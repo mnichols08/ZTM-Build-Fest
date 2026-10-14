@@ -44,18 +44,18 @@ test("catch up names the list each item was actually added to", () => {
   ]);
   assert.deepEqual(lines, [
     "today added to Today",
-    "needs added to Needs",
+    "needs added to To do",
     "shopping added to Shopping",
     "staples added to Staples",
   ]);
 });
 
-test("catch up never reports a Shopping or Staples item as added to Needs", () => {
+test("catch up never reports a Shopping or Staples item as added to To do", () => {
   const lines = renderedLines([
     { kind: "item-added", text: "milk", classification: "shopping" },
     { kind: "item-added", text: "rice", classification: "staple" },
   ]);
-  for (const line of lines) assert.doesNotMatch(line, /added to Needs/);
+  for (const line of lines) assert.doesNotMatch(line, /added to To do/);
 });
 
 test("catch up falls back to a neutral destination for an unknown classification", () => {

@@ -17,6 +17,7 @@ export async function planningDateRegressions() {
     const text = `Planning date ${crypto.randomUUID()}`;
     app.compose.input.value = text;
     app.compose.classification.value = "need";
+    app.compose.plan.value = "none";
     app.compose.form.requestSubmit();
     await idle();
     const item = app.state.items.find((entry) => entry.text === text);
@@ -25,24 +26,20 @@ export async function planningDateRegressions() {
       "new Items begin without a planning date and record their creation date",
     );
     app.navLinks.get("lists").click();
-    // Planning controls live under the item's Details disclosure on every viewport.
-    const toolsToggle = app.needs.querySelector(`.item-tools-toggle[data-item-id="${item.itemId}"]`);
-    check(toolsToggle?.getAttribute("aria-expanded") === "false", "item details start collapsed");
-    toolsToggle.click();
-    check(
-      toolsToggle.getAttribute("aria-expanded") === "true" || app.needs.querySelector(`.item-tools-toggle[data-item-id="${item.itemId}"]`)?.getAttribute("aria-expanded") === "true",
-      "Details disclosure expands the planning controls",
-    );
-    const dateInput = () => app.needs.querySelector(
+    // Planning controls live in the shared item detail view on every viewport.
+    const detailsButton = app.needs.querySelector(`.item-details-button[data-item-id="${item.itemId}"]`);
+    check(detailsButton?.getAttribute("aria-expanded") === "false" && app.selection === null, "item details start closed");
+    detailsButton.click();
+    check(app.selection?.itemId === item.itemId && app.detail.isConnected, "Details opens the shared detail view for that item");
+    const dateInput = () => app.detail.querySelector(
       `.item-planning-date-input[data-item-id="${item.itemId}"]`,
     );
-    check(!dateInput().closest("[hidden]"), "expanded details reveal the planning date editor");
+    check(!dateInput().closest("[hidden]"), "the detail view shows the planning date editor");
     check(
       dateInput()?.getAttribute("aria-label") === `Planned date for ${text}`,
       "native date input has an item-specific accessible name",
     );
-    const lastChangedLabel = () =>
-      dateInput().closest("kin-item").querySelector(".item-last-changed");
+    const lastChangedLabel = () => app.detail.querySelector(".item-last-changed");
     const expectedDate = () =>
       new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(
         new Date(now),
@@ -53,7 +50,7 @@ export async function planningDateRegressions() {
     );
 
     const beforeToday = (await app.store.loadEvents()).length;
-    const shortcuts = () => [...dateInput().closest("kin-item").querySelectorAll(".item-planning-date-shortcut")];
+    const shortcuts = () => [...app.detail.querySelectorAll(".item-planning-date-shortcut")];
     now += 60_000;
     shortcuts().find((button) => button.textContent === "Today").click();
     await idle();
@@ -123,6 +120,7 @@ export async function planningDateRegressions() {
     check(app.calendarExportButton.disabled, "clearing the last date disables calendar export");
   } finally {
     Date.now = originalNow;
+    app.closeItemDetail({ restoreFocus: false });
     await app.refreshFromEvents();
     app.navLinks.get(originalPage)?.click();
   }

@@ -26,6 +26,9 @@ export async function routineRegressions() {
       ),
       "richer cadence choices are keyboard-selectable",
     );
+    check(ui.form.hidden && ui.addButton.getAttribute("aria-expanded") === "false", "routine creation starts behind Add routine");
+    ui.openCreate();
+    check(!ui.form.hidden && document.activeElement === ui.input, "Add routine reveals the form and focuses it");
     ui.input.value = "<b>Starter 🥛</b>";
     ui.cadence.value = "daily";
     ui.input.focus();
@@ -475,7 +478,7 @@ export async function routineKeyboardRegressions(client, until) {
   const idle = () =>
     until(() => client.evaluate("(()=>{const a=document.querySelector('kin-app');return !a.busy&&!a.refreshing&&!a.pendingRefresh;})()"));
   await client.evaluate(
-    `(()=>{const ui=document.querySelector('kin-app').routines;ui.input.value='Keyboard routine';ui.input.focus();})()`,
+    `(()=>{const ui=document.querySelector('kin-app').routines;ui.openCreate();ui.input.value='Keyboard routine';ui.input.focus();})()`,
   );
   await key("Tab");
   assert.equal(

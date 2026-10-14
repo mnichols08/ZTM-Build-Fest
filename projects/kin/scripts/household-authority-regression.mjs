@@ -304,6 +304,8 @@ async function pageSync() {
 async function pageAddItem(text) {
   const app = document.querySelector("kin-app");
   app.compose.input.value = text;
+  // The drill counts one relay envelope per item: capture without a date.
+  app.compose.plan.value = "none";
   app.compose.form.requestSubmit();
   for (let i = 0; i < 400; i++) {
     if (!app.busy && app.state?.items.some((item) => item.text === text)) break;
@@ -410,7 +412,7 @@ async function pageRestoreArchive({ base64, secret, clockOffset = 0 }) {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  location.hash = "#more";
+  location.hash = "#household/privacy";
   app.showPageFromLocation();
   app.security.showRestore();
   const file = app.security.querySelector("#archive-file");

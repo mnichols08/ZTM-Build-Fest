@@ -18,11 +18,16 @@ export async function shoppingRegressions() {
     "Shopping is an available capture destination",
   );
   check(
-    app.compose.classification.querySelector('option[value="staple"]'),
-    "Staples is an available capture destination",
+    app.staples.composer?.fixedClassification === "staple",
+    "Staples has its own capture fixed to Staples",
   );
+  // Earlier suites leave other Shopping items behind; address rows by id.
+  const rowFor = (list, itemId) => [...list.querySelectorAll("kin-item")].find((node) => node.record?.itemId === itemId) ?? null;
+  // One list is shown at a time, so focus assertions need that list's route.
+  app.navigate("#lists/shopping");
   app.compose.input.value = "Shopping regression item";
   app.compose.classification.value = "shopping";
+  app.compose.plan.value = "none";
   app.compose.input.focus();
   app.compose.form.requestSubmit();
   await idle();
@@ -32,15 +37,12 @@ export async function shoppingRegressions() {
   );
   check(item?.classification === "shopping", "Shopping classification is replayed");
   check(
-    app.shopping.querySelector("kin-item .item-text")?.textContent ===
-      item.text &&
-      !app.needs.querySelector("kin-item .item-text")?.textContent?.includes(
-        item.text,
-      ),
+    rowFor(app.shopping, item.itemId)?.querySelector(".item-text")?.textContent === item.text &&
+      !rowFor(app.needs, item.itemId) && !rowFor(app.staples, item.itemId),
     "Shopping appears only in its dedicated list",
   );
 
-  const complete = app.shopping.querySelector("kin-item .complete-button");
+  const complete = rowFor(app.shopping, item.itemId).querySelector(".complete-button");
   complete.focus();
   complete.click();
   await idle();
@@ -49,50 +51,51 @@ export async function shoppingRegressions() {
   );
   check(item.status === "completed", "Shopping completion is persisted");
   check(
-    app.shopping.querySelector("kin-item .reopen-button") ===
+    rowFor(app.shopping, item.itemId).querySelector(".reopen-button") ===
       document.activeElement,
     "List focus follows the completed item's Reopen action",
   );
 
-  app.shopping.querySelector("kin-item .reopen-button").click();
+  rowFor(app.shopping, item.itemId).querySelector(".reopen-button").click();
   await idle();
   check(
     app.state.items.find((record) => record.itemId === item.itemId).status ===
       "active",
     "Shopping item can be reopened",
   );
-  app.shopping.querySelector("kin-item .archive-button").click();
+  app.openItemDetail(item.itemId);
+  check(app.selection?.itemId === item.itemId && app.detail.querySelector(".archive-button"), "details expose Archive for the open item");
+  app.detail.querySelector(".archive-button").click();
   await idle();
   check(
     app.state.items.find((record) => record.itemId === item.itemId).status ===
       "archived" &&
-      !app.shopping.querySelector("kin-item"),
+      !rowFor(app.shopping, item.itemId),
     "Archived Shopping item is retained but hidden",
   );
+  check(app.detail.textContent.includes("archived") && !app.detail.querySelector(".archive-button"), "details explain an archived record instead of offering stale actions");
+  app.closeItemDetail({ restoreFocus: false });
 
-  app.compose.input.value = "Laundry detergent";
-  app.compose.classification.value = "staple";
-  app.compose.form.requestSubmit();
+  app.navigate("#lists/staples");
+  app.staples.composer.input.value = "Laundry detergent";
+  app.staples.composer.form.requestSubmit();
   await idle();
   let staple = app.state.items.find(
     (record) => record.text === "Laundry detergent",
   );
   check(
     staple?.classification === "staple" &&
-      app.staples.querySelector("kin-item .item-text")?.textContent ===
-        staple.text &&
-      !app.shopping.querySelector("kin-item .item-text")?.textContent?.includes(
-        staple.text,
-      ),
+      rowFor(app.staples, staple.itemId)?.querySelector(".item-text")?.textContent === staple.text &&
+      !rowFor(app.shopping, staple.itemId),
     "Staples appear only in the reusable Staples list",
   );
   check(
-    !app.staples.querySelector("kin-item .complete-button") &&
-      app.staples.querySelector("kin-item .replenish-button"),
+    !rowFor(app.staples, staple.itemId).querySelector(".complete-button") &&
+      rowFor(app.staples, staple.itemId).querySelector(".replenish-button"),
     "Staples offer replenishment rather than completion",
   );
 
-  const replenish = app.staples.querySelector("kin-item .replenish-button");
+  const replenish = rowFor(app.staples, staple.itemId).querySelector(".replenish-button");
   replenish.focus();
   const append = app.store.append;
   let firstAttempt = true;
@@ -134,24 +137,24 @@ export async function shoppingRegressions() {
       shoppingCopies.length === 1 &&
       staple.status === "active" &&
       shoppingCopy?.status === "active" &&
-      app.shopping.querySelector("kin-item .item-text")?.textContent ===
-        staple.text,
+      rowFor(app.shopping, shoppingCopy.itemId)?.querySelector(".item-text")?.textContent === staple.text,
     "Retry appends exactly one Shopping Item with the same identity and keeps the staple",
   );
   check(
-    app.staples.querySelector("kin-item .replenish-button") ===
+    rowFor(app.staples, staple.itemId).querySelector(".replenish-button") ===
       document.activeElement,
     "Staples focus returns to Add to Shopping after persistence",
   );
 
-  app.staples.querySelector("kin-item .archive-button").click();
+  app.openItemDetail(staple.itemId);
+  app.detail.querySelector(".archive-button").click();
   await idle();
+  app.closeItemDetail({ restoreFocus: false });
   staple = app.state.items.find((record) => record.itemId === staple.itemId);
   check(
     staple.status === "archived" &&
-      app.staples.querySelector("kin-item") === null &&
-      app.shopping.querySelector("kin-item .item-text")?.textContent ===
-        shoppingCopy.text,
+      rowFor(app.staples, staple.itemId) === null &&
+      rowFor(app.shopping, shoppingCopy.itemId)?.querySelector(".item-text")?.textContent === shoppingCopy.text,
     "Archiving a staple does not remove its Shopping copy",
   );
   return "PASS Shopping lifecycle and Staples replenishment, isolation, and focus";

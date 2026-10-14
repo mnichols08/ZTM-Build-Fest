@@ -1,5 +1,48 @@
 # Testing Contracts
 
+## Household workspace UX coverage (unversioned candidate)
+
+`scripts/workspace-ux-regression.mjs` runs inside `browser-regression.mjs`
+after the attachment suite. It also checks that empty automatic sync polls do
+not repaint the workspace or refresh peer tabs, and records before/after WebM
+clips in `target/ux-screenshots/kin-sync-refresh-*.webm`. Its in-page part covers the journeys in
+[WORKSPACE-UX](WORKSPACE-UX.md) §6: To do and Shopping capture, planning a
+shopping item for today and seeing the same record on Today, completing from
+either view, a synthetic legacy `today` item on Today and under To do with
+date precedence, future and earlier plans, paused routines, opening/closing
+details with scroll position and drafts intact, search results that open an
+item, a checklist step and a note by canonical id and return to search, the
+in-app routine reminder control, offline/failed/partial saves with inline
+feedback, legacy route aliases with Back/Forward, and lock during details and
+search. Its CDP part resizes 360 → 768 → 1024 → 1440 → 1920 → 390 with details
+open, asserting five equal navigation tracks, one editor re-homed between
+sheet, inline and side presentations with its draft, no horizontal overflow,
+no undersized target, Escape, and no empty column; it writes
+`target/ux-screenshots/regression-*.png`. `scripts/workspace-screenshots.mjs`
+(not part of the gate) captures Today, Shopping, an open item, Search,
+Routines, Household, failed-save and offline states at representative widths
+in light and dark. Node tests: `web/routes.test.mjs`,
+`web/today-view.test.mjs`, `web/reminder-time.test.mjs`,
+`web/capture-plan.test.mjs`, plus the compact-mode case in
+`web/components/kin-attachments.test.mjs`. Existing suites were updated for
+the new structure (details instead of inline row tools, `#updates`,
+`#household/...`, Today capture semantics).
+
+PR #42 remediation coverage extends these real browser paths: item A/B
+checklist draft isolation, close/route retention, successful-save clearing,
+empty-submit duplicate prevention, and delayed A success/failure while B is
+selected without draft clearing or feedback leakage; partial capture retries
+through Try again, Add, and a real Enter key
+with the same canonical id and an explicit finish-or-start-new choice after
+edits; checklist and planning-date failure/retry inside the actual mobile
+`<dialog>` with one alert and draft retention through rerender; and native
+keyboard Escape over desktop details and the mobile detail sheet, including
+rerender and focus/URL cleanup. `target/ux-screenshots/regression-360-detail-step-error.png`,
+`regression-360-detail-date-error.png`,
+`regression-viewer-escape-mobile-preserved.png`, and
+`regression-viewer-escape-desktop-preserved.png` capture representative
+synthetic-data states. These remain local uncommitted-patch results, not CI.
+
 ## v0.41.1 Mobile Attachment Upload coverage
 
 The browser regression runs `scripts/attachment-upload-regression.mjs` right

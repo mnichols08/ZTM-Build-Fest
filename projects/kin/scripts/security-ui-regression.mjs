@@ -201,6 +201,8 @@ async function browserUiChecks() {
     "setup verifies root and empty replay before unlock",
   );
   app.compose.input.value = "Synthetic protected household secret";
+  // One canonical event: capture without a planning date.
+  app.compose.plan.value = "none";
   app.compose.form.requestSubmit();
   await wait(() => !app.busy);
   check(
@@ -580,7 +582,7 @@ async function browserUiChecks() {
       `cancelled archive ${stage} retains original recoverable empty target`,
     );
   }
-  location.hash = "#more";
+  location.hash = "#household/privacy";
   app.showPageFromLocation();
   app.security.showRestore();
   const restoreFile = app.security.querySelector("#archive-file");

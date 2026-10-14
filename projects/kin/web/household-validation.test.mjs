@@ -24,12 +24,12 @@ test("Reference Record validator mirrors UTF-8 byte, count, and control limits",
 
 test("Playbook validator uses the same trimmed UTF-8 rules for create and edit", () => {
   assert.equal(validatePlaybook("T".repeat(128), ["Step"]).valid, true);
-  assert.equal(validatePlaybook("界".repeat(43), ["Step"]).errors.title, "This Playbook title is too long.");
+  assert.equal(validatePlaybook("界".repeat(43), ["Step"]).errors.title, "This checklist name is too long.");
   assert.equal(validatePlaybook("  Weekly reset  ", ["  Check filter  "]).entries[0], "Check filter");
   assert.equal(validatePlaybook("Plan", [""]).errors.entries[0], "Checklist steps can't be empty.");
   assert.equal(validatePlaybook("Plan", ["S".repeat(257)]).errors.entries[0], "This step is too long.");
   assert.match(validatePlaybook("Plan", Array.from({ length: MAX_PLAYBOOK_ENTRIES + 1 }, () => "Step")).errors.count, /16/);
-  assert.equal(validatePlaybook("Plan\nTitle", ["Step"]).errors.title, "This Playbook title can't contain control characters.");
+  assert.equal(validatePlaybook("Plan\nTitle", ["Step"]).errors.title, "This checklist name can't contain control characters.");
   const edit = validatePlaybook("Edited title", ["Changed later"]);
   const create = validatePlaybook("Edited title", ["Changed later"]);
   assert.deepEqual(edit, create);

@@ -184,6 +184,8 @@ async function setupPasskey() {
   input.form.requestSubmit();
   await wait(() => app.store && !app.security.busy && !app.busy);
   app.compose.input.value = "Virtual passkey protected content";
+  // One canonical event: capture without a planning date.
+  app.compose.plan.value = "none";
   app.compose.form.requestSubmit();
   await wait(() => !app.busy);
   check(
@@ -312,18 +314,19 @@ async function attachmentUiChecks(recovery) {
   await wait(() => Boolean(app.household?.identity), "household identity");
   location.hash = "#today";
   app.showPageFromLocation();
-  app.compose.classification.value = "today";
+  app.compose.classification.value = "need";
+  app.compose.plan.value = "today";
   app.compose.input.value = "Photo of the fridge";
   app.compose.form.requestSubmit();
-  await wait(() => !app.busy && app.state.items.some((item) => item.text === "Photo of the fridge"), "item add");
+  await wait(() => !app.busy && app.state.items.some((item) => item.text === "Photo of the fridge") && app.state.items.find((item) => item.text === "Photo of the fridge").planningDate !== null, "item add");
   const item = app.state.items.find((entry) => entry.text === "Photo of the fridge");
-  check(item.classification === "today" && app.today.querySelector(`.item-text[data-item-id="${item.itemId}"]`),
-    "Today capture creates a visible Today item");
+  check(item.classification === "need" && item.planningDate === app.currentCivilDate() && app.today.querySelector(`.item-text[data-item-id="${item.itemId}"]`),
+    "Today capture creates a task planned for today that is visible on Today");
   // A real 2x2 PNG so the thumbnail pipeline decodes genuine image bytes.
   const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DwHwqY/j9/j8EBABRiB/GKvM3kAAAAAElFTkSuQmCC"), (c) => c.charCodeAt(0));
   const file = new File([png], "fridge.png", { type: "image/png" });
   const attach = app.today.querySelector(`.item-attach-button[data-item-id="${item.itemId}"]`);
-  check(Boolean(attach) && !attach.closest("[hidden]") && app.today.querySelector(`#tools-${item.itemId}`).hidden === true,
+  check(Boolean(attach) && !attach.closest("[hidden]") && app.selection === null,
     "Add photo is on the row itself; Details stays closed");
   // The tap must open the app-owned input synchronously (user activation) and
   // remember which item asked.
@@ -348,7 +351,8 @@ async function attachmentUiChecks(recovery) {
   // ciphertext. Either way nothing is stored in the clear.
   check(Boolean(encryptedRow) && (encryptedRow.ciphertext ? encryptedRow.keyEpoch >= 1 && !encryptedRow.localSealed : Boolean(encryptedRow.localSealed)) && encryptedRow.state === "queued",
     "the stored record is protected at rest (household-key ciphertext or vault-sealed) and queued for sync");
-  const thumb = () => app.today.querySelector(`kin-item .attachment-thumb[aria-label="View fridge.png"]`);
+  // Rows carry a compact thumbnail strip whose control names the file and its state.
+  const thumb = () => app.today.querySelector(`kin-item .attachment-thumb[aria-label^="View fridge.png"]`);
   check(Boolean(thumb()) && !thumb().closest("[hidden]"), "an image thumbnail tile renders in the item's main area");
   const diagnose = () => JSON.stringify({
     tile: thumb()?.outerHTML.slice(0, 240),
@@ -375,8 +379,12 @@ async function attachmentUiChecks(recovery) {
   check(img.naturalWidth <= 192 && img.naturalHeight <= 192 && img.alt === "", "thumbnail is bounded and decorative");
   check(getComputedStyle(thumb()).height.replace("px", "") >= 48, "thumbnail is a comfortable touch target");
   check(app.attachmentPreviews.peek(row.attachmentId)?.url === img.src, "preview object URL is cached per session");
-  const metaText = app.today.querySelector(`kin-item .attachment-tile .attachment-meta`)?.textContent ?? "";
-  check(metaText.includes("Photo") && metaText.includes("B"), "tile shows kind and size: " + metaText);
+  // Kind, size and state live on the full tile in the shared detail view.
+  app.openItemDetail(item.itemId);
+  const metaText = app.detail.querySelector(`.attachment-tile .attachment-meta`)?.textContent ?? "";
+  app.closeItemDetail({ restoreFocus: false });
+  check(metaText.includes("Photo") && metaText.includes("B"), "detail tile shows kind and size: " + metaText);
+  check(thumb()?.getAttribute("aria-label").includes("Photo"), "the row thumbnail names the file kind for assistive technology");
   thumb().click();
   await wait(() => app.viewer.open, "viewer open");
   check(app.viewer.viewerImage.src.startsWith("blob:") && app.viewer.viewerTitle.textContent === "fridge.png",
@@ -394,10 +402,15 @@ async function attachmentUiChecks(recovery) {
   const pdf = new File([new TextEncoder().encode("%PDF-1.4\n% synthetic\n%%EOF")], "warranty.pdf", { type: "application/pdf" });
   app.dispatchEvent(new CustomEvent("kin:add-attachment", { detail: { file: pdf, parentKind: "item", parentId: item.itemId }, bubbles: true }));
   await wait(() => !app.busy && app.attachmentRows.filter((entry) => entry.parentId === item.itemId).length === 2, "pdf capture");
-  const pdfTile = [...app.today.querySelectorAll("kin-item .attachment-tile")].find((tile) => tile.textContent.includes("warranty.pdf"));
+  const pdfRow = [...app.today.querySelectorAll("kin-item .attachment-tile-document")].find((tile) => tile.querySelector("button")?.getAttribute("aria-label")?.startsWith("Open warranty.pdf"));
+  check(Boolean(pdfRow) && !pdfRow.querySelector(".attachment-thumb") && pdfRow.querySelector("button").getAttribute("aria-label").includes("PDF"),
+    "documents render as a recognizable compact control on the row, named with their kind");
+  app.openItemDetail(item.itemId);
+  const pdfTile = [...app.detail.querySelectorAll(".attachment-tile")].find((tile) => tile.textContent.includes("warranty.pdf"));
   check(pdfTile?.classList.contains("attachment-tile-document") && pdfTile.querySelector(".attachment-meta").textContent.includes("PDF") &&
     pdfTile.querySelector('button[aria-label="Open warranty.pdf"]') && pdfTile.querySelector('button[aria-label="Save warranty.pdf"]') &&
-    !pdfTile.querySelector(".attachment-thumb"), "documents render as a recognizable tile with Open and Save");
+    !pdfTile.querySelector(".attachment-thumb"), "documents render as a recognizable tile with Open and Save in the detail view");
+  app.closeItemDetail({ restoreFocus: false });
   app.clearAlert();
   await app.handleViewAttachment({ detail: { attachmentId: "00".repeat(16), parentKind: "item", parentId: item.itemId } });
   check(app.alert.textContent === "We couldn't open this attachment. Your existing household information hasn't been deleted." && !app.viewer.open,

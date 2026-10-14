@@ -10,11 +10,12 @@ const CACHE = `kin-static-v${RELEASE}`;
 const SHELL = [
   "/", "/index.html", "/styles/app.css", "/manifest.webmanifest", "/icon.svg",
   "/browser-time.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin_engine.wasm",
+  "/routes.js", "/today-view.js", "/reminder-time.js", "/capture-plan.js",
   "/attachments/attachment-crypto.js", "/attachments/attachment-lifecycle.js", "/attachments/attachment-preview.js", "/attachments/attachment-progress.js",
   "/storage/event-store.js", "/storage/encrypted-idb.js", "/storage/root-rotation.js",
   "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js",
   "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js",
-  ...["app", "security", "household", "compose", "item", "today", "handoff-list", "talk-list", "search", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility"].map((name) => `/components/kin-${name}.js`),
+  ...["app", "security", "household", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility"].map((name) => `/components/kin-${name}.js`),
 ];
 const ALLOWED = new Set(SHELL);
 

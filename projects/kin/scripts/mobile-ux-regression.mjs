@@ -26,34 +26,45 @@ export async function mobileUxRegressions(recovery) {
   const visit = (id) => { location.hash = `#${id}`; app.showPageFromLocation(); };
   const visible = (node) => Boolean(node) && !node.closest("[hidden]") && node.getClientRects().length > 0;
 
-  // 1. A fresh Today capture form defaults to Today; the chosen destination sticks.
+  // 1. The Today capture asks what the item is and when it matters; it never
+  //    creates a `today`-classified record, and the chosen kind sticks.
   const probe = document.createElement("kin-compose");
+  probe.setAttribute("mode", "today");
   document.body.append(probe);
-  check(probe.classification.value === "today", "fresh capture defaults to Today");
+  check(probe.classification.value === "need" && probe.plan.value === "today" && !probe.pin.checked &&
+    [...probe.classification.options].map((option) => option.value).join(",") === "need,shopping",
+    "fresh Today capture defaults to a task planned for today, offering Task or Shopping item");
   probe.remove();
   visit("today");
-  app.compose.classification.value = "today";
+  app.compose.classification.value = "need";
+  app.compose.plan.value = "today";
   app.compose.input.value = "Call the dentist";
   app.compose.form.requestSubmit();
   await idle();
   const todayItem = app.state.items.find((item) => item.text === "Call the dentist");
-  check(todayItem?.classification === "today" && visible(app.today.querySelector(`.item-text[data-item-id="${todayItem.itemId}"]`)),
-    "adding from Today visibly creates a Today item");
-  check(app.status.textContent === "Added to Today." && app.compose.input.value === "" && app.compose.classification.value === "today",
-    `Today add confirms its destination and keeps it selected: ${app.status.textContent}`);
+  check(todayItem?.classification === "need" && todayItem.planningDate === app.currentCivilDate() &&
+    visible(app.today.querySelector(`.item-text[data-item-id="${todayItem.itemId}"]`)) &&
+    app.needs.querySelector(`.item-text[data-item-id="${todayItem.itemId}"]`),
+    "adding from Today creates a task planned for today that shows on Today and lives in To do");
+  check(app.status.textContent === "Added to To do and Today." && app.compose.input.value === "" && app.compose.classification.value === "need" &&
+    app.compose.result.textContent === "Saved on this device.",
+    `Today add confirms its destination inline and keeps the kind selected: ${app.status.textContent} / ${app.compose.result.textContent}`);
   app.compose.classification.value = "shopping";
+  app.compose.plan.value = "none";
   app.compose.input.value = "Eggs from Today";
   app.compose.form.requestSubmit();
   await idle();
   check(app.state.items.find((item) => item.text === "Eggs from Today")?.classification === "shopping" &&
-    app.status.textContent === "Added to Shopping." && app.compose.classification.value === "shopping",
-    "a chosen destination is confirmed and not silently reset");
-  app.compose.classification.value = "today";
+    app.state.items.find((item) => item.text === "Eggs from Today").planningDate === null &&
+    app.status.textContent === "Added to Shopping." && app.compose.classification.value === "shopping" && app.compose.plan.value === "none",
+    "a chosen kind and plan are confirmed and not silently reset");
+  app.compose.classification.value = "need";
+  app.compose.plan.value = "today";
 
   // 2. Each list carries its own capture with a fixed destination and clear hints.
-  visit("lists");
+  visit("lists/shopping");
   check(!app.today.querySelector("kin-compose"), "the Today list itself embeds no second capture form");
-  for (const [list, classification, title] of [[app.needs, "need", "Needs"], [app.shopping, "shopping", "Shopping"], [app.staples, "staple", "Staples"]]) {
+  for (const [list, classification, title] of [[app.needs, "need", "To do"], [app.shopping, "shopping", "Shopping"], [app.staples, "staple", "Staples"]]) {
     const composer = list.querySelector("kin-compose");
     check(composer?.fixedClassification === classification && composer.classification.hidden && composer.classificationField.hidden,
       `${title} quick-add fixes its destination without a dropdown`);
@@ -76,18 +87,18 @@ export async function mobileUxRegressions(recovery) {
   needsComposer.input.value = "Fix the gate latch";
   needsComposer.form.requestSubmit();
   await idle();
-  check(app.state.items.find((item) => item.text === "Fix the gate latch")?.classification === "need" && app.status.textContent === "Added to Needs.",
-    "Needs quick-add creates a Need");
+  check(app.state.items.find((item) => item.text === "Fix the gate latch")?.classification === "need" && app.status.textContent === "Added to To do.",
+    "To do quick-add creates a task");
 
-  // 3. Item rows show one primary action; secondary controls sit behind Details.
+  // 3. Item rows show a complete control, the text, Add photo and Details;
+  //    everything else lives in the shared detail view.
   const eggsRow = [...app.shopping.querySelectorAll("kin-item")].find((node) => node.record?.itemId === eggs.itemId);
-  const toggle = () => app.shopping.querySelector(`.item-tools-toggle[data-item-id="${eggs.itemId}"]`);
-  const tools = () => app.shopping.querySelector(`#tools-${eggs.itemId}`);
-  check(visible(eggsRow.querySelector(".complete-button")) && toggle()?.getAttribute("aria-expanded") === "false" && tools()?.hidden === true,
-    "a list row shows Complete and a collapsed Details disclosure");
-  check(!visible(eggsRow.querySelector(".item-area-select")) && !visible(eggsRow.querySelector(".item-planning-date-input")) &&
-    !visible(eggsRow.querySelector(".pin-button")) && !eggsRow.querySelector('input[type="file"]'),
-    "area, planned date and pin controls are not visible until requested and the row owns no file input");
+  const toggle = () => app.shopping.querySelector(`.item-details-button[data-item-id="${eggs.itemId}"]`);
+  check(visible(eggsRow.querySelector(".complete-button")) && toggle()?.getAttribute("aria-expanded") === "false" && app.selection === null,
+    "a list row shows a complete control and a closed Details control");
+  check(!eggsRow.querySelector(".item-area-select") && !eggsRow.querySelector(".item-planning-date-input") &&
+    !eggsRow.querySelector(".pin-button") && !eggsRow.querySelector('input[type="file"]') && !eggsRow.querySelector(".step-summary"),
+    "area, planned date, pin and step-count controls are absent from a plain row and the row owns no file input");
   const attachButton = eggsRow.querySelector(".item-attach-button");
   check(visible(attachButton) && attachButton.textContent === "Add photo" && attachButton.getAttribute("aria-label") === "Add a photo or file to Eggs" &&
     attachButton.getBoundingClientRect().height >= 44,
@@ -97,25 +108,24 @@ export async function mobileUxRegressions(recovery) {
     "one app-owned file input accepts photos and PDFs");
   toggle().focus();
   toggle().click();
-  check(toggle()?.getAttribute("aria-expanded") === "true" && tools()?.hidden === false && toggle().textContent === "Hide details",
-    "Details expands in place");
-  check(document.activeElement === toggle(), "expanding Details keeps focus on the disclosure");
-  const expandedRow = [...app.shopping.querySelectorAll("kin-item")].find((node) => node.record?.itemId === eggs.itemId);
-  check(visible(expandedRow.querySelector(".item-area-select")) && visible(expandedRow.querySelector(".item-planning-date-input")) &&
-    visible(expandedRow.querySelector(".pin-button")) && visible(expandedRow.querySelector(".archive-button")) &&
-    !expandedRow.querySelector(`#tools-${eggs.itemId} kin-attachments`),
-    "expanded Details reveals area, planned date, pin and archive without a second attach control");
-  expandedRow.querySelector(".complete-button").click();
+  check(toggle()?.getAttribute("aria-expanded") === "true" && app.selection?.itemId === eggs.itemId && app.detail.isConnected && app.detail.itemId === eggs.itemId,
+    "Details opens the shared detail view for that item");
+  check(document.activeElement === app.detail.querySelector(".item-detail-title"), "opening details moves focus to the detail heading");
+  check(visible(app.detail.querySelector(".item-area-select")) && visible(app.detail.querySelector(".item-planning-date-input")) &&
+    visible(app.detail.querySelector(".pin-button")) && visible(app.detail.querySelector(".archive-button")) &&
+    app.detail.querySelectorAll(".attachment-add").length === 1 && app.querySelectorAll('input[type="file"]').length === 1,
+    "the detail view holds area, planned date, pin, archive and one Add a photo or file button; the app still owns a single file input");
+  app.detail.querySelector(".complete-button").click();
   await idle();
   const completedRow = [...app.shopping.querySelectorAll("kin-item")].find((node) => node.record?.itemId === eggs.itemId);
-  check(completedRow.classList.contains("item-completed") || completedRow.querySelector(".item-completed"), "completion is visibly marked");
-  check(visible(completedRow.querySelector(".reopen-button")) && completedRow.querySelector(`#tools-${eggs.itemId}`).hidden === false &&
-    app.status.textContent === "Marked complete.",
-    "completion keeps Details open, offers Reopen and confirms");
-  completedRow.querySelector(".reopen-button").click();
+  check(completedRow.querySelector(".item-completed") && completedRow.querySelector(".reopen-button")?.getAttribute("aria-pressed") === "true", "completion is visibly marked on the row");
+  check(app.selection?.itemId === eggs.itemId && app.detail.querySelector(".reopen-button") && app.status.textContent === "Marked complete.",
+    "completion keeps details open for the same record, offers Reopen and confirms");
+  app.detail.querySelector(".reopen-button").click();
   await idle();
-  toggle().click();
-  check(tools()?.hidden === true, "Details collapses again");
+  app.detail.querySelector(".item-detail-close").click();
+  check(app.selection === null && !app.detail.isConnected && document.activeElement === toggle(),
+    "closing details restores focus to the row's Details control");
 
   // 4. Without a household, Today offers the three ways to get started.
   await wait(() => app.householdStatus !== null, "household status event");
@@ -127,7 +137,7 @@ export async function mobileUxRegressions(recovery) {
     `Get started offers create, join and add-device: ${onboardingLabels.join("|")}`);
   visit("today");
   onboardingLabels.length && [...app.onboarding.querySelectorAll("button")][1].click();
-  await wait(() => location.hash === "#more" && app.household.intent === "join", "join intent");
+  await wait(() => location.hash === "#household/people" && app.household.intent === "join", "join intent");
   check(Boolean(app.household.querySelector('input[name="code"]')) &&
     app.household.textContent.includes("never creates a second household") &&
     [...app.household.querySelectorAll("button")].some((button) => button.textContent === "Back"),
@@ -171,7 +181,7 @@ export async function mobileUxRegressions(recovery) {
   app.clearAlert();
 
   // 6. Security settings show passkey state and an inactivity lock preference.
-  visit("more");
+  visit("household/privacy");
   const passkeyStatus = app.security.querySelector("[data-passkey-unlock]");
   check(passkeyStatus?.dataset.passkeyUnlock === "off" && passkeyStatus.textContent.startsWith("Off"),
     "settings show that passkey unlock is off on this device");

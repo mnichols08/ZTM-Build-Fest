@@ -1,5 +1,25 @@
 # Accessibility Contract
 
+## Household workspace shell (unversioned candidate)
+
+The five primary destinations are links in a `nav` labelled "Main": a sticky
+left rail from 720px and a fixed bottom bar with five equal tracks below. The
+current destination carries `aria-current="page"`; secondary destinations are
+links in a labelled `nav` with `aria-current="true"`; the resolved route is
+on `kin-app[data-route]` and in `document.title`. The header exposes Search
+and Lock as labelled controls on every width. Item rows separate the
+complete control (a `button` with `aria-pressed`) from the text control that
+opens details. The detail view is one `section` labelled by its heading; on
+phones it is a modal `dialog` that closes on Escape and returns focus to the
+originating row's Details control; on wider screens it is non-modal and
+Escape closes it without trapping focus. Checklist step ids are rendered
+once (in the detail), so repeated record views create no duplicate ids. The
+reminder editor uses labelled native date and time inputs, an alert for
+validation and a polite preview of the resolved time. Inline save results
+beside a capture field are plain text; the app's single status/alert regions
+remain the only live regions for save outcomes. All controls keep 48px
+targets. Automated coverage: `scripts/workspace-ux-regression.mjs`.
+
 ## v0.14.x application shell
 
 The primary shell uses five keyboard-reachable links with visible labels and

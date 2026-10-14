@@ -6,6 +6,9 @@ import { clearAttachmentProgress, setAttachmentProgress } from "../attachments/a
 import { AttachmentPreviewCache, isImageAttachment } from "../attachments/attachment-preview.js";
 import { CLASSIFICATION_LABELS } from "./kin-compose.js";
 import { passkeyUnlockSupported } from "../security/passkey-unlock.js";
+import { listSegmentForClassification, PRIMARY_DESTINATIONS, resolveRoute, routeHash, SEGMENTS } from "../routes.js";
+import { formatCivilDate } from "../today-view.js";
+import { describePartialCapture, remainingCaptureSteps } from "../capture-plan.js";
 import "./kin-routines.js";
 import "./kin-areas.js";
 import "./kin-notes.js";
@@ -14,10 +17,13 @@ import { EventStore } from "../storage/event-store.js";
 import { SyncCoordinator } from "../sync/sync-coordinator.js";
 import "./kin-compose.js";
 import "./kin-item.js";
+import "./kin-item-detail.js";
 import "./kin-today.js";
 import "./kin-handoff-list.js";
 import "./kin-talk-list.js";
 import "./kin-search.js";
+import "./kin-segment-nav.js";
+import "./kin-sync-status.js";
 import "./kin-pulse.js";
 import "./kin-catch-up.js";
 import "./kin-household.js";
@@ -36,6 +42,7 @@ const SAVE_ERROR =
 const ATTACHMENT_OPEN_ERROR =
   "We couldn't open this attachment. Your existing household information hasn't been deleted.";
 const AUTO_LOCK_KEY = "kin.auto-lock-minutes";
+const INLINE_SAVE_FAILED = "Couldn't save. Your text is still here.";
 
 // Plain-language explanations for sync pauses. The code is kept on the state
 // object for debugging and tests; only the wording changes here.
@@ -45,6 +52,16 @@ const SYNC_PAUSE_MESSAGES = {
   authentication_required: "Sign in to your household again to keep syncing. Your changes are saved on this device until then.",
   connection_unavailable: "Your changes are saved on this device and will sync when you're connected.",
 };
+
+const NAV_ICONS = {
+  today: '<path d="M3 10.8 12 3l9 7.8"/><path d="M5.5 9.5V20h13V9.5M9.5 20v-6h5v6"/>',
+  lists: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h5"/>',
+  routines: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.5 9a7 7 0 0 1 12-2L20 12M4 12l2.5 5a7 7 0 0 0 12-2"/>',
+  updates: '<path d="M8 10h8M8 14h5"/><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-4l-3 3-3-3H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/>',
+  household: '<path d="M4 20V9l8-6 8 6v11"/><path d="M9 20v-5h6v5"/><circle cx="12" cy="10.5" r="1.6"/>',
+};
+const SEARCH_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/></svg>';
+const LOCK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg>';
 
 function readAutoLockPreference() {
   try {
@@ -94,9 +111,10 @@ class KinApp extends HTMLElement {
     this.previewProvider = (record, options) => this.provideAttachmentPreview(record, options);
     this.viewerUrl = null;
     this.viewerOpener = null;
+    this.pendingCapture = null;
     this.householdStatus = null;
     this.passkeyPromptDismissed = false;
-    this.onHouseholdStatus = (event) => { this.householdStatus = event.detail; this.renderOnboarding(); };
+    this.onHouseholdStatus = (event) => { this.householdStatus = event.detail; this.renderOnboarding(); this.updateSyncChip(); };
     this.onSecurityChanged = () => this.renderOnboarding();
     this.autoLockMinutes = readAutoLockPreference();
     this.autoLockTimer = null;
@@ -105,14 +123,21 @@ class KinApp extends HTMLElement {
     this.onRetryAttachments = () => { if (this.syncCoordinator) void this.syncCoordinator.syncNow(); else void this.configureSyncCoordinator(); };
     this.onChangeResponsibility = (event) => this.handleChangeResponsibility(event);
     this.onReplenishStaple = (event) => this.handleReplenishStaple(event);
+    this.syncState = null;
+    // Follows the browser's own offline/online events, like the state notice.
+    this.offline = typeof navigator !== "undefined" && navigator.onLine === false;
     this.onOffline = () => {
+      this.offline = true;
       this.stateNotice.textContent = this.syncCoordinator || this.householdStatus?.identity
         ? "You're offline. Your changes are saved on this device and will sync when you're connected."
         : "You're offline. Your changes are saved on this device.";
       this.stateNotice.hidden = false;
+      this.updateSyncChip();
     };
     this.onOnline = () => {
+      this.offline = false;
       this.stateNotice.hidden = true;
+      this.updateSyncChip();
       if (!this.vault || this.vault.locked || !this.store) return;
       this.setStatus(this.syncCoordinator ? "Back online. Syncing…" : "Back online.");
       if (this.syncCoordinator) void this.syncCoordinator.syncNow();
@@ -148,12 +173,15 @@ class KinApp extends HTMLElement {
     this.onMaintenanceIntent = (event) => this.saveMaintenanceEvent(event.type.slice(4), event.detail);
     this.onItemAreaChange = (event) => this.saveArea({ ...event.detail, action: "assign-item-area" });
     this.onItemPlanningDateChange = (event) =>
-      this.saveItemPlanningDate(event.detail, event.target.closest("kin-today"));
+      this.saveItemPlanningDate(event.detail, event.target.closest("kin-today, kin-item-detail"));
     this.onPinIntent = (event) => this.savePin(event.detail);
-    this.onOpenPin = (event) => this.openPinnedItem(event.detail.itemId);
+    this.onOpenPin = (event) => this.openPinnedItem(event.detail.itemId, event.detail.opener);
+    this.onOpenItem = (event) => this.openItemDetail(event.detail.itemId, { opener: event.detail.opener ?? event.target });
+    this.onCloseItemDetail = () => this.closeItemDetail({ restoreFocus: true });
+    this.onOpenSearchResult = (event) => this.handleOpenSearchResult(event.detail);
     this.onPlaybookIntent = (event) => this.handlePlaybookIntent(event);
     this.onLocalReminder = (event) => this.handleLocalReminder(event.detail);
-    this.onCancelLocalReminder = (event) => { this.localReminders.cancel(event.detail.id); this.setStatus("Reminder canceled on this device."); };
+    this.onCancelLocalReminder = (event) => { this.localReminders.cancel(event.detail.id); this.renderReminders(); this.setStatus("Reminder canceled on this device."); };
     this.onModeChange = () => this.saveMode(this.modeSelect.value);
     this.pulseTimer = null;
     this.catchUpCursor = null;
@@ -164,33 +192,37 @@ class KinApp extends HTMLElement {
     this.onSyncStop = (event) => {
       this.syncCoordinator?.stop();
       this.syncCoordinator = null;
+      this.syncState = null;
+      this.updateSyncChip();
       this.setStatus(event.detail?.message ?? "Household sync has stopped.");
     };
     this.onSyncState = (value) => this.handleSyncState(value);
     this.onHashChange = () => this.showPageFromLocation();
     this.onNavigationClick = (event) => {
-      const link = event.target.closest?.("a[data-page]");
+      const link = event.target.closest?.("a[href^='#']");
       if (
         !link || event.defaultPrevented || event.button !== 0 ||
         event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
       ) return;
       event.preventDefault();
-      history.pushState(null, "", link.hash);
-      this.showPageFromLocation();
+      this.navigate(link.getAttribute("href"));
     };
-    this.onHandoffTabClick = (event) => {
-      const tab = event.target.closest?.('[role="tab"][data-panel]');
-      if (tab) this.showHandoffPanel(tab.dataset.panel, true);
-    };
-    this.onHandoffTabKeydown = (event) => {
-      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-      const tabs = [...this.handoffTabs.querySelectorAll('[role="tab"]')];
-      const current = tabs.indexOf(event.target);
-      if (current < 0) return;
-      event.preventDefault();
-      const step = event.key === "ArrowRight" ? 1 : -1;
-      tabs[(current + step + tabs.length) % tabs.length].focus();
-      this.showHandoffPanel(tabs[(current + step + tabs.length) % tabs.length].dataset.panel);
+    // Selection: one canonical item id plus where it was opened from. The
+    // same <kin-item-detail> element is re-homed between the mobile sheet,
+    // the inline column and the side column as the viewport changes.
+    this.selection = null;
+    this.detailMode = null;
+    this.rehomingDetail = false;
+    this.pageScroll = new Map();
+    this.phoneQuery = typeof matchMedia === "function" ? matchMedia("(max-width: 719px)") : null;
+    this.wideQuery = typeof matchMedia === "function" ? matchMedia("(min-width: 1180px)") : null;
+    this.onLayoutChange = () => this.mountDetail();
+    this.onDetailKeydown = (event) => {
+      if (event.defaultPrevented || event.key !== "Escape" || this.viewer?.open) return;
+      if (this.selection && this.detailMode !== "sheet") {
+        event.preventDefault();
+        this.closeItemDetail({ restoreFocus: true });
+      }
     };
     this.onSetPulse = (event) => {
       const timestamp = Date.now();
@@ -303,6 +335,9 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:cancel-local-reminder", this.onCancelLocalReminder);
     this.addEventListener("kin:pin-intent", this.onPinIntent);
     this.addEventListener("kin:open-pin", this.onOpenPin);
+    this.addEventListener("kin:open-item", this.onOpenItem);
+    this.addEventListener("kin:close-item-detail", this.onCloseItemDetail);
+    this.addEventListener("kin:open-search-result", this.onOpenSearchResult);
     this.addEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.addEventListener(`kin:${action}`, this.onNoteIntent);
     for (const action of ["save-reference-record", "archive-reference-record"]) this.addEventListener(`kin:${action}`, this.onReferenceIntent);
@@ -321,11 +356,15 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:sync-now", this.onSyncNow);
     this.addEventListener("kin:sync-stop", this.onSyncStop);
     this.addEventListener("kin:lock", this.onLockRequest);
+    this.addEventListener("keydown", this.onDetailKeydown);
     window.addEventListener("hashchange", this.onHashChange);
     window.addEventListener("popstate", this.onHashChange);
     window.addEventListener("offline", this.onOffline);
     window.addEventListener("online", this.onOnline);
     window.addEventListener("pagehide", this.onPageHide);
+    this.phoneQuery?.addEventListener("change", this.onLayoutChange);
+    this.wideQuery?.addEventListener("change", this.onLayoutChange);
+    window.addEventListener("resize", this.onLayoutChange);
     for (const action of [
       "create-routine",
       "complete-routine-occurrence",
@@ -378,23 +417,40 @@ class KinApp extends HTMLElement {
     clearLegacyDrafts();
     const header = document.createElement("header");
     header.className = "site-header";
-    const brand = document.createElement("div");
+    const brand = document.createElement("a");
     brand.className = "brand";
-    const title = document.createElement("span");
-    title.textContent = "Kin";
-    title.className = "brand-name";
+    brand.href = "#today";
+    brand.setAttribute("aria-label", "Kin — Today");
     const mark = document.createElement("img");
     mark.className = "brand-mark";
     mark.src = "/icon.svg";
     mark.alt = "";
-    const tagline = document.createElement("p");
-    tagline.textContent = "A little more in step.";
-    const brandCopy = document.createElement("div");
-    brandCopy.className = "brand-copy";
-    brandCopy.append(title, tagline);
-    brand.append(mark, brandCopy);
-    header.append(brand);
-
+    const title = document.createElement("span");
+    title.textContent = "Kin";
+    title.className = "brand-name";
+    brand.append(mark, title);
+    brand.addEventListener("click", this.onNavigationClick);
+    // Header tools exist only while unlocked: search entry, truthful sync
+    // state, and a lock action that is always one tap away.
+    const tools = document.createElement("div");
+    tools.className = "site-tools";
+    tools.hidden = true;
+    this.searchLink = document.createElement("a");
+    this.searchLink.className = "header-search";
+    this.searchLink.href = "#search";
+    this.searchLink.innerHTML = `${SEARCH_ICON}<span>Search</span>`;
+    this.searchLink.setAttribute("aria-label", "Search household");
+    this.searchLink.addEventListener("click", this.onNavigationClick);
+    this.syncChip = document.createElement("kin-sync-status");
+    this.lockButton = document.createElement("button");
+    this.lockButton.type = "button";
+    this.lockButton.className = "header-lock";
+    this.lockButton.innerHTML = `${LOCK_ICON}<span>Lock</span>`;
+    this.lockButton.setAttribute("aria-label", "Lock Kin");
+    this.lockButton.addEventListener("click", () => this.lockHousehold());
+    tools.append(this.searchLink, this.syncChip, this.lockButton);
+    this.siteTools = tools;
+    header.append(brand, tools);
     this.header = header;
 
     const shell = document.createElement("div");
@@ -403,22 +459,15 @@ class KinApp extends HTMLElement {
 
     const nav = document.createElement("nav");
     nav.className = "primary-nav";
-    nav.setAttribute("aria-label", "Household");
+    nav.setAttribute("aria-label", "Main");
     nav.hidden = true;
-    const destinations = [
-      ["today", "Today", '<path d="M3 10.8 12 3l9 7.8"/><path d="M5.5 9.5V20h13V9.5M9.5 20v-6h5v6"/>'],
-      ["lists", "Lists", '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h8M8 17h5"/>'],
-      ["routines", "Routines", '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.5 9a7 7 0 0 1 12-2L20 12M4 12l2.5 5a7 7 0 0 0 12-2"/>'],
-      ["handoff", "Handoff", '<path d="M8 10h8M8 14h5"/><path d="M5 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-4l-3 3-3-3H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"/>'],
-      ["more", "More", '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>'],
-    ];
     this.navLinks = new Map();
-    for (const [id, label, icon] of destinations) {
+    for (const { id, label } of PRIMARY_DESTINATIONS) {
       const link = document.createElement("a");
       link.className = "nav-link";
-      link.href = `#${id}`;
+      link.href = routeHash(id);
       link.dataset.page = id;
-      link.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icon}</svg><span>${label}</span>`;
+      link.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_ICONS[id]}</svg><span>${label}</span>`;
       nav.append(link);
       this.navLinks.set(id, link);
     }
@@ -429,8 +478,8 @@ class KinApp extends HTMLElement {
     main.id = "main";
     main.tabIndex = -1;
     main.setAttribute("aria-busy", "true");
-    // The invitation route exposes only the enrollment surface until authorization.
     main.hidden = true;
+    main.addEventListener("click", this.onNavigationClick);
     this.main = main;
     this.catchUp = document.createElement("kin-catch-up");
     this.today = document.createElement("kin-today");
@@ -444,6 +493,7 @@ class KinApp extends HTMLElement {
     this.pulse = document.createElement("kin-pulse");
     this.routines = document.createElement("kin-routines");
     this.areas = document.createElement("kin-areas");
+    this.detail = document.createElement("kin-item-detail");
     this.buildViews(main);
     shell.append(nav, main);
 
@@ -474,6 +524,7 @@ class KinApp extends HTMLElement {
     this.retryButton.textContent = "Try again";
     this.retryButton.hidden = true;
     feedback.append(this.status, this.alert, this.retryButton);
+    this.feedback = feedback;
 
     this.security = document.createElement("kin-security");
     this.security.onUnlocked = (vault) => this.openUnlockedHousehold(vault);
@@ -490,7 +541,8 @@ class KinApp extends HTMLElement {
     updateNow.textContent = "Update now";
     updateNow.addEventListener("click", () => {
       const focusedEditor = document.activeElement?.matches?.("input, textarea, select, [contenteditable='true']");
-      const hasDraft = this.compose?.input?.value.trim() || this.routines?.input?.value.trim() || this.routines?.playbookTitle?.value.trim() || this.routines?.playbookEntries?.value.trim() || this.notes?.editor?.title.trim() || this.notes?.editor?.body.trim();
+      const hasDraft = this.compose?.input?.value.trim() || this.routines?.hasDraft || this.detail?.hasDraft || this.notes?.editor?.title.trim() || this.notes?.editor?.body.trim() ||
+        [this.needs, this.shopping, this.staples].some((list) => list.composer?.input?.value.trim());
       if (this.busy || focusedEditor || hasDraft) {
         this.setStatus("Finish or save your current edit before updating Kin.");
         return;
@@ -508,6 +560,8 @@ class KinApp extends HTMLElement {
     this.retryButton.addEventListener("click", () => this.retryAction?.());
     this.viewer = this.buildAttachmentViewer();
     this.append(this.viewer);
+    this.detailSheet = this.buildDetailSheet();
+    this.append(this.detailSheet);
     this.attachmentInput = this.buildAttachmentInput();
     this.append(this.attachmentInput);
     this.showPageFromLocation();
@@ -589,6 +643,22 @@ class KinApp extends HTMLElement {
     return dialog;
   }
 
+  // The mobile presentation of item details: a full-height modal sheet that
+  // hosts the same <kin-item-detail> element the other layouts use.
+  buildDetailSheet() {
+    const dialog = document.createElement("dialog");
+    dialog.className = "detail-sheet";
+    dialog.setAttribute("aria-label", "Item details");
+    dialog.addEventListener("close", () => {
+      // close() delivers this event asynchronously, so a re-home or an app-
+      // initiated close leaves a flag that outlives the synchronous call.
+      if (this.sheetClosingProgrammatically) { this.sheetClosingProgrammatically = false; return; }
+      this.closeItemDetail({ restoreFocus: true, fromDialog: true });
+    });
+    dialog.addEventListener("cancel", (event) => { event.preventDefault(); if (!this.rehomingDetail) this.closeItemDetail({ restoreFocus: true }); });
+    return dialog;
+  }
+
   releaseViewer() {
     if (this.viewerUrl) URL.revokeObjectURL(this.viewerUrl);
     this.viewerUrl = null;
@@ -599,7 +669,16 @@ class KinApp extends HTMLElement {
     }
     const opener = this.viewerOpener;
     this.viewerOpener = null;
-    if (opener?.isConnected) opener.focus();
+    if (opener?.isConnected) { opener.focus(); return; }
+    // The row that opened the viewer may have been rebuilt meanwhile (a sync
+    // tick, a progress update); return focus to the equivalent control.
+    const { attachmentId, action } = opener?.dataset ?? {};
+    if (!attachmentId) return;
+    const matches = (root) => [...(root?.querySelectorAll?.("[data-attachment-id]") ?? [])]
+      .find((node) => node.dataset.attachmentId === attachmentId && node.dataset.action === action &&
+        !node.closest("[hidden]") && node.getClientRects().length > 0);
+    const next = matches(this.detail) ?? matches(this);
+    next?.focus();
   }
 
   closeViewer() {
@@ -617,8 +696,7 @@ class KinApp extends HTMLElement {
     const passkeys = this.security?.passkeyWrappers?.length ?? 0;
     const heading = document.createElement("h2");
     const goTo = (intent) => {
-      history.pushState(null, "", "#more");
-      this.showPageFromLocation();
+      this.navigate("#household/people");
       this.household?.startIntent?.(intent);
     };
     if (status && !status.identity && !status.claimState && status.lifecycle !== "deleted" && status.lifecycle !== "deletion_pending") {
@@ -650,12 +728,12 @@ class KinApp extends HTMLElement {
       heading.textContent = status.claimState === "Confirmed" ? "Almost there" : "Waiting for approval";
       const intro = document.createElement("p");
       intro.textContent = status.claimState === "Confirmed"
-        ? "Your device was approved. Open More → Household to compare the device key and finish activating this device."
+        ? "Your device was approved. Open Household → People & devices to compare the device key and finish activating this device."
         : "This device needs approval from an existing household member. Keep Kin open on both devices and compare the device keys together.";
       const open = document.createElement("button");
       open.type = "button";
-      open.textContent = "Open household";
-      open.addEventListener("click", () => { history.pushState(null, "", "#more"); this.showPageFromLocation(); this.household?.scrollIntoView?.({ block: "start" }); });
+      open.textContent = "Open People & devices";
+      open.addEventListener("click", () => { this.navigate("#household/people"); this.household?.scrollIntoView?.({ block: "start" }); });
       card.append(heading, intro, open);
       card.hidden = false;
       return;
@@ -752,100 +830,145 @@ class KinApp extends HTMLElement {
   }
 
   buildViews(main) {
-    const page = (id, title, description) => {
+    const page = (id, title, description = null) => {
       const section = document.createElement("section");
       section.className = "app-view";
       section.id = id;
+      section.dataset.page = id;
       section.setAttribute("aria-labelledby", `${id}-title`);
       const intro = document.createElement("header");
       intro.className = "page-intro";
       const heading = document.createElement("h1");
       heading.id = `${id}-title`;
+      heading.tabIndex = -1;
       heading.textContent = title;
       intro.append(heading);
       if (description) {
         const supporting = document.createElement("p");
+        supporting.className = "page-lead";
         supporting.textContent = description;
         intro.append(supporting);
       }
       section.append(intro);
       return section;
     };
-
+    const segmentNav = (pageId, label) => {
+      const nav = document.createElement("kin-segment-nav");
+      nav.setAttribute("label", label);
+      nav.segments = SEGMENTS[pageId].map((entry) => ({ id: entry.id, label: entry.id === "hub" ? "Overview" : entry.label, hash: routeHash(pageId, entry.id) }));
+      return nav;
+    };
     this.pages = new Map();
-    const today = page("today", "A little less to carry.", "A place for what needs doing, remembering, or a little conversation.");
+    this.segmentNavs = new Map();
+    this.segmentPanels = new Map();
+
+    // Today: a practical heading (the date), the capture field, catch-up, the
+    // onboarding card while it applies, and the composition.
+    const today = page("today", "Today");
+    this.todayDate = document.createElement("p");
+    this.todayDate.className = "page-lead today-date";
+    today.querySelector(".page-intro").append(this.todayDate);
+    this.compose.setAttribute("mode", "today");
+    this.compose.setAttribute("scope", "today");
     this.catchUp.setAttribute("aria-label", "Catch up since you last looked");
     this.today.display = "today";
     this.today.previews = this.previewProvider;
     this.onboarding = document.createElement("section");
     this.onboarding.className = "today-section onboarding-card";
     this.onboarding.hidden = true;
-    today.append(this.catchUp, this.onboarding, this.compose, this.today);
+    today.append(this.compose, this.catchUp, this.onboarding, this.today);
 
-    const lists = page("lists", "Lists", "Needs, Shopping, and Staples. Add to a list right where it lives.");
+    // Lists: one list at a time, each with its own quick-add; export lives in
+    // the list actions with its warning at the point of use.
+    const lists = page("lists", "Lists");
+    const listsNav = segmentNav("lists", "Lists");
+    this.segmentNavs.set("lists", listsNav);
+    lists.append(listsNav);
+    const listActions = document.createElement("details");
+    listActions.className = "list-actions";
+    const listActionsSummary = document.createElement("summary");
+    listActionsSummary.textContent = "List actions";
     this.calendarExportButton = document.createElement("button");
     this.calendarExportButton.type = "button";
     this.calendarExportButton.className = "calendar-export-button";
     this.calendarExportButton.textContent = "Download calendar (.ics)";
-    this.calendarExportButton.setAttribute(
-      "aria-label",
-      "Download active planned Items as an all-day calendar",
-    );
+    this.calendarExportButton.setAttribute("aria-label", "Download active planned Items as an all-day calendar");
     this.calendarExportButton.disabled = true;
     this.calendarExportButton.addEventListener("click", () => this.downloadCalendar());
     const calendarExportNote = document.createElement("p");
-    calendarExportNote.textContent =
-      "The downloaded .ics file is unencrypted and contains planned Item text.";
-    lists.querySelector(".page-intro").append(
-      this.calendarExportButton,
-      calendarExportNote,
-    );
+    calendarExportNote.className = "section-hint";
+    calendarExportNote.textContent = "Exports every open item that has a planned date, from all lists. The downloaded .ics file is not encrypted and contains the item text.";
+    listActions.append(listActionsSummary, this.calendarExportButton, calendarExportNote);
+    lists.append(listActions);
     this.needs.display = "need";
     this.shopping.display = "shopping";
     this.staples.display = "staple";
-    for (const list of [this.needs, this.shopping, this.staples]) list.previews = this.previewProvider;
-    lists.append(this.needs, this.shopping, this.staples);
+    const listPanels = new Map([["todo", this.needs], ["shopping", this.shopping], ["staples", this.staples]]);
+    for (const [segment, list] of listPanels) {
+      list.previews = this.previewProvider;
+      list.dataset.segment = segment;
+      lists.append(list);
+    }
+    this.segmentPanels.set("lists", listPanels);
 
-    const search = page("search", "Search", "Find household context without sending your search outside this device.");
+    const search = page("search", "Search");
     search.append(this.search);
 
-    const routines = page("routines", "Routines", "Small household rhythms, without streaks or pressure.");
-    routines.append(this.routines);
+    const routines = page("routines", "Routines");
+    const routinesNav = segmentNav("routines", "Routines");
+    this.segmentNavs.set("routines", routinesNav);
+    routines.append(routinesNav, this.routines);
 
-    const handoff = page("handoff", "Handoff", "Pass along what will help someone pick things up.");
-    const tablist = document.createElement("div");
-    tablist.className = "section-tabs";
-    tablist.setAttribute("role", "tablist");
-    tablist.setAttribute("aria-label", "Handoff and Talk");
-    this.handoffTabs = tablist;
+    const updates = page("updates", "Updates", "Handoffs pass context to someone; Talk keeps topics for a calm moment.");
+    const updatesNav = segmentNav("updates", "Updates");
+    this.segmentNavs.set("updates", updatesNav);
     const handoffPanel = document.createElement("section");
     handoffPanel.id = "handoffs-panel";
-    handoffPanel.setAttribute("role", "tabpanel");
-    handoffPanel.setAttribute("aria-labelledby", "handoffs-tab");
+    handoffPanel.setAttribute("aria-label", "Handoffs");
     const talkPanel = document.createElement("section");
     talkPanel.id = "talk-panel";
-    talkPanel.setAttribute("role", "tabpanel");
-    talkPanel.setAttribute("aria-labelledby", "talk-tab");
-    for (const [id, label, panel] of [
-      ["handoffs", "Handoffs", handoffPanel],
-      ["talk", "Talk", talkPanel],
-    ]) {
-      const tab = document.createElement("button");
-      tab.type = "button";
-      tab.id = `${id}-tab`;
-      tab.setAttribute("role", "tab");
-      tab.setAttribute("aria-controls", panel.id);
-      tab.dataset.panel = id;
-      tab.textContent = label;
-      tablist.append(tab);
-    }
+    talkPanel.setAttribute("aria-label", "Talk");
     handoffPanel.append(this.handoffs);
     talkPanel.append(this.talks);
-    handoff.append(tablist, handoffPanel, talkPanel);
-    tablist.addEventListener("click", this.onHandoffTabClick);
-    tablist.addEventListener("keydown", this.onHandoffTabKeydown);
+    updates.append(updatesNav, handoffPanel, talkPanel);
+    this.segmentPanels.set("updates", new Map([["handoffs", handoffPanel], ["talk", talkPanel]]));
 
-    const more = page("more", "More", "Household context, people, devices, and continuity.");
+    // Household: an overview plus four secondary destinations.
+    const household = page("household", "Household");
+    const householdNav = segmentNav("household", "Household");
+    this.segmentNavs.set("household", householdNav);
+    household.append(householdNav);
+    const hub = document.createElement("section");
+    hub.className = "household-hub";
+    hub.setAttribute("aria-label", "Household overview");
+    this.householdGlance = document.createElement("p");
+    this.householdGlance.className = "household-glance";
+    const hubLinks = document.createElement("ul");
+    hubLinks.className = "hub-links";
+    for (const [segment, description] of [
+      ["notes", "Notes, reference details, and maintenance history."],
+      ["areas", "Areas, household mode, and Pulse."],
+      ["people", "Members, pairing, trusted devices, and access."],
+      ["privacy", "Lock, passkeys, recovery key, export, and restore."],
+    ]) {
+      const entry = SEGMENTS.household.find((candidate) => candidate.id === segment);
+      const item = document.createElement("li");
+      const link = document.createElement("a");
+      link.className = "hub-link";
+      link.href = routeHash("household", segment);
+      const name = document.createElement("span");
+      name.className = "hub-link-name";
+      name.textContent = entry.label;
+      const text = document.createElement("span");
+      text.className = "hub-link-text";
+      text.textContent = description;
+      link.append(name, text);
+      item.append(link);
+      hubLinks.append(item);
+    }
+    hub.append(this.householdGlance, hubLinks);
+    const hubTools = document.createElement("div");
+    hubTools.className = "hub-tools";
     this.installButton = document.createElement("button");
     this.installButton.type = "button";
     this.installButton.textContent = "Install Kin";
@@ -859,12 +982,23 @@ class KinApp extends HTMLElement {
       await prompt.userChoice;
     });
     if (this.deferredInstallPrompt) this.installButton.hidden = false;
-    more.append(this.installButton);
     const searchLink = document.createElement("a");
     searchLink.className = "more-search-link";
     searchLink.href = "#search";
     searchLink.textContent = "Search household";
-    more.append(searchLink);
+    hubTools.append(searchLink, this.installButton);
+    hub.append(hubTools);
+
+    const notesPage = document.createElement("section");
+    notesPage.className = "household-subpage";
+    notesPage.setAttribute("aria-label", "Notes & reference");
+    this.notes = document.createElement("kin-notes");
+    this.notes.previews = this.previewProvider;
+    notesPage.append(this.notes);
+
+    const areasPage = document.createElement("section");
+    areasPage.className = "household-subpage";
+    areasPage.setAttribute("aria-label", "Areas & status");
     const modeSection = document.createElement("section");
     modeSection.className = "today-section household-mode";
     const modeHeading = document.createElement("h2");
@@ -887,58 +1021,285 @@ class KinApp extends HTMLElement {
     }
     this.modeSelect.addEventListener("change", this.onModeChange);
     const modeHint = document.createElement("p");
-    modeHint.textContent = "Routine occurrences pause outside Normal; routine definitions stay unchanged. Modes do not grant or end access. Guest mode does not add a Temporary Member.";
+    modeHint.className = "section-hint";
+    modeHint.textContent = "Routines pause while the household is in Vacation, Guests, or Rest; their definitions stay as they are. Nothing else changes: lists, handoffs, and access are unaffected, and Guests does not add a member.";
     modeSection.append(modeHeading, modeLabel, this.modeSelect, modeHint);
-    more.append(modeSection);
-    more.append(this.pulse);
-    this.household = document.createElement("kin-household");
-    this.moreSecurity = document.createElement("section");
-    this.moreSecurity.className = "more-security";
-    const securityHeading = document.createElement("h2");
-    securityHeading.textContent = "Privacy & continuity";
-    this.moreSecurity.append(securityHeading);
-    more.append(this.moreSecurity);
-    more.insertBefore(this.areas, this.moreSecurity);
-    this.notes = document.createElement("kin-notes");
-    this.notes.previews = this.previewProvider;
-    more.insertBefore(this.notes, this.moreSecurity);
+    areasPage.append(this.areas, modeSection, this.pulse);
 
-    for (const section of [today, lists, search, routines, handoff, more]) {
+    const peoplePage = document.createElement("section");
+    peoplePage.className = "household-subpage";
+    peoplePage.setAttribute("aria-label", "People & devices");
+    this.household = document.createElement("kin-household");
+    this.peoplePage = peoplePage;
+
+    const privacyPage = document.createElement("section");
+    privacyPage.className = "household-subpage";
+    privacyPage.setAttribute("aria-label", "Privacy & recovery");
+    const privacyLead = document.createElement("p");
+    privacyLead.className = "section-hint";
+    privacyLead.textContent = "Your household is encrypted on this device. Lock Kin whenever you step away; closing or reloading always locks it.";
+    privacyPage.append(privacyLead);
+    this.privacyPage = privacyPage;
+    // Kept for callers that still address the former More security block.
+    this.moreSecurity = privacyPage;
+
+    household.append(hub, notesPage, areasPage, peoplePage, privacyPage);
+    this.segmentPanels.set("household", new Map([["hub", hub], ["notes", notesPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage]]));
+
+    for (const section of [today, lists, search, routines, updates, household]) {
       this.pages.set(section.id, section);
       main.append(section);
     }
-    this.showHandoffPanel("handoffs");
+    // The conditional side/inline column for item details.
+    this.detailPanel = document.createElement("aside");
+    this.detailPanel.className = "detail-panel";
+    this.detailPanel.setAttribute("aria-label", "Item details");
+    this.detailPanel.hidden = true;
+    main.append(this.detailPanel);
+    this.showPageFromLocation();
+  }
+
+  navigate(hash) {
+    const route = resolveRoute({ hash, pathname: location.pathname });
+    if (location.hash !== route.hash) history.pushState(null, "", route.hash);
     this.showPageFromLocation();
   }
 
   showPageFromLocation() {
     if (!this.pages || !this.navLinks) return;
-    const requested = location.hash.slice(1);
-    const active = this.pages.has(requested) ? requested : "today";
-    const labels = { today: "Today", lists: "Lists", search: "Search", routines: "Routines", handoff: "Handoff", more: "More" };
-    const changed = this.activePage !== active;
-    this.activePage = active;
-    document.title = `${labels[active]} — Kin`;
-    if (changed && this.routeAnnouncement) this.routeAnnouncement.textContent = `${labels[active]} view`;
-    const currentDestination = active === "search" ? "more" : active;
-    for (const [id, section] of this.pages) section.hidden = id !== active;
+    const route = resolveRoute({ hash: location.hash, pathname: location.pathname });
+    const previous = this.route ?? null;
+    const changed = previous?.canonical !== route.canonical;
+    if (previous && changed) this.pageScroll.set(previous.canonical, window.scrollY);
+    this.route = route;
+    this.activePage = route.page;
+    this.dataset.route = route.canonical;
+    document.title = `${route.title} — Kin`;
+    if (changed && this.routeAnnouncement) this.routeAnnouncement.textContent = `${route.title} view`;
+    for (const [id, section] of this.pages) section.hidden = id !== route.page;
     for (const [id, link] of this.navLinks) {
-      if (id === currentDestination) link.setAttribute("aria-current", "page");
+      if (id === route.destination) link.setAttribute("aria-current", "page");
       else link.removeAttribute("aria-current");
+    }
+    for (const [pageId, nav] of this.segmentNavs) if (pageId === route.page) nav.current = route.segment;
+    for (const [pageId, panels] of this.segmentPanels) {
+      if (pageId !== route.page) continue;
+      for (const [segment, panel] of panels) panel.hidden = segment !== route.segment;
+    }
+    if (route.page === "routines") this.routines.view = route.segment;
+    // Details stay open only within the page that opened them.
+    if (this.selection && this.selection.page !== route.page) this.closeItemDetail({ restoreFocus: false });
+    this.mountDetail();
+    if (changed && previous) {
+      const remembered = this.pageScroll.get(route.canonical) ?? 0;
+      requestAnimationFrame(() => window.scrollTo({ top: remembered, behavior: "auto" }));
+      if (route.page === "search") this.search.focusInput?.();
     }
   }
 
+  // Kept for callers that switched the former Handoff/Talk tabs directly.
   showHandoffPanel(id, focus = false) {
-    if (!this.handoffTabs) return;
-    const active = id === "talk" ? "talk" : "handoffs";
-    for (const tab of this.handoffTabs.querySelectorAll('[role="tab"]')) {
-      const selected = tab.dataset.panel === active;
-      tab.setAttribute("aria-selected", String(selected));
-      tab.tabIndex = selected ? 0 : -1;
-      if (focus && selected) tab.focus();
+    const segment = id === "talk" ? "talk" : "handoffs";
+    this.navigate(routeHash("updates", segment));
+    if (focus) this.segmentNavs.get("updates")?.focusCurrent();
+  }
+
+  // --- Item details -------------------------------------------------------
+
+  currentCivilDate() { return projectionContext().civilDate; }
+
+  layoutMode() {
+    if (this.phoneQuery?.matches) return "sheet";
+    if (this.wideQuery?.matches) return "side";
+    return "inline";
+  }
+
+  openItemDetail(itemId, { opener = null, stepId = null, origin = null } = {}) {
+    if (!this.state || !this.vault || this.vault.locked) return;
+    const record = this.state.items.find((item) => item.itemId === itemId) ?? null;
+    const page = this.route?.page ?? "today";
+    const sameItem = this.selection?.itemId === itemId;
+    this.selection = {
+      itemId,
+      page,
+      opener: sameItem ? this.selection.opener : (opener?.isConnected ? opener : this.selection?.opener ?? null),
+      origin: origin ?? (sameItem ? this.selection?.origin : null),
+      // The inline presentation hides the list; remember where it was scrolled.
+      scrollY: sameItem ? this.selection.scrollY : window.scrollY,
+    };
+    this.detail.itemId = itemId;
+    this.detail.closeLabel = this.selection.origin === "search" ? "Back to search" : this.layoutMode() === "inline" ? "Back to list" : "Close";
+    this.feedDetail(record);
+    this.mountDetail();
+    this.renderSelection();
+    if (stepId) this.detail.revealStep(stepId);
+    else if (!sameItem) this.detail.focusHeading();
+  }
+
+  feedDetail(record = null) {
+    const detail = this.detail;
+    if (!detail || !this.selection) return;
+    const item = record ?? this.state?.items.find((candidate) => candidate.itemId === this.selection.itemId) ?? null;
+    detail.update({
+      today: this.currentCivilDate(),
+      previews: this.previewProvider,
+      areaOptions: this.state?.areas ?? [],
+      pinned: (this.state?.pins ?? []).some((pin) => pin.targetKind === "item" && pin.targetId === this.selection.itemId),
+      pinLimitReached: (this.state?.pins ?? []).length >= 10,
+      attachments: this.attachmentRows,
+      responsibilityContext: this.responsibilityContext(),
+      reminder: this.localReminders.entries.get(`item:${this.selection.itemId}`) ?? null,
+      item,
+    });
+    detail.disabled = this.busy || !this.store;
+  }
+
+  responsibilityContext() {
+    const memberId = this.syncCoordinator?.identity?.memberId ?? this.store?.actorId ?? null;
+    return { responsibilities: this.state?.responsibilities ?? [], memberId, memberIds: this.activeMemberIds ?? (memberId ? [memberId] : []) };
+  }
+
+  // Places the single detail element according to the current layout.
+  mountDetail() {
+    if (!this.detail || !this.detailPanel || !this.detailSheet) return;
+    const open = Boolean(this.selection && this.vault && !this.vault.locked);
+    const mode = open ? this.layoutMode() : null;
+    const previousMode = this.detailMode;
+    if (mode === previousMode && open && this.detail.parentElement) return;
+    this.rehomingDetail = true;
+    try {
+      if (previousMode === "sheet" && mode !== "sheet" && this.detailSheet.open) { this.sheetClosingProgrammatically = true; this.detailSheet.close(); }
+      if (!open) {
+        this.detail.remove();
+        this.detailPanel.hidden = true;
+        this.detailPanel.classList.remove("detail-panel-inline", "detail-panel-side");
+        this.main?.classList.remove("has-detail-side", "has-detail-inline");
+        this.detailMode = null;
+        return;
+      }
+      this.detail.mode = mode;
+      if (mode === "sheet") {
+        this.detailPanel.hidden = true;
+        this.detailPanel.classList.remove("detail-panel-inline", "detail-panel-side");
+        this.main?.classList.remove("has-detail-side", "has-detail-inline");
+        this.detailSheet.append(this.detail);
+        if (!this.detailSheet.open) this.detailSheet.showModal();
+      } else {
+        this.detailPanel.append(this.detail);
+        this.detailPanel.hidden = false;
+        this.detailPanel.classList.toggle("detail-panel-inline", mode === "inline");
+        this.detailPanel.classList.toggle("detail-panel-side", mode === "side");
+        this.main?.classList.toggle("has-detail-side", mode === "side");
+        this.main?.classList.toggle("has-detail-inline", mode === "inline");
+      }
+      this.detail.closeLabel = this.selection.origin === "search" ? "Back to search" : mode === "inline" ? "Back to list" : "Close";
+      this.detailMode = mode;
+    } finally {
+      this.rehomingDetail = false;
     }
-    this.pages?.get("handoff")?.querySelector("#handoffs-panel")?.toggleAttribute("hidden", active !== "handoffs");
-    this.pages?.get("handoff")?.querySelector("#talk-panel")?.toggleAttribute("hidden", active !== "talk");
+  }
+
+  closeItemDetail({ restoreFocus = true, fromDialog = false } = {}) {
+    const selection = this.selection;
+    if (!selection) return;
+    this.selection = null;
+    this.detail.itemId = null;
+    if (this.detailSheet?.open) { this.sheetClosingProgrammatically = true; this.detailSheet.close(); }
+    this.mountDetail();
+    this.renderSelection();
+    // The list keeps the position it had when the item was opened; focus
+    // returns to the originating row without scrolling it somewhere else.
+    const keepScroll = Number.isFinite(selection.scrollY) && selection.page === this.route?.page;
+    const restoreScroll = () => { if (keepScroll) window.scrollTo({ top: selection.scrollY, behavior: "auto" }); };
+    restoreScroll();
+    if (!restoreFocus) return;
+    if (selection.origin === "search" && this.route?.page !== "search") {
+      this.navigate("#search");
+      requestAnimationFrame(() => {
+        ([...this.search.querySelectorAll("[data-result-id]")].find((node) => node.dataset.resultId === selection.originId) ?? this.search.queryInput)?.focus();
+      });
+      return;
+    }
+    const restored = [this.today, this.needs, this.shopping, this.staples]
+      .filter((list) => !list.closest("[hidden]"))
+      .some((list) => list.focusItem(selection.itemId, { preventScroll: keepScroll }));
+    if (!restored) {
+      if (selection.opener?.isConnected && !selection.opener.closest("[hidden]")) selection.opener.focus({ preventScroll: keepScroll });
+      else this.main.querySelector(".app-view:not([hidden]) h2, .app-view:not([hidden]) h1")?.focus({ preventScroll: keepScroll });
+    }
+    restoreScroll();
+    requestAnimationFrame(restoreScroll);
+  }
+
+  renderSelection() {
+    const selected = this.selection?.itemId ?? null;
+    for (const list of [this.today, this.needs, this.shopping, this.staples]) if (list) list.selected = selected;
+  }
+
+  renderReminders() {
+    const reminders = new Map([...this.localReminders.entries].map(([id, entry]) => [id, { at: entry.at }]));
+    if (this.routines) this.routines.reminders = reminders;
+    if (this.selection) this.detail.reminder = reminders.get(`item:${this.selection.itemId}`) ?? null;
+  }
+
+  // Search results open the real record by canonical id.
+  handleOpenSearchResult(detail) {
+    if (!this.state) return;
+    const unavailable = () => this.setStatus("That record is no longer available. It may have been archived or removed.");
+    const reveal = (hash, selector) => {
+      this.navigate(hash);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        const target = this.main.querySelector(selector);
+        if (!target) { unavailable(); return; }
+        target.scrollIntoView({ block: "center" });
+        target.classList.add("record-highlight");
+        setTimeout(() => target.classList.remove("record-highlight"), 2_500);
+        (target.matches("button, input, select, textarea, [tabindex]") ? target : target.querySelector("button, [tabindex]") ?? target).focus();
+      }));
+    };
+    switch (detail.kind) {
+      case "item":
+      case "step": {
+        const itemId = detail.kind === "step" ? detail.itemId : detail.id;
+        const item = this.state.items.find((record) => record.itemId === itemId && record.status !== "archived");
+        if (!item) { unavailable(); return; }
+        this.navigate(routeHash("lists", listSegmentForClassification(item.classification)));
+        this.openItemDetail(itemId, { opener: detail.opener, stepId: detail.kind === "step" ? detail.stepId : null, origin: "search" });
+        this.selection.originId = detail.id;
+        return;
+      }
+      case "handoff":
+        if (!this.state.handoffs.some((record) => record.handoffId === detail.id && record.status !== "archived")) { unavailable(); return; }
+        reveal(routeHash("updates", "handoffs"), `[data-handoff-id="${detail.id}"]`);
+        return;
+      case "talk":
+        if (!this.state.talks.some((record) => record.talkId === detail.id && record.status !== "archived")) { unavailable(); return; }
+        reveal(routeHash("updates", "talk"), `[data-talk-id="${detail.id}"]`);
+        return;
+      case "note":
+        if (!(this.state.notes ?? []).some((record) => record.noteId === detail.id && !record.archived)) { unavailable(); return; }
+        reveal(routeHash("household", "notes"), `[data-note-id="${detail.id}"]`);
+        return;
+      case "reference-record":
+        if (!(this.state.referenceRecords ?? []).some((record) => record.recordId === detail.id && !record.archived)) { unavailable(); return; }
+        reveal(routeHash("household", "notes"), `[data-record-id="${detail.id}"]`);
+        return;
+      case "maintenance":
+        if (!(this.state.maintenanceEvents ?? []).some((record) => record.maintenanceId === detail.id && !record.archived)) { unavailable(); return; }
+        reveal(routeHash("household", "notes"), `[data-maintenance-id="${detail.id}"]`);
+        return;
+      default:
+        unavailable();
+    }
+  }
+
+  updateSyncChip() {
+    if (!this.syncChip) return;
+    if (!this.vault || this.vault.locked || !this.store) { this.syncChip.state = null; return; }
+    if (this.offline || navigator.onLine === false) { this.syncChip.state = this.syncCoordinator || this.householdStatus?.identity ? "offline-sync" : "offline"; return; }
+    if (!this.syncCoordinator) { this.syncChip.state = "local"; return; }
+    const state = this.syncState?.state;
+    this.syncChip.state = state === "syncing" ? "syncing" : state === "paused" || state === "deleted" ? "paused" : state === "ready" ? "ready" : "syncing";
   }
 
   disconnectedCallback() {
@@ -981,6 +1342,13 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:cancel-local-reminder", this.onCancelLocalReminder);
     this.removeEventListener("kin:pin-intent", this.onPinIntent);
     this.removeEventListener("kin:open-pin", this.onOpenPin);
+    this.removeEventListener("kin:open-item", this.onOpenItem);
+    this.removeEventListener("kin:close-item-detail", this.onCloseItemDetail);
+    this.removeEventListener("kin:open-search-result", this.onOpenSearchResult);
+    this.removeEventListener("keydown", this.onDetailKeydown);
+    this.phoneQuery?.removeEventListener("change", this.onLayoutChange);
+    this.wideQuery?.removeEventListener("change", this.onLayoutChange);
+    window.removeEventListener("resize", this.onLayoutChange);
     this.removeEventListener("kin:area-intent", this.onAreaIntent);
     for (const action of ["create-note", "update-note", "archive-note"]) this.removeEventListener(`kin:${action}`, this.onNoteIntent);
     for (const action of ["save-reference-record", "archive-reference-record"]) this.removeEventListener(`kin:${action}`, this.onReferenceIntent);
@@ -1104,10 +1472,12 @@ class KinApp extends HTMLElement {
       void this.refreshAttachmentRows();
       this.main.hidden = false;
       this.nav.hidden = false;
-      this.moreSecurity.before(this.household);
-      this.moreSecurity.append(this.security);
+      this.siteTools.hidden = false;
+      this.peoplePage.append(this.household);
+      this.privacyPage.append(this.security);
       this.showPageFromLocation();
       this.setStatus("Ready.");
+      this.updateSyncChip();
       if (navigator.onLine === false) this.onOffline();
       this.retryButton.hidden = true;
       void this.configureSyncCoordinator();
@@ -1198,6 +1568,7 @@ class KinApp extends HTMLElement {
       },
     });
     this.syncCoordinator = coordinator;
+    this.updateSyncChip();
     try {
       await coordinator.start();
     } catch (error) {
@@ -1222,6 +1593,7 @@ class KinApp extends HTMLElement {
 
   handleSyncState(value) {
     if (!this.vault || this.vault.locked) return;
+    if (value.state) { this.syncState = value; this.updateSyncChip(); }
     if (value.state === "paused") {
       const attention = SYNC_PAUSE_MESSAGES[value.code] ?? value.message;
       if (attention) {
@@ -1231,7 +1603,7 @@ class KinApp extends HTMLElement {
     } else if (["ready", "disabled"].includes(value.state)) {
       this.stateNotice.hidden = true;
     }
-    if (value.projection) {
+    if (value.projection && value.added > 0) {
       if (this.busy) {
         this.pendingRefresh = true;
       } else {
@@ -1242,15 +1614,29 @@ class KinApp extends HTMLElement {
       }
     }
     if (Array.isArray(value.attachmentRows)) {
-      this.attachmentRows = this.mergeAttachmentRows(value.attachmentRows);
-      this.renderState();
+      const rows = this.mergeAttachmentRows(value.attachmentRows);
+      const sameRows = rows.length === this.attachmentRows.length && rows.every((row, index) => {
+        const current = this.attachmentRows[index];
+        return current && ["attachmentId", "parentKind", "parentId", "name", "size", "type", "state"]
+          .every((key) => row[key] === current[key]);
+      });
+      if (!sameRows) {
+        this.attachmentRows = rows;
+        this.renderState();
+      }
     }
     if (Array.isArray(value.memberIds)) {
-      this.activeMemberIds = [...new Set(value.memberIds)];
-      this.renderState();
+      const memberIds = [...new Set(value.memberIds)];
+      const previousMembers = new Set(this.activeMemberIds ?? []);
+      const membershipChanged = memberIds.length !== previousMembers.size || memberIds.some((id) => !previousMembers.has(id));
+      this.activeMemberIds = memberIds;
+      if (membershipChanged) this.renderState();
       void this.reconcileResponsibilityMembers();
     }
-    if (value.message && value.state !== "paused")
+    // The sync chip already shows routine progress. Toast only meaningful
+    // incoming changes or an unusual state, not every five-second idle poll.
+    if (value.message && value.state !== "paused" &&
+        (value.quarantined > 0 || !["syncing", "ready", "disabled"].includes(value.state)))
       this.setStatus(value.message);
   }
 
@@ -1259,44 +1645,70 @@ class KinApp extends HTMLElement {
       return;
     }
     const session = this.captureSession();
-    const submittedDraft = Object.freeze({
+    // Every capture carries a client-generated id (hex, like projection ids)
+    // so a retry after a partial success resumes against the same record
+    // instead of creating another.
+    const composer = event.detail.composer?.isConnected ? event.detail.composer : this.compose;
+    const incoming = {
       text: event.detail.text,
       classification: event.detail.classification,
-      ...(event.detail.sourceStapleId
-        ? {
-            sourceStapleId: event.detail.sourceStapleId,
-            id: event.detail.id ?? randomId(),
-          }
-        : {}),
+      planningDate: Number.isSafeInteger(event.detail.planningDate) ? event.detail.planningDate : null,
+      pinned: Boolean(event.detail.pinned),
+      revision: event.detail.revision ?? 0,
+      ...(event.detail.sourceStapleId ? { sourceStapleId: event.detail.sourceStapleId } : {}),
+    };
+    let pending = this.pendingCapture;
+    const matches = (draft) => draft && draft.text === incoming.text && draft.classification === incoming.classification &&
+      draft.planningDate === incoming.planningDate && draft.pinned === incoming.pinned && draft.sourceStapleId === incoming.sourceStapleId && draft.revision === incoming.revision;
+    if (pending && pending.composer !== composer) pending = null;
+    if (pending && !matches(pending.draft)) {
+      composer.showPendingCapture?.({
+        finish: pending.retry,
+        startNew: () => { this.pendingCapture = null; composer.clearResult?.(); this.handleAddItem(event); },
+      });
+      this.setStatus("An earlier item is partly saved. Finish it or choose Start a new item.");
+      return;
+    }
+    const submittedDraft = Object.freeze({
+      ...incoming,
+      id: pending?.draft.id ?? event.detail.id ?? crypto.randomUUID().replaceAll("-", ""),
+      revision: incoming.revision,
     });
     const sourceList = submittedDraft.sourceStapleId ? this.staples : null;
     // The capture form that submitted owns clearing and focus; the Today form
     // is the default for retries that carry no composer.
-    const composer = event.detail.composer?.isConnected ? event.detail.composer : this.compose;
+    const destination = CLASSIFICATION_LABELS[submittedDraft.classification] ?? "your lists";
+    const retry = () => this.handleAddItem({ detail: { ...submittedDraft, composer } });
+    if (pending) pending.retry = retry;
     this.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     let restoreComposeFocus = false;
+    let step = null;
     try {
-      const command = {
-        type: "add",
-        text: submittedDraft.text,
-        classification: submittedDraft.classification,
-        ...(submittedDraft.id ? { id: submittedDraft.id } : {}),
-      };
-      await this.appendCommand(command);
-      this.assertCurrentSession(session);
+      const steps = remainingCaptureSteps(this.state, submittedDraft);
+      for (step of steps) {
+        await this.appendCommand(step);
+        this.assertCurrentSession(session);
+      }
+      step = null;
       this.renderState();
       if (!sourceList) composer.clearIfMatches(submittedDraft);
-      const destination = CLASSIFICATION_LABELS[submittedDraft.classification] ?? "your lists";
-      this.setStatus(`Added to ${destination}.${this.offlineSyncSuffix()}`);
+      const where = submittedDraft.planningDate === this.currentCivilDate() ? `${destination} and Today` : destination;
+      this.setStatus(`Added to ${where}.${this.offlineSyncSuffix()}`);
+      if (!sourceList) composer.showResult?.(this.syncCoordinator ? "Saved here. Waiting to sync." : "Saved on this device.");
+      if (this.pendingCapture?.draft.id === submittedDraft.id) this.pendingCapture = null;
       this.broadcastEventChange();
       restoreComposeFocus = !sourceList;
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
-      this.showAlert(error.userMessage ?? SAVE_ERROR, () =>
-        this.handleAddItem({ detail: { ...submittedDraft, composer } }),
-      );
+      if (error.code === 4) this.pendingRefresh = true;
+      this.renderState();
+      const partial = step && step.type !== "add";
+      const inline = step ? describePartialCapture(step, destination) : INLINE_SAVE_FAILED;
+      if (!sourceList) this.pendingCapture = { draft: submittedDraft, composer, retry };
+      this.showAlert(partial ? inline : (error.userMessage ?? SAVE_ERROR), retry);
+      if (!sourceList && composer.showResult) { composer.showResult(inline, { kind: "error", retry }); this.feedback.classList.add("app-feedback-inline"); }
       this.setStatus("");
       restoreComposeFocus = !sourceList;
     } finally {
@@ -1469,6 +1881,8 @@ class KinApp extends HTMLElement {
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
     const submitted = Object.freeze({ ...command });
+    const todayFocused = this.today.contains(document.activeElement);
+    if (todayFocused) this.today.rememberFocus();
     const focus = this.routines.captureFocus();
     let committed = false;
     this.setBusy(true);
@@ -1505,7 +1919,8 @@ class KinApp extends HTMLElement {
     } finally {
       if (this.isCurrentSession(session)) {
         this.setBusy(false);
-        if (
+        if (todayFocused) { /* kin-today restored its own focus on render */ }
+        else if (
           submitted.type === "create-routine" ||
           submitted.type === "archive-routine"
         )
@@ -1533,7 +1948,7 @@ class KinApp extends HTMLElement {
     this.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
     try {
       await this.appendCommand(command); this.assertCurrentSession(session); this.routines.clearPlaybookEditor(); this.renderState(); this.broadcastEventChange();
-      this.setStatus(action === "save-playbook" ? "Playbook saved." : "Playbook archived.");
+      this.setStatus(action === "save-playbook" ? "Reusable checklist saved." : "Reusable checklist archived.");
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
       this.showAlert(error.userMessage ?? SAVE_ERROR, () => this.handlePlaybookIntent(event), command); this.setStatus("");
@@ -1551,7 +1966,7 @@ class KinApp extends HTMLElement {
         await this.appendCommand({ type: "add-item-step", itemId: batch.itemId, stepId: step.stepId, text: step.text });
         item = this.state?.items.find(record => record.itemId === batch.itemId);
       }
-      this.assertCurrentSession(session); this.renderState(); this.broadcastEventChange(); this.setStatus("Checklist created. It is now an ordinary household item.");
+      this.assertCurrentSession(session); this.renderState(); this.broadcastEventChange(); this.setStatus("Checklist created under To do. It is now an ordinary household item.");
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
       this.showAlert(error.userMessage ?? SAVE_ERROR, () => this.instantiatePlaybook(batch)); this.setStatus("");
@@ -1597,7 +2012,7 @@ class KinApp extends HTMLElement {
         if (action === "archive-area") this.areas.focus();
         if (action === "assign-item-area") {
           [...this.querySelectorAll(".item-area-select")]
-            .find((select) => select.dataset.itemId === detail.itemId)
+            .find((select) => select.dataset.itemId === detail.itemId && !select.closest("[hidden]"))
             ?.focus();
         }
         this.flushPeerRefresh();
@@ -1621,17 +2036,20 @@ class KinApp extends HTMLElement {
       this.assertCurrentSession(session);
       this.renderState();
       this.broadcastEventChange();
+      this.detail.clearFeedback(detail.itemId);
+      this.feedDetail();
       this.setStatus(detail.planningDate ? "Planned date saved." : "Planned date cleared.");
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
       if (error.code === 4) this.pendingRefresh = true;
       this.renderState();
-      this.showAlert(error.userMessage ?? SAVE_ERROR);
+      this.showDetailActionError(detail.itemId, error.userMessage ?? SAVE_ERROR,
+        () => this.saveItemPlanningDate(detail, sourceList));
       this.setStatus("");
     } finally {
       if (this.isCurrentSession(session)) {
         this.setBusy(false);
-        sourceList?.querySelector(
+        (sourceList ?? this.detail)?.querySelector?.(
           `.item-planning-date-input[data-item-id="${detail.itemId}"]`,
         )?.focus();
         this.flushPeerRefresh();
@@ -1644,6 +2062,9 @@ class KinApp extends HTMLElement {
     const currentItem = () => !itemId || this.state?.items?.some((item) => item.itemId === itemId && item.status === "active");
     try {
       const result = await this.localReminders.schedule({ id, title, at, isCurrent: currentItem });
+      this.renderReminders();
+      for (const control of this.querySelectorAll("kin-reminder")) if (control.targetRecord?.id === id) control.saved(result === "granted" ? at : null);
+      if (itemId) this.detail?.reminderDrafts?.delete(itemId);
       this.setStatus(result === "granted" ? "Reminder set on this device while Kin is open." : result === "denied" ? "Notifications are blocked in browser settings. Kin still works normally." : "Reminders are unavailable in this browser. Kin still works normally.");
     } catch (error) {
       this.showAlert(error.message ?? "Choose a future reminder time.");
@@ -1944,6 +2365,7 @@ class KinApp extends HTMLElement {
     const command = { type: detail.pinned ? "pin" : "unpin", targetKind: "item", targetId: detail.targetId };
     const list = [this.today, this.needs, this.shopping, this.staples].find((candidate) => candidate.contains(document.activeElement));
     list?.rememberFocus();
+    const detailFocused = this.detail?.contains(document.activeElement);
     this.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
@@ -1961,23 +2383,16 @@ class KinApp extends HTMLElement {
     } finally {
       if (this.isCurrentSession(session)) {
         this.setBusy(false);
+        if (detailFocused && !this.detail.contains(document.activeElement)) this.detail.querySelector(".pin-button")?.focus();
         this.flushPeerRefresh();
       }
     }
   }
 
-  openPinnedItem(itemId) {
+  openPinnedItem(itemId, opener = null) {
     const item = this.state?.items.find((record) => record.itemId === itemId && record.status !== "archived");
-    if (!item) return;
-    const page = item.classification === "today" ? "today" : "lists";
-    history.pushState(null, "", `#${page}`);
-    this.showPageFromLocation();
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      const text = [...this.main.querySelectorAll(".item-text[data-item-id]")].find((node) => node.dataset.itemId === itemId);
-      if (!text) return;
-      text.scrollIntoView({ block: "center" });
-      text.focus();
-    }));
+    if (!item) { this.setStatus("That item is no longer available."); return; }
+    this.openItemDetail(itemId, { opener });
   }
 
   async handleReopenItem(event) {
@@ -1995,10 +2410,11 @@ class KinApp extends HTMLElement {
     }
     const session = this.captureSession();
     const submittedItemId = itemId;
-    const activeList = [this.needs, this.shopping, this.staples].find((list) =>
+    const activeList = [this.today, this.needs, this.shopping, this.staples].find((list) =>
       list.contains(document.activeElement),
     );
-    const restoreListFocus = Boolean(activeList);
+    const detailFocused = this.detail?.contains(document.activeElement);
+    const restoreListFocus = Boolean(activeList) || detailFocused;
     activeList?.rememberFocus();
     this.setBusy(true);
     this.clearAlert();
@@ -2032,7 +2448,10 @@ class KinApp extends HTMLElement {
     } finally {
       if (this.isCurrentSession(session)) {
         this.setBusy(false);
-        if (restoreComposeFocus && !restoreListFocus) {
+        if (detailFocused) {
+          const next = this.detail.querySelector('[data-focus-id="primary"]') ?? this.detail.querySelector(".item-detail-close");
+          next?.focus();
+        } else if (restoreComposeFocus && !restoreListFocus) {
           this.compose.focusInput();
         }
         this.flushPeerRefresh();
@@ -2042,14 +2461,9 @@ class KinApp extends HTMLElement {
 
   async handleItemStep(type, detail) {
     if (this.busy || !this.store || !this.engine) return;
-    const list = this.today.contains(document.activeElement)
-      ? this.today
-      : this.needs.contains(document.activeElement)
-        ? this.needs
-        : this.shopping.contains(document.activeElement)
-          ? this.shopping
-          : null;
+    const list = [this.today, this.needs, this.shopping, this.staples].find((candidate) => candidate.contains(document.activeElement)) ?? null;
     if (list) list.rememberFocus();
+    const stepFocus = this.detail?.contains(document.activeElement) ? (document.activeElement.dataset.focusId ?? "add-step") : null;
     const session = this.captureSession();
     const command = Object.freeze({
       type,
@@ -2058,6 +2472,7 @@ class KinApp extends HTMLElement {
         ? { stepId: detail.stepId ?? randomId(), text: detail.text }
         : { stepId: detail.stepId }),
     });
+    const submittedStep = command.type === "add-item-step" ? command.text : null;
     this.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
@@ -2065,6 +2480,9 @@ class KinApp extends HTMLElement {
       await this.appendCommand(command);
       this.assertCurrentSession(session);
       this.renderState();
+      if (submittedStep != null) this.detail.clearStepDraft(command.itemId, submittedStep);
+      this.detail.clearFeedback(command.itemId);
+      this.feedDetail();
       this.setStatus(
         type === "add-item-step"
           ? "Step added."
@@ -2079,18 +2497,25 @@ class KinApp extends HTMLElement {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
       if (error.code === 4) this.pendingRefresh = true;
       this.renderState();
-      this.showAlert(
-        error.userMessage ?? SAVE_ERROR,
-        () => this.handleItemStep(type, command),
-        command,
-      );
+      this.showDetailActionError(command.itemId, error.userMessage ?? SAVE_ERROR,
+        () => this.handleItemStep(type, command), command);
       this.setStatus("");
     } finally {
       if (this.isCurrentSession(session)) {
         this.setBusy(false);
+        if (stepFocus && !this.detail.contains(document.activeElement)) {
+          const target = type === "add-item-step" ? this.detail.stepInput : [...this.detail.querySelectorAll("[data-focus-id]")].find((node) => node.dataset.focusId === stepFocus);
+          (target && !target.disabled ? target : this.detail.stepInput)?.focus();
+        }
         this.flushPeerRefresh();
       }
     }
+  }
+
+  showDetailActionError(itemId, message, retry, intent = null) {
+    if (!this.detail) { this.showAlert(message, retry, intent); return; }
+    this.detail.setFeedback(itemId, { itemId, message, retry, intent });
+    if (this.selection) this.feedDetail();
   }
 
   openPeerChannel() {
@@ -2264,7 +2689,11 @@ class KinApp extends HTMLElement {
     const previousRetry = previousFailure.action;
     const previousRetryIntent = previousFailure.intent;
     const previousAlert = previousFailure.message;
-    const restoreComposeFocus = this.today.contains(document.activeElement);
+    const restoreComposeFocus = this.compose.contains(document.activeElement);
+    // A focused list row is rebuilt by the refresh; the list restores focus
+    // to the equivalent control, or the capture field takes it as a fallback.
+    const focusedList = [this.today, this.needs, this.shopping, this.staples].find((list) => list.contains(document.activeElement)) ?? null;
+    focusedList?.rememberFocus();
     const restoreHandoffFocus = this.handoffs.lists.contains(
       document.activeElement,
     );
@@ -2348,6 +2777,9 @@ class KinApp extends HTMLElement {
         if (restoreTalkFocus) this.talks.focusInput();
         if (restoreComposeFocus) {
           this.compose.focusInput();
+        } else if (focusedList && !this.contains(document.activeElement)) {
+          if (focusedList.closest("[hidden]") || focusedList === this.today) this.compose.focusInput();
+          else focusedList.focusInput?.();
         }
         this.flushPeerRefresh();
       }
@@ -2368,33 +2800,67 @@ class KinApp extends HTMLElement {
 
   renderState() {
     if (!this.vault || this.vault.locked || !this.state) return;
+    // Rendering reconciles the whole unlocked workspace and is also used for
+    // background sync. Suppress motion during that pass; navigation and
+    // explicitly opened detail sheets keep their separate entrance effects.
+    const renderToken = (this.quietRenderToken ?? 0) + 1;
+    this.quietRenderToken = renderToken;
+    this.setAttribute("data-quiet-render", "");
+    try {
+      this.renderStateContents();
+    } finally {
+      const clearQuietRender = () => {
+        if (this.quietRenderToken === renderToken) this.removeAttribute("data-quiet-render");
+      };
+      if (typeof globalThis.requestAnimationFrame === "function") globalThis.requestAnimationFrame(clearQuietRender);
+      else setTimeout(clearQuietRender, 0);
+    }
+  }
+
+  renderStateContents() {
     const mode = this.state.mode ?? "normal";
     this.modeSelect.value = mode;
     this.routines.householdMode = mode;
-    const memberId = this.syncCoordinator?.identity?.memberId ?? this.store?.actorId ?? null;
-    const responsibilityContext = { responsibilities: this.state.responsibilities ?? [], memberId, memberIds: this.activeMemberIds ?? (memberId ? [memberId] : []) };
+    const civilDate = this.currentCivilDate();
+    const responsibilityContext = this.responsibilityContext();
     this.catchUp.summary = this.state.summary;
     this.catchUp.lastLookedAt = this.catchUpCursor?.lastLookedAt;
-    this.today.items = this.state.items;
-    this.today.responsibilityContext = responsibilityContext;
-    this.today.areas = this.state.areas ?? [];
-    this.today.pins = this.state.pins ?? [];
-    this.today.attachments = this.attachmentRows;
-    this.needs.items = this.state.items;
-    this.needs.responsibilityContext = responsibilityContext;
-    this.needs.areas = this.state.areas ?? [];
-    this.needs.pins = this.state.pins ?? [];
-    this.needs.attachments = this.attachmentRows;
-    this.shopping.items = this.state.items;
-    this.shopping.responsibilityContext = responsibilityContext;
-    this.shopping.areas = this.state.areas ?? [];
-    this.shopping.pins = this.state.pins ?? [];
-    this.shopping.attachments = this.attachmentRows;
-    this.staples.items = this.state.items;
-    this.staples.responsibilityContext = responsibilityContext;
-    this.staples.areas = this.state.areas ?? [];
-    this.staples.pins = this.state.pins ?? [];
-    this.staples.attachments = this.attachmentRows;
+    this.todayDate.textContent = formatCivilDate(civilDate);
+    const selected = this.selection?.itemId ?? null;
+    for (const list of [this.needs, this.shopping, this.staples]) {
+      list.update({
+        today: civilDate,
+        items: this.state.items,
+        responsibilityContext,
+        areas: this.state.areas ?? [],
+        pins: this.state.pins ?? [],
+        attachments: this.attachmentRows,
+        selected,
+      });
+    }
+    this.today.update({
+      today: civilDate,
+      items: this.state.items,
+      responsibilityContext,
+      areas: this.state.areas ?? [],
+      pins: this.state.pins ?? [],
+      attachments: this.attachmentRows,
+      selected,
+      routines: this.state.routines ?? [],
+      handoffs: this.state.handoffs ?? [],
+      mode,
+    });
+    const waiting = (this.state.handoffs ?? []).filter((record) => record.status === "unacknowledged").length;
+    const updatesNav = this.segmentNavs?.get("updates");
+    if (updatesNav) updatesNav.segments = SEGMENTS.updates.map((entry) => ({ id: entry.id, label: entry.label, hash: routeHash("updates", entry.id), count: entry.id === "handoffs" ? waiting : 0, countLabel: "waiting" }));
+    if (updatesNav && this.route?.page === "updates") updatesNav.current = this.route.segment;
+    const activePulse = this.state.pulses.find((pulse) => pulse.actorId === this.store?.actorId && pulse.status === "active");
+    if (this.householdGlance) this.householdGlance.textContent = `Household mode: ${{ normal: "Normal", vacation: "Vacation", guests: "Guests", rest: "Rest" }[mode] ?? mode}${mode !== "normal" ? " (routines paused)" : ""}. Your pulse: ${activePulse ? activePulse.value.replace("-", " ") : "not set"}.`;
+    if (this.selection) {
+      const current = this.state.items.find((item) => item.itemId === this.selection.itemId) ?? null;
+      this.feedDetail(current);
+    }
+    this.renderReminders();
     this.handoffs.handoffs = this.state.handoffs;
     this.talks.talks = this.state.talks;
     this.search.household = {
@@ -2446,14 +2912,14 @@ class KinApp extends HTMLElement {
     this.talks.disabled = isBusy || !this.store;
     this.pulse.disabled = isBusy || !this.store;
     this.catchUp.disabled = isBusy || !this.store;
+    if (this.detail) this.detail.disabled = isBusy || !this.store;
+    if (this.lockButton) this.lockButton.disabled = isBusy;
     this.routines.disabled = isBusy || !this.store;
     this.areas.disabled = isBusy || !this.store;
     this.notes.disabled = isBusy || !this.store;
     if (this.modeSelect) this.modeSelect.disabled = isBusy || !this.store;
     this.household.disabled = isBusy || !this.store;
     if (this.installButton) this.installButton.disabled = isBusy;
-    for (const tab of this.handoffTabs?.querySelectorAll('[role="tab"]') ?? [])
-      tab.disabled = isBusy;
     for (const button of this.main.querySelectorAll("kin-responsibility button"))
       button.disabled = isBusy;
     this.retryButton.disabled = isBusy;
@@ -2461,9 +2927,13 @@ class KinApp extends HTMLElement {
 
   setStatus(message) {
     this.status.textContent = message;
+    clearTimeout(this.statusTimer);
+    this.status.removeAttribute("data-stale");
+    if (message) this.statusTimer = setTimeout(() => this.status.setAttribute("data-stale", "true"), 6_000);
   }
 
   clearAlert() {
+    this.feedback?.classList.remove("app-feedback-inline");
     this.alert.textContent = "";
     this.alert.hidden = true;
     this.retryButton.hidden = true;
@@ -2538,9 +3008,15 @@ class KinApp extends HTMLElement {
     clearTimeout(this.autoLockTimer);
     this.autoLockTimer = null;
     this.closeViewer();
+    this.closeItemDetail({ restoreFocus: false });
+    this.pendingCapture = null;
     this.attachmentPreviews?.clear();
     this.attachmentPreviews = null;
     this.attachmentTarget = null;
+    this.syncState = null;
+    this.pageScroll.clear();
+    if (this.siteTools) this.siteTools.hidden = true;
+    if (this.syncChip) this.syncChip.state = null;
     for (const timer of this.attachmentProgressTimers.values()) clearTimeout(timer);
     this.attachmentProgressTimers.clear();
     clearAttachmentProgress();
@@ -2584,9 +3060,11 @@ class KinApp extends HTMLElement {
         ["search", "kin-search"],
         ["pulse", "kin-pulse"],
         ["routines", "kin-routines"],
+        ["detail", "kin-item-detail"],
       ];
       for (const [field, name] of components)
         this[field] = document.createElement(name);
+      this.detailMode = null;
       this.household.syncKeyStore?.close();
       this.household.remove();
       this.buildViews(this.main);

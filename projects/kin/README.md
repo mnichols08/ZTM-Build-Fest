@@ -6,6 +6,8 @@
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Exports are encrypted history recovery and do not restore server membership, device trust, credentials, or sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
+An unversioned household workspace UX candidate (`feat/kin-workspace-ux`) revises the presentation only: five destinations (Today, Lists with To do · Shopping · Staples, Routines, Updates with Handoffs · Talk, Household), a persistent desktop navigation with a conditional item-detail column, a read-only Today composition over existing records, actionable search results, an in-app reminder control, and inline save feedback. See [docs/WORKSPACE-UX.md](docs/WORKSPACE-UX.md).
+
 ## The problem
 
 Household information gets scattered across memory, messages, calendars, sticky notes, verbal conversations, and assumptions. That makes small handoffs easy to miss and everyday coordination harder than it needs to be. The gaps can lead to "I thought you knew," "Why didn't you tell me?", "I thought you were doing that," or conversations happening at the wrong time.

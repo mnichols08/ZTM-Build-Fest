@@ -127,3 +127,23 @@ test("saved files render as tiles under their own parent only, with readable sta
   assert.ok(element.find((node) => node.getAttribute("aria-label") === "View fridge-shelf.jpg"), "image tiles open the viewer");
   assert.ok(element.find((node) => node.getAttribute("aria-label") === "Remove fridge-shelf.jpg"));
 });
+
+test("compact rows render one small control per attachment with its name and state for assistive technology", () => {
+  const photo = { attachmentId: "e".repeat(32), parentKind: "item", parentId: ITEM, name: "fridge-shelf.jpg", size: 2048, type: "image/jpeg", state: "queued" };
+  const document_ = { ...photo, attachmentId: "f".repeat(32), name: "receipt.pdf", type: "application/pdf", state: "synced" };
+  const element = mount("compact", [photo, document_]);
+  assert.equal(element.find((node) => node.className === "attachment-add"), null, "the row's own Add photo button is not duplicated");
+  assert.equal(element.find((node) => node.className === "attachment-name"), null, "names belong to the detail view's full tiles");
+  const strip = element.find((node) => node.className === "attachment-strip");
+  assert.equal(strip.children.length, 2);
+  const image = element.find((node) => node.className === "attachment-thumb attachment-thumb-small");
+  assert.equal(image.getAttribute("aria-label"), "View fridge-shelf.jpg (Photo, Saved here, waiting to sync)");
+  image.listeners.click();
+  assert.equal(element.dispatched.at(-1).type, "kin:view-attachment");
+  const pdf = element.find((node) => node.className === "attachment-icon attachment-icon-small");
+  assert.equal(pdf.getAttribute("aria-label"), "Open receipt.pdf (PDF, Synced)");
+  pdf.listeners.click();
+  assert.equal(element.dispatched.at(-1).type, "kin:open-attachment");
+  const empty = mount("compact");
+  assert.equal(empty.children.length, 0, "a row without attachments or progress renders nothing");
+});

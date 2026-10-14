@@ -1,0 +1,448 @@
+# Household Workspace UX — design and implementation contract
+
+**Status:** unversioned UX implementation candidate on `feat/kin-workspace-ux`,
+based on `origin/kin-development` at `d27bf48` (the merge of the v0.41.1
+attachment patch). Presentation, navigation, and browser-side composition only.
+No persistent, transport, cryptographic, or domain-protocol contract changes;
+no version number, tag, or release line is created. The record of what was
+actually built and verified is at the end of this document.
+
+This document is the contract the implementation follows. Where it says
+"must", a browser regression asserts it.
+
+---
+
+## 1. Goal
+
+A returning household member should be able to answer, within a few seconds
+and on any screen size:
+
+| Question | Where the answer lives |
+| --- | --- |
+| What needs attention now? | **Today**: planned-for-today items, routines due in the current period, handoffs waiting, catch-up |
+| Where do things live? | **Lists** (To do · Shopping · Staples), **Routines**, **Updates** (Handoffs · Talk), **Household** |
+| How do I add something? | A capture field at the top of Today and of every list, each fixed to where it lands |
+| How do I open its details? | The item text or its `Details` control opens one shared detail view |
+| Did it save, and is it syncing? | Inline result next to the capture field; a header status chip for device/sync state |
+
+Kin stays a calm household workspace: five destinations, one list at a time,
+no dashboards, no statistics, no draggable widgets, no new domain rules in
+JavaScript.
+
+---
+
+## 2. Navigation and route mapping
+
+### 2.1 Primary destinations
+
+Ordered identically on desktop (left rail) and mobile (bottom bar, five equal
+tracks):
+
+| # | Label | Route | Contents |
+| --- | --- | --- | --- |
+| 1 | Today | `#today` | Today composition (§3) |
+| 2 | Lists | `#lists/todo` · `#lists/shopping` · `#lists/staples` | One list at a time with its own quick-add |
+| 3 | Routines | `#routines` · `#routines/checklists` | Existing routines first; `Add routine` opens creation; reusable checklists in their own segment |
+| 4 | Updates | `#updates/handoffs` · `#updates/talk` | Handoffs (acknowledge) and Talk (topics to discuss, resolve) |
+| 5 | Household | `#household` and its secondary destinations (§2.3) | Notes & reference, Areas & status, People & devices, Privacy & recovery |
+
+Presentation labels map to unchanged canonical values:
+
+| UI label | Canonical value |
+| --- | --- |
+| To do | `need` classification (plus legacy `today` items, see §3.2) |
+| Shopping | `shopping` |
+| Staples | `staple` |
+| Updates | the former Handoff page (`kin-handoff-list`, `kin-talk-list`) |
+| Household | the former More page |
+| Reusable checklists | playbooks (`save-playbook`, `archive-playbook`, `instantiate-playbook`) |
+
+No persisted classification, event kind, or command value is renamed.
+
+### 2.2 Secondary routes and aliases
+
+`web/routes.js` resolves `location.hash` (and `location.pathname`) to a
+`{ page, segment, canonical }` record. Unknown hashes resolve to Today.
+
+| Requested | Resolves to | Why |
+| --- | --- | --- |
+| `#lists` | `#lists/todo` | first list |
+| `#handoff` | `#updates/handoffs` | legacy primary destination |
+| `#handoff/talk`, `#talk` | `#updates/talk` | legacy tab |
+| `#more` | `#household` | legacy primary destination |
+| `#search` | `#search` (no primary destination current) | legacy search route; still reachable from the header on every page |
+| `/pair` with no hash | `#household/people` | the invitation route must show the join form, not Today |
+| `#pair`, `#invite`, `#recover*` | not routes today; resolve to Today | pairing, invitation, and recovery are handled inside People & devices and Privacy & recovery, not by hash |
+
+`history.pushState` is used for in-app navigation; `popstate`/`hashchange`
+re-resolve the route, so Back/Forward and refresh land on the same view and
+segment. The resolved canonical route is exposed as `kin-app[data-route]`,
+the active primary link carries `aria-current="page"`, the active segment link
+carries `aria-current="true"`, and `document.title` is `<Page> — Kin`.
+
+### 2.3 Household secondary destinations
+
+| Route | Label | Existing features it holds |
+| --- | --- | --- |
+| `#household` | Household (hub) | current mode and Pulse at a glance, links to the four destinations, Search, Install |
+| `#household/notes` | Notes & reference | `kin-notes`: Notes, household reference records, maintenance history (with attachments) |
+| `#household/areas` | Areas & status | `kin-areas`; household mode selector with its routine effect spelled out; `kin-pulse` |
+| `#household/people` | People & devices | `kin-household`: create/join/add device, pairing, trusted devices, membership, log out |
+| `#household/privacy` | Privacy & recovery | `kin-security` settings: lock, passkey unlock, automatic lock, recovery key, export/restore |
+
+Household mode copy: "Routines pause while the household is in Vacation,
+Guests, or Rest. Nothing else changes: lists, handoffs, and access stay as
+they are." Pulse stays discoverable from the hub and from Areas & status.
+
+---
+
+## 3. Today: a read-only composition
+
+`web/today-view.js` exports `composeToday({ items, routines, pins, handoffs,
+mode, civilDate })`. It filters and groups the Rust projection; it never
+derives recurrence, eligibility, or validity. All date comparisons use the
+integer civil date (`YYYYMMDD`) that the browser already passes to Rust.
+
+### 3.1 Rule A — Planned for today
+
+Active items whose `planningDate === civilDate`, excluding Staples. Each keeps
+its task/shopping identity (shown as a small label). The same canonical record
+appears in Lists; completing it in either place completes the same record.
+
+### 3.2 Rule B — Legacy Today items (compatibility)
+
+Items persisted with classification `today` (pre-v0.22 captures and v0.1
+legacy events normalised to Today by Rust) are preserved as they are:
+
+- An undated legacy Today item (`planningDate === null`) remains on Today in
+  the same "Today" list as planned items.
+- An explicit planning date takes precedence: a legacy Today item dated for
+  another day leaves Today and is listed by its date (Earlier plans or its
+  list).
+- Legacy Today items are also listed under **To do**, so nothing depends on
+  the Today view to be found.
+- No event is rewritten and no migration runs. New captures never create a
+  `today`-classified item; the Today capture creates a `need` or `shopping`
+  item and sets its planning date explicitly.
+
+### 3.3 Rule C — Earlier plans
+
+Active items (not Staples) with `planningDate < civilDate` stay in their lists
+and are collected in a collapsed "Earlier plans" disclosure on Today labelled
+"Still open from earlier". No alarm styling, no counts in red, no "overdue".
+
+### 3.4 Rule D — Routines
+
+Routines are shown from the Rust-derived `occurrenceStatus` and
+`occurrenceKey` only:
+
+| Cadence | Open occurrence label |
+| --- | --- |
+| daily | Today |
+| weekly | This week |
+| biweekly | This two-week period |
+| monthly | This month |
+
+Completed occurrences are listed under the collapsed Completed disclosure.
+`unavailable` occurrences are omitted. When household mode is not Normal, the
+routines section states that occurrences are paused and offers no
+complete/reopen actions (Rust rejects them independently).
+
+### 3.5 Rule E — Household context
+
+- Catch up (`kin-catch-up`) stays at the top of Today in compact form.
+- Handoffs with status `unacknowledged` are summarised as "N handoffs waiting
+  for a Got it" with a link to `#updates/handoffs`. No read receipts.
+- Pinned items render in a separate "Quick access" section. A pin implies no
+  date or obligation; a pinned item may also appear elsewhere on Today.
+
+### 3.6 Deduplication and completed content
+
+Within the actionable sections (Today list, Earlier plans) an item appears at
+most once. Completed items with today's date, completed legacy Today items,
+and completed routine occurrences sit under one collapsed "Completed"
+disclosure. Empty states explain where other information lives ("Nothing
+planned for today. Lists hold everything else.").
+
+### 3.7 Today capture
+
+The Today capture field offers:
+
+- **What it is**: Task (`need`) or Shopping item (`shopping`).
+- **When it matters**: Today (default), Tomorrow, a chosen date, or no date.
+- **Quick access**: an optional pin.
+
+Saving uses existing commands in order: `add` (with a client-generated id),
+`set-item-planning-date`, `pin`. Partial success is reported truthfully
+("Saved to To do. Couldn't set the date — Try again.") and the retry runs only
+the remaining operations against the same item id; it never creates a second
+item or announces success early.
+
+---
+
+## 4. Responsive layout and the shared detail view
+
+Breakpoints are content-driven, not device names:
+
+| Width | Shell | Opening an item |
+| --- | --- | --- |
+| < 720 px | fixed bottom navigation, five equal tracks; compact header with Search and Lock | full-height modal sheet (`<dialog>`) |
+| 720–1179 px | persistent left navigation; one centred content column (max 720 px) | the detail replaces the list in the content column with a Back control (non-modal) |
+| ≥ 1180 px | left navigation; content column; **conditional** detail column (380–440 px) | the detail opens beside the list, which stays visible |
+
+The detail is one element, `<kin-item-detail>`, owned by `<kin-app>`. Layout
+changes re-home that same element between the sheet, the inline column, and
+the side column. There is never a second copy of the editor, so drafts inside
+it (an unsent checklist step, a reminder date/time) survive resizing.
+
+The detail view holds, for one canonical item id: text, kind and status, the
+primary action (Complete/Reopen or Add to Shopping), checklist steps and the
+add-step form, photos and files (`kin-attachments` in full mode), planned
+date, responsibility, Area, reminder on this device, pin, archive, and "Last
+changed". Archived or missing records render an explanation and a Close
+control instead of actions.
+
+Default rows (`<kin-item>`) show: a restrained complete control, the item text
+(a button that opens details), a context line (planned date, responsibility,
+Area) when present, "n of m steps" only when steps exist, a compact strip of
+attachment thumbnails only when attachments exist, `Add photo`, and `Details`.
+Completing and opening are separate controls; clicking text never completes.
+
+---
+
+## 5. State, focus, and draft lifetime
+
+- **Selection** is the item id plus its origin (route and focused control).
+  Closing restores focus to the originating row's `Details` control, or to
+  the list heading when the row is gone. Escape closes the sheet and the
+  inline/side detail.
+- **Scroll position** is remembered per route and per list while unlocked and
+  restored on return (including returning to Search).
+- **Search** keeps its query, filters, and results while unlocked; results
+  open the real record by id. Returning (Back) shows the same results.
+- **Drafts** (capture text, step text, reminder date/time, note editors)
+  stay in unlocked in-memory component state. Checklist drafts are keyed by
+  canonical item id, so changing selection, closing details, routing away, or
+  resizing cannot move one item's text into another item's editor. Reminder
+  edits are also captured against their target item. A background refresh
+  re-renders rows and the detail but reapplies the matching draft and keeps
+  focus. A successful save clears only the submitted value/revision; failed
+  saves keep it for retry. Drafts for temporarily closed details continue to
+  block update activation. Lock/session replacement destroys these maps.
+- **Lock, logout, teardown, access loss** replace every protected component,
+  close the viewer and the detail, forget previews and progress, and clear
+  search state, exactly as before. No plaintext goes to `localStorage`,
+  `sessionStorage`, URLs, or logs.
+- **Stale records**: if the detail's record is archived or missing after a
+  refresh, the detail explains that instead of submitting a stale action.
+  Existing stale-command protections (error code 4 refresh) are unchanged.
+- **Update activation** still refuses while an edit is focused or a draft is
+  non-empty; the step and reminder drafts in the detail count as drafts.
+
+### 5.1 Feedback wording
+
+| Situation | Where | Text |
+| --- | --- | --- |
+| Local save, no sync configured | inline by the capture field | "Saved on this device." |
+| Local save, sync configured | inline by the capture field | "Saved here. Waiting to sync." |
+| Attachment capture | row status | "Saving photo…" / "<name> is saved on this device" |
+| Save failed | inline by the capture field, with Try again | "Couldn't save. Your text is still here." |
+| Attachment failed | row status (alert) | "Couldn't add this photo. Try again." plus the specific reason |
+
+The header chip reports only states the app actually knows: "On this device"
+(no sync), "Up to date" (sync ready), "Syncing…", "Sync paused", "Offline —
+saved here". Relay acceptance is never presented as delivery.
+
+### 5.2 Reminders
+
+`<kin-reminder>` replaces `window.prompt`. It has labelled date and time
+inputs, a readable confirmation of the resolved local date and time, Today /
+Tomorrow / In 1 hour shortcuts that fill the inputs so the resolved time is
+always visible, validation ("Choose a time that hasn't passed yet."), Set and
+Cancel, and the explanation "On this device only, while Kin is open in this
+browser." The underlying `LocalReminders` model is unchanged.
+
+---
+
+## 6. Acceptance tests
+
+Browser (`scripts/workspace-ux-regression.mjs`, run by
+`scripts/browser-regression.mjs`; CDP-driven viewport checks live in the
+runner):
+
+1. Add a task in To do; it is listed there and found by Search.
+2. Add a shopping item; it stays a shopping item.
+3. Plan that shopping item for today; Today shows the same canonical item.
+4. Complete it from Today; Shopping shows it completed (and the reverse).
+5. A synthetic legacy `today` event stays on Today undated and in To do; no
+   event bytes change.
+6. A future-dated item is not labelled as today's work.
+7. An earlier-dated item appears under Earlier plans; paused routines show
+   no occurrence actions.
+8. Open and close details without losing scroll position or an unsent step
+   draft.
+9. Search for an item, a checklist step, and a note; each opens its target.
+10. Back returns to Search with the query, filters, and results intact.
+11. Attachment picker lifecycle survives re-render, route change, details,
+    and lock (existing `attachment-upload-regression.mjs`, updated).
+12. Lock during details/search/viewer: protected content is gone.
+13. Set and cancel a routine reminder through the date/time control.
+14. Offline saves and an injected failure produce truthful inline feedback.
+15. Back/forward and legacy routes (`#more`, `#handoff`, `#search`,
+    `#lists`) resolve.
+16. Resize 360 → 768 → 1024 → 1440 → 1920 with details open: one editor, the
+    draft intact, five equal nav tracks on mobile.
+17. Keep separate unsaved checklist text on A and B while switching, closing,
+    routing, and resizing; returning restores the target's own draft. Saving
+    clears the submitted step, and an empty Enter adds no duplicate.
+18. A delayed save or failure for A completes with B selected without
+    clearing B or showing A's error on B. Returning to A restores its retry.
+    Phone-sheet checklist and planning-date failures keep the draft and a
+    usable in-sheet retry through rerenders.
+19. Add and Enter resume a partially saved capture's canonical id. Editing
+    that pending capture presents explicit Finish saved item / Start a new
+    item choices, and finishing preserves newer text.
+20. Real keyboard Escape closes the photo viewer first on desktop and above
+    the mobile sheet, including after rerender; the next Escape closes details.
+
+Node (`node --test`): `web/today-view.test.mjs` (rules A–E, dedupe,
+completed, mode), `web/routes.test.mjs` (aliases, segments, `/pair`),
+`web/reminder-time.test.mjs` (validation, formatting, shortcuts),
+`web/capture-plan.test.mjs` (remaining steps after partial success).
+
+Screenshots are written to `target/ux-screenshots/` (ignored) for Today,
+Shopping, and an open item at 360, 390, 768, 1024, 1440, and 1920 px, in
+light and dark, populated and empty, and with a failed save.
+
+### Known boundaries
+
+- Headless Chromium-family automation only. Installed-PWA, physical camera,
+  Safari/Firefox, and real assistive technology are not exercised.
+- No usability study with real people was performed; §1 is the design
+  intent, not a measured outcome.
+- Sync "Up to date" reflects the coordinator's last state, not recipient
+  delivery or reading.
+- Reminders remain browser-local and foreground-only.
+
+---
+
+## 7. Implementation record
+
+Implemented on `feat/kin-workspace-ux` from `origin/kin-development` at
+`d27bf48`, uncommitted. Every change is under `projects/kin/`; version
+numbers (`0.41.1`), tags, Rust sources, the WASM ABI, storage, sync, server,
+and cryptography are untouched.
+
+### What was built
+
+| Area | Files |
+| --- | --- |
+| Routes and shell | `web/routes.js` (+test), `web/components/kin-app.js` (header tools, five destinations, segments, Household hub and sub-pages, detail hosting, scroll memory, search-result routing, sync chip), `web/components/kin-segment-nav.js`, `web/components/kin-sync-status.js`, `web/styles/app.css` |
+| Today composition | `web/today-view.js` (+test), `web/components/kin-today.js` (Today view and one-list-at-a-time views), `web/components/kin-compose.js` (Today capture: kind, plan, pin; inline results), `web/capture-plan.js` (+test) |
+| Rows and details | `web/components/kin-item.js` (simplified row), `web/components/kin-item-detail.js` (shared detail, re-homed by `<kin-app>`), `web/components/kin-attachments.js` (`compact` mode) |
+| Routines and reminders | `web/components/kin-routines.js`, `web/components/kin-reminder.js`, `web/reminder-time.js` (+test), `web/household-validation.js` (checklist wording) |
+| Search | `web/components/kin-search.js` (actionable results, safe highlighting), `web/search.js` (label) |
+| Updates, notes | `web/components/kin-handoff-list.js`, `kin-talk-list.js`, `kin-notes.js` (record ids for reveal, wording) |
+| Offline shell | `web/service-worker.js` (new modules in the precache list; the cache name already derives from the served shell fingerprint) |
+| Tests | `scripts/workspace-ux-regression.mjs` (new), `scripts/workspace-screenshots.mjs` (new, evidence only), updated `browser-regression.mjs`, `mobile-ux-regression.mjs`, `attachment-upload-regression.mjs`, `shopping-regression.mjs`, `planning-date-regression.mjs`, `routine-regression.mjs`, `passkey-regression.mjs`, `security-ui-regression.mjs`, `household-authority-regression.mjs`, `catch-up-regression.mjs`, `handoff-regression.mjs`; Node tests under `web/` |
+| Docs | this contract, `UX.md`, `COMPONENTS.md`, `ACCESSIBILITY.md`, `TESTING.md`, `README.md`, `CHANGELOG.md`, `AGENTS.md` |
+
+### Decisions worth knowing
+
+- The former "today" classification is never written by new captures. It
+  remains a valid canonical value that Rust accepts and replays; the UI
+  treats it as "undated legacy Today item" (§3.2).
+- Search marks no primary destination; it is reachable from the header on
+  every page and from the Household overview, so no sixth tab was added.
+- Secondary destinations are hash routes, not in-page tabs, so Back/Forward
+  and refresh work and the selected segment is identifiable.
+- The detail view is hosted by `<kin-app>` rather than inside `<kin-today>`
+  so one instance can serve Today and every list and be re-homed on resize.
+- Capture and app-wide errors use the existing global status/alert region.
+  A checklist or planning-date failure is instead announced beside the
+  selected detail editor, with its retry button in that same presentation.
+  This keeps mobile retries inside the active modal and avoids duplicate
+  announcements. The detail retains that feedback across unrelated renders;
+  success clears it.
+- The open photo viewer owns Escape while it is the top modal layer. Its
+  native close releases the preview URL and restores focus to the equivalent
+  viewer control after a rerender; a later Escape can close the underlying
+  detail or sheet.
+- Routine rows on the Routines page keep responsibility and the reminder
+  control inline (no routine detail view was added); on Today a routine row
+  only shows its period and a complete control.
+- Three latent defects were fixed because the new coverage hit them:
+  `LocalReminders` threw "Illegal invocation" in browsers (unbound
+  `setTimeout`), so reminders never scheduled from the UI; cached thumbnails
+  were skipped while a tile was still being built; and a row rebuilt while
+  the viewer was open lost focus on close. Capture ids are hex strings so a
+  partial-save retry can find its record.
+
+### Historical implementation verification
+
+Run on 2026-10-13 (Windows 11, Node 22.13.0 via `fnm exec`, pinned Rust
+toolchain, headless Edge 155) from `projects/kin`:
+
+| Command | Outcome |
+| --- | --- |
+| `node scripts/verify.mjs --browser "<edge>"` (the `verify:browser` gate) | PASS, exit 0: environment; Rust format; Clippy (warnings denied); version consistency (`0.41.1` unchanged); Kin diff whitespace; 51 Node test files / 473 tests; 173 Rust tests; release wasm32 build matching the local browser asset; browser regression (37 suites, including the new workspace journeys with 88 checks and the responsive checks with 10); security storage (4); security UI (149); passkey (67, PRF exercised); household authority (103) |
+| `node scripts/workspace-screenshots.mjs "<edge>"` | PASS: 22 screenshots in `target/ux-screenshots/` (360/390/768/1024/1440/1920, light and dark, empty, populated, failed save, offline) plus `regression-*.png` from the gate |
+| `python scripts/check_version.py`, `git diff --check -- projects/kin` | PASS |
+
+Not run: `scripts/verify.test.mjs` (the runner's self-test; two of its cases
+fail on this machine on an untouched checkout, as recorded for v0.41.1).
+During development two intermittent gate failures were traced to real timing
+defects and fixed (cached thumbnail application before connection; focus
+return after a row rebuild); one Handoff retry step was made tolerant of a
+background refresh that can start between its wait and its click.
+
+### Not done / boundaries
+
+- No real-device, installed-PWA, Safari/Firefox, or assistive-technology
+  session was run; headless Chromium-family automation only.
+- No usability study with real household members.
+- Routine rows did not get their own detail view; their inline controls were
+  tidied instead.
+- The Talk and Handoff capture forms keep their existing single-field layout
+  and byte limits (wording only changed).
+
+## 8. PR #42 correctness remediation
+
+This remediation starts from PR branch `feat/kin-workspace-ux` at
+`c6adca29e4855defa736c7163dc98b1571a884b4`, the reviewed baseline.
+Verification in this section covers the current uncommitted working-tree
+patch; it is not a CI result. It adds item-keyed transient checklist/reminder
+drafts, clears only matching successful checklist submissions, preserves
+partial capture ids across Add/form submission, offers an explicit choice
+when a pending capture was edited, puts detail save errors and retry beside
+the active editor, and assigns Escape to the topmost photo viewer. No event,
+storage, version, WASM, or security contract changed.
+
+Fresh remediation verification (2026-10-13, Windows 11, Node 22.13.0, pinned
+Rust 1.93.0, headless Edge 155) covers the uncommitted working-tree patch:
+
+| Command | Outcome |
+| --- | --- |
+| `npm --prefix projects/kin run verify` | PASS, exit 0: environment, formatting, Clippy, version consistency, whitespace, 51 Node test files / 473 tests, 173 Rust tests, release WASM build |
+| `npm --prefix projects/kin run verify:browser -- "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"` | PASS, exit 0: full verification plus browser, security storage, security UI, passkey, and household authority suites |
+
+For this machine, Node 22.13.0 was placed first on `PATH` before invoking
+these npm commands. Browser coverage reports 110 workspace journey checks,
+15 responsive checks, and 31 phone attachment/viewer checks. The security
+sub-gates report 4 storage, 149 security UI, 67 passkey, and 103 household
+authority assertions. The release WASM build matched the local browser asset;
+no committed expected WASM artifact exists. Version remains `0.41.1`.
+
+Screenshots are under `target/ux-screenshots/`, including
+`regression-360-detail-step-error.png`,
+`regression-360-detail-date-error.png`,
+`regression-viewer-escape-mobile-preserved.png`,
+`regression-viewer-escape-desktop-preserved.png`, and the responsive
+`regression-*.png` set. The first remediation browser run exposed focus
+returning to a thumbnail in the inert background after a detail rerender; the
+fallback now prefers the equivalent control inside the active detail. The
+final full gate passed after this correction. `scripts/verify.test.mjs` was
+not run, and no fresh CI result is claimed. The PR API could not be reached
+from this environment, so remote PR metadata was not independently queried.
+Physical camera, installed-PWA, Safari/Firefox, and real assistive technology
+are outside this headless Edge run.
