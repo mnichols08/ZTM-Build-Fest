@@ -75,6 +75,22 @@ export function requireTrustAuthority(member, action = "manage trust", now = Dat
     );
 }
 
+// Household administration is a server-recorded flag on an active Adult.
+// Clients never assert it; it is granted at bootstrap or by another admin.
+export function isHouseholdAdmin(member, now = Date.now()) {
+  return canManageTrust(member, now) && member.householdAdmin === true;
+}
+
+export function requireHouseholdAdmin(member, action = "manage the household", now = Date.now()) {
+  requireTrustAuthority(member, action, now);
+  if (!isHouseholdAdmin(member, now))
+    throw new PairingError(
+      "household_admin_required",
+      `Only household admins can ${action}.`,
+      403,
+    );
+}
+
 export function isTemporaryMember(member, now = Date.now()) {
   if (!member || member.active === false || member.revokedAt) return false;
   const normalized = normalizeMemberKind(member.kind);
@@ -149,6 +165,26 @@ export class PairingService {
     this.store?.saveIdentityHousehold(householdId, this);
   }
 
+  hasHouseholdAdmin(household) {
+    return [...household.members].some((memberId) =>
+      isHouseholdAdmin(this.members.get(memberId), this.now()),
+    );
+  }
+
+  // Households that predate household admins keep Adult-level management
+  // until an admin is recorded; Kin never infers one from existing members.
+  canManageMembers(member, household) {
+    return this.hasHouseholdAdmin(household)
+      ? isHouseholdAdmin(member, this.now())
+      : canManageTrust(member, this.now());
+  }
+
+  requireManagementAuthority(member, household, action) {
+    if (this.hasHouseholdAdmin(household))
+      requireHouseholdAdmin(member, action, this.now());
+    else requireTrustAuthority(member, action, this.now());
+  }
+
   addCredential(memberId, credential) {
     if (!credential?.id || !credential.publicKey || !credential.algorithm) {
       throw new PairingError(
@@ -192,6 +228,7 @@ export class PairingService {
       householdId,
       active: true,
       kind: "adult",
+      householdAdmin: true,
       credentials: new Set([credential.id]),
     });
     this.addCredential(memberId, credential);
@@ -333,7 +370,7 @@ export class PairingService {
 
   requestHouseholdDeletion(sessionToken, reauthenticatedMemberId) {
     const { member, household } = this.authorize(sessionToken);
-    requireTrustAuthority(member, "delete the household");
+    this.requireManagementAuthority(member, household, "delete the household");
     if (reauthenticatedMemberId !== member.id)
       throw new PairingError(
         "fresh_auth_required",
@@ -375,8 +412,8 @@ export class PairingService {
     const { device, member } = this.trustedDevice(deviceToken, {
       allowDeletionPending: true,
     });
-    requireTrustAuthority(member, "cancel household deletion");
     const household = this.households.get(member.householdId);
+    this.requireManagementAuthority(member, household, "cancel household deletion");
     const credential = this.credentials.get(credentialId);
     if (!credential || credential.memberId !== member.id)
       throw new PairingError(
@@ -522,7 +559,7 @@ export class PairingService {
 
   createPairing(sessionToken, { kind = "adult", expiresAt } = {}) {
     const { member, household, device } = this.authorize(sessionToken);
-    requireTrustAuthority(member, "invite a new household member");
+    this.requireManagementAuthority(member, household, "invite a new household member");
     if (! ["adult", "limited", "temporary"].includes(kind))
       throw new PairingError("member_kind_invalid", "Choose a supported member type.");
     if (kind === "temporary" && (!Number.isSafeInteger(expiresAt) || expiresAt <= this.now()))
@@ -756,6 +793,10 @@ export class PairingService {
     requireTrustAuthority(approver, "approve member recovery");
     this.prunePairingCapabilities();
     const target = this.members.get(targetMemberId);
+    // Recovery issues a device for the target member, so recovering an admin
+    // must not let a non-admin Adult acquire admin authority.
+    if (isHouseholdAdmin(target, this.now()))
+      requireHouseholdAdmin(approver, "recover a household admin", this.now());
     if (
       !target ||
       target.householdId !== household.id ||
@@ -960,6 +1001,8 @@ export class PairingService {
         "That pairing request is unavailable.",
         404,
       );
+    if (!pairing.purpose)
+      this.requireManagementAuthority(member, household, "approve a household invitation");
     const state = this.state(pairing);
     if (state === "Confirmed") return this.pairingView(pairing);
     if (state !== "Claimed") throw terminalPairingError(state);
@@ -1426,11 +1469,14 @@ export class PairingService {
     return {
       householdId: household.id,
       currentMemberId: member.id,
+      adminRecorded: this.hasHouseholdAdmin(household),
+      canManageMembers: this.canManageMembers(member, household),
       members: [...household.members].map((memberId) => ({
         id: memberId,
         current: memberId === member.id,
         active: canParticipate(this.members.get(memberId), this.now()),
         kind: normalizeMemberKind(this.members.get(memberId)?.kind),
+        admin: isHouseholdAdmin(this.members.get(memberId), this.now()),
         ...(this.members.get(memberId)?.expiresAt == null ? {} : { expiresAt: this.members.get(memberId).expiresAt }),
       })),
     };
@@ -1457,13 +1503,19 @@ export class PairingService {
         "The only active trusted adult cannot leave. Household deletion and recovery are not available.",
         409,
       );
+    if (isHouseholdAdmin(member, this.now()) && !this.hasOtherUsableAdmin(household, member.id))
+      throw new PairingError(
+        "last_household_admin",
+        "Make another Adult a household admin before leaving.",
+        409,
+      );
     return this.removeMembership(household, member.id, member.id);
   }
 
   removalContext(sessionToken, memberId, { allowSelf = false } = {}) {
     const { member, household, device } = this.authorize(sessionToken);
     if (memberId !== member.id)
-      requireTrustAuthority(member, "remove a household member");
+      this.requireManagementAuthority(member, household, "remove a household member");
     if (memberId === member.id && !allowSelf)
       throw new PairingError(
         "use_leave",
@@ -1497,13 +1549,97 @@ export class PairingService {
     const target = this.members.get(memberId);
     if (canManageTrust(target, this.now()) && !this.hasOtherUsableTrustedAdult(household, memberId))
       throw new PairingError("last_adult", "Keep another Adult with a usable trusted device and passkey before removing this Adult.", 409);
+    if (isHouseholdAdmin(target, this.now()) && !this.hasOtherUsableAdmin(household, memberId))
+      throw new PairingError("last_household_admin", "Keep another household admin with a usable trusted device and passkey before removing this admin.", 409);
     return this.removeMembership(household, memberId, context.memberId);
+  }
+
+  householdAdminContext(sessionToken, memberId) {
+    const { member, household, device } = this.authorize(sessionToken);
+    requireHouseholdAdmin(member, "change household admins", this.now());
+    const target = this.members.get(memberId);
+    if (!target || target.householdId !== household.id || !canParticipate(target, this.now()))
+      throw new PairingError("not_found", "That household member is unavailable.", 404);
+    if (normalizeMemberKind(target.kind) !== "adult")
+      throw new PairingError("household_admin_adult_required", "Only Adults can be household admins.", 409);
+    return {
+      memberId: member.id,
+      deviceId: device.id,
+      credentialIds: [...member.credentials],
+    };
+  }
+
+  setHouseholdAdmin(sessionToken, memberId, admin, reauthenticatedMemberId) {
+    if (typeof admin !== "boolean")
+      throw new PairingError("household_admin_invalid", "Choose whether this Adult is a household admin.");
+    const context = this.householdAdminContext(sessionToken, memberId);
+    if (reauthenticatedMemberId !== context.memberId)
+      throw new PairingError(
+        "fresh_auth_required",
+        "Authenticate with your passkey again before changing household admins.",
+        401,
+      );
+    const target = this.members.get(memberId);
+    const household = this.households.get(target.householdId);
+    if (isHouseholdAdmin(target, this.now()) === admin)
+      return { memberId, admin, changed: false };
+    if (!admin && !this.hasOtherUsableAdmin(household, memberId))
+      throw new PairingError(
+        "last_household_admin",
+        "Make another Adult a household admin before removing this admin.",
+        409,
+      );
+    if (admin) target.householdAdmin = true;
+    else {
+      delete target.householdAdmin;
+      this.revokeInviterPairings(household, memberId, "admin_revoked", (pairing) => !pairing.purpose);
+    }
+    household.version += 1;
+    this.audit(admin ? "household_admin_granted" : "household_admin_revoked", {
+      householdId: household.id,
+      memberId,
+      actorId: context.memberId,
+    });
+    this.persistHousehold(household.id);
+    return { memberId, admin, changed: true };
   }
 
   hasUsableTrustedDevice(memberId) {
     return [...this.devices.values()].some((device) =>
       device.memberId === memberId && !device.revokedAt,
     );
+  }
+
+  hasOtherUsableAdmin(household, excludingMemberId) {
+    return [...household.members].some((memberId) => {
+      if (memberId === excludingMemberId) return false;
+      const other = this.members.get(memberId);
+      return isHouseholdAdmin(other, this.now()) &&
+        other.credentials?.size > 0 && this.hasUsableTrustedDevice(other.id);
+    });
+  }
+
+  // Usable admin access needs a recorded admin with a passkey and an
+  // unrevoked trusted device; the admin flag alone is not enough.
+  hasUsableAdminAccess(household, excludingDeviceIds = []) {
+    return [...household.members].some((memberId) => {
+      const admin = this.members.get(memberId);
+      return isHouseholdAdmin(admin, this.now()) && admin.credentials?.size > 0 &&
+        [...this.devices.values()].some((device) =>
+          device.memberId === memberId && !device.revokedAt &&
+          !excludingDeviceIds.includes(device.id));
+    });
+  }
+
+  // A household that records admins must keep one who can still act.
+  // Legacy households without an admin are unaffected.
+  requireAdminAccessAfterRevocation(household, deviceId) {
+    if (this.hasHouseholdAdmin(household) && !this.hasUsableAdminAccess(household, [deviceId]))
+      throw new PairingError(
+        "last_household_admin",
+        "Keep a household admin with a usable trusted device and passkey before revoking this device.",
+        409,
+      );
   }
 
   hasOtherUsableTrustedAdult(household, excludingMemberId) {
@@ -1523,18 +1659,21 @@ export class PairingService {
       throw new PairingError("not_found", "That device is unavailable.", 404);
     if (target.id === actingDevice.id)
       throw new PairingError("current_device", "Use another trusted device to revoke this device.", 409);
+    if (target.memberId !== member.id)
+      this.requireManagementAuthority(member, household, "revoke another member's device");
+    if (!target.revokedAt) this.requireAdminAccessAfterRevocation(household, target.id);
     return { memberId: member.id, deviceId: actingDevice.id, credentialIds: [...member.credentials] };
   }
 
-  removeMembership(household, memberId, actorId) {
-    const target = this.members.get(memberId);
-    // An invitation is bound to its author. Once that member loses authority,
-    // pending claims must not remain stranded or become approvable later.
+  // An invitation is bound to its author. Once that member loses authority,
+  // pending claims must not remain stranded or become approvable later.
+  revokeInviterPairings(household, memberId, reason, include = () => true) {
     for (const pairing of this.pairings.values()) {
       if (
         pairing.householdId !== household.id ||
         pairing.inviterId !== memberId ||
-        !["Pending", "Claimed"].includes(this.state(pairing))
+        !["Pending", "Claimed"].includes(this.state(pairing)) ||
+        !include(pairing)
       ) continue;
       pairing.state = "Revoked";
       pairing.terminalAt = this.now();
@@ -1545,9 +1684,14 @@ export class PairingService {
       this.audit("pairing_revoked", {
         householdId: household.id,
         pairingId: pairing.id,
-        reason: "inviter_removed",
+        reason,
       });
     }
+  }
+
+  removeMembership(household, memberId, actorId) {
+    const target = this.members.get(memberId);
+    this.revokeInviterPairings(household, memberId, "inviter_removed");
     target.active = false;
     target.memberStatus = "removed";
     household.version += 1;
@@ -1585,7 +1729,11 @@ export class PairingService {
         "Use another trusted device to revoke this device.",
         409,
       );
+    if (device.memberId !== member.id)
+      this.requireManagementAuthority(member, household, "revoke another member's device");
     if (!device.revokedAt) {
+      // Recheck at mutation time; state may have changed since the options step.
+      this.requireAdminAccessAfterRevocation(household, device.id);
       device.revokedAt = this.now();
       this.audit("device_revoked", {
         householdId: household.id,

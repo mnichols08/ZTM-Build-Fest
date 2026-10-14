@@ -320,6 +320,8 @@ test("sender revocation after a restart preserves committed recovery and relay h
       "the rotating device's committed epoch is durable");
     const recipient = first.pairing.reauthenticate(f.recipient.deviceToken, "recipient");
     const historyBefore = first.sync.pull(recipient.sessionToken, "", "20");
+    // Revoking another member's device is household-admin authority.
+    first.pairing.members.get(f.recipient.memberId).householdAdmin = true;
     first.pairing.revokeDevice(recipient.sessionToken, f.adult.deviceId, f.recipient.memberId);
     first.sync.onAccessChange(f.adult.householdId, [f.adult.deviceId]);
     // The reopened services use the real clock, well past the fixture's TTL.
@@ -429,6 +431,8 @@ test("committed rotation recovery survives sender revocation, expiry, and restar
   let reopened;
   try {
     f.rotate();
+    // Revoking another member's device is household-admin authority.
+    f.pairing.members.get(f.recipient.memberId).householdAdmin = true;
     f.pairing.revokeDevice(
       f.recipient.sessionToken,
       f.adult.deviceId,

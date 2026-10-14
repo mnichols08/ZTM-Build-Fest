@@ -3141,7 +3141,7 @@ class KinApp extends HTMLElement {
       const value = await loadCachedHouseholdSettings(identity);
       this.assertCurrentSession(session);
       if (value && (this.householdSettings?.revision ?? -1) <= value.revision) this.householdSettings = value;
-      this.householdDefaults.initialize({ owner: false, ownerRecorded: false, value: this.householdSettings });
+      this.householdDefaults.initialize({ admin: false, adminRecorded: false, value: this.householdSettings });
       this.applyEffectiveAppearance();
     } catch {
       if (this.isCurrentSession(session)) this.setStatus("Kin couldn't restore the last shared appearance. Local household information is still available.");

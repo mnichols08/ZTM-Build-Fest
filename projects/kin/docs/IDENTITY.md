@@ -15,7 +15,7 @@ Household
     └── Device B1
 ```
 
-The initial multi-device target is one household, two adult members, and multiple trusted devices. Child accounts, extended-family roles, teams, organizations, admin panels, and complex RBAC are out of scope.
+The initial multi-device target was one household, two adult members, and multiple trusted devices. Households now have up to four Adults, Limited members (children/teens), and expiring Temporary members (babysitters, caregivers, guests). A server-recorded household admin flag on Adults governs membership and shared settings; see [HOUSEHOLD-IDENTITY-DEFAULTS.md](HOUSEHOLD-IDENTITY-DEFAULTS.md#authority). Extended-family roles, teams, organizations, and general RBAC remain out of scope.
 
 | Concept    | Identity                 | Meaning                                                                                                                     |
 | ---------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------- |

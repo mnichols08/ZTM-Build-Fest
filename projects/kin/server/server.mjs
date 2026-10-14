@@ -631,7 +631,11 @@ async function api(request, response, url, context) {
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/devices") {
-    json(response, 200, { devices: service.listDevices(session) });
+    const auth = service.authorize(session);
+    json(response, 200, {
+      devices: service.listDevices(session),
+      canManageMembers: service.canManageMembers(auth.member, auth.household),
+    });
     return;
   }
   const revokeOptionsMatch = url.pathname.match(/^\/api\/devices\/([a-f0-9]{32})\/revocation\/options$/);
@@ -823,7 +827,7 @@ async function api(request, response, url, context) {
     url.pathname === "/api/household/deletion/options"
   ) {
     const auth = service.authorize(session);
-    requireTrustAuthority(auth.member, "delete the household");
+    service.requireManagementAuthority(auth.member, auth.household, "delete the household");
     const flow = createFlow(
       {
         purpose: "delete-household",
@@ -885,8 +889,9 @@ async function api(request, response, url, context) {
     const { device, member } = service.trustedDevice(deviceToken, {
       allowDeletionPending: true,
     });
-    requireTrustAuthority(member, "cancel household deletion");
     const household = service.households.get(member.householdId);
+    if (household) service.requireManagementAuthority(member, household, "cancel household deletion");
+    else requireTrustAuthority(member, "cancel household deletion");
     if (household?.lifecycleState !== "deletion_pending")
       throw new PairingError(
         "household_deletion_unavailable",
@@ -1011,6 +1016,54 @@ async function api(request, response, url, context) {
       clearCookie(response, "kin_device", secureCookies);
     }
     json(response, 200, result);
+    return;
+  }
+  if (
+    request.method === "POST" &&
+    url.pathname === "/api/household/admins/options"
+  ) {
+    if (typeof body?.admin !== "boolean") throw badRequest();
+    const change = service.householdAdminContext(session, body.memberId);
+    const flow = createFlow(
+      {
+        purpose: "set-household-admin",
+        targetMemberId: body.memberId,
+        admin: body.admin,
+        memberId: change.memberId,
+        deviceId: change.deviceId,
+      },
+      context,
+    );
+    json(response, 200, {
+      flow,
+      publicKey: webauthn.authenticationOptions(flow, change.credentialIds),
+    });
+    return;
+  }
+  if (
+    request.method === "POST" &&
+    url.pathname === "/api/household/admins/finish"
+  ) {
+    const flow = consumeFlow(body.flow, context);
+    if (flow.purpose !== "set-household-admin") throw badRequest();
+    const auth = service.authorize(session);
+    if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id)
+      throw badRequest();
+    const credential = service.credentials.get(body.credential?.id);
+    if (!credential || credential.memberId !== auth.member.id)
+      throw new PairingError(
+        "passkey_member_mismatch",
+        "Use this member's passkey to continue.",
+        401,
+      );
+    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    json(
+      response,
+      200,
+      withTransaction(context, () =>
+        service.setHouseholdAdmin(session, flow.targetMemberId, flow.admin, auth.member.id),
+      ),
+    );
     return;
   }
   if (

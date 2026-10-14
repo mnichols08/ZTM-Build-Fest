@@ -35,7 +35,7 @@ function makeEnvelope(adult, overrides = {}) {
   };
 }
 
-test("founder alone can replace encrypted household settings with revision checks", () => {
+test("only household admins can replace encrypted household settings with revision checks", () => {
   const { pairing, adult, sync } = fixture();
   sync.enable(adult.sessionToken);
   const invitation = pairing.createPairing(adult.sessionToken, { kind: "adult" });
@@ -43,12 +43,22 @@ test("founder alone can replace encrypted household settings with revision check
   pairing.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
   const second = pairing.activateClaim(claim.claimToken);
   const ciphertext = Buffer.alloc(40, 7);
-  const value = { expectedRevision: 0, keyEpoch: 1, ciphertext: ciphertext.toString("base64url"), digest: createHash("sha256").update(ciphertext).digest("hex"), ownerId: second.memberId, isOwner: true };
+  const value = { expectedRevision: 0, keyEpoch: 1, ciphertext: ciphertext.toString("base64url"), digest: createHash("sha256").update(ciphertext).digest("hex"), ownerId: second.memberId, isOwner: true, admin: true, householdAdmin: true };
   assert.equal(pairing.households.get(adult.householdId).ownerMemberId, adult.memberId);
-  assert.throws(() => sync.updateHouseholdSettings(second.sessionToken, value), (error) => error.code === "household_owner_required");
+  assert.equal(sync.householdSettings(adult.sessionToken).admin, true);
+  assert.equal(sync.householdSettings(second.sessionToken).admin, false);
+  assert.equal(sync.householdSettings(second.sessionToken).adminRecorded, true);
+  assert.throws(() => sync.updateHouseholdSettings(second.sessionToken, value), (error) => error.code === "household_admin_required");
   assert.deepEqual(sync.updateHouseholdSettings(adult.sessionToken, value), { revision: 1, accepted: true });
   assert.equal(sync.householdSettings(second.sessionToken).settings.revision, 1);
   assert.throws(() => sync.updateHouseholdSettings(adult.sessionToken, value), (error) => error.code === "household_settings_stale");
+
+  pairing.setHouseholdAdmin(adult.sessionToken, second.memberId, true, adult.memberId);
+  pairing.devices.get(second.deviceId).syncProvisionedEpochs = [1];
+  assert.equal(sync.householdSettings(second.sessionToken).admin, true);
+  assert.deepEqual(sync.updateHouseholdSettings(second.sessionToken, { ...value, expectedRevision: 1 }), { revision: 2, accepted: true });
+  pairing.setHouseholdAdmin(second.sessionToken, second.memberId, false, second.memberId);
+  assert.throws(() => sync.updateHouseholdSettings(second.sessionToken, { ...value, expectedRevision: 2 }), (error) => error.code === "household_admin_required");
 });
 
 test("household settings require the active provisioned epoch and preserve accepted bytes on rejection", () => {
@@ -84,14 +94,15 @@ test("household settings require the active provisioned epoch and preserve accep
 
 function adultDevice(pairing, adult) { return pairing.devices.get(adult.deviceId); }
 
-test("legacy households without trustworthy ownership fail closed", () => {
+test("legacy households without a recorded admin fail closed", () => {
   const { pairing, adult, sync } = fixture();
   sync.enable(adult.sessionToken);
   pairing.households.get(adult.householdId).ownerMemberId = null;
+  delete pairing.members.get(adult.memberId).householdAdmin;
   const ciphertext = Buffer.alloc(40, 9);
   const value = { expectedRevision: 0, keyEpoch: 1, ciphertext: ciphertext.toString("base64url"), digest: createHash("sha256").update(ciphertext).digest("hex") };
-  assert.equal(sync.householdSettings(adult.sessionToken).ownerRecorded, false);
-  assert.throws(() => sync.updateHouseholdSettings(adult.sessionToken, value), (error) => error.code === "household_owner_required");
+  assert.equal(sync.householdSettings(adult.sessionToken).adminRecorded, false);
+  assert.throws(() => sync.updateHouseholdSettings(adult.sessionToken, value), (error) => error.code === "household_admin_required");
 });
 
 test("relay enforces bounded interoperable logical time", () => {

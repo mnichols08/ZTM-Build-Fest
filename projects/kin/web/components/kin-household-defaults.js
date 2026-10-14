@@ -22,22 +22,31 @@ export class KinHouseholdDefaults extends HTMLElement {
     this.editor.addEventListener("kin:save-appearance", (event) => { event.stopPropagation(); event.detail.complete(null, new Error("Use Save household settings below.")); });
     this.append(heading, this.note, this.identity, this.editor, this.warning, this.feedback);
   }
-  initialize({ owner, ownerRecorded, value }) {
-    this.owner = owner; this.ownerRecorded = ownerRecorded;
+  initialize({ admin, adminRecorded, value }) {
+    this.admin = admin === true; this.adminRecorded = adminRecorded;
     // Shared mutation controls must not enter the rendered or accessibility
     // tree without authority established by the authenticated server response.
-    this.hidden = !owner;
-    if (!owner) return;
+    this.hidden = !this.admin;
+    if (!this.admin) {
+      // Authority can be withdrawn after it was granted; drop the privileged
+      // actions and lock the remaining controls rather than only hiding them.
+      this.actions?.remove(); this.actions = null;
+      this.disabled = this.busy;
+      return;
+    }
     this.saved = value ?? { version: 1, revision: 0, name: DEFAULT_HOUSEHOLD_NAME, appearance: { ...DEFAULT_APPEARANCE, owner: "household" } };
     this.nameInput.value = this.saved.name; this.draftAppearance = structuredClone(this.saved.appearance);
     this.initializing = true; this.editor.initialize(this.draftAppearance); this.initializing = false;
     this.note.textContent = "Set the name and default appearance shared by your household.";
     this.identity.disabled = false; this.editor.disabled = false;
     this.installActions();
+    // Busy state may have been applied before admin authority arrived and
+    // left the name input disabled; recompute control state now.
+    this.disabled = this.busy;
   }
   installActions() {
     this.actions?.remove(); this.actions = document.createElement("div"); this.actions.className = "appearance-actions";
-    if (this.owner) {
+    if (this.admin) {
       const save = button("Save household settings", () => this.save(), "primary-action");
       const cancel = button("Cancel changes", () => this.restore());
       const reset = button("Restore Kin defaults", () => { if (confirm("Restore Kin's shared defaults? Personal appearance choices will not change.")) { this.nameInput.value = DEFAULT_HOUSEHOLD_NAME; this.draftAppearance = { ...DEFAULT_APPEARANCE, owner: "household" }; this.editor.initialize(this.draftAppearance); this.preview("Kin defaults are previewed. Save to share them."); } });
@@ -46,7 +55,7 @@ export class KinHouseholdDefaults extends HTMLElement {
     this.insertBefore(this.actions, this.feedback);
   }
   preview(message = "Unsaved shared preview.") {
-    if (!this.owner || !this.draftAppearance) return;
+    if (!this.admin || !this.draftAppearance) return;
     this.feedback.textContent = message;
     this.dispatchEvent(new CustomEvent("kin:household-defaults-preview", { bubbles: true, detail: { name: this.nameInput.value.trim() || DEFAULT_HOUSEHOLD_NAME, appearance: structuredClone(this.draftAppearance) } }));
   }
@@ -55,7 +64,7 @@ export class KinHouseholdDefaults extends HTMLElement {
     let name; try { name = normalizeHouseholdName(this.nameInput.value); this.nameError.textContent = ""; } catch (error) { this.nameError.textContent = error.message; this.nameInput.focus(); return; }
     this.dispatchEvent(new CustomEvent("kin:save-household-defaults", { bubbles: true, detail: { value: { version: 1, revision: this.saved.revision, name, appearance: { ...structuredClone(this.draftAppearance), owner: "household" } }, complete: (saved, error) => { this.feedback.textContent = error?.message ?? "Household settings saved. Other online members receive them when they sync."; if (saved) { this.saved = structuredClone(saved); this.nameInput.value = saved.name; } } } }));
   }
-  set disabled(value) { this.busy = Boolean(value); for (const control of this.querySelectorAll("button,input")) control.disabled = this.busy || (!this.owner && this.contains(control)); }
+  set disabled(value) { this.busy = Boolean(value); for (const control of this.querySelectorAll("button,input")) control.disabled = this.busy || (!this.admin && this.contains(control)); }
 }
 function button(label, action, className = "") { const value = document.createElement("button"); value.type = "button"; value.textContent = label; value.className = className; value.addEventListener("click", action); return value; }
 customElements.define("kin-household-defaults", KinHouseholdDefaults);

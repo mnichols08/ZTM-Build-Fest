@@ -681,10 +681,12 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     let household = await b.call(pageHousehold);
     const bMember = household.members.find((member) => member.current);
     check(bMember?.kind === "adult" && bMember.active, "Adult B is an active Adult in the server household view");
+    check(household.adminRecorded && !bMember.admin && !household.canManageMembers &&
+      household.members.some((member) => !member.current && member.kind === "adult" && member.admin),
+      "the founding Adult A is the household admin and Adult B is not");
     const bPairing = await b.call(pageFetch, { path: "/api/pairings", method: "POST", body: { kind: "limited" } });
-    check(bPairing.status === 201 && bPairing.body?.code, "Adult B may create invitations (Adult trust authority): " + JSON.stringify(bPairing));
-    const bCancel = await b.call(pageFetch, { path: `/api/pairings/${bPairing.body.pairingId}`, method: "DELETE", body: {} });
-    check(bCancel.status === 200, "Adult B cancels its probe invitation");
+    check(bPairing.status === 403 && bPairing.body?.error === "household_admin_required",
+      "non-admin Adult B cannot create invitations: " + JSON.stringify(bPairing));
     result = await a.call(pageSync); // A commits the rotation and provisions B's epoch keys.
     check(result.last?.state !== "paused", "Adult A rotates and provisions after B joins: " + JSON.stringify(result.last));
     await a.call(pageAddItem, "A2 after B joined");

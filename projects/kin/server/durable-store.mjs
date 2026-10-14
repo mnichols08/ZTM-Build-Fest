@@ -34,7 +34,7 @@ import {
   validStoredDevice,
 } from "./durable-identity.mjs";
 
-const SERVER_SCHEMA_VERSION = 7;
+const SERVER_SCHEMA_VERSION = 8;
 export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024 + 4096;
 export const MAX_HOUSEHOLD_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 export const MAX_HOUSEHOLD_ATTACHMENTS = 64;
@@ -810,6 +810,29 @@ export class DurableStore {
         throw new DurableStoreError("Kin could not complete the household owner/settings migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 7) {
+      try {
+        this.transaction(() => {
+          // Only a recorded founder-owner becomes the first admin. Ownerless
+          // legacy households stay adminless; nothing is inferred.
+          this.db.exec(`
+            ALTER TABLE members ADD COLUMN household_admin INTEGER NOT NULL DEFAULT 0
+              CHECK (household_admin IN (0, 1));
+            UPDATE members SET household_admin = 1
+              WHERE kind = 'adult' AND id IN (
+                SELECT owner_member_id FROM households
+                WHERE owner_member_id IS NOT NULL AND households.id = members.household_id
+              );
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(8, Date.now());
+          sqlitePragma(this.db, "user_version = 8");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the household admin migration.", { cause: error });
+      }
+    }
   }
 
   verify() {
@@ -973,9 +996,12 @@ export class DurableStore {
           memberStatus: row.member_status ?? (row.active ? "active" : "removed"),
           kind: row.kind ?? "adult",
           ...(row.expires_at == null ? {} : { expiresAt: row.expires_at }),
+          ...(row.household_admin === 1 ? { householdAdmin: true } : {}),
           credentials: new Set(credentialIds),
         };
         if (!["adult", "limited", "temporary"].includes(member.kind) ||
+            ![0, 1].includes(row.household_admin ?? 0) ||
+            (member.householdAdmin && member.kind !== "adult") ||
             !["active", "removed", "expired"].includes(member.memberStatus) ||
             (member.memberStatus === "expired" && member.kind !== "temporary") ||
             (member.kind === "temporary" && !Number.isSafeInteger(member.expiresAt)) ||
@@ -1085,7 +1111,7 @@ export class DurableStore {
           throw new DurableStoreError("Kin server membership data is invalid.");
         this.db
           .prepare(
-            "INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at, member_status) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET active = excluded.active, credential_ids = excluded.credential_ids, kind = excluded.kind, expires_at = excluded.expires_at, member_status = excluded.member_status",
+            "INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at, member_status, household_admin) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET active = excluded.active, credential_ids = excluded.credential_ids, kind = excluded.kind, expires_at = excluded.expires_at, member_status = excluded.member_status, household_admin = excluded.household_admin",
           )
           .run(
             member.id,
@@ -1095,6 +1121,7 @@ export class DurableStore {
             member.kind ?? "adult",
             member.expiresAt ?? null,
             member.memberStatus ?? (member.active ? "active" : "removed"),
+            Number(member.householdAdmin === true),
           );
         for (const credentialId of member.credentials) {
           const credential = service.credentials.get(credentialId);
@@ -1350,18 +1377,19 @@ export class DurableStore {
           )
           .run(Math.max(current.version, snapshot.household.version), snapshot.householdId);
         const insertMember = this.db.prepare(
-          `INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at, member_status)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO members(id, household_id, active, credential_ids, kind, expires_at, member_status, household_admin)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET
              household_id = excluded.household_id,
              active = excluded.active,
              credential_ids = excluded.credential_ids,
              kind = excluded.kind,
              expires_at = excluded.expires_at,
-             member_status = excluded.member_status`,
+             member_status = excluded.member_status,
+             household_admin = excluded.household_admin`,
         );
         for (const row of snapshot.members)
-          insertMember.run(row.id, row.household_id, row.active, row.credential_ids, row.kind ?? "adult", row.expires_at ?? null, row.member_status ?? (row.active ? "active" : "removed"));
+          insertMember.run(row.id, row.household_id, row.active, row.credential_ids, row.kind ?? "adult", row.expires_at ?? null, row.member_status ?? (row.active ? "active" : "removed"), row.household_admin ?? 0);
         const insertCredential = this.db.prepare(
           "INSERT INTO credentials(id, member_id, credential_json) VALUES (?, ?, ?)",
         );

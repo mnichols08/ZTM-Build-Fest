@@ -918,7 +918,7 @@ class KinHousehold extends HTMLElement {
 
   async showDevices() {
     await this.run(async () => {
-      const { devices } = await this.api("/api/devices");
+      const { devices, canManageMembers } = await this.api("/api/devices");
       let directoryDevices = [];
       if (!this.syncKeyError) {
         await this.openSyncKeyStore();
@@ -1010,7 +1010,9 @@ class KinHousehold extends HTMLElement {
                 "secondary",
               ),
             );
-          item.append(
+          // Fail closed: show another member's revoke control only when the
+          // server explicitly grants management authority. It enforces this too.
+          if (device.memberId === this.identity.memberId || canManageMembers === true) item.append(
             this.makeButton(
               `Revoke ${device.label}`,
               async () => {
@@ -1055,10 +1057,13 @@ class KinHousehold extends HTMLElement {
       heading.textContent = "Household access";
       this.append(heading);
       this.text(
-        "Only adults can manage household access. Removing a member blocks future access, but cannot erase information already copied.",
+        household.adminRecorded
+          ? "Household admins manage who has access. Removing a member blocks future access, but cannot erase information already copied."
+          : "Only adults can manage household access. Removing a member blocks future access, but cannot erase information already copied.",
       );
       const activeMembers = household.members.filter((value) => value.active);
       const me = household.members.find((value) => value.current);
+      const canManage = household.canManageMembers === true;
       for (const kind of ["adult", "limited", "temporary"]) {
         const sectionMembers = household.members.filter((member) =>
           kind === "temporary" ? member.kind === kind : member.kind === kind && member.active,
@@ -1066,24 +1071,38 @@ class KinHousehold extends HTMLElement {
         if (!sectionMembers.length && kind === "temporary") continue;
         const section = document.createElement("section");
         const title = document.createElement("h3");
-        title.textContent = kind === "adult" ? "Adults" : kind === "limited" ? "Limited Members" : "Temporary Access";
+        title.textContent = kind === "adult" ? "Adults" : kind === "limited" ? "Children & Limited Members" : "Babysitters, Caregivers & Guests";
         section.append(title);
         const list = document.createElement("ul");
         for (const [index, member] of sectionMembers.entries()) {
         const item = document.createElement("li");
         const memberLabel = member.current ? "You" : `${kind === "adult" ? "Adult" : kind === "limited" ? "Limited member" : "Temporary member"} ${index + 1}`;
         const expiryText = kind === "temporary" && member.expiresAt ? ` — ends ${new Date(member.expiresAt).toLocaleString()}` : "";
-        item.textContent = `${memberLabel}${expiryText}${member.active ? "" : " — access ended"}`;
+        item.textContent = `${memberLabel}${member.admin ? " — Household admin" : ""}${expiryText}${member.active ? "" : " — access ended"}`;
         if (member.current && kind === "temporary") item.textContent = `Temporary household access — ends ${new Date(member.expiresAt).toLocaleString()}`;
+        if (me?.admin && kind === "adult" && member.active && (!member.current || member.admin))
+          item.append(
+            this.makeButton(
+              member.current
+                ? "Stop being a household admin"
+                : member.admin
+                  ? `Remove household admin from ${memberLabel}`
+                  : `Make ${memberLabel} a household admin`,
+              () => this.setHouseholdAdmin(member.id, memberLabel, !member.admin),
+              "secondary",
+            ),
+          );
         if (me?.kind === "adult" && !member.current && member.active) {
-          if (kind !== "temporary") item.append(
+          // Recovering an admin issues admin authority, so the server
+          // requires an admin approver for it.
+          if (kind !== "temporary" && (!member.admin || me.admin)) item.append(
             this.makeButton(
               `Authorize recovery for ${memberLabel}`,
               () => this.authorizeRecovery(member.id),
               "secondary",
             ),
           );
-          item.append(
+          if (canManage) item.append(
             this.makeButton(
               kind === "temporary" ? `Revoke ${memberLabel}'s temporary access` : `Remove ${memberLabel} from household`,
               () => this.removeMember(member.id, memberLabel, kind),
@@ -1097,20 +1116,20 @@ class KinHousehold extends HTMLElement {
         this.append(section);
       }
       this.append(
-        ...(me?.kind === "adult" && activeMembers.length < 12
+        ...(canManage && activeMembers.length < 12
           ? [
               ...(activeMembers.filter((member) => member.kind === "adult").length < MAX_ACTIVE_ADULTS
                 ? [this.makeButton("Add Adult", () => this.createPairing("adult"))]
                 : []),
               ...(activeMembers.filter((member) => member.kind === "limited").length < MAX_ACTIVE_LIMITED
-                ? [this.makeButton("Add Limited Member", () => this.createPairing("limited"))]
+                ? [this.makeButton("Add Child or Limited Member", () => this.createPairing("limited"))]
                 : []),
               ...(activeMembers.length < 12
                 ? [this.temporaryInvitationForm()]
                 : []),
             ]
           : []),
-        ...(me?.kind === "adult" ? [this.makeButton(
+        ...(canManage ? [this.makeButton(
           "Delete household",
           () => this.deleteHousehold(),
           "danger",
@@ -1125,7 +1144,7 @@ class KinHousehold extends HTMLElement {
     const form = document.createElement("form");
     form.className = "temporary-invitation-form";
     const label = document.createElement("label");
-    label.textContent = "Temporary access ends";
+    label.textContent = "Babysitter, caregiver, or guest access ends";
     const expiry = document.createElement("input");
     expiry.type = "datetime-local";
     expiry.required = true;
@@ -1135,7 +1154,7 @@ class KinHousehold extends HTMLElement {
     help.textContent = "Uses your device's local time. Kin checks the expiry on every server request.";
     const submit = document.createElement("button");
     submit.type = "submit";
-    submit.textContent = "Add Temporary Member";
+    submit.textContent = "Add Babysitter or Guest";
     label.append(expiry);
     form.append(label, help, submit);
     form.addEventListener("submit", (event) => {
@@ -1153,7 +1172,7 @@ class KinHousehold extends HTMLElement {
   async deleteHousehold() {
     if (
       !confirm(
-        "Delete this household from Kin? Sync stops immediately for all adults and devices. Kin will remove its encrypted relay history and authorization records after 30 days; any active adult can cancel with a passkey before then. This does not erase this browser, offline devices, exported archives, or external backups. After final deletion Kin cannot restore the household.",
+        "Delete this household from Kin? Sync stops immediately for all adults and devices. Kin will remove its encrypted relay history and authorization records after 30 days; a household admin can cancel with a passkey before then. This does not erase this browser, offline devices, exported archives, or external backups. After final deletion Kin cannot restore the household.",
       )
     )
       return;
@@ -1236,6 +1255,35 @@ class KinHousehold extends HTMLElement {
     )
       return;
     await this.run(() => this.authenticateRemoval(memberId));
+    await this.showHousehold();
+  }
+  async setHouseholdAdmin(memberId, memberLabel, admin) {
+    if (
+      !confirm(
+        admin
+          ? `Make ${memberLabel} a household admin? Admins can add and remove members, change shared household settings, and make other Adults admins.`
+          : `Remove household admin from ${memberLabel}? They stay an Adult member, and invitations they started will be cancelled.`,
+      )
+    )
+      return;
+    await this.run(async () => {
+      const started = await this.api("/api/household/admins/options", {
+        method: "POST",
+        body: JSON.stringify({ memberId, admin }),
+      });
+      this.message("Confirm the household admin change with your passkey.");
+      const credential = await navigator.credentials.get({
+        publicKey: authenticationOptions(started.publicKey),
+        signal: this.connectionAbort.signal,
+      });
+      await this.api("/api/household/admins/finish", {
+        method: "POST",
+        body: JSON.stringify({
+          flow: started.flow,
+          credential: credentialJson(credential),
+        }),
+      });
+    });
     await this.showHousehold();
   }
   async authenticateRemoval(memberId) {

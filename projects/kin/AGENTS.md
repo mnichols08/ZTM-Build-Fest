@@ -434,16 +434,20 @@ The initial product should optimize for:
 
 > One household with two adult members.
 
+The user has since authorized bounded expansion: up to four Adults, Limited
+members (presented as children/teens), Temporary members (presented as
+babysitters, caregivers, and guests), and a server-recorded **household admin**
+flag on Adults. The founder is the first admin, and admins may promote or demote
+other Adults. Do not add further member classes or permission tiers for
+these presentations.
+
 Do not prematurely introduce:
 
-- child accounts
 - grandparents
-- babysitters
 - extended family roles
 - organization accounts
 - teams
-- administrators
-- complicated role-based permissions
+- complicated role-based permissions beyond the household admin flag
 
 Additional household roles may be considered later.
 
@@ -1505,3 +1509,9 @@ The user-authorized Household Identity & Shared Appearance candidate is
 `kin-v0.47.0` on `feat/kin-household-owner-settings`, stacked from the Personal
 Appearance candidate; no tag has been created. It adds narrow founder-backed
 owner authority and a revisioned, opaque encrypted household-settings record.
+The same candidate replaces single-owner settings authority with household
+admins (server schema 8). The founder is the first admin. Admins can promote or
+demote other Adults with a fresh passkey. Membership management, other
+members' device revocation, household deletion, admin recovery, and shared
+settings require an admin. Legacy households without one keep Adult-level
+management and stay fail-closed for settings and admin grants.

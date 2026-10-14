@@ -66,7 +66,7 @@ The event stream records changes; current domain state is a projection of valid 
 
 A household is one private coordination space with a stable, opaque `household_id`. The ID remains stable when a member replaces a device. It is included in each event so data from different households cannot be silently mixed.
 
-The initial product assumption is two adult members. This is a scope constraint, not a role/permission system. A household is created, active, and eventually may be closed or deleted through an explicit lifecycle; there is no implicit transfer of ownership when a device changes.
+The initial product assumption was two adult members. Membership is now bounded by member class (Adult, Limited, Temporary), and one narrow server-recorded flag, household admin, marks the Adults who manage membership and shared settings. This is not a general role/permission system. A household is created, active, and eventually may be closed or deleted through an explicit lifecycle; there is no implicit transfer of ownership when a device changes.
 
 In v0.1.x, the household ID is a local placeholder created for the browser installation. It does not represent a remotely registered household and does not establish membership or authentication. Household creation, membership, closure, recovery, and deletion protocols remain future work.
 
