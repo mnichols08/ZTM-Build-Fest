@@ -432,6 +432,19 @@ kin-segment-nav { display: block; margin: 0 0 16px; }
 .form-actions { display: flex; flex-wrap: wrap; gap: 8px; grid-column: 1 / -1; }
 .view-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; }
 
+.quick-add-trigger { padding-inline: 14px; border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 650; }
+.quick-add-dialog { width: min(92vw, 480px); max-width: calc(100vw - 24px); margin: auto; padding: 22px; border: 1px solid var(--line-strong); border-radius: var(--r-card); background: var(--surface); color: var(--ink); box-shadow: 0 18px 60px rgba(0, 0, 0, .28); }
+.quick-add-dialog::backdrop { background: rgba(10, 16, 12, .52); }
+.quick-add-dialog[open] { animation: sheet-arrive .18s cubic-bezier(.2,.75,.25,1) both; }
+.quick-add-dialog h2 { margin: 0 0 4px; }
+.quick-add-hint, .quick-add-destination { margin: 0 0 14px; color: var(--ink-muted); font-size: 14px; line-height: 1.45; }
+.quick-add-form { display: grid; gap: 8px; }
+.quick-add-form label { font-weight: 640; }
+.quick-add-form input { width: 100%; min-width: 0; min-height: var(--tap); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); }
+.quick-add-destination { margin: 0; }
+.quick-add-error { min-height: 1.4em; margin: 0; color: var(--danger); font-size: 14px; }
+.quick-add-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
 /* ---------- Sections, cards, lists, rows ---------- */
 .today-section, .household-panel, .security-panel {
   min-width: 0;
@@ -917,6 +930,8 @@ kin-app > .security-panel {
   .nav-link { display: flex; min-width: 0; min-height: 56px; flex-direction: column; justify-content: center; gap: 1px; padding: 3px 2px; border-radius: var(--r-row); font-size: 11px; line-height: 1.2; }
   .nav-link svg { width: 20px; height: 20px; }
   .header-search span, .header-lock span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .quick-add-trigger { min-width: var(--tap); padding-inline: 8px; font-size: 0; }
+  .quick-add-trigger::before { content: "Add"; font-size: 14px; }
   .header-search, .header-lock { padding: 0 12px; }
   .sync-chip { max-width: 44vw; }
   .site-tools { gap: 6px; }
@@ -1048,7 +1063,7 @@ kin-app > .security-panel {
 
 @media (forced-colors: active) {
   .nav-link[aria-current="page"], .segment-link[aria-current="true"], .today-section, .household-panel,
-  .security-panel, .compose-form, .hub-link, .detail-panel-side, .item-row.item-selected { border: 1px solid CanvasText; }
+  .security-panel, .compose-form, .quick-add-dialog, .hub-link, .detail-panel-side, .item-row.item-selected { border: 1px solid CanvasText; }
   .add-button, .complete-button, .retry-button, .primary-action { border: 1px solid ButtonText; }
   .complete-control::before { border-color: ButtonText; }
   .complete-control[aria-pressed="true"]::before { background: Highlight; }

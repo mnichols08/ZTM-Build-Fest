@@ -16,6 +16,7 @@ import { loadKinEngine, randomId } from "../wasm/kin-engine.js";
 import { EventStore } from "../storage/event-store.js";
 import { loadCachedHouseholdSettings, SyncCoordinator } from "../sync/sync-coordinator.js";
 import "./kin-compose.js";
+import "./kin-quick-add.js";
 import "./kin-item.js";
 import "./kin-item-detail.js";
 import "./kin-today.js";
@@ -465,13 +466,14 @@ class KinApp extends HTMLElement {
     this.searchLink.setAttribute("aria-label", "Search household");
     this.searchLink.addEventListener("click", this.onNavigationClick);
     this.syncChip = document.createElement("kin-sync-status");
+    this.quickAdd = document.createElement("kin-quick-add");
     this.lockButton = document.createElement("button");
     this.lockButton.type = "button";
     this.lockButton.className = "header-lock";
     this.lockButton.innerHTML = `${LOCK_ICON}<span>Lock</span>`;
     this.lockButton.setAttribute("aria-label", "Lock Kin");
     this.lockButton.addEventListener("click", () => this.lockHousehold());
-    tools.append(this.searchLink, this.syncChip, this.lockButton);
+    tools.append(this.quickAdd, this.searchLink, this.syncChip, this.lockButton);
     this.siteTools = tools;
     header.append(brand, tools);
     this.header = header;
@@ -2951,6 +2953,7 @@ class KinApp extends HTMLElement {
     this.updateCalendarExportButton();
     this.main.setAttribute("aria-busy", String(isBusy));
     this.compose.disabled = isBusy || !this.store;
+    this.quickAdd.disabled = isBusy || !this.store;
     for (const button of this.onboarding?.querySelectorAll("button") ?? []) button.disabled = isBusy;
     this.today.disabled = isBusy || !this.store;
     this.needs.disabled = isBusy || !this.store;
@@ -3250,6 +3253,7 @@ class KinApp extends HTMLElement {
     clearTimeout(this.focusTimer);
     this.clearAlert();
     clearLegacyDrafts();
+    this.quickAdd?.reset();
     if (this.main) {
       this.nav.hidden = true;
       this.shell.before(this.security);
