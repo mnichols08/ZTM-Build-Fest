@@ -71,5 +71,61 @@ export async function quickAddRegressions() {
   app.appendCommand = originalAppend;
   check(count(retryText) === 1 && !quick.dialog.open, "failed submission retries safely exactly once");
 
-  return "PASS universal quick-add focus, validation, IME, duplicate guard, routing, durability, and retry";
+  // A Today capture is multi-command: the Item may be durable before its
+  // planning date. Editing the title must expose the established recovery
+  // choice instead of leaving Quick Add's local pending guard stuck.
+  app.navigate("#today");
+  const partialA = `Partial task A ${crypto.randomUUID().slice(0, 6)}`;
+  const nextB = `Next task B ${crypto.randomUUID().slice(0, 6)}`;
+  let dateFailures = 1;
+  app.appendCommand = async function (command) {
+    if (command.type === "set-item-planning-date" && dateFailures-- > 0) throw new Error("forced date failure");
+    return originalAppend.call(this, command);
+  };
+  await add(partialA);
+  const partialItem = app.state.items.find((item) => item.text === partialA);
+  check(count(partialA) === 1 && partialItem?.planningDate == null && quick.dialog.open &&
+    quick.input.value === partialA && quick.error.textContent.includes("Couldn't set the date") && app.pendingCapture?.draft.id === partialItem.itemId,
+  "a failed secondary command reports one durable partial task and preserves its draft");
+  quick.input.value = nextB;
+  quick.input.dispatchEvent(new Event("input", { bubbles: true }));
+  quick.form.requestSubmit();
+  quick.form.requestSubmit();
+  const finishPrevious = [...quick.error.querySelectorAll("button")].find((button) => button.textContent === "Finish previous task");
+  check(quick.recoveryVisible && finishPrevious && document.activeElement === finishPrevious && count(partialA) === 1 && count(nextB) === 0,
+    "an edited draft exposes an announced, keyboard-focused recovery choice without duplication");
+  finishPrevious.click();
+  finishPrevious.click();
+  await idle();
+  check(count(partialA) === 1 && app.state.items.find((item) => item.itemId === partialItem.itemId)?.planningDate === app.currentCivilDate() &&
+    app.pendingCapture == null && quick.input.value === nextB && quick.error.textContent.includes("Previous task finished"),
+  "Finish previous task retries only the missing date and retains the new draft");
+  quick.form.requestSubmit();
+  await idle();
+  check(count(partialA) === 1 && count(nextB) === 1 && !quick.dialog.open,
+    "the retained new draft submits exactly once after previous recovery");
+
+  const partialC = `Partial task C ${crypto.randomUUID().slice(0, 6)}`;
+  const nextD = `Next task D ${crypto.randomUUID().slice(0, 6)}`;
+  dateFailures = 1;
+  await add(partialC);
+  const partialCItem = app.state.items.find((item) => item.text === partialC);
+  check(count(partialC) === 1 && partialCItem?.planningDate == null && app.pendingCapture?.draft.id === partialCItem.itemId,
+    "a second partial task remains recoverable");
+  quick.cancelButton.click();
+  quick.trigger.click();
+  quick.input.value = nextD;
+  quick.input.dispatchEvent(new Event("input", { bubbles: true }));
+  quick.form.requestSubmit();
+  const startNew = [...quick.error.querySelectorAll("button")].find((button) => button.textContent === "Start new task");
+  check(startNew && quick.recoveryVisible && count(nextD) === 0,
+    "closing and reopening still resolves the app-owned partial capture before a new task");
+  startNew.click();
+  await idle();
+  app.appendCommand = originalAppend;
+  check(count(partialC) === 1 && app.state.items.find((item) => item.itemId === partialCItem.itemId)?.planningDate == null &&
+    count(nextD) === 1 && app.state.items.find((item) => item.text === nextD)?.planningDate === app.currentCivilDate() && !quick.dialog.open,
+  "Start new task explicitly retains the prior partial record and creates the new task once");
+
+  return "PASS universal quick-add focus, validation, IME, duplicate guard, routing, durability, retry, and partial-capture recovery";
 }

@@ -84,7 +84,10 @@ class KinQuickAdd extends HTMLElement {
       this.dialog.close();
     });
     this.form.addEventListener("submit", (event) => this.submit(event));
-    this.input.addEventListener("input", () => { this.draftRevision++; this.error.textContent = ""; });
+    this.input.addEventListener("input", () => {
+      this.draftRevision++;
+      if (!this.recoveryVisible) this.clearResult();
+    });
     this.input.addEventListener("invalid", () => {
       this.error.textContent = "Enter a task title.";
       this.input.focus();
@@ -163,19 +166,60 @@ class KinQuickAdd extends HTMLElement {
   }
 
   showResult(text, { kind = "saved" } = {}) {
-    if (kind !== "error") return;
+    if (kind === "saved" && !this.dialog.open) return;
     this.pending = false;
     this.addButton.textContent = "Add";
-    this.error.textContent = text;
+    const finishingPrevious = kind === "saved" && this.recoveryVisible;
+    this.clearResult();
+    this.error.setAttribute("role", kind === "error" ? "alert" : "status");
+    this.error.textContent = finishingPrevious ? "Previous task finished. Your new title is still here." : text;
     this.disabled = this.isDisabled;
     this.input.focus();
+  }
+
+  showPendingCapture({ finish, startNew }) {
+    this.pending = false;
+    this.addButton.textContent = "Add";
+    this.clearResult();
+    this.recoveryVisible = true;
+    this.error.setAttribute("role", "alert");
+    const title = document.createElement("strong");
+    title.textContent = "Previous task needs attention";
+    const explanation = document.createElement("span");
+    explanation.textContent = " The task was created, but its remaining details could not be saved.";
+    const actions = document.createElement("span");
+    actions.className = "quick-add-recovery-actions";
+    const finishButton = document.createElement("button");
+    finishButton.type = "button";
+    finishButton.textContent = "Finish previous task";
+    const startButton = document.createElement("button");
+    startButton.type = "button";
+    startButton.textContent = "Start new task";
+    const run = (action) => {
+      if (this.pending || this.isDisabled) return;
+      this.pending = true;
+      this.disabled = this.isDisabled;
+      action();
+    };
+    finishButton.addEventListener("click", () => run(finish));
+    startButton.addEventListener("click", () => run(startNew));
+    actions.append(finishButton, startButton);
+    this.error.append(title, explanation, actions);
+    this.disabled = this.isDisabled;
+    finishButton.focus();
+  }
+
+  clearResult() {
+    this.recoveryVisible = false;
+    this.error?.replaceChildren();
+    this.error?.setAttribute("role", "alert");
   }
 
   focusInput() { if (this.dialog.open) this.input.focus(); }
 
   clearDraft() {
     this.input.value = "";
-    this.error.textContent = "";
+    this.clearResult();
   }
 
   reset() {
