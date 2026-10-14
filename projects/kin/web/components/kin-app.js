@@ -80,6 +80,7 @@ function readAutoLockPreference() {
 }
 
 const BULK_UNDO_WINDOW_MS = 10 * 60_000;
+const BULK_UNDO_UNVERIFIED = "Unable to verify the latest item state. No changes were undone. Try again.";
 
 class KinApp extends HTMLElement {
   constructor() {
@@ -2688,6 +2689,7 @@ class KinApp extends HTMLElement {
     const undone = [];
     const conflicts = [];
     const failed = [];
+    let unverified = false;
     this.bulkRunning = true;
     this.setBusy(true);
     this.clearAlert();
@@ -2698,7 +2700,11 @@ class KinApp extends HTMLElement {
         items = (await this.readAuthoritativeState(session)).items;
       } catch (error) {
         if (error.code === "locked" || !this.isCurrentSession(session)) return;
-        items = this.state.items;
+        // Fail closed: the rendered projection may be stale, so checking
+        // against it could overwrite a newer change. Nothing is undone and
+        // the whole undo set stays available to try again.
+        unverified = true;
+        return;
       }
       for (const [index, change] of record.changes.entries()) {
         list.setBulkProgress(`Undoing ${index + 1} of ${record.changes.length}…`);
@@ -2720,11 +2726,14 @@ class KinApp extends HTMLElement {
         list.setBulkProgress("");
         if (undone.length) { this.renderState(); this.broadcastEventChange(); }
         // Items failed for a local reason (not a conflict) can be undone again.
-        if (failed.length) this.armBulkUndo({ ...record, changes: failed, generation: session.generation });
+        const retryable = unverified ? record.changes : failed;
+        if (retryable.length) this.armBulkUndo({ ...record, changes: retryable, generation: session.generation });
         list.setBulkResult({
-          message: describeBulkOutcome(record.action, { succeeded: undone.length, conflicts: conflicts.length, failed: failed.length, undo: true }),
-          error: failed.length > 0 || conflicts.length > 0,
-          canUndo: failed.length > 0,
+          message: unverified
+            ? BULK_UNDO_UNVERIFIED
+            : describeBulkOutcome(record.action, { succeeded: undone.length, conflicts: conflicts.length, failed: failed.length, undo: true }),
+          error: unverified || failed.length > 0 || conflicts.length > 0,
+          canUndo: retryable.length > 0,
           undoLabel: "Try undo again",
           canRetry: false,
         });

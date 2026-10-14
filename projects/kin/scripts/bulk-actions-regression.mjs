@@ -95,6 +95,40 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     for (const run of gate.waiting.splice(0)) run();
     delete window.__bulkGate;
   });
+  // Holds authoritative reads of the encrypted log until rejected with a
+  // non-lock storage error, and counts every command append meanwhile.
+  const holdReads = () => page(() => {
+    const app = document.querySelector("kin-app");
+    window.__readGate = { read: app.readAuthoritativeState, append: app.appendCommand, waiting: [], appends: [] };
+    app.readAuthoritativeState = () => new Promise((resolve, reject) => window.__readGate.waiting.push(reject));
+    app.appendCommand = function (command) {
+      window.__readGate.appends.push(command);
+      return window.__readGate.append.call(this, command);
+    };
+  });
+  const rejectReads = () => page(() => {
+    for (const reject of window.__readGate.waiting.splice(0)) reject(Object.assign(new Error("forced storage read failure"), { code: "storage" }));
+  });
+  const restoreReads = () => page(() => {
+    const gate = window.__readGate;
+    if (!gate) return [];
+    const app = document.querySelector("kin-app");
+    app.readAuthoritativeState = gate.read;
+    app.appendCommand = gate.append;
+    delete window.__readGate;
+    return gate.appends;
+  });
+  const undoFeedback = () => page(() => {
+    const app = document.querySelector("kin-app");
+    const bar = app.needs.bulkBar;
+    return {
+      error: bar.result.classList.contains("bulk-result-error"),
+      live: bar.message.getAttribute("role") === "status" && bar.message.getAttribute("aria-live") === "polite",
+      kept: app.bulkUndo?.changes.map((change) => change.itemId) ?? null,
+      label: bar.undo.textContent,
+    };
+  });
+  const UNVERIFIED = "Unable to verify the latest item state. No changes were undone. Try again.";
 
   try {
     await viewport(1280, 900, false);
@@ -253,6 +287,61 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     check(rejected === 4, "Rust refuses a completion that would not change the item's status", { rejected });
     await idle();
 
+    // --- Undo fails closed when the encrypted log cannot be read -------------
+    await tick([a]);
+    await runAction("complete");
+    state = await bar();
+    check(state.result === "1 item completed." && state.undo && (await statusOf([a]))[0] === "completed", "a bulk completion is offered for undo", state);
+    await holdReads();
+    before = await eventCount();
+    // Repeated activation while the read is pending starts one undo only.
+    await page(() => { const app = document.querySelector("kin-app"); app.needs.bulkBar.undo.click(); app.needs.bulkBar.undo.click(); app.needs.bulkAction("bulk-undo"); });
+    await until(() => window.__readGate.waiting.length === 1, "held authoritative read");
+    const pendingReads = await page(() => window.__readGate.waiting.length);
+    await rejectReads();
+    await idle();
+    await settle();
+    state = await bar();
+    after = await eventCount();
+    let feedback = await undoFeedback();
+    let appends = await page(() => window.__readGate.appends.length);
+    check(pendingReads === 1 && appends === 0 && after === before && (await statusOf([a]))[0] === "completed" && state.result === UNVERIFIED &&
+      feedback.error && feedback.live && state.undo && state.focus === "bulk-undo" && JSON.stringify(feedback.kept) === JSON.stringify([a]),
+    "a failed authoritative read issues no compensating command, never falls back to the rendered state, and keeps undo for retry", { pendingReads, appends, delta: after - before, state, feedback });
+    appends = (await restoreReads()).length;
+    await runAction("undo");
+    state = await bar();
+    check(appends === 0 && state.result === "Undid 1 item." && !state.undo && (await statusOf([a]))[0] === "active" && (await eventCount()) - before === 1,
+      "once storage is readable again, Try undo again reopens the item exactly once", { state, delta: (await eventCount()) - before });
+
+    // The hazard itself: a newer change sits only in the encrypted log while
+    // the rendered projection still matches what undo expects.
+    await tick([a]);
+    await runAction("complete");
+    await page(async (id) => {
+      const app = document.querySelector("kin-app");
+      await app.store.append({ type: "reopen", itemId: id }, app.engine);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await app.store.append({ type: "complete", itemId: id }, app.engine);
+    }, a);
+    await holdReads();
+    before = await eventCount();
+    await page(() => document.querySelector("kin-app").needs.bulkBar.undo.click());
+    await until(() => window.__readGate.waiting.length === 1, "held read over a hidden change");
+    await rejectReads();
+    await idle();
+    state = await bar();
+    after = await eventCount();
+    appends = (await restoreReads()).length;
+    check(appends === 0 && after === before && state.result === UNVERIFIED && state.undo,
+      "an unreadable log never lets undo overwrite a newer change the rendered state has not seen", { appends, delta: after - before, state });
+    await runAction("undo");
+    state = await bar();
+    check(state.result === "1 item changed since then, so it was left as it is." && (await eventCount()) === before,
+      "the retry re-reads the log and still detects the newer change", state);
+    await page(async (id) => { const app = document.querySelector("kin-app"); await app.refreshFromEvents(); await app.appendCommand({ type: "reopen", itemId: id }); app.renderState(); }, a);
+    await idle();
+
     // --- Mixed selection ----------------------------------------------------
     await page(() => { const details = document.querySelector("kin-app").needs.querySelector(".completed-disclosure"); details.open = true; details.dispatchEvent(new Event("toggle")); });
     await tick([a, b, e]);
@@ -404,6 +493,13 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     await runAction("complete");
     state = await bar();
     check(state.result === "2 items completed." && !/sync/i.test(state.result), "offline bulk completion saves locally and does not claim sync", state);
+    before = await eventCount();
+    await runAction("undo");
+    state = await bar();
+    check(state.result === "Undid 2 items." && (await statusOf([a, b])).every((status) => status === "active") && (await eventCount()) - before === 2,
+      "offline undo verifies against the local encrypted log and reopens both items", state);
+    await tick([a, b]);
+    await runAction("complete");
     await client.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     await page(() => window.dispatchEvent(new Event("online")));
     const storage = await page((text) => JSON.stringify({ ...localStorage }).includes(text) || JSON.stringify({ ...sessionStorage }).includes(text), `Bulk A ${stamp}`);
@@ -457,15 +553,53 @@ export async function bulkActionRegressions(client, { visit, ready }) {
       return after === before;
     });
     check(staleUndo, "an undo from a previous session (lock, logout, or household switch) is refused");
+
+    // The session ends while undo is reading the log: whether the read fails
+    // as locked or with a storage error, nothing reaches the next session.
+    for (const code of ["locked", "storage"]) {
+      await mode(true);
+      await tick([b]);
+      await runAction("complete");
+      before = await eventCount();
+      await page((code) => {
+        const app = document.querySelector("kin-app");
+        window.__readOriginal = app.readAuthoritativeState;
+        app.readAuthoritativeState = async function () {
+          this.lockHousehold();
+          throw Object.assign(new Error("read ended by lock"), { code });
+        };
+        app.needs.bulkBar.undo.click();
+      }, code);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      const duringLock = await page(() => {
+        const app = document.querySelector("kin-app");
+        app.readAuthoritativeState = window.__readOriginal;
+        delete window.__readOriginal;
+        return { locked: !app.vault, undo: app.bulkUndo, running: app.bulkRunning, result: app.needs.bulkResult };
+      });
+      await ready(client);
+      await visit("lists/todo");
+      await idle();
+      const afterUnlock = await page((id) => {
+        const app = document.querySelector("kin-app");
+        return { undo: app.bulkUndo, result: app.needs.bulkResult, status: app.state.items.find((item) => item.itemId === id)?.status };
+      }, b);
+      check(duringLock.locked && duringLock.undo === null && !duringLock.running && duringLock.result === null &&
+        afterUnlock.undo === null && afterUnlock.result === null && afterUnlock.status === "completed" && (await eventCount()) === before,
+      `a ${code} read failure across a lock cancels undo without updating the next session`, { duringLock, afterUnlock });
+      await page(async (id) => { const app = document.querySelector("kin-app"); await app.appendCommand({ type: "reopen", itemId: id }); app.renderState(); }, b);
+      await idle();
+    }
     await page((ids) => Promise.resolve().then(async () => { const app = document.querySelector("kin-app"); for (const id of ids) if (app.state.items.find((item) => item.itemId === id)?.status === "completed") await app.appendCommand({ type: "reopen", itemId: id }); app.renderState(); }), [a, b, d]);
     await idle();
   } finally {
     await ungate().catch(() => {});
+    await restoreReads().catch(() => {});
     await client.send("Network.emulateNetworkConditions", { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 }).catch(() => {});
     await client.send("Emulation.setEmulatedMedia", { media: "", features: [] }).catch(() => {});
     await client.send("Emulation.clearDeviceMetricsOverride").catch(() => {});
     await page(() => { const app = document.querySelector("kin-app"); for (const list of [app?.needs, app?.shopping]) list?.setSelectionMode?.(false); app?.clearBulkOutcome?.(); window.scrollTo(0, 0); }).catch(() => {});
   }
   for (const line of metrics) console.log(line);
-  return `PASS bulk actions (${passed.length} checks): keyboard selection, select all/clear, bulk complete/reopen, rapid repeats, partial failure and retry, undo and partial undo, remote-conflict undo, ineligible ids, reconciliation, Quick add/palette/details, navigation mid-batch, Shopping, 320px, forced colours, offline, reload, lock mid-batch`;
+  return `PASS bulk actions (${passed.length} checks): keyboard selection, select all/clear, bulk complete/reopen, rapid repeats, partial failure and retry, undo and partial undo, remote-conflict undo, fail-closed undo on unreadable log, ineligible ids, reconciliation, Quick add/palette/details, navigation mid-batch, Shopping, 320px, forced colours, offline undo, reload, lock mid-batch and mid-undo`;
 }
