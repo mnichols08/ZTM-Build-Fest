@@ -172,12 +172,22 @@ Routines are shown from the Rust-derived `occurrenceStatus` and
 | Cadence | Open occurrence label |
 | --- | --- |
 | daily | Today |
+| weekdays | Today |
 | weekly | This week |
 | biweekly | This two-week period |
 | monthly | This month |
 
+Cadences that share a label share one group, so every-day and every-weekday
+tasks sit under a single "Today" heading. Each repeating task has exactly one
+row for its current occurrence, never one per future occurrence. The row
+reads "Repeats every weekday · Next: Mon, Oct 19"; the next date is the
+Rust-derived `nextOn`, formatted only. A **Schedule** button opens that
+task's editor on Routines (§5.5).
+
 Completed occurrences are listed under the collapsed Completed disclosure.
-`unavailable` occurrences are omitted. When household mode is not Normal, the
+`unavailable` occurrences are omitted (an every-weekday task at the weekend).
+With nothing due and nothing done the section says "Nothing repeating is due
+today."; with no repeating tasks at all it points to Repeat in Quick add. When household mode is not Normal, the
 routines section states that occurrences are paused and offers no
 complete/reopen actions (Rust rejects them independently).
 
@@ -413,6 +423,59 @@ browser." The underlying `LocalReminders` model is unchanged.
   A toolbar control that hides while focused hands focus to Select all or
   Select. Lock or session changes discard results from the old session
   without touching the new interface.
+
+### 5.5 Repeating tasks
+
+Repeating tasks are Routines presented as ordinary tasks. Rust owns every
+recurrence rule; `web/recurrence.js` only names the values Rust returns and
+plans which existing commands a request still needs.
+
+- **Schedules.** Does not repeat (default), Every day, Every weekday, Every
+  week, Every two weeks, Every month. There is no custom rule editor.
+
+  | Schedule | Occurrence (Rust `Cadence`) |
+  | --- | --- |
+  | Every day | Each civil date. |
+  | Every weekday | Each Monday–Friday civil date (protocol 24). Saturday and Sunday have no occurrence; Friday's does not carry over. |
+  | Every week | The Monday–Sunday week. |
+  | Every two weeks | Fourteen-day periods anchored to the creation date. |
+  | Every month | The calendar month, keyed by its first day. A task created on the 31st has one occurrence in every month, including February, so no day-of-month clamping exists. |
+
+  Dates are integer civil dates from the browser's local calendar, so a
+  daylight-saving day of 23 or 25 hours is still one day.
+- **Quick add.** A collapsed **Repeat: Does not repeat** disclosure follows the
+  destination line. Title + Enter still creates a one-off task. Choosing a
+  schedule updates the summary and the destination line ("Adds a repeating
+  task (every weekday). It shows on Today whenever it's due."), which the title
+  field is described by. Saving sends one `create-routine` command with a
+  client id, so the existing partial-capture recovery treats it like an `add`;
+  a retry never creates a second task. Shopping and Staples destinations hide
+  Repeat.
+- **Completion.** Completing affects only the current occurrence key. Rust
+  refuses a completion or reopening of any other key (yesterday's view,
+  tomorrow, a weekend day), a second completion of a done occurrence, and any
+  change while the household mode is not Normal. Repeating tasks are never
+  bulk-selectable, so bulk complete and undo cannot touch an occurrence.
+- **Schedule editor.** Each row on Routines has a **Schedule** disclosure: the
+  current schedule and next date, a Repeat select, and **Change schedule**.
+  **Stop repeating** sits beside Complete, where Archive was, keeping the row's
+  tab order. Routines have no schedule-change event and history is
+  never rewritten, so **Change schedule** explicitly starts a new repeating task
+  today with the same title (and owner), then stops the old one. Its past
+  completions stay with the old schedule, and the current period's done mark
+  does not carry over; the editor says so before saving. A failure after the
+  new schedule is saved says the old one is still repeating; Try again resumes
+  with the same replacement id. A change from a stale view (already stopped)
+  is refused with an explanation. **Stop repeating** archives the Routine:
+  no future occurrences, history kept.
+- **Feedback.** Polite status messages: "Added. Repeats every weekday; it's on
+  Today now.", "Done for this period. Next: tomorrow.", "Schedule changed:
+  repeats every week, starting today. Past completions are kept.", "Stopped
+  repeating. Past completions are kept." Stale actions reuse "That period
+  changed. Review the current routine."
+- **Concurrency limit.** Two devices that change the same schedule before
+  syncing each create a replacement; both remain visible and either can be
+  stopped. Identical completions converge on one occurrence.
 
 ---
 

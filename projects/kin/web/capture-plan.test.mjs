@@ -33,6 +33,7 @@ test("a draft without an id is refused so no duplicate can be created", () => {
 
 test("partial failures are described truthfully", () => {
   assert.equal(describePartialCapture({ type: "add" }, "To do"), "Couldn't save. Your text is still here.");
+  assert.equal(describePartialCapture({ type: "create-routine" }, "To do"), "Couldn't save. Your text is still here.");
   assert.equal(describePartialCapture({ type: "set-item-planning-date" }, "Shopping"), "Saved to Shopping. Couldn't set the date.");
   assert.equal(describePartialCapture({ type: "pin" }, "To do"), "Saved to To do. Couldn't pin it.");
 });

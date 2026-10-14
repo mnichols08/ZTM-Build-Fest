@@ -1,5 +1,6 @@
 import { validatePlaybook } from "../household-validation.js";
 import { ROUTINE_PERIOD_LABELS } from "../today-view.js";
+import { REPEAT_HINTS, REPEAT_OPTIONS, describeNextOccurrence, describeRepeat } from "../recurrence.js";
 import "./kin-reminder.js";
 import "./kin-responsibility.js";
 
@@ -9,7 +10,7 @@ import "./kin-responsibility.js";
 // view with a separate editor. Reminders use the in-app <kin-reminder>.
 
 const MODE_LABELS = { normal: "Normal", vacation: "Vacation", guests: "Guests", rest: "Rest" };
-const CADENCE_LABELS = { daily: "Daily", weekly: "Weekly", biweekly: "Every two weeks", monthly: "Monthly" };
+const CADENCE_LABELS = { daily: "Daily", weekdays: "Weekdays", weekly: "Weekly", biweekly: "Every two weeks", monthly: "Monthly" };
 
 class KinRoutines extends HTMLElement {
   constructor() {
@@ -25,6 +26,11 @@ class KinRoutines extends HTMLElement {
     this.editorOpen = false;
     this.instanceId = `routines-${++KinRoutines.instances}`;
     this.reminderControls = new Map();
+    this.civilDate = null;
+    // Which row's schedule editor is open, and its unsaved choice, survive
+    // the re-render a background refresh causes.
+    this.scheduleOpenId = null;
+    this.scheduleDrafts = new Map();
   }
 
   connectedCallback() {
@@ -77,7 +83,7 @@ class KinRoutines extends HTMLElement {
     }
     const cadenceHint = document.createElement("p");
     cadenceHint.className = "section-hint";
-    cadenceHint.textContent = "Weekly starts on Monday. Every two weeks counts from the day you add it. Monthly follows the calendar month.";
+    cadenceHint.textContent = "Weekdays skips Saturday and Sunday. Weekly starts on Monday. Every two weeks counts from the day you add it. Monthly follows the calendar month, so one added on the 31st still repeats in shorter months.";
     this.button = document.createElement("button");
     this.button.type = "submit";
     this.button.className = "add-button";
@@ -193,6 +199,7 @@ class KinRoutines extends HTMLElement {
   }
 
   set routines(value) { this.records = Array.isArray(value) ? value : []; this.render(); }
+  set today(value) { this.civilDate = Number.isSafeInteger(value) ? value : null; }
   set responsibilityContext(value) { this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.memberIds = value?.memberIds ?? []; this.render(); }
   set playbooks(value) { this.playbookRecords = value ?? []; this.renderPlaybooks(); }
   set householdMode(value) { this.mode = value; this.render(); }
@@ -206,12 +213,12 @@ class KinRoutines extends HTMLElement {
     this.isDisabled = Boolean(value);
     for (const control of this.querySelectorAll("input, textarea, select, button")) {
       if (control.closest("kin-reminder")) continue;
-      control.disabled = this.isDisabled;
+      control.disabled = this.isDisabled || control.dataset.domainDisabled === "true";
     }
     for (const control of this.reminderControls.values()) control.disabled = this.isDisabled;
   }
   get hasDraft() {
-    return Boolean(this.input?.value.trim() || this.playbookTitle?.value.trim() || this.playbookEntries?.value.trim()) ||
+    return Boolean(this.input?.value.trim() || this.playbookTitle?.value.trim() || this.playbookEntries?.value.trim()) || this.scheduleDrafts.size > 0 ||
       [...this.reminderControls.values()].some((control) => control.hasDraft);
   }
 
@@ -238,6 +245,26 @@ class KinRoutines extends HTMLElement {
   // After a save the form stays open for another routine; otherwise the Add
   // control is the sensible focus target.
   focusInput() { if (this.createOpen) this.input.focus(); else this.addButton.focus(); }
+  // Opens one row's schedule editor (from Today's Schedule button) and moves
+  // focus into it. Returns false when the task is gone or stopped.
+  openSchedule(routineId) {
+    if (!this.records.some((record) => record.routineId === routineId && record.status !== "archived")) return false;
+    this.scheduleOpenId = routineId;
+    this.render();
+    const row = this.rowFor(routineId);
+    row?.scrollIntoView?.({ block: "nearest" });
+    row?.querySelector(".routine-schedule select")?.focus();
+    return true;
+  }
+  closeSchedule(routineId) {
+    if (this.scheduleOpenId === routineId) this.scheduleOpenId = null;
+    this.scheduleDrafts.delete(routineId);
+  }
+  rowFor(routineId) { return [...(this.list?.children ?? [])].find((row) => row.dataset.routineId === routineId) ?? null; }
+  focusRoutine(routineId) {
+    const row = this.rowFor(routineId);
+    (row?.querySelector("button[data-routine-id], summary") ?? (this.createOpen ? this.input : this.addButton)).focus();
+  }
   focusHeading() { (this.currentView === "checklists" ? this.playbookHeading : this.heading)?.focus(); }
   saveDraft() { /* Drafts stay only in the unlocked inputs. */ }
   clearIfMatches({ text, cadence }) {
@@ -276,23 +303,28 @@ class KinRoutines extends HTMLElement {
   }
   captureFocus() {
     const control = document.activeElement;
-    return this.contains(control) ? { control, id: control.dataset.routineId, action: control.dataset.action } : null;
+    return this.contains(control) ? { control, id: control.dataset.routineId ?? control.closest("[data-routine-id]")?.dataset.routineId, action: control.dataset.action } : null;
   }
   restoreFocus(focus) {
     if (!focus) return;
     if (focus.control.isConnected && !focus.control.closest("[hidden]")) { focus.control.focus(); return; }
-    const sameRow = [...this.querySelectorAll("button[data-routine-id]")].filter((button) => button.dataset.routineId === focus.id);
-    (sameRow.find((button) => button.dataset.action === focus.action) ?? sameRow[0] ?? (this.createOpen ? this.input : this.addButton)).focus();
+    // A completed row swaps Complete for Reopen (and back); buttons inside a
+    // closed Schedule editor cannot take focus.
+    const counterpart = { "complete-routine-occurrence": "reopen-routine-occurrence", "reopen-routine-occurrence": "complete-routine-occurrence" }[focus.action];
+    const sameRow = [...this.querySelectorAll("button[data-routine-id]")].filter((button) => button.dataset.routineId === focus.id && !button.closest("details:not([open])"));
+    (sameRow.find((button) => button.dataset.action === focus.action) ?? sameRow.find((button) => button.dataset.action === counterpart) ?? sameRow[0] ?? (this.createOpen ? this.input : this.addButton)).focus();
   }
   render() {
     if (!this.list) return;
     const focus = this.captureFocus();
     this.list.replaceChildren();
     this.hint.textContent = this.mode === "normal"
-      ? "Small household rhythms, without streaks or pressure. Complete the current period when it's done; skipping one is fine."
+      ? "Repeating tasks, without streaks or pressure. Complete the current one when it's done; skipping one is fine. Add one here or with Repeat in Quick add."
       : `Routine occurrences are paused during ${MODE_LABELS[this.mode] ?? "this"} mode. Definitions stay unchanged. Change the mode under Household › Areas & status.`;
     const visible = this.records.filter((record) => record.status !== "archived");
     this.empty.hidden = visible.length !== 0;
+    if (this.scheduleOpenId && !visible.some((record) => record.routineId === this.scheduleOpenId)) this.scheduleOpenId = null;
+    for (const id of [...this.scheduleDrafts.keys()]) if (!visible.some((record) => record.routineId === id)) this.scheduleDrafts.delete(id);
     const keep = new Set();
     for (const record of visible) {
       const row = document.createElement("li");
@@ -306,11 +338,12 @@ class KinRoutines extends HTMLElement {
       const status = document.createElement("p");
       status.className = "routine-status item-meta";
       const period = ROUTINE_PERIOD_LABELS[record.cadence] ?? "this period";
-      status.textContent = `${CADENCE_LABELS[record.cadence] ?? record.cadence} · ${this.mode !== "normal"
+      const next = this.mode === "normal" ? describeNextOccurrence(record.nextOn, this.civilDate) : null;
+      status.textContent = [CADENCE_LABELS[record.cadence] ?? record.cadence, this.mode !== "normal"
         ? `Paused during ${MODE_LABELS[this.mode] ?? "this mode"}`
         : record.occurrenceStatus === "unavailable"
-          ? "Not available for the current date"
-          : record.occurrenceStatus === "completed" ? `Done ${period.toLowerCase()}` : `Open ${period.toLowerCase()}`}`;
+          ? record.cadence === "weekdays" ? "Nothing due at the weekend" : "Not available for the current date"
+          : record.occurrenceStatus === "completed" ? `Done ${period.toLowerCase()}` : `Open ${period.toLowerCase()}`, next].filter(Boolean).join(" · ");
       content.append(text, status);
       const responsibility = document.createElement("kin-responsibility");
       responsibility.record = { targetKind: "routine", targetId: record.routineId, text: record.text, ownerId: this.responsibilities?.find((entry) => entry.targetKind === "routine" && entry.targetId === record.routineId)?.memberId ?? null, memberId: this.memberId, memberIds: this.memberIds };
@@ -338,13 +371,80 @@ class KinRoutines extends HTMLElement {
         actions.append(button);
       };
       if (this.mode === "normal" && record.occurrenceStatus !== "unavailable") addAction(record.occurrenceStatus === "completed" ? "Reopen" : "Complete", record.occurrenceStatus === "completed" ? "reopen-routine-occurrence" : "complete-routine-occurrence");
-      addAction("Archive", "archive-routine");
+      addAction("Stop repeating", "archive-routine");
+      content.append(this.createScheduleEditor(record));
       row.append(content, actions);
       this.list.append(row);
     }
     for (const id of [...this.reminderControls.keys()]) if (!keep.has(id)) this.reminderControls.delete(id);
     this.restoreFocus(focus);
     this.renderPlaybooks();
+  }
+  // The minimal recurrence editor. Rust has no schedule-change event and
+  // history is never rewritten, so a change explicitly starts a new schedule
+  // today and stops this one; stopping keeps every past completion.
+  createScheduleEditor(record) {
+    const id = `${this.instanceId}-schedule-${record.routineId}`;
+    const details = document.createElement("details");
+    details.className = "routine-schedule";
+    details.open = this.scheduleOpenId === record.routineId;
+    const summary = document.createElement("summary");
+    summary.textContent = "Schedule";
+    summary.setAttribute("aria-label", `Schedule for ${record.text}`);
+    details.append(summary);
+    details.addEventListener("toggle", () => {
+      if (details.open) this.scheduleOpenId = record.routineId;
+      else if (this.scheduleOpenId === record.routineId) this.scheduleOpenId = null;
+    });
+    const form = document.createElement("form");
+    form.className = "routine-schedule-form";
+    form.noValidate = true;
+    const current = document.createElement("p");
+    const next = describeNextOccurrence(record.nextOn, this.civilDate);
+    current.textContent = `${describeRepeat(record.cadence)}.${next && this.mode === "normal" ? ` ${next}.` : ""}`;
+    const label = document.createElement("label");
+    label.htmlFor = `${id}-cadence`;
+    label.textContent = "Repeat";
+    const select = document.createElement("select");
+    select.id = `${id}-cadence`;
+    select.dataset.routineId = record.routineId;
+    for (const { value, label: text } of REPEAT_OPTIONS.slice(1)) select.append(new Option(text, value));
+    select.value = this.scheduleDrafts.get(record.routineId) ?? record.cadence;
+    const scope = document.createElement("p");
+    scope.id = `${id}-scope`;
+    select.setAttribute("aria-describedby", scope.id);
+    const save = document.createElement("button");
+    save.type = "submit";
+    save.className = "add-button";
+    save.textContent = "Change schedule";
+    save.dataset.routineId = record.routineId;
+    save.dataset.action = "change-routine-schedule";
+    const describeScope = () => {
+      const changed = select.value !== record.cadence;
+      save.dataset.domainDisabled = String(!changed);
+      save.disabled = this.isDisabled || !changed;
+      scope.textContent = changed
+        ? `${REPEAT_HINTS[select.value]} The new schedule starts today. Past completions stay with the current schedule, and ${record.occurrenceStatus === "completed" ? "this period's done mark" : "the open occurrence"} does not carry over.`
+        : "Choose a different schedule to change it, or use Stop repeating to end it. Past completions are always kept.";
+    };
+    select.addEventListener("change", () => {
+      if (select.value === record.cadence) this.scheduleDrafts.delete(record.routineId);
+      else this.scheduleDrafts.set(record.routineId, select.value);
+      describeScope();
+    });
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (this.isDisabled || select.value === record.cadence) return;
+      this.dispatch("change-routine-schedule", { routineId: record.routineId, cadence: select.value });
+    });
+    const buttons = document.createElement("div");
+    buttons.className = "routine-schedule-actions";
+    buttons.append(save);
+    form.append(current, label, select, scope, buttons);
+    details.append(form);
+    select.disabled = this.isDisabled;
+    describeScope();
+    return details;
   }
   renderPlaybooks() {
     if (!this.playbookList) return;

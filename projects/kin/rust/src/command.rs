@@ -490,6 +490,16 @@ pub fn execute(
     }
     if matches!(
         command,
+        HouseholdCommand::CreateRoutine {
+            cadence: Cadence::Weekdays,
+            ..
+        }
+    ) && request.protocol_version < crate::protocol::PROTOCOL_V24
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
+    if matches!(
+        command,
         HouseholdCommand::AddItem {
             classification: ItemClassification::Staple,
             ..

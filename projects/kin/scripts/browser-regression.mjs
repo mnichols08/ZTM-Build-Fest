@@ -22,6 +22,7 @@ import { quickAddRegressions } from "./quick-add-regression.mjs";
 import { todayActionableRegressions, todayLifecycleRegressions } from "./today-actionable-regression.mjs";
 import { keyboardCommandRegressions } from "./keyboard-commands-regression.mjs";
 import { bulkActionRegressions } from "./bulk-actions-regression.mjs";
+import { recurringTaskRegressions } from "./recurring-tasks-regression.mjs";
 import {
   handoffRegressions,
   handoffPeerRegressions,
@@ -1359,6 +1360,7 @@ try {
   problems.push(...problems.splice(offlineWindowStart).filter((entry) => !offlineStatusProbe(entry)));
   console.log(await keyboardCommandRegressions(first, { visit: (id) => visit(first, id), ready }));
   console.log(await bulkActionRegressions(first, { visit: (id) => visit(first, id), ready }));
+  console.log(await recurringTaskRegressions(first, { visit: (id) => visit(first, id), ready }));
   await visit(first, "routines");
   console.log(await first.evaluate(`(${routineRegressions.toString()})()`));
   const playbookResult = await first.evaluate(async () => {
@@ -2047,10 +2049,12 @@ try {
     ),
     "3px",
   );
-  await first.evaluate('document.querySelector("select").focus()');
+  // The first rendered select: Quick add's Repeat select sits earlier in the
+  // DOM inside a closed dialog.
+  await first.evaluate("[...document.querySelectorAll('select')].find((node)=>node.getClientRects().length).focus()");
   assert.deepEqual(
     await first.evaluate(`(()=>{
-      const select=document.querySelector('select');
+      const select=[...document.querySelectorAll('select')].find((node)=>node.getClientRects().length);
       return {
         label:select.labels?.[0]?.textContent,
         targetHeight:select.getBoundingClientRect().height,
@@ -2073,7 +2077,7 @@ try {
         forcedColors:matchMedia('(forced-colors: active)').matches,
         reducedMotion:matchMedia('(prefers-reduced-motion: reduce)').matches,
         undersized:controls.some(control=>control.getClientRects().length>0&&control.getBoundingClientRect().height<48),
-        focusWidth:getComputedStyle(document.querySelector('select')).outlineWidth,
+        focusWidth:getComputedStyle([...document.querySelectorAll('select')].find((node)=>node.getClientRects().length)).outlineWidth,
         overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth,
       };
     })()`),

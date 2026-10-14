@@ -20,6 +20,9 @@ pub struct RoutineState {
     pub archived: bool,
     pub occurrence_key: Option<CivilDate>,
     pub completed: bool,
+    /// When the next new occurrence opens. Derived from the cadence and the
+    /// projection date; `None` once archived or past the calendar range.
+    pub next_start: Option<CivilDate>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -716,6 +719,7 @@ fn rebuild_with_context(
                     archived: false,
                     occurrence_key: cadence.current_key(*created_on, today),
                     completed: false,
+                    next_start: cadence.next_start(*created_on, today),
                 });
             }
             EventKind::RoutineOccurrenceCompleted { routine_id, key }
@@ -765,6 +769,7 @@ fn rebuild_with_context(
                 } else {
                     routine.archived = true;
                     routine.occurrence_key = None;
+                    routine.next_start = None;
                     routine_archives.insert(*routine_id, (event.logical_time, event.device_id));
                 }
                 pins.retain(|pin| {

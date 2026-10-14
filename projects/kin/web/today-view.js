@@ -7,6 +7,7 @@
 
 export const ROUTINE_PERIOD_LABELS = Object.freeze({
   daily: "Today",
+  weekdays: "Today",
   weekly: "This week",
   biweekly: "This two-week period",
   monthly: "This month",
@@ -58,12 +59,18 @@ export function composeToday({ items = [], routines = [], pins = [], handoffs = 
   const activeRoutines = routines.filter((routine) => routine.status !== "archived");
   const openRoutines = paused ? [] : activeRoutines.filter((routine) => routine.occurrenceStatus === "open");
   const completedRoutines = paused ? [] : activeRoutines.filter((routine) => routine.occurrenceStatus === "completed");
-  const routineGroups = Object.keys(ROUTINE_PERIOD_LABELS)
-    .map((cadence) => ({
-      cadence,
-      label: ROUTINE_PERIOD_LABELS[cadence],
-      routines: openRoutines.filter((routine) => routine.cadence === cadence),
-    }))
+  // Cadences sharing a period label (every day, every weekday) share a group,
+  // so Today never shows two "Today" headings.
+  const routineGroups = [...new Set(Object.values(ROUTINE_PERIOD_LABELS))]
+    .map((label) => {
+      const cadences = Object.keys(ROUTINE_PERIOD_LABELS).filter((cadence) => ROUTINE_PERIOD_LABELS[cadence] === label);
+      return {
+        cadence: cadences[0],
+        cadences,
+        label,
+        routines: openRoutines.filter((routine) => cadences.includes(routine.cadence)),
+      };
+    })
     .filter((group) => group.routines.length > 0);
 
   // Rule E — household context. Pins are a separate section and may repeat

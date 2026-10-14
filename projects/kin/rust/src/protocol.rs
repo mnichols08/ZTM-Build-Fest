@@ -34,7 +34,8 @@ pub const PROTOCOL_V20: u16 = 20;
 pub const PROTOCOL_V21: u16 = 21;
 pub const PROTOCOL_V22: u16 = 22;
 pub const PROTOCOL_V23: u16 = 23;
-pub const PROTOCOL_VERSION: u16 = PROTOCOL_V23;
+pub const PROTOCOL_V24: u16 = 24;
+pub const PROTOCOL_VERSION: u16 = PROTOCOL_V24;
 pub const ERROR_PROTOCOL_VERSION: u16 = PROTOCOL_V1;
 pub const MAX_EVENT_COUNT: usize = 10_000;
 pub const MAX_PROTOCOL_BYTES: usize = 64 * 1024 * 1024;
@@ -101,6 +102,7 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
             | PROTOCOL_V21
             | PROTOCOL_V22
             | PROTOCOL_V23
+            | PROTOCOL_V24
     ) {
         return Err(KinError::UnsupportedVersion);
     }
@@ -199,9 +201,8 @@ pub fn decode_request_with_summary(bytes: &[u8]) -> Result<DecodedRequest, KinEr
     let mut offset = match version {
         PROTOCOL_V8 | PROTOCOL_V9 | PROTOCOL_V10 | PROTOCOL_V11 | PROTOCOL_V12 | PROTOCOL_V13
         | PROTOCOL_V14 | PROTOCOL_V15 | PROTOCOL_V16 | PROTOCOL_V17 | PROTOCOL_V18
-        | PROTOCOL_V19 | PROTOCOL_V20 | PROTOCOL_V21 | PROTOCOL_V22 | PROTOCOL_V23 => {
-            V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES
-        }
+        | PROTOCOL_V19 | PROTOCOL_V20 | PROTOCOL_V21 | PROTOCOL_V22 | PROTOCOL_V23
+        | PROTOCOL_V24 => V8_REQUEST_HEADER_BYTES + identity_bindings.len() * V8_BINDING_BYTES,
         PROTOCOL_V7 => 44,
         PROTOCOL_V6 => V6_REQUEST_HEADER_BYTES,
         PROTOCOL_V5 => 20,
@@ -567,6 +568,12 @@ pub fn encode_state_v23(
 ) -> Result<Vec<u8>, KinError> {
     encode_state_with_summary(state, summary, PROTOCOL_V23)
 }
+pub fn encode_state_v24(
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<Vec<u8>, KinError> {
+    encode_state_with_summary(state, summary, PROTOCOL_V24)
+}
 
 fn encode_state_with_summary(
     state: &HouseholdState,
@@ -619,6 +626,14 @@ fn encode_state_with_summary(
     {
         return Err(KinError::UnsupportedVersion);
     }
+    if version < PROTOCOL_V24
+        && state
+            .routines
+            .iter()
+            .any(|routine| routine.cadence == Cadence::Weekdays)
+    {
+        return Err(KinError::UnsupportedVersion);
+    }
     if version < PROTOCOL_V13
         && (state
             .items
@@ -656,6 +671,11 @@ fn encode_state_with_summary(
             || !valid_timestamp(routine.created_at)
             || (routine.archived && routine.occurrence_key.is_some())
             || (routine.completed && routine.occurrence_key.is_none())
+            || (routine.archived && routine.next_start.is_some())
+            || routine
+                .next_start
+                .zip(routine.occurrence_key)
+                .is_some_and(|(next, key)| next <= key)
         {
             return Err(KinError::MalformedProtocol);
         }
@@ -863,6 +883,13 @@ fn encode_state_with_summary(
         .and_then(|length| length.checked_add(if version >= PROTOCOL_V20 { 4 } else { 0 }))
         .and_then(|length| length.checked_add(if version >= PROTOCOL_V21 { 4 } else { 0 }))
         .and_then(|length| length.checked_add(if version >= PROTOCOL_V22 { 4 } else { 0 }))
+        .and_then(|length| {
+            length.checked_add(if version >= PROTOCOL_V24 {
+                state.routines.len().checked_mul(4)?
+            } else {
+                0
+            })
+        })
         .and_then(|length| {
             length.checked_add(if version >= PROTOCOL_V23 {
                 4 + state.responsibilities.len().checked_mul(33)?
@@ -1082,6 +1109,14 @@ fn encode_state_with_summary(
             result.extend_from_slice(&entry.member_id.map_or([0; 16], |id| id.0));
         }
     }
+    if version >= PROTOCOL_V24 {
+        for routine in &state.routines {
+            push_u32(
+                &mut result,
+                routine.next_start.map_or(0, CivilDate::encoded),
+            );
+        }
+    }
 
     for entry in &summary.entries {
         result.extend_from_slice(&entry.event_id.0);
@@ -1102,7 +1137,7 @@ fn encode_state_with_summary(
 }
 
 pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelope, KinError> {
-    if !(PROTOCOL_V1..=PROTOCOL_V23).contains(&protocol_version) {
+    if !(PROTOCOL_V1..=PROTOCOL_V24).contains(&protocol_version) {
         return Err(KinError::UnsupportedVersion);
     }
     if record.len() > MAX_PROTOCOL_BYTES {
@@ -1138,8 +1173,9 @@ pub fn decode_event(record: &[u8], protocol_version: u16) -> Result<EventEnvelop
                 return Err(KinError::MalformedProtocol);
             }
             let cadence = Cadence::try_from(payload[16])?;
-            if matches!(cadence, Cadence::Biweekly | Cadence::Monthly)
-                && protocol_version < PROTOCOL_V12
+            if (matches!(cadence, Cadence::Biweekly | Cadence::Monthly)
+                && protocol_version < PROTOCOL_V12)
+                || (cadence == Cadence::Weekdays && protocol_version < PROTOCOL_V24)
             {
                 return Err(KinError::UnsupportedVersion);
             }

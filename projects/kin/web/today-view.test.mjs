@@ -49,6 +49,19 @@ test("rule D: routines use the Rust occurrence state and are grouped by period",
   assert.equal(ROUTINE_PERIOD_LABELS.biweekly, "This two-week period");
 });
 
+test("rule D: every-day and every-weekday tasks share one Today group; a weekend weekday task is absent", () => {
+  const daily = routine({ text: "Dishes" });
+  const weekdays = routine({ text: "Lunches", cadence: "weekdays" });
+  const weekend = routine({ text: "School run", cadence: "weekdays", occurrenceStatus: "unavailable", occurrenceKey: null });
+  const view = composeToday({ items: [], routines: [daily, weekdays, weekend], civilDate: TODAY });
+  assert.deepEqual(view.routineGroups.map((group) => [group.label, group.routines.map((entry) => entry.text)]), [["Today", ["Dishes", "Lunches"]]]);
+  assert.equal(view.routineGroups.filter((group) => group.label === "Today").length, 1);
+  assert.equal(ROUTINE_PERIOD_LABELS.weekdays, "Today");
+  // Each repeating task appears once, never once per future occurrence.
+  assert.equal(view.routineGroups.flatMap((group) => group.routines).length, 2);
+  assert.equal(view.hasRoutines, true);
+});
+
 test("rule D: a non-Normal mode pauses every occurrence without hiding that routines exist", () => {
   const view = composeToday({ items: [], routines: [routine()], mode: "vacation", civilDate: TODAY });
   assert.equal(view.routineGroups.length, 0);

@@ -19,7 +19,7 @@ export function remainingCaptureSteps(state, draft) {
 
 // Describes what did get saved when a later step fails, without overstating.
 export function describePartialCapture(failedStep, destinationLabel) {
-  if (failedStep.type === "add") return "Couldn't save. Your text is still here.";
+  if (failedStep.type === "add" || failedStep.type === "create-routine") return "Couldn't save. Your text is still here.";
   if (failedStep.type === "set-item-planning-date") return `Saved to ${destinationLabel}. Couldn't set the date.`;
   if (failedStep.type === "pin") return `Saved to ${destinationLabel}. Couldn't pin it.`;
   return `Saved to ${destinationLabel}. One more step didn't finish.`;

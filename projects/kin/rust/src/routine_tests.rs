@@ -347,7 +347,12 @@ fn richer_routine_cadences_are_protocol_v12_only_and_roundtrip() {
         decode_request_with_summary(&old_request),
         Err(KinError::UnsupportedVersion)
     );
-    let malformed = record(1, 14, 4, 20240228, b"Unknown");
+    let weekdays = record(1, 14, 4, 20240228, b"Weekdays");
+    assert_eq!(
+        decode_request_with_summary(&request_v12(&[weekdays], 20240313)),
+        Err(KinError::UnsupportedVersion)
+    );
+    let malformed = record(1, 14, 5, 20240228, b"Unknown");
     assert_eq!(
         decode_request_with_summary(&request_v12(&[malformed], 20240313)),
         Err(KinError::MalformedProtocol)
@@ -402,13 +407,13 @@ fn v7_invalid_header_date_cadence_reserved_schema_text_and_extreme_lengths() {
             Err(KinError::MalformedProtocol)
         );
     }
-    for cadence in 2..=3 {
+    for cadence in 2..=4 {
         assert_eq!(
             project(&[record(1, 14, cadence, 20261002, b"x")], 20261002),
             Err(KinError::UnsupportedVersion)
         );
     }
-    for cadence in 4..=255 {
+    for cadence in 5..=255 {
         assert_eq!(
             project(&[record(1, 14, cadence, 20261002, b"x")], 20261002),
             Err(KinError::MalformedProtocol)

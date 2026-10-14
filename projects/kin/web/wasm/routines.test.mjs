@@ -166,3 +166,58 @@ test("v7 maximum replay grows real memory and copies results across calls", asyn
   assert.equal(engine.applyEvents([], 1234, null, 20261002).routines.length, 0);
   assert.deepEqual(state, copy); assert.deepEqual(bytes, byteCopy);
 });
+
+test("v24 real Wasm weekdays cadence skips weekends and reports Rust's next occurrence", async () => {
+  const engine = await loadKinEngine(url);
+  const project = (rows, day) => engine.applyEvents(rows, 1234, null, day).routines[0];
+  const rows = [create("weekdays", "Pack lunches", 20261002)]; // Friday
+  assert.deepEqual(
+    [20261002, 20261003, 20261004, 20261005].map((day) => { const r = project(rows, day); return [r.cadence, r.occurrenceKey, r.occurrenceStatus, r.nextOn]; }),
+    [["weekdays", 20261002, "open", 20261005], ["weekdays", null, "unavailable", 20261005], ["weekdays", null, "unavailable", 20261005], ["weekdays", 20261005, "open", 20261006]],
+  );
+  rows.push(action(2, "complete", 20261005));
+  assert.equal(project(rows, 20261005).occurrenceStatus, "completed");
+  assert.equal(project(rows, 20261006).occurrenceStatus, "open");
+  // A weekend key is never a valid occurrence, even in replayed history.
+  assert.throws(() => engine.applyEvents([...rows, action(3, "complete", 20261003)], 1234, null, 20261005), (error) => error.code === 4);
+  rows.push(action(3, "archive"));
+  assert.equal(project(rows, 20261005).nextOn, null);
+});
+
+test("v24 next occurrence comes from Rust for every cadence, including month ends", async () => {
+  const engine = await loadKinEngine(url);
+  for (const [cadence, createdOn, today, nextOn] of [
+    ["daily", 20261002, 20261231, 20270101],
+    ["weekly", 20261002, 20261002, 20261005],
+    ["biweekly", 20261002, 20261015, 20261016],
+    ["monthly", 20260131, 20260215, 20260301],
+    ["monthly", 20241231, 20250131, 20250201],
+  ]) {
+    assert.equal(engine.applyEvents([create(cadence, "x", createdOn)], 1234, null, today).routines[0].nextOn, nextOn, `${cadence} ${today}`);
+  }
+});
+
+test("v24 commands complete only the current occurrence and refuse stale or weekend intents", async () => {
+  const engine = await loadKinEngine(url);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const context = (sequence) => ({ ...identity(sequence), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) });
+  const routineId = hex(id(0x31));
+  const run = (command, sequence, records, day) => engine.executeCommand(command, context(sequence), records, 1_791_475_200_100, null, day);
+  const created = run({ type: "create-routine", routineId, text: "Pack lunches", cadence: "weekdays" }, 1, [], 20261005);
+  assert.equal(created.state.routines[0].routineId, routineId);
+  assert.equal(created.state.routines[0].createdOn, 20261005);
+  const records = [created.encodedEvent];
+  const done = run({ type: "complete-routine-occurrence", routineId, occurrenceKey: 20261005 }, 2, records, 20261005);
+  assert.equal(done.state.routines[0].occurrenceStatus, "completed");
+  records.push(done.encodedEvent);
+  for (const [type, occurrenceKey, day] of [
+    ["complete-routine-occurrence", 20261005, 20261005], // already done
+    ["complete-routine-occurrence", 20261005, 20261006], // yesterday's view
+    ["complete-routine-occurrence", 20261006, 20261005], // tomorrow, early
+    ["reopen-routine-occurrence", 20261005, 20261010], // weekend: nothing current
+    ["complete-routine-occurrence", 20261010, 20261010],
+  ]) {
+    assert.throws(() => run({ type, routineId, occurrenceKey }, 3, records, day), (error) => error.code === 4, `${type} ${occurrenceKey} on ${day}`);
+  }
+  assert.equal(engine.applyEvents(records, 1_791_475_200_100, null, 20261006).routines[0].occurrenceStatus, "open");
+});
