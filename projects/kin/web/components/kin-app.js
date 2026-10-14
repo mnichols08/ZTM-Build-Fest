@@ -1603,7 +1603,7 @@ class KinApp extends HTMLElement {
     } else if (["ready", "disabled"].includes(value.state)) {
       this.stateNotice.hidden = true;
     }
-    if (value.projection) {
+    if (value.projection && value.added > 0) {
       if (this.busy) {
         this.pendingRefresh = true;
       } else {
@@ -1614,15 +1614,29 @@ class KinApp extends HTMLElement {
       }
     }
     if (Array.isArray(value.attachmentRows)) {
-      this.attachmentRows = this.mergeAttachmentRows(value.attachmentRows);
-      this.renderState();
+      const rows = this.mergeAttachmentRows(value.attachmentRows);
+      const sameRows = rows.length === this.attachmentRows.length && rows.every((row, index) => {
+        const current = this.attachmentRows[index];
+        return current && ["attachmentId", "parentKind", "parentId", "name", "size", "type", "state"]
+          .every((key) => row[key] === current[key]);
+      });
+      if (!sameRows) {
+        this.attachmentRows = rows;
+        this.renderState();
+      }
     }
     if (Array.isArray(value.memberIds)) {
-      this.activeMemberIds = [...new Set(value.memberIds)];
-      this.renderState();
+      const memberIds = [...new Set(value.memberIds)];
+      const previousMembers = new Set(this.activeMemberIds ?? []);
+      const membershipChanged = memberIds.length !== previousMembers.size || memberIds.some((id) => !previousMembers.has(id));
+      this.activeMemberIds = memberIds;
+      if (membershipChanged) this.renderState();
       void this.reconcileResponsibilityMembers();
     }
-    if (value.message && value.state !== "paused")
+    // The sync chip already shows routine progress. Toast only meaningful
+    // incoming changes or an unusual state, not every five-second idle poll.
+    if (value.message && value.state !== "paused" &&
+        (value.quarantined > 0 || !["syncing", "ready", "disabled"].includes(value.state)))
       this.setStatus(value.message);
   }
 

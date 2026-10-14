@@ -30,6 +30,18 @@ export function memberHasTrustAuthority(status) {
   return status?.memberKind === "adult";
 }
 
+// A normal empty poll still returns a projection and cursor boundary from the
+// store. Publishing those as a change makes every open tab replay and repaint
+// the same workspace. Only an accepted new event needs a projection broadcast.
+export function committedBatchUpdate(committed) {
+  const update = { added: committed.added ?? 0, quarantined: committed.quarantined ?? 0 };
+  if (update.added > 0) {
+    update.projection = committed.state;
+    update.snapshotBoundary = committed.snapshotBoundary;
+  }
+  return update;
+}
+
 export function portableMembershipFromDirectory(entries) {
   if (!Array.isArray(entries) || entries.length > 12)
     throw new Error("Kin could not validate current household membership for export.");
@@ -374,8 +386,7 @@ export class SyncCoordinator {
           : committed.added
           ? "Household changes received."
           : "Device sync is up to date.",
-        projection: committed.state,
-        snapshotBoundary: committed.snapshotBoundary,
+        ...committedBatchUpdate(committed),
       });
       hasMore = page.hasMore;
       passes += 1;

@@ -17,7 +17,7 @@ import { shoppingRegressions } from "./shopping-regression.mjs";
 import { planningDateRegressions } from "./planning-date-regression.mjs";
 import { mobileUxRegressions } from "./mobile-ux-regression.mjs";
 import { attachmentUploadRegressions } from "./attachment-upload-regression.mjs";
-import { workspaceUxRegressions, workspaceViewportRegressions } from "./workspace-ux-regression.mjs";
+import { syncMotionRegressions, workspaceUxRegressions, workspaceViewportRegressions } from "./workspace-ux-regression.mjs";
 import {
   handoffRegressions,
   handoffPeerRegressions,
@@ -1657,6 +1657,7 @@ try {
       'JSON.stringify(document.querySelector("kin-app").state)',
     ),
   );
+  console.log(await syncMotionRegressions(first, second));
 
   const raceItemId = await first.evaluate(`(async()=>{
     const app=document.querySelector('kin-app');

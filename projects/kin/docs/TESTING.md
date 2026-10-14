@@ -3,7 +3,9 @@
 ## Household workspace UX coverage (unversioned candidate)
 
 `scripts/workspace-ux-regression.mjs` runs inside `browser-regression.mjs`
-after the attachment suite. Its in-page part covers the journeys in
+after the attachment suite. It also checks that empty automatic sync polls do
+not repaint the workspace or refresh peer tabs, and records before/after WebM
+clips in `target/ux-screenshots/kin-sync-refresh-*.webm`. Its in-page part covers the journeys in
 [WORKSPACE-UX](WORKSPACE-UX.md) §6: To do and Shopping capture, planning a
 shopping item for today and seeing the same record on Today, completing from
 either view, a synthetic legacy `today` item on Today and under To do with

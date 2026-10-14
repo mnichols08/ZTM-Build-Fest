@@ -574,6 +574,201 @@ export async function workspaceViewportRegressions(client, { visit }) {
   }
 }
 
+// Exercises a real sync callback shape in the zero-dependency CDP harness and
+// records baseline/fixed peer-tab behavior as WebM using Chromium's MediaRecorder.
+export async function syncMotionRegressions(first, second) {
+  const outDir = join(dirname(fileURLToPath(import.meta.url)), "../target/ux-screenshots");
+  await mkdir(outDir, { recursive: true });
+  const viewport = { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false };
+  await first.send("Emulation.setDeviceMetricsOverride", viewport);
+  await second.send("Emulation.setDeviceMetricsOverride", viewport);
+  const wait = async (client, expression, label) => {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      if (await client.evaluate(expression)) return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`sync motion regression timed out: ${label}`);
+  };
+  const mediaRecorderStart = async (client) => {
+    const supported = await client.evaluate(`(() => {
+      if (typeof MediaRecorder !== "function" || !MediaRecorder.isTypeSupported("video/webm;codecs=vp8") || !HTMLCanvasElement.prototype.captureStream) return false;
+      const canvas = document.createElement("canvas");
+      canvas.width = innerWidth; canvas.height = innerHeight;
+      const context = canvas.getContext("2d");
+      const stream = canvas.captureStream(10);
+      const recorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp8" });
+      const chunks = [];
+      recorder.addEventListener("dataavailable", event => { if (event.data.size) chunks.push(event.data); });
+      recorder.start(100);
+      window.__kinSyncVideo = { canvas, context, stream, recorder, chunks, async draw(base64) {
+        const bytes = Uint8Array.from(atob(base64), value => value.charCodeAt(0));
+        const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/jpeg" }));
+        context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        bitmap.close();
+      } };
+      return true;
+    })()`);
+    assert.equal(supported, true, "the installed browser must record WebM without an added package");
+  };
+  const recordFrame = async (client) => {
+    const { data } = await client.send("Page.captureScreenshot", { format: "jpeg", quality: 72 });
+    await client.evaluate(`window.__kinSyncVideo.draw(${JSON.stringify(data)})`);
+  };
+  const saveVideo = async (client, name) => {
+    const encoded = await client.evaluate(`(async () => {
+      const capture = window.__kinSyncVideo;
+      const stopped = new Promise(resolve => capture.recorder.addEventListener("stop", resolve, { once: true }));
+      capture.recorder.stop(); await stopped;
+      const blob = new Blob(capture.chunks, { type: "video/webm" });
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      let binary = "";
+      for (let offset = 0; offset < bytes.length; offset += 0x8000) binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+      capture.stream.getTracks().forEach(track => track.stop());
+      delete window.__kinSyncVideo;
+      return btoa(binary);
+    })()`);
+    const path = join(outDir, `kin-sync-${name}.webm`);
+    await writeFile(path, Buffer.from(encoded, "base64"));
+    assert.ok((await (await import("node:fs/promises")).stat(path)).size > 0, `recorded video is non-empty: ${path}`);
+    return path;
+  };
+  const frames = async (client, count) => {
+    for (let index = 0; index < count; index++) {
+      await recordFrame(client);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  };
+  const prepare = async (client) => client.evaluate(`(() => {
+    const app = document.querySelector("kin-app");
+    app.navigate("#today");
+    const previousLoad = app.store.getCatchUpState;
+    window.__kinOriginalCatchUpState = previousLoad;
+    window.__kinSyncReadCount = 0;
+    app.store.getCatchUpState = async (...args) => {
+      window.__kinSyncReadCount++;
+      await new Promise(resolve => setTimeout(resolve, 650));
+      return previousLoad.apply(app.store, args);
+    };
+    window.__kinSyncInitialGeometry = [".site-header", ".primary-nav", "#today > header", "#today > kin-compose", "#today .today-list"]
+      .map(selector => { const element = app.querySelector(selector); if (!element) return null;
+        const rect = element.getBoundingClientRect(); return [Math.round(rect.top), Math.round(rect.height)]; });
+    return true;
+  })()`);
+  try {
+    await prepare(first);
+    await prepare(second);
+    await wait(first, `!document.querySelector("kin-app").pages.get("today").hidden && !document.querySelector("kin-app").busy`, "first Today view");
+    await wait(second, `!document.querySelector("kin-app").pages.get("today").hidden && !document.querySelector("kin-app").busy`, "second Today view");
+    await new Promise((resolve) => setTimeout(resolve, 450));
+
+    // Capture the old no-op path: a same-state sync callback broadcast an
+    // events-changed message, making the peer lock and repaint the whole UI.
+    await mediaRecorderStart(second);
+    await frames(second, 3);
+    await first.evaluate(`(() => document.querySelector("kin-app").broadcastEventChange())()`);
+    await wait(second, `document.querySelector("kin-app").refreshing && document.querySelector("kin-app").busy`, "baseline peer refresh");
+    await frames(second, 15);
+    await wait(second, `!document.querySelector("kin-app").refreshing && !document.querySelector("kin-app").busy`, "baseline peer refresh completion");
+    await frames(second, 4);
+    const beforeVideo = await saveVideo(second, "refresh-before");
+    await second.evaluate(`window.__kinSyncReadCount = 0`);
+
+    // The fixed coordinator omits projection/boundary for added: 0. Attachment
+    // and membership notifications are also no-ops when their values are same.
+    const fixedPoll = await first.evaluate(`(() => {
+      const app = document.querySelector("kin-app");
+      const originalRender = app.renderState;
+      const originalBroadcast = app.broadcastEventChange;
+      const originalState = app.state;
+      const originalBoundary = app.snapshotBoundary;
+      let renders = 0, broadcasts = 0;
+      app.renderState = function(...args) { renders++; return originalRender.apply(this, args); };
+      app.broadcastEventChange = () => { broadcasts++; };
+      const status = app.status.textContent;
+      const rows = structuredClone(app.attachmentRows);
+      const members = [...(app.activeMemberIds ?? [])];
+      app.handleSyncState({ state: "syncing", message: "Device sync is up to date.", added: 0, quarantined: 0 });
+      app.handleSyncState({ state: "syncing", attachmentRows: rows });
+      app.handleSyncState({ state: "ready", memberIds: members, message: "Device sync is up to date." });
+      const result = { renders, broadcasts, statusUnchanged: app.status.textContent === status,
+        readCount: window.__kinSyncReadCount ?? 0, busy: app.busy };
+      app.renderState = originalRender;
+      app.broadcastEventChange = originalBroadcast;
+      app.state = originalState;
+      app.snapshotBoundary = originalBoundary;
+      return result;
+    })()`);
+    assert.deepEqual(fixedPoll, { renders: 0, broadcasts: 0, statusUnchanged: true, readCount: 0, busy: false },
+      `unchanged polling must not repaint, toast, or notify peer tabs: ${JSON.stringify(fixedPoll)}`);
+    await mediaRecorderStart(second);
+    await frames(second, 3);
+    await first.evaluate(`(() => {
+      const app = document.querySelector("kin-app");
+      app.handleSyncState({ state: "syncing", message: "Device sync is up to date.", added: 0, quarantined: 0 });
+      app.handleSyncState({ state: "syncing", attachmentRows: structuredClone(app.attachmentRows) });
+      app.handleSyncState({ state: "ready", memberIds: [...(app.activeMemberIds ?? [])], message: "Device sync is up to date." });
+    })()`);
+    await frames(second, 19);
+    const afterVideo = await saveVideo(second, "refresh-after");
+    const peerReads = await second.evaluate("window.__kinSyncReadCount");
+    assert.equal(peerReads, 0, "an unchanged sync poll must not refresh another tab");
+
+    const changedProjection = await first.evaluate(() => {
+      const app = document.querySelector("kin-app");
+      const itemNode = [...app.today.querySelectorAll("kin-item")].find(node => node.record?.text?.length);
+      if (!itemNode) throw new Error("sync motion regression needs a visible Today item");
+      const itemId = itemNode.record.itemId;
+      const originalText = itemNode.record.text;
+      const originalState = app.state;
+      const originalBoundary = app.snapshotBoundary;
+      const originalRender = app.renderState;
+      const originalBroadcast = app.broadcastEventChange;
+      const geometry = () => [".site-header", ".primary-nav", "#today > header", "#today > kin-compose", "#today .today-list"]
+        .map(selector => { const element = app.querySelector(selector); if (!element) return null;
+          const rect = element.getBoundingClientRect(); return [Math.round(rect.top), Math.round(rect.height)]; });
+      const beforeGeometry = geometry();
+      let renders = 0, broadcasts = 0;
+      app.renderState = function(...args) { renders++; return originalRender.apply(this, args); };
+      app.broadcastEventChange = () => { broadcasts++; };
+      const projection = structuredClone(originalState);
+      const changedText = `${originalText[0] === "S" ? "T" : "S"}${originalText.slice(1)}`;
+      projection.items.find(item => item.itemId === itemId).text = changedText;
+      app.handleSyncState({ state: "syncing", message: "Household changes received.", added: 1,
+        quarantined: 0, projection, snapshotBoundary: { eventId: "sync-test", localSequence: 1 } });
+      const quietDuringRender = app.hasAttribute("data-quiet-render");
+      const renderedText = [...app.today.querySelectorAll("kin-item")].find(node => node.record?.itemId === itemId)?.record?.text;
+      const afterGeometry = geometry();
+      const result = { renders, broadcasts, quietDuringRender, renderedTextMatches: renderedText === changedText,
+        stableGeometry: JSON.stringify(afterGeometry) === JSON.stringify(beforeGeometry) };
+      app.renderState = originalRender;
+      app.broadcastEventChange = originalBroadcast;
+      app.state = originalState;
+      app.snapshotBoundary = originalBoundary;
+      app.renderState();
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    changedProjection.activeCssMotion = await first.evaluate(() => document.getAnimations({ subtree: true })
+      .filter(animation => ["CSSAnimation", "CSSTransition"].includes(animation.constructor.name) && animation.playState !== "finished").length);
+    assert.equal(changedProjection.renders, 1, `a real remote change renders once: ${JSON.stringify(changedProjection)}`);
+    assert.equal(changedProjection.broadcasts, 1, "a real remote change still notifies peer tabs");
+    assert.equal(changedProjection.quietDuringRender, true, "a real projection uses quiet render suppression");
+    assert.equal(changedProjection.renderedTextMatches, true, "the remote projection reaches the visible row");
+    assert.equal(changedProjection.stableGeometry, true, "sync reconciliation keeps the visible workspace geometry stable");
+    assert.equal(changedProjection.activeCssMotion, 0, "sync projection updates start no CSS animations or transitions");
+    return `PASS sync motion (${beforeVideo}, ${afterVideo}): no-op poll avoids peer refresh; changed projection renders once with no CSS motion`;
+  } finally {
+    await first.send("Emulation.clearDeviceMetricsOverride").catch(() => {});
+    await second.send("Emulation.clearDeviceMetricsOverride").catch(() => {});
+    for (const client of [first, second]) await client.evaluate(`(() => {
+      const app = document.querySelector("kin-app");
+      if (window.__kinOriginalCatchUpState) app.store.getCatchUpState = window.__kinOriginalCatchUpState;
+      delete window.__kinOriginalCatchUpState;
+      delete window.__kinSyncReadCount;
+    })()`).catch(() => {});
+  }
+}
+
 // When run directly, delegate to the shared real-browser fixture so this
 // command cannot silently do nothing.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
