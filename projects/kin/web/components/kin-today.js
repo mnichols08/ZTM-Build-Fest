@@ -3,6 +3,7 @@ import "./kin-item.js";
 import { composeToday, ROUTINE_PERIOD_LABELS } from "../today-view.js";
 import { CLASSIFICATION_LABELS } from "./kin-compose.js";
 import { isBulkEligible, reconcileSelection } from "../bulk-actions.js";
+import { describeNextOccurrence, describeRepeat } from "../recurrence.js";
 
 // A list view over the Rust projection. `display` selects one list
 // ("need" — To do, which also lists legacy `today` records — "shopping",
@@ -539,18 +540,19 @@ class KinToday extends HTMLElement {
     if (!view.hasRoutines) {
       const empty = document.createElement("p");
       empty.className = "empty-state";
-      empty.append(document.createTextNode("No routines yet. Set up a small household rhythm in "));
+      empty.append(document.createTextNode("No repeating tasks yet. Choose Repeat in Quick add, or set one up in "));
       const link = document.createElement("a");
       link.href = "#routines";
       link.textContent = "Routines";
-      empty.append(link, document.createTextNode(" when one would help."));
+      empty.append(link, document.createTextNode("."));
       section.append(empty);
       return section;
     }
     if (!view.routineGroups.length) {
       const empty = document.createElement("p");
       empty.className = "empty-state";
-      empty.textContent = "Every routine for this period is done.";
+      // Done for now, or nothing due today (an every-weekday task at the weekend).
+      empty.textContent = view.completedRoutines.length ? "Every routine for this period is done." : "Nothing repeating is due today.";
       section.append(empty);
       return section;
     }
@@ -594,9 +596,26 @@ class KinToday extends HTMLElement {
       text.textContent = routine.text;
       const meta = document.createElement("p");
       meta.className = "item-meta";
-      meta.textContent = `Routine · ${state === "done" ? `Done ${period.toLowerCase()}` : period}`;
+      // Rust supplies the next occurrence; only one row per task, never one
+      // per future occurrence.
+      const next = describeNextOccurrence(routine.nextOn, this.civilDate);
+      meta.textContent = [state === "done" ? `Done ${period.toLowerCase()}` : describeRepeat(routine.cadence), next].filter(Boolean).join(" · ");
       body.append(text, meta);
-      row.append(control, body);
+      const actions = document.createElement("div");
+      actions.className = "item-row-actions";
+      const schedule = document.createElement("button");
+      schedule.type = "button";
+      schedule.className = "routine-schedule-button";
+      schedule.textContent = "Schedule";
+      schedule.setAttribute("aria-label", `Schedule for ${routine.text}`);
+      schedule.dataset.routineId = routine.routineId;
+      schedule.dataset.action = "open-routine-schedule";
+      schedule.disabled = this.isDisabled;
+      schedule.addEventListener("click", () => this.dispatchEvent(new CustomEvent("kin:open-routine-schedule", {
+        detail: { routineId: routine.routineId }, bubbles: true, composed: true,
+      })));
+      actions.append(schedule);
+      row.append(control, body, actions);
       entry.append(row);
       list.append(entry);
     }

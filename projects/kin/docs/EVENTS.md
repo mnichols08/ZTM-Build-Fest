@@ -143,7 +143,7 @@ No domain event kinds are added. Codes 1–13 and their persisted bytes remain u
 
 ## v0.7.0 Routines
 
-Schema-1 codes 14 ROUTINE_CREATED, 15 ROUTINE_OCCURRENCE_COMPLETED, 16 ROUTINE_OCCURRENCE_REOPENED, 17 ROUTINE_ARCHIVED. Creation persists text/cadence/creation civil date; occurrence actions persist a deterministic date key. Cadence values 0/1 are Daily/Monday-start Weekly; protocol 12 additionally supports 2 (every two weeks anchored to creation date) and 3 (calendar month start). No reset or automatically created occurrence event. Archive is terminal. The earlier conceptual ROUTINE_COMPLETED name never had a persisted wire code and is replaced by occurrence-specific naming. See [V0.7.0](V0.7.0.md) and [V0.18.0](releases/V0.18.0.md).
+Schema-1 codes 14 ROUTINE_CREATED, 15 ROUTINE_OCCURRENCE_COMPLETED, 16 ROUTINE_OCCURRENCE_REOPENED, 17 ROUTINE_ARCHIVED. Creation persists text/cadence/creation civil date; occurrence actions persist a deterministic date key. Cadence values 0/1 are Daily/Monday-start Weekly; protocol 12 additionally supports 2 (every two weeks anchored to creation date) and 3 (calendar month start); protocol 24 adds 4 (Weekdays: one occurrence per Monday–Friday civil date, none at the weekend, keys on or after creation). No reset or automatically created occurrence event. Archive is terminal. The earlier conceptual ROUTINE_COMPLETED name never had a persisted wire code and is replaced by occurrence-specific naming. See [V0.7.0](V0.7.0.md) and [V0.18.0](releases/V0.18.0.md).
 
 ## v0.15.0 Areas
 

@@ -11,7 +11,7 @@ Kin version numbers describe product releases; they do not version every persist
 | Application | Last published `0.10.3`; candidate `0.46.0` | Existing application capabilities plus member-bound device-local personal appearance; the service-worker cache name advances with the release |
 | Server database schema | `6` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination, lifecycle, encrypted attachment records, member kind, Temporary expiry, and authoritative membership status |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
-| Replay protocol | Reads v1–v23; writes v23 for local and synchronized requests | Request context and projection semantics |
+| Replay protocol | Reads v1–v24; writes v24 for local and synchronized requests | Request context and projection semantics |
 | Manual WASM ABI | Existing exports plus additive command/metadata/archive/import APIs | Host ownership and calls; new command packet v1 |
 | IndexedDB schema | Event DB 2→4; key DB 3→4 | Journalled upgrade to encrypted records; protected attachment rows |
 | Local envelope | v1 for original roots; v2 for rotated roots | v2 authenticates rootVersion in addition to purpose/routing |
@@ -126,6 +126,17 @@ creation-date-anchored every-two-weeks and calendar-month periods; protocols
 1–11 reject these values and cannot encode state containing them. Protocol 12
 replays existing Daily/Weekly histories unchanged. No event schema, IndexedDB,
 server, KARC, or sync-envelope migration is required.
+
+## Daily UX: Repeating tasks (protocol 24)
+
+Protocol 24 is additive and carries no application version change. Routine
+cadence value 4 represents Weekdays (one occurrence per Monday–Friday civil
+date); the result appends one derived next-occurrence date per Routine. Request
+and result headers, existing sections, canonical event payload layouts,
+IndexedDB, KARC, server schema and the sync envelope are unchanged. Protocols
+1–23 reject Weekdays events and state rather than project them; a device
+running an older build fails closed on a synchronized Weekdays task until it
+is updated, as with protocol 12.
 
 ## v0.19.0 Shared Shopping Lists
 

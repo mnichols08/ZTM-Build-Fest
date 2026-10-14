@@ -26,6 +26,26 @@ test('complete new shell stages all assets while retaining prior cache until act
   assert.deepEqual([...stored.keys()], ['kin-static-v0.38.2']);
 });
 
+test('the shell caches every module statically imported from the app entry point', async () => {
+  const { listeners, stored } = await worker(); let install;
+  listeners.get('install')({ waitUntil(value) { install = value; } }); await install;
+  const cached = stored.get('kin-static-v0.38.2');
+  const root = new URL('./', import.meta.url);
+  const pending = ['/components/kin-app.js'], seen = new Set();
+  while (pending.length) {
+    const path = pending.pop();
+    if (seen.has(path)) continue;
+    seen.add(path);
+    assert.ok(cached.has(path), `${path} is imported by the app but missing from the offline shell`);
+    const source = await readFile(new URL(`.${path}`, root), 'utf8');
+    for (const [, specifier] of source.matchAll(/^\s*(?:import|export)\s[^;]*?from\s+["'](\.{1,2}\/[^"']+)["']|^\s*import\s+["'](\.{1,2}\/[^"']+)["']/gm).map((match) => [match[0], match[1] ?? match[2]])) {
+      pending.push(new URL(specifier, `https://kin.test${path}`).pathname);
+    }
+  }
+  assert.ok(seen.has('/recurrence.js'), 'repeating-task presentation is part of the shell');
+  assert.ok(seen.size > 20);
+});
+
 test('failed shell staging leaves the known-good cache available', async () => {
   const { listeners, stored } = await worker({ failPath: '/index.html' }); let install;
   listeners.get('install')({ waitUntil(value) { install = value; } }); await assert.rejects(install);

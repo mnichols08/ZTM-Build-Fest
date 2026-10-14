@@ -1,5 +1,6 @@
 import { CLASSIFICATION_LABELS, TOO_LONG } from "./kin-compose.js";
 import { projectionContext } from "../browser-time.js";
+import { REPEAT_HINTS, REPEAT_OPTIONS, isCadence, repeatLabel } from "../recurrence.js";
 
 const MAX_ITEM_TEXT_BYTES = 4096;
 const textEncoder = new TextEncoder();
@@ -60,6 +61,29 @@ class KinQuickAdd extends HTMLElement {
     this.destination = document.createElement("p");
     this.destination.id = "quick-add-destination";
     this.destination.className = "quick-add-destination";
+    // Repeating is optional and collapsed, so a plain capture stays title +
+    // Enter. Only task destinations offer it; shopping and staples don't repeat.
+    this.repeat = document.createElement("details");
+    this.repeat.className = "quick-add-repeat";
+    this.repeatSummary = document.createElement("summary");
+    this.repeatSummary.id = "quick-add-repeat-summary";
+    this.repeatLabel = document.createElement("label");
+    this.repeatLabel.htmlFor = "quick-add-repeat-select";
+    this.repeatLabel.textContent = "How often";
+    this.repeatSelect = document.createElement("select");
+    this.repeatSelect.id = "quick-add-repeat-select";
+    this.repeatSelect.name = "repeat";
+    for (const { value, label } of REPEAT_OPTIONS) this.repeatSelect.append(new Option(label, value));
+    this.repeatHint = document.createElement("p");
+    this.repeatHint.id = "quick-add-repeat-hint";
+    this.repeatHint.className = "quick-add-repeat-hint";
+    this.repeatSelect.setAttribute("aria-describedby", this.repeatHint.id);
+    this.repeat.append(this.repeatSummary, this.repeatLabel, this.repeatSelect, this.repeatHint);
+    this.repeatSelect.addEventListener("change", () => {
+      this.draftRevision++;
+      if (!this.recoveryVisible) this.clearResult();
+      this.renderRepeat();
+    });
     this.error = document.createElement("p");
     this.error.id = "quick-add-error";
     this.error.className = "quick-add-error";
@@ -74,7 +98,7 @@ class KinQuickAdd extends HTMLElement {
     this.addButton.className = "add-button";
     this.addButton.textContent = "Add";
     actions.append(this.cancelButton, this.addButton);
-    this.form.append(this.label, this.input, this.destination, this.error, actions);
+    this.form.append(this.label, this.input, this.destination, this.repeat, this.error, actions);
     this.dialog.append(heading, hint, this.form);
     this.append(this.trigger, this.dialog);
 
@@ -119,6 +143,7 @@ class KinQuickAdd extends HTMLElement {
     this.trigger.disabled = this.isDisabled;
     const saving = this.pending;
     this.input.disabled = this.isDisabled || saving;
+    this.repeatSelect.disabled = this.isDisabled || saving;
     this.addButton.disabled = this.isDisabled || saving;
     this.cancelButton.disabled = saving;
   }
@@ -127,7 +152,8 @@ class KinQuickAdd extends HTMLElement {
     if (this.isDisabled || this.dialog.open) return;
     this.clearDraft();
     this.defaults = captureDefaults();
-    this.destination.textContent = `Adds to ${this.defaults.destination}.`;
+    this.repeat.hidden = this.defaults.classification !== "need";
+    this.renderRepeat();
     this.opener = opener?.isConnected ? opener : this.trigger;
     this.fallback = typeof fallback === "function" ? fallback : null;
     this.dialog.showModal();
@@ -150,13 +176,20 @@ class KinQuickAdd extends HTMLElement {
       this.input.focus();
       return;
     }
+    const cadence = this.cadence;
+    if (this.repeatSelect.value && !cadence) {
+      this.error.textContent = "Choose how often it repeats.";
+      this.repeatSelect.focus();
+      return;
+    }
     this.error.textContent = "";
     this.pending = true;
     this.disabled = this.isDisabled;
     this.addButton.textContent = "Saving…";
-    const planningDate = this.defaults.planningDate === "today" ? projectionContext().civilDate : null;
+    // A repeating task is scheduled by Rust from today; it takes no planning date.
+    const planningDate = cadence || this.defaults.planningDate !== "today" ? null : projectionContext().civilDate;
     this.dispatchEvent(new CustomEvent("kin:add-item", {
-      detail: { text, classification: this.defaults.classification, planningDate, pinned: false, composer: this, revision: this.draftRevision },
+      detail: { text, classification: this.defaults.classification, planningDate, pinned: false, cadence, composer: this, revision: this.draftRevision },
       bubbles: true,
       composed: true,
     }));
@@ -222,8 +255,32 @@ class KinQuickAdd extends HTMLElement {
 
   focusInput() { if (this.dialog.open) this.input.focus(); }
 
+  // The chosen schedule, or null for a one-off task (also when the
+  // destination cannot repeat).
+  get cadence() {
+    const value = this.repeatSelect?.value;
+    return !this.repeat?.hidden && isCadence(value) ? value : null;
+  }
+
+  // The selection is always visible before saving: in the collapsed summary
+  // and in the destination line the title field is described by.
+  renderRepeat() {
+    if (!this.defaults) return;
+    const cadence = this.cadence;
+    this.repeatSummary.textContent = `Repeat: ${cadence ? repeatLabel(cadence) : "Does not repeat"}`;
+    this.repeatHint.textContent = cadence ? REPEAT_HINTS[cadence] : "Adds a one-time task.";
+    this.destination.textContent = cadence
+      ? `Adds a repeating task (${repeatLabel(cadence).toLowerCase()}). It shows on Today whenever it's due.`
+      : `Adds to ${this.defaults.destination}.`;
+  }
+
   clearDraft() {
     this.input.value = "";
+    if (this.repeatSelect) {
+      this.repeatSelect.value = "";
+      this.repeat.open = false;
+      this.renderRepeat();
+    }
     this.clearResult();
   }
 

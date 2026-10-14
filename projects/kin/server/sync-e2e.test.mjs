@@ -159,3 +159,55 @@ test("two trusted devices exchange an opaque canonical Kin event through the rel
       error.code === "event_signature_invalid",
   );
 });
+
+test("two devices completing one repeating occurrence offline converge without duplicates", async () => {
+  const pairing = new PairingService();
+  const deviceA = pairing.bootstrap({ credential: credential("adult-a"), deviceLabel: "Device A" });
+  const invitation = pairing.createPairing(deviceA.sessionToken);
+  const claim = pairing.claimPairing({ code: invitation.code, credential: credential("adult-b"), deviceLabel: "Device B" });
+  pairing.approvePairing(deviceA.sessionToken, invitation.pairingId, claim.version);
+  const deviceB = pairing.activateClaim(claim.claimToken);
+  const sync = new EncryptedSyncService(pairing);
+  const [householdKey, keysA, keysB] = await Promise.all([generateHouseholdKey(), generateDeviceKeys(), generateDeviceKeys()]);
+  const signing = new Map([[deviceA.deviceId, keysA], [deviceB.deviceId, keysB]]);
+  const engine = await loadKinEngine(wasmUrl);
+  const monday = 20261005;
+  const asOf = 1_791_172_800_000;
+  const routineId = "05".repeat(16);
+  const context = (device, eventByte, logicalTime) => ({
+    eventId: idFromHex(eventByte.repeat(16)),
+    householdId: idFromHex(deviceA.householdId),
+    actorId: idFromHex(device.memberId),
+    deviceId: idFromHex(device.deviceId),
+    timestamp: asOf + logicalTime,
+    logicalTime: BigInt(logicalTime),
+  });
+  const seal = (device, sequence, logicalTime, eventByte, plaintext) => encryptEvent({
+    eventId: eventByte.repeat(16), householdId: deviceA.householdId, deviceId: device.deviceId, deviceSequence: sequence,
+    logicalTime: BigInt(logicalTime), keyEpoch: 1, plaintext, householdKey, signingKey: signing.get(device.deviceId).signingPrivateKey,
+  });
+  const created = engine.executeCommand({ type: "create-routine", routineId, text: "Pack lunches", cadence: "weekdays" }, context(deviceA, "11", 1), [], asOf, null, monday).encodedEvent;
+  sync.push(deviceA.sessionToken, [await seal(deviceA, 1, 1, "11", created)]);
+  // Both devices see the same open occurrence and complete it before syncing.
+  const complete = { type: "complete-routine-occurrence", routineId, occurrenceKey: monday };
+  const doneA = engine.executeCommand(complete, context(deviceA, "12", 2), [created], asOf, null, monday).encodedEvent;
+  const doneB = engine.executeCommand(complete, context(deviceB, "13", 2), [created], asOf, null, monday).encodedEvent;
+  const envelopeB = await seal(deviceB, 1, 2, "13", doneB);
+  sync.push(deviceA.sessionToken, [await seal(deviceA, 2, 2, "12", doneA)]);
+  const cursor = sync.push(deviceB.sessionToken, [envelopeB]).latestCursor;
+  // Re-sending the same envelope (a retry after a lost acknowledgement) adds nothing.
+  assert.equal(sync.push(deviceB.sessionToken, [envelopeB]).latestCursor, cursor);
+  const pulled = sync.pull(deviceB.sessionToken, "", "20").events;
+  assert.equal(pulled.length, 3);
+  const plain = await Promise.all(pulled.map(({ envelope }) => decryptEvent({ envelope, householdKey, signingKey: signing.get(envelope.deviceId).signingPublicKey })));
+  for (const records of [plain, [...plain, plain[2]]]) {
+    const state = engine.applyEvents(records, asOf, null, monday);
+    assert.equal(state.routines.length, 1);
+    assert.deepEqual([state.routines[0].occurrenceStatus, state.routines[0].nextOn], ["completed", 20261006]);
+  }
+  // Tuesday's occurrence is independent of Monday's two completions.
+  assert.equal(engine.applyEvents(plain, asOf + 86_400_000, null, 20261006).routines[0].occurrenceStatus, "open");
+  // A device that has merged both completions cannot record a third.
+  assert.throws(() => engine.executeCommand(complete, context(deviceB, "14", 3), plain, asOf, null, monday), (error) => error.code === 4);
+  engine.dispose();
+});

@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** Current through v0.34.0 Responsibility Ownership. Protocol 22 appends bounded attachment bindings and protocol 23 appends responsibility projection entries. Event kinds 39–41 add attachment bind/remove and responsibility change events; earlier event bytes remain immutable. Protocol 21 appends maintenance history, protocol 20 Reference Records, and protocol 19 Playbooks.
+**Status:** Current through v0.34.0 Responsibility Ownership. Protocol 22 appends bounded attachment bindings, protocol 23 appends responsibility projection entries, and protocol 24 adds the Weekdays cadence and a per-Routine next-occurrence date. Event kinds 39–41 add attachment bind/remove and responsibility change events; earlier event bytes remain immutable. Protocol 21 appends maintenance history, protocol 20 Reference Records, and protocol 19 Playbooks.
 
 ## Target and exports
 
@@ -505,3 +505,14 @@ records, 128 title bytes, 64 label bytes, and 1,024 value bytes. Protocols
 ## Protocol version 21 — Maintenance Records
 
 Schema-1 event kinds 37 and 38 save/correct or archive a maintenance event. A save contains maintenance ID, Reference Record ID, performed `CivilDate`, optional next `CivilDate` (zero when absent), optional Routine ID, summary byte length, and summary UTF-8 bytes. The result header extends to 88 bytes with `maintenance-event-count:u32` at offset 84. Each projected row is 60 bytes plus summary: maintenance ID, record ID, performed date, next date, Routine ID, archived byte, reserved zero byte, summary length, and summary. A maximum of 64 lifetime events per Reference Record and 8,192 projected events apply; summary is 1–240 UTF-8 bytes. Protocols 1–20 retain their layouts and reject maintenance event history or state.
+
+## Protocol version 24 — Repeating tasks
+
+Protocol 24 preserves the protocol-23 request header, 96-byte `KINS` result
+header, canonical event envelope and every existing result section. It adds
+`ROUTINE_CREATED` cadence value 4 (Weekdays) and appends, after the
+responsibility entries and before the catch-up summary, one little-endian
+`next_on:u32` civil date per Routine in Routine order. `next_on` is the date the
+next new occurrence opens (`Cadence::next_start`), always later than the
+current key; it is zero for an archived Routine or past 9999-12-31. Protocols
+1–23 reject Weekdays events and projections containing them.

@@ -1,4 +1,4 @@
-const PROTOCOL_VERSION = 23;
+const PROTOCOL_VERSION = 24;
 const REQUEST_HEADER_BYTES = 64;
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 const PULSE_VALUES = ["good", "okay", "drained", "rough-day", "need-quiet"];
@@ -206,6 +206,9 @@ function isCivilDate(value) {
     date.getUTCDate() !== day
   );
 }
+
+// Wire cadence codes, in Rust's `Cadence` order. Weekdays needs protocol 24.
+const ROUTINE_CADENCES = Object.freeze(["daily", "weekly", "biweekly", "monthly", "weekdays"]);
 
 function civilOrdinal(value) {
   const year = Math.floor(value / 10000);
@@ -499,7 +502,7 @@ function encodeIntentPacket(command, identity) {
     assertTimestamp(command.expiresAt);
     view.setBigInt64(116, BigInt(command.expiresAt), true);
   } else if (kind === 14) {
-    const code = ["daily", "weekly", "biweekly", "monthly"].indexOf(command.cadence);
+    const code = ROUTINE_CADENCES.indexOf(command.cadence);
     if (code < 0) throw new KinEngineError(2, "Choose a valid cadence.");
     packet[112] = code;
   } else if (kind === 29) {
@@ -1010,7 +1013,7 @@ function decodeState(bytes) {
   const protocolVersion = view.getUint16(4, true);
   if (
     ![
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
     ].includes(protocolVersion) ||
     view.getUint16(6, true) !== 0
   ) {
@@ -1294,8 +1297,9 @@ function decodeState(bytes) {
       length < 1 ||
       length > 4096 ||
       end > bytes.length ||
-      cadence > 3 ||
+      cadence > 4 ||
       (protocolVersion < 12 && cadence > 1) ||
+      (protocolVersion < 24 && cadence > 3) ||
       status > 1 ||
       occurrence > 2 ||
       bytes[offset + 51] !== 0 ||
@@ -1337,6 +1341,8 @@ function decodeState(bytes) {
         cadence === 3 &&
         (key % 100 !== 1 || key < Math.floor(createdOn / 100) * 100 + 1)
       ) throw new Error();
+      // Weekdays: a Monday-Friday key on or after creation (ordinal 0 is a Monday).
+      if (key && cadence === 4 && (key < createdOn || civilOrdinal(key) % 7 >= 5)) throw new Error();
       text = strictTextDecoder.decode(bytes.subarray(headerEnd, end));
     } catch {
       throw new KinEngineError(6, "Kin received invalid routine fields.");
@@ -1347,10 +1353,11 @@ function decodeState(bytes) {
       createdBy: idToHex(bytes.subarray(offset + 16, offset + 32)),
       createdAt,
       createdOn,
-      cadence: ["daily", "weekly", "biweekly", "monthly"][cadence],
+      cadence: ROUTINE_CADENCES[cadence],
       status: ["active", "archived"][status],
       occurrenceKey: key || null,
       occurrenceStatus: ["unavailable", "open", "completed"][occurrence],
+      nextOn: null,
       text,
     });
     offset = end;
@@ -1600,6 +1607,22 @@ function decodeState(bytes) {
     responsibilityIds.add(key);
     responsibilities.push({ targetKind, targetId, memberId: memberId === "00".repeat(16) ? null : memberId });
     offset += 33;
+  }
+  // Protocol 24: Rust's next-occurrence date per Routine, in Routine order.
+  // Presence and ordering are checked here; the date itself is never derived.
+  if (protocolVersion >= 24) {
+    if (offset + routines.length * 4 > bytes.length) throw new KinEngineError(6, "Kin received truncated routine schedule data.");
+    for (const routine of routines) {
+      const nextOn = view.getUint32(offset, true);
+      offset += 4;
+      try {
+        if (nextOn) assertCivilDate(nextOn);
+        if (routine.status === "archived" ? nextOn !== 0 : nextOn !== 0 && routine.occurrenceKey && nextOn <= routine.occurrenceKey) throw new Error();
+      } catch {
+        throw new KinEngineError(6, "Kin received invalid routine schedule data.");
+      }
+      routine.nextOn = nextOn || null;
+    }
   }
   const entityNames = ["", "item", "handoff", "talk", "routine"];
   for (let index = 0; index < summaryCount; index += 1) {

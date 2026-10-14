@@ -59,6 +59,35 @@ after the keyboard suite, through the real store and WASM. It covers:
 - Offline completion, reload persistence, and no Web Storage leakage.
 - Lock during a batch, and refusal of an undo from a previous session.
 
+## Repeating tasks coverage
+
+- **Rust.** `recurrence.rs` tests cover Weekdays keys, `next_start` for every
+  cadence, an exhaustive two-year check that `next_start` is the first later
+  date with a new occurrence, and monthly creation on the 31st.
+  `recurring_task_tests.rs` covers protocol-24 gating and wire layout,
+  weekend refusal, independent future occurrences, stale and repeated
+  commands, concurrent completions from two devices, stopping, and paused
+  modes.
+- **WASM.** `web/wasm/routines.test.mjs` checks Weekdays and `nextOn` through
+  the real engine and that `executeCommand` refuses stale or weekend intents.
+- **Sync.** `server/sync-e2e.test.mjs` has two devices complete one occurrence
+  offline through the encrypted relay, re-push a duplicate envelope, and
+  converge on one completed occurrence.
+- **Units.** `web/recurrence.test.mjs` (labels, next-date wording, capture
+  and schedule-change planning, resume and refusal), `web/today-view.test.mjs`
+  (one Today group, one row per task), `web/bulk-actions.test.mjs` (Routines
+  are never bulk targets), and `web/service-worker.test.mjs` (every module
+  statically imported from `kin-app.js` is in the offline shell).
+- **Browser.** `scripts/recurring-tasks-regression.mjs` runs inside
+  `browser-regression.mjs` after the bulk suite, with a pinned page clock. It
+  covers: default one-off Quick add; keyboard-only Repeat selection with
+  visible summary; one Routine and no Item; one Today row with next date and no
+  checkbox; bulk complete and undo leaving the occurrence alone; Space
+  completion; a stale repeat; weekend absence and Monday's new occurrence;
+  reload and unlock; Schedule from Today; a partial schedule change and its
+  resume without a duplicate; a stale change; 320px targets and overflow; and
+  Stop repeating.
+
 ## Keyboard shortcuts and command palette coverage
 
 `web/keyboard-commands.test.mjs` covers the command allowlist against the

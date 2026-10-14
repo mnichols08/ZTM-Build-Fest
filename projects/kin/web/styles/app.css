@@ -755,7 +755,21 @@ kin-household, kin-security, kin-areas, kin-notes, kin-search, kin-item, kin-att
 .routine-row .item-body { grid-area: body; }
 .routine-row .item-action { grid-area: actions; }
 .routine-list .item-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "body" "actions"; }
-.today-routines .routine-list .item-row { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "control body"; }
+.today-routines .routine-list .item-row { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "control body" ". actions"; }
+.routine-schedule { margin: 4px 0 0; }
+.routine-schedule > summary { display: inline-flex; align-items: center; min-height: var(--tap); padding-inline: 10px; border-radius: var(--r-control); cursor: pointer; color: var(--ink-muted); font-size: 14px; list-style: none; }
+.routine-schedule > summary:hover { background: var(--surface-secondary); color: var(--ink); }
+.routine-schedule[open] > summary { color: var(--accent); }
+.routine-schedule-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin: 6px 0 4px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-control); }
+.routine-schedule-form label { font-size: 14px; font-weight: 640; }
+.routine-schedule-form select, .quick-add-repeat select { width: 100%; min-width: 0; min-height: var(--tap); }
+.routine-schedule-form p { margin: 0; color: var(--ink-muted); font-size: 14px; overflow-wrap: anywhere; }
+.routine-schedule-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.routine-schedule-actions button { min-height: var(--tap); white-space: normal; }
+.quick-add-repeat { display: grid; gap: 8px; }
+.quick-add-repeat > summary { display: flex; align-items: center; min-height: var(--tap); cursor: pointer; color: var(--accent); font-size: 14px; font-weight: 640; list-style: none; }
+.quick-add-repeat[open] { padding-bottom: 4px; }
+.quick-add-repeat-hint { margin: 0; color: var(--ink-muted); font-size: 14px; }
 .routine-status { margin: 0; }
 .playbook-form { grid-template-columns: minmax(0, 1fr); }
 .playbook-form label { font-size: 14px; font-weight: 640; }

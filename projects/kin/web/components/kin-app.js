@@ -9,6 +9,7 @@ import { passkeyUnlockSupported } from "../security/passkey-unlock.js";
 import { listSegmentForClassification, PRIMARY_DESTINATIONS, resolveRoute, routeHash, SEGMENTS } from "../routes.js";
 import { formatCivilDate } from "../today-view.js";
 import { describePartialCapture, remainingCaptureSteps } from "../capture-plan.js";
+import { describeNextOccurrence, describeRecurringCapture, describeScheduleChanged, isCadence, planScheduleChange, remainingRecurringSteps, SCHEDULE_MESSAGES } from "../recurrence.js";
 import "./kin-routines.js";
 import "./kin-areas.js";
 import "./kin-notes.js";
@@ -124,6 +125,7 @@ class KinApp extends HTMLElement {
     this.viewerUrl = null;
     this.viewerOpener = null;
     this.pendingCapture = null;
+    this.pendingScheduleChange = null;
     this.householdStatus = null;
     this.passkeyPromptDismissed = false;
     this.onHouseholdStatus = (event) => { this.householdStatus = event.detail; this.renderOnboarding(); this.updateSyncChip(); };
@@ -179,6 +181,8 @@ class KinApp extends HTMLElement {
       if (event.type === "kin:archive-routine" || event.type === "kin:complete-routine-occurrence") this.localReminders.cancel(`routine:${event.detail.routineId}`);
       this.saveRoutine({ ...event.detail, type: event.type.slice(4) });
     };
+    this.onChangeRoutineSchedule = (event) => this.changeRoutineSchedule(event.detail);
+    this.onOpenRoutineSchedule = (event) => this.openRoutineSchedule(event.detail.routineId);
     this.onAreaIntent = (event) => this.saveArea(event.detail);
     this.onNoteIntent = (event) => this.saveNote(event.type.slice(4), event.detail);
     this.onReferenceIntent = (event) => this.saveReferenceRecord(event.type.slice(4), event.detail);
@@ -426,6 +430,8 @@ class KinApp extends HTMLElement {
     ]) {
       this.addEventListener(`kin:${action}`, this.onRoutineIntent);
     }
+    this.addEventListener("kin:change-routine-schedule", this.onChangeRoutineSchedule);
+    this.addEventListener("kin:open-routine-schedule", this.onOpenRoutineSchedule);
     for (const action of ["save-playbook", "archive-playbook", "instantiate-playbook"]) this.addEventListener(`kin:${action}`, this.onPlaybookIntent);
     document.addEventListener("visibilitychange", this.onTimeWake);
     window.addEventListener("focus", this.onWindowFocus);
@@ -1538,6 +1544,8 @@ class KinApp extends HTMLElement {
     ]) {
       this.removeEventListener(`kin:${action}`, this.onRoutineIntent);
     }
+    this.removeEventListener("kin:change-routine-schedule", this.onChangeRoutineSchedule);
+    this.removeEventListener("kin:open-routine-schedule", this.onOpenRoutineSchedule);
     for (const action of ["save-playbook", "archive-playbook", "instantiate-playbook"]) this.removeEventListener(`kin:${action}`, this.onPlaybookIntent);
     document.removeEventListener("visibilitychange", this.onTimeWake);
     window.removeEventListener("focus", this.onWindowFocus);
@@ -1818,12 +1826,13 @@ class KinApp extends HTMLElement {
       classification: event.detail.classification,
       planningDate: Number.isSafeInteger(event.detail.planningDate) ? event.detail.planningDate : null,
       pinned: Boolean(event.detail.pinned),
+      cadence: isCadence(event.detail.cadence) ? event.detail.cadence : null,
       revision: event.detail.revision ?? 0,
       ...(event.detail.sourceStapleId ? { sourceStapleId: event.detail.sourceStapleId } : {}),
     };
     let pending = this.pendingCapture;
     const matches = (draft) => draft && draft.text === incoming.text && draft.classification === incoming.classification &&
-      draft.planningDate === incoming.planningDate && draft.pinned === incoming.pinned && draft.sourceStapleId === incoming.sourceStapleId && draft.revision === incoming.revision;
+      draft.planningDate === incoming.planningDate && draft.pinned === incoming.pinned && draft.sourceStapleId === incoming.sourceStapleId && draft.cadence === incoming.cadence && draft.revision === incoming.revision;
     if (pending && pending.composer !== composer) pending = null;
     if (pending && !matches(pending.draft)) {
       composer.showPendingCapture?.({
@@ -1850,7 +1859,8 @@ class KinApp extends HTMLElement {
     let restoreComposeFocus = false;
     let step = null;
     try {
-      const steps = remainingCaptureSteps(this.state, submittedDraft);
+      // A repeating task is a Routine: one create command, nothing partial.
+      const steps = submittedDraft.cadence ? remainingRecurringSteps(this.state, submittedDraft) : remainingCaptureSteps(this.state, submittedDraft);
       for (step of steps) {
         await this.appendCommand(step);
         this.assertCurrentSession(session);
@@ -1859,7 +1869,8 @@ class KinApp extends HTMLElement {
       this.renderState();
       if (!sourceList) composer.clearIfMatches(submittedDraft);
       const where = submittedDraft.planningDate === this.currentCivilDate() ? `${destination} and Today` : destination;
-      this.setStatus(`Added to ${where}.${this.offlineSyncSuffix()}`);
+      const recurring = submittedDraft.cadence ? this.state.routines?.find((routine) => routine.routineId === submittedDraft.id) : null;
+      this.setStatus(`${recurring ? describeRecurringCapture(recurring, this.currentCivilDate()) : `Added to ${where}.`}${this.offlineSyncSuffix()}`);
       if (!sourceList) composer.showResult?.(this.syncCoordinator ? "Saved here. Waiting to sync." : "Saved on this device.");
       if (this.pendingCapture?.draft.id === submittedDraft.id) this.pendingCapture = null;
       this.broadcastEventChange();
@@ -1868,7 +1879,7 @@ class KinApp extends HTMLElement {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
       if (error.code === 4) this.pendingRefresh = true;
       this.renderState();
-      const partial = step && step.type !== "add";
+      const partial = step && step.type !== "add" && step.type !== "create-routine";
       const inline = step ? describePartialCapture(step, destination) : INLINE_SAVE_FAILED;
       if (!sourceList) this.pendingCapture = { draft: submittedDraft, composer, retry };
       this.showAlert(partial ? inline : (error.userMessage ?? SAVE_ERROR), retry);
@@ -2060,14 +2071,20 @@ class KinApp extends HTMLElement {
       this.renderState();
       if (submitted.type === "create-routine")
         this.routines.clearIfMatches(submitted);
+      if (submitted.type === "archive-routine") this.routines.closeSchedule(submitted.routineId);
+      // Feedback reads the Rust projection after the save, never a guess.
+      const saved = submitted.routineId
+        ? this.state.routines?.find((routine) => routine.routineId === submitted.routineId)
+        : this.state.routines?.at(-1);
+      const next = describeNextOccurrence(saved?.nextOn ?? null, this.currentCivilDate());
       this.setStatus(
         submitted.type === "create-routine"
-          ? "Routine added."
+          ? describeRecurringCapture(saved, this.currentCivilDate())
           : submitted.type === "archive-routine"
-            ? "Routine archived."
+            ? "Stopped repeating. Past completions are kept."
             : submitted.type === "complete-routine-occurrence"
-              ? "Occurrence completed."
-              : "Occurrence reopened.",
+              ? `Done for this period.${next ? ` ${next}.` : ""}`
+              : "Reopened for this period.",
       );
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
@@ -2090,6 +2107,71 @@ class KinApp extends HTMLElement {
         )
           this.routines.focusInput();
         else this.routines.restoreFocus(focus);
+        this.flushPeerRefresh();
+      }
+    }
+  }
+
+  // From Today: show the task's schedule editor on the Routines page.
+  openRoutineSchedule(routineId) {
+    if (!this.workspaceReady()) return;
+    this.navigate("#routines");
+    if (!this.routines.openSchedule(routineId)) this.setStatus(SCHEDULE_MESSAGES.gone);
+  }
+
+  // A schedule change is a new Routine starting today plus stopping the old
+  // one, each an ordinary Rust-validated command (see planScheduleChange).
+  // The replacement id is kept until the change finishes, so a retry after a
+  // partial save resumes instead of creating a second repeating task.
+  async changeRoutineSchedule(detail) {
+    if (this.busy || !this.store || !this.engine) return;
+    const session = this.captureSession();
+    const pending = this.pendingScheduleChange;
+    const resume = pending?.routineId === detail.routineId && pending.cadence === detail.cadence;
+    const change = Object.freeze({
+      routineId: detail.routineId,
+      cadence: detail.cadence,
+      replacementId: resume ? pending.replacementId : crypto.randomUUID().replaceAll("-", ""),
+    });
+    const plan = planScheduleChange(this.state, change, pending);
+    if (plan.status !== "ready") {
+      if (resume) this.pendingScheduleChange = null;
+      this.setStatus(SCHEDULE_MESSAGES[plan.status]);
+      return;
+    }
+    this.pendingScheduleChange = change;
+    let step = null;
+    let appended = 0;
+    this.setBusy(true);
+    this.clearAlert();
+    this.setStatus("Saving…");
+    try {
+      for (step of plan.steps) {
+        await this.appendCommand(step);
+        this.assertCurrentSession(session);
+        appended++;
+      }
+      step = null;
+      this.pendingScheduleChange = null;
+      this.localReminders.cancel(`routine:${change.routineId}`);
+      this.routines.closeSchedule(change.routineId);
+      this.broadcastEventChange();
+      this.renderState();
+      this.setStatus(describeScheduleChanged(change.cadence));
+    } catch (error) {
+      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === 4) this.pendingRefresh = true;
+      if (appended) this.broadcastEventChange();
+      this.renderState();
+      this.showAlert(
+        step && step.type !== "create-routine" ? SCHEDULE_MESSAGES.partial : (error.userMessage ?? SAVE_ERROR),
+        () => this.changeRoutineSchedule(change),
+      );
+      this.setStatus("");
+    } finally {
+      if (this.isCurrentSession(session)) {
+        this.setBusy(false);
+        if (!this.pendingScheduleChange) this.routines.focusRoutine(change.replacementId);
         this.flushPeerRefresh();
       }
     }
@@ -3230,6 +3312,7 @@ class KinApp extends HTMLElement {
     this.pulse.pulse = this.state.pulses.find(
       (pulse) => pulse.actorId === this.store?.actorId,
     );
+    this.routines.today = civilDate;
     this.routines.routines = this.state.routines ?? [];
     this.routines.responsibilityContext = responsibilityContext;
     this.routines.playbooks = this.state.playbooks ?? [];
@@ -3528,6 +3611,7 @@ class KinApp extends HTMLElement {
     this.commandGeneration = null;
     this.clearBulkOutcome();
     this.pendingCapture = null;
+    this.pendingScheduleChange = null;
     this.attachmentPreviews?.clear();
     this.attachmentPreviews = null;
     this.attachmentTarget = null;

@@ -61,3 +61,12 @@ test("outcome messages count successes, failures, and skips separately", () => {
   // Local durability is never described as sync.
   for (const action of Object.keys(BULK_ACTIONS)) assert.doesNotMatch(describeBulkOutcome(action, { succeeded: 2 }), /sync/i);
 });
+
+test("repeating tasks are never bulk targets, so a bulk action cannot touch any occurrence", () => {
+  const routine = { routineId: "r".repeat(32), text: "Pack lunches", cadence: "daily", status: "active", occurrenceStatus: "open", occurrenceKey: 20261014 };
+  assert.equal(isBulkEligible(routine), false);
+  const task = { itemId: "i".repeat(32), classification: "need", status: "active" };
+  // Even if a routine id reached the selection, it is skipped, not submitted.
+  assert.deepEqual(planBulk("complete", [routine.routineId, task.itemId], [task]), { action: "complete", targets: [task.itemId], skipped: [routine.routineId] });
+  assert.deepEqual([...reconcileSelection(new Set([routine.routineId, task.itemId]), [task])], [task.itemId]);
+});

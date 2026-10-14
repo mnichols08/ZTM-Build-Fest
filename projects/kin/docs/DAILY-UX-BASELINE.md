@@ -90,6 +90,15 @@ per-item milliseconds through the real encrypted store and WASM. Commands run
 one at a time and yield to the event loop between IndexedDB transactions. This
 is a diagnostic sample, not a budget.
 
+## Repeating tasks follow-up
+
+A one-off Quick add is unchanged: **2 interactions to create**. A repeating
+task adds two: open Repeat and choose a schedule (**4 interactions**, or one
+more for a schedule further down the list). Completing its current occurrence
+from Today is **1 interaction**, the same row control as any task. Changing or
+stopping a schedule is Schedule, choose, confirm (**3 interactions**). Today
+shows one row per repeating task, never its future occurrences.
+
 ## Known gaps
 
 - Timings are local end-to-end samples, not statistically rigorous benchmarks
