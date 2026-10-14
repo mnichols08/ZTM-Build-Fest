@@ -28,6 +28,7 @@ export function resolveReminderTime({ date, time, now = Date.now() } = {}) {
   const resolved = new Date(year, month - 1, day, hours, minutes, 0, 0);
   if (
     resolved.getFullYear() !== year || resolved.getMonth() !== month - 1 || resolved.getDate() !== day ||
+    resolved.getHours() !== hours || resolved.getMinutes() !== minutes ||
     hours > 23 || minutes > 59
   ) return { error: "That date or time doesn't exist." };
   const at = resolved.getTime();

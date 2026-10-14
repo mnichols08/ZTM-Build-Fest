@@ -1146,7 +1146,7 @@ class KinApp extends HTMLElement {
       itemId,
       page,
       opener: sameItem ? this.selection.opener : (opener?.isConnected ? opener : this.selection?.opener ?? null),
-      origin: origin ?? this.selection?.origin ?? null,
+      origin: origin ?? (sameItem ? this.selection?.origin : null),
       // The inline presentation hides the list; remember where it was scrolled.
       scrollY: sameItem ? this.selection.scrollY : window.scrollY,
     };
