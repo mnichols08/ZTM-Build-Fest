@@ -1500,3 +1500,8 @@ The user-authorized Personal Appearance candidate is `kin-v0.46.0` on
 `feat/kin-personal-appearance`, stacked from open PR #42 at `dadd92b`; no tag
 has been created. It is member-bound and device-local and adds no household
 event, sync, attachment, activity, or portable-export contract.
+
+The user-authorized Household Identity & Shared Appearance candidate is
+`kin-v0.47.0` on `feat/kin-household-owner-settings`, stacked from the Personal
+Appearance candidate; no tag has been created. It adds narrow founder-backed
+owner authority and a revisioned, opaque encrypted household-settings record.
