@@ -308,6 +308,57 @@ always visible, validation ("Choose a time that hasn't passed yet."), Set and
 Cancel, and the explanation "On this device only, while Kin is open in this
 browser." The underlying `LocalReminders` model is unchanged.
 
+### 5.3 Keyboard shortcuts and command palette
+
+| Shortcut | Action |
+| --- | --- |
+| Ctrl + K (Windows, Linux) / Cmd + K (Mac) | Open the command palette |
+| N | Quick add a task |
+| / | Go to Search and focus its field |
+| ? | Show keyboard shortcuts |
+| Escape | Close the open dialog, then the item details |
+
+- **Where they work.** Only in the unlocked, rendered workspace. The unlock
+  screen, a locked session, and a closing session ignore them, and
+  `runWorkspaceCommand` re-checks this before acting.
+- **Typing is never hijacked.** N, / and ? do nothing when focus is in a text
+  input, textarea, select, contenteditable region, or a text-role element,
+  including fields inside open shadow roots (checked through
+  `composedPath()` and the deep active element). They also ignore IME
+  composition (`isComposing`, key code 229) and auto-repeat.
+- **Other dialogs keep their keyboard.** While Quick add, the mobile item
+  sheet, or the photo viewer is open, no shortcut runs and the browser keeps
+  Ctrl/Cmd+K. Ctrl/Cmd+K works from a text field and over the non-modal
+  side or inline details. Escape inside any open dialog closes that dialog
+  first, so the details beneath stay open.
+- **Browser shortcuts.** Kin calls `preventDefault()` only when it acts. On a
+  Mac, Ctrl+K is left alone because text fields use it to delete to the end
+  of the line. Alt/AltGr and Shift with Ctrl/Cmd+K are left to the browser.
+- **Palette.** `<kin-command-palette>` is a native modal `<dialog>` in light
+  DOM that holds the APG combobox-with-listbox pattern. The field keeps focus,
+  Up and Down move `aria-activedescendant` (wrapping), Enter runs the active
+  command, and Escape, Close, or the backdrop closes it. A polite status
+  announces the match count, and an empty result shows "No commands match."
+  The commands are a fixed allowlist in `web/keyboard-commands.js`: Go to
+  Today, Go to To do, Go to Shopping, Search household, Quick add a task, and
+  Keyboard shortcuts. Filtering is local plain-text word matching; the query
+  is never stored, logged, or evaluated.
+- **Help.** A second modal dialog lists every shortcut, with Windows/Linux and
+  Mac modifiers on separate lines. It stacks to one column at narrow widths.
+  The palette and the help swap in place, so only one overlay is ever open.
+- **Focus.** Opening the palette remembers the focused element. Dismissing it
+  restores focus there, or to the current page heading if that element is
+  gone. A command runs after the palette has closed. Today focuses its
+  heading, To do and Shopping focus their current list link, and Search
+  focuses its field. Quick add returns focus to the original element when it
+  closes.
+- **Lifecycle.** Lock, logout, and household changes call `dismiss()`, which
+  closes both dialogs without running a command or restoring focus. A command
+  chosen before a lock carries the previous security generation and is
+  dropped. Disconnecting the palette closes it and disables commands until it
+  is reconnected. The palette persists nothing, and the visible Quick add
+  and Search controls advertise their keys through `aria-keyshortcuts`.
+
 ---
 
 ## 6. Acceptance tests

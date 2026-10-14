@@ -448,6 +448,39 @@ kin-segment-nav { display: block; margin: 0 0 16px; }
 .quick-add-recovery-actions button { min-height: var(--tap); }
 .quick-add-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
+/* Command palette and keyboard shortcut help: native modal dialogs sized like
+   Quick add. The palette field keeps focus, so the active option carries its
+   own outline in place of a focus ring. */
+.command-dialog { width: min(92vw, 520px); max-width: calc(100vw - 24px); max-height: min(86vh, 640px); margin: auto; padding: 18px 20px 20px; overflow: auto; border: 1px solid var(--line-strong); border-radius: var(--r-card); background: var(--surface); color: var(--ink); box-shadow: 0 18px 60px rgba(0, 0, 0, .28); }
+.command-dialog::backdrop { background: rgba(10, 16, 12, .52); }
+.command-dialog[open] { animation: sheet-arrive .18s cubic-bezier(.2,.75,.25,1) both; }
+.command-dialog-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.command-dialog-bar h2 { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.command-dialog-close { flex: none; }
+.command-palette label { display: block; margin-bottom: 6px; font-weight: 640; }
+.command-palette input { width: 100%; min-width: 0; min-height: var(--tap); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); }
+.command-palette-list { display: grid; gap: 4px; margin: 10px 0 0; padding: 0; list-style: none; }
+.command-option { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 12px; min-height: var(--tap); padding: 8px 12px; border: 1px solid transparent; border-radius: var(--r-row); cursor: pointer; }
+.command-option:hover { background: var(--surface-secondary); }
+.command-option[aria-selected="true"] { border-color: var(--accent); background: var(--accent-soft); outline: 2px solid var(--accent); outline-offset: -2px; }
+.command-label { font-weight: 640; overflow-wrap: anywhere; }
+.command-description { grid-column: 1; color: var(--ink-muted); font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+.command-shortcut { grid-column: 2; grid-row: 1 / span 2; }
+.command-dialog kbd { display: inline-block; padding: 2px 7px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 6px; background: var(--surface-secondary); color: var(--ink); font: inherit; font-size: 13px; font-weight: 650; line-height: 1.4; white-space: nowrap; }
+.command-palette-empty, .command-palette-hint, .shortcut-help-hint { margin: 10px 0 0; color: var(--ink-muted); font-size: 14px; line-height: 1.45; }
+.command-palette-empty { color: var(--ink); }
+.shortcut-help-hint { margin: 0 0 8px; }
+.shortcut-list { margin: 0; }
+.shortcut-row { display: grid; grid-template-columns: minmax(0, 14rem) minmax(0, 1fr); gap: 4px 16px; padding: 10px 0; border-top: 1px solid var(--line); }
+.shortcut-row dt { display: grid; gap: 6px; }
+.shortcut-row dd { margin: 0; overflow-wrap: anywhere; }
+.shortcut-combo { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.shortcut-platform { color: var(--ink-muted); font-size: 13px; }
+@media (max-width: 480px) {
+  .command-dialog { padding: 14px 14px 16px; }
+  .shortcut-row { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* ---------- Sections, cards, lists, rows ---------- */
 .today-section, .household-panel, .security-panel {
   min-width: 0;
@@ -1091,6 +1124,8 @@ kin-app > .security-panel {
   .complete-control[aria-pressed="true"]::before { background: Highlight; }
   .sync-chip { border-color: CanvasText; }
   .today-summary-entry { border: 1px solid CanvasText; }
+  .command-dialog, .command-dialog kbd { border: 1px solid CanvasText; }
+  .command-option[aria-selected="true"] { outline: 3px solid Highlight; outline-offset: -3px; }
   button:focus-visible, input:focus-visible, select:focus-visible,
   a:focus-visible, main:focus-visible { outline: 3px solid Highlight; }
 }

@@ -32,6 +32,7 @@ class KinQuickAdd extends HTMLElement {
     this.trigger.className = "quick-add-trigger";
     this.trigger.textContent = "Quick add";
     this.trigger.setAttribute("aria-haspopup", "dialog");
+    this.trigger.setAttribute("aria-keyshortcuts", "N");
 
     this.dialog = document.createElement("dialog");
     this.dialog.className = "quick-add-dialog";

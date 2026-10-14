@@ -73,6 +73,14 @@ prints `METRIC today-actionable` with the completion latency and the cost of
 one full Today render with the accumulated test household. These are
 diagnostic samples, like the baseline above, not budgets.
 
+## Keyboard commands follow-up
+
+Ctrl/Cmd+K, N, / and ? ([WORKSPACE-UX](WORKSPACE-UX.md) §5.3) make Quick add
+and Search reachable without a pointer. Pressing N from any workspace page is
+**1 interaction to open capture**, the same as the Quick add button. The
+palette adds no new save path: completion and capture interaction counts are
+unchanged.
+
 ## Known gaps
 
 - Timings are local end-to-end samples, not statistically rigorous benchmarks
