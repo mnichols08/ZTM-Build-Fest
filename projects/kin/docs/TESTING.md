@@ -1,5 +1,16 @@
 # Testing Contracts
 
+## Daily UX baseline
+
+`web/daily-ux-fixtures.js` defines deterministic empty, overdue, due-today,
+and completed records in the shape emitted by the Rust/WASM projection.
+`web/daily-ux-fixtures.test.mjs` locks their Today grouping. The workspace
+browser journey measures a real local due-today create and completion, checks
+focus restoration, and prints the interaction and latency baseline. Existing
+browser coverage supplies offline creation/reload and 320px reflow evidence.
+See [DAILY-UX-BASELINE](DAILY-UX-BASELINE.md) for the implementation map,
+measurement definitions, accessibility baseline, and disclosed gaps.
+
 ## Household workspace UX coverage (unversioned candidate)
 
 `scripts/workspace-ux-regression.mjs` runs inside `browser-regression.mjs`

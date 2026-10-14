@@ -38,6 +38,35 @@ export async function workspaceUxRegressions(recovery) {
   const shift = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
   const stamp = crypto.randomUUID().slice(0, 6);
 
+  // Daily UX baseline: measure the existing local pipeline without imposing a
+  // machine-specific performance budget. Interaction counts begin with focus
+  // in the primary Today capture (text entry + Enter, then one completion).
+  app.navigate("#today");
+  const baselineText = `Daily baseline ${stamp}`;
+  app.compose.input.focus();
+  app.compose.input.value = baselineText;
+  const createStarted = performance.now();
+  app.compose.form.requestSubmit();
+  await idle();
+  const createMs = performance.now() - createStarted;
+  const baselineItem = app.state.items.find((entry) => entry.text === baselineText);
+  check(baselineItem?.planningDate === today && document.activeElement === app.compose.input,
+    "daily baseline creates a due-today task and restores focus to capture");
+  const baselineRow = rowIn(app.today, baselineItem.itemId);
+  const complete = baselineRow.querySelector(".complete-button");
+  complete.focus();
+  const completeStarted = performance.now();
+  complete.click();
+  await idle();
+  const completeMs = performance.now() - completeStarted;
+  const completedRow = rowIn(app.today, baselineItem.itemId);
+  check(app.state.items.find((entry) => entry.itemId === baselineItem.itemId)?.status === "completed" &&
+    document.activeElement === completedRow?.querySelector(".reopen-button"),
+  "daily baseline completes the canonical task and restores focus to its Reopen action");
+  check(Number.isFinite(createMs) && createMs > 0 && Number.isFinite(completeMs) && completeMs > 0,
+    "daily baseline records finite positive local create and complete latencies");
+  console.log(`METRIC daily-ux ${JSON.stringify({ createMs: Number(createMs.toFixed(2)), completeMs: Number(completeMs.toFixed(2)), createInteractions: 2, completeInteractions: 1 })}`);
+
   // 1. Add a task in To do; it stays findable.
   app.navigate("#lists/todo");
   const task = await addVia(app.needs.composer, `Fix the gate latch ${stamp}`);
@@ -418,7 +447,7 @@ export async function workspaceUxRegressions(recovery) {
   await wait(() => app.state !== null, "state after unlock");
   check(app.selection === null && (app.search.queryInput?.value ?? "") === "" && !app.siteTools.hidden, "12. after unlocking, no previous selection or search query returns");
   app.navigate("#today");
-  return `PASS household workspace journeys (${passed.length} checks): To do/Shopping capture, Today composition and legacy items, earlier/future plans, paused routines, details drafts and position, search targets, reminders, offline/failed/partial saves, legacy routes, lock`;
+  return `PASS household workspace journeys (${passed.length} checks; daily create ${createMs.toFixed(2)} ms / 2 interactions; complete ${completeMs.toFixed(2)} ms / 1 interaction): To do/Shopping capture, Today composition and legacy items, earlier/future plans, paused routines, details drafts and position, search targets, reminders, offline/failed/partial saves, legacy routes, lock`;
 }
 
 // CDP-driven: five equal mobile tracks, one detail editor re-homed across
