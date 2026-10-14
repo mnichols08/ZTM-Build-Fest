@@ -121,8 +121,9 @@ export async function workspaceUxRegressions(recovery) {
   await app.appendCommand({ type: "set-item-planning-date", itemId: legacy.itemId, planningDate: shift(1) });
   await idle();
   app.renderState();
-  check(!rowIn(app.today, legacy.itemId) && rowIn(app.needs, legacy.itemId)?.querySelector(".item-meta")?.textContent.includes("Planned for tomorrow"),
-    "5. an explicit date takes precedence over the legacy classification");
+  check(rowsIn(app.today, legacy.itemId).length === 1 && rowIn(app.today, legacy.itemId).closest("[data-section]")?.dataset.section === "upcoming" &&
+    rowIn(app.needs, legacy.itemId)?.querySelector(".item-meta")?.textContent.includes("Planned for tomorrow"),
+    "5. an explicit date takes precedence over the legacy classification (tomorrow is Coming up, not Today)");
   await app.appendCommand({ type: "set-item-planning-date", itemId: legacy.itemId, planningDate: null });
   await idle();
   app.renderState();
@@ -135,9 +136,10 @@ export async function workspaceUxRegressions(recovery) {
   await app.appendCommand({ type: "set-item-planning-date", itemId: forms.itemId, planningDate: shift(5) });
   await idle();
   app.renderState();
-  check(!rowIn(app.today, forms.itemId) && rowIn(app.needs, forms.itemId).querySelector(".item-meta").textContent.startsWith("Planned for ") &&
+  check(rowsIn(app.today, forms.itemId).length === 1 && rowIn(app.today, forms.itemId).closest("[data-section]")?.dataset.section === "upcoming" &&
+    rowIn(app.needs, forms.itemId).querySelector(".item-meta").textContent.startsWith("Planned for ") &&
     !rowIn(app.needs, forms.itemId).querySelector(".item-meta").textContent.includes("today"),
-    "6. a future-dated item stays off Today and is labelled with its date in To do");
+    "6. a future-dated item is listed once under Coming up, not as today's work, and labelled with its date in To do");
 
   // 7. Earlier plans and paused routines.
   const bins = await addVia(app.needs.composer, `Bins ${stamp}`);
@@ -145,9 +147,11 @@ export async function workspaceUxRegressions(recovery) {
   await idle();
   app.renderState();
   const earlierRow = rowIn(app.today, bins.itemId);
-  check(earlierRow?.closest("details")?.classList.contains("earlier-disclosure") && app.today.querySelector(".earlier-disclosure summary").textContent.startsWith("Earlier plans") &&
-    /still open/.test(earlierRow.querySelector(".item-meta").textContent) && !/overdue|late|behind/i.test(app.today.textContent),
-    "7. an unfinished earlier plan sits under a calm Earlier plans disclosure and stays in To do");
+  const earlierSection = earlierRow?.closest("[data-section]");
+  check(earlierSection?.dataset.section === "earlier" && earlierSection.querySelector("h2").textContent === "Earlier plans" &&
+    earlierSection.querySelector(".section-hint").textContent.startsWith("Still open from earlier") && !earlierRow.closest("details") &&
+    /still open/.test(earlierRow.querySelector(".item-meta").textContent) && !/overdue|late|behind/i.test(app.today.textContent) && rowIn(app.needs, bins.itemId),
+    "7. an unfinished earlier plan is visible under a calm Earlier plans section and stays in To do");
   await app.appendCommand({ type: "create-routine", text: `Water plants ${stamp}`, cadence: "daily", createdOn: today });
   await idle();
   app.renderState();

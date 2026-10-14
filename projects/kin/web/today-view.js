@@ -2,7 +2,8 @@
 // filters and groups records that Rust already derived (status, planning
 // date, occurrence status); it never computes recurrence, eligibility or
 // validity. Dates are the integer civil date (YYYYMMDD) the browser already
-// passes to Rust as explicit context.
+// passes to Rust as explicit context, so grouping is an integer comparison of
+// two Rust-facing values with no clock, time-zone or DST arithmetic here.
 
 export const ROUTINE_PERIOD_LABELS = Object.freeze({
   daily: "Today",
@@ -43,6 +44,12 @@ export function composeToday({ items = [], routines = [], pins = [], handoffs = 
     .filter(take)
     .sort((left, right) => left.planningDate - right.planningDate);
 
+  // Rule C2 — later plans, nearest first, so nothing planned sneaks up.
+  const upcoming = live
+    .filter((item) => item.status === "active" && item.planningDate != null && item.planningDate > civilDate)
+    .filter(take)
+    .sort((left, right) => left.planningDate - right.planningDate);
+
   const completed = live.filter((item) => item.status === "completed" &&
     (item.planningDate === civilDate || (item.classification === "today" && item.planningDate == null)));
 
@@ -71,14 +78,20 @@ export function composeToday({ items = [], routines = [], pins = [], handoffs = 
     civilDate,
     today,
     earlier,
+    upcoming,
     completed,
+    // Counts are lengths of the lists above, never tracked separately, so a
+    // completed task can only be counted as done.
+    counts: { earlier: earlier.length, today: today.length, upcoming: upcoming.length, completed: completed.length },
+    hasItems: live.length > 0,
+    allDone: today.length === 0 && completed.length > 0,
     routineGroups,
     completedRoutines,
     routinesPaused: paused && activeRoutines.length > 0,
     hasRoutines: activeRoutines.length > 0,
     quickAccess,
     waitingHandoffs,
-    isEmpty: today.length === 0 && earlier.length === 0 && routineGroups.length === 0 && !paused,
+    isEmpty: today.length === 0 && earlier.length === 0 && upcoming.length === 0 && routineGroups.length === 0 && !paused,
   };
 }
 

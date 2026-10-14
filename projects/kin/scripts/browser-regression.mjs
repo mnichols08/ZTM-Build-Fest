@@ -19,6 +19,7 @@ import { mobileUxRegressions } from "./mobile-ux-regression.mjs";
 import { attachmentUploadRegressions } from "./attachment-upload-regression.mjs";
 import { syncMotionRegressions, workspaceUxRegressions, workspaceViewportRegressions } from "./workspace-ux-regression.mjs";
 import { quickAddRegressions } from "./quick-add-regression.mjs";
+import { todayActionableRegressions, todayLifecycleRegressions } from "./today-actionable-regression.mjs";
 import {
   handoffRegressions,
   handoffPeerRegressions,
@@ -1344,6 +1345,16 @@ try {
   console.log(await attachmentUploadRegressions(first, { recovery: recoverySecret, visit: (id) => visit(first, id), scratch: profile }));
   console.log(await first.evaluate(`(${workspaceUxRegressions.toString()})(${JSON.stringify(recoverySecret)})`));
   console.log(await workspaceViewportRegressions(first, { visit: (id) => visit(first, id) }));
+  await visit(first, "today");
+  console.log(await first.evaluate(`(${todayActionableRegressions.toString()})(${JSON.stringify(recoverySecret)})`));
+  // The lifecycle suite unlocks while the network is deliberately offline, so
+  // the app's own status probe fails then. Only that exact failure, inside
+  // this window, is expected; every other console error still fails the run.
+  const offlineWindowStart = problems.length;
+  console.log(await todayLifecycleRegressions(first, { visit: (id) => visit(first, id), ready }));
+  const offlineStatusProbe = (entry) => entry.source === "network" && entry.text === "Failed to load resource: net::ERR_INTERNET_DISCONNECTED" &&
+    typeof entry.url === "string" && new URL(entry.url).origin === origin && new URL(entry.url).pathname === "/api/status";
+  problems.push(...problems.splice(offlineWindowStart).filter((entry) => !offlineStatusProbe(entry)));
   await visit(first, "routines");
   console.log(await first.evaluate(`(${routineRegressions.toString()})()`));
   const playbookResult = await first.evaluate(async () => {

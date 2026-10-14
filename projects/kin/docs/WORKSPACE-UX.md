@@ -19,7 +19,7 @@ and on any screen size:
 
 | Question | Where the answer lives |
 | --- | --- |
-| What needs attention now? | **Today**: planned-for-today items, routines due in the current period, handoffs waiting, catch-up |
+| What needs attention now? | **Today**: task counts, plans still open from earlier, planned-for-today items, plans coming up, routines due in the current period, handoffs waiting, catch-up |
 | Where do things live? | **Lists** (To do · Shopping · Staples), **Routines**, **Updates** (Handoffs · Talk), **Household** |
 | How do I add something? | A capture field at the top of Today and of every list, each fixed to where it lands |
 | How do I open its details? | The item text or its `Details` control opens one shared detail view |
@@ -117,8 +117,8 @@ legacy events normalised to Today by Rust) are preserved as they are:
 - An undated legacy Today item (`planningDate === null`) remains on Today in
   the same "Today" list as planned items.
 - An explicit planning date takes precedence: a legacy Today item dated for
-  another day leaves Today and is listed by its date (Earlier plans or its
-  list).
+  another day leaves the Today list and is listed by its date (Earlier plans
+  or Coming up, and its list).
 - Legacy Today items are also listed under **To do**, so nothing depends on
   the Today view to be found.
 - No event is rewritten and no migration runs. New captures never create a
@@ -128,8 +128,41 @@ legacy events normalised to Today by Rust) are preserved as they are:
 ### 3.3 Rule C — Earlier plans
 
 Active items (not Staples) with `planningDate < civilDate` stay in their lists
-and are collected in a collapsed "Earlier plans" disclosure on Today labelled
-"Still open from earlier". No alarm styling, no counts in red, no "overdue".
+and are listed, oldest first, in a visible "Earlier plans" section labelled
+"Still open from earlier". It comes first because these are the most
+time-sensitive open tasks. No alarm styling, no counts in red, no "overdue",
+"late" or "behind".
+
+### 3.3a Rule C2 — Coming up
+
+Active items (not Staples) with `planningDate > civilDate` are listed under
+"Coming up", soonest first, after Today. Equal dates keep the Rust projection
+order (the sort is stable), so every device shows the same order. A completed
+future-dated item is not today's work and leaves Today.
+
+### 3.3b Item summary and actionable rows
+
+When the household has any task or shopping item, an "Item summary"
+(visually hidden heading) heads the task sections with counts of items still
+open from earlier, planned for today, coming up, and completed from today's
+plans. "Items" covers both tasks and shopping items. The completed count is
+items planned for today (or undated legacy Today items) whose status is
+completed; it is not a count of everything completed on this calendar day. Each count is the length of the list the
+same `composeToday` call returned, so a completed task can only be counted as
+done and the counts change only when the projection does. Non-zero counts are
+native buttons that move focus to their section (the done count opens the
+Completed disclosure); zero counts are plain text. The summary sits directly
+above the sections at every width, so reading and focus order match the
+layout.
+
+Every row completes with one native button through the existing `complete`
+command (`reopen` on completed rows). The app-wide busy guard disables every
+workspace control, including the summary, while a change saves, so rapid
+repeats append one event. A failed local save shows the error with Try again
+and leaves the task and counts unchanged. When a completed row leaves its
+section (an earlier or coming-up plan), focus moves to the row that took its
+place, else the previous row, else the section heading. A completed Today row
+keeps focus on its Reopen action.
 
 ### 3.4 Rule D — Routines
 
@@ -158,11 +191,24 @@ complete/reopen actions (Rust rejects them independently).
 
 ### 3.6 Deduplication and completed content
 
-Within the actionable sections (Today list, Earlier plans) an item appears at
-most once. Completed items with today's date, completed legacy Today items,
+Within the actionable sections (Earlier plans, Today, Coming up) an item
+appears at most once. Completed items with today's date, completed legacy Today items,
 and completed routine occurrences sit under one collapsed "Completed"
-disclosure. Empty states explain where other information lives ("Nothing
-planned for today. Lists hold everything else.").
+disclosure. Empty states explain the situation without implying anything was
+removed:
+
+| State | Today shows |
+| --- | --- |
+| No projection yet | "Today's tasks aren't available yet…" |
+| No tasks at all | "No household tasks yet…" and **Add a task for today** |
+| Tasks exist, none today | "Nothing planned for today." with links to To do and Shopping, and **Add a task for today** |
+| Everything for today done | "Everything planned for today is done. Completed tasks are listed below." |
+| Nothing coming up | "Nothing is planned for the coming days." |
+
+**Add a task for today** opens the universal Quick add (and its
+partial-capture recovery) with the Today destination; it is not a second
+composer. Focus returns to the button, or to the Today heading if a refresh
+has replaced it.
 
 ### 3.7 Today capture
 
@@ -276,7 +322,7 @@ runner):
 4. Complete it from Today; Shopping shows it completed (and the reverse).
 5. A synthetic legacy `today` event stays on Today undated and in To do; no
    event bytes change.
-6. A future-dated item is not labelled as today's work.
+6. A future-dated item is listed under Coming up, not as today's work.
 7. An earlier-dated item appears under Earlier plans; paused routines show
    no occurrence actions.
 8. Open and close details without losing scroll position or an unsent step

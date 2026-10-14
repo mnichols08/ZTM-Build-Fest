@@ -17,7 +17,7 @@ diagnostic baselines, not performance budgets.
 
 The named fixtures in `web/daily-ux-fixtures.js` are stable browser-facing Rust
 projection records for empty, earlier unfinished ("overdue" in test naming),
-due-today, and completed states. Product copy deliberately says **Earlier
+due-today, upcoming, and completed states. Product copy deliberately says **Earlier
 plans** and **still open**, not overdue or late.
 
 ## Interaction baseline
@@ -61,6 +61,17 @@ conditions are offline, reload and Rust replay from IndexedDB, keyboard
 completion, focus restoration, and a 320px Today viewport. The focused daily
 journey additionally creates and completes a due-today task through the real
 store and WASM projection while recording latency and interaction counts.
+
+## Actionable Today follow-up
+
+The actionable Today dashboard ([WORKSPACE-UX](WORKSPACE-UX.md) §3.3–3.6) adds
+Coming up, a task summary, empty and all-done states, and focus continuity
+when a completed row leaves its section. Completion still uses the existing
+row button, canonical command and busy guard, so the interaction count stays
+**1 interaction to complete**. `scripts/today-actionable-regression.mjs`
+prints `METRIC today-actionable` with the completion latency and the cost of
+one full Today render with the accumulated test household. These are
+diagnostic samples, like the baseline above, not budgets.
 
 ## Known gaps
 

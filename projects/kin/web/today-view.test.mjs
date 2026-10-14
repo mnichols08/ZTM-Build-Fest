@@ -96,3 +96,84 @@ test("planning date descriptions are calm and relative", () => {
   assert.equal(nextCivilDate(20261231), 20270101);
   assert.equal(typeof formatCivilDate(TODAY), "string");
 });
+
+test("upcoming plans are later active items, nearest first, and never today's or earlier work", () => {
+  const nextWeek = item({ text: "Next week", planningDate: 20261020 });
+  const tomorrow = item({ text: "Tomorrow", planningDate: nextCivilDate(TODAY) });
+  const doneLater = item({ text: "Done later", planningDate: 20261020, status: "completed" });
+  const stapleLater = item({ text: "Staple later", classification: "staple", planningDate: 20261020 });
+  const archivedLater = item({ text: "Archived later", planningDate: 20261020, status: "archived" });
+  const view = composeToday({ items: [nextWeek, tomorrow, doneLater, stapleLater, archivedLater], civilDate: TODAY });
+  assert.deepEqual(view.upcoming.map((entry) => entry.text), ["Tomorrow", "Next week"]);
+  assert.equal(view.today.length + view.earlier.length + view.completed.length, 0, "a later plan, done or not, is not today's work");
+  assert.equal(view.isEmpty, false, "only-upcoming households are not described as empty");
+});
+
+test("each actionable item lands in exactly one section and counts are the section lengths", () => {
+  const records = [
+    item({ text: "Earlier", planningDate: 20261001 }),
+    item({ text: "Today", planningDate: TODAY }),
+    item({ text: "Legacy", classification: "today" }),
+    item({ text: "Later", planningDate: 20261101 }),
+    item({ text: "Undated need" }),
+    item({ text: "Done today", planningDate: TODAY, status: "completed" }),
+    item({ text: "Done earlier", planningDate: 20261001, status: "completed" }),
+  ];
+  const view = composeToday({ items: records, civilDate: TODAY });
+  const placed = [...view.earlier, ...view.today, ...view.upcoming].map((entry) => entry.itemId);
+  assert.equal(new Set(placed).size, placed.length, "no item is listed in two actionable sections");
+  assert.deepEqual(view.counts, { earlier: 1, today: 2, upcoming: 1, completed: 1 });
+  assert.deepEqual(view.counts, { earlier: view.earlier.length, today: view.today.length, upcoming: view.upcoming.length, completed: view.completed.length });
+  assert.equal(view.allDone, false);
+  assert.equal(view.hasItems, true);
+});
+
+test("completing a task moves it from its pending count to the done count without inflating either", () => {
+  const task = item({ text: "Call", planningDate: TODAY });
+  const before = composeToday({ items: [task], civilDate: TODAY });
+  const after = composeToday({ items: [{ ...task, status: "completed" }], civilDate: TODAY });
+  assert.deepEqual(before.counts, { earlier: 0, today: 1, upcoming: 0, completed: 0 });
+  assert.deepEqual(after.counts, { earlier: 0, today: 0, upcoming: 0, completed: 1 });
+  assert.equal(after.allDone, true, "all of today's work being done is distinguishable from nothing planned");
+  assert.equal(composeToday({ items: [], civilDate: TODAY }).allDone, false);
+});
+
+test("an empty projection has zero counts and no items; staples and archived records do not count as tasks", () => {
+  const empty = composeToday({ items: [], civilDate: TODAY });
+  assert.deepEqual(empty.counts, { earlier: 0, today: 0, upcoming: 0, completed: 0 });
+  assert.equal(empty.hasItems, false);
+  const onlyStaplesAndArchived = composeToday({ items: [item({ classification: "staple" }), item({ status: "archived", planningDate: TODAY })], civilDate: TODAY });
+  assert.equal(onlyStaplesAndArchived.hasItems, false);
+});
+
+test("month and year boundaries compare civil dates, not clock times", () => {
+  const view = composeToday({
+    items: [
+      item({ text: "Dec 31", planningDate: 20261231 }),
+      item({ text: "Jan 1", planningDate: 20270101 }),
+      item({ text: "Jan 2", planningDate: 20270102 }),
+    ],
+    civilDate: 20270101,
+  });
+  assert.deepEqual(view.earlier.map((entry) => entry.text), ["Dec 31"]);
+  assert.deepEqual(view.today.map((entry) => entry.text), ["Jan 1"]);
+  assert.deepEqual(view.upcoming.map((entry) => entry.text), ["Jan 2"]);
+  // DST change days are ordinary civil dates: the same record is "today" all day.
+  const dst = composeToday({ items: [item({ text: "Clocks change", planningDate: 20261101 })], civilDate: 20261101 });
+  assert.deepEqual(dst.today.map((entry) => entry.text), ["Clocks change"]);
+  assert.equal(nextCivilDate(20261031), 20261101);
+  assert.equal(nextCivilDate(20260308), 20260309);
+});
+
+test("ordering is deterministic: equal dates keep the Rust projection order", () => {
+  const records = [
+    item({ itemId: "b", text: "B", planningDate: 20261020 }),
+    item({ itemId: "a", text: "A", planningDate: 20261020 }),
+    item({ itemId: "c", text: "C", planningDate: 20261018 }),
+  ];
+  const first = composeToday({ items: records, civilDate: TODAY });
+  const second = composeToday({ items: records.map((record) => ({ ...record })), civilDate: TODAY });
+  assert.deepEqual(first.upcoming.map((entry) => entry.itemId), ["c", "b", "a"]);
+  assert.deepEqual(second.upcoming.map((entry) => entry.itemId), first.upcoming.map((entry) => entry.itemId));
+  assert.deepEqual(records.map((record) => record.itemId), ["b", "a", "c"], "composition never reorders its input");
+});

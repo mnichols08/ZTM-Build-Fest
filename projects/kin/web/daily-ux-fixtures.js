@@ -28,4 +28,7 @@ export const DAILY_UX_FIXTURES = Object.freeze({
   completed: Object.freeze([
     item("00000000000000000000000000000003", "Pack lunches", DAILY_UX_CIVIL_DATE, "completed"),
   ]),
+  upcoming: Object.freeze([
+    item("00000000000000000000000000000004", "Renew car registration", 20261016),
+  ]),
 });

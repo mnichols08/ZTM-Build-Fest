@@ -11,6 +11,25 @@ browser coverage supplies offline creation/reload and 320px reflow evidence.
 See [DAILY-UX-BASELINE](DAILY-UX-BASELINE.md) for the implementation map,
 measurement definitions, accessibility baseline, and disclosed gaps.
 
+## Actionable Today coverage
+
+`scripts/today-actionable-regression.mjs` runs inside `browser-regression.mjs`
+after the responsive workspace suite. Its in-page part checks `<kin-today>`
+states over projection-shaped records (not yet available, empty, all done, no
+upcoming, full ordering and counts, semantic sections and labelled buttons),
+Quick add from an empty state, and then the real store and WASM replay:
+counts equal both the rendered rows and the projection, one-click completion
+and focus, rapid repeats append one event, local save failure and retry, a
+replayed peer change, a newer change arriving mid-save, navigation mid-save,
+details origin and focus return, and lock or household re-open while a
+completion is pending. Its CDP part completes a task with a real Enter key
+while offline, reloads, unlocks locally while still offline, reconnects, and
+checks 320px and desktop layout (screenshots in `target/ux-screenshots/`), an
+unrelated open editor draft, forced colours and reduced motion.
+`web/today-view.test.mjs` covers the composition rules: upcoming ordering,
+one section per item, counts, all-done, empty projections, month/year and DST
+civil-date boundaries, and deterministic ordering.
+
 ## Household workspace UX coverage (unversioned candidate)
 
 `scripts/workspace-ux-regression.mjs` runs inside `browser-regression.mjs`

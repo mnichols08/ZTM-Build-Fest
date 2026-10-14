@@ -182,6 +182,9 @@ class KinApp extends HTMLElement {
       this.saveItemPlanningDate(event.detail, event.target.closest("kin-today, kin-item-detail"));
     this.onPinIntent = (event) => this.savePin(event.detail);
     this.onOpenPin = (event) => this.openPinnedItem(event.detail.itemId, event.detail.opener);
+    // Today's empty states reuse the universal Quick add; focus returns to the
+    // button that opened it, or to the Today heading once that button is gone.
+    this.onOpenQuickAdd = (event) => this.quickAdd.open({ opener: event.detail?.opener, fallback: () => this.today.querySelector('[data-section="today"] h2') });
     this.onOpenItem = (event) => this.openItemDetail(event.detail.itemId, { opener: event.detail.opener ?? event.target });
     this.onCloseItemDetail = () => this.closeItemDetail({ restoreFocus: true });
     this.onOpenSearchResult = (event) => this.handleOpenSearchResult(event.detail);
@@ -350,6 +353,7 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:cancel-local-reminder", this.onCancelLocalReminder);
     this.addEventListener("kin:pin-intent", this.onPinIntent);
     this.addEventListener("kin:open-pin", this.onOpenPin);
+    this.addEventListener("kin:open-quick-add", this.onOpenQuickAdd);
     this.addEventListener("kin:open-item", this.onOpenItem);
     this.addEventListener("kin:close-item-detail", this.onCloseItemDetail);
     this.addEventListener("kin:open-search-result", this.onOpenSearchResult);
@@ -1389,6 +1393,7 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:cancel-local-reminder", this.onCancelLocalReminder);
     this.removeEventListener("kin:pin-intent", this.onPinIntent);
     this.removeEventListener("kin:open-pin", this.onOpenPin);
+    this.removeEventListener("kin:open-quick-add", this.onOpenQuickAdd);
     this.removeEventListener("kin:open-item", this.onOpenItem);
     this.removeEventListener("kin:close-item-detail", this.onCloseItemDetail);
     this.removeEventListener("kin:open-search-result", this.onOpenSearchResult);
