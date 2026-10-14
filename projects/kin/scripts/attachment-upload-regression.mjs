@@ -254,6 +254,11 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
       const thumb = () => item()?.querySelector(".attachment-thumb");
       const tileBack = await wait(() => Boolean(thumb()));
       thumb()?.scrollIntoView({ block: "center" });
+      // Headless Chromium does not consistently deliver IntersectionObserver
+      // after a same-task scripted scroll. Exercise the component's existing
+      // next-frame visibility fallback deterministically without bypassing
+      // encrypted blob loading or thumbnail generation.
+      item()?.querySelector("kin-attachments")?.loadVisiblePreviews();
       const decoded = await wait(() => thumb()?.querySelector("img")?.src.startsWith("blob:"));
       return { ...lockedState, tileBack, decoded, rows: app.attachmentRows.filter((row) => row.parentId === itemId).length };
     }, itemId, recovery);
