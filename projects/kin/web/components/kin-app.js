@@ -17,6 +17,8 @@ import { EventStore } from "../storage/event-store.js";
 import { loadCachedHouseholdSettings, SyncCoordinator } from "../sync/sync-coordinator.js";
 import "./kin-compose.js";
 import "./kin-quick-add.js";
+import "./kin-command-palette.js";
+import { isTypingContext, shortcutForKey } from "../keyboard-commands.js";
 import "./kin-item.js";
 import "./kin-item-detail.js";
 import "./kin-today.js";
@@ -227,12 +229,18 @@ class KinApp extends HTMLElement {
     this.wideQuery = typeof matchMedia === "function" ? matchMedia("(min-width: 1180px)") : null;
     this.onLayoutChange = () => this.mountDetail();
     this.onDetailKeydown = (event) => {
-      if (event.defaultPrevented || event.key !== "Escape" || this.viewer?.open) return;
+      // Escape inside an open dialog (Quick add, the palette) closes that
+      // dialog first; the side or inline details stay open beneath it.
+      if (event.defaultPrevented || event.key !== "Escape" || this.viewer?.open || event.target.closest?.("dialog[open]")) return;
       if (this.selection && this.detailMode !== "sheet") {
         event.preventDefault();
         this.closeItemDetail({ restoreFocus: true });
       }
     };
+    this.onShortcutKeydown = (event) => this.handleShortcutKeydown(event);
+    const platform = typeof navigator === "undefined" ? "" : navigator.userAgentData?.platform ?? navigator.platform ?? "";
+    this.macShortcuts = /mac|iphone|ipad|ipod/i.test(platform);
+    this.commandGeneration = null;
     this.onSetPulse = (event) => {
       const timestamp = Date.now();
       const hours = event.detail.hours;
@@ -383,6 +391,7 @@ class KinApp extends HTMLElement {
     this.addEventListener("kin:household-defaults-cancel", this.onHouseholdDefaultsCancel);
     this.addEventListener("kin:save-household-defaults", this.onSaveHouseholdDefaults);
     this.addEventListener("keydown", this.onDetailKeydown);
+    document.addEventListener("keydown", this.onShortcutKeydown);
     window.addEventListener("hashchange", this.onHashChange);
     window.addEventListener("popstate", this.onHashChange);
     window.addEventListener("offline", this.onOffline);
@@ -468,6 +477,7 @@ class KinApp extends HTMLElement {
     this.searchLink.href = "#search";
     this.searchLink.innerHTML = `${SEARCH_ICON}<span>Search</span>`;
     this.searchLink.setAttribute("aria-label", "Search household");
+    this.searchLink.setAttribute("aria-keyshortcuts", "/");
     this.searchLink.addEventListener("click", this.onNavigationClick);
     this.syncChip = document.createElement("kin-sync-status");
     this.quickAdd = document.createElement("kin-quick-add");
@@ -596,6 +606,12 @@ class KinApp extends HTMLElement {
     this.append(this.viewer);
     this.detailSheet = this.buildDetailSheet();
     this.append(this.detailSheet);
+    this.commandPalette = document.createElement("kin-command-palette");
+    this.commandPalette.onCommand = (id, { opener }) => {
+      if (this.commandGeneration === this.securityGeneration) this.runWorkspaceCommand(id, { opener });
+    };
+    this.commandPalette.onDismiss = ({ opener }) => this.restoreCommandFocus(opener);
+    this.append(this.commandPalette);
     this.attachmentInput = this.buildAttachmentInput();
     this.append(this.attachmentInput);
     this.showPageFromLocation();
@@ -1141,6 +1157,76 @@ class KinApp extends HTMLElement {
     }
   }
 
+  // --- Keyboard commands --------------------------------------------------
+
+  // Shortcuts and palette commands act only on an unlocked, rendered
+  // workspace; the security screen and its fields never see them.
+  workspaceReady() {
+    return Boolean(this.vault && !this.vault.locked && this.store && this.main && !this.main.hidden &&
+      this.siteTools && !this.siteTools.hidden && this.commandPalette?.isConnected);
+  }
+
+  handleShortcutKeydown(event) {
+    if (event.defaultPrevented || !this.workspaceReady()) return;
+    const shortcut = shortcutForKey(event, { mac: this.macShortcuts });
+    if (!shortcut) return;
+    const openDialogs = [...this.querySelectorAll("dialog[open]")];
+    let active = document.activeElement;
+    while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+    const opener = active && active !== document.body && active !== document.documentElement ? active : null;
+    if (shortcut === "palette") {
+      // Another app dialog (Quick add, item details, the photo viewer) keeps
+      // its keyboard; the browser keeps Ctrl/Cmd+K there too.
+      if (openDialogs.some((dialog) => !this.commandPalette.contains(dialog))) return;
+      event.preventDefault();
+      if (!this.commandPalette.isOpen) this.commandGeneration = this.securityGeneration;
+      this.commandPalette.openPalette({ opener });
+      return;
+    }
+    if (openDialogs.length || isTypingContext(event, active)) return;
+    event.preventDefault();
+    this.runWorkspaceCommand(shortcut, { opener });
+  }
+
+  // The allowlisted command ids map onto the same methods the visible
+  // navigation, Search link, and Quick add button use.
+  runWorkspaceCommand(id, { opener = null } = {}) {
+    if (!this.workspaceReady()) return;
+    switch (id) {
+      case "today":
+        this.navigate("#today");
+        this.pages.get("today")?.querySelector("h1")?.focus();
+        return;
+      case "todo":
+      case "shopping":
+        this.navigate(routeHash("lists", id));
+        this.segmentNavs.get("lists")?.focusCurrent();
+        return;
+      case "search":
+        this.navigate("#search");
+        this.search.focusInput?.();
+        return;
+      case "quick-add":
+        if (this.quickAdd.isDisabled) {
+          this.setStatus("Quick add is available again once Kin finishes saving.");
+          this.restoreCommandFocus(opener);
+          return;
+        }
+        this.quickAdd.open({ opener, fallback: () => this.main.querySelector(".app-view:not([hidden]) h1") });
+        return;
+      case "shortcuts":
+        this.commandGeneration = this.securityGeneration;
+        this.commandPalette.openHelp({ opener });
+        return;
+    }
+  }
+
+  restoreCommandFocus(opener) {
+    if (!this.workspaceReady()) return;
+    if (opener?.isConnected && !opener.closest("[hidden], [inert]") && opener.getClientRects().length) opener.focus();
+    else this.main.querySelector(".app-view:not([hidden]) h1")?.focus();
+  }
+
   // Kept for callers that switched the former Handoff/Talk tabs directly.
   showHandoffPanel(id, focus = false) {
     const segment = id === "talk" ? "talk" : "handoffs";
@@ -1398,6 +1484,7 @@ class KinApp extends HTMLElement {
     this.removeEventListener("kin:close-item-detail", this.onCloseItemDetail);
     this.removeEventListener("kin:open-search-result", this.onOpenSearchResult);
     this.removeEventListener("keydown", this.onDetailKeydown);
+    document.removeEventListener("keydown", this.onShortcutKeydown);
     this.phoneQuery?.removeEventListener("change", this.onLayoutChange);
     this.wideQuery?.removeEventListener("change", this.onLayoutChange);
     this.systemAppearance?.removeEventListener("change", this.onSystemAppearance);
@@ -3225,6 +3312,8 @@ class KinApp extends HTMLElement {
     this.autoLockTimer = null;
     this.closeViewer();
     this.closeItemDetail({ restoreFocus: false });
+    this.commandPalette?.dismiss();
+    this.commandGeneration = null;
     this.pendingCapture = null;
     this.attachmentPreviews?.clear();
     this.attachmentPreviews = null;

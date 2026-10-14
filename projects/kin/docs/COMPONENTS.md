@@ -160,6 +160,18 @@ date-only “Last changed” text label. It receives no actor/device identity an
 does not expose a read receipt, exact time, or timeline. It adds no command or
 event. See [V0.24.0](releases/V0.24.0.md).
 
+## Keyboard shortcuts and command palette
+
+`<kin-command-palette>` owns two native modal dialogs: the command palette,
+an APG combobox over a listbox, and the keyboard shortcut help. Both live in
+light DOM and are styled by `app.css`, like `<kin-quick-add>`. Choosing a
+command only reports an allowlisted id (`onCommand`). `<kin-app>` performs it
+through its existing `navigate()`, Search focus, and `quickAdd.open()`
+methods. `dismiss()` closes both dialogs without side effects on lock or
+disconnection. The pure `web/keyboard-commands.js` module holds the command
+allowlist, filtering, key mapping, and typing detection. See
+[WORKSPACE-UX](WORKSPACE-UX.md) §5.3.
+
 ## v0.25.0 Search & Filters
 
 `<kin-search>` receives the unlocked Item, Handoff, Talk, Note, and Area

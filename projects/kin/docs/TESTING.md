@@ -30,6 +30,37 @@ unrelated open editor draft, forced colours and reduced motion.
 one section per item, counts, all-done, empty projections, month/year and DST
 civil-date boundaries, and deterministic ordering.
 
+## Keyboard shortcuts and command palette coverage
+
+`web/keyboard-commands.test.mjs` covers the command allowlist against the
+router, filtering and ranking, the Ctrl/Cmd+K, N, / and ? mapping (including
+the Mac Ctrl+K exclusion, non-Latin layouts, AltGr, IME, and auto-repeat),
+typing detection through nested shadow roots, and the help contents.
+`scripts/keyboard-commands-regression.mjs` runs inside
+`browser-regression.mjs` after the Today lifecycle suite and uses real CDP
+key events. It covers:
+
+- Ctrl+K and Cmd+K opening the palette, with no duplicate overlays.
+- Escape closing the palette and restoring focus.
+- Filtering, the announced empty result, wrapping arrow selection, Enter, and
+  pointer selection.
+- Modal Tab containment.
+- Each navigation command's destination and focus.
+- N, / and ? from a page, and their absence while typing in Search, Quick
+  add, a field two shadow roots deep, and contenteditable.
+- IME and auto-repeat.
+- Quick add opened by N saving exactly once.
+- Overlays: the palette over side details (Escape closes only the palette),
+  the Search origin kept, and the mobile sheet blocking shortcuts.
+- Navigating during an in-flight save.
+- 320px reflow and 48px targets for both dialogs, forced colours, and reduced
+  motion.
+- Lock with the palette open, every shortcut ignored while locked, a command
+  chosen just before lock being dropped, and disconnection.
+
+`scripts/quick-add-regression.mjs` still runs unchanged, including
+partial-capture recovery.
+
 ## Household workspace UX coverage (unversioned candidate)
 
 `scripts/workspace-ux-regression.mjs` runs inside `browser-regression.mjs`
