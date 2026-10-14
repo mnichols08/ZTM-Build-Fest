@@ -112,6 +112,7 @@ export class EncryptedSyncService {
     const digest = value?.digest;
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !Number.isSafeInteger(keyEpoch) || keyEpoch < 1 || keyEpoch > 128 || !ciphertext || ciphertext.length < 29 || ciphertext.length > 4_198_400 || !/^[a-f0-9]{64}$/.test(digest ?? "") || createHash("sha256").update(ciphertext).digest("hex") !== digest)
       throw new PairingError("household_settings_invalid", "Those household settings could not be verified.", 400);
+    this.settingsWriteState(auth, keyEpoch);
     const record = { keyEpoch, ciphertext, digest, memberId: auth.member.id, deviceId: auth.device.id, updatedAt: this.now() };
     let revision;
     if (this.store) revision = this.store.putHouseholdSettings(auth.household.id, expectedRevision, record);
@@ -124,6 +125,14 @@ export class EncryptedSyncService {
     this.pairingService.audit("household_settings_updated", { householdId: auth.household.id, memberId: auth.member.id, deviceId: auth.device.id, revision });
     this.pairingService.persistHousehold(auth.household.id);
     return { revision, accepted: true };
+  }
+
+  settingsWriteState(auth, keyEpoch) {
+    const state = this.state(auth.household.id);
+    const provisioned = auth.device.syncProvisionedEpochs ?? [];
+    if (!state.enabled || state.rotationPending || keyEpoch !== state.currentEpoch || !provisioned.includes(state.currentEpoch))
+      throw new PairingError("household_settings_key_unavailable", "Shared settings are unavailable until this device finishes household key setup.", 409);
+    return state;
   }
 
   enable(sessionToken) {

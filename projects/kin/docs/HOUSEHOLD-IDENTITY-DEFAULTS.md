@@ -13,7 +13,7 @@ The Identity & defaults management panel is absent from the rendered and accessi
 
 ## Protected contract
 
-`household_settings` stores one household-scoped opaque ciphertext, its key epoch, SHA-256 integrity digest, monotonic revision, authenticated writer IDs, and update time. The client payload is version 1 and contains the normalized household name plus appearance mode, color source/seed, manual color metadata, and the processed optional image. The service cannot read the name or image. A write supplies the last observed revision; stale writes receive a conflict and never overwrite a newer value. The encrypted record survives restart and is removed with household data.
+`household_settings` stores one household-scoped opaque ciphertext, its key epoch, SHA-256 integrity digest, monotonic revision, authenticated writer IDs, and update time. The client payload is version 1 and contains the normalized household name plus appearance mode, color source/seed, manual color metadata, and the processed optional image. The service cannot read the name or image. A write supplies the last observed revision; stale writes receive a conflict and never overwrite a newer value. The service accepts a write only at the authoritative active epoch, while rotation is not pending, and only from a device provisioned for that epoch. The encrypted record survives restart and is removed with household data.
 
 Names are trimmed and NFC-normalized, must be nonempty, contain at most 80 Unicode code points and 240 UTF-8 bytes, and may not contain control, formatting, or surrogate characters. UI rendering must use text nodes/textContent. Locked and signed-out shells retain the neutral `Kin` title; the manifest and global PWA identity remain Kin.
 
@@ -25,7 +25,9 @@ Shared images use the Personal Appearance validation, bounded resize, metadata-s
 
 ## Offline, rotation, and lifecycle
 
-Shared writes require a current online authenticated session and authoritative revision. No offline mutation is queued. Offline members keep their last validated local copy and adopt a newer revision after successful synchronization. The ciphertext records its epoch and is readable only by devices entitled to that epoch. Key rotation does not weaken historic entitlement; a later settings save uses the current epoch. Revoked/removed devices cannot read or write through the API, and queued forged writes have no special path. Household deletion removes the record; archive restore alone does not restore server authority.
+Shared writes require a current online authenticated session and authoritative revision. No offline mutation is queued. After transport decryption, digest verification, AEAD authentication, and content validation succeed, Kin stores the accepted envelope in the root-protected `kin-crypto-keys` IndexedDB database, scoped by household ID. A fresh offline unlock reopens that protected cache and decrypts it again with the recorded household epoch key; missing keys, routing mismatches, malformed records, and tampering fail closed. A lower server or cached revision cannot replace a newer validated cache, while a newer valid server revision replaces it after reconnection. The owner-editing capability is never restored from cache.
+
+The ciphertext records its epoch and is readable only by devices entitled to that epoch. Rotation pauses settings writes; after commit, a later save must use the new active epoch. Key rotation does not weaken historic read entitlement. Revoked/removed devices cannot read or write through the API, and queued forged writes have no special path. Household deletion removes the server record; archive restore alone does not restore server authority.
 
 ## Known limitations
 

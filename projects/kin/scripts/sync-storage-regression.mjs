@@ -7,6 +7,8 @@ export async function syncStorageRegressions(client) {
     const {getActiveVault}=await import('/security/local-vault.js');
     const {SyncKeyStore}=await import('/sync/key-store.js');
     const {createHouseholdEpochKey,restoreHouseholdEpochKey}=await import('/sync/crypto.js');
+    const {encryptHouseholdSettings,decryptHouseholdSettings}=await import('/appearance/household.js');
+    const {DEFAULT_APPEARANCE}=await import('/appearance/store.js');
     const {encodeAddedRecord,idFromHex,idToHex}=await import('/wasm/kin-engine.js');
     const keyStore=await SyncKeyStore.open();
     const pendingDevice=await keyStore.getOrCreatePendingDevice();
@@ -19,6 +21,11 @@ export async function syncStorageRegressions(client) {
       deviceKeys:pendingDevice.keys,
     });
     await keyStore.saveEpoch({householdId:keyHousehold,keyEpoch:1,...epochMaterial});
+    const sharedValue={version:1,revision:0,name:'Offline Home',appearance:{...DEFAULT_APPEARANCE,owner:'household'}};
+    const encryptedSettings=await encryptHouseholdSettings(sharedValue,{householdId:keyHousehold,keyEpoch:1,householdKey:epochMaterial.householdKey});
+    let settingsBinary=''; for(const byte of encryptedSettings.ciphertext) settingsBinary+=String.fromCharCode(byte);
+    const settingsRecord={householdId:keyHousehold,revision:1,keyEpoch:1,ciphertext:btoa(settingsBinary).split('+').join('-').split('/').join('_').replace(/=+$/,''),digest:encryptedSettings.digest};
+    await keyStore.cacheHouseholdSettings(settingsRecord);
     const conflictingEpochMaterial=await createHouseholdEpochKey({
       householdId:keyHousehold,
       keyEpoch:1,
@@ -39,6 +46,8 @@ export async function syncStorageRegressions(client) {
     const reopenedDevice=await reopenedKeyStore.getDevice('pending');
     const reopenedPin=await reopenedKeyStore.getPinnedDevice(keyHousehold,pinnedPeer.deviceId);
     const reopenedEpoch=await reopenedKeyStore.getEpoch(keyHousehold,1);
+    const reopenedSettings=await reopenedKeyStore.getCachedHouseholdSettings(keyHousehold);
+    const restoredSettings=await decryptHouseholdSettings(reopenedSettings,{householdId:keyHousehold,householdKey:reopenedEpoch.householdKey});
     const restoredHouseholdKey=await restoreHouseholdEpochKey({
       sealed:reopenedEpoch.sealed,
       deviceKeys:reopenedDevice.keys,
@@ -47,8 +56,20 @@ export async function syncStorageRegressions(client) {
        reopenedDevice.keys.signingPrivateKey.extractable ||
        restoredHouseholdKey.extractable!==false ||
       reopenedEpoch.fingerprint!==epochMaterial.fingerprint ||
-      reopenedPin?.fingerprint!==pendingDevice.fingerprint)
+      reopenedPin?.fingerprint!==pendingDevice.fingerprint || restoredSettings.name!=='Offline Home')
       throw Error('IndexedDB did not preserve non-extractable key material safely');
+    if(await reopenedKeyStore.getCachedHouseholdSettings('34'.repeat(16))!==null)
+      throw Error('Household settings leaked across household identities');
+    const newer={...reopenedSettings,revision:2,digest:'a'.repeat(64),ciphertext:'AQ'};
+    await reopenedKeyStore.cacheHouseholdSettings(newer);
+    if((await reopenedKeyStore.cacheHouseholdSettings(reopenedSettings)).revision!==2)
+      throw Error('An older household settings revision replaced a newer cache');
+    let malformedRejected=false;
+    try{await reopenedKeyStore.cacheHouseholdSettings({...newer,householdId:'wrong'});}catch{malformedRejected=true;}
+    if(!malformedRejected) throw Error('Malformed cached household settings were accepted');
+    let tamperedRejected=false;
+    try{await decryptHouseholdSettings(newer,{householdId:keyHousehold,householdKey:reopenedEpoch.householdKey});}catch{tamperedRejected=true;}
+    if(!tamperedRejected) throw Error('Tampered cached household settings were accepted');
     reopenedKeyStore.close();
     await new Promise((resolve,reject)=>{
       const request=indexedDB.deleteDatabase('kin-crypto-keys');
@@ -227,12 +248,12 @@ export async function syncStorageRegressions(client) {
       request.onerror=()=>reject(request.error);
       request.onblocked=()=>reject(Error('Sync fixture database remained open'));
     });
-    return {version:database.version,localBytesPreserved:true,cursorSeparated:true,duplicateAdded:replay.added};
+    return {version:database.version,localBytesPreserved:true,cursorSeparated:true,duplicateAdded:replay.added,offlineSettings:true};
   })()`);
   if (
     !result.localBytesPreserved ||
     !result.cursorSeparated ||
-    result.duplicateAdded !== 0
+    result.duplicateAdded !== 0 || !result.offlineSettings
   )
     throw new Error(`Sync storage fixture failed: ${JSON.stringify(result)}`);
   console.log(

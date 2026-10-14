@@ -106,3 +106,44 @@ test("only Adult sessions attempt epoch rotation and key provisioning during syn
   assert.equal(memberHasTrustAuthority({}), false);
   assert.equal(memberHasTrustAuthority(null), false);
 });
+
+test("offline household settings load only from the matching protected cache", async () => {
+  const householdId = "11".repeat(16);
+  const cached = { householdId, revision: 4, keyEpoch: 2, ciphertext: "AQ", digest: "a".repeat(64) };
+  const coordinator = new SyncCoordinator({ store: {}, engine: {}, identity: { householdId, deviceId: "device" } });
+  coordinator.keyStore = { getCachedHouseholdSettings: async (requested) => requested === householdId ? cached : null };
+  coordinator.request = async () => { const error = new Error("offline"); error.code = "connection_unavailable"; throw error; };
+  coordinator.decryptCachedHouseholdSettings = async (record) => ({ version: 1, revision: record.revision, name: "Cached Home" });
+  const originalNavigator = globalThis.navigator;
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { onLine: false } });
+  try {
+    assert.deepEqual(await coordinator.loadHouseholdSettings(), { owner: false, ownerRecorded: true,
+      value: { version: 1, revision: 4, name: "Cached Home" }, offline: true });
+  } finally {
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: originalNavigator });
+  }
+});
+
+test("household settings are cached only after validation and newer protected revisions win", async () => {
+  const householdId = "22".repeat(16);
+  const server = { revision: 3, keyEpoch: 1, ciphertext: "AQ", digest: "b".repeat(64) };
+  const newer = { householdId, revision: 5, keyEpoch: 2, ciphertext: "Ag", digest: "c".repeat(64) };
+  const calls = [];
+  const coordinator = new SyncCoordinator({ store: {}, engine: {}, identity: { householdId, deviceId: "device" } });
+  coordinator.request = async () => ({ owner: true, ownerRecorded: true, settings: server });
+  coordinator.keyStore = { cacheHouseholdSettings: async (record) => { calls.push(record); return newer; } };
+  coordinator.decryptCachedHouseholdSettings = async (record) => {
+    calls.push(`decrypt:${record.revision}`);
+    if (record.revision === 3) return { revision: 3, name: "Server" };
+    return { revision: 5, name: "Newer cache" };
+  };
+  const result = await coordinator.loadHouseholdSettings();
+  assert.deepEqual(calls.map((value) => typeof value === "string" ? value : `cache:${value.revision}`),
+    ["decrypt:3", "cache:3", "decrypt:5"]);
+  assert.equal(result.value.name, "Newer cache");
+
+  calls.length = 0;
+  coordinator.decryptCachedHouseholdSettings = async () => { throw new Error("tampered"); };
+  await assert.rejects(() => coordinator.loadHouseholdSettings(), /tampered/);
+  assert.deepEqual(calls, []);
+});
