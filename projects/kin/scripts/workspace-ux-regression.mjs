@@ -162,6 +162,68 @@ export async function workspaceUxRegressions(recovery) {
   check(app.selection === null && Math.abs(window.scrollY - scrolledTo) <= 2 && document.activeElement === rowIn(app.needs, bins.itemId).querySelector(".item-details-button") &&
     app.needs.composer.input.value === "unsent quick-add draft",
     `8. closing restores the list position (${window.scrollY} vs ${scrolledTo}) and focus, and keeps the quick-add draft`);
+  app.openItemDetail(bins.itemId);
+  app.detail.stepInput.value = "draft for A";
+  const itemA = app.selection.itemId;
+  app.openItemDetail(forms.itemId);
+  check(app.detail.stepInput.value === "", "8. selecting B never shows A's checklist draft");
+  app.detail.stepInput.value = "draft for B";
+  app.openItemDetail(itemA);
+  check(app.detail.stepInput.value === "draft for A", "8. returning to A restores its own unsaved draft");
+  app.detail.stepInput.value = "Async A step";
+  const originalDetailAppend = app.appendCommand.bind(app);
+  let finishDetailAppend;
+  app.appendCommand = (command) => new Promise((resolve, reject) => {
+    finishDetailAppend = () => originalDetailAppend(command).then(resolve, reject);
+  });
+  app.detail.querySelector(".step-compose").requestSubmit();
+  await wait(() => app.busy && finishDetailAppend, "A checklist save is pending");
+  app.openItemDetail(forms.itemId);
+  app.detail.stepInput.value = "draft for B while A saves";
+  finishDetailAppend();
+  await idle();
+  app.appendCommand = originalDetailAppend;
+  check(app.selection.itemId === forms.itemId && app.detail.stepInput.value === "draft for B while A saves" &&
+    app.state.items.find((item) => item.itemId === itemA).steps.some((step) => step.text === "Async A step"),
+    "8. A's delayed successful save clears only A after B is selected and leaves B's editor untouched");
+  app.openItemDetail(itemA);
+  check(app.detail.stepInput.value === "", "8. a successfully saved A draft stays cleared when returning to A");
+  app.detail.stepInput.value = "Async failed A";
+  let failDetailAppend;
+  app.appendCommand = (command) => new Promise((resolve) => {
+    failDetailAppend = () => { app.appendCommand = originalDetailAppend; const error = new Error("Synthetic delayed failure"); error.code = 5; resolve(Promise.reject(error)); };
+  });
+  app.detail.querySelector(".step-compose").requestSubmit();
+  await wait(() => app.busy && failDetailAppend, "A checklist failure is pending");
+  app.openItemDetail(forms.itemId);
+  failDetailAppend();
+  await idle();
+  app.appendCommand = originalDetailAppend;
+  check(app.selection.itemId === forms.itemId && !app.detail.querySelector(".item-detail-feedback") && app.alert.hidden && app.detail.detailFeedbacks.has(itemA),
+    "8. a delayed A failure stays keyed to A and does not leak into B or the blocked global alert");
+  app.openItemDetail(itemA);
+  check(app.detail.querySelector("[data-detail-retry]") && app.detail.stepInput.value === "Async failed A",
+    "8. returning to A restores its matching error, retry and failed checklist draft");
+  app.detail.querySelector("[data-detail-retry]").click();
+  await idle();
+  check(app.state.items.find((item) => item.itemId === itemA).steps.some((step) => step.text === "Async failed A") &&
+    !app.detail.detailFeedbacks.has(itemA) && app.detail.stepInput.value === "",
+    "8. retrying the selected A error succeeds and clears its feedback and submitted draft");
+  app.detail.stepInput.value = "draft through route change";
+  app.closeItemDetail({ restoreFocus: false });
+  app.navigate("#today");
+  app.navigate("#lists/todo");
+  app.openItemDetail(itemA);
+  check(app.detail.stepInput.value === "draft through route change", "8. closing details and changing routes retain the item-keyed draft");
+  app.detail.stepInput.value = "Saved step once";
+  app.detail.querySelector(".step-compose").requestSubmit();
+  await idle();
+  const savedA = app.state.items.find((item) => item.itemId === itemA);
+  app.detail.querySelector(".step-compose").requestSubmit();
+  await idle();
+  check(savedA.steps.filter((step) => step.text === "Saved step once").length === 1 && app.detail.stepInput.value === "",
+    "8. successful step save clears its submitted draft and empty Enter cannot append a duplicate");
+  app.closeItemDetail({ restoreFocus: false });
   app.needs.composer.input.value = "";
   window.scrollTo(0, 0);
 
@@ -272,11 +334,37 @@ export async function workspaceUxRegressions(recovery) {
   const partial = app.state.items.filter((item) => item.text === `Partial milk ${stamp}`);
   check(partial.length === 1 && partial[0].planningDate === null && app.compose.result.textContent.startsWith("Saved to Shopping. Couldn't set the date.") && app.compose.input.value === `Partial milk ${stamp}`,
     "14. partial success says what saved and what did not, without claiming completion");
-  app.compose.querySelector(".compose-retry").click();
+  const partialId = partial[0]?.itemId;
+  app.compose.button.click();
   await idle();
   const resumed = app.state.items.filter((item) => item.text === `Partial milk ${stamp}`);
-  check(resumed.length === 1 && resumed[0].planningDate === today && app.compose.input.value === "" && app.compose.result.textContent === "Saved on this device.",
-    `14. retrying resumes against the same record instead of creating a duplicate (${JSON.stringify({ count: resumed.length, planningDate: resumed[0]?.planningDate, today, input: app.compose.input.value, result: app.compose.result.textContent, alert: app.alert.textContent, status: app.status.textContent })})`);
+  check(resumed.length === 1 && resumed[0].itemId === partialId && resumed[0].planningDate === today && app.compose.input.value === "" && app.compose.result.textContent === "Saved on this device.",
+    `14. Add resumes the same partially saved record instead of creating a duplicate (${JSON.stringify({ count: resumed.length, planningDate: resumed[0]?.planningDate, today, input: app.compose.input.value, result: app.compose.result.textContent, alert: app.alert.textContent, status: app.status.textContent })})`);
+  app.store.append = async (command, engine) => { if (command.type === "set-item-planning-date") { const error = new Error("Synthetic date failure"); error.code = 5; throw error; } return realAppend(command, engine); };
+  app.compose.plan.value = "today"; app.compose.input.value = `Edited partial ${stamp}`;
+  app.compose.form.requestSubmit(); await idle(); app.store.append = realAppend;
+  const editedPending = app.state.items.find((item) => item.text === `Edited partial ${stamp}`);
+  app.compose.input.value = `Edited partial ${stamp} changed`; app.compose.input.dispatchEvent(new Event("input", { bubbles: true }));
+  app.compose.form.requestSubmit(); await idle();
+  check(app.compose.result.querySelector("button")?.textContent === "Finish saved item" &&
+    [...app.compose.result.querySelectorAll("button")].some((button) => button.textContent === "Start a new item") &&
+    app.state.items.filter((item) => item.itemId === editedPending.itemId).length === 1,
+    "14. editing a partially saved capture presents explicit finish-or-start-new choices without duplicating the saved item");
+  app.compose.result.querySelector("button").click(); await idle();
+  check(app.state.items.find((item) => item.itemId === editedPending.itemId)?.planningDate === today &&
+    app.compose.input.value === `Edited partial ${stamp} changed`,
+    "14. finishing the saved capture preserves the newer edited draft");
+  app.store.append = async (command, engine) => { if (command.type === "pin") { const error = new Error("Synthetic pin failure"); error.code = 5; throw error; } return realAppend(command, engine); };
+  app.compose.plan.value = "none"; app.compose.pin.checked = true; app.compose.input.value = `Partial pin ${stamp}`;
+  app.compose.form.requestSubmit(); await idle(); app.store.append = realAppend;
+  const pinPartial = app.state.items.find((item) => item.text === `Partial pin ${stamp}`);
+  app.compose.input.focus();
+  app.compose.form.requestSubmit(); await idle();
+  check(app.state.items.filter((item) => item.text === `Partial pin ${stamp}`).length === 1 &&
+    app.state.items.find((item) => item.itemId === pinPartial.itemId) && app.state.pins.some((pin) => pin.targetId === pinPartial.itemId),
+    "14. resubmitting the form resumes a partial pin against the original canonical item id");
+  app.compose.pin.checked = false;
+  app.compose.plan.value = "today";
   app.compose.classification.value = "need";
 
   // 15. Legacy routes, back and forward.
@@ -353,6 +441,7 @@ export async function workspaceViewportRegressions(client, { visit }) {
       detailInPanel: app.detailPanel.contains(app.detail),
       listVisible: !app.pages.get("lists").hidden && getComputedStyle(app.pages.get("lists")).display !== "none",
       draft: app.detail.stepInput?.value ?? null,
+      draftMap: [...app.detail.stepDrafts.entries()], activeDetailId: app.detail.itemId, activeInputId: app.detail.stepInput?.dataset.itemId ?? null,
       undersized: [...app.querySelectorAll("button, a.nav-link, a.segment-link, select, input:not([type=checkbox])")].filter((node) => node.getClientRects().length > 0 && !node.closest("dialog:not([open])")).filter((node) => node.getBoundingClientRect().height < 44).map((node) => `${node.tagName}.${node.className}`).slice(0, 5),
       shellGrid: getComputedStyle(app.shell).display,
       focusedInSheet: app.detailSheet.contains(document.activeElement),
@@ -379,10 +468,55 @@ export async function workspaceViewportRegressions(client, { visit }) {
       "360px: details open as a modal sheet hosting the single editor, with focus inside it");
     await page(() => { document.querySelector("kin-app").detail.stepInput.value = "draft across widths"; });
     await shot("360-detail-sheet");
+    const stepFailure = await page(async () => {
+      const app = document.querySelector("kin-app"), original = app.appendCommand.bind(app);
+      app.detail.stepInput.value = "retry checklist step";
+      app.appendCommand = async (command) => { if (command.type === "add-item-step") { app.appendCommand = original; const error = new Error("Synthetic checklist failure"); error.code = 5; throw error; } return original(command); };
+      app.detail.querySelector(".step-compose").requestSubmit();
+      for (let i = 0; app.busy && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
+      app.renderState();
+      const dialog = app.detailSheet, error = app.detail.querySelector(".item-detail-feedback [role=alert]"), retry = app.detail.querySelector("[data-detail-retry]");
+      return { open: dialog.open, inside: dialog.contains(error) && dialog.contains(retry), retryVisible: retry?.getClientRects().length > 0,
+        draft: app.detail.stepInput.value, singleAlert: app.detail.querySelectorAll("[role=alert]").length === 1 && app.alert.hidden, text: error?.textContent };
+    });
+    check(stepFailure.open && stepFailure.inside && stepFailure.retryVisible && stepFailure.draft === "retry checklist step" && stepFailure.singleAlert,
+      "360px: checklist failure survives a rerender with one reachable alert and the draft inside the active sheet");
+    await shot("360-detail-step-error");
+    const stepRetry = await page(async () => {
+      const app = document.querySelector("kin-app"); app.detail.querySelector("[data-detail-retry]").click();
+      for (let i = 0; (app.busy || app.refreshing) && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
+      return { open: app.detailSheet.open, selection: app.selection?.itemId, draft: app.detail.stepInput.value,
+        saved: app.state.items.find((item) => item.itemId === app.selection?.itemId)?.steps.some((step) => step.text === "retry checklist step"),
+        error: app.detail.querySelector(".item-detail-feedback") };
+    });
+    check(stepRetry.open && stepRetry.selection && stepRetry.saved && stepRetry.draft === "" && !stepRetry.error,
+      "360px: the in-sheet checklist retry saves once and clears only the submitted draft without closing details");
+    const dateFailure = await page(async () => {
+      const app = document.querySelector("kin-app"), original = app.appendCommand.bind(app), input = app.detail.querySelector(".item-planning-date-input");
+      app.appendCommand = async (command) => { if (command.type === "set-item-planning-date") { app.appendCommand = original; const error = new Error("Synthetic date failure"); error.code = 5; throw error; } return original(command); };
+      input.value = "2026-10-25"; input.dispatchEvent(new Event("change", { bubbles: true }));
+      for (let i = 0; app.busy && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
+      app.renderState();
+      const error = app.detail.querySelector(".item-detail-feedback [role=alert]"), retry = app.detail.querySelector("[data-detail-retry]");
+      return { open: app.detailSheet.open, inside: app.detailSheet.contains(error) && app.detailSheet.contains(retry), reachable: retry?.getClientRects().length > 0,
+        singleAlert: app.detail.querySelectorAll("[role=alert]").length === 1 && app.alert.hidden, text: error?.textContent };
+    });
+    check(dateFailure.open && dateFailure.inside && dateFailure.reachable && dateFailure.singleAlert,
+      "360px: planning-date failure and retry remain inside the active sheet after rerender, with one announcement");
+    await shot("360-detail-date-error");
+    const dateRetry = await page(async () => {
+      const app = document.querySelector("kin-app"); app.detail.querySelector("[data-detail-retry]").click();
+      for (let i = 0; (app.busy || app.refreshing) && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
+      return { open: app.detailSheet.open, selection: app.selection?.itemId, date: app.state.items.find((item) => item.itemId === app.selection?.itemId)?.planningDate,
+        error: app.detail.querySelector(".item-detail-feedback") };
+    });
+    check(dateRetry.open && dateRetry.selection && dateRetry.date === 20261025 && !dateRetry.error,
+      "360px: planning-date retry succeeds without closing the detail sheet and clears its feedback");
+    await page(() => { document.querySelector("kin-app").detail.stepInput.value = "draft across widths"; });
     await viewport(768, 1024, false);
     state = await layout();
     check(state.detailMode === "inline" && !state.sheetOpen && state.detailInPanel && !state.listVisible && state.editors === 1 && state.draft === "draft across widths" && !state.overflow,
-      "768px: the same editor moves inline in place of the list, keeping its draft");
+      `768px: the same editor moves inline in place of the list, keeping its draft ${JSON.stringify(state)}`);
     await shot("768-detail-inline");
     await viewport(1024, 800, false);
     state = await layout();
@@ -411,6 +545,27 @@ export async function workspaceViewportRegressions(client, { visit }) {
     state = await layout();
     check(state.detailMode === null && state.listVisible && !state.overflow, "1440px without a selection: no empty third column");
     await visit("today");
+    const partial = await page(async () => {
+      const app = document.querySelector("kin-app"), composer = app.compose, original = app.store.append.bind(app.store);
+      app.store.append = async (command, engine) => { if (command.type === "pin") { app.store.append = original; const error = new Error("Synthetic pin failure"); error.code = 5; throw error; } return original(command, engine); };
+      composer.plan.value = "none"; composer.pin.checked = true; composer.input.value = "Keyboard partial pin";
+      composer.form.requestSubmit();
+      for (let i = 0; app.busy && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
+      app.store.append = original;
+      return { id: app.state.items.find((item) => item.text === "Keyboard partial pin")?.itemId, input: composer.input, count: app.state.items.filter((item) => item.text === "Keyboard partial pin").length };
+    });
+    await page(() => document.querySelector("kin-app").compose.input.focus());
+    await client.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", text: "\r", windowsVirtualKeyCode: 13 });
+    await client.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
+    const keyboardRetry = await page(async (id) => {
+      const app = document.querySelector("kin-app");
+      for (let i = 0; (app.busy || app.refreshing) && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
+      return { count: app.state.items.filter((item) => item.text === "Keyboard partial pin").length,
+        sameId: app.state.items.find((item) => item.text === "Keyboard partial pin")?.itemId === id,
+        pinned: app.state.pins.some((pin) => pin.targetId === id), input: app.compose.input.value };
+    }, partial.id);
+    check(partial.id && partial.count === 1 && keyboardRetry.count === 1 && keyboardRetry.sameId && keyboardRetry.pinned && keyboardRetry.input === "",
+      `real Enter retries a partially saved pin against its original id and appends no duplicate (${JSON.stringify({ partial, keyboardRetry })})`);
     await shot("1440-today");
     return `PASS responsive workspace (${passed.length} checks): five mobile tracks, one editor re-homed sheet → inline → side → sheet with its draft, Escape, no empty column, screenshots in ${outDir}`;
   } finally {

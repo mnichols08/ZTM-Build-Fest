@@ -111,6 +111,7 @@ class KinApp extends HTMLElement {
     this.previewProvider = (record, options) => this.provideAttachmentPreview(record, options);
     this.viewerUrl = null;
     this.viewerOpener = null;
+    this.pendingCapture = null;
     this.householdStatus = null;
     this.passkeyPromptDismissed = false;
     this.onHouseholdStatus = (event) => { this.householdStatus = event.detail; this.renderOnboarding(); this.updateSyncChip(); };
@@ -217,7 +218,8 @@ class KinApp extends HTMLElement {
     this.wideQuery = typeof matchMedia === "function" ? matchMedia("(min-width: 1180px)") : null;
     this.onLayoutChange = () => this.mountDetail();
     this.onDetailKeydown = (event) => {
-      if (event.key === "Escape" && this.selection && this.detailMode !== "sheet") {
+      if (event.defaultPrevented || event.key !== "Escape" || this.viewer?.open) return;
+      if (this.selection && this.detailMode !== "sheet") {
         event.preventDefault();
         this.closeItemDetail({ restoreFocus: true });
       }
@@ -672,7 +674,10 @@ class KinApp extends HTMLElement {
     // tick, a progress update); return focus to the equivalent control.
     const { attachmentId, action } = opener?.dataset ?? {};
     if (!attachmentId) return;
-    const next = [...this.querySelectorAll("[data-attachment-id]")].find((node) => node.dataset.attachmentId === attachmentId && node.dataset.action === action && !node.closest("[hidden]"));
+    const matches = (root) => [...(root?.querySelectorAll?.("[data-attachment-id]") ?? [])]
+      .find((node) => node.dataset.attachmentId === attachmentId && node.dataset.action === action &&
+        !node.closest("[hidden]") && node.getClientRects().length > 0);
+    const next = matches(this.detail) ?? matches(this);
     next?.focus();
   }
 
@@ -1629,20 +1634,38 @@ class KinApp extends HTMLElement {
     // Every capture carries a client-generated id (hex, like projection ids)
     // so a retry after a partial success resumes against the same record
     // instead of creating another.
-    const submittedDraft = Object.freeze({
+    const composer = event.detail.composer?.isConnected ? event.detail.composer : this.compose;
+    const incoming = {
       text: event.detail.text,
       classification: event.detail.classification,
-      id: event.detail.id ?? crypto.randomUUID().replaceAll("-", ""),
       planningDate: Number.isSafeInteger(event.detail.planningDate) ? event.detail.planningDate : null,
       pinned: Boolean(event.detail.pinned),
+      revision: event.detail.revision ?? 0,
       ...(event.detail.sourceStapleId ? { sourceStapleId: event.detail.sourceStapleId } : {}),
+    };
+    let pending = this.pendingCapture;
+    const matches = (draft) => draft && draft.text === incoming.text && draft.classification === incoming.classification &&
+      draft.planningDate === incoming.planningDate && draft.pinned === incoming.pinned && draft.sourceStapleId === incoming.sourceStapleId && draft.revision === incoming.revision;
+    if (pending && pending.composer !== composer) pending = null;
+    if (pending && !matches(pending.draft)) {
+      composer.showPendingCapture?.({
+        finish: pending.retry,
+        startNew: () => { this.pendingCapture = null; composer.clearResult?.(); this.handleAddItem(event); },
+      });
+      this.setStatus("An earlier item is partly saved. Finish it or choose Start a new item.");
+      return;
+    }
+    const submittedDraft = Object.freeze({
+      ...incoming,
+      id: pending?.draft.id ?? event.detail.id ?? crypto.randomUUID().replaceAll("-", ""),
+      revision: incoming.revision,
     });
     const sourceList = submittedDraft.sourceStapleId ? this.staples : null;
     // The capture form that submitted owns clearing and focus; the Today form
     // is the default for retries that carry no composer.
-    const composer = event.detail.composer?.isConnected ? event.detail.composer : this.compose;
     const destination = CLASSIFICATION_LABELS[submittedDraft.classification] ?? "your lists";
     const retry = () => this.handleAddItem({ detail: { ...submittedDraft, composer } });
+    if (pending) pending.retry = retry;
     this.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
@@ -1660,6 +1683,7 @@ class KinApp extends HTMLElement {
       const where = submittedDraft.planningDate === this.currentCivilDate() ? `${destination} and Today` : destination;
       this.setStatus(`Added to ${where}.${this.offlineSyncSuffix()}`);
       if (!sourceList) composer.showResult?.(this.syncCoordinator ? "Saved here. Waiting to sync." : "Saved on this device.");
+      if (this.pendingCapture?.draft.id === submittedDraft.id) this.pendingCapture = null;
       this.broadcastEventChange();
       restoreComposeFocus = !sourceList;
     } catch (error) {
@@ -1668,6 +1692,7 @@ class KinApp extends HTMLElement {
       this.renderState();
       const partial = step && step.type !== "add";
       const inline = step ? describePartialCapture(step, destination) : INLINE_SAVE_FAILED;
+      if (!sourceList) this.pendingCapture = { draft: submittedDraft, composer, retry };
       this.showAlert(partial ? inline : (error.userMessage ?? SAVE_ERROR), retry);
       if (!sourceList && composer.showResult) { composer.showResult(inline, { kind: "error", retry }); this.feedback.classList.add("app-feedback-inline"); }
       this.setStatus("");
@@ -1997,12 +2022,15 @@ class KinApp extends HTMLElement {
       this.assertCurrentSession(session);
       this.renderState();
       this.broadcastEventChange();
+      this.detail.clearFeedback(detail.itemId);
+      this.feedDetail();
       this.setStatus(detail.planningDate ? "Planned date saved." : "Planned date cleared.");
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
       if (error.code === 4) this.pendingRefresh = true;
       this.renderState();
-      this.showAlert(error.userMessage ?? SAVE_ERROR);
+      this.showDetailActionError(detail.itemId, error.userMessage ?? SAVE_ERROR,
+        () => this.saveItemPlanningDate(detail, sourceList));
       this.setStatus("");
     } finally {
       if (this.isCurrentSession(session)) {
@@ -2022,6 +2050,7 @@ class KinApp extends HTMLElement {
       const result = await this.localReminders.schedule({ id, title, at, isCurrent: currentItem });
       this.renderReminders();
       for (const control of this.querySelectorAll("kin-reminder")) if (control.targetRecord?.id === id) control.saved(result === "granted" ? at : null);
+      if (itemId) this.detail?.reminderDrafts?.delete(itemId);
       this.setStatus(result === "granted" ? "Reminder set on this device while Kin is open." : result === "denied" ? "Notifications are blocked in browser settings. Kin still works normally." : "Reminders are unavailable in this browser. Kin still works normally.");
     } catch (error) {
       this.showAlert(error.message ?? "Choose a future reminder time.");
@@ -2429,6 +2458,7 @@ class KinApp extends HTMLElement {
         ? { stepId: detail.stepId ?? randomId(), text: detail.text }
         : { stepId: detail.stepId }),
     });
+    const submittedStep = command.type === "add-item-step" ? command.text : null;
     this.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
@@ -2436,6 +2466,9 @@ class KinApp extends HTMLElement {
       await this.appendCommand(command);
       this.assertCurrentSession(session);
       this.renderState();
+      if (submittedStep != null) this.detail.clearStepDraft(command.itemId, submittedStep);
+      this.detail.clearFeedback(command.itemId);
+      this.feedDetail();
       this.setStatus(
         type === "add-item-step"
           ? "Step added."
@@ -2450,11 +2483,8 @@ class KinApp extends HTMLElement {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
       if (error.code === 4) this.pendingRefresh = true;
       this.renderState();
-      this.showAlert(
-        error.userMessage ?? SAVE_ERROR,
-        () => this.handleItemStep(type, command),
-        command,
-      );
+      this.showDetailActionError(command.itemId, error.userMessage ?? SAVE_ERROR,
+        () => this.handleItemStep(type, command), command);
       this.setStatus("");
     } finally {
       if (this.isCurrentSession(session)) {
@@ -2466,6 +2496,12 @@ class KinApp extends HTMLElement {
         this.flushPeerRefresh();
       }
     }
+  }
+
+  showDetailActionError(itemId, message, retry, intent = null) {
+    if (!this.detail) { this.showAlert(message, retry, intent); return; }
+    this.detail.setFeedback(itemId, { itemId, message, retry, intent });
+    if (this.selection) this.feedDetail();
   }
 
   openPeerChannel() {
@@ -2941,6 +2977,7 @@ class KinApp extends HTMLElement {
     this.autoLockTimer = null;
     this.closeViewer();
     this.closeItemDetail({ restoreFocus: false });
+    this.pendingCapture = null;
     this.attachmentPreviews?.clear();
     this.attachmentPreviews = null;
     this.attachmentTarget = null;

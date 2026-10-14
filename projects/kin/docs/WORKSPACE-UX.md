@@ -221,10 +221,14 @@ Completing and opening are separate controls; clicking text never completes.
 - **Search** keeps its query, filters, and results while unlocked; results
   open the real record by id. Returning (Back) shows the same results.
 - **Drafts** (capture text, step text, reminder date/time, note editors)
-  live only in the unlocked DOM. Navigation and resizing never clear them. A
-  background refresh re-renders rows and the detail but re-applies the
-  in-progress draft values and keeps focus. Only a successful save clears the
-  draft that was submitted, never a newer edit.
+  stay in unlocked in-memory component state. Checklist drafts are keyed by
+  canonical item id, so changing selection, closing details, routing away, or
+  resizing cannot move one item's text into another item's editor. Reminder
+  edits are also captured against their target item. A background refresh
+  re-renders rows and the detail but reapplies the matching draft and keeps
+  focus. A successful save clears only the submitted value/revision; failed
+  saves keep it for retry. Drafts for temporarily closed details continue to
+  block update activation. Lock/session replacement destroys these maps.
 - **Lock, logout, teardown, access loss** replace every protected component,
   close the viewer and the detail, forget previews and progress, and clear
   search state, exactly as before. No plaintext goes to `localStorage`,
@@ -288,6 +292,18 @@ runner):
     `#lists`) resolve.
 16. Resize 360 → 768 → 1024 → 1440 → 1920 with details open: one editor, the
     draft intact, five equal nav tracks on mobile.
+17. Keep separate unsaved checklist text on A and B while switching, closing,
+    routing, and resizing; returning restores the target's own draft. Saving
+    clears the submitted step, and an empty Enter adds no duplicate.
+18. A delayed save or failure for A completes with B selected without
+    clearing B or showing A's error on B. Returning to A restores its retry.
+    Phone-sheet checklist and planning-date failures keep the draft and a
+    usable in-sheet retry through rerenders.
+19. Add and Enter resume a partially saved capture's canonical id. Editing
+    that pending capture presents explicit Finish saved item / Start a new
+    item choices, and finishing preserves newer text.
+20. Real keyboard Escape closes the photo viewer first on desktop and above
+    the mobile sheet, including after rerender; the next Escape closes details.
 
 Node (`node --test`): `web/today-view.test.mjs` (rules A–E, dedupe,
 completed, mode), `web/routes.test.mjs` (aliases, segments, `/pair`),
@@ -342,9 +358,16 @@ and cryptography are untouched.
   and refresh work and the selected segment is identifiable.
 - The detail view is hosted by `<kin-app>` rather than inside `<kin-today>`
   so one instance can serve Today and every list and be re-homed on resize.
-- The global status/alert region remains the single live region. Inline
-  results are plain text beside the field; when an inline error is shown the
-  floating card is visually hidden but still announced.
+- Capture and app-wide errors use the existing global status/alert region.
+  A checklist or planning-date failure is instead announced beside the
+  selected detail editor, with its retry button in that same presentation.
+  This keeps mobile retries inside the active modal and avoids duplicate
+  announcements. The detail retains that feedback across unrelated renders;
+  success clears it.
+- The open photo viewer owns Escape while it is the top modal layer. Its
+  native close releases the preview URL and restores focus to the equivalent
+  viewer control after a rerender; a later Escape can close the underlying
+  detail or sheet.
 - Routine rows on the Routines page keep responsibility and the reminder
   control inline (no routine detail view was added); on Today a routine row
   only shows its period and a complete control.
@@ -355,7 +378,7 @@ and cryptography are untouched.
   the viewer was open lost focus on close. Capture ids are hex strings so a
   partial-save retry can find its record.
 
-### Verification
+### Historical implementation verification
 
 Run on 2026-10-13 (Windows 11, Node 22.13.0 via `fnm exec`, pinned Rust
 toolchain, headless Edge 155) from `projects/kin`:
@@ -382,3 +405,44 @@ background refresh that can start between its wait and its click.
   tidied instead.
 - The Talk and Handoff capture forms keep their existing single-field layout
   and byte limits (wording only changed).
+
+## 8. PR #42 correctness remediation
+
+This remediation starts from PR branch `feat/kin-workspace-ux` at
+`c6adca29e4855defa736c7163dc98b1571a884b4`, the reviewed baseline.
+Verification in this section covers the current uncommitted working-tree
+patch; it is not a CI result. It adds item-keyed transient checklist/reminder
+drafts, clears only matching successful checklist submissions, preserves
+partial capture ids across Add/form submission, offers an explicit choice
+when a pending capture was edited, puts detail save errors and retry beside
+the active editor, and assigns Escape to the topmost photo viewer. No event,
+storage, version, WASM, or security contract changed.
+
+Fresh remediation verification (2026-10-13, Windows 11, Node 22.13.0, pinned
+Rust 1.93.0, headless Edge 155) covers the uncommitted working-tree patch:
+
+| Command | Outcome |
+| --- | --- |
+| `npm --prefix projects/kin run verify` | PASS, exit 0: environment, formatting, Clippy, version consistency, whitespace, 51 Node test files / 473 tests, 173 Rust tests, release WASM build |
+| `npm --prefix projects/kin run verify:browser -- "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"` | PASS, exit 0: full verification plus browser, security storage, security UI, passkey, and household authority suites |
+
+For this machine, Node 22.13.0 was placed first on `PATH` before invoking
+these npm commands. Browser coverage reports 110 workspace journey checks,
+15 responsive checks, and 31 phone attachment/viewer checks. The security
+sub-gates report 4 storage, 149 security UI, 67 passkey, and 103 household
+authority assertions. The release WASM build matched the local browser asset;
+no committed expected WASM artifact exists. Version remains `0.41.1`.
+
+Screenshots are under `target/ux-screenshots/`, including
+`regression-360-detail-step-error.png`,
+`regression-360-detail-date-error.png`,
+`regression-viewer-escape-mobile-preserved.png`,
+`regression-viewer-escape-desktop-preserved.png`, and the responsive
+`regression-*.png` set. The first remediation browser run exposed focus
+returning to a thumbnail in the inert background after a detail rerender; the
+fallback now prefers the equivalent control inside the active detail. The
+final full gate passed after this correction. `scripts/verify.test.mjs` was
+not run, and no fresh CI result is claimed. The PR API could not be reached
+from this environment, so remote PR metadata was not independently queried.
+Physical camera, installed-PWA, Safari/Firefox, and real assistive technology
+are outside this headless Edge run.

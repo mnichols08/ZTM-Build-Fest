@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,6 +17,12 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
   const page = (fn, ...args) => client.evaluate(`(${fn.toString()})(${args.map((value) => JSON.stringify(value)).join(",")})`);
   const passed = [];
   const check = (condition, message) => { assert.ok(condition, message); passed.push(message); };
+  const evidenceDir = join(dirname(fileURLToPath(import.meta.url)), "../target/ux-screenshots");
+  await mkdir(evidenceDir, { recursive: true });
+  const screenshot = async (name) => {
+    const { data } = await client.send("Page.captureScreenshot", { format: "png" });
+    await writeFile(join(evidenceDir, `regression-${name}.png`), Buffer.from(data, "base64"));
+  };
   await client.send("DOM.enable");
   await client.send("Page.setInterceptFileChooserDialog", { enabled: true });
   await client.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
@@ -164,6 +170,57 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
     check(viewer.decoded && viewer.loaded && viewer.bounded, `the JPEG renders as a bounded thumbnail once the tile is on screen: ${JSON.stringify(viewer)}`);
     check(viewer.opened && viewer.viewerSrc && viewer.title === "fridge-shelf.jpg" && viewer.closeFocused, "tapping the thumbnail opens the image viewer with the file name and focuses Close");
     check(viewer.closed && viewer.focusBack, `closing the viewer releases the image and returns focus to the thumbnail: ${JSON.stringify(viewer.focusInfo)}`);
+
+    // Escape belongs to the topmost viewer. Exercise actual native dialog
+    // cancellation by sending keyboard input through CDP, including a refresh
+    // while the viewer is open.
+    const escape = async () => {
+      await client.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+      await client.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+    };
+    await page(async (itemId) => {
+      const app = document.querySelector("kin-app"); app.openItemDetail(itemId);
+      app.detail.stepInput.value = "viewer preserves this draft";
+      app.detail.querySelector(".attachment-thumb").click();
+      for (let i = 0; i < 400 && !app.viewer.open; i++) await new Promise((r) => setTimeout(r, 10));
+      if (!app.viewer.open) throw Error("viewer did not open above mobile details");
+      app.renderState();
+    }, itemId);
+    await escape();
+    const mobileEscape = await page(async (itemId) => {
+      const app = document.querySelector("kin-app");
+      for (let i = 0; i < 200 && app.viewer.open; i++) await new Promise((r) => setTimeout(r, 10));
+      return { viewer: app.viewer.open, url: app.viewerUrl, selection: app.selection?.itemId, sheet: app.detailSheet.open,
+        draft: app.detail.stepInput?.value, focusInDetail: app.detail.contains(document.activeElement), id: itemId };
+    }, itemId);
+    check(!mobileEscape.viewer && mobileEscape.url === null && mobileEscape.selection === itemId && mobileEscape.sheet &&
+      mobileEscape.draft === "viewer preserves this draft" && mobileEscape.focusInDetail,
+      `phone: native Escape closes only the viewer above the modal sheet, preserving selection, draft, URL cleanup and focus (${JSON.stringify(mobileEscape)})`);
+    await screenshot("viewer-escape-mobile-preserved");
+    await escape();
+    const mobileClosed = await page(async () => {
+      const app = document.querySelector("kin-app");
+      for (let i = 0; i < 200 && app.detailSheet.open; i++) await new Promise((r) => setTimeout(r, 10));
+      return { selection: app.selection, sheet: app.detailSheet.open, viewer: app.viewer.open, url: app.viewerUrl,
+        focus: document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.className ?? "" };
+    });
+    check(!mobileClosed.selection && !mobileClosed.sheet && !mobileClosed.viewer && mobileClosed.url === null,
+      "phone: the next native Escape closes details through the sheet path after the viewer is already gone");
+
+    await client.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false });
+    await page((itemId) => { const app = document.querySelector("kin-app"); app.openItemDetail(itemId); app.detail.stepInput.value = "desktop viewer draft"; app.detail.querySelector(".attachment-thumb").click(); }, itemId);
+    await page(async () => { const app = document.querySelector("kin-app"); for (let i = 0; i < 400 && !app.viewer.open; i++) await new Promise((r) => setTimeout(r, 10)); if (!app.viewer.open) throw Error("desktop viewer did not open"); app.renderState(); });
+    await escape();
+    const desktopViewerClosed = await page(async (itemId) => {
+      const app = document.querySelector("kin-app"); for (let i = 0; i < 200 && app.viewer.open; i++) await new Promise((r) => setTimeout(r, 10));
+      return !app.viewer.open && !app.viewerUrl && app.selection?.itemId === itemId && app.detail.stepInput?.value === "desktop viewer draft" && app.detail.isConnected;
+    }, itemId);
+    check(desktopViewerClosed, "desktop: Escape closes the viewer after a rerender while details and their draft remain selected");
+    await screenshot("viewer-escape-desktop-preserved");
+    await escape();
+    const desktopDetailsClosed = await page(() => { const app = document.querySelector("kin-app"); return app.selection === null && !app.detail.isConnected; });
+    check(desktopDetailsClosed, "desktop: a second Escape closes the underlying detail and restores the list context");
+    await client.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
 
     // 3. Details toggling, navigation, a stale sync refresh, and lock/unlock keep the attachment.
     await visit("today");

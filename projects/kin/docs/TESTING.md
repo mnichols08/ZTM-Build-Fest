@@ -26,6 +26,21 @@ in light and dark. Node tests: `web/routes.test.mjs`,
 the new structure (details instead of inline row tools, `#updates`,
 `#household/...`, Today capture semantics).
 
+PR #42 remediation coverage extends these real browser paths: item A/B
+checklist draft isolation, close/route retention, successful-save clearing,
+empty-submit duplicate prevention, and delayed A success/failure while B is
+selected without draft clearing or feedback leakage; partial capture retries
+through Try again, Add, and a real Enter key
+with the same canonical id and an explicit finish-or-start-new choice after
+edits; checklist and planning-date failure/retry inside the actual mobile
+`<dialog>` with one alert and draft retention through rerender; and native
+keyboard Escape over desktop details and the mobile detail sheet, including
+rerender and focus/URL cleanup. `target/ux-screenshots/regression-360-detail-step-error.png`,
+`regression-360-detail-date-error.png`,
+`regression-viewer-escape-mobile-preserved.png`, and
+`regression-viewer-escape-desktop-preserved.png` capture representative
+synthetic-data states. These remain local uncommitted-patch results, not CI.
+
 ## v0.41.1 Mobile Attachment Upload coverage
 
 The browser regression runs `scripts/attachment-upload-regression.mjs` right

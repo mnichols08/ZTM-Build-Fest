@@ -27,11 +27,21 @@ class KinReminder extends HTMLElement {
     for (const control of this.querySelectorAll("button, input")) control.disabled = this.isDisabled;
   }
   get hasDraft() { return this.editing && Boolean(this.draft.date || this.draft.time); }
+  getDraftState() { return { editing: this.editing, draft: { ...this.draft }, error: this.error }; }
+  restoreDraftState(state) {
+    if (!state) return;
+    this.editing = Boolean(state.editing);
+    this.draft = { date: state.draft?.date ?? "", time: state.draft?.time ?? "" };
+    this.error = state.error ?? "";
+  }
 
   connectedCallback() { this.render(); }
 
   open() { this.editing = true; this.error = ""; this.render(); this.querySelector("input")?.focus(); }
-  close() { this.editing = false; this.draft = { date: "", time: "" }; this.error = ""; this.render(); }
+  close() {
+    this.editing = false; this.draft = { date: "", time: "" }; this.error = ""; this.render();
+    this.dispatchEvent(new CustomEvent("kin:reminder-draft-cleared", { detail: { id: this.targetRecord?.id }, bubbles: true, composed: true }));
+  }
 
   render() {
     if (!this.targetRecord) { this.replaceChildren(); return; }

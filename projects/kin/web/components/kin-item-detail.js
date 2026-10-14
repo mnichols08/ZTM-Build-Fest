@@ -28,13 +28,31 @@ class KinItemDetail extends HTMLElement {
     this.presentation = "side";
     this.backLabel = "Close";
     this.stepDraft = "";
+    this.stepDrafts = new Map();
+    this.reminderDrafts = new Map();
+    this.detailFeedbacks = new Map();
     this.highlightStepId = null;
+    this.addEventListener("kin:reminder-draft-cleared", (event) => {
+      const itemId = event.detail?.id?.startsWith("item:") ? event.detail.id.slice(5) : null;
+      if (itemId) this.reminderDrafts.delete(itemId);
+    });
   }
 
   set item(value) { this.record = value ?? null; this.render(); }
   set itemId(value) {
+    const previousId = this.record?.itemId ?? this.requestedId;
+    if (previousId && this.stepInput) this.stepDrafts.set(previousId, this.stepInput.value);
+    if (previousId && this.reminderControl?.editing) this.reminderDrafts.set(previousId, this.reminderControl.getDraftState());
     this.requestedId = value ?? null;
-    if (value == null) { this.record = null; this.highlightStepId = null; this.stepDraft = ""; this.reminderControl = null; }
+    if (value == null) {
+      this.record = null; this.requestedId = null; this.highlightStepId = null;
+      this.stepInput = null; this.reminderControl = null;
+    } else if (value !== previousId) {
+      this.record = null;
+      this.stepInput = null;
+      this.reminderControl = null;
+    }
+    if (value != null) this.stepDraft = this.stepDrafts.get(value) ?? "";
   }
   // Assigns several inputs and renders once; setters stay for single changes.
   update(props) {
@@ -70,7 +88,7 @@ class KinItemDetail extends HTMLElement {
   }
 
   get hasDraft() {
-    return Boolean(this.stepInput?.value.trim()) || Boolean(this.reminderControl?.hasDraft);
+    return [...this.stepDrafts.values()].some((value) => value.trim()) || this.reminderDrafts.size > 0 || this.detailFeedbacks.size > 0 || Boolean(this.reminderControl?.hasDraft);
   }
 
   connectedCallback() { this.render(); }
@@ -88,8 +106,25 @@ class KinItemDetail extends HTMLElement {
   }
 
   captureDrafts() {
-    return { step: this.stepInput?.value ?? this.stepDraft, focusId: this.contains(document.activeElement) ? document.activeElement.dataset.focusId ?? null : null };
+    this.captureStepDraft();
+    return { step: this.stepDrafts.get(this.itemId) ?? "", focusId: this.contains(document.activeElement) ? document.activeElement.dataset.focusId ?? null : null };
   }
+
+  captureStepDraft() {
+    const id = this.record?.itemId ?? this.requestedId;
+    if (id && this.stepInput) this.stepDrafts.set(id, this.stepInput.value);
+  }
+
+  clearStepDraft(itemId, submitted) {
+    if (this.stepDrafts.get(itemId) === submitted) this.stepDrafts.delete(itemId);
+    if (this.itemId === itemId && this.stepInput?.value === submitted) {
+      this.stepInput.value = "";
+      this.stepDraft = "";
+    }
+  }
+
+  setFeedback(itemId, feedback) { this.detailFeedbacks.set(itemId, feedback); }
+  clearFeedback(itemId) { this.detailFeedbacks.delete(itemId); }
 
   render() {
     if (this.suspended) return;
@@ -136,6 +171,22 @@ class KinItemDetail extends HTMLElement {
     const planned = this.civilDate != null ? describePlanningDate(record.planningDate, this.civilDate) : null;
     kind.textContent = [KIND_LABELS[record.classification] ?? "Item", record.status === "completed" ? "Completed" : "Open", planned].filter(Boolean).join(" · ");
     section.append(title, kind);
+    const detailFeedback = this.detailFeedbacks.get(record.itemId);
+    if (detailFeedback) {
+      const feedback = document.createElement("div");
+      feedback.className = "item-detail-feedback";
+      const message = document.createElement("p");
+      message.className = "error-message";
+      message.setAttribute("role", "alert");
+      message.textContent = detailFeedback.message;
+      feedback.append(message);
+      if (typeof detailFeedback.retry === "function") {
+        const retry = this.button("Try again", detailFeedback.retry, "retry-button");
+        retry.dataset.detailRetry = "true";
+        feedback.append(retry);
+      }
+      section.append(feedback);
+    }
 
     const primary = document.createElement("div");
     primary.className = "item-detail-primary";
@@ -243,7 +294,7 @@ class KinItemDetail extends HTMLElement {
     input.id = inputId;
     input.required = true;
     input.autocomplete = "off";
-    input.value = drafts.step ?? "";
+    input.value = drafts.step ?? this.stepDrafts.get(record.itemId) ?? "";
     input.dataset.itemId = record.itemId;
     input.dataset.itemAction = "add-step";
     input.dataset.focusId = "add-step";
@@ -360,7 +411,9 @@ class KinItemDetail extends HTMLElement {
     const id = `item:${record.itemId}`;
     const reminder = this.reminderControl?.targetRecord?.id === id ? this.reminderControl : document.createElement("kin-reminder");
     reminder.target = { id, title: record.text };
+    if (this.reminderDrafts.has(record.itemId)) reminder.restoreDraftState(this.reminderDrafts.get(record.itemId));
     reminder.reminder = this.reminderRecord;
+    if (reminder.hasDraft) this.reminderDrafts.set(record.itemId, reminder.getDraftState());
     reminder.disabled = this.isDisabled || record.status !== "active";
     this.reminderControl = reminder;
     group.append(reminder);

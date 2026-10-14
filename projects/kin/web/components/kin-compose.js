@@ -69,6 +69,7 @@ class KinCompose extends HTMLElement {
     this.input.name = "item";
     this.input.type = "text";
     this.input.autocomplete = "off";
+    if (this.mode === "today") this.input.placeholder = "For example, take out the recycling";
     this.input.maxLength = MAX_ITEM_TEXT_BYTES;
     this.input.required = true;
     this.input.setAttribute("aria-describedby", `compose-message${suffix}`);
@@ -144,6 +145,7 @@ class KinCompose extends HTMLElement {
     this.result.className = "compose-result";
     this.result.hidden = true;
     this.restoreDraft();
+    this.draftRevision = 0;
     this.form.append(this.label, this.input);
     if (this.mode === "today") {
       const options = document.createElement("div");
@@ -162,7 +164,10 @@ class KinCompose extends HTMLElement {
     this.form.append(this.button, this.message, this.result);
     this.replaceChildren(this.form);
     this.form.addEventListener("submit", (event) => this.submit(event));
-    this.input.addEventListener("input", () => { if (!this.result.hidden && this.result.dataset.kind === "error") this.clearResult(); });
+    for (const control of [this.input, this.classification, this.plan, this.planDate, this.pin]) {
+      control.addEventListener("input", () => this.noteDraftChange());
+      control.addEventListener("change", () => this.noteDraftChange());
+    }
   }
 
   set disabled(value) {
@@ -191,6 +196,7 @@ class KinCompose extends HTMLElement {
     // Completion belongs to the submitted draft, not a newer edit. The chosen
     // kind and plan stay selected so a second item lands where the person expects.
     if (this.input.value !== submittedDraft.text || this.currentClassification !== submittedDraft.classification) return;
+    if (submittedDraft.revision != null && submittedDraft.revision !== this.draftRevision) return;
     this.input.value = "";
     this.message.textContent = "";
     if (this.mode === "today") this.pin.checked = false;
@@ -226,6 +232,26 @@ class KinCompose extends HTMLElement {
     this.result.hidden = false;
     clearTimeout(this.resultTimer);
     if (kind === "saved") this.resultTimer = setTimeout(() => { if (this.result.dataset.kind === "saved") this.clearResult(); }, 6_000);
+  }
+
+  noteDraftChange() {
+    this.draftRevision++;
+    if (!this.result.hidden && this.result.dataset.kind === "error") this.clearResult();
+  }
+
+  showPendingCapture({ finish, startNew }) {
+    this.result.replaceChildren(document.createTextNode("An earlier item is partly saved. Finish it, or intentionally start another item. "));
+    const finishButton = document.createElement("button");
+    finishButton.type = "button";
+    finishButton.textContent = "Finish saved item";
+    finishButton.addEventListener("click", finish);
+    const newButton = document.createElement("button");
+    newButton.type = "button";
+    newButton.textContent = "Start a new item";
+    newButton.addEventListener("click", startNew);
+    this.result.append(finishButton, " ", newButton);
+    this.result.dataset.kind = "error";
+    this.result.hidden = false;
   }
 
   clearResult() {
@@ -264,6 +290,7 @@ class KinCompose extends HTMLElement {
         planningDate: this.currentPlanningDate(),
         pinned: this.mode === "today" && this.pin.checked,
         composer: this,
+        revision: this.draftRevision,
       },
       bubbles: true,
       composed: true,
