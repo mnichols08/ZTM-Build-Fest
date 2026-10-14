@@ -196,3 +196,34 @@ test("device revocation refreshes the trusted-device list after the passkey oper
   assert.equal(labels.some((label) => label === "Revoke Kitchen tablet"), false, "revoked device offers no further revoke control");
   assert.equal(component.busy, false);
 });
+
+test("household admins see admin, invitation, and removal controls; other Adults do not", async () => {
+  const members = (currentAdmin) => [
+    { id: "founder", current: currentAdmin, active: true, kind: "adult", admin: true },
+    { id: "partner", current: !currentAdmin, active: true, kind: "adult", admin: false },
+    { id: "child", current: false, active: true, kind: "limited", admin: false },
+  ];
+  const render = async (currentAdmin) => {
+    const component = new KinHousehold();
+    component.identity = { memberId: currentAdmin ? "founder" : "partner" };
+    component.run = async (action) => action();
+    component.api = async () => ({ adminRecorded: true, canManageMembers: currentAdmin, members: members(currentAdmin) });
+    await component.showHousehold();
+    const descendants = (items) => items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
+    return descendants(component.children).filter((child) => child.tagName === "button").map((button) => button.textContent);
+  };
+
+  const admin = await render(true);
+  for (const label of ["Make Adult 2 a household admin", "Remove Adult 2 from household", "Remove Limited member 1 from household",
+    "Add Adult", "Add Child or Limited Member", "Add Babysitter or Guest", "Delete household"])
+    assert.ok(admin.includes(label), `admin sees ${label}`);
+  assert.equal(admin.includes("Stop being a household admin"), true);
+
+  const adult = await render(false);
+  for (const label of ["Add Adult", "Add Child or Limited Member", "Add Babysitter or Guest", "Delete household", "Remove Limited member 1 from household"])
+    assert.equal(adult.includes(label), false, `non-admin Adult does not see ${label}`);
+  assert.equal(adult.some((label) => label.includes("household admin")), false);
+  assert.equal(adult.some((label) => label.startsWith("Authorize recovery for Adult 1")), false, "non-admins cannot recover an admin");
+  assert.ok(adult.includes("Authorize recovery for Limited member 1"));
+  assert.ok(adult.includes("Leave household"));
+});
