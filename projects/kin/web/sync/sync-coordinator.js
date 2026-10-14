@@ -16,6 +16,7 @@ import {
 import { SyncKeyStore } from "./key-store.js";
 import { idToHex } from "../wasm/kin-engine.js";
 import { reconcileAttachments } from "../attachments/attachment-lifecycle.js";
+import { decryptHouseholdSettings, encryptHouseholdSettings } from "../appearance/household.js";
 
 export function activeResponsibilityMemberIds(devices, now = Date.now()) {
   return [...new Set(devices
@@ -874,6 +875,27 @@ export class SyncCoordinator {
     if (this.stopped) throw new Error("Device sync was stopped.");
     this.keyStore?.vault.assertUnlocked();
     return result;
+  }
+
+  async loadHouseholdSettings() {
+    const response = await this.request("/api/household/settings");
+    if (!response.settings) return { owner: response.owner, ownerRecorded: response.ownerRecorded, value: null };
+    const epoch = await this.keyStore.getEpoch(this.identity.householdId, response.settings.keyEpoch);
+    if (!epoch) throw new Error("This device does not have the key needed to read the shared appearance.");
+    return { owner: response.owner, ownerRecorded: response.ownerRecorded,
+      value: await decryptHouseholdSettings(response.settings, { householdId: this.identity.householdId, householdKey: epoch.householdKey }) };
+  }
+
+  async saveHouseholdSettings(value) {
+    if (navigator.onLine === false) throw new Error("Connect to the household before changing shared settings.");
+    const status = await this.request("/api/sync/status");
+    const epoch = await this.keyStore.getEpoch(this.identity.householdId, status.currentEpoch);
+    if (!epoch) throw new Error("This device is not ready to protect shared settings.");
+    const encrypted = await encryptHouseholdSettings(value, { householdId: this.identity.householdId, keyEpoch: status.currentEpoch, householdKey: epoch.householdKey });
+    const result = await this.request("/api/household/settings", { method: "PUT", body: encrypted.ciphertext,
+      headers: { "Content-Type": "application/octet-stream", "X-Household-Settings-Revision": String(value.revision),
+        "X-Household-Settings-Key-Epoch": String(status.currentEpoch), "X-Household-Settings-SHA256": encrypted.digest } });
+    return { ...value, revision: result.revision };
   }
 
   stop() {

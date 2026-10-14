@@ -26,3 +26,10 @@ test("manual override remains valid when a background is replaced", () => {
   assert.equal(record.seed, "#74507D");
   assert.equal(record.image.seed, "#CC7722");
 });
+
+test("version two records preserve independent household inheritance", () => {
+  const owner = appearanceOwner(vault, actor);
+  const partial = { version: 2, owner, mode: "dark", colorSource: undefined, seed: undefined, manual: undefined, image: null };
+  assert.deepEqual(validateAppearance(partial, owner), partial);
+  assert.throws(() => validateAppearance({ ...partial, colorSource: "custom" }, owner));
+});

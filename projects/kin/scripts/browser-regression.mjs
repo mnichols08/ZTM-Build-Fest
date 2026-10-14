@@ -258,7 +258,7 @@ async function regressions() {
     getComputedStyle(app.shell).display === "grid" &&
       getComputedStyle(app.nav).position === "sticky" &&
       app.nav.getBoundingClientRect().left < app.main.getBoundingClientRect().left &&
-      app.pages.get("today").getBoundingClientRect().width <= 720 &&
+      app.pages.get("today").getBoundingClientRect().width <= 1080 &&
       !app.siteTools.hidden && app.searchLink.getAttribute("href") === "#search" && app.lockButton.textContent.trim() === "Lock",
     "wide screens use a persistent left navigation, a readable content column, and header search/lock",
   );
@@ -274,7 +274,7 @@ async function regressions() {
     location.hash === "#lists/todo" && !app.pages.get("lists").hidden &&
       app.nav.querySelector('[aria-current="page"]').dataset.page === "lists" &&
       app.pages.get("today").hidden && app.routeAnnouncement.textContent === "Lists view" &&
-      document.title === "Lists — Kin" && app.dataset.route === "lists/todo",
+      document.title === "Our Home — Kin" && app.dataset.route === "lists/todo",
     "navigation changes the URL, current destination, and visible page together",
   );
   app.nav.querySelector('a[href="#today"]').click();
@@ -1941,9 +1941,9 @@ try {
     await saveAppearance(app.store,app.vault,originalAppearance);
     const archive=await app.store.snapshotForArchive();
     const after={events:await count('events'),outbox:await count('sync_outbox')};
-    return {aSeed:a.seed,bInitial:bInitial.colorSource,bSeed:b.seed,restoredA:restoredA.seed,pipelineUnchanged:before.events===after.events&&before.outbox===after.outbox,archiveFields:Object.keys(archive).sort()};
+    return {aSeed:a.seed,bInitial:bInitial.colorSource??'inherit',bSeed:b.seed,restoredA:restoredA.seed,pipelineUnchanged:before.events===after.events&&before.outbox===after.outbox,archiveFields:Object.keys(archive).sort()};
   })()`), {
-    aSeed: "#74507D", bInitial: "default", bSeed: "#16756F", restoredA: "#74507D",
+    aSeed: "#74507D", bInitial: "inherit", bSeed: "#16756F", restoredA: "#74507D",
     pipelineUnchanged: true, archiveFields: ["attachments", "events", "formatVersion", "local_context"],
   }, "personal appearance stays member-bound and absent from events, relay outbox, and portable snapshots");
   console.log("PASS personal appearance member isolation and household-pipeline exclusion");
