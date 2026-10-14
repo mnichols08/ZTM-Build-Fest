@@ -1219,6 +1219,96 @@ export class DurableStore {
     };
   }
 
+  householdPurgeStatus(householdId) {
+    this.assertAvailable();
+    if (!isId(householdId))
+      throw new DurableStoreError(
+        "A Kin household ID must be 32 lowercase hexadecimal characters.",
+      );
+    const lifecycle = this.lifecycleInfo(householdId);
+    if (!lifecycle)
+      throw new DurableStoreError("The Kin household does not exist.");
+    const count = (sql) => this.db.prepare(sql).get(householdId).count;
+    const counts = {
+      members: count(
+        "SELECT COUNT(*) AS count FROM members WHERE household_id = ?",
+      ),
+      credentials: count(
+        "SELECT COUNT(*) AS count FROM credentials WHERE member_id IN (SELECT id FROM members WHERE household_id = ?)",
+      ),
+      devices: count(
+        "SELECT COUNT(*) AS count FROM devices WHERE household_id = ?",
+      ),
+      settings: count(
+        "SELECT COUNT(*) AS count FROM household_settings WHERE household_id = ?",
+      ),
+      attachments: count(
+        "SELECT COUNT(*) AS count FROM sync_attachments WHERE household_id = ?",
+      ),
+      events: count(
+        "SELECT COUNT(*) AS count FROM sync_events WHERE household_id = ?",
+      ),
+      bindings: count(
+        "SELECT COUNT(*) AS count FROM sync_bindings WHERE household_id = ?",
+      ),
+      deviceSequences: count(
+        "SELECT COUNT(*) AS count FROM sync_device_sequences WHERE household_id = ?",
+      ),
+      syncState: count(
+        "SELECT COUNT(*) AS count FROM sync_households WHERE household_id = ?",
+      ),
+      provisioningGrants: count(
+        "SELECT COUNT(*) AS count FROM provisioning_grants WHERE household_id = ?",
+      ),
+      securityAudit: count(
+        "SELECT COUNT(*) AS count FROM security_audit WHERE household_id = ?",
+      ),
+    };
+    const ownerRecorded = this.db
+      .prepare(
+        "SELECT owner_member_id IS NOT NULL AS value FROM households WHERE id = ?",
+      )
+      .get(householdId).value === 1;
+    return {
+      ...lifecycle,
+      ownerRecorded,
+      counts,
+      purged:
+        lifecycle.state === "deleted" &&
+        !ownerRecorded &&
+        Object.values(counts).every((value) => value === 0),
+    };
+  }
+
+  forcePurgeHousehold(householdId, deletedAt) {
+    if (!isId(householdId) || !isTimestamp(deletedAt))
+      throw new DurableStoreError(
+        "Kin forced household deletion metadata is invalid.",
+      );
+    return this.transaction(() => {
+      const lifecycle = this.lifecycleInfo(householdId);
+      if (!lifecycle)
+        throw new DurableStoreError("The Kin household does not exist.");
+      if (lifecycle.state !== "deleted") {
+        purgeHouseholdData(this.db, householdId);
+        this.db
+          .prepare(
+            `UPDATE households
+             SET lifecycle_state = 'deleted',
+                 deletion_requested_at = NULL,
+                 deletion_finalize_at = NULL,
+                 deleted_at = ?
+             WHERE id = ?`,
+          )
+          .run(deletedAt, householdId);
+      }
+      const status = this.householdPurgeStatus(householdId);
+      if (!status.purged)
+        throw new DurableStoreError("Kin could not verify the household purge.");
+      return status;
+    });
+  }
+
   requestHouseholdDeletion(householdId, requestedAt, finalizeAt) {
     if (
       !isId(householdId) ||

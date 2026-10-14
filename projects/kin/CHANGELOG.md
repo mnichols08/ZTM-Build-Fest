@@ -9,6 +9,7 @@
 - Require an admin to invite, approve, or remove members, revoke another member's device, request or cancel household deletion, recover an admin, or change shared settings. Legacy households with no admin keep Adult-level management, and their settings and admin grants stay fail-closed.
 - Server schema 8 adds `members.household_admin` and promotes only recorded founder-owners. Load validation rejects admin rows on non-Adult members.
 - Household access shows admin badges and admin controls, and labels Limited members as "Children & Limited Members" and Temporary access as "Babysitters, Caregivers & Guests". Settings responses report `admin`/`adminRecorded` instead of `owner`/`ownerRecorded`.
+- Add a CLI-only, household-scoped operator purge with exact opaque-ID confirmation, exclusive maintenance/service locking, transactional reuse of the normal deletion purge, retained anti-resurrection tombstones, blind row-count status, and post-purge verification. It does not provide arbitrary SQL or database-wide clearing.
 
 ## v0.46.0 — Personal Appearance
 

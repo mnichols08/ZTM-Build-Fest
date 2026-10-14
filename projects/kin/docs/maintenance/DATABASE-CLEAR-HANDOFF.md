@@ -13,3 +13,30 @@ verify lock behavior, backup failure atomicity, WAL/integrity handling,
 restore, and deletion scope before an authorized maintenance PR.
 
 No database clearing command was executed as part of this review.
+
+## Household-scoped operator purge
+
+Kin provides a deliberately narrow operator CLI for inspecting and forcibly
+finalizing one household deletion. It does not expose SQL, decrypted content,
+search by personal information, or a database-wide clear operation.
+
+Stop the Kin service before using the mutation command. The command acquires
+both maintenance and service locks and refuses to run while either is held.
+
+```text
+node server/admin.mjs household-status <household-id>
+node server/admin.mjs household-purge <household-id> --confirm-household-id <household-id>
+node server/admin.mjs household-verify-purged <household-id>
+```
+
+The confirmation must repeat the exact 32-character opaque household ID. The
+purge uses the same transactional data-removal routine as scheduled deletion,
+then verifies that all service-controlled household rows are gone while the
+minimal anti-resurrection tombstone remains. It can finalize either an active
+or deletion-pending household and therefore bypasses the normal 30-day grace
+period. Use it only after independently verifying the request and target.
+
+The command cannot erase browser storage, offline devices, user-created
+exports, screenshots, or separately retained database backups. Operators must
+apply their backup-retention policy separately. Output contains lifecycle
+metadata and row counts, never decrypted household content.

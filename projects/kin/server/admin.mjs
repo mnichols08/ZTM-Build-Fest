@@ -1,6 +1,10 @@
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { DurableStore, DurableStoreError } from "./durable-store.mjs";
+import {
+  acquireDatabaseMaintenanceLock,
+  DurableStore,
+  DurableStoreError,
+} from "./durable-store.mjs";
 import { resolveDurablePath } from "./path-safety.mjs";
 
 const dataDirectory =
@@ -45,8 +49,59 @@ export async function runAdminCommand(args) {
     );
     return;
   }
+  if (
+    (command === "household-status" ||
+      command === "household-verify-purged") &&
+    parameters.length === 1
+  ) {
+    const databasePath = resolveDurablePath(defaultDatabasePath);
+    const store = new DurableStore(databasePath, { readonly: true });
+    try {
+      const status = store.householdPurgeStatus(parameters[0]);
+      if (command === "household-verify-purged" && !status.purged)
+        throw new DurableStoreError(
+          "The Kin household has not been fully purged.",
+        );
+      console.log(JSON.stringify(status, null, 2));
+    } finally {
+      store.close();
+    }
+    return;
+  }
+  if (
+    command === "household-purge" &&
+    parameters.length === 3 &&
+    parameters[1] === "--confirm-household-id" &&
+    parameters[0] === parameters[2]
+  ) {
+    const householdId = parameters[0];
+    const databasePath = resolveDurablePath(defaultDatabasePath);
+    const releaseMaintenanceLock = acquireDatabaseMaintenanceLock(
+      databasePath,
+      "household-purge",
+    );
+    let store;
+    try {
+      store = new DurableStore(databasePath);
+      const status = store.forcePurgeHousehold(householdId, Date.now());
+      console.log(
+        [
+          `Kin household ${householdId} was purged and its deletion tombstone was verified.`,
+          JSON.stringify(status, null, 2),
+          "This does not erase browser storage, offline devices, exports, or separately retained backups.",
+        ].join("\n"),
+      );
+    } finally {
+      try {
+        store?.close();
+      } finally {
+        releaseMaintenanceLock();
+      }
+    }
+    return;
+  }
   throw new DurableStoreError(
-    "Usage: node server/admin.mjs backup <destination> | restore <backup-file> --acknowledge-deletion-history",
+    "Usage: node server/admin.mjs backup <destination> | restore <backup-file> --acknowledge-deletion-history | household-status <household-id> | household-purge <household-id> --confirm-household-id <household-id> | household-verify-purged <household-id>",
   );
 }
 

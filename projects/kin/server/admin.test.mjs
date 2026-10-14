@@ -104,6 +104,97 @@ test("admin explains why restore over pending deletion is refused", async () => 
   }
 });
 
+test("admin force-purges exactly one confirmed household and verifies its tombstone", () => {
+  const directory = mkdtempSync(join(tmpdir(), "kin-admin-purge-"));
+  const databasePath = join(directory, "kin.sqlite");
+  const store = new DurableStore(databasePath);
+  const service = new PairingService({ store });
+  const first = service.bootstrap({
+    credential: {
+      id: "purge-first-passkey",
+      publicKey: "purge-first-key",
+      algorithm: -7,
+    },
+    deviceLabel: "First purge fixture",
+  });
+  const second = service.bootstrap({
+    credential: {
+      id: "purge-second-passkey",
+      publicKey: "purge-second-key",
+      algorithm: -7,
+    },
+    deviceLabel: "Second purge fixture",
+  });
+  store.close();
+  try {
+    const mismatch = admin(
+      databasePath,
+      "household-purge",
+      first.householdId,
+      "--confirm-household-id",
+      second.householdId,
+    );
+    assert.equal(mismatch.status, 1);
+    assert.match(mismatch.stderr, /Usage:/);
+
+    const result = admin(
+      databasePath,
+      "household-purge",
+      first.householdId,
+      "--confirm-household-id",
+      first.householdId,
+    );
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(
+      result.stdout,
+      /was purged and its deletion tombstone was verified/,
+    );
+
+    const verified = admin(
+      databasePath,
+      "household-verify-purged",
+      first.householdId,
+    );
+    assert.equal(verified.status, 0, verified.stderr);
+    assert.equal(JSON.parse(verified.stdout).purged, true);
+
+    const untouched = admin(
+      databasePath,
+      "household-status",
+      second.householdId,
+    );
+    assert.equal(untouched.status, 0, untouched.stderr);
+    const untouchedStatus = JSON.parse(untouched.stdout);
+    assert.equal(untouchedStatus.state, "active");
+    assert.equal(untouchedStatus.purged, false);
+    assert.equal(untouchedStatus.counts.members, 1);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("admin purge refuses malformed and unknown household IDs", () => {
+  const directory = mkdtempSync(join(tmpdir(), "kin-admin-purge-invalid-"));
+  const databasePath = join(directory, "kin.sqlite");
+  new DurableStore(databasePath).close();
+  try {
+    for (const householdId of ["not-an-id", "a".repeat(32)]) {
+      const result = admin(
+        databasePath,
+        "household-purge",
+        householdId,
+        "--confirm-household-id",
+        householdId,
+      );
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("admin and service reject the web root and all descendants before creating files", () => {
   const directory = mkdtempSync(join(tmpdir(), "kin-admin-"));
   const source = join(directory, "kin.sqlite");
