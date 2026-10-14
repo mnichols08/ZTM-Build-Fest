@@ -245,8 +245,23 @@ export async function workspaceUxRegressions(recovery) {
     "9. results carry canonical ids and highlight matches with safe mark elements");
   result("Item", trip.itemId).click();
   await frame();
-  check(app.dataset.route === "lists/todo" && app.selection?.itemId === trip.itemId && app.detail.querySelector(".item-detail-close").textContent === "Back to search",
+  check(app.dataset.route === "lists/todo" && app.selection?.itemId === trip.itemId && app.selection.origin === "search" && app.detail.querySelector(".item-detail-close").textContent === "Back to search",
     "9. an item result opens that record's details in its list");
+  app.openItemDetail(trip.itemId);
+  check(app.selection.origin === "search" && app.detail.querySelector(".item-detail-close").textContent === "Back to search",
+    "9. reopening the same item preserves its Search origin");
+  rowIn(app.needs, forms.itemId).querySelector(".item-details-button").click();
+  await frame();
+  check(app.selection?.itemId === forms.itemId && app.selection.origin === null && app.detail.querySelector(".item-detail-close").textContent !== "Back to search",
+    "9. opening another To do item does not inherit the prior item's Search origin");
+  app.detail.querySelector(".item-detail-close").click();
+  await frame();
+  await frame();
+  check(app.dataset.route === "lists/todo" && app.selection === null,
+    "9. closing the newly selected item returns to its To do list");
+  app.navigate("#search");
+  result("Item", trip.itemId).click();
+  await frame();
   app.detail.querySelector(".item-detail-close").click();
   await frame();
   await frame();
