@@ -6,6 +6,7 @@ export async function syncStorageRegressions(client) {
     const {encryptedDatabase}=await import('/storage/encrypted-idb.js');
     const {getActiveVault}=await import('/security/local-vault.js');
     const {SyncKeyStore}=await import('/sync/key-store.js');
+    const {loadCachedHouseholdSettings}=await import('/sync/sync-coordinator.js');
     const {createHouseholdEpochKey,restoreHouseholdEpochKey}=await import('/sync/crypto.js');
     const {encryptHouseholdSettings,decryptHouseholdSettings}=await import('/appearance/household.js');
     const {DEFAULT_APPEARANCE}=await import('/appearance/store.js');
@@ -13,6 +14,7 @@ export async function syncStorageRegressions(client) {
     const keyStore=await SyncKeyStore.open();
     const pendingDevice=await keyStore.getOrCreatePendingDevice();
     const keyHousehold='12'.repeat(16);
+    const cachedIdentity={householdId:keyHousehold,memberId:'15'.repeat(16),deviceId:'16'.repeat(16)};
     const pinnedPeer={householdId:keyHousehold,memberId:'13'.repeat(16),deviceId:'14'.repeat(16),publicKeys:pendingDevice.publicKeys,fingerprint:pendingDevice.fingerprint};
     await keyStore.pinTrustedDevice(pinnedPeer);
     const epochMaterial=await createHouseholdEpochKey({
@@ -26,6 +28,7 @@ export async function syncStorageRegressions(client) {
     let settingsBinary=''; for(const byte of encryptedSettings.ciphertext) settingsBinary+=String.fromCharCode(byte);
     const settingsRecord={householdId:keyHousehold,revision:1,keyEpoch:1,ciphertext:btoa(settingsBinary).split('+').join('-').split('/').join('_').replace(/=+$/,''),digest:encryptedSettings.digest};
     await keyStore.cacheHouseholdSettings(settingsRecord);
+    await keyStore.bindPendingDevice(cachedIdentity);
     const conflictingEpochMaterial=await createHouseholdEpochKey({
       householdId:keyHousehold,
       keyEpoch:1,
@@ -43,11 +46,12 @@ export async function syncStorageRegressions(client) {
       throw Error('Conflicting household epoch key material was not rejected');
     keyStore.close();
     const reopenedKeyStore=await SyncKeyStore.open();
-    const reopenedDevice=await reopenedKeyStore.getDevice('pending');
+    const reopenedDevice=await reopenedKeyStore.getDevice(cachedIdentity.deviceId);
     const reopenedPin=await reopenedKeyStore.getPinnedDevice(keyHousehold,pinnedPeer.deviceId);
     const reopenedEpoch=await reopenedKeyStore.getEpoch(keyHousehold,1);
     const reopenedSettings=await reopenedKeyStore.getCachedHouseholdSettings(keyHousehold);
     const restoredSettings=await decryptHouseholdSettings(reopenedSettings,{householdId:keyHousehold,householdKey:reopenedEpoch.householdKey});
+    const startupSettings=await loadCachedHouseholdSettings(cachedIdentity,{keyStore:reopenedKeyStore});
     const restoredHouseholdKey=await restoreHouseholdEpochKey({
       sealed:reopenedEpoch.sealed,
       deviceKeys:reopenedDevice.keys,
@@ -56,7 +60,7 @@ export async function syncStorageRegressions(client) {
        reopenedDevice.keys.signingPrivateKey.extractable ||
        restoredHouseholdKey.extractable!==false ||
       reopenedEpoch.fingerprint!==epochMaterial.fingerprint ||
-      reopenedPin?.fingerprint!==pendingDevice.fingerprint || restoredSettings.name!=='Offline Home')
+      reopenedPin?.fingerprint!==pendingDevice.fingerprint || restoredSettings.name!=='Offline Home' || startupSettings.name!=='Offline Home')
       throw Error('IndexedDB did not preserve non-extractable key material safely');
     if(await reopenedKeyStore.getCachedHouseholdSettings('34'.repeat(16))!==null)
       throw Error('Household settings leaked across household identities');

@@ -43,6 +43,25 @@ export function committedBatchUpdate(committed) {
   return update;
 }
 
+export async function loadCachedHouseholdSettings(identity, { keyStore = null } = {}) {
+  if (![identity?.householdId, identity?.memberId, identity?.deviceId].every((value) => /^[a-f0-9]{32}$/.test(value ?? "")))
+    throw new Error("Kin could not identify the local household settings cache.");
+  const ownedStore = !keyStore;
+  const store = keyStore ?? await SyncKeyStore.open();
+  try {
+    const device = await store.getDevice(identity.deviceId);
+    if (!device || device.householdId !== identity.householdId || device.memberId !== identity.memberId)
+      throw new Error("Kin could not match the local household settings cache to this device.");
+    const cached = await store.getCachedHouseholdSettings(identity.householdId);
+    if (!cached) return null;
+    const epoch = await store.getEpoch(identity.householdId, cached.keyEpoch);
+    if (!epoch) throw new Error("This device does not have the key needed to read the shared appearance.");
+    return decryptHouseholdSettings(cached, { householdId: identity.householdId, householdKey: epoch.householdKey });
+  } finally {
+    if (ownedStore) store.close();
+  }
+}
+
 export function portableMembershipFromDirectory(entries) {
   if (!Array.isArray(entries) || entries.length > 12)
     throw new Error("Kin could not validate current household membership for export.");
@@ -883,9 +902,8 @@ export class SyncCoordinator {
       response = await this.request("/api/household/settings");
     } catch (error) {
       if (error.code !== "connection_unavailable" && navigator.onLine !== false) throw error;
-      const cached = await this.keyStore.getCachedHouseholdSettings(this.identity.householdId);
-      if (!cached) return { owner: false, ownerRecorded: false, value: null, offline: true };
-      return { owner: false, ownerRecorded: true, value: await this.decryptCachedHouseholdSettings(cached), offline: true };
+      const value = await this.loadCachedHouseholdSettings();
+      return { owner: false, ownerRecorded: false, value, offline: true };
     }
     if (!response.settings) return { owner: response.owner, ownerRecorded: response.ownerRecorded, value: null };
     const candidate = { householdId: this.identity.householdId, ...response.settings };
@@ -893,6 +911,10 @@ export class SyncCoordinator {
     const cached = await this.keyStore.cacheHouseholdSettings(candidate);
     return { owner: response.owner, ownerRecorded: response.ownerRecorded,
       value: cached.revision === candidate.revision ? value : await this.decryptCachedHouseholdSettings(cached) };
+  }
+
+  loadCachedHouseholdSettings() {
+    return loadCachedHouseholdSettings(this.identity, { keyStore: this.keyStore });
   }
 
   async decryptCachedHouseholdSettings(settings) {

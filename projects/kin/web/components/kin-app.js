@@ -14,7 +14,7 @@ import "./kin-areas.js";
 import "./kin-notes.js";
 import { loadKinEngine, randomId } from "../wasm/kin-engine.js";
 import { EventStore } from "../storage/event-store.js";
-import { SyncCoordinator } from "../sync/sync-coordinator.js";
+import { loadCachedHouseholdSettings, SyncCoordinator } from "../sync/sync-coordinator.js";
 import "./kin-compose.js";
 import "./kin-item.js";
 import "./kin-item-detail.js";
@@ -1514,6 +1514,7 @@ class KinApp extends HTMLElement {
       const snapshot = await store.getCatchUpState();
       this.assertCurrentSession(session);
       this.applyCatchUpSnapshot(snapshot);
+      await this.restoreCachedHouseholdDefaults(snapshot.syncIdentity, session);
       this.renderState();
       void this.refreshAttachmentRows();
       this.main.hidden = false;
@@ -3132,6 +3133,19 @@ class KinApp extends HTMLElement {
       this.householdDefaults.initialize({ ...result, value: this.householdSettings });
       this.applyEffectiveAppearance();
     } catch { this.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded."); }
+  }
+
+  async restoreCachedHouseholdDefaults(identity, session = this.captureSession()) {
+    if (!identity) return;
+    try {
+      const value = await loadCachedHouseholdSettings(identity);
+      this.assertCurrentSession(session);
+      if (value && (this.householdSettings?.revision ?? -1) <= value.revision) this.householdSettings = value;
+      this.householdDefaults.initialize({ owner: false, ownerRecorded: false, value: this.householdSettings });
+      this.applyEffectiveAppearance();
+    } catch {
+      if (this.isCurrentSession(session)) this.setStatus("Kin couldn't restore the last shared appearance. Local household information is still available.");
+    }
   }
 
   async handleSaveHouseholdDefaults(event) {
