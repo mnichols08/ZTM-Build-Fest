@@ -140,11 +140,14 @@ Active items (not Staples) with `planningDate > civilDate` are listed under
 order (the sort is stable), so every device shows the same order. A completed
 future-dated item is not today's work and leaves Today.
 
-### 3.3b Task summary and actionable rows
+### 3.3b Item summary and actionable rows
 
-When the household has any task, a "Task summary" (visually hidden heading)
-heads the task sections with counts of tasks still open from earlier, planned
-for today, coming up and done today. Each count is the length of the list the
+When the household has any task or shopping item, an "Item summary"
+(visually hidden heading) heads the task sections with counts of items still
+open from earlier, planned for today, coming up, and completed from today's
+plans. "Items" covers both tasks and shopping items. The completed count is
+items planned for today (or undated legacy Today items) whose status is
+completed; it is not a count of everything completed on this calendar day. Each count is the length of the list the
 same `composeToday` call returned, so a completed task can only be counted as
 done and the counts change only when the projection does. Non-zero counts are
 native buttons that move focus to their section (the done count opens the

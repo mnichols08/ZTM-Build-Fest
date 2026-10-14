@@ -115,8 +115,8 @@ export async function todayActionableRegressions(recovery) {
     sectionOf(fixtures.upcoming.itemId, full) === "upcoming" && sectionOf(fixtures.completed.itemId, full) === "completed",
   "A. each fixture record lands in exactly its section");
   const entries = [...full.querySelectorAll(".today-summary-entry")].map((node) => node.textContent);
-  check(JSON.stringify(entries) === JSON.stringify(["1 task still open from earlier", "1 task planned for today", "1 task coming up", "1 task done today"]) &&
-    full.querySelector(".today-summary h2")?.textContent === "Task summary" && !/overdue|late|behind/i.test(full.textContent),
+  check(JSON.stringify(entries) === JSON.stringify(["1 item still open from earlier", "1 item planned for today", "1 item coming up", "1 item completed from today's plans"]) &&
+    full.querySelector(".today-summary h2")?.textContent === "Item summary" && !/overdue|late|behind/i.test(full.textContent),
   `A. summary counts read as complete phrases for screen readers in calm language (${JSON.stringify(entries)})`);
   check(full.querySelector(`[data-item-id="${fixtures.today.itemId}"][data-item-action="complete"]`)?.getAttribute("aria-label") === "Complete Call the dentist" &&
     full.querySelector(`[data-item-id="${fixtures.completed.itemId}"][data-item-action="reopen"]`)?.getAttribute("aria-label") === "Reopen Pack lunches" &&
@@ -126,13 +126,22 @@ export async function todayActionableRegressions(recovery) {
   check(document.activeElement === full.querySelector('[data-section="upcoming"] h2'), "A. a count moves focus to its section heading");
   full.querySelector('[data-summary="completed"]').click();
   check(full.querySelector(".completed-disclosure").open && document.activeElement === full.querySelector(".completed-disclosure summary"),
-    "A. the done count opens the Completed disclosure and focuses it");
+    "A. the completed count opens the Completed disclosure and focuses it");
   full.disabled = true;
   check([...full.querySelectorAll("[data-summary]")].every((node) => node.disabled) && full.querySelector(".complete-button").disabled,
     "A. while saving, summary and task controls are disabled like every other workspace control");
   full.disabled = false;
   check([...full.querySelectorAll("[data-summary]")].every((node) => !node.disabled), "A. summary controls re-enable once saving ends");
   full.remove();
+
+  // Today mixes record types, so the summary says "items" and pluralises.
+  const shoppingToday = { ...record("d0000000000000000000000000000005", "Buy eggs", DAY), classification: "shopping" };
+  const mixed = mount({ today: DAY, items: [fixtures.today, shoppingToday, fixtures.completed] });
+  const mixedEntries = [...mixed.querySelectorAll(".today-summary-entry")].map((node) => node.textContent);
+  check(JSON.stringify(mixedEntries) === JSON.stringify(["2 items planned for today", "0 items coming up", "1 item completed from today's plans"]) &&
+    !/tasks?/.test(mixed.querySelector(".today-summary").textContent),
+  `A. a task and a shopping item are summarised as items with correct plurals (${JSON.stringify(mixedEntries)})`);
+  mixed.remove();
 
   const noUpcoming = mount({ today: DAY, items: [fixtures.today] });
   check(/Nothing is planned for the coming days/.test(noUpcoming.querySelector('[data-section="upcoming"]').textContent) &&

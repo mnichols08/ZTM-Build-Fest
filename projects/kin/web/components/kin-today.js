@@ -232,7 +232,7 @@ class KinToday extends HTMLElement {
     return section;
   }
 
-  // Task counts from the same composition that renders the sections below,
+  // Item counts (tasks and shopping items) from the same composition that renders the sections below,
   // so they can never drift from what is listed. Each non-zero count is a
   // native button that moves focus to its section; like every other control
   // here it is disabled while a change is saving.
@@ -242,14 +242,14 @@ class KinToday extends HTMLElement {
     section.dataset.section = "summary";
     const heading = document.createElement("h2");
     heading.className = "visually-hidden";
-    heading.textContent = "Task summary";
+    heading.textContent = "Item summary";
     const list = document.createElement("ul");
     list.className = "today-summary-list";
     const entries = [
       ["earlier", counts.earlier, "still open from earlier"],
       ["today", counts.today, "planned for today"],
       ["upcoming", counts.upcoming, "coming up"],
-      ["completed", counts.completed, "done today"],
+      ["completed", counts.completed, "completed from today's plans"],
     ].filter(([kind, count]) => kind !== "earlier" || count > 0);
     for (const [kind, count, label] of entries) {
       const entry = document.createElement("li");
@@ -265,7 +265,7 @@ class KinToday extends HTMLElement {
       const number = document.createElement("span");
       number.className = "today-summary-count";
       number.textContent = String(count);
-      content.append(number, document.createTextNode(` ${count === 1 ? "task" : "tasks"} ${label}`));
+      content.append(number, document.createTextNode(` ${count === 1 ? "item" : "items"} ${label}`));
       entry.append(content);
       list.append(entry);
     }
