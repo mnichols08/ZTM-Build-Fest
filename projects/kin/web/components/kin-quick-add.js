@@ -103,8 +103,11 @@ class KinQuickAdd extends HTMLElement {
       }
     });
     this.dialog.addEventListener("close", () => {
-      if (this.opener?.isConnected) this.opener.focus();
+      // An opener inside a list can be replaced by the save's re-render.
+      const target = this.opener?.isConnected ? this.opener : this.fallback?.() ?? this.trigger;
+      if (target?.isConnected) target.focus();
       this.opener = null;
+      this.fallback = null;
     });
     this.disabled = this.isDisabled;
   }
@@ -119,12 +122,13 @@ class KinQuickAdd extends HTMLElement {
     this.cancelButton.disabled = saving;
   }
 
-  open() {
+  open({ opener = null, fallback = null } = {}) {
     if (this.isDisabled || this.dialog.open) return;
     this.clearDraft();
     this.defaults = captureDefaults();
     this.destination.textContent = `Adds to ${this.defaults.destination}.`;
-    this.opener = this.trigger;
+    this.opener = opener?.isConnected ? opener : this.trigger;
+    this.fallback = typeof fallback === "function" ? fallback : null;
     this.dialog.showModal();
     this.input.focus();
   }
