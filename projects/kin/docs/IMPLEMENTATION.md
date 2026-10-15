@@ -101,7 +101,7 @@ See [ABI](ABI.md), [Storage](STORAGE.md), and [Components](COMPONENTS.md) for im
 
 The target is `wasm32-unknown-unknown`. The local WASM artifact is loaded by the page; no remote code loader is used. Kin has no `wasm-bindgen`, `web-sys`, `js-sys`, `serde`, `serde_json`, UI framework, or runtime library dependency. `build-wasm.ps1` and `build-wasm.sh` build and copy the artifact; `run.ps1` and `run.sh` reuse those scripts before serving the static web root on loopback for development.
 
-`web/index.html` applies a same-origin Content Security Policy. It allows `wasm-unsafe-eval` only for WebAssembly compilation/instantiation; scripts, styles, fetches, images, and fonts remain same-origin. The policy denies objects and restricts base/form targets. A meta-delivered policy cannot set `frame-ancestors`; production hosting should add that directive as an HTTP response header if framing must be prohibited.
+`web/index.html` applies a same-origin Content Security Policy. It allows `wasm-unsafe-eval` only for WebAssembly compilation/instantiation; scripts, styles, fetches, images, and fonts remain same-origin. The policy denies objects and restricts base/form targets. Because a meta-delivered policy cannot set `frame-ancestors`, Kin's server also sends `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY`. Deployments that replace the built-in server must preserve those response headers.
 
 ## Browser support floor
 

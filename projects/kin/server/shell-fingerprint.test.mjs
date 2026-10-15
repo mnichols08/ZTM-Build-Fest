@@ -6,6 +6,14 @@ import { join } from "node:path";
 import { createKinServer, fingerprintedShell, shellFingerprint } from "./server.mjs";
 import { DurableStore } from "./durable-store.mjs";
 
+function assertFramingDenied(response) {
+  assert.equal(
+    response.headers.get("content-security-policy"),
+    "frame-ancestors 'none'",
+  );
+  assert.equal(response.headers.get("x-frame-options"), "DENY");
+}
+
 test("the shell fingerprint hashes served content deterministically and ignores test files", () => {
   const root = mkdtempSync(join(tmpdir(), "kin-shell-"));
   try {
@@ -43,6 +51,7 @@ test("index.html is served with the release plus fingerprint while the static fi
     for (const path of ["/", "/index.html", "/pair"]) {
       const response = await fetch(`${origin}${path}`);
       assert.equal(response.status, 200);
+      assertFramingDenied(response);
       const html = await response.text();
       const version = /<meta name="kin-version" content="([^"]+)"/.exec(html)?.[1];
       assert.match(version, /^\d+\.\d+\.\d+\+[a-f0-9]{12}$/, `${path} carries the fingerprint: ${version}`);
@@ -50,7 +59,11 @@ test("index.html is served with the release plus fingerprint while the static fi
     }
     const worker = await fetch(`${origin}/service-worker.js?v=0.41.0+abc123def456`);
     assert.equal(worker.status, 200);
+    assertFramingDenied(worker);
     assert.match(await worker.text(), /kin-static-v\$\{RELEASE\}/);
+    const api = await fetch(`${origin}/api/status`);
+    assert.equal(api.status, 200);
+    assertFramingDenied(api);
   } finally {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
