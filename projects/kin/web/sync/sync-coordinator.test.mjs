@@ -167,3 +167,13 @@ test("household settings are cached only after validation and newer protected re
   await assert.rejects(() => coordinator.loadHouseholdSettings(), /tampered/);
   assert.deepEqual(calls, []);
 });
+
+test("a member listed twice must agree field by field", () => {
+  const entry = { memberId: "aa".repeat(16), memberKind: "temporary", memberActive: true, memberStatus: "active", memberExpiresAt: 9_000 };
+  // The same record with its fields in another order is one member.
+  const reordered = { memberExpiresAt: 9_000, memberStatus: "active", memberActive: true, memberKind: "temporary", memberId: "aa".repeat(16) };
+  assert.deepEqual(portableMembershipFromDirectory([entry, reordered]),
+    [{ memberId: "aa".repeat(16), memberKind: "temporary", status: "active", expiresAt: 9_000 }]);
+  for (const change of [{ memberStatus: "removed", memberActive: false }, { memberExpiresAt: 9_001 }])
+    assert.throws(() => portableMembershipFromDirectory([entry, { ...entry, ...change }]), /conflicting membership/);
+});

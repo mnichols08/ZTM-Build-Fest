@@ -85,12 +85,19 @@ export function portableMembershipFromDirectory(entries) {
       ...(expiresAt === undefined ? {} : { expiresAt }),
     };
     const prior = members.get(record.memberId);
-    if (prior && JSON.stringify(prior) !== JSON.stringify(record))
+    if (prior && !sameMembershipRecord(prior, record))
       throw new Error("Kin found conflicting membership records during export.");
     members.set(record.memberId, record);
   }
   return [...members.values()].sort((left, right) =>
     left.memberId < right.memberId ? -1 : left.memberId > right.memberId ? 1 : 0);
+}
+
+// Two portable membership records agree when every field does. Compared
+// field by field: a JSON string comparison also depends on key order.
+function sameMembershipRecord(left, right) {
+  return left.memberId === right.memberId && left.memberKind === right.memberKind &&
+    left.status === right.status && left.expiresAt === right.expiresAt;
 }
 
 const MAX_PUSH_BATCH = 20;
