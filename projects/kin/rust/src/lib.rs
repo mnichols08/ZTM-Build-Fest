@@ -8,6 +8,7 @@ pub mod event;
 pub mod event_decode;
 pub mod history;
 pub mod recurrence;
+pub mod replay;
 pub mod request;
 pub mod sections;
 pub mod state;
