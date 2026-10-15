@@ -37,13 +37,6 @@ export async function catchUpRegressions() {
       request.onerror = () => reject(request.error);
     });
   };
-  const resetCursor = async () => {
-    const existing = await context();
-    delete existing.last_looked_event_id;
-    delete existing.last_looked_local_sequence;
-    delete existing.last_looked_at;
-    await writeContext(existing);
-  };
   const makeBoundary = (snapshot) => ({
     eventId: snapshot.through.eventId,
     localSequence: snapshot.through.localSequence,
@@ -51,37 +44,17 @@ export async function catchUpRegressions() {
     snapshotThroughLocalSequence: snapshot.through.localSequence,
   });
 
-  let rows = await app.store.loadEvents();
-  let localContext = await context();
-  const historyCount = rows.length;
-  const logicalTime = localContext.next_logical_time;
-  const oldTail = rows.at(-1);
-  await resetCursor();
-  const initialized = await context();
-  check(
-    initialized.last_looked_local_sequence === oldTail.local_sequence &&
-      [...initialized.last_looked_event_id].every(
-        (byte, index) => byte === oldTail.event_id[index],
-      ),
-    "legacy context initializes caught up through existing history",
-  );
-  check(
-    initialized.next_logical_time === logicalTime &&
-      (await count()) === historyCount,
-    "first-run initialization does not mutate events or logical time",
-  );
+  // Start caught up through the existing history, through the real path.
+  let localContext;
+  const existing = await app.store.getCatchUpState();
+  if (existing.through) await app.store.markCaughtUpThrough(makeBoundary(existing));
   await app.refreshFromEvents();
   check(
     app.state.summary.totalCount === 0 &&
       app.catchUp.empty.textContent === "You're caught up.",
-    "existing history does not flood the first summary",
+    "history already marked as seen does not flood the summary",
   );
-
-  await resetCursor();
-  rows = await app.store.loadEvents();
-  const initializationTail = rows.at(-1);
-  const initialization = app.store.ensureContext();
-  const concurrentAppend = app.store.append(
+  const appendResult = await app.store.append(
     {
       type: "add",
       text: "Initialization race addition",
@@ -89,20 +62,11 @@ export async function catchUpRegressions() {
     },
     app.engine,
   );
-  const [initializedContext, appendResult] = await Promise.all([
-    initialization,
-    concurrentAppend,
-  ]);
-  check(
-    initializedContext.last_looked_local_sequence ===
-      initializationTail.local_sequence,
-    "initialization captures the pre-append transaction boundary",
-  );
   check(
     appendResult.state.summary.totalCount === 1 &&
       appendResult.state.summary.entries[0].text ===
         "Initialization race addition",
-    "an append ordered after initialization remains unseen",
+    "an append after the cursor remains unseen",
   );
   const handoff = await app.store.append(
     { type: "add-handoff", text: "Diaper bag summary" },

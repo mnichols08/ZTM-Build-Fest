@@ -422,73 +422,16 @@ async function regressions() {
     "startup, normal add, own draft clearing, sessionStorage removal, focus, busy",
   );
 
-  const legacyText = "Legacy v0.1 item";
-  const legacyTextBytes = new TextEncoder().encode(legacyText);
-  const legacyContext = await app.store.ensureContext();
-  const legacyEventId = crypto.getRandomValues(new Uint8Array(16));
-  const legacyItemId = crypto.getRandomValues(new Uint8Array(16));
-  const legacyTimestamp = Date.now();
-  const legacyLogicalTime = legacyContext.next_logical_time;
-  const legacyPayload = new Uint8Array(20 + legacyTextBytes.length);
-  legacyPayload.set(legacyItemId);
-  new DataView(legacyPayload.buffer).setUint32(
-    16,
-    legacyTextBytes.length,
-    true,
-  );
-  legacyPayload.set(legacyTextBytes, 20);
-  const legacyBytes = new Uint8Array(88 + legacyPayload.length);
-  const legacyView = new DataView(legacyBytes.buffer);
-  legacyView.setUint16(0, 1, true);
-  legacyView.setUint16(2, 1, true);
-  legacyBytes.set(legacyEventId, 4);
-  legacyBytes.set(legacyContext.household_id, 20);
-  legacyBytes.set(legacyContext.actor_id, 36);
-  legacyBytes.set(legacyContext.device_id, 52);
-  legacyView.setBigInt64(68, BigInt(legacyTimestamp), true);
-  legacyView.setBigUint64(76, legacyLogicalTime, true);
-  legacyView.setUint32(84, legacyPayload.length, true);
-  legacyBytes.set(legacyPayload, 88);
-  const legacyTransaction = app.store.database.transaction(
-    ["events", "local_context"],
-    "readwrite",
-  );
-  const legacyCompletion = new Promise((resolve, reject) => {
-    legacyTransaction.oncomplete = resolve;
-    legacyTransaction.onabort = () => reject(legacyTransaction.error);
-  });
-  legacyTransaction.objectStore("events").add({
-    event_id: legacyEventId,
-    household_id: legacyContext.household_id,
-    actor_id: legacyContext.actor_id,
-    device_id: legacyContext.device_id,
-    timestamp: legacyTimestamp,
-    logical_time: legacyLogicalTime,
-    kind: "ITEM_ADDED",
-    event_version: 1,
-    encoded_event: legacyBytes,
-  });
-  legacyTransaction.objectStore("local_context").put({
-    ...legacyContext,
-    next_logical_time: legacyLogicalTime + 1n,
-  });
-  await legacyCompletion;
+  // An undated Item with the Today classification, which earlier captures
+  // used; later checks keep it on Today and under To do.
+  const legacyText = "Legacy Today item";
+  await app.store.append({ type: "add", text: legacyText, classification: "today" }, app.engine);
   await app.refreshFromEvents();
-  const legacyStored = (await app.store.loadEvents()).at(-1).encoded_event;
   check(
-    [...new Uint8Array(legacyStored)].every(
-      (byte, index) => byte === legacyBytes[index],
-    ),
-    "legacy source bytes remain unchanged",
+    app.state.items.find((item) => item.text === legacyText).classification === "today",
+    "a Today-classified Item replays as Today",
   );
-  check(
-    app.state.items.find((item) => item.text === legacyText).classification ===
-      "today",
-    "legacy item normalizes to Today",
-  );
-  passed.push(
-    "synthetic v0.1 event replay, Today normalization, immutable source bytes",
-  );
+  passed.push("Today-classified Item replay");
 
   const replayRecords = (await app.store.loadEvents()).map(
     (event) => event.encoded_event,
@@ -2552,13 +2495,14 @@ try {
       const itemId=new Uint8Array(16);
       new DataView(eventId.buffer).setUint32(12,index+1,true);
       new DataView(itemId.buffer).setUint32(12,index+1,true);
-      const payload=new Uint8Array(21);
+      const payload=new Uint8Array(25);
       payload.set(itemId);
-      payload.set(textLength,16);
-      payload.set(textBytes,20);
+      payload[16]=1; // Need; three reserved zero bytes follow
+      payload.set(textLength,20);
+      payload.set(textBytes,24);
       const encoded=new Uint8Array(88+payload.length);
       const view=new DataView(encoded.buffer);
-      view.setUint16(0,1,true);
+      view.setUint16(0,2,true);
       view.setUint16(2,1,true);
       encoded.set(eventId,4);
       encoded.set(context.household_id,20);
@@ -2572,12 +2516,10 @@ try {
       encoded.set(payload,88);
       events.add({event_id:eventId,household_id:context.household_id,actor_id:context.actor_id,
         device_id:context.device_id,timestamp,logical_time:logicalTime,kind:'ITEM_ADDED',
-        event_version:1,encoded_event:encoded});
+        event_version:2,encoded_event:encoded});
     }
-    const replacementContext={...context,next_logical_time:nextLogicalTime};
-    delete replacementContext.last_looked_event_id;
-    delete replacementContext.last_looked_local_sequence;
-    delete replacementContext.last_looked_at;
+    const replacementContext={...context,next_logical_time:nextLogicalTime,
+      last_looked_event_id:null,last_looked_local_sequence:0,last_looked_at:Date.now()};
     transaction.objectStore('local_context').put(replacementContext);
     await new Promise((resolve,reject)=>{
       transaction.oncomplete=resolve;

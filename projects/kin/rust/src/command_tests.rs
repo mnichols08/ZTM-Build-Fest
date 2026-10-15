@@ -4,8 +4,9 @@ use crate::command::{
 };
 use crate::error::KinError;
 use crate::event::*;
-use crate::protocol::{decode_event, DecodedRequest};
+use crate::event_decode::decode_event;
 use crate::recurrence::{Cadence, CivilDate};
+use crate::request::DecodedRequest;
 use crate::state::ItemStatus;
 
 fn day() -> CivilDate {
@@ -23,11 +24,10 @@ fn context(sequence: u8) -> CommandContext {
 }
 fn request(events: Vec<EventEnvelope>) -> DecodedRequest {
     DecodedRequest {
-        protocol_version: 7,
         events,
-        as_of: Some(1234),
+        as_of: 1234,
         summary_cursor: None,
-        civil_date: Some(day()),
+        civil_date: day(),
         target_household_id: None,
         identity_bindings: vec![],
     }
@@ -159,7 +159,7 @@ fn every_command_has_a_lossless_canonical_roundtrip() {
     ];
     for command in commands {
         let event = create_event(&command, context(1)).unwrap();
-        let decoded = decode_event(&event.canonical_bytes, 8).unwrap();
+        let decoded = decode_event(&event.canonical_bytes).unwrap();
         assert_eq!(event, decoded);
         assert_eq!(encode_event(&decoded).unwrap(), event.canonical_bytes);
         for end in 0..event.canonical_bytes.len() {
@@ -169,141 +169,87 @@ fn every_command_has_a_lossless_canonical_roundtrip() {
 }
 
 #[test]
-fn richer_routine_creation_requires_protocol_v12() {
-    let command = C::CreateRoutine {
-        id: RoutineId([9; 16]),
-        text: "Replace water filter".into(),
-        cadence: Cadence::Monthly,
-        created_on: CivilDate::from_encoded(20261003).unwrap(),
-    };
-    assert_eq!(
-        execute(&command, context(1), request(vec![])).unwrap_err(),
-        KinError::UnsupportedVersion
-    );
-
-    let mut compatible = request(vec![]);
-    compatible.protocol_version = 12;
-    let result = execute(&command, context(1), compatible).unwrap();
-    assert_eq!(result.projection.routines[0].cadence, Cadence::Monthly);
-    assert_eq!(&result.encoded_projection[..4], b"KINS");
-    assert_eq!(&result.encoded_projection[4..6], &[12, 0]);
+fn every_cadence_and_classification_projects_under_protocol_24() {
+    for (n, cadence) in [
+        Cadence::Daily,
+        Cadence::Weekly,
+        Cadence::Biweekly,
+        Cadence::Monthly,
+        Cadence::Weekdays,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let command = C::CreateRoutine {
+            id: RoutineId([9 + n as u8; 16]),
+            text: "Replace water filter".into(),
+            cadence,
+            created_on: day(),
+        };
+        let result = execute(&command, context(1), request(vec![])).unwrap();
+        assert_eq!(result.projection.routines[0].cadence, cadence);
+        assert_eq!(&result.encoded_projection[..6], b"KINS\x18\0");
+    }
+    for classification in [
+        ItemClassification::Today,
+        ItemClassification::Need,
+        ItemClassification::Shopping,
+        ItemClassification::Staple,
+    ] {
+        let command = C::AddItem {
+            id: ItemId([9; 16]),
+            text: "Buy wipes".into(),
+            classification,
+        };
+        let result = execute(&command, context(1), request(vec![])).unwrap();
+        assert_eq!(result.projection.items[0].classification, classification);
+    }
 }
 
 #[test]
-fn shopping_items_require_protocol_v13() {
-    let command = C::AddItem {
-        id: ItemId([9; 16]),
-        text: "Buy wipes".into(),
-        classification: ItemClassification::Shopping,
-    };
-    assert_eq!(
-        execute(&command, context(1), request(vec![])).unwrap_err(),
-        KinError::UnsupportedVersion
-    );
-
-    let mut compatible = request(vec![]);
-    compatible.protocol_version = 13;
-    let result = execute(&command, context(1), compatible).unwrap();
-    assert_eq!(
-        result.projection.items[0].classification,
-        ItemClassification::Shopping
-    );
-    assert_eq!(&result.encoded_projection[..4], b"KINS");
-    assert_eq!(&result.encoded_projection[4..6], &[13, 0]);
-}
-
-#[test]
-fn staple_items_require_protocol_v14() {
-    let command = C::AddItem {
-        id: ItemId([10; 16]),
-        text: "Laundry detergent".into(),
-        classification: ItemClassification::Staple,
-    };
-    let mut older = request(vec![]);
-    older.protocol_version = 13;
-    assert_eq!(
-        execute(&command, context(1), older).unwrap_err(),
-        KinError::UnsupportedVersion
-    );
-
-    let mut compatible = request(vec![]);
-    compatible.protocol_version = 14;
-    let result = execute(&command, context(1), compatible).unwrap();
-    assert_eq!(
-        result.projection.items[0].classification,
-        ItemClassification::Staple
-    );
-    assert_eq!(&result.encoded_projection[..4], b"KINS");
-    assert_eq!(&result.encoded_projection[4..6], &[14, 0]);
-}
-
-#[test]
-fn item_planning_dates_require_protocol_v16_and_can_be_cleared() {
-    let created = execute(&add(), context(1), {
-        let mut request = request(vec![]);
-        request.protocol_version = 16;
-        request
-    })
-    .unwrap()
-    .event;
+fn item_planning_dates_can_be_set_and_cleared() {
+    let created = execute(&add(), context(1), request(vec![])).unwrap().event;
     let command = C::SetItemPlanningDate {
         item_id: ItemId([4; 16]),
         planning_date: Some(CivilDate::from_encoded(20261004).unwrap()),
     };
-    let mut older = request(vec![created.clone()]);
-    older.protocol_version = 15;
-    assert_eq!(
-        execute(&command, context(2), older).unwrap_err(),
-        KinError::UnsupportedVersion
-    );
-
-    let mut current = request(vec![created.clone()]);
-    current.protocol_version = 16;
-    let changed = execute(&command, context(2), current).unwrap();
+    let changed = execute(&command, context(2), request(vec![created.clone()])).unwrap();
     assert_eq!(
         changed.projection.items[0].planning_date,
         Some(CivilDate::from_encoded(20261004).unwrap())
     );
     assert_eq!(changed.event.canonical_bytes[2..4], [30, 0]);
     assert_eq!(
-        decode_event(&changed.event.canonical_bytes, 16)
-            .unwrap()
-            .kind,
+        decode_event(&changed.event.canonical_bytes).unwrap().kind,
         EventKind::ItemPlanningDateChanged {
             item_id: ItemId([4; 16]),
             planning_date: Some(CivilDate::from_encoded(20261004).unwrap()),
         }
     );
-    assert!(decode_event(&changed.event.canonical_bytes, 15).is_err());
-
     let clear = C::SetItemPlanningDate {
         item_id: ItemId([4; 16]),
         planning_date: None,
     };
-    let cleared = execute(&clear, context(3), {
-        let mut request = request(vec![created, changed.event]);
-        request.protocol_version = 16;
-        request
-    })
-    .unwrap();
+    let cleared = execute(&clear, context(3), request(vec![created, changed.event])).unwrap();
     assert_eq!(cleared.projection.items[0].planning_date, None);
 }
 
 #[test]
-fn codec_preserves_legacy_schema_one_and_rejects_lossy_schema() {
+fn item_added_schema_one_is_no_longer_encoded_or_decoded() {
+    // Protocol 24 writes ITEM_ADDED only as schema 2; the v0.1 schema-1 payload
+    // was a legacy format and is refused in both directions.
     let mut event = create_event(&add(), context(1)).unwrap();
     event.event_version = 1;
     assert_eq!(encode_event(&event), Err(KinError::UnsupportedVersion));
-    if let EventKind::ItemAdded { classification, .. } = &mut event.kind {
-        *classification = ItemClassification::Today;
-    }
-    let bytes = encode_event(&event).unwrap();
-    assert_eq!(&bytes[..4], &[1, 0, 1, 0]);
-    assert_eq!(bytes.len(), 108 + "Milk 🥛".len());
-    for protocol in 1..=9 {
-        let decoded = decode_event(&bytes, protocol).unwrap();
-        assert_eq!(encode_event(&decoded).unwrap(), bytes);
-    }
+    let mut legacy = Vec::new();
+    legacy.extend_from_slice(&[1, 0, 1, 0]);
+    legacy.extend_from_slice(&event.canonical_bytes[4..84]);
+    let text = "Milk".as_bytes();
+    legacy.extend_from_slice(&(20 + text.len() as u32).to_le_bytes());
+    legacy.extend_from_slice(&[4; 16]);
+    legacy.extend_from_slice(&(text.len() as u32).to_le_bytes());
+    legacy.extend_from_slice(text);
+    assert_eq!(decode_event(&legacy), Err(KinError::UnsupportedVersion));
     let area = create_event(
         &C::CreateArea {
             id: crate::event::AreaId([7; 16]),
@@ -313,13 +259,12 @@ fn codec_preserves_legacy_schema_one_and_rejects_lossy_schema() {
     )
     .unwrap();
     assert_eq!(
-        decode_event(&area.canonical_bytes, 9).unwrap().kind,
+        decode_event(&area.canonical_bytes).unwrap().kind,
         EventKind::AreaCreated {
             area_id: crate::event::AreaId([7; 16]),
             name: "Kitchen".into(),
         }
     );
-    assert!(decode_event(&area.canonical_bytes, 8).is_err());
 }
 
 #[test]

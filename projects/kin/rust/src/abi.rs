@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use crate::error::KinError;
-use crate::protocol::{ERROR_PROTOCOL_VERSION, MAX_PROTOCOL_BYTES};
+use crate::wire::{ERROR_PROTOCOL_VERSION, MAX_PROTOCOL_BYTES};
 
 struct AbiState {
     allocations: BTreeMap<u32, Box<[u8]>>,
@@ -207,7 +207,7 @@ pub extern "C" fn kin_error_len() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::request_length_is_supported;
-    use crate::protocol::MAX_PROTOCOL_BYTES;
+    use crate::wire::MAX_PROTOCOL_BYTES;
 
     #[test]
     fn request_size_is_bounded_before_pointer_dereference() {

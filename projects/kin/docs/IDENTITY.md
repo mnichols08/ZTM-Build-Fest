@@ -2,6 +2,18 @@
 
 **Status:** v0.12.3 implementation candidate; awaiting human review. Server member/passkey/device authorization remains distinct from the local encryption unlock. The service persists identity and device-token verifiers; raw tokens and sessions remain ephemeral. Household deletion is a separate lifecycle and an encrypted local archive restores local history, not an authenticated server household.
 
+## Placeholder identities and bindings
+
+A household starts local-only, so its first events carry locally generated
+placeholder household, actor and device IDs inside their canonical bytes.
+Enabling sync never rewrites those bytes. Instead a signed, encrypted binding
+maps the exact placeholder tuple (`legacyHouseholdId`, `legacyActorId`,
+`legacyDeviceId`) to the authenticated household, member and device, and
+every protocol-24 replay of that history applies it ([ABI](ABI.md)). The
+"legacy" names refer to pre-sync placeholders, not to an old format: removing
+them would make every household created before pairing unreplayable after
+sync. The refactor track's protocol reset (Slice 2) therefore keeps them.
+
 ## Separate identities
 
 ```text

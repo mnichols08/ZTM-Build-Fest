@@ -46,6 +46,11 @@ It is a derived cache, never a second source of truth:
   mismatch) zero-fill every arena buffer and drop it. Growth zero-fills the
   buffers it replaces.
 
+The v0.5→v0.6 backfill that initialized missing catch-up cursor fields was
+removed with the protocol reset (Slice 2, D3): a context without all three
+fields now fails closed like a partial one. Archive restore accepts only
+package format 2 with `formatVersion: 2` snapshots.
+
 Projection equivalence is enforced by `scripts/event-arena-regression.mjs`:
 the cached path must produce byte-identical protocol-24 projection bytes to a
 fresh full read and full replay with the same `as_of`, civil date, cursor and

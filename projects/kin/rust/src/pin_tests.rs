@@ -1,9 +1,22 @@
 use crate::command::{create_event, execute, CommandContext, HouseholdCommand as C};
 use crate::error::KinError;
 use crate::event::*;
-use crate::protocol::{decode_event, DecodedRequest, PROTOCOL_V18};
+use crate::event_decode::decode_event;
 use crate::recurrence::CivilDate;
-use crate::state::{rebuild, rebuild_distributed_on, ItemStatus, MAX_PINS};
+use crate::request::DecodedRequest;
+use crate::state::{rebuild, ItemStatus, MAX_PINS};
+
+/// Protocol-24 replay at a fixed instant and civil date for tests that do not
+/// depend on time.
+fn replay(
+    events: &[crate::event::EventEnvelope],
+) -> Result<crate::state::HouseholdState, crate::error::KinError> {
+    crate::state::rebuild(
+        events,
+        0,
+        crate::recurrence::CivilDate::from_encoded(20261003).unwrap(),
+    )
+}
 
 fn context(n: u8) -> CommandContext {
     CommandContext {
@@ -17,11 +30,10 @@ fn context(n: u8) -> CommandContext {
 }
 fn request(events: Vec<EventEnvelope>) -> DecodedRequest {
     DecodedRequest {
-        protocol_version: PROTOCOL_V18,
         events,
-        as_of: Some(1_760_000_000_000),
+        as_of: 1_760_000_000_000,
         summary_cursor: None,
-        civil_date: Some(CivilDate::from_encoded(20261009).unwrap()),
+        civil_date: CivilDate::from_encoded(20261009).unwrap(),
         target_household_id: None,
         identity_bindings: vec![],
     }
@@ -61,7 +73,7 @@ fn pin_target_is_stable_duplicate_add_and_remove_retry_are_idempotent() {
         )
         .unwrap();
     }
-    assert_eq!(rebuild(&events).unwrap().pins.len(), 1);
+    assert_eq!(replay(&events).unwrap().pins.len(), 1);
     for n in [4, 5] {
         run(
             &mut events,
@@ -73,11 +85,8 @@ fn pin_target_is_stable_duplicate_add_and_remove_retry_are_idempotent() {
         )
         .unwrap();
     }
-    assert!(rebuild(&events).unwrap().pins.is_empty());
-    assert_eq!(
-        decode_event(&events[1].canonical_bytes, PROTOCOL_V18).unwrap(),
-        events[1]
-    );
+    assert!(replay(&events).unwrap().pins.is_empty());
+    assert_eq!(decode_event(&events[1].canonical_bytes).unwrap(), events[1]);
 }
 
 #[test]
@@ -141,7 +150,7 @@ fn pin_rejects_unknown_target_and_enforces_household_bound() {
         .unwrap_err(),
         KinError::InvalidEvent
     );
-    assert_eq!(rebuild(&events).unwrap().pins.len(), MAX_PINS);
+    assert_eq!(replay(&events).unwrap().pins.len(), MAX_PINS);
 }
 
 #[test]
@@ -168,7 +177,7 @@ fn archived_targets_are_removed_from_quick_access_projection() {
     )
     .unwrap();
     run(&mut events, C::ArchiveItem(target), 3).unwrap();
-    let state = rebuild(&events).unwrap();
+    let state = replay(&events).unwrap();
     assert!(state.pins.is_empty());
     assert_eq!(state.items[0].status, ItemStatus::Archived);
 }
@@ -212,14 +221,14 @@ fn distributed_concurrent_pin_and_unpin_converge_in_device_order() {
     for event in &mut events {
         event.canonical_bytes = crate::codec::encode_event(event).unwrap();
     }
-    let first = rebuild_distributed_on(
+    let first = rebuild(
         &events,
         1_760_000_000_000,
         CivilDate::from_encoded(20261009).unwrap(),
     )
     .unwrap();
     events.reverse();
-    let second = rebuild_distributed_on(
+    let second = rebuild(
         &events,
         1_760_000_000_000,
         CivilDate::from_encoded(20261009).unwrap(),

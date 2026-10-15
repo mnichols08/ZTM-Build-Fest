@@ -1,8 +1,9 @@
 use crate::command::{execute, CommandContext, HouseholdCommand as C};
 use crate::event::*;
-use crate::protocol::{decode_event, DecodedRequest, PROTOCOL_V18, PROTOCOL_V19};
+use crate::event_decode::decode_event;
 use crate::recurrence::CivilDate;
-use crate::state::{rebuild_distributed_on, rebuild_on, MAX_PLAYBOOKS};
+use crate::request::DecodedRequest;
+use crate::state::{rebuild, MAX_PLAYBOOKS};
 
 fn context(n: u8, device: u8) -> CommandContext {
     CommandContext {
@@ -14,24 +15,18 @@ fn context(n: u8, device: u8) -> CommandContext {
         logical_time: n as u64,
     }
 }
-fn request(events: Vec<EventEnvelope>, version: u16) -> DecodedRequest {
+fn request(events: Vec<EventEnvelope>) -> DecodedRequest {
     DecodedRequest {
-        protocol_version: version,
         events,
-        as_of: Some(1_791_475_200_000),
+        as_of: 1_791_475_200_000,
         summary_cursor: None,
-        civil_date: Some(CivilDate::from_encoded(20261009).unwrap()),
+        civil_date: CivilDate::from_encoded(20261009).unwrap(),
         target_household_id: None,
         identity_bindings: vec![],
     }
 }
 fn add(events: &mut Vec<EventEnvelope>, command: C, n: u8) {
-    let result = execute(
-        &command,
-        context(n, 3),
-        request(events.clone(), PROTOCOL_V19),
-    )
-    .unwrap();
+    let result = execute(&command, context(n, 3), request(events.clone())).unwrap();
     events.push(result.event);
 }
 
@@ -48,11 +43,8 @@ fn playbook_create_edit_archive_replay_and_event_roundtrip() {
         },
         1,
     );
-    assert_eq!(
-        decode_event(&events[0].canonical_bytes, PROTOCOL_V19).unwrap(),
-        events[0]
-    );
-    let first = rebuild_on(
+    assert_eq!(decode_event(&events[0].canonical_bytes).unwrap(), events[0]);
+    let first = rebuild(
         &events,
         1_791_475_200_001,
         CivilDate::from_encoded(20261009).unwrap(),
@@ -69,7 +61,7 @@ fn playbook_create_edit_archive_replay_and_event_roundtrip() {
         },
         2,
     );
-    let edited = rebuild_on(
+    let edited = rebuild(
         &events,
         1_791_475_200_002,
         CivilDate::from_encoded(20261009).unwrap(),
@@ -78,7 +70,7 @@ fn playbook_create_edit_archive_replay_and_event_roundtrip() {
     assert_eq!(edited.playbooks[0].title, "Vacation prep");
     assert_eq!(edited.playbooks[0].entries, ["Lock doors"]);
     add(&mut events, C::ArchivePlaybook(id), 3);
-    let archived = rebuild_on(
+    let archived = rebuild(
         &events,
         1_791_475_200_003,
         CivilDate::from_encoded(20261009).unwrap(),
@@ -92,13 +84,13 @@ fn playbook_create_edit_archive_replay_and_event_roundtrip() {
             entries: vec!["x".into()]
         },
         context(4, 3),
-        request(events, PROTOCOL_V19)
+        request(events)
     )
     .is_err());
 }
 
 #[test]
-fn playbooks_enforce_limits_and_remain_additive_to_legacy_histories() {
+fn playbooks_enforce_limits() {
     let legacy = crate::command::create_event(
         &C::AddItem {
             id: ItemId([7; 16]),
@@ -118,7 +110,7 @@ fn playbooks_enforce_limits_and_remain_additive_to_legacy_histories() {
         },
         2,
     );
-    let state = rebuild_on(
+    let state = rebuild(
         &events,
         1_791_475_200_002,
         CivilDate::from_encoded(20261009).unwrap(),
@@ -145,7 +137,7 @@ fn playbooks_enforce_limits_and_remain_additive_to_legacy_histories() {
             entries: vec!["Step".into()]
         },
         context(33, 3),
-        request(many, PROTOCOL_V19)
+        request(many)
     )
     .is_err());
     assert!(execute(
@@ -155,17 +147,7 @@ fn playbooks_enforce_limits_and_remain_additive_to_legacy_histories() {
             entries: vec![]
         },
         context(1, 3),
-        request(vec![], PROTOCOL_V19)
-    )
-    .is_err());
-    assert!(execute(
-        &C::SavePlaybook {
-            id: PlaybookId([90; 16]),
-            title: "Old client".into(),
-            entries: vec!["Step".into()]
-        },
-        context(1, 3),
-        request(vec![], PROTOCOL_V18)
+        request(vec![])
     )
     .is_err());
 }
@@ -201,14 +183,14 @@ fn same_logical_time_offline_edits_converge_in_stable_device_order() {
     )
     .unwrap();
     events.extend([left.clone(), right.clone()]);
-    let forward = rebuild_distributed_on(
+    let forward = rebuild(
         &events,
         1_791_475_200_002,
         CivilDate::from_encoded(20261009).unwrap(),
     )
     .unwrap();
     events.swap(1, 2);
-    let reverse = rebuild_distributed_on(
+    let reverse = rebuild(
         &events,
         1_791_475_200_002,
         CivilDate::from_encoded(20261009).unwrap(),

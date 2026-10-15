@@ -367,7 +367,7 @@ async function browserUiChecks() {
     secondVault.lock();
   }
   check(
-    (header.archiveVersion === 1 ? snapshot : snapshot.snapshot).events.length === 1 &&
+    snapshot.snapshot.events.length === 1 &&
       header.archiveVersion === 2 &&
       header.packageManifest.packageFormatVersion === 2 &&
       header.packageManifest.eventCount === 1 &&
@@ -382,7 +382,7 @@ async function browserUiChecks() {
       portableMembership: [{ memberId: "55555555555555555555555555555555", memberKind: "future-kind", status: "active" }] });
   } catch { denied = true; }
   check(denied, "unknown explicit member kinds fail closed during export");
-  const legacySnapshot = header.archiveVersion === 1 ? snapshot : snapshot.snapshot;
+  const legacySnapshot = snapshot.snapshot;
   const legacyAad = serializeProtectedValue({
     archiveVersion: 1,
     manifest: header.manifest,
@@ -456,19 +456,19 @@ async function browserUiChecks() {
     validateHouseholdArchive,
     discardValidatedHouseholdArchive,
   } = await import("/security/archive.js");
-  const legacyStage = await validateHouseholdArchive({
-    bytes: legacyArchive,
-    recoverySecret: sourceRecovery,
-    engine: app.engine,
-    vault: app.vault,
-  });
+  denied = false;
+  try {
+    await validateHouseholdArchive({
+      bytes: legacyArchive,
+      recoverySecret: sourceRecovery,
+      engine: app.engine,
+      vault: app.vault,
+    });
+  } catch { denied = true; }
   check(
-    legacyStage.packageFormatVersion === 1 &&
-      legacyStage.eventCount === 1 &&
-      (await app.store.loadEvents()).length === 0,
-    "legacy package-v1 validates without modifying the target",
+    denied && (await app.store.loadEvents()).length === 0,
+    "a development-era package-v1 export is refused without modifying the target",
   );
-  discardValidatedHouseholdArchive(legacyStage.stage);
   const corrupted = archive.slice();
   corrupted[corrupted.length - 1] ^= 1;
   denied = false;
@@ -610,7 +610,7 @@ async function browserUiChecks() {
   const restored = await app.store.loadEvents();
   check(
     Array.from(restored[0].encoded_event).join(",") ===
-      Array.from((header.archiveVersion === 1 ? snapshot : snapshot.snapshot).events[0].encoded_event).join(","),
+      Array.from(snapshot.snapshot.events[0].encoded_event).join(","),
     "archive restoration preserves canonical source bytes",
   );
   const restoredPortableSnapshot = await app.store.snapshotForArchive();

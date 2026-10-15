@@ -1,6 +1,6 @@
 # Derived Household State
 
-**Status:** v0.24.0 adds a derived date-only Item history value through protocol 17 while preserving prior result layouts. Modes, Item categories, planning dates, and Item history dates are derived from canonical events; protocols 1–15 fail closed on date-bearing history. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection.
+**Status:** Protocol 24 is the only replay format (refactor track, D3). Replay is always the distributed reduction: an owned copy sorted by `(logical_time, device_id, event_id)` with an explicit `as_of` and civil date; the catch-up summary uses input order. Modes, Item categories, planning dates and Item history dates are derived from canonical events. Browser startup obtains authorized local unlock before decrypting and replaying, and locked state holds no household projection. Version sections below are history.
 
 ## Projection pipeline
 

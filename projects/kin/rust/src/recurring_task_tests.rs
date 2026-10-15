@@ -6,9 +6,9 @@ use crate::command::{execute, CommandContext, HouseholdCommand as C};
 use crate::core::encode_projection;
 use crate::error::KinError;
 use crate::event::*;
-use crate::protocol::{DecodedRequest, PROTOCOL_V23, PROTOCOL_V24};
 use crate::recurrence::{Cadence, CivilDate};
-use crate::state::{rebuild_distributed_on, HouseholdState};
+use crate::request::DecodedRequest;
+use crate::state::{rebuild, HouseholdState};
 
 const ROUTINE: RoutineId = RoutineId([5; 16]);
 const AS_OF: i64 = 1_791_475_200_100;
@@ -28,13 +28,12 @@ fn context(n: u8, device: u8, logical: u64) -> CommandContext {
     }
 }
 
-fn request(events: &[EventEnvelope], version: u16, on: u32) -> DecodedRequest {
+fn request(events: &[EventEnvelope], on: u32) -> DecodedRequest {
     DecodedRequest {
-        protocol_version: version,
         events: events.to_vec(),
-        as_of: Some(AS_OF),
+        as_of: AS_OF,
         summary_cursor: None,
-        civil_date: Some(day(on)),
+        civil_date: day(on),
         target_household_id: None,
         identity_bindings: vec![],
     }
@@ -46,11 +45,11 @@ fn run(
     ctx: CommandContext,
     on: u32,
 ) -> Result<EventEnvelope, KinError> {
-    execute(&command, ctx, request(events, PROTOCOL_V24, on)).map(|result| result.event)
+    execute(&command, ctx, request(events, on)).map(|result| result.event)
 }
 
 fn project(events: &[EventEnvelope], on: u32) -> HouseholdState {
-    rebuild_distributed_on(events, AS_OF, day(on)).unwrap()
+    rebuild(events, AS_OF, day(on)).unwrap()
 }
 
 fn create(cadence: Cadence, on: u32) -> Vec<EventEnvelope> {
@@ -83,57 +82,32 @@ fn reopen(key: u32) -> C {
 }
 
 #[test]
-fn weekdays_requires_protocol_24_end_to_end() {
-    let command = C::CreateRoutine {
-        id: ROUTINE,
-        text: "Pack lunches".into(),
-        cadence: Cadence::Weekdays,
-        created_on: day(20261012),
-    };
-    assert_eq!(
-        execute(
-            &command,
-            context(1, 1, 1),
-            request(&[], PROTOCOL_V23, 20261012)
-        )
-        .unwrap_err(),
-        KinError::UnsupportedVersion
-    );
+fn weekdays_routine_roundtrips_end_to_end() {
     let events = create(Cadence::Weekdays, 20261012);
-    let state = project(&events, 20261012);
-    let encoded_v23 = encode_projection(&request(&events, PROTOCOL_V23, 20261012), &state);
-    assert_eq!(encoded_v23, Err(KinError::UnsupportedVersion));
-    // An older protocol cannot decode a Weekdays event at all.
     let bytes = crate::codec::encode_event(&events[0]).unwrap();
     assert_eq!(
-        crate::protocol::decode_event(&bytes, PROTOCOL_V23).unwrap_err(),
-        KinError::UnsupportedVersion
-    );
-    assert_eq!(
-        crate::protocol::decode_event(&bytes, PROTOCOL_V24).unwrap(),
+        crate::event_decode::decode_event(&bytes).unwrap(),
         events[0]
     );
+    let state = project(&events, 20261012);
+    assert_eq!(state.routines[0].cadence, Cadence::Weekdays);
+    assert!(encode_projection(&request(&events, 20261012), &state).is_ok());
 }
 
 #[test]
-fn protocol_24_appends_one_next_occurrence_per_routine() {
+fn projection_carries_one_next_occurrence_per_routine_before_the_summary() {
     let events = create(Cadence::Daily, 20261012);
     let state = project(&events, 20261012);
     assert_eq!(state.routines[0].next_start, Some(day(20261013)));
-    let v23 = encode_projection(&request(&events, PROTOCOL_V23, 20261012), &state).unwrap();
-    let v24 = encode_projection(&request(&events, PROTOCOL_V24, 20261012), &state).unwrap();
-    assert_eq!(u16::from_le_bytes([v24[4], v24[5]]), 24);
-    assert_eq!(v24.len(), v23.len() + 4);
-    // Apart from the version, protocol 24 inserts exactly one u32 per
-    // Routine (before the catch-up summary) and changes nothing else.
-    assert_eq!(&v24[..4], &v23[..4]);
-    assert_eq!(&v24[6..96], &v23[6..96]);
-    let split = (96..v23.len())
-        .find(|&index| v23[index] != v24[index])
-        .unwrap_or(v23.len());
-    assert_eq!(&v24[96..split], &v23[96..split]);
-    assert_eq!(&v24[split..split + 4], &20261013u32.to_le_bytes());
-    assert_eq!(&v24[split + 4..], &v23[split..]);
+    let summary = crate::state::CatchUpSummary {
+        entries: Vec::new(),
+        total_count: 0,
+        through_event_id: None,
+    };
+    let bytes = crate::state_encode::encode_state(&state, &summary).unwrap();
+    assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), 24);
+    // No summary entries, so the Routine's next-occurrence date ends the projection.
+    assert_eq!(&bytes[bytes.len() - 4..], &20261013u32.to_le_bytes());
 }
 
 #[test]
@@ -363,7 +337,7 @@ fn concurrent_schedule_changes_at_different_logical_times_reject_the_merge_in_an
         // logical-time window, so a full replay refuses the set as a whole:
         // nothing is partially applied. Sync quarantines that remote event.
         assert_eq!(
-            rebuild_distributed_on(&events, AS_OF, day(20261014)).unwrap_err(),
+            rebuild(&events, AS_OF, day(20261014)).unwrap_err(),
             KinError::InvalidEvent
         );
     }

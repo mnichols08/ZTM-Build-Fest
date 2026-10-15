@@ -1,255 +1,68 @@
 # Data Migrations
 
-**Status:** v0.30.0 adds Home Reference Records through protocol 20 without changing IndexedDB, archive-container, sync-envelope, or server schemas. v0.29.0 changes only the static application shell cache and manifest. v0.28.0 reminders remain ephemeral browser-local state. Earlier version sections are historical.
+**Status:** Single baseline (refactor track, Slice 2). Kin has never shipped to real users. Owner decision D3 made protocol 24 the only wire format: protocols 1–23, the schema-1 `ITEM_ADDED` payload, archive package format 1 and the v0.5→v0.6 catch-up-context backfill were deleted, and development databases are wiped rather than migrated. Release notes under `docs/releases/` and the `V0.*.md` contracts keep the history of the removed formats.
 
-## v0.30.0 Home Reference Records compatibility
+## The baseline
 
-Protocol 20 adds event kinds 35 and 36 and appends up to 128 bounded
-Reference Records after Playbooks. Protocols 1–19 retain their prior layouts
-and reject Reference Record events and projections rather than omit household
-data. Existing encrypted storage, sync, and portable event-history archives
-preserve the canonical bytes, so no persistent-format migration is required.
-Older clients cannot replay records created by v0.30.0; active devices should
-be updated before creating them.
+| Contract | Current version | Older versions |
+| --- | --- | --- |
+| Replay protocol (KINE/KINS) | 24 | Rejected with status 3 |
+| Canonical events | `ITEM_ADDED` schema 2; every other kind schema 1 | Schema-1 `ITEM_ADDED` rejected with status 3 |
+| Command transport (KCMD), metadata (KMET, KMDQ/KMDL), command result (KCMT), import plan (KIMP) | 1 | None existed |
+| Error buffer (KERR) | 1 | None existed |
+| Archive container (KARC) | 1 | None existed |
+| Archive package | 2 | Package 1 refused |
+| Event IndexedDB `kin` | schema 5 | Structures are created on first open |
+| Key IndexedDB `kin-crypto-keys` | schema 5 | Structures are created on first open |
+| Local envelope / root manifest | Format 1 roots, format 2 after rotation | Both current |
+| Server SQLite | `user_version` 8 | Upgrade chain 0→8 retained (see below) |
 
-## v0.27.0 Household Playbooks compatibility
+Application, event, protocol, IndexedDB, archive and server versions remain
+independent; change only the axis whose contract changes.
 
-Protocol 19 adds event kinds 33 and 34 and appends a bounded Playbook list to
-the state projection after Pins. Protocols 1–18 remain unchanged for histories
-without Playbooks and reject Playbook events and Playbook-bearing projections.
-Templates and their generated Items/Steps remain separate canonical records;
-there is no persistent schema migration or server plaintext index.
+## What is still a migration
 
-## v0.26.0 Pins compatibility
+Three mechanisms keep their migration-style code because they are part of the
+current product, not compatibility with old data:
 
-Protocol 18 adds event kinds 31 and 32 and appends a bounded Pin count and
-stable target references to the state projection. Old histories contain no
-Pin events and therefore project an empty list. Protocols 1–17 remain readable
-for legacy histories and reject histories containing Pins; event bytes are
-never silently discarded or reinterpreted. No stored envelope or IndexedDB
-schema changes.
+- **Local protection setup.** `EventStore.migrate` (phases `preparing`,
+  `cleanup-pending`, `encrypted`) is how a new household's plaintext setup
+  becomes encrypted storage. It stages, verifies and replaces every store and
+  is described in [V0.10.0](V0.10.0.md). Removing it would change security
+  setup, which no refactor slice authorizes.
+- **Sync key preparation.** `migrateSyncKeys` / `finalizeSyncKeyMigration` run
+  inside that setup and inside root rotation.
+- **Identity bindings.** A household created locally keeps its placeholder
+  household/actor/device IDs in canonical bytes forever. When it enables sync,
+  a signed binding maps that tuple to the authenticated identity on every
+  replay ([IDENTITY](IDENTITY.md), [SYNC](SYNC.md)). The binding fields
+  (`legacyHouseholdId`, `legacyActorId`, `legacyDeviceId`) are therefore
+  load-bearing and stay.
 
-## v0.24.0 Useful Household History compatibility
+Root rotation ([ROOT-ROTATION](ROOT-ROTATION.md)) is re-encryption, not a
+format migration, and is unchanged.
 
-Protocol 17 appends one derived little-endian `i64` timestamp per Item after
-the protocol-16 planning-date array. The value is reconstructed from existing
-canonical events on every replay; there is no event, persistent-format
-migration, archive rewrite, sync-envelope change, or server-schema change.
-Protocol 16 can replay the same current history but does not receive the new
-display field. Protocols 1–15 retain their historical layouts and continue to
-fail closed on event kinds they do not support.
+The server's SQLite upgrade chain (0→8) is also retained for now. Schema 8's
+admin promotion is an authority-bearing step, and the server split belongs to
+Slice 10; removing the chain there would need its own review.
 
-## v0.22.0 Lightweight Planning Dates compatibility
+## Rules for any future change
 
-Protocol 16 introduces schema-1 event kind 30 and appends one little-endian
-`u32` planning-date value per Item to the projection after existing protocol
-extensions. Zero means no date. Protocols 1–15 continue to replay histories
-that contain no planning-date events and reject event kind 30; their original
-state layouts remain unchanged. No stored rows are rewritten: the local
-encrypted event store, sync relay/outbox, and KARC v1 archive already carry
-canonical event bytes. Upgrading Kin is the migration for devices that share
-a history containing planning dates.
+- Canonical event bytes are immutable history. A new capability adds an event
+  kind or a projection field; it never rewrites stored events.
+- Before Kin has real users, a breaking wire change may replace the format
+  outright (D3). After that, it needs a versioned decoder, a portable-backup
+  path and explicit consent before anything is rewritten.
+- Storage changes use one atomic IndexedDB upgrade transaction and never clear
+  data as a fallback. Crypto, network and other asynchronous work never runs
+  inside an upgrade transaction.
+- A failure preserves the original data and surfaces a recoverable message; it
+  never presents incomplete state as complete.
+- Every change updates the golden fixtures deliberately
+  ([TEST-VECTORS](TEST-VECTORS.md)) and records the version axis that moved.
 
-## v0.21.0 Household Modes compatibility
+## Projection caches
 
-Protocol 15 adds canonical event kind 29 and appends a bounded mode field to
-its projection header. Protocols 1–14 fail closed when they encounter the new
-event or a non-Normal state. A history with no mode event defaults to Normal;
-its source bytes are unchanged. The existing encrypted local store, relay,
-and archive carry the canonical event without a storage or envelope
-migration.
-
-## v0.20.0 Staples & Replenishment compatibility
-
-Staples reuse schema-v2 `ITEM_ADDED` and the existing Item archive event.
-Manual replenishment appends a separate ordinary Shopping Item; no source
-link, inventory quantity, or synthetic event is stored. Protocol 14 reads
-prior histories and classification code 3. Protocols 1–13 continue to read
-their supported histories but reject Staple-bearing events, summaries, or
-projections before returning incomplete state. Protocol 13 continues to carry
-Shopping. Existing encrypted local storage, sync, and KARC adapters carry the
-canonical Item events without an IndexedDB, server-schema, archive-container,
-or sync-envelope migration.
-
-## v0.19.0 Shared Shopping Lists compatibility
-
-Shopping Items reuse schema-v2 `ITEM_ADDED` and the existing Item lifecycle
-events; there is no new event kind, table, sync envelope, KARC format, or
-synthetic migration event. Protocol 13 reads prior history and Shopping
-classification code 2. Protocols 1–12 continue to read Today/Needs data but
-reject Shopping-bearing events or projections before returning incomplete
-state. Devices that encounter Shopping data need a protocol-13-capable Kin
-before replaying that shared history. Offline capture persists through the
-existing encrypted local event store; the existing sync and archive adapters
-carry the same canonical event bytes.
-
-## v0.18.0 Richer Routine Scheduling compatibility
-
-The `ROUTINE_CREATED` payload and event schema remain unchanged; only cadence
-values 2 and 3 are new. Protocol 12 reads old and new Routine history, while
-protocols 1–11 reject a history containing either richer cadence before
-returning a projection. Existing Daily/Weekly event bytes replay unchanged.
-No synthetic events, persistent-state migration, IndexedDB change, KARC change,
-server-schema change, or encrypted sync-envelope change is required.
-
-## v0.17.0 Checklist Steps compatibility
-
-Existing histories replay with no Steps on each Item until Step events are
-appended. No synthetic event or destructive migration is performed. Protocol
-11 appends Step records after the protocol-10 Notes section; protocols 1–10
-retain their historical request/result layouts and fail closed on Step history.
-Canonical source bytes remain unchanged. IndexedDB, KARC v1 framing, server
-schema, and encrypted sync envelope do not change; export/import and sync use
-the existing canonical event adapters.
-
-## v0.16.0 Notes compatibility
-
-Existing histories replay with `notes = []` until Note events are appended. No synthetic Note event or destructive migration is performed. The existing event log and KARC v1 carry Note canonical bytes inside their already encrypted local/sync/archive boundaries.
-
-Protocol 10 appends Notes after the protocol-9 Areas result section. Protocols
-1–9 retain their original request/result layouts and fail closed on Note
-history; old canonical event bytes are neither rewritten nor omitted. No
-IndexedDB schema change is required.
-
-## v0.15.0 Areas compatibility
-
-Areas require no IndexedDB or server-schema migration. Pre-Area event streams
-remain valid and replay to an empty Area collection; migration creates no
-General, Default, or Uncategorized Area. Event DB schema 3 continues to hold
-the same opaque encrypted event rows. The canonical event catalogue extends
-additively with schema-1 kinds 18–21 and replay protocol 9. Existing event
-bytes are retained exactly. Updated imports replay both old and Area-bearing
-histories before publishing. An older client that does not understand protocol
-9 fails closed on an Area-bearing history; it must not skip or rewrite those
-events. See [v0.15.0](releases/V0.15.0.md).
-
-## v0.11 server database migration
-
-The Node service owns an independent `PRAGMA user_version`. Migration 0→1
-creates normalized identity, authorization, encrypted relay, coordination and
-audit tables inside one SQLite transaction. Migration 1→2 adds household
-lifecycle state, deletion timestamps and insert guards that reject new
-authorization or relay records after deletion is requested. Startup rejects
-newer schema versions, inconsistent migration metadata and unversioned existing
-tables; it never resets or downgrades the database. Tests verify initial
-migration rollback, the v1→v2 upgrade and lifecycle restart behavior. See the
-[v0.11 contract](V0.11.0.md) for the complete server schema and its relation to
-product and client-storage versions.
-
-## v0.9.3 → v0.10 local protection
-
-Follow [V0.10.0](V0.10.0.md): establish/verify recovery and root wrappers first;
-persist a stable journal; exclude stale writers; stage all events, context, outbox,
-bindings and keys; decrypt/compare exact canonical bytes and perform complete Rust
-replay; replace each database atomically; remove legacy plaintext and capabilities;
-publish encrypted only after both databases agree. Key migration must include the
-signed successor transition for nonextractable legacy transport private keys.
-
-An interruption, tab closure, aborted transaction, quota error, key-generation
-failure, cancelled authentication or failed ciphertext verification preserves the
-legacy dataset or a verified replacement recoverable with the same wrappers.
-Restart resumes the journal and never silently creates another root. Cross-DB
-progress is recoverable, not one fictional atomic transaction. Schema upgrades
-only establish structure; asynchronous crypto and network work happen outside them.
-
-Implemented phases are absent/unconfigured, `preparing`, `cleanup-pending`, and
-`encrypted`. Event DB 3 adds `security_state`; key DB 4 adds a protected staging
-journal. Setup verifies an independent recovery wrapper before writing it. Web
-Locks serializes migration; source snapshots and lock epochs are checked again
-inside replacement transactions. Each staged value is decrypted and compared;
-Rust replays the entire recovered canonical corpus. Legacy AES and sealed epoch
-copies must agree (including fingerprint and authenticated test encryption)
-before either is replaced. The root and signed successor remain stable on retry.
-`cleanup-pending` cannot open a household; it resumes only key cleanup and final
-commit. Quota, transaction abort, changed sources, cancelled unlock, corrupt keys
-or lost capability fail without publishing a partial secure state.
-
-New security metadata starts with `configRevision: 0` and `lockEpoch: 0`.
-Compatibility reads treat an absent revision or epoch as zero. Wrapper updates
-use a transactional revision comparison; removing an unlock wrapper increments
-both the configuration revision and lock epoch atomically. This prevents a stale
-tab from restoring a removed credential through a later wrapper write. Migration
-replacement and final publication compare lock epochs again, so an interrupted
-setup cannot overwrite a newer lock with its earlier journal snapshot.
-
-## Migration categories
-
-v0.10.3 retains canonical source bytes once and clones only metadata requiring
-mutation. Every 32-row protection batch decrypts and compares exact values and
-checks the durable security epoch before/after crypto. Legacy device migration
-checks between individual device/epoch operations as well. Final source CAS uses
-bounded native pages; full Rust replay still runs before atomic replacement.
-Native key/event replacement transactions abort on lock through completion.
-
-### v0.10.2 root replacement recovery
-
-Root rotation is encryption re-protection, not canonical event migration. Before
-event publication, original event/key rows remain intact and the journal retains
-one candidate root through its verified recovery wrapper. The candidate encrypts
-the old root for restart; old capabilities never wrap the candidate. Entering the
-new recovery key resumes the same operation after tab closure/reload/process-style
-restart. Every source/stage is compared exactly and full Rust replay repeats even
-when the journal records prior verification.
-
-After the atomic event/manifest switch, `root-cleanup` accepts only the candidate
-recovery path and resumes idempotent key replacement and stage cleanup. Normal
-household/sync access stays blocked until both databases agree. Quota/abort/peer
-lock preserve either the original corpus plus the exact candidate journal or the
-verified candidate corpus plus recoverable staged keys. No database schema bump,
-canonical rewrite or household sync-epoch rotation is involved. The full versioned
-contract is [ROOT-ROTATION](ROOT-ROTATION.md).
-
-- **Storage migration:** change IndexedDB schema, such as database schema 1 to 2 (stores, indexes, local record layout). This is distinct from an event payload change.
-- **Event/protocol migration:** decode a supported event or wire representation version into the current in-memory model. Persisted source event bytes remain immutable unless a separately reviewed, explicit export/restore conversion is required.
-- **Projection migration:** change derived state, a disposable cache, or snapshot format. Rebuild from canonical events whenever possible; do not make a projection a second source of truth.
-- **Export migration:** validate an older portable export format and import its logical events into the current event representation without silently dropping unsupported content.
-
-Application, event, protocol, IndexedDB, and export versions are independent. Update only the version axis whose contract changed.
-
-## Safety requirements
-
-Once implementation begins, migrations must be deterministic for the same source bytes and target version, tested, and explicit about the data they read/write. They must not silently discard household events or meaningful fields. A destructive transformation requires exceptional justification, a reviewed recovery plan, and explicit user consent. Preserve original information when reasonably possible; rebuild derived state from events.
-
-Storage changes should use an atomic IndexedDB upgrade transaction. Prepare a validated target representation before replacing source values; a failed transaction must leave the old database readable. Do not perform asynchronous network requests, cryptographic key changes, or unrelated work inside an upgrade transaction.
-
-For an event format change, use a versioned decoder/normalizer that leaves original event bytes unchanged. v0.2.0 reads `ITEM_ADDED` schema v1 as Today and schema v2 with its explicit classification; it does not convert stored source bytes. If conversion of source bytes ever becomes unavoidable, first create and verify a portable backup, then stage the conversion separately and retain a recoverable original until successful validation.
-
-## Failure behavior
-
-```text
-detect required migration
-        |
-        v
-validate source and target support
-        |
-        v
-attempt bounded, atomic migration
-        |
-    success? ---- no ----> abort transaction
-        |                    preserve original data
-       yes                   show recoverable error
-        |                    offer export/restore path
-        v
-verify target records and replay
-        |
-        v
-commit upgraded schema
-```
-
-A migration failure must never default to clearing IndexedDB, partially accepting the new schema, or presenting incomplete state as complete. Stop writes that could worsen the incompatibility. Preserve the database and surface a non-destructive recovery choice. If recovery cannot be guaranteed, explain that limitation rather than retrying destructive steps automatically.
-
-## Backup before destructive changes
-
-Before a migration that rewrites or removes user information, require a verified recovery representation that the user can store outside the current browser installation. The future portable format and its plaintext/encryption choices are described in [PORTABILITY](PORTABILITY.md). A backup is useful only if it can be read and its event stream validated; creating a file without a verification path is not a sufficient rollback plan.
-
-## Test obligations
-
-Migration implementations must have tests for supported old versions, malformed input, unknown newer versions, interrupted/aborted transaction behavior, preservation of original event bytes, deterministic output, successful replay after migration, and recovery from failure. No migration implementation is part of v0.1.0 beyond creating schema version 1 from an empty database.
-
-## v0.5.0 Pulse
-
-No migration is required. New Pulse events coexist with unchanged historical bytes in IndexedDB schema 1. See [V0.5.0](V0.5.0.md).
-
-## v0.6.0 Since You Last Looked
-
-No migration is required. Three optional fields are added to the existing `local_context` singleton, which is not a canonical household event. A context with all fields absent is initialized atomically with the current event tail; partial or malformed metadata fails closed and is not overwritten. IndexedDB schema remains version 1 and event bytes remain unchanged. See [V0.6.0](V0.6.0.md).
+The session event arena and any future checkpoint are derived projections,
+not migrations: they are rebuilt from canonical events whenever their store
+generation or row count disagrees with storage ([STORAGE](STORAGE.md)).

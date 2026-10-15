@@ -5,9 +5,12 @@ pub mod command;
 pub mod core;
 pub mod error;
 pub mod event;
-pub mod protocol;
+pub mod event_decode;
 pub mod recurrence;
+pub mod request;
 pub mod state;
+pub mod state_encode;
+pub mod wire;
 
 #[cfg(test)]
 mod pulse_tests;
@@ -53,3 +56,15 @@ mod recurring_task_tests;
 
 #[cfg(test)]
 mod golden_tests;
+
+#[cfg(test)]
+mod test_support;
+
+#[cfg(test)]
+mod request_tests;
+
+#[cfg(test)]
+mod event_decode_tests;
+
+#[cfg(test)]
+mod state_encode_tests;

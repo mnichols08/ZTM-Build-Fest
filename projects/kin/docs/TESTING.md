@@ -21,6 +21,12 @@
   the KINS projection under `rust/fixtures/golden/`. `web/wasm/golden.test.mjs`
   replays the same requests through the release WASM. Regenerate only
   deliberately with `KIN_UPDATE_GOLDEN=1 cargo test golden`.
+- **Protocol 24.** `rust/src/request_tests.rs` (framing, bindings, ordering,
+  bounds), `event_decode_tests.rs` (every kind's payload rules, Handoff and
+  Talk lifecycles) and `state_encode_tests.rs` (projection layout and limits)
+  replace the per-version protocol tests. `web/wasm/projection-decode.test.mjs`
+  checks that the bridge fails closed on every truncation of a golden
+  projection, on trailing bytes and on invalid header fields.
 - **ABI ownership.** `web/wasm/abi-ownership.test.mjs` checks that every
   `kin_alloc` input is freed exactly once when the copy, the export, the result
   copy or the decode throws, for each operation family, and against the real

@@ -397,34 +397,14 @@ pub struct CatchUpSummary {
 
 pub const MAX_SUMMARY_ENTRIES: usize = 8;
 
-pub fn rebuild(events: &[EventEnvelope]) -> Result<HouseholdState, KinError> {
-    if events
-        .iter()
-        .any(|e| matches!(e.kind, EventKind::PulseSet { .. } | EventKind::PulseCleared))
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    rebuild_at(events, 0)
-}
-
-pub fn rebuild_at(events: &[EventEnvelope], as_of: i64) -> Result<HouseholdState, KinError> {
-    rebuild_with_context(events, as_of, None, false)
-}
-
-pub fn rebuild_on(
+/// Deterministic household replay at an explicit `as_of` instant and civil
+/// date. Reduction uses an owned copy sorted by `(logical_time, device_id,
+/// event_id)`; callers keep arrival order for catch-up boundaries.
+pub fn rebuild(
     events: &[EventEnvelope],
     as_of: i64,
     civil_date: CivilDate,
 ) -> Result<HouseholdState, KinError> {
-    rebuild_with_context(events, as_of, Some(civil_date), false)
-}
-
-pub fn rebuild_distributed_on(
-    events: &[EventEnvelope],
-    as_of: i64,
-    civil_date: CivilDate,
-) -> Result<HouseholdState, KinError> {
-    // Sort an owned copy for deterministic reduction; callers keep arrival order for cursors.
     let mut ordered_events = events.to_vec();
     ordered_events.sort_by_key(|event| (event.logical_time, event.device_id, event.event_id));
     rebuild_with_context(&ordered_events, as_of, Some(civil_date), true)
@@ -1497,15 +1477,7 @@ fn is_concurrent_terminal_conflict(
         })
 }
 
-pub fn summarize(
-    events: &[EventEnvelope],
-    cursor: Option<EventId>,
-) -> Result<CatchUpSummary, KinError> {
-    let state = rebuild_at(events, 0)?;
-    summarize_validated(events, cursor, &state)
-}
-
-pub(crate) fn summarize_validated(
+pub fn summarize_validated(
     events: &[EventEnvelope],
     cursor: Option<EventId>,
     state: &HouseholdState,
@@ -1720,6 +1692,17 @@ pub(crate) fn summarize_validated(
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Protocol-24 replay at a fixed instant and civil date for tests that do not
+    /// depend on time.
+    fn replay(
+        events: &[crate::event::EventEnvelope],
+    ) -> Result<crate::state::HouseholdState, crate::error::KinError> {
+        crate::state::rebuild(
+            events,
+            0,
+            crate::recurrence::CivilDate::from_encoded(20261003).unwrap(),
+        )
+    }
     use crate::event::{DeviceId, EventId};
 
     fn id(byte: u8) -> [u8; 16] {
@@ -1841,7 +1824,7 @@ mod tests {
 
     #[test]
     fn add_item_creates_active_item() {
-        let state = rebuild(&[added(1, 1, 0x11, "Buy milk")]).unwrap();
+        let state = replay(&[added(1, 1, 0x11, "Buy milk")]).unwrap();
         assert_eq!(state.items.len(), 1);
         assert_eq!(state.items[0].text, "Buy milk");
         assert_eq!(state.items[0].status, ItemStatus::Active);
@@ -1854,7 +1837,7 @@ mod tests {
             added(1, 1, 0x11, "Buy milk"),
             added(2, 2, 0x22, "Restock wipes"),
         ];
-        let state = rebuild(&events).unwrap();
+        let state = replay(&events).unwrap();
         assert_eq!(state.items.len(), 2);
         assert_eq!(state.items[0].text, "Buy milk");
         assert_eq!(state.items[1].text, "Restock wipes");
@@ -1893,9 +1876,9 @@ mod tests {
                 },
             ),
         ];
-        let forward = rebuild_distributed_on(&events, 0, first_date).unwrap();
+        let forward = rebuild(&events, 0, first_date).unwrap();
         let reverse_events = events.into_iter().rev().collect::<Vec<_>>();
-        let reverse = rebuild_distributed_on(&reverse_events, 0, first_date).unwrap();
+        let reverse = rebuild(&reverse_events, 0, first_date).unwrap();
         assert_eq!(forward, reverse);
         assert_eq!(forward.items[0].status, ItemStatus::Archived);
         assert_eq!(forward.items[0].planning_date, Some(first_date));
@@ -1944,33 +1927,33 @@ mod tests {
             event(12, 12, EventKind::ItemArchived { item_id }),
         ];
 
-        let after_create = rebuild(&events[..1]).unwrap();
+        let after_create = replay(&events[..1]).unwrap();
         assert_eq!(after_create.items[0].last_changed_at, 1_760_000_000_001);
-        let after_date_change = rebuild(&events[..2]).unwrap();
+        let after_date_change = replay(&events[..2]).unwrap();
         assert_eq!(
             after_date_change.items[0].last_changed_at,
             1_760_000_000_002
         );
-        let after_date_noop = rebuild(&events[..3]).unwrap();
+        let after_date_noop = replay(&events[..3]).unwrap();
         assert_eq!(after_date_noop.items[0].last_changed_at, 1_760_000_000_002);
-        let after_step_change = rebuild(&events[..5]).unwrap();
+        let after_step_change = replay(&events[..5]).unwrap();
         assert_eq!(
             after_step_change.items[0].last_changed_at,
             1_760_000_000_005
         );
-        let after_step_noop = rebuild(&events[..6]).unwrap();
+        let after_step_noop = replay(&events[..6]).unwrap();
         assert_eq!(after_step_noop.items[0].last_changed_at, 1_760_000_000_005);
-        let after_step_archive = rebuild(&events[..8]).unwrap();
+        let after_step_archive = replay(&events[..8]).unwrap();
         assert_eq!(
             after_step_archive.items[0].last_changed_at,
             1_760_000_000_008
         );
-        let after_status_noop = rebuild(&events[..10]).unwrap();
+        let after_status_noop = replay(&events[..10]).unwrap();
         assert_eq!(
             after_status_noop.items[0].last_changed_at,
             1_760_000_000_009
         );
-        let final_state = rebuild(&events).unwrap();
+        let final_state = replay(&events).unwrap();
         assert_eq!(final_state.items[0].status, ItemStatus::Archived);
         assert_eq!(final_state.items[0].last_changed_at, 1_760_000_000_012);
 
@@ -1981,9 +1964,9 @@ mod tests {
             item_id,
             planning_date: Some(CivilDate::from_encoded(20261005).unwrap()),
         };
-        let forward = rebuild_distributed_on(&equal_time_events, 0, planning_date).unwrap();
+        let forward = rebuild(&equal_time_events, 0, planning_date).unwrap();
         equal_time_events.reverse();
-        let reverse = rebuild_distributed_on(&equal_time_events, 0, planning_date).unwrap();
+        let reverse = rebuild(&equal_time_events, 0, planning_date).unwrap();
         assert_eq!(forward, reverse);
         assert_eq!(forward.items[0].last_changed_at, 1_760_000_000_003);
     }
@@ -2000,7 +1983,7 @@ mod tests {
                 },
             ),
         ];
-        let state = rebuild(&events).unwrap();
+        let state = replay(&events).unwrap();
         assert_eq!(state.items[0].text, "Buy milk");
         assert_eq!(state.items[0].status, ItemStatus::Completed);
     }
@@ -2014,13 +1997,13 @@ mod tests {
                 item_id: ItemId(id(0xff)),
             },
         );
-        assert_eq!(rebuild(&[completion]), Err(KinError::InvalidEvent));
+        assert_eq!(replay(&[completion]), Err(KinError::InvalidEvent));
     }
 
     #[test]
     fn identical_event_delivery_is_idempotent() {
         let added = added(1, 1, 0x11, "Buy milk");
-        let state = rebuild(&[added.clone(), added]).unwrap();
+        let state = replay(&[added.clone(), added]).unwrap();
         assert_eq!(state.items.len(), 1);
     }
 
@@ -2029,7 +2012,7 @@ mod tests {
         let first = added(1, 1, 0x11, "Buy milk");
         let mut conflicting = added(2, 2, 0x22, "Restock wipes");
         conflicting.event_id = first.event_id;
-        assert_eq!(rebuild(&[first, conflicting]), Err(KinError::InvalidEvent));
+        assert_eq!(replay(&[first, conflicting]), Err(KinError::InvalidEvent));
     }
 
     #[test]
@@ -2051,7 +2034,7 @@ mod tests {
                 },
             ),
         ];
-        let state = rebuild(&events).unwrap();
+        let state = replay(&events).unwrap();
         assert_eq!(state.items[0].status, ItemStatus::Completed);
     }
 
@@ -2067,9 +2050,9 @@ mod tests {
                 },
             ),
         ];
-        let state_a = rebuild(&events).unwrap();
-        let state_b = rebuild(&events).unwrap();
-        let state_c = rebuild(&events).unwrap();
+        let state_a = replay(&events).unwrap();
+        let state_b = replay(&events).unwrap();
+        let state_c = replay(&events).unwrap();
         assert_eq!(state_a, state_b);
         assert_eq!(state_b, state_c);
         assert_eq!(state_a, state_c);
@@ -2080,13 +2063,13 @@ mod tests {
         let first = added(1, 1, 0x11, "Buy milk");
         let mut second = added(2, 2, 0x22, "Restock wipes");
         second.household_id = HouseholdId(id(0xdd));
-        assert_eq!(rebuild(&[first, second]), Err(KinError::InvalidEvent));
+        assert_eq!(replay(&[first, second]), Err(KinError::InvalidEvent));
     }
 
     #[test]
     fn whitespace_only_items_are_invalid() {
         assert_eq!(
-            rebuild(&[added(1, 1, 0x11, " \t\n")]),
+            replay(&[added(1, 1, 0x11, " \t\n")]),
             Err(KinError::InvalidEvent)
         );
     }
@@ -2099,14 +2082,14 @@ mod tests {
             event(2, 2, EventKind::ItemCompleted { item_id }),
             event(3, 3, EventKind::ItemReopened { item_id }),
         ];
-        let reopened_state = rebuild(&completed_then_reopened).unwrap();
+        let reopened_state = replay(&completed_then_reopened).unwrap();
         assert_eq!(reopened_state.items[0].status, ItemStatus::Active);
 
         let already_active = [
             added(1, 1, 0x11, "Buy milk"),
             event(2, 2, EventKind::ItemReopened { item_id }),
         ];
-        let active_state = rebuild(&already_active).unwrap();
+        let active_state = replay(&already_active).unwrap();
         assert_eq!(active_state.items[0].status, ItemStatus::Active);
     }
 
@@ -2126,7 +2109,7 @@ mod tests {
                 archived_events.len() as u64 + 1,
                 EventKind::ItemArchived { item_id },
             ));
-            let archived_state = rebuild(&archived_events).unwrap();
+            let archived_state = replay(&archived_events).unwrap();
             assert_eq!(archived_state.items[0].status, ItemStatus::Archived);
 
             for mutation in [
@@ -2140,7 +2123,7 @@ mod tests {
                     invalid_events.len() as u64 + 1,
                     mutation,
                 ));
-                assert_eq!(rebuild(&invalid_events), Err(KinError::InvalidEvent));
+                assert_eq!(replay(&invalid_events), Err(KinError::InvalidEvent));
             }
         }
     }
@@ -2152,7 +2135,7 @@ mod tests {
             EventKind::ItemReopened { item_id },
             EventKind::ItemArchived { item_id },
         ] {
-            assert_eq!(rebuild(&[event(1, 1, kind)]), Err(KinError::InvalidEvent));
+            assert_eq!(replay(&[event(1, 1, kind)]), Err(KinError::InvalidEvent));
         }
     }
 
@@ -2162,16 +2145,31 @@ mod tests {
             added(1, 1, 0x11, "Buy milk"),
             added(2, 2, 0x11, "Restock wipes"),
         ];
-        assert_eq!(rebuild(&events), Err(KinError::InvalidEvent));
+        assert_eq!(replay(&events), Err(KinError::InvalidEvent));
     }
 
     #[test]
-    fn non_increasing_logical_order_is_invalid() {
+    fn equal_logical_times_order_by_device_then_event_id_in_any_input_order() {
         let events = [
-            added(1, 2, 0x11, "Buy milk"),
             added(2, 2, 0x22, "Restock wipes"),
+            added(1, 2, 0x11, "Buy milk"),
         ];
-        assert_eq!(rebuild(&events), Err(KinError::InvalidEvent));
+        let reversed = [events[1].clone(), events[0].clone()];
+        let texts = |state: HouseholdState| {
+            state
+                .items
+                .into_iter()
+                .map(|item| item.text)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            texts(replay(&events).unwrap()),
+            ["Buy milk", "Restock wipes"]
+        );
+        assert_eq!(
+            texts(replay(&reversed).unwrap()),
+            ["Buy milk", "Restock wipes"]
+        );
     }
 
     #[test]
@@ -2192,9 +2190,8 @@ mod tests {
             stale_complete,
             stale_reopen,
         ];
-        let forward =
-            rebuild_distributed_on(&events, 0, CivilDate::from_encoded(20261009).unwrap()).unwrap();
-        let reverse = rebuild_distributed_on(
+        let forward = rebuild(&events, 0, CivilDate::from_encoded(20261009).unwrap()).unwrap();
+        let reverse = rebuild(
             &events.into_iter().rev().collect::<Vec<_>>(),
             0,
             CivilDate::from_encoded(20261009).unwrap(),
@@ -2208,13 +2205,13 @@ mod tests {
     #[test]
     fn logical_time_has_a_shared_ceiling_and_bounded_advance() {
         let mut above = added(1, MAX_LOGICAL_TIME + 1, 0x11, "Milk");
-        assert_eq!(rebuild(&[above.clone()]), Err(KinError::InvalidEvent));
+        assert_eq!(replay(&[above.clone()]), Err(KinError::InvalidEvent));
         above.logical_time = MAX_LOGICAL_TIME_ADVANCE + 1;
-        assert_eq!(rebuild(&[above.clone()]), Err(KinError::InvalidEvent));
+        assert_eq!(replay(&[above.clone()]), Err(KinError::InvalidEvent));
         above.logical_time = MAX_LOGICAL_TIME_ADVANCE;
         let mut next = added(2, MAX_LOGICAL_TIME_ADVANCE + 1, 0x22, "Bread");
         next.device_id = DeviceId(id(2));
-        assert!(rebuild_distributed_on(
+        assert!(rebuild(
             &[above, next],
             0,
             CivilDate::from_encoded(20261009).unwrap()

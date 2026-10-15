@@ -1,16 +1,28 @@
 use crate::command::{execute, CommandContext, HouseholdCommand as C};
 use crate::error::KinError;
 use crate::event::*;
-use crate::protocol::{decode_event, DecodedRequest, PROTOCOL_V9};
-use crate::state::{rebuild, MAX_AREAS, MAX_AREA_NAME_BYTES, MAX_AREA_NAME_CHARS};
+use crate::event_decode::decode_event;
+use crate::request::DecodedRequest;
+use crate::state::{MAX_AREAS, MAX_AREA_NAME_BYTES, MAX_AREA_NAME_CHARS};
+
+/// Protocol-24 replay at a fixed instant and civil date for tests that do not
+/// depend on time.
+fn replay(
+    events: &[crate::event::EventEnvelope],
+) -> Result<crate::state::HouseholdState, crate::error::KinError> {
+    crate::state::rebuild(
+        events,
+        0,
+        crate::recurrence::CivilDate::from_encoded(20261003).unwrap(),
+    )
+}
 
 fn request(events: Vec<EventEnvelope>) -> DecodedRequest {
     DecodedRequest {
-        protocol_version: PROTOCOL_V9,
         events,
-        as_of: Some(1_760_000_000_000),
+        as_of: 1_760_000_000_000,
         summary_cursor: None,
-        civil_date: Some(crate::recurrence::CivilDate::from_encoded(20261004).unwrap()),
+        civil_date: crate::recurrence::CivilDate::from_encoded(20261004).unwrap(),
         target_household_id: None,
         identity_bindings: Vec::new(),
     }
@@ -91,7 +103,7 @@ fn assigned_items_keep_area_identity_through_rename_and_archive() {
     )
     .unwrap();
     run(&mut events, C::ArchiveArea(area_id), 5).unwrap();
-    let state = rebuild(&events).unwrap();
+    let state = replay(&events).unwrap();
     assert_eq!(state.areas[0].name, "Cooking area");
     assert!(state.areas[0].archived);
     assert_eq!(state.items[0].area_id, Some(area_id));
@@ -130,7 +142,7 @@ fn item_history_changes_only_when_area_assignment_changes() {
         3,
     )
     .unwrap();
-    let changed = rebuild(&events).unwrap();
+    let changed = replay(&events).unwrap();
     assert_eq!(changed.items[0].last_changed_at, 1_760_000_000_003);
 
     run(
@@ -142,7 +154,7 @@ fn item_history_changes_only_when_area_assignment_changes() {
         4,
     )
     .unwrap();
-    let unchanged = rebuild(&events).unwrap();
+    let unchanged = replay(&events).unwrap();
     assert_eq!(unchanged.items[0].last_changed_at, 1_760_000_000_003);
 }
 
@@ -150,18 +162,18 @@ fn item_history_changes_only_when_area_assignment_changes() {
 fn unassigned_pre_area_history_needs_no_synthetic_area() {
     let request = request(Vec::new());
     assert!(request.events.is_empty());
-    assert!(rebuild(&[]).unwrap().areas.is_empty());
+    assert!(replay(&[]).unwrap().areas.is_empty());
 }
 
 #[test]
-fn pre_area_projection_remains_valid_and_area_history_requires_protocol_nine() {
-    let empty = rebuild(&[]).unwrap();
+fn projections_with_and_without_areas_encode() {
+    let empty = replay(&[]).unwrap();
     let summary = crate::state::CatchUpSummary {
         entries: Vec::new(),
         total_count: 0,
         through_event_id: None,
     };
-    assert!(crate::protocol::encode_state_v8(&empty, &summary).is_ok());
+    assert!(crate::state_encode::encode_state(&empty, &summary).is_ok());
 
     let area = EventEnvelope {
         event_id: EventId([31; 16]),
@@ -177,12 +189,9 @@ fn pre_area_projection_remains_valid_and_area_history_requires_protocol_nine() {
         },
         canonical_bytes: Vec::new(),
     };
-    let state = rebuild(&[area]).unwrap();
+    let state = replay(&[area]).unwrap();
     assert_eq!(state.areas.len(), 1);
-    assert_eq!(
-        crate::protocol::encode_state_v8(&state, &summary),
-        Err(KinError::UnsupportedVersion)
-    );
+    assert!(crate::state_encode::encode_state(&state, &summary).is_ok());
 }
 
 #[test]
@@ -207,7 +216,7 @@ fn replay_rejects_malformed_area_names_and_zero_area_identity() {
             },
             canonical_bytes: Vec::new(),
         };
-        assert_eq!(rebuild(&[event]), Err(KinError::InvalidEvent));
+        assert_eq!(replay(&[event]), Err(KinError::InvalidEvent));
     }
 }
 
@@ -284,9 +293,9 @@ fn invalid_area_references_archived_assignment_and_archiving_rules_are_explicit(
         canonical_bytes: Vec::new(),
     })
     .unwrap();
-    let stale_event = decode_event(&stale, PROTOCOL_V9).unwrap();
+    let stale_event = decode_event(&stale).unwrap();
     events.push(stale_event);
-    assert_eq!(rebuild(&events).unwrap().items[0].area_id, Some(area_id));
+    assert_eq!(replay(&events).unwrap().items[0].area_id, Some(area_id));
 }
 
 #[test]
@@ -330,7 +339,7 @@ fn names_are_trimmed_bounded_and_duplicate_commands_reject_without_merging() {
         KinError::InvalidEvent
     );
     let duplicate = events[0].clone();
-    let replay = rebuild(&[duplicate.clone(), duplicate]).unwrap();
+    let replay = replay(&[duplicate.clone(), duplicate]).unwrap();
     assert_eq!(replay.areas.len(), 1);
 }
 
@@ -364,7 +373,7 @@ fn independently_created_same_name_areas_keep_distinct_stable_ids_on_replay() {
         },
         canonical_bytes: Vec::new(),
     };
-    let state = crate::state::rebuild_distributed_on(
+    let state = crate::state::rebuild(
         &[first, second],
         1_760_000_000_100,
         crate::recurrence::CivilDate::from_encoded(20261004).unwrap(),
@@ -462,7 +471,7 @@ fn offline_rename_assignment_archive_and_duplicate_delivery_converge() {
         assignment.clone(),
         rename.clone(),
     ];
-    let converged = crate::state::rebuild_distributed_on(
+    let converged = crate::state::rebuild(
         &merged,
         1_760_000_000_100,
         crate::recurrence::CivilDate::from_encoded(20261004).unwrap(),
@@ -470,7 +479,7 @@ fn offline_rename_assignment_archive_and_duplicate_delivery_converge() {
     .unwrap();
     assert_eq!(
         converged,
-        crate::state::rebuild_distributed_on(
+        crate::state::rebuild(
             &reverse,
             1_760_000_000_100,
             crate::recurrence::CivilDate::from_encoded(20261004).unwrap(),
@@ -497,7 +506,7 @@ fn offline_rename_assignment_archive_and_duplicate_delivery_converge() {
     let states = two_area_orders
         .iter()
         .map(|events| {
-            crate::state::rebuild_distributed_on(
+            crate::state::rebuild(
                 events,
                 1_760_000_000_100,
                 crate::recurrence::CivilDate::from_encoded(20261004).unwrap(),
@@ -521,7 +530,7 @@ fn offline_rename_assignment_archive_and_duplicate_delivery_converge() {
     let mut archived_merge = base.clone();
     archived_merge.push(archive);
     archived_merge.extend([assignment.clone(), assignment.clone()]); // retry / duplicate delivery
-    let archived_state = crate::state::rebuild_distributed_on(
+    let archived_state = crate::state::rebuild(
         &archived_merge,
         1_760_000_000_100,
         crate::recurrence::CivilDate::from_encoded(20261004).unwrap(),

@@ -134,7 +134,13 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
       "title + Enter still creates exactly one one-off task for Today and no repeating task", oneOffState);
 
     // 2. Keyboard-only repeating capture: Tab to Repeat, open it, choose Every weekday.
-    await press(KEYS.n);
+    // A wake refresh can make the app busy right after the save and swallow N;
+    // press it again only while idle until Quick add opens.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await idle();
+      await press(KEYS.n);
+      if (await page(() => document.querySelector("kin-app").quickAdd.dialog.open)) break;
+    }
     await type(title);
     check(await page((title) => { const q = document.querySelector("kin-app").quickAdd; return q.dialog.open && q.input.value === title; }, title), "N opens Quick add and the title is typed into it",
       await page(() => { const q = document.querySelector("kin-app").quickAdd; return { open: q.dialog.open, value: q.input.value, focus: document.activeElement?.id || document.activeElement?.tagName }; }));

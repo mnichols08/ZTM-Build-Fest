@@ -1,7 +1,7 @@
 //! Versioned, bounded framing for an authenticated encrypted archive. Browser
 //! Web Crypto owns authentication; parsing alone never establishes authenticity.
 use crate::error::KinError;
-use crate::protocol::MAX_PROTOCOL_BYTES;
+use crate::wire::MAX_PROTOCOL_BYTES;
 pub const MAX_ARCHIVE_BYTES: usize = 160 * 1024 * 1024;
 
 pub const ARCHIVE_VERSION: u16 = 1;
@@ -132,7 +132,7 @@ pub fn validate_request(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
 /// corpus, rejects duplicate archive entries, and derives a replacement plan.
 /// It performs no persistence and cannot partially import a failed archive.
 pub fn plan_import(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
-    let request = crate::protocol::decode_request_with_summary(bytes)?;
+    let request = crate::request::decode_request(bytes)?;
     let mut ids = std::collections::BTreeSet::new();
     let mut next_logical_time = 1u64;
     for event in &request.events {
@@ -238,8 +238,8 @@ mod tests {
         };
         let event = create_event(&command, context).unwrap();
         let make_request = |count: u32| {
-            let mut bytes = vec![0; 44];
-            bytes[..8].copy_from_slice(b"KINE\x07\0\0\0");
+            let mut bytes = vec![0; 64];
+            bytes[..8].copy_from_slice(b"KINE\x18\0\0\0");
             bytes[8..12].copy_from_slice(&count.to_le_bytes());
             bytes[12..20].copy_from_slice(&1234i64.to_le_bytes());
             bytes[40..44].copy_from_slice(&20261003u32.to_le_bytes());
@@ -257,7 +257,7 @@ mod tests {
         assert_eq!(plan_import(&make_request(2)), Err(KinError::InvalidEvent));
         assert!(plan_import(&bytes[..bytes.len() - 1]).is_err());
         let mut corrupt = bytes;
-        corrupt[44] = 255;
+        corrupt[64] = 255;
         assert_eq!(plan_import(&corrupt), Err(KinError::UnsupportedVersion));
     }
 }

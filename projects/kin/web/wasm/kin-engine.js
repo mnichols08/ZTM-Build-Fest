@@ -2,7 +2,8 @@ const PROTOCOL_VERSION = 24;
 const REQUEST_HEADER_BYTES = 64;
 const MAX_TIMESTAMP = 8_640_000_000_000_000;
 const PULSE_VALUES = ["good", "okay", "drained", "rough-day", "need-quiet"];
-const RESULT_HEADER_BYTES = 12;
+// Protocol-24 KINS projection header.
+const PROJECTION_HEADER_BYTES = 96;
 const ITEM_HEADER_BYTES = 48;
 const MAX_EVENT_COUNT = 10_000;
 const MAX_PROTOCOL_BYTES = 64 * 1024 * 1024;
@@ -1023,7 +1024,7 @@ function decodeError(bytes, status) {
 
 function decodeState(bytes) {
   if (
-    bytes.length < RESULT_HEADER_BYTES ||
+    bytes.length < PROJECTION_HEADER_BYTES ||
     bytes.length > MAX_PROTOCOL_BYTES ||
     readAscii(bytes, 0, 4) !== "KINS"
   ) {
@@ -1034,63 +1035,34 @@ function decodeState(bytes) {
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const protocolVersion = view.getUint16(4, true);
-  if (
-    ![
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-    ].includes(protocolVersion) ||
-    view.getUint16(6, true) !== 0
-  ) {
+  if (protocolVersion !== PROTOCOL_VERSION || view.getUint16(6, true) !== 0) {
     throw new KinEngineError(6, "Kin received an unsupported state format.");
   }
-  const resultHeaderBytes =
-    protocolVersion >= 23 ? 96 : protocolVersion >= 22 ? 92 : protocolVersion >= 21 ? 88 : protocolVersion >= 20 ? 84 : protocolVersion >= 19 ? 80 : protocolVersion >= 18 ? 76 : protocolVersion >= 15 ? 72 : protocolVersion >= 11 ? 68 : protocolVersion >= 10 ? 64 : protocolVersion >= 9
-      ? 60
-      : protocolVersion >= 7
-      ? 56
-      : protocolVersion >= 6
-        ? 52
-        : protocolVersion === 5
-          ? 24
-          : protocolVersion === 4
-            ? 20
-            : protocolVersion === 3
-              ? 16
-              : 12;
-  if (bytes.length < resultHeaderBytes) {
-    throw new KinEngineError(6, "Kin received a truncated state header.");
-  }
-  const handoffCount = protocolVersion >= 3 ? view.getUint32(12, true) : 0;
-  const talkCount = protocolVersion >= 4 ? view.getUint32(16, true) : 0;
-  const pulseCount = protocolVersion >= 5 ? view.getUint32(20, true) : 0;
+  const handoffCount = view.getUint32(12, true);
+  const talkCount = view.getUint32(16, true);
+  const pulseCount = view.getUint32(20, true);
   const itemCount = view.getUint32(8, true);
-  const routineCount = protocolVersion >= 7 ? view.getUint32(52, true) : 0;
-  const areaCount = protocolVersion >= 9 ? view.getUint32(56, true) : 0;
-  const noteCount = protocolVersion >= 10 ? view.getUint32(60, true) : 0;
-  const stepCount = protocolVersion >= 11 ? view.getUint32(64, true) : 0;
-  const modeCode = protocolVersion >= 15 ? view.getUint8(68) : 0;
-  const pinCount = protocolVersion >= 18 ? view.getUint32(72, true) : 0;
-  const playbookCount = protocolVersion >= 19 ? view.getUint32(76, true) : 0;
-  const referenceRecordCount = protocolVersion >= 20 ? view.getUint32(80, true) : 0;
-  const maintenanceEventCount = protocolVersion >= 21 ? view.getUint32(84, true) : 0;
-  const attachmentCount = protocolVersion >= 22 ? view.getUint32(88, true) : 0;
-  const responsibilityCount = protocolVersion >= 23 ? view.getUint32(92, true) : 0;
-  if (
-    protocolVersion >= 15 &&
-    (modeCode > 3 || bytes.subarray(69, 72).some((byte) => byte !== 0))
-  ) {
+  const routineCount = view.getUint32(52, true);
+  const areaCount = view.getUint32(56, true);
+  const noteCount = view.getUint32(60, true);
+  const stepCount = view.getUint32(64, true);
+  const modeCode = view.getUint8(68);
+  const pinCount = view.getUint32(72, true);
+  const playbookCount = view.getUint32(76, true);
+  const referenceRecordCount = view.getUint32(80, true);
+  const maintenanceEventCount = view.getUint32(84, true);
+  const attachmentCount = view.getUint32(88, true);
+  const responsibilityCount = view.getUint32(92, true);
+  if (modeCode > 3 || bytes.subarray(69, 72).some((byte) => byte !== 0)) {
     throw new KinEngineError(6, "Kin received an invalid household mode.");
   }
-  const summaryCount = protocolVersion >= 6 ? view.getUint32(24, true) : 0;
-  const summaryTotalCount = protocolVersion >= 6 ? view.getUint32(28, true) : 0;
-  const summaryThroughPresent = protocolVersion >= 6 ? view.getUint8(32) : 0;
-  const summaryThroughBytes =
-    protocolVersion >= 6 ? bytes.subarray(36, 52) : null;
+  const summaryCount = view.getUint32(24, true);
+  const summaryTotalCount = view.getUint32(28, true);
+  const summaryThroughPresent = view.getUint8(32);
+  const summaryThroughBytes = bytes.subarray(36, 52);
   const summaryThroughEventId =
-    protocolVersion >= 6 && summaryThroughPresent === 1
-      ? idToHex(summaryThroughBytes)
-      : null;
+    summaryThroughPresent === 1 ? idToHex(summaryThroughBytes) : null;
   if (
-    protocolVersion >= 6 &&
     (summaryCount > MAX_SUMMARY_ENTRIES ||
       summaryCount > summaryTotalCount ||
       summaryTotalCount > MAX_EVENT_COUNT ||
@@ -1123,7 +1095,7 @@ function decodeState(bytes) {
     );
   }
   const items = [];
-  let offset = resultHeaderBytes;
+  let offset = PROJECTION_HEADER_BYTES;
   for (let index = 0; index < itemCount; index += 1) {
     const headerEnd = offset + ITEM_HEADER_BYTES;
     if (headerEnd > bytes.length) {
@@ -1135,18 +1107,12 @@ function decodeState(bytes) {
     const textLength = view.getUint32(offset + 44, true);
     const recordEnd = headerEnd + textLength;
     const classificationCode = view.getUint8(offset + 40);
-    const statusCode =
-      protocolVersion === 1 ? classificationCode : view.getUint8(offset + 41);
+    const statusCode = view.getUint8(offset + 41);
     const validStatus =
-      protocolVersion === 1
-        ? classificationCode <= 1 &&
-          view.getUint8(offset + 41) === 0 &&
-          view.getUint8(offset + 42) === 0 &&
-          view.getUint8(offset + 43) === 0
-        : classificationCode <= (protocolVersion >= 14 ? 3 : protocolVersion >= 13 ? 2 : 1) &&
-          statusCode <= 2 &&
-          view.getUint8(offset + 42) === 0 &&
-          view.getUint8(offset + 43) === 0;
+      classificationCode <= 3 &&
+      statusCode <= 2 &&
+      view.getUint8(offset + 42) === 0 &&
+      view.getUint8(offset + 43) === 0;
     if (
       recordEnd > bytes.length ||
       textLength < 1 ||
@@ -1179,14 +1145,11 @@ function decodeState(bytes) {
       itemId: idToHex(bytes.subarray(offset, offset + 16)),
       createdBy: idToHex(bytes.subarray(offset + 16, offset + 32)),
       createdAt: createdAtNumber,
-      classification:
-        protocolVersion === 1
-          ? "today"
-          : ["today", "need", "shopping", "staple"][classificationCode],
+      classification: ["today", "need", "shopping", "staple"][classificationCode],
       status: ["active", "completed", "archived"][statusCode],
-      ...(protocolVersion >= 9 ? { areaId: null } : {}),
-      ...(protocolVersion >= 11 ? { steps: [] } : {}),
-      ...(protocolVersion >= 16 ? { planningDate: null } : {}),
+      areaId: null,
+      steps: [],
+      planningDate: null,
       text,
     });
     offset = recordEnd;
@@ -1292,7 +1255,7 @@ function decodeState(bytes) {
     previousActor = actorId;
     offset += 40;
   }
-  if (protocolVersion >= 9) {
+  {
     for (const item of items) {
       if (offset + 16 > bytes.length)
         throw new KinEngineError(6, "Kin received truncated Area assignments.");
@@ -1321,8 +1284,6 @@ function decodeState(bytes) {
       length > 4096 ||
       end > bytes.length ||
       cadence > 4 ||
-      (protocolVersion < 12 && cadence > 1) ||
-      (protocolVersion < 24 && cadence > 3) ||
       status > 1 ||
       occurrence > 2 ||
       bytes[offset + 51] !== 0 ||
@@ -1425,7 +1386,7 @@ function decodeState(bytes) {
     noteIds.add(noteId); offset = end;
   }
   if (notes.some((note) => note.areaId && !areaIds.has(note.areaId))) throw new KinEngineError(6, "Kin received a Note with an unknown Area.");
-  if (protocolVersion >= 11) {
+  {
     const itemById = new Map(items.map((item) => [item.itemId, item]));
     const stepIds = new Set();
     for (let index = 0; index < stepCount; index += 1) {
@@ -1471,7 +1432,7 @@ function decodeState(bytes) {
       offset = end;
     }
   }
-  if (protocolVersion >= 16) {
+  {
     for (const item of items) {
       if (offset + 4 > bytes.length) {
         throw new KinEngineError(6, "Kin received a truncated planning date.");
@@ -1484,7 +1445,7 @@ function decodeState(bytes) {
       offset += 4;
     }
   }
-  if (protocolVersion >= 17) {
+  {
     for (const item of items) {
       if (offset + 8 > bytes.length) {
         throw new KinEngineError(6, "Kin received a truncated Item history date.");
@@ -1502,7 +1463,7 @@ function decodeState(bytes) {
   }
   const pins = [];
   const pinKeys = new Set();
-  if (protocolVersion >= 18) {
+  {
     const targetNames = [null, "item", "note", "routine", "area"];
     for (let index = 0; index < pinCount; index += 1) {
       if (offset + 20 > bytes.length) throw new KinEngineError(6, "Kin received a truncated Pin.");
@@ -1631,9 +1592,9 @@ function decodeState(bytes) {
     responsibilities.push({ targetKind, targetId, memberId: memberId === "00".repeat(16) ? null : memberId });
     offset += 33;
   }
-  // Protocol 24: Rust's next-occurrence date per Routine, in Routine order.
+  // Rust's next-occurrence date per Routine, in Routine order.
   // Presence and ordering are checked here; the date itself is never derived.
-  if (protocolVersion >= 24) {
+  {
     if (offset + routines.length * 4 > bytes.length) throw new KinEngineError(6, "Kin received truncated routine schedule data.");
     for (const routine of routines) {
       const nextOn = view.getUint32(offset, true);
@@ -1665,12 +1626,12 @@ function decodeState(bytes) {
           ? 2
           : kindCode >= 8 && kindCode <= 11
             ? 3
-            : protocolVersion >= 7 && kindCode >= 12 && kindCode <= 15
+            : kindCode >= 12 && kindCode <= 15
               ? 4
               : 0;
     const validClassification =
       kindCode === 1
-        ? classificationCode <= (protocolVersion >= 14 ? 3 : protocolVersion >= 13 ? 2 : 1)
+        ? classificationCode <= 3
         : classificationCode === 255;
     if (
       end > bytes.length ||
@@ -1714,32 +1675,29 @@ function decodeState(bytes) {
       "Kin received trailing bytes from its household engine.",
     );
   }
-  if (protocolVersion >= 6) {
-    return {
-      items,
-      handoffs,
-      talks,
-      pulses,
-      ...(protocolVersion >= 7 ? { routines } : {}),
-      ...(protocolVersion >= 9 ? { areas } : {}),
-      ...(protocolVersion >= 10 ? { notes } : {}),
-      ...(protocolVersion >= 18 ? { pins } : {}),
-      ...(protocolVersion >= 19 ? { playbooks } : {}),
-      ...(protocolVersion >= 20 ? { referenceRecords } : {}),
-      ...(protocolVersion >= 21 ? { maintenanceEvents } : {}),
-      ...(protocolVersion >= 22 && attachments.length ? { attachments } : {}),
-      ...(protocolVersion >= 23 && responsibilities.length ? { responsibilities } : {}),
-      ...(modeCode === 0
-        ? {}
-        : { mode: ["normal", "vacation", "guests", "rest"][modeCode] }),
-      summary: {
-        entries: summaryEntries,
-        totalCount: summaryTotalCount,
-        throughEventId: summaryThroughEventId,
-      },
-    };
-  }
-  return { items, handoffs, talks, pulses };
+  return {
+    items,
+    handoffs,
+    talks,
+    pulses,
+    routines,
+    areas,
+    notes,
+    pins,
+    playbooks,
+    referenceRecords,
+    maintenanceEvents,
+    ...(attachments.length ? { attachments } : {}),
+    ...(responsibilities.length ? { responsibilities } : {}),
+    ...(modeCode === 0
+      ? {}
+      : { mode: ["normal", "vacation", "guests", "rest"][modeCode] }),
+    summary: {
+      entries: summaryEntries,
+      totalCount: summaryTotalCount,
+      throughEventId: summaryThroughEventId,
+    },
+  };
 }
 
 function assertId(value) {

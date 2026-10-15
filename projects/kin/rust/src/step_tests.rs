@@ -1,9 +1,10 @@
 use crate::command::{create_event, execute, CommandContext, HouseholdCommand as C};
 use crate::event::*;
-use crate::protocol::{decode_event, DecodedRequest, PROTOCOL_V10, PROTOCOL_V11};
+use crate::event_decode::decode_event;
 use crate::recurrence::CivilDate;
+use crate::request::DecodedRequest;
 use crate::state::{
-    normalize_step_text, rebuild_distributed_on, HouseholdState, ItemStatus, MAX_STEPS_PER_ITEM,
+    normalize_step_text, rebuild, HouseholdState, ItemStatus, MAX_STEPS_PER_ITEM,
     MAX_STEP_TEXT_BYTES, MAX_STEP_TEXT_CHARS,
 };
 
@@ -24,11 +25,10 @@ fn context(sequence: u8, logical_time: u64, device: u8) -> CommandContext {
 
 fn request(events: Vec<EventEnvelope>) -> DecodedRequest {
     DecodedRequest {
-        protocol_version: PROTOCOL_V11,
         events,
-        as_of: Some(1_791_475_200_000),
+        as_of: 1_791_475_200_000,
         summary_cursor: None,
-        civil_date: Some(date()),
+        civil_date: date(),
         target_household_id: None,
         identity_bindings: vec![],
     }
@@ -349,7 +349,7 @@ fn equal_time_archives_win_independent_of_device_and_delivery_order() {
             context(4, 3, archive_device),
         )
         .unwrap();
-        let first = rebuild_distributed_on(
+        let first = rebuild(
             &[
                 item.clone(),
                 step.clone(),
@@ -360,7 +360,7 @@ fn equal_time_archives_win_independent_of_device_and_delivery_order() {
             date,
         )
         .unwrap();
-        let reversed = rebuild_distributed_on(
+        let reversed = rebuild(
             &[item.clone(), step.clone(), item_archive, step_completion],
             1_791_475_200_000,
             date,
@@ -388,7 +388,7 @@ fn equal_time_archives_win_independent_of_device_and_delivery_order() {
             context(6, 3, archive_device),
         )
         .unwrap();
-        let state = rebuild_distributed_on(
+        let state = rebuild(
             &[item.clone(), step.clone(), completion, step_archive],
             1_791_475_200_000,
             date,
@@ -416,7 +416,7 @@ fn suppressed_step_add_still_reserves_household_step_identity() {
     let item_archive = create_event(&C::ArchiveItem(ItemId([10; 16])), context(4, 3, 2)).unwrap();
     let duplicate_step = add_step(ItemId([11; 16]), step_id, "Duplicate step", 5, 4, 1);
 
-    assert!(rebuild_distributed_on(
+    assert!(rebuild(
         &[
             first_item,
             second_item,
@@ -431,46 +431,22 @@ fn suppressed_step_add_still_reserves_household_step_identity() {
 }
 
 #[test]
-fn step_events_are_protocol_11_only_and_malformed_payloads_fail_closed() {
+fn step_events_roundtrip_and_malformed_payloads_fail_closed() {
     let event = add_step(ItemId([10; 16]), StepId([20; 16]), "Wipe stove", 2, 2, 1);
-    assert_eq!(
-        decode_event(&event.canonical_bytes, PROTOCOL_V11).unwrap(),
-        event
-    );
-    assert_eq!(
-        decode_event(&event.canonical_bytes, PROTOCOL_V10),
-        Err(crate::error::KinError::UnsupportedVersion)
-    );
-    for protocol in 1..=10 {
-        assert_eq!(
-            decode_event(&event.canonical_bytes, protocol),
-            Err(crate::error::KinError::UnsupportedVersion)
-        );
-    }
+    assert_eq!(decode_event(&event.canonical_bytes).unwrap(), event);
     let mut malformed = event.canonical_bytes.clone();
     malformed[88 + 32..88 + 36].copy_from_slice(&0u32.to_le_bytes());
     assert_eq!(
-        decode_event(&malformed, PROTOCOL_V11),
+        decode_event(&malformed),
         Err(crate::error::KinError::MalformedProtocol)
     );
-    let old_history = request(vec![item()]);
-    let state: HouseholdState = crate::core::project(&old_history).unwrap();
+    let without_steps = request(vec![item()]);
+    let state: HouseholdState = crate::core::project(&without_steps).unwrap();
     assert!(state.items[0].steps.is_empty());
-    assert!(crate::core::encode_projection(&old_history, &state).is_ok());
+    assert!(crate::core::encode_projection(&without_steps, &state).is_ok());
 
     let history_with_step = request(vec![item(), event]);
     let state = crate::core::project(&history_with_step).unwrap();
-    let summary = crate::state::CatchUpSummary {
-        entries: Vec::new(),
-        total_count: 0,
-        through_event_id: None,
-    };
-    assert_eq!(
-        crate::protocol::encode_state_v10(&state, &summary),
-        Err(crate::error::KinError::UnsupportedVersion)
-    );
-    assert_eq!(
-        crate::protocol::encode_state(&state, 5),
-        Err(crate::error::KinError::UnsupportedVersion)
-    );
+    assert_eq!(state.items[0].steps.len(), 1);
+    assert!(crate::core::encode_projection(&history_with_step, &state).is_ok());
 }

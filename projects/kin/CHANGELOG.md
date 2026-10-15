@@ -24,6 +24,27 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
 - Documents the arena in STORAGE, THREAT-MODEL and PRIVACY, and a
   `RUSTUP_TOOLCHAIN=stable` fallback in DEVELOPMENT (the 1.93.0 pin is unchanged).
 
+### Slice 2 — Protocol 24 is the only format
+
+- Protocols 1–23, the 19 `encode_state_vN` wrappers, the legacy entity
+  encoder, the version-keyed decode branches and the pre-v8 replay entry
+  points are deleted. One replay path remains: `state::rebuild(events, as_of,
+  civil_date)` with distributed ordering, and `core::project` /
+  `encode_projection` each have one path. The number 24 is unchanged, and the
+  golden fixtures prove event and projection bytes are byte-identical.
+- `protocol.rs` (3,166 lines) is split into `wire.rs`, `request.rs`,
+  `event_decode.rs` and `state_encode.rs`, with protocol-24 tests in
+  `request_tests.rs`, `event_decode_tests.rs` and `state_encode_tests.rs`.
+- Schema-1 `ITEM_ADDED`, archive package format 1 and the v0.5→v0.6
+  catch-up-context backfill are removed. Development databases are wiped,
+  not migrated.
+- The bridge's `decodeState` decodes only protocol 24; new bridge tests cover
+  truncation, trailing bytes and invalid header fields on the golden
+  projections.
+- Identity-binding fields stay: they map placeholder IDs in pre-sync history
+  and are part of the current sync flow (IDENTITY.md).
+- MIGRATIONS.md, TEST-VECTORS.md and ABI.md now describe a single baseline.
+
 ## Unreleased — v0.47.0 — Household Identity & Shared Appearance
 
 - Record the household founder as durable owner for new households while leaving legacy ownership unresolved and fail-closed.

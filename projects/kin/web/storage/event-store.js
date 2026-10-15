@@ -342,10 +342,6 @@ export class EventStore {
           if (!context) {
             context = { key: CONTEXT_KEY, household_id: randomId(), actor_id: randomId(), device_id: randomId(), next_logical_time: 1n, last_looked_event_id: null, last_looked_local_sequence: 0, last_looked_at: Date.now() };
             rows.local_context.push(context);
-          } else if (!hasCatchUpMetadata(context)) {
-            validateContext(context, { allowUninitialized: true });
-            const tail = events.at(-1);
-            Object.assign(context, { last_looked_event_id: tail ? asBytes(tail.event_id).slice() : null, last_looked_local_sequence: tail?.local_sequence ?? 0, last_looked_at: Date.now() });
           }
           validateContext(context);
           validateCursorBoundary(context, history);
@@ -2084,24 +2080,8 @@ export class EventStore {
             return;
           }
 
-          validateContext(context, { allowUninitialized: true });
-          validateEventHousehold(context, loadedEvents);
-          if (!hasCatchUpMetadata(context)) {
-            const tail = loadedEvents.length - 1;
-            context = {
-              ...context,
-              last_looked_event_id: tail >= 0
-                ? loadedEvents.id(tail, "event_id").slice()
-                : null,
-              last_looked_local_sequence: loadedEvents.tail,
-              last_looked_at: Date.now(),
-            };
-            const write = contexts.put(context);
-            write.onerror = () =>
-              abortWith(transaction, storageError(write.error));
-          } else {
-            validateCursorBoundary(context, loadedEvents);
-          }
+          validateContext(context);
+          validateCursorBoundary(context, loadedEvents);
           finish(context);
         } catch (error) {
           abortWith(transaction, error);
@@ -2378,7 +2358,7 @@ function validateLegacyOutbox(outboxRows, eventRows) {
   }
 }
 
-function validateContext(context, { allowUninitialized = false } = {}) {
+function validateContext(context) {
   if (
     context?.key !== CONTEXT_KEY ||
     !isId(context.household_id) ||
@@ -2422,7 +2402,6 @@ function validateContext(context, { allowUninitialized = false } = {}) {
   const presentFields = catchUpFields.filter((field) =>
     Object.prototype.hasOwnProperty.call(context, field),
   );
-  if (presentFields.length === 0 && allowUninitialized) return;
   if (
     presentFields.length !== catchUpFields.length ||
     !Number.isSafeInteger(context.last_looked_local_sequence) ||
@@ -2435,14 +2414,6 @@ function validateContext(context, { allowUninitialized = false } = {}) {
   ) {
     throw invalidCatchUpState();
   }
-}
-
-function hasCatchUpMetadata(context) {
-  return [
-    "last_looked_event_id",
-    "last_looked_local_sequence",
-    "last_looked_at",
-  ].some((field) => Object.prototype.hasOwnProperty.call(context, field));
 }
 
 function validateEventHousehold(context, view) {
@@ -2650,7 +2621,7 @@ function validateRotationRows(rows, engine) {
 
 function validateArchiveSnapshot(snapshot, engine) {
   const onlyFields = (value, names) => value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).every((key) => names.includes(key));
-  if (!engine || !onlyFields(snapshot, ["formatVersion", "events", "local_context", "attachments"]) || ![1, 2].includes(snapshot.formatVersion) || (snapshot.formatVersion === 2 && !Array.isArray(snapshot.attachments)) ||
+  if (!engine || !onlyFields(snapshot, ["formatVersion", "events", "local_context", "attachments"]) || snapshot.formatVersion !== 2 || !Array.isArray(snapshot.attachments) ||
       !Array.isArray(snapshot.local_context) || snapshot.local_context.length !== 1)
     throw new EventStoreError("Kin could not validate this archive's household records.");
   const rows = validateEventRows(snapshot.events);

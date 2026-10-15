@@ -1,8 +1,9 @@
 use crate::command::{execute, CommandContext, HouseholdCommand as C};
 use crate::event::*;
-use crate::protocol::{decode_event, DecodedRequest, PROTOCOL_V20, PROTOCOL_V21};
+use crate::event_decode::decode_event;
 use crate::recurrence::{Cadence, CivilDate};
-use crate::state::{rebuild_distributed_on, MAX_MAINTENANCE_EVENTS_PER_RECORD};
+use crate::request::DecodedRequest;
+use crate::state::{rebuild, MAX_MAINTENANCE_EVENTS_PER_RECORD};
 
 fn date(value: u32) -> CivilDate {
     CivilDate::from_encoded(value).unwrap()
@@ -17,19 +18,18 @@ fn ctx(n: u8, device: u8) -> CommandContext {
         logical_time: u64::from(n),
     }
 }
-fn req(events: Vec<EventEnvelope>, version: u16) -> DecodedRequest {
+fn req(events: Vec<EventEnvelope>) -> DecodedRequest {
     DecodedRequest {
-        protocol_version: version,
         events,
-        as_of: Some(1_791_475_200_000),
+        as_of: 1_791_475_200_000,
         summary_cursor: None,
-        civil_date: Some(date(20261009)),
+        civil_date: date(20261009),
         target_household_id: None,
         identity_bindings: vec![],
     }
 }
 fn add(events: &mut Vec<EventEnvelope>, command: C, n: u8) {
-    let result = execute(&command, ctx(n, 3), req(events.clone(), PROTOCOL_V21)).unwrap();
+    let result = execute(&command, ctx(n, 3), req(events.clone())).unwrap();
     events.push(result.event);
 }
 fn reference() -> C {
@@ -55,26 +55,7 @@ fn maintenance_history_create_edit_archive_and_legacy_replay() {
         routine_id: None,
     };
     add(&mut events, first, 2);
-    assert_eq!(
-        decode_event(&events[1].canonical_bytes, PROTOCOL_V21).unwrap(),
-        events[1]
-    );
-    assert_eq!(
-        execute(
-            &C::SaveMaintenanceEvent {
-                id: maintenance,
-                record_id: ReferenceRecordId([4; 16]),
-                performed_on: date(20260918),
-                summary: "Filter changed".into(),
-                next_on: Some(date(20261218)),
-                routine_id: None
-            },
-            ctx(3, 3),
-            req(events.clone(), PROTOCOL_V20)
-        )
-        .unwrap_err(),
-        crate::error::KinError::UnsupportedVersion
-    );
+    assert_eq!(decode_event(&events[1].canonical_bytes).unwrap(), events[1]);
     add(
         &mut events,
         C::SaveMaintenanceEvent {
@@ -87,12 +68,12 @@ fn maintenance_history_create_edit_archive_and_legacy_replay() {
         },
         3,
     );
-    let replay = rebuild_distributed_on(&events, 1_791_475_200_004, date(20261009)).unwrap();
+    let replay = rebuild(&events, 1_791_475_200_004, date(20261009)).unwrap();
     assert_eq!(replay.maintenance_events[0].summary, "Filter changed");
     assert_eq!(replay.maintenance_events[0].next_on, Some(date(20270118)));
     add(&mut events, C::ArchiveMaintenanceEvent(maintenance), 4);
     assert!(
-        rebuild_distributed_on(&events, 1_791_475_200_005, date(20261009))
+        rebuild(&events, 1_791_475_200_005, date(20261009))
             .unwrap()
             .maintenance_events[0]
             .archived
@@ -128,7 +109,7 @@ fn maintenance_links_and_limits_fail_closed_and_old_histories_stay_empty() {
         3,
     );
     assert_eq!(
-        rebuild_distributed_on(&complete, 1_791_475_200_004, date(20261009))
+        rebuild(&complete, 1_791_475_200_004, date(20261009))
             .unwrap()
             .maintenance_events[0]
             .routine_id,
@@ -144,7 +125,7 @@ fn maintenance_links_and_limits_fail_closed_and_old_histories_stay_empty() {
             routine_id: Some(RoutineId([99; 16]))
         },
         ctx(4, 3),
-        req(events.clone(), PROTOCOL_V21)
+        req(events.clone())
     )
     .is_err());
     assert!(execute(
@@ -157,15 +138,13 @@ fn maintenance_links_and_limits_fail_closed_and_old_histories_stay_empty() {
             routine_id: None
         },
         ctx(4, 3),
-        req(events.clone(), PROTOCOL_V21)
+        req(events.clone())
     )
     .is_err());
-    assert!(
-        rebuild_distributed_on(&events, 1_791_475_200_002, date(20261009))
-            .unwrap()
-            .maintenance_events
-            .is_empty()
-    );
+    assert!(rebuild(&events, 1_791_475_200_002, date(20261009))
+        .unwrap()
+        .maintenance_events
+        .is_empty());
     for n in 0..MAX_MAINTENANCE_EVENTS_PER_RECORD {
         add(
             &mut events,
@@ -190,7 +169,7 @@ fn maintenance_links_and_limits_fail_closed_and_old_histories_stay_empty() {
             routine_id: None
         },
         ctx(100, 3),
-        req(events, PROTOCOL_V21)
+        req(events)
     )
     .is_err());
 }
@@ -224,7 +203,7 @@ fn archived_reference_history_is_retained_and_concurrent_create_converges() {
         },
     )
     .unwrap();
-    let replay = rebuild_distributed_on(
+    let replay = rebuild(
         &[base[0].clone(), archive.clone(), maintenance.clone()],
         1_791_475_200_010,
         date(20261009),
@@ -242,7 +221,7 @@ fn archived_reference_history_is_retained_and_concurrent_create_converges() {
             routine_id: None
         },
         ctx(4, 3),
-        req(vec![base[0].clone(), archive], PROTOCOL_V21),
+        req(vec![base[0].clone(), archive]),
     )
     .is_err());
 }

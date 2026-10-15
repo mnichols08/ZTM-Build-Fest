@@ -94,3 +94,32 @@ directly. With the arena, normal operation pays them once, at unlock.
 - No Node stage regressed beyond noise. The 10k decode moved +5% between
   runs, inside run-to-run variance; the 4 KB stages improved because command
   requests no longer copy the history twice.
+
+## Slice 2 — protocol 24 only
+
+Two runs, because the first showed movement in stages this slice did not
+touch (the Node array encode and the app render); the second, with nothing
+else running, is the comparison of record.
+
+| Stage (ms) | 1k short | 10k short | 10k × 4 KB |
+| --- | ---: | ---: | ---: |
+| Request encode | 0.25 | 0.74 | 8.48 |
+| Copy into WASM | 0.01 | 0.14 | 5.10 |
+| Rust replay + encode | 1.09 | 9.93 | 62.99 |
+| Copy-out + JS decode | 3.78 | 31.93 | 55.61 |
+| Store unlock → projection | 146 | 1,416 | 9,463 |
+| Store refresh | 5.6 | 48 | 180 |
+| Store command | 7 | 55 | 242 |
+| App `renderState()` | 177 | 2,144 | 2,216 |
+| App peer refresh (incl. render) | 236 | 2,536 | 2,697 |
+| App unlock (recovery key) | 407 | 5,245 | 12,399 |
+
+Every multi-sample stage is within ±10% of Slice 1 except render at 10k short
+(+6%, inside the first run's spread). App unlock at 10k varied between runs:
+3,439 ms (Slice 1), 4,027 ms (Slice 2, first run) and 5,245 ms (Slice 2,
+second run). It is one unrepeated sample of the app's whole boot-and-unlock
+path, and the replay code under it is unchanged, so this is run-to-run
+variance, not a regression. The store-level unlock, which is sampled more
+directly, is 1,416 ms against 1,447 ms. Replay itself is unchanged: decoding
+and encoding run the same protocol-24 code without version branches, and the
+golden fixtures are byte-identical.

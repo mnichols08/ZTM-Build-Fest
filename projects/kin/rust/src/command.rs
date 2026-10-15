@@ -4,14 +4,13 @@ use crate::codec::{encode_event, encode_metadata};
 use crate::core::{encode_projection, project};
 use crate::error::KinError;
 use crate::event::*;
-use crate::protocol::{
-    decode_event, decode_request_with_summary, DecodedRequest, MAX_EVENT_COUNT, MAX_PROTOCOL_BYTES,
-    PROTOCOL_VERSION,
-};
+use crate::event_decode::decode_event;
 use crate::recurrence::{Cadence, CivilDate};
+use crate::request::{decode_request, DecodedRequest};
 use crate::state::{
     normalize_area_name, normalize_step_text, HouseholdState, ItemStatus, MAX_STEPS_PER_ITEM,
 };
+use crate::wire::{MAX_EVENT_COUNT, MAX_PROTOCOL_BYTES};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HouseholdCommand {
@@ -369,7 +368,7 @@ pub fn create_event(
         kind,
         canonical_bytes: Vec::new(),
     };
-    decode_event(&encode_event(&event)?, PROTOCOL_VERSION)
+    decode_event(&encode_event(&event)?)
 }
 
 #[derive(Debug)]
@@ -405,40 +404,6 @@ pub fn execute(
         return Err(KinError::InvalidEvent);
     }
     let current = project(&request)?;
-    if matches!(
-        command,
-        HouseholdCommand::SavePlaybook { .. } | HouseholdCommand::ArchivePlaybook(_)
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V19
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(
-        command,
-        HouseholdCommand::SaveReferenceRecord { .. } | HouseholdCommand::ArchiveReferenceRecord(_)
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V20
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(
-        command,
-        HouseholdCommand::SaveMaintenanceEvent { .. }
-            | HouseholdCommand::ArchiveMaintenanceEvent(_)
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V21
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(
-        command,
-        HouseholdCommand::BindAttachment { .. } | HouseholdCommand::RemoveAttachment(_)
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V22
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(command, HouseholdCommand::ChangeResponsibility { .. })
-        && request.protocol_version < crate::protocol::PROTOCOL_V23
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
     if let HouseholdCommand::ChangeResponsibility {
         target_kind,
         target_id,
@@ -467,61 +432,6 @@ pub fn execute(
         {
             return Err(KinError::InvalidEvent);
         }
-    }
-    if matches!(
-        command,
-        HouseholdCommand::AddItemStep { .. }
-            | HouseholdCommand::CompleteItemStep { .. }
-            | HouseholdCommand::ReopenItemStep { .. }
-            | HouseholdCommand::ArchiveItemStep { .. }
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V11
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(
-        command,
-        HouseholdCommand::CreateRoutine {
-            cadence: Cadence::Biweekly | Cadence::Monthly,
-            ..
-        }
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V12
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(
-        command,
-        HouseholdCommand::CreateRoutine {
-            cadence: Cadence::Weekdays,
-            ..
-        }
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V24
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(
-        command,
-        HouseholdCommand::AddItem {
-            classification: ItemClassification::Staple,
-            ..
-        }
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V14
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(
-        command,
-        HouseholdCommand::AddItem {
-            classification: ItemClassification::Shopping,
-            ..
-        }
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V13
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(command, HouseholdCommand::SetHouseholdMode(_))
-        && request.protocol_version < crate::protocol::PROTOCOL_V15
-    {
-        return Err(KinError::UnsupportedVersion);
     }
     if let HouseholdCommand::SetHouseholdMode(mode) = command {
         if current.mode == *mode {
@@ -559,9 +469,6 @@ pub fn execute(
             .ok_or(KinError::InvalidEvent)?;
         if item.status == ItemStatus::Archived || item.planning_date == *planning_date {
             return Err(KinError::InvalidEvent);
-        }
-        if request.protocol_version < crate::protocol::PROTOCOL_V16 {
-            return Err(KinError::UnsupportedVersion);
         }
     }
     let routine_intent = match command {
@@ -782,7 +689,7 @@ pub fn execute(
         _ => {}
     }
     if let HouseholdCommand::CreateRoutine { created_on, .. } = command {
-        if request.civil_date != Some(*created_on) {
+        if request.civil_date != *created_on {
             return Err(KinError::InvalidEvent);
         }
     }
@@ -1223,8 +1130,7 @@ pub fn execute_request(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
         .checked_add(command_length)
         .ok_or(KinError::MalformedProtocol)?;
     let (command, context) = decode_command(bytes.get(4..end).ok_or(KinError::MalformedProtocol)?)?;
-    let request =
-        decode_request_with_summary(bytes.get(end..).ok_or(KinError::MalformedProtocol)?)?;
+    let request = decode_request(bytes.get(end..).ok_or(KinError::MalformedProtocol)?)?;
     let result = execute(&command, context, request)?;
     let metadata = encode_metadata(&result.event.canonical_bytes)?;
     let length =

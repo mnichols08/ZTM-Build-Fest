@@ -11,8 +11,9 @@ use std::path::PathBuf;
 use crate::command::{execute, CommandContext, HouseholdCommand as C};
 use crate::core::replay;
 use crate::event::*;
-use crate::protocol::{DecodedRequest, PROTOCOL_V24};
 use crate::recurrence::{Cadence, CivilDate};
+use crate::request::DecodedRequest;
+use crate::wire::PROTOCOL_VERSION;
 
 const HOUSEHOLD: HouseholdId = HouseholdId([1; 16]);
 const LEGACY_HOUSEHOLD: HouseholdId = HouseholdId([9; 16]);
@@ -52,11 +53,10 @@ impl Scenario {
 
     fn request(&self, events: &[EventEnvelope]) -> DecodedRequest {
         DecodedRequest {
-            protocol_version: PROTOCOL_V24,
             events: events.to_vec(),
-            as_of: Some(BASE_TIME + 1_000_000),
+            as_of: BASE_TIME + 1_000_000,
             summary_cursor: None,
-            civil_date: Some(date(ON)),
+            civil_date: date(ON),
             target_household_id: self.target,
             identity_bindings: self.bindings.clone(),
         }
@@ -101,7 +101,7 @@ impl Scenario {
 
     fn encode(&self, as_of: i64, cursor: Option<EventId>) -> Vec<u8> {
         let mut bytes = b"KINE".to_vec();
-        bytes.extend_from_slice(&PROTOCOL_V24.to_le_bytes());
+        bytes.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
         bytes.extend_from_slice(&0u16.to_le_bytes());
         bytes.extend_from_slice(&(self.events.len() as u32).to_le_bytes());
         bytes.extend_from_slice(&as_of.to_le_bytes());

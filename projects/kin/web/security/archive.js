@@ -50,46 +50,36 @@ export async function validateHouseholdArchive({ bytes, recoverySecret, engine, 
   const header = deserializeProtectedValue(metadata);
   if (!header || typeof header !== "object" || Array.isArray(header))
     throw new VaultError("This file is damaged or incomplete.");
+  // Package format 2 is the only export format; earlier formats were
+  // development-only and are refused.
   const archiveVersion = header.archiveVersion;
-  if (archiveVersion !== 1 && archiveVersion !== 2)
+  if (archiveVersion !== 2)
     throw new VaultError("This Kin export version is not supported.");
-  const expectedHeaderFields = archiveVersion === 1
-    ? ["archiveVersion", "manifest", "protection"]
-    : ["archiveVersion", "manifest", "packageManifest", "protection"];
-  if (!hasExactKeys(header, expectedHeaderFields) ||
+  if (!hasExactKeys(header, ["archiveVersion", "manifest", "packageManifest", "protection"]) ||
       !hasExactKeys(header.protection, ["nonce", "salt", "vaultId", "version"]))
     throw new VaultError("This file is damaged or incomplete.");
-  const packageManifest = archiveVersion === 2
-    ? validatePackageManifest(header.packageManifest)
-    : null;
+  const packageManifest = validatePackageManifest(header.packageManifest);
   let sourceVault;
   const unsubscribe = vault.onLock(() => sourceVault?.lock());
   try {
     sourceVault = await LocalVault.unlock(header.manifest, recoverySecret);
     await assertCurrentProtection(vault);
-    const authenticatedMetadata = archiveVersion === 1
-      ? serializeProtectedValue({ archiveVersion: 1, manifest: header.manifest })
-      : serializeProtectedValue({ archiveVersion: 2, manifest: header.manifest, packageManifest });
+    const authenticatedMetadata = serializeProtectedValue({ archiveVersion: 2, manifest: header.manifest, packageManifest });
     const decoded = await sourceVault.openArchive(
       { ...header.protection, ciphertext },
       authenticatedMetadata,
       { ownedCiphertext: true },
     );
     await assertCurrentProtection(vault);
-    let snapshot;
-    if (archiveVersion === 1) {
-      snapshot = decoded;
-    } else {
-      if (!hasExactKeys(decoded, ["packageFormatVersion", "snapshot"]) ||
-          decoded.packageFormatVersion !== 2)
-        throw new VaultError("This Kin export version is not supported.");
-      snapshot = decoded.snapshot;
-    }
+    if (!hasExactKeys(decoded, ["packageFormatVersion", "snapshot"]) ||
+        decoded.packageFormatVersion !== 2)
+      throw new VaultError("This Kin export version is not supported.");
+    const snapshot = decoded.snapshot;
 
     const sourceSummary = await EventStore.validateArchiveSnapshot({
       snapshot, engine, vault: sourceVault,
     });
-    if (packageManifest && (
+    if ((
       packageManifest.eventCount !== sourceSummary.eventCount ||
       packageManifest.attachmentCount !== sourceSummary.attachmentCount ||
       packageManifest.attachmentBytes !== sourceSummary.attachmentBytes
