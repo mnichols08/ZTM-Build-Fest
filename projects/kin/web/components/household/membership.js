@@ -85,15 +85,33 @@ export class HouseholdMembership {
                 document.createTextNode(" The codes match."),
               );
               const approve = this.host.makeButton("Trust this device", async () => {
-                await this.host.syncKeyStore.pinTrustedDevice({
-                  householdId: this.host.identity.householdId,
-                  memberId: syncDevice.memberId,
-                  deviceId: syncDevice.deviceId,
-                  publicKeys: syncDevice.publicKeys,
-                  fingerprint: syncDevice.fingerprint,
+                let trusted = false;
+                await this.host.run(async () => {
+                  if (!confirmation.checked)
+                    throw new Error(
+                      "Compare the codes on both devices before trusting this device.",
+                    );
+                  const current = (
+                    await this.host.api("/api/sync/devices")
+                  ).devices.find((entry) => entry.deviceId === device.id);
+                  if (
+                    !current ||
+                    current.fingerprint !== displayedFingerprint
+                  )
+                    throw new Error(
+                      "This device code changed. Compare the codes again before trusting this device.",
+                    );
+                  await this.host.syncKeyStore.pinTrustedDevice({
+                    householdId: this.host.identity.householdId,
+                    memberId: current.memberId,
+                    deviceId: current.deviceId,
+                    publicKeys: current.publicKeys,
+                    fingerprint: current.fingerprint,
+                  });
+                  this.ctx.api.requestSync();
+                  trusted = true;
                 });
-                this.ctx.api.requestSync();
-                await this.host.showDevices();
+                if (trusted) await this.host.showDevices();
               });
               this.host.setControlDisabled(approve, true);
               confirmation.addEventListener("change", () => {

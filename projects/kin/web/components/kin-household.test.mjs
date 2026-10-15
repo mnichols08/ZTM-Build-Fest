@@ -108,6 +108,86 @@ test("device revocation control names its target", async () => {
   assert.equal(revoke.textContent, "Revoke Kitchen tablet");
 });
 
+test("device trust refuses a forced click until its displayed code is confirmed", async () => {
+  const component = new KinHousehold();
+  component.identity = {
+    householdId: "household",
+    memberId: "adult",
+    deviceId: "current-device",
+  };
+  component.assertConnection = () => {};
+  const expected = {
+    householdId: "household",
+    memberId: "partner",
+    deviceId: "partner-device",
+    publicKeys: { encryption: "key" },
+    fingerprint: "a".repeat(64),
+  };
+  const pinned = [];
+  component.syncKeyStore = {
+    getPinnedDevice: async () => null,
+    pinTrustedDevice: async (value) => pinned.push(value),
+  };
+  component.ctx.api.openSyncKeyStore = async () => {};
+  component.ctx.api.requestSync = () => {};
+  component.api = async (path) => {
+    if (path === "/api/devices")
+      return {
+        canManageMembers: false,
+        devices: [
+          {
+            id: "partner-device",
+            memberId: "partner",
+            label: "Partner phone",
+            revokedAt: null,
+          },
+        ],
+      };
+    if (path === "/api/sync/devices")
+      return {
+        devices: [
+          {
+            memberId: expected.memberId,
+            deviceId: expected.deviceId,
+            publicKeys: expected.publicKeys,
+            fingerprint: expected.fingerprint,
+          },
+        ],
+      };
+    throw new Error(`Unexpected API path: ${path}`);
+  };
+
+  await component.showDevices();
+  const descendants = (items) =>
+    items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
+  const verify = descendants(component.children).find(
+    (child) => child.textContent === "Verify device",
+  );
+  verify.listeners.click();
+  const confirmation = descendants(component.children).find(
+    (child) => child.tagName === "input" && child.type === "checkbox",
+  );
+  const trust = descendants(component.children).find(
+    (child) => child.textContent === "Trust this device",
+  );
+
+  trust.disabled = false;
+  await trust.listeners.click();
+  assert.equal(pinned.length, 0);
+  const refusal = component.children.find(
+    (child) => child.className === "household-message",
+  );
+  assert.equal(refusal.attributes.role, "alert");
+  assert.equal(
+    refusal.textContent,
+    "Compare the codes on both devices before trusting this device.",
+  );
+
+  confirmation.checked = true;
+  await trust.listeners.click();
+  assert.deepEqual(pinned, [expected]);
+});
+
 test("self-leave requests a passkey and cancellation leaves local authority intact", async () => {
   const component = new KinHousehold();
   component.identity = { memberId: "limited-member" };
