@@ -50,6 +50,7 @@ test("busy-state changes preserve controls gated by a local prerequisite", () =>
   component.append(gated, available);
 
   component.setControlDisabled(gated, true);
+  assert.equal(gated.hasAttribute("data-gated"), true);
   component.disabled = true;
   assert.equal(gated.disabled, true);
   assert.equal(available.disabled, true);
@@ -60,6 +61,7 @@ test("busy-state changes preserve controls gated by a local prerequisite", () =>
 
   component.setControlDisabled(gated, false);
   assert.equal(gated.disabled, false);
+  assert.equal(gated.hasAttribute("data-gated"), false);
 });
 
 test("Limited and Temporary members get a clearly named Leave household button", async () => {
