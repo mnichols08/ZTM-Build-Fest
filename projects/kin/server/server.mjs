@@ -1293,6 +1293,8 @@ function json(response, status, value) {
 }
 function setHeaders(response) {
   response.setHeader("X-Content-Type-Options", "nosniff");
+  response.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+  response.setHeader("X-Frame-Options", "DENY");
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader(
     "Permissions-Policy",
