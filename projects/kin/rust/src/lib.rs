@@ -6,6 +6,7 @@ pub mod core;
 pub mod error;
 pub mod event;
 pub mod event_decode;
+pub mod history;
 pub mod recurrence;
 pub mod request;
 pub mod sections;
@@ -72,3 +73,6 @@ mod state_encode_tests;
 
 #[cfg(test)]
 mod section_tests;
+
+#[cfg(test)]
+mod history_tests;

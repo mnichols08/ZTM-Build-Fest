@@ -28,6 +28,14 @@
   checks that the bridge fails closed on every truncation of a golden
   projection, on trailing bytes, on invalid header fields and on a section
   table that does not cover the body.
+- **Instance history (Slice 6).** `rust/src/history_tests.rs` checks append
+  batches, truncation and atomic rejection, and that replaying the held
+  history matches replaying the whole request for every golden fixture.
+  `web/wasm/history-mirror.test.mjs` checks over the real WASM that a growing
+  arena view sends only new records, a shorter one truncates, `historyWith`
+  extras are rolled back, and a new epoch, another arena or an array sends
+  the history whole. `web/wasm/abi-test-support.mjs` (not shipped) lets raw
+  ABI tests replay a whole KINE request: reset, append, project.
 - **Section revisions.** `rust/src/section_tests.rs` covers the contiguous
   section layout, the table and revision wrapping. The `abi.rs` tests check
   that revisions advance only for changed sections across calls, survive a

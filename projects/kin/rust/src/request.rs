@@ -59,7 +59,76 @@ impl DecodedRequest {
     }
 }
 
+/// A whole KINE request: the context and its event records.
 pub fn decode_request(bytes: &[u8]) -> Result<DecodedRequest, KinError> {
+    let (mut request, event_count, mut offset) = decode_header(bytes)?;
+    request
+        .events
+        .try_reserve_exact(event_count)
+        .map_err(|_| KinError::SizeLimit)?;
+    for _ in 0..event_count {
+        let header_end = offset
+            .checked_add(EVENT_HEADER_BYTES)
+            .ok_or(KinError::MalformedProtocol)?;
+        let header = bytes
+            .get(offset..header_end)
+            .ok_or(KinError::MalformedProtocol)?;
+        let payload_length = read_u32(header, 84)? as usize;
+        let record_end = header_end
+            .checked_add(payload_length)
+            .ok_or(KinError::MalformedProtocol)?;
+        let record = bytes
+            .get(offset..record_end)
+            .ok_or(KinError::MalformedProtocol)?;
+        request.push_record(record)?;
+        offset = record_end;
+    }
+    if offset != bytes.len() {
+        return Err(KinError::MalformedProtocol);
+    }
+    Ok(request)
+}
+
+/// Only the context of a KINE request (as_of, cursor, civil date, target
+/// household and bindings), for replaying the history an engine instance
+/// holds (history.rs). The request must carry no event records.
+pub fn decode_context(bytes: &[u8]) -> Result<DecodedRequest, KinError> {
+    let (request, event_count, offset) = decode_header(bytes)?;
+    if event_count != 0 || offset != bytes.len() {
+        return Err(KinError::MalformedProtocol);
+    }
+    Ok(request)
+}
+
+impl DecodedRequest {
+    /// Decodes one canonical record and appends it, with its replay identity
+    /// normalized through the bindings. canonical_bytes keep the signed source.
+    pub fn push_record(&mut self, record: &[u8]) -> Result<(), KinError> {
+        if self.events.len() >= MAX_EVENT_COUNT {
+            return Err(KinError::SizeLimit);
+        }
+        let mut event = decode_event(record)?;
+        if let Some(target_household_id) = self.target_household_id {
+            if let Some(binding) = self.identity_bindings.iter().find(|binding| {
+                binding.legacy_household_id == event.household_id
+                    && binding.legacy_actor_id == event.actor_id
+                    && binding.legacy_device_id == event.device_id
+            }) {
+                event.household_id = binding.household_id;
+                event.actor_id = binding.actor_id;
+                event.device_id = binding.device_id;
+            } else if event.household_id != target_household_id {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        self.events.push(event);
+        Ok(())
+    }
+}
+
+/// The header and bindings; returns the request without events, the declared
+/// event count and the offset of the first record.
+fn decode_header(bytes: &[u8]) -> Result<(DecodedRequest, usize, usize), KinError> {
     if bytes.len() > MAX_PROTOCOL_BYTES {
         return Err(KinError::SizeLimit);
     }
@@ -129,51 +198,13 @@ pub fn decode_request(bytes: &[u8]) -> Result<DecodedRequest, KinError> {
         identity_bindings.push(binding);
         offset += BINDING_BYTES;
     }
-    let mut events = Vec::new();
-    events
-        .try_reserve_exact(event_count)
-        .map_err(|_| KinError::SizeLimit)?;
-    for _ in 0..event_count {
-        let header_end = offset
-            .checked_add(EVENT_HEADER_BYTES)
-            .ok_or(KinError::MalformedProtocol)?;
-        let header = bytes
-            .get(offset..header_end)
-            .ok_or(KinError::MalformedProtocol)?;
-        let payload_length = read_u32(header, 84)? as usize;
-        let record_end = header_end
-            .checked_add(payload_length)
-            .ok_or(KinError::MalformedProtocol)?;
-        let record = bytes
-            .get(offset..record_end)
-            .ok_or(KinError::MalformedProtocol)?;
-        let mut event = decode_event(record)?;
-        if let Some(target_household_id) = target_household_id {
-            if let Some(binding) = identity_bindings.iter().find(|binding| {
-                binding.legacy_household_id == event.household_id
-                    && binding.legacy_actor_id == event.actor_id
-                    && binding.legacy_device_id == event.device_id
-            }) {
-                // Normalize replay identity only; canonical_bytes retain the signed source event.
-                event.household_id = binding.household_id;
-                event.actor_id = binding.actor_id;
-                event.device_id = binding.device_id;
-            } else if event.household_id != target_household_id {
-                return Err(KinError::InvalidEvent);
-            }
-        }
-        events.push(event);
-        offset = record_end;
-    }
-    if offset != bytes.len() {
-        return Err(KinError::MalformedProtocol);
-    }
-    Ok(DecodedRequest {
-        events,
+    let request = DecodedRequest {
+        events: Vec::new(),
         as_of,
         summary_cursor,
         civil_date,
         target_household_id,
         identity_bindings,
-    })
+    };
+    Ok((request, event_count, offset))
 }

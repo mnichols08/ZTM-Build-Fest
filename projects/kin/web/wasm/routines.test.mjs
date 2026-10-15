@@ -104,8 +104,8 @@ test("current result decoder rejects truncation, fields, duplicates and trailing
   context.mock.method(WebAssembly, "instantiate", async (...args) => {
     const { instance } = await instantiate(...args); const abi = instance.exports;
     return { instance: { exports: { ...abi,
-      kin_apply_events(pointer, length) {
-        const status = abi.kin_apply_events(pointer, length);
+      kin_project(pointer, length) {
+        const status = abi.kin_project(pointer, length);
         if (!status) {
           actualLength = abi.kin_result_len();
           const result = new Uint8Array(abi.memory.buffer, abi.kin_result_ptr(), actualLength);

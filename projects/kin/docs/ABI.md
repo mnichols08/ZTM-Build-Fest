@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** Protocol 24 is the only replay format (refactor track, Slice 2; owner decision D3). Protocols 1–23 and the schema-1 `ITEM_ADDED` payload were removed, not migrated; their contracts survive only in the release records. The Rust sources that implement this contract are `rust/src/wire.rs`, `request.rs`, `event_decode.rs`, `state_encode.rs` (with `state_encode/records.rs`), `sections.rs`, `codec.rs`, `command.rs`, `archive.rs` and `abi.rs`. Refactor Slice 4 added the KINS section table and regrouped the body into one contiguous section per domain; the version stays 24 because event encoding and the KINE request are unchanged.
+**Status:** Protocol 24 is the only replay format (refactor track, Slice 2; owner decision D3). Protocols 1–23 and the schema-1 `ITEM_ADDED` payload were removed, not migrated; their contracts survive only in the release records. The Rust sources that implement this contract are `rust/src/wire.rs`, `request.rs`, `event_decode.rs`, `history.rs`, `state_encode.rs` (with `state_encode/records.rs`), `sections.rs`, `codec.rs`, `command.rs`, `archive.rs` and `abi.rs`. Refactor Slice 4 added the KINS section table and regrouped the body into one contiguous section per domain. Slice 6 moved the history into the engine instance (`kin_history_*`, `kin_project`, `kin_execute`) and removed the whole-history `kin_apply_events` and `kin_execute_command`. The version stays 24 because event encoding and the KINE layout are unchanged.
 
 All multibyte integers are little-endian. IDs are exactly 16 opaque bytes and are never parsed, except for the bytewise tie-break in replay ordering. Text is strict UTF-8 with no terminator. Reserved fields must be zero. Decoders reject truncation, trailing bytes, overflow, unknown codes, invalid UTF-8 and unsupported versions; they never reinterpret a different layout.
 
@@ -8,8 +8,11 @@ All multibyte integers are little-endian. IDs are exactly 16 opaque bytes and ar
 
 ```text
 kin_alloc(length) -> ptr             kin_free(ptr, length) -> status
-kin_apply_events(ptr, len)           replay: KINE -> KINS
-kin_execute_command(ptr, len)        command: length + KCMD + KINE -> KCMT
+kin_history_reset() -> status        empty the instance's history
+kin_history_append(ptr, len)         append a record batch to the history
+kin_history_truncate(count) -> status   keep the first `count` records
+kin_project(ptr, len)                replay the history: KINE context -> KINS
+kin_execute(ptr, len)                command: length + KCMD + KINE context -> KCMT
 kin_encode_command(ptr, len)         KCMD -> canonical event bytes
 kin_event_metadata(ptr, len)         one canonical event -> KMET
 kin_event_metadata_batch(ptr, len)   KMDQ -> KMDL
@@ -33,8 +36,44 @@ range and never frees an unrelated allocation. Requests and results are capped
 at 64 MiB and 10,000 events.
 
 `kin_alloc(0)` and a failed allocation return 0, which the host treats as
-failure. `kin_clear` releases retained buffers; it does not promise physical
-erasure. `engine.dispose()` calls it.
+failure. Live allocations sit in a fixed table of 8 slots. The host holds one
+input at a time, so a full table means a leaked allocation, and `kin_alloc`
+returns 0. `kin_clear` releases retained buffers and the history (whose bytes
+it zero-fills first); it does not promise physical erasure. `engine.dispose()`
+calls it.
+
+## Instance history (Slice 6)
+
+Each engine instance holds one canonical history (`rust/src/history.rs`):
+records in local arrival order, stored as received in one byte buffer with an
+`(offset, length)` span per record. Projections and commands replay this
+history; no call carries a whole history any more except `kin_plan_import`,
+whose history is a separate one being imported.
+
+- `kin_history_append(ptr, len)` adds records after those held. Its input is
+  `count:u32`, then `count` record lengths (u32 each), then the records back
+  to back. Every record is checked (`decode_event`) before any is appended,
+  so a failure leaves the history unchanged and publishes a KERR error. It
+  publishes no result on success. The history is capped at 10,000 records
+  and 64 MiB.
+- `kin_history_truncate(count)` keeps the first `count` records (status 1 if
+  `count` exceeds the history). It touches neither result nor error buffer.
+- `kin_history_reset()` empties the history, zero-filling its bytes.
+- `kin_project(ptr, len)` takes a KINE request whose `event_count` is 0 and
+  which carries no records: its as_of, cursor, civil date, target household
+  and bindings are the replay context. It publishes the KINS projection with
+  stamped section revisions.
+- `kin_execute(ptr, len)` takes `intent length:u32`, the KCMD intent, then such
+  a record-less KINE context, and publishes KCMT. The history is not changed;
+  the host appends the new event once it is stored.
+
+The bridge keeps the instance's history equal to what a caller asks it to
+replay (`web/wasm/history-mirror.js`). Views of the same session arena and
+epoch send only the records added since the last call, or truncate for a
+shorter view. Another arena, a new epoch or a plain array resets the instance
+and sends that history whole. `historyWith(view, extras)` appends the extras
+for one replay and truncates them afterwards. Growth reserves an eighth more
+than the history holds, so appending a few events copies nothing.
 
 ## Status codes and KERR
 
@@ -72,6 +111,10 @@ Bindings change only the replay identity; `canonical_bytes` keep the signed
 source event. They are how history created before sync (with placeholder IDs
 in its canonical bytes) replays after sync, so they are part of the current
 contract, not a migration ([IDENTITY](IDENTITY.md)).
+
+For `kin_project` and `kin_execute` the request is only the context: its
+`event_count` must be 0 and nothing may follow the bindings; the events are
+the instance history's records.
 
 Replay reduces an owned copy sorted by `(logical_time, device_id, event_id)`;
 equal logical times are valid. The catch-up summary uses input (local arrival)
@@ -211,8 +254,8 @@ A revision tells the host whether a section changed since the last projection
 from the same engine instance, so it can skip decoding and rendering an
 unchanged section.
 
-- The ABI stamps revisions on the projections returned by `kin_apply_events`
-  and `kin_execute_command`. Each section's counter starts at 0 per instance
+- The ABI stamps revisions on the projections returned by `kin_project`
+  and `kin_execute`. Each section's counter starts at 0 per instance
   and increases by one (wrapping past `u32::MAX` to 1, never 0) whenever that
   section differs from the same section of the last projection the instance
   emitted. The comparison is exact: the section bytes and the header fields
@@ -253,7 +296,8 @@ revision is meaningful only within one instance.
   validates the history, requires a fresh event ID and a logical time above
   history, rejects stale Routine intents and Item completions or reopenings
   that would not change status, and returns the KINS projection of the
-  candidate history.
+  candidate history (the instance history plus the new event, which is not
+  kept).
 - **KMET v1** (92 bytes): `"KMET"`, version 1, reserved, event/household/
   actor/device IDs, timestamp i64, logical time u64, event version u16, kind
   u16. **KMDQ v1 / KMDL v1** batch these: `"KMDQ"`, version, reserved, count,
@@ -273,15 +317,15 @@ revision is meaningful only within one instance.
 buffers, encodes KINE and KCMD, decodes KINS (`decodeProjection` in
 `projection-decode.js`, one module per section family under `projection/`) and
 converts status codes to safe messages. It never reduces events.
-`engine.applyEvents(..., previous)` reuses every decoded section of `previous`
-whose revision is unchanged, keeping those arrays' identity. Cross-section
-references are checked again on every decode. A replay or command
-history may be an array of canonical records or a contiguous source exposing
-`length`, `byteLength` and `copyTo(target, offset)` (the session event arena),
-copied in one operation; command requests encode the history once behind a
-reserved intent prefix. `createEngine(exports)` wraps instantiated exports for
-tests, and `engine.projectionBytes(...)` returns exact KINS bytes for the
-projection-equivalence oracle.
+The engine reuses every decoded section of the last state it produced whose
+revision is unchanged, keeping those arrays' identity. Cross-section
+references are checked again on every decode. A replay or command history may
+be a session-arena view, a `historyWith(view, extras)` source or an array of
+canonical records; the history mirror (above) brings the instance up to date
+with it before `kin_project` or `kin_execute`. `createEngine(exports)` wraps
+instantiated exports for tests, `web/wasm/abi-test-support.mjs` replays whole
+KINE requests through the raw ABI for tests, and `engine.projectionBytes(...)`
+returns exact KINS bytes for the projection-equivalence oracle.
 
 ## History
 

@@ -3,24 +3,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile, readdir } from "node:fs/promises";
+import { replayRequest, resultBytes } from "./abi-test-support.mjs";
 
 const fixtures = new URL("../../rust/fixtures/golden/", import.meta.url);
 const wasm = await readFile(new URL("./kin_engine.wasm", import.meta.url));
 
 // Section revisions count per engine instance; the fixtures hold a fresh
-// instance's first projection, where every section is revision 1.
+// instance's first projection, where every section is revision 1. The
+// instance replays its own history, so the request's records are appended
+// first (abi-test-support.mjs).
 async function replay(request) {
   const { instance } = await WebAssembly.instantiate(wasm, {});
   const abi = instance.exports;
-  const pointer = abi.kin_alloc(request.length);
-  assert.notEqual(pointer, 0);
-  try {
-    new Uint8Array(abi.memory.buffer, pointer, request.length).set(request);
-    assert.equal(abi.kin_apply_events(pointer, request.length), 0);
-    return new Uint8Array(abi.memory.buffer, abi.kin_result_ptr(), abi.kin_result_len()).slice();
-  } finally {
-    assert.equal(abi.kin_free(pointer, request.length), 0);
-  }
+  assert.equal(replayRequest(abi, request), 0);
+  return resultBytes(abi);
 }
 
 const names = (await readdir(fixtures)).filter((name) => name.endsWith(".kine")).map((name) => name.slice(0, -5));

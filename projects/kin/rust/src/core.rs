@@ -1,6 +1,7 @@
 //! Portable application operations shared by the native library and manual ABI.
 use crate::error::KinError;
-use crate::request::{decode_request, DecodedRequest};
+use crate::history::History;
+use crate::request::{decode_context, decode_request, DecodedRequest};
 use crate::state::{self, HouseholdState};
 use crate::state_encode::encode_state;
 
@@ -18,7 +19,15 @@ pub fn encode_projection(
     encode_state(household, &summary)
 }
 
+/// Replay of a whole KINE request (tests, golden fixtures, import plans).
 pub fn replay(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
     let request = decode_request(bytes)?;
+    encode_projection(&request, &project(&request)?)
+}
+
+/// Replay of the history an engine instance holds, in the context a
+/// record-less KINE request gives (`kin_project`).
+pub fn replay_history(context: &[u8], history: &History) -> Result<Vec<u8>, KinError> {
+    let request = history.request(decode_context(context)?)?;
     encode_projection(&request, &project(&request)?)
 }

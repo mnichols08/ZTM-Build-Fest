@@ -1121,6 +1121,29 @@ pub fn encode_command(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
     Ok(create_event(&command, context)?.canonical_bytes)
 }
 
+/// A command against the history an engine instance holds (`kin_execute`):
+/// u32 intent length, the KCMD intent, then a record-less KINE request giving
+/// the replay context. The history itself is not changed; the host appends
+/// the new event once it is stored.
+pub fn execute_history(
+    bytes: &[u8],
+    history: &crate::history::History,
+) -> Result<Vec<u8>, KinError> {
+    if bytes.len() > MAX_PROTOCOL_BYTES {
+        return Err(KinError::SizeLimit);
+    }
+    let command_length = u32::from_le_bytes(field(bytes, 0)?) as usize;
+    let end = 4usize
+        .checked_add(command_length)
+        .ok_or(KinError::MalformedProtocol)?;
+    let (command, context) = decode_command(bytes.get(4..end).ok_or(KinError::MalformedProtocol)?)?;
+    let request = history.request(crate::request::decode_context(
+        bytes.get(end..).ok_or(KinError::MalformedProtocol)?,
+    )?)?;
+    command_result(execute(&command, context, request)?)
+}
+
+/// The same command against a whole KINE request (tests).
 pub fn execute_request(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
     if bytes.len() > MAX_PROTOCOL_BYTES {
         return Err(KinError::SizeLimit);
@@ -1131,7 +1154,11 @@ pub fn execute_request(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
         .ok_or(KinError::MalformedProtocol)?;
     let (command, context) = decode_command(bytes.get(4..end).ok_or(KinError::MalformedProtocol)?)?;
     let request = decode_request(bytes.get(end..).ok_or(KinError::MalformedProtocol)?)?;
-    let result = execute(&command, context, request)?;
+    command_result(execute(&command, context, request)?)
+}
+
+/// KCMT: the new event, its metadata and the candidate projection.
+fn command_result(result: CommandResult) -> Result<Vec<u8>, KinError> {
     let metadata = encode_metadata(&result.event.canonical_bytes)?;
     let length =
         20 + result.event.canonical_bytes.len() + metadata.len() + result.encoded_projection.len();

@@ -14,7 +14,9 @@ Native Rust (`rust/src/golden_tests.rs`) and the release WASM
 Regenerating them (`KIN_UPDATE_GOLDEN=1 cargo test golden`) is a deliberate
 protocol change and needs its own justification.
 
-The `.kins` files hold a fresh engine instance's first projection, so every
+Since Slice 6 the WASM test replays a fixture by appending the `.kine`
+records to a fresh instance's history and projecting its context; the bytes
+are unchanged. The `.kins` files hold a fresh engine instance's first projection, so every
 section revision is 1; the WASM test instantiates a new module per fixture for
 that reason. Refactor Slice 4 regenerated only the `.kins` files, when the
 section table was added. Every `.kine` request stayed byte-identical, so

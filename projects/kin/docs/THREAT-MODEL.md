@@ -28,6 +28,14 @@ that does not go through Kin's replacement paths (and so does not bump the
 generation) is not detected until the next unlock; such a writer already has
 storage access.
 
+From Slice 6 the engine instance also keeps its own copy of the canonical
+history in WASM memory while unlocked (`rust/src/history.rs`), so a refresh
+sends only new events. Before, every replay copied the whole history into
+WASM memory and freed it afterwards, without zeroing it. WASM memory never
+shrinks, so those bytes could stay resident until something overwrote them. The copy is
+zero-filled and dropped on `kin_history_reset` and on lock (`kin_clear` from
+`engine.dispose()`). As with the arena, zero-filling covers that buffer only.
+
 Incremental rendering (Slice 4) adds no new plaintext copy. The engine keeps
 its last projection buffer between calls, as its result buffer already did, to
 compare sections and stamp revisions. The bridge keeps the last decoded state,

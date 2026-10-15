@@ -16,6 +16,7 @@ import {
   strictTextDecoder,
 } from "./wire.js";
 import { decodeProjection } from "./projection-decode.js";
+import { HistoryMirror } from "./history-mirror.js";
 
 export { idToHex, KinEngineError };
 
@@ -79,11 +80,14 @@ export function createEngine(instanceExports) {
     "memory",
     "kin_alloc",
     "kin_free",
-    "kin_apply_events",
+    "kin_history_reset",
+    "kin_history_append",
+    "kin_history_truncate",
+    "kin_project",
     "kin_event_metadata",
     "kin_event_metadata_batch",
     "kin_encode_command",
-    "kin_execute_command",
+    "kin_execute",
     "kin_encode_archive",
     "kin_decode_archive",
     "kin_archive_header",
@@ -112,10 +116,18 @@ export function createEngine(instanceExports) {
   // throws leaves the previous state in place for the same reason.
   let lastState = null;
   const decoded = (state) => (lastState = state);
+  // What the instance's own history holds; replays and commands bring it up
+  // to date with only the records that changed (history-mirror.js).
+  const mirror = new HistoryMirror(
+    exports,
+    (batch) => callCore(exports, "kin_history_append", batch, { statusOnly: true }),
+    asBytes,
+  );
   return {
     dispose() {
       if (exports) {
         exports.kin_clear();
+        mirror.forget();
         if (sharedCodec === exports) sharedCodec = null;
         exports = null;
         lastState = null;
@@ -135,6 +147,7 @@ export function createEngine(instanceExports) {
     ) => {
       const result = executeCommand(
         exports,
+        mirror,
         command,
         identity,
         records,
@@ -174,6 +187,7 @@ export function createEngine(instanceExports) {
     ) =>
       decoded(applyEvents(
         exports,
+        mirror,
         records,
         asOf,
         cursorEventId,
@@ -194,7 +208,7 @@ export function createEngine(instanceExports) {
       civilDate,
       syncIdentity = null,
     ) =>
-      replayBytes(exports, records, asOf, cursorEventId, civilDate, syncIdentity),
+      replayBytes(exports, mirror, records, asOf, cursorEventId, civilDate, syncIdentity),
   };
 }
 
@@ -653,6 +667,7 @@ function metadataBatch(exports, records) {
 
 function executeCommand(
   exports,
+  mirror,
   command,
   identity,
   records,
@@ -671,22 +686,24 @@ function executeCommand(
     },
     identity,
   );
-  // Request layout: u32 intent length, the KCMD intent, then the KINE
-  // history. The history is encoded once behind that reserved prefix instead
-  // of being built separately and copied in. The KCMT result is a 20-byte
-  // header ("KCMT", version, reserved, then event, metadata and projection
-  // lengths as u32 @8, @12, @16) followed by those three buffers.
-  const request = encodeRequest(
-    records,
-    asOf,
-    cursor,
-    civilDate,
-    syncIdentity,
-    4 + intent.length,
-  );
+  // Request layout: u32 intent length, the KCMD intent, then a record-less
+  // KINE request giving the replay context; Rust validates the command
+  // against the history the instance holds, brought up to date first. The
+  // KCMT result is a 20-byte header ("KCMT", version, reserved, then event,
+  // metadata and projection lengths as u32 @8, @12, @16) followed by those
+  // three buffers.
+  if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
+  if (records.length > MAX_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  const request = encodeRequest([], asOf, cursor, civilDate, syncIdentity, 4 + intent.length);
   new DataView(request.buffer).setUint32(0, intent.length, true);
   request.set(intent, 4);
-  const bytes = callCore(exports, "kin_execute_command", request);
+  const release = mirror.hold(records);
+  let bytes;
+  try {
+    bytes = callCore(exports, "kin_execute", request);
+  } finally {
+    release();
+  }
   if (bytes.length < 20 || readAscii(bytes, 0, 4) !== "KCMT")
     throw new KinEngineError(6, "Kin received an invalid command result.");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -776,7 +793,9 @@ function decodeArchive(exports, bytes) {
   };
 }
 
-function callCore(exports, operation, request) {
+// `statusOnly`: the operation publishes no result on success
+// (kin_history_append); only a failure's KERR buffer is read.
+function callCore(exports, operation, request, { statusOnly = false } = {}) {
   if (!exports)
     throw new KinEngineError(
       6,
@@ -793,6 +812,10 @@ function callCore(exports, operation, request) {
   try {
     new Uint8Array(exports.memory.buffer, pointer, request.length).set(request);
     const status = exports[operation](pointer, request.length);
+    if (status === 0 && statusOnly) {
+      completed = true;
+      return null;
+    }
     const bytes =
       status === 0
         ? copyWasmBytes(
@@ -815,7 +838,10 @@ function callCore(exports, operation, request) {
   }
 }
 
-function replayBytes(exports, records, asOf, cursorEventId, civilDate, syncIdentity) {
+// The KINS projection of `records` (a history view, a historyWith() result
+// or an array): the instance's history is brought up to date, then replayed
+// in the context of a record-less KINE request.
+function replayBytes(exports, mirror, records, asOf, cursorEventId, civilDate, syncIdentity) {
   if (!exports)
     throw new KinEngineError(
       6,
@@ -824,15 +850,18 @@ function replayBytes(exports, records, asOf, cursorEventId, civilDate, syncIdent
   if (records.length > MAX_EVENT_COUNT) {
     throw new KinEngineError(5, USER_MESSAGES.get(5));
   }
-  return callCore(
-    exports,
-    "kin_apply_events",
-    encodeRequest(records, asOf, cursorEventId, civilDate, syncIdentity),
-  );
+  const context = encodeRequest([], asOf, cursorEventId, civilDate, syncIdentity);
+  const release = mirror.hold(records);
+  try {
+    return callCore(exports, "kin_project", context);
+  } finally {
+    release();
+  }
 }
 
 function applyEvents(
   exports,
+  mirror,
   records,
   asOf,
   cursorEventId,
@@ -841,7 +870,7 @@ function applyEvents(
   previous,
 ) {
   return safeDecode(() => decodeProjection(
-    replayBytes(exports, records, asOf, cursorEventId, civilDate, syncIdentity),
+    replayBytes(exports, mirror, records, asOf, cursorEventId, civilDate, syncIdentity),
     { previous, stampedBy: exports },
   ));
 }

@@ -284,6 +284,23 @@ export class HistoryView {
     target.set(arena.bytes.subarray(0, this.byteLength), offset);
   }
 
+  /** Byte length of record `index`. */
+  recordLength(index) {
+    if (index < 0 || index >= this.length) throw new RangeError("Event index out of range.");
+    return this.#live().spans[index * 2 + 1];
+  }
+
+  /** Copies the bytes of records [from, to), which are contiguous, in one
+   * operation (the engine appends new records to its own history this way). */
+  copyRecordsTo(target, offset, from, to) {
+    const arena = this.#live();
+    if (from < 0 || to > this.length || from > to) throw new RangeError("Event range out of bounds.");
+    if (from === to) return;
+    const start = arena.spans[from * 2];
+    const end = arena.spans[(to - 1) * 2] + arena.spans[(to - 1) * 2 + 1];
+    target.set(arena.bytes.subarray(start, end), offset);
+  }
+
   localSequence(index) { return this.#live().sequences[index]; }
   logicalTime(index) { return this.#live().logical[index]; }
 
@@ -344,6 +361,10 @@ export class HistoryView {
 export function historyWith(view, extras) {
   const sources = extras.map((record) => (record instanceof Uint8Array ? record : new Uint8Array(record)));
   return {
+    // The engine recognizes these: it brings its own history up to `base` and
+    // appends `extras` for one replay only (kin-engine.js syncHistory).
+    base: view,
+    extras: sources,
     length: view.length + sources.length,
     byteLength: view.byteLength + sources.reduce((total, record) => total + record.length, 0),
     copyTo(target, offset) {

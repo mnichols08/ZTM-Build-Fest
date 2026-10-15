@@ -4,8 +4,11 @@
 //   node scripts/core-performance.mjs --browser <exe> adds browser stages
 //   node scripts/core-performance.mjs --json <file>   also writes the report
 //
-// Node stages (real release WASM, no storage): request encode, copy into WASM
-// memory, Rust replay + projection encode, and copy-out + JS decode.
+// Node stages (real release WASM, no storage): loading a whole history into
+// the instance (batch build, copy, Rust validation), appending one more event,
+// Rust replay + projection encode of the held history, and copy-out + JS
+// decode. Since Slice 6 the instance holds the history, so a refresh pays the
+// one-event append, not the load.
 // Browser stages (real IndexedDB, Web Crypto and the shipped app): native IDB
 // read of the protected rows, decryption of every row, first unlock to a
 // projection, store-level refresh and command, and the app's full
@@ -53,6 +56,7 @@ const median = (values) => {
 async function nodeStages() {
   const { loadKinEngine, encodeAddedRecord, encodeReplayRequest, decodeProjection } =
     await import("../web/wasm/kin-engine.js");
+  const { appendBatch, callExport } = await import("../web/wasm/abi-test-support.mjs");
   const bytes = await readFile(wasmPath);
   const codec = await loadKinEngine(`data:application/wasm;base64,${bytes.toString("base64")}`);
   const { instance } = await WebAssembly.instantiate(bytes, {});
@@ -62,6 +66,7 @@ async function nodeStages() {
     new DataView(out.buffer).setUint32(0, value, true);
     return out;
   };
+  const context = encodeReplayRequest([], 1_760_100_000_000, null, 20261014, null);
   const results = [];
   for (const dataset of DATASETS) {
     const text = "h".repeat(dataset.textBytes);
@@ -70,35 +75,36 @@ async function nodeStages() {
       actorId: id(8, 4), deviceId: id(9, 5), timestamp: 1_760_000_000_000 + index,
       logicalTime: BigInt(index + 1), text, classification: "need",
     }));
-    const stage = { encode: [], wasmCopy: [], replay: [], decode: [] };
+    const last = appendBatch(records.slice(-1));
+    const stage = { load: [], append: [], replay: [], decode: [] };
     for (let sample = 0; sample < 8; sample += 1) {
       let start = performance.now();
-      const request = encodeReplayRequest(records, 1_760_100_000_000, null, 20261014, null);
-      const encode = performance.now() - start;
+      abi.kin_history_reset();
+      assert.equal(callExport(abi, "kin_history_append", appendBatch(records.slice(0, -1))), 0);
+      const load = performance.now() - start;
       start = performance.now();
-      const pointer = abi.kin_alloc(request.length);
-      new Uint8Array(abi.memory.buffer, pointer, request.length).set(request);
-      const wasmCopy = performance.now() - start;
+      assert.equal(callExport(abi, "kin_history_append", last), 0);
+      const append = performance.now() - start;
       start = performance.now();
-      assert.equal(abi.kin_apply_events(pointer, request.length), 0);
+      assert.equal(callExport(abi, "kin_project", context), 0);
       const replay = performance.now() - start;
       start = performance.now();
       const output = new Uint8Array(abi.memory.buffer, abi.kin_result_ptr(), abi.kin_result_len()).slice();
       const state = decodeProjection(output);
       const decode = performance.now() - start;
-      assert.equal(abi.kin_free(pointer, request.length), 0);
       assert.equal(state.items.length, dataset.count);
       if (sample === 0) continue; // warm-up
-      stage.encode.push(encode); stage.wasmCopy.push(wasmCopy);
+      stage.load.push(load); stage.append.push(append);
       stage.replay.push(replay); stage.decode.push(decode);
     }
     results.push({
       dataset: dataset.name, events: dataset.count,
       canonicalBytes: records.reduce((total, row) => total + row.length, 0),
-      requestEncodeMs: median(stage.encode), wasmCopyMs: median(stage.wasmCopy),
+      historyLoadMs: median(stage.load), appendOneMs: median(stage.append),
       replayEncodeMs: median(stage.replay), jsDecodeMs: median(stage.decode), samples: stage.replay.length,
     });
   }
+  abi.kin_clear();
   codec.dispose();
   return { wasmBytes: bytes.length, datasets: results };
 }

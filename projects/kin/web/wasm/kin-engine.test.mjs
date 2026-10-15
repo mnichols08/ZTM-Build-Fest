@@ -18,6 +18,7 @@ import {
   encodeNoteArchivedRecord,
   loadKinEngine as loadCurrentEngine,
 } from "./kin-engine.js";
+import { replayRequest } from "./abi-test-support.mjs";
 
 // Existing scenarios use a fixed explicit civil context; raw legacy fixtures stay unchanged.
 async function loadKinEngine(...args) {
@@ -202,8 +203,8 @@ test("bridge rejects invalid or truncated Item history timestamps and recovers",
       instance: {
         exports: {
           ...abi,
-          kin_apply_events(pointer, length) {
-            const status = abi.kin_apply_events(pointer, length);
+          kin_project(pointer, length) {
+            const status = abi.kin_project(pointer, length);
             if (status === 0) {
               mutateResult(
                 new Uint8Array(
@@ -620,40 +621,30 @@ async function rawEngine() {
       request.set(record, offset);
       offset += record.length;
     }
-    const pointer = abi.kin_alloc(request.length);
-    assert.notEqual(pointer, 0);
-    try {
-      new Uint8Array(abi.memory.buffer, pointer, request.length).set(request);
-      assert.equal(
-        abi.kin_apply_events(pointer, request.length),
-        expectedStatus,
+    assert.equal(replayRequest(abi, request), expectedStatus);
+    const success = expectedStatus === 0;
+    assert.equal(success ? abi.kin_error_ptr() : abi.kin_result_ptr(), 0);
+    assert.equal(success ? abi.kin_error_len() : abi.kin_result_len(), 0);
+    const result = new Uint8Array(
+      abi.memory.buffer,
+      success ? abi.kin_result_ptr() : abi.kin_error_ptr(),
+      success ? abi.kin_result_len() : abi.kin_error_len(),
+    ).slice();
+    if (!success) {
+      assert.deepEqual(
+        result.subarray(0, 8),
+        new Uint8Array([75, 69, 82, 82, 1, 0, expectedStatus, 0]),
       );
-      const success = expectedStatus === 0;
-      assert.equal(success ? abi.kin_error_ptr() : abi.kin_result_ptr(), 0);
-      assert.equal(success ? abi.kin_error_len() : abi.kin_result_len(), 0);
-      const result = new Uint8Array(
-        abi.memory.buffer,
-        success ? abi.kin_result_ptr() : abi.kin_error_ptr(),
-        success ? abi.kin_result_len() : abi.kin_error_len(),
-      ).slice();
-      if (!success) {
-        assert.deepEqual(
-          result.subarray(0, 8),
-          new Uint8Array([75, 69, 82, 82, 1, 0, expectedStatus, 0]),
-        );
-        assert.equal(
-          result.length,
-          12 + new DataView(result.buffer).getUint32(8, true),
-        );
-      }
-      return result;
-    } finally {
-      assert.equal(abi.kin_free(pointer, request.length), 0);
+      assert.equal(
+        result.length,
+        12 + new DataView(result.buffer).getUint32(8, true),
+      );
     }
+    return result;
   };
 }
 
-test("real WASM apply accepts only an exact live input allocation", async () => {
+test("real WASM projection accepts only an exact live input allocation", async () => {
   const { instance } = await WebAssembly.instantiate(
     await readFile(new URL("./kin_engine.wasm", import.meta.url)),
     {},
@@ -667,21 +658,21 @@ test("real WASM apply accepts only an exact live input allocation", async () => 
   new Uint8Array(abi.memory.buffer, pointer, request.length).set(request);
 
   try {
-    assert.equal(abi.kin_apply_events(pointer, request.length), 0);
+    assert.equal(abi.kin_project(pointer, request.length), 0);
     const resultPointer = abi.kin_result_ptr();
     const resultLength = abi.kin_result_len();
-    assert.equal(abi.kin_apply_events(resultPointer, resultLength), 1);
+    assert.equal(abi.kin_project(resultPointer, resultLength), 1);
     const errorPointer = abi.kin_error_ptr();
     const errorLength = abi.kin_error_len();
-    assert.equal(abi.kin_apply_events(errorPointer, errorLength), 1);
-    assert.equal(abi.kin_apply_events(pointer + 1, request.length - 1), 1);
-    assert.equal(abi.kin_apply_events(pointer, request.length - 1), 1);
-    assert.equal(abi.kin_apply_events(pointer, request.length + 1), 1);
-    assert.equal(abi.kin_apply_events(1, request.length), 1);
-    assert.equal(abi.kin_apply_events(0, 0), 2);
+    assert.equal(abi.kin_project(errorPointer, errorLength), 1);
+    assert.equal(abi.kin_project(pointer + 1, request.length - 1), 1);
+    assert.equal(abi.kin_project(pointer, request.length - 1), 1);
+    assert.equal(abi.kin_project(pointer, request.length + 1), 1);
+    assert.equal(abi.kin_project(1, request.length), 1);
+    assert.equal(abi.kin_project(0, 0), 2);
 
-    // Rejected apply calls do not consume the legitimate input allocation.
-    assert.equal(abi.kin_apply_events(pointer, request.length), 0);
+    // Rejected calls do not consume the legitimate input allocation.
+    assert.equal(abi.kin_project(pointer, request.length), 0);
   } finally {
     assert.equal(abi.kin_free(pointer, request.length), 0);
   }
@@ -697,9 +688,9 @@ test("bridge accepts KERR version 1 and rejects other or malformed versions", as
       instance: {
         exports: {
           ...abi,
-          kin_apply_events(pointer, length) {
+          kin_project(pointer, length) {
             new DataView(abi.memory.buffer).setUint16(pointer + 4, 99, true);
-            const status = abi.kin_apply_events(pointer, length);
+            const status = abi.kin_project(pointer, length);
             mutateError(
               new Uint8Array(
                 abi.memory.buffer,
@@ -911,31 +902,6 @@ test("large Talk replay grows WASM memory and preserves independent repeated res
     (error) => error.code === 5,
   );
 });
-
-// Adapt the current request header to an exact-size historical input allocation.
-function applyLegacy(abi, pointer, length) {
-  const bytes = new Uint8Array(abi.memory.buffer, pointer, length);
-  const version = new DataView(
-    bytes.buffer,
-    bytes.byteOffset,
-    bytes.byteLength,
-  ).getUint16(4, true);
-  const headerLength = version === 6 ? 40 : version >= 5 ? 20 : 12;
-  const currentHeaderLength = 64;
-  bytes.copyWithin(headerLength, currentHeaderLength);
-  const legacyLength = length - (currentHeaderLength - headerLength);
-  const legacyRequest = bytes.slice(0, legacyLength);
-  const legacyPointer = abi.kin_alloc(legacyLength);
-  assert.notEqual(legacyPointer, 0);
-  new Uint8Array(abi.memory.buffer, legacyPointer, legacyLength).set(
-    legacyRequest,
-  );
-  try {
-    return abi.kin_apply_events(legacyPointer, legacyLength);
-  } finally {
-    assert.equal(abi.kin_free(legacyPointer, legacyLength), 0);
-  }
-}
 
 function pulseRecord(
   sequence,
