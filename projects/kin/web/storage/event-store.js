@@ -410,6 +410,7 @@ export class EventStore {
     vault?.assertUnlocked();
     if (!vault) throw new EventStoreError("Kin is locked. Unlock before reading household data.");
     const database = await openEventDatabase();
+    let store;
     try {
       const manifest = await readSecurity(database);
       if (manifest?.phase !== "encrypted" || manifest.vaultId !== vault.vaultId || manifest.rootVersion !== vault.manifest.rootVersion)
@@ -421,18 +422,22 @@ export class EventStore {
       }
       vault.securityEpoch = epoch;
       vault.checkSecurityEpoch = () => EventStore.checkSecurityEpoch(vault);
-      const store = new EventStore(encryptedDatabase(database, vault, EVENT_STORE_DEFINITIONS, {
+      store = new EventStore(encryptedDatabase(database, vault, EVENT_STORE_DEFINITIONS, {
         securityGuard: { store: SECURITY_STORE, key: SECURITY_KEY, epoch, rootVersion: manifest.rootVersion },
       }));
       store.vault = vault;
       store.engine = engine;
       // Any lock (local, peer-tab, epoch mismatch) discards session plaintext,
       // even before the application closes this store.
-      vault.onLock(() => store.arena.wipe());
+      store.removeLockListener = vault.onLock(() => store.arena.wipe());
       const context = await store.ensureContext();
       store.actorId = idToHex(context.sync_member_id ?? context.actor_id);
       return store;
-    } catch (error) { database.close(); throw error; }
+    } catch (error) {
+      if (store) store.close();
+      else database.close();
+      throw error;
+    }
   }
 
   static async openLegacyForMigration() {
@@ -2201,6 +2206,8 @@ export class EventStore {
   }
 
   close() {
+    this.removeLockListener?.();
+    this.removeLockListener = null;
     this.arena.wipe();
     this.database.close();
   }
