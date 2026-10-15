@@ -80,6 +80,16 @@ impl Output {
         self.u32(u32::try_from(value).map_err(|_| KinError::SizeLimit)?)
     }
 
+    /// A length in a one-byte field; a longer value is a size error.
+    pub(super) fn len_u8(&mut self, length: usize) -> Result<(), KinError> {
+        self.u8(u8::try_from(length).map_err(|_| KinError::SizeLimit)?)
+    }
+
+    /// A length in a two-byte field; a longer value is a size error.
+    pub(super) fn len_u16(&mut self, length: usize) -> Result<(), KinError> {
+        self.u16(u16::try_from(length).map_err(|_| KinError::SizeLimit)?)
+    }
+
     pub(super) fn text(&mut self, text: &str) -> Result<(), KinError> {
         self.count(text.len())?;
         self.bytes(text.as_bytes())

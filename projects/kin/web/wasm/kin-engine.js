@@ -172,7 +172,11 @@ export function createEngine(instanceExports) {
         lastState,
       )),
     // The exact protocol-24 projection bytes, for equivalence checks that must
-    // compare encodings rather than decoded objects.
+    // compare encodings rather than decoded objects. The section revisions in
+    // these bytes depend on this engine's earlier calls, so two calls compare
+    // equal only with nothing changed in between. This call moves Rust's
+    // comparison basis but not `lastState`; the next decode stays correct
+    // because a changed section always gets a new revision.
     projectionBytes: (
       records,
       asOf,
@@ -682,7 +686,7 @@ function executeCommand(
     metadata: decodeMetadata(
       bytes.subarray(20 + eventLength, 20 + eventLength + metadataLength),
     ),
-    state: decodeProjection(bytes.subarray(20 + eventLength + metadataLength), { previous, source: exports }),
+    state: safeDecode(() => decodeProjection(bytes.subarray(20 + eventLength + metadataLength), { previous, source: exports })),
   };
 }
 
@@ -818,11 +822,17 @@ function applyEvents(
   syncIdentity,
   previous,
 ) {
+  return safeDecode(() => decodeProjection(
+    replayBytes(exports, records, asOf, cursorEventId, civilDate, syncIdentity),
+    { previous, source: exports },
+  ));
+}
+
+// Any unexpected error while producing a state becomes a code-6 engine error,
+// so callers always get a `code` and a safe message.
+function safeDecode(decode) {
   try {
-    return decodeProjection(
-      replayBytes(exports, records, asOf, cursorEventId, civilDate, syncIdentity),
-      { previous, source: exports },
-    );
+    return decode();
   } catch (error) {
     if (error instanceof KinEngineError) throw error;
     throw new KinEngineError(

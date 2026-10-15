@@ -5,7 +5,7 @@ import {
   encryptedDatabase, snapshotStores, protectRows, valuesEqual, compareStoreRows,
 } from "./encrypted-idb.js";
 import { projectionContext } from "../browser-time.js";
-import { EventArena, EVENT_GENERATION_KEY, historyWith } from "./event-arena.js";
+import { bumpEventGeneration as bumpGeneration, EventArena, EVENT_GENERATION_KEY, historyWith } from "./event-arena.js";
 import { rotateEventProtection, resumeEventProtection } from "./root-rotation.js";
 import { MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "../attachments/attachment-crypto.js";
 
@@ -2203,10 +2203,11 @@ function historyRequest(store, transaction) {
     all.onsuccess = () => {
       try {
         arena.reset(generation);
-        appendRows(arena, all.result);
-        zeroRows(all.result);
+        appendRows(arena, all.result, store.engine);
         succeed(arena.view());
       } catch (error) { arena.reset(null); fail(error); }
+      // The arena holds the only kept copy; these decrypted rows go either way.
+      finally { zeroRows(all.result); }
     };
     all.onerror = () => fail(storageError(all.error));
   };
@@ -2233,10 +2234,10 @@ function historyRequest(store, transaction) {
           // Another transaction may have appended meanwhile; append skips rows
           // already present. Anything else inconsistent rebuilds.
           if (arena.generation !== generation || known + delta.result.length !== total) { rebuild(generation); return; }
-          appendRows(arena, delta.result.filter((row) => row.local_sequence > arena.tail));
-          zeroRows(delta.result);
+          appendRows(arena, delta.result.filter((row) => row.local_sequence > arena.tail), store.engine);
           succeed(arena.view(total));
         } catch (error) { arena.reset(null); fail(error); }
+        finally { zeroRows(delta.result); }
       };
       delta.onerror = () => fail(storageError(delta.error));
     } catch (error) { fail(error); }
@@ -2252,8 +2253,13 @@ function zeroRows(rows) {
   }
 }
 
-/** Validates rows in ascending local order and appends them to `arena`. */
-function appendRows(arena, rows) {
+/**
+ * Validates rows in ascending local order and appends them to `arena`.
+ * `engine` is the store's own engine. Without one (snapshot helpers used
+ * before a store exists) the module-level codec, the last engine created,
+ * reads the metadata.
+ */
+function appendRows(arena, rows, engine = null) {
   if (!Array.isArray(rows) || arena.length + rows.length > MAX_EVENT_COUNT) throw invalidEventHistory();
   let previousSequence = arena.tail;
   for (const row of rows) {
@@ -2263,7 +2269,8 @@ function appendRows(arena, rows) {
     previousSequence = row.local_sequence;
   }
   if (!rows.length) return;
-  const metadata = eventMetadataBatch(rows.map((row) => asBytes(row.encoded_event)));
+  const records = rows.map((row) => asBytes(row.encoded_event));
+  const metadata = engine ? engine.eventMetadataBatch(records) : eventMetadataBatch(records);
   rows.forEach((row, index) => validateEventRow(row, metadata[index]));
   rows.forEach((row, index) => arena.append(row.local_sequence, asBytes(row.encoded_event), metadata[index]));
 }
@@ -2283,16 +2290,8 @@ function invalidEventHistory() {
 }
 
 function bumpEventGeneration(transaction) {
-  const security = transaction.objectStore(SECURITY_STORE);
-  const request = security.get(EVENT_GENERATION_KEY);
-  request.onsuccess = () => {
-    const current = request.result?.generation ?? 0;
-    if (!Number.isSafeInteger(current) || current < 0 || current >= Number.MAX_SAFE_INTEGER) {
-      abortWith(transaction, invalidEventHistory());
-      return;
-    }
-    security.put({ key: EVENT_GENERATION_KEY, generation: current + 1 });
-  };
+  bumpGeneration(transaction.objectStore(SECURITY_STORE),
+    (error) => abortWith(transaction, error ? storageError(error) : invalidEventHistory()));
 }
 
 function snapshotBoundary(view) {

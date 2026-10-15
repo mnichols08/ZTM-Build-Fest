@@ -7,6 +7,9 @@ use crate::state::{
     CatchUpSummary, HandoffStatus, HouseholdState, ItemStatus, NoteStatus, PulseStatus, TalkStatus,
 };
 
+// Enum fields are written as their declared discriminants (`as u8`); those
+// numbers are the wire codes in ABI.md and the JS tables that read them back.
+// Lengths go through `len_u8` / `len_u16`, which fail instead of truncating.
 const PULSE_BYTES: usize = 40;
 const SUMMARY_HEADER_BYTES: usize = 24;
 
@@ -165,12 +168,12 @@ pub(super) fn playbooks(out: &mut Output, state: &HouseholdState) -> Result<(), 
     for record in &state.playbooks {
         out.bytes(&record.playbook_id.0)?;
         out.u8(u8::from(record.archived))?;
-        out.u8(record.entries.len() as u8)?;
-        out.u16(record.title.len() as u16)?;
+        out.len_u8(record.entries.len())?;
+        out.len_u16(record.title.len())?;
         out.bytes(&[0; 2])?;
         out.bytes(record.title.as_bytes())?;
         for entry in &record.entries {
-            out.u16(entry.len() as u16)?;
+            out.len_u16(entry.len())?;
             out.bytes(entry.as_bytes())?;
         }
     }
@@ -189,14 +192,14 @@ pub(super) fn reference_records(out: &mut Output, state: &HouseholdState) -> Res
         )?;
         out.bytes(&record.record_id.0)?;
         out.id_or_zero(record.area_id.map(|id| id.0))?;
-        out.u16(title.len() as u16)?;
-        out.u8(fields.len() as u8)?;
+        out.len_u16(title.len())?;
+        out.len_u8(fields.len())?;
         out.u8(u8::from(record.archived))?;
         out.bytes(title.as_bytes())?;
         for field in fields {
             out.bytes(&field.field_id.0)?;
-            out.u16(field.label.len() as u16)?;
-            out.u16(field.value.len() as u16)?;
+            out.len_u16(field.label.len())?;
+            out.len_u16(field.value.len())?;
             out.bytes(field.label.as_bytes())?;
             out.bytes(field.value.as_bytes())?;
         }
@@ -213,7 +216,7 @@ pub(super) fn maintenance(out: &mut Output, state: &HouseholdState) -> Result<()
         out.id_or_zero(entry.routine_id.map(|id| id.0))?;
         out.u8(u8::from(entry.archived))?;
         out.u8(0)?;
-        out.u16(entry.summary.len() as u16)?;
+        out.len_u16(entry.summary.len())?;
         out.bytes(entry.summary.as_bytes())?;
     }
     Ok(())

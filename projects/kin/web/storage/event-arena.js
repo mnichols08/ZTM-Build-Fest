@@ -31,6 +31,23 @@ const INITIAL_BYTES = 16 * 1024;
 
 export const EVENT_GENERATION_KEY = "event_generation";
 
+/**
+ * Advances the persisted event generation inside the caller's write
+ * transaction, so every session arena rebuilds on its next read. Every change
+ * to the events store other than an append (restore, migration, root
+ * rotation) must call this in the same transaction; otherwise an arena would
+ * keep serving the old plaintext. `abort(error)` aborts that transaction.
+ */
+export function bumpEventGeneration(security, abort) {
+  const request = security.get(EVENT_GENERATION_KEY);
+  request.onsuccess = () => {
+    const current = request.result?.generation ?? 0;
+    if (!Number.isSafeInteger(current) || current < 0 || current >= Number.MAX_SAFE_INTEGER) abort(null);
+    else security.put({ key: EVENT_GENERATION_KEY, generation: current + 1 });
+  };
+  request.onerror = () => abort(request.error);
+}
+
 export class StaleHistoryError extends Error {
   constructor() {
     super("Kin's in-memory household history changed. Try again.");
@@ -207,6 +224,12 @@ const FIELDS = { event_id: 0, household_id: 16, actor_id: 32, device_id: 48 };
  * The first `length` records of an arena, as one transaction observed them.
  * Records beyond the prefix may be appended later without affecting it; a
  * rebuild or wipe makes the view stale and every access throws.
+ *
+ * `record()`, `records()` and `id()` return subarrays of the arena's own
+ * buffers, not copies. They are valid only until the next append: an append
+ * that grows the arena moves its bytes and zero-fills the old buffer, so a
+ * subarray kept across an `await` may silently read zeros. Use them
+ * synchronously, or `slice()` what must outlive the current task.
  */
 export class HistoryView {
   constructor(arena, length, epoch) {

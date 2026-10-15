@@ -146,3 +146,42 @@ test("the section table must cover the body exactly", async () => {
   failsClosed(longer, "table longer than body");
   failsClosed(Uint8Array.from([...empty, 0]), "body longer than table");
 });
+
+test("invalid text, dates and duplicate Items in record sections fail closed with code 6", async () => {
+  const full = await load("full.kins");
+  const view = new DataView(full.buffer, full.byteOffset, full.byteLength);
+  const sectionStart = (index) => {
+    let offset = 208;
+    for (let i = 0; i < index; i += 1) offset += view.getUint32(96 + i * 8 + 4, true);
+    return offset;
+  };
+  const mutate = (change) => { const copy = full.slice(); change(copy, new DataView(copy.buffer)); return copy; };
+  assert.ok(view.getUint32(76, true) > 0, "fixture has a Playbook");
+  failsClosed(mutate((bytes) => { bytes[sectionStart(8) + 22] = 0xff; }), "invalid UTF-8 Playbook title");
+  assert.ok(view.getUint32(80, true) > 0, "fixture has a Reference Record");
+  failsClosed(mutate((bytes) => { bytes[sectionStart(9) + 36] = 0xff; }), "invalid UTF-8 reference title");
+  assert.ok(view.getUint32(84, true) > 0, "fixture has a Maintenance event");
+  failsClosed(mutate((bytes, data) => data.setUint32(sectionStart(10) + 36, 20261399, true)), "invalid next date");
+  failsClosed(mutate((bytes, data) => data.setUint32(sectionStart(10) + 32, 20261399, true)), "invalid performed date");
+  assert.ok(view.getUint32(8, true) > 1, "fixture has two Items");
+  failsClosed(mutate((bytes) => {
+    // Copy the first Item's ID over the second's.
+    const first = sectionStart(0), second = first + 48 + view.getUint32(first + 44, true);
+    bytes.copyWithin(second, first, first + 16);
+  }), "duplicate Item ID");
+});
+
+test("a decode failure after Rust stamped, or interleaved projectionBytes, never reuses stale sections", async () => {
+  const engine = await loadKinEngine(wasmUrl);
+  const project = (rows) => engine.applyEvents(rows, 5000, null, 20261014);
+  const one = [item(1, "Milk")];
+  const two = [...one, item(2, "Eggs")];
+  const first = project(one);
+  // Bytes for `two` are stamped but never decoded into a state.
+  engine.projectionBytes(two, 5000, null, 20261014);
+  const back = project(one);
+  assert.deepEqual(back, first);
+  const after = project(two);
+  assert.equal(after.items.length, 2);
+  assert.deepEqual(after, (await loadKinEngine(wasmUrl)).applyEvents(two, 5000, null, 20261014));
+});

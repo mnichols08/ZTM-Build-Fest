@@ -29,6 +29,7 @@ export function decodeItems(reader, { itemCount, stepCount }) {
 function records(reader, count) {
   const { bytes, view } = reader;
   const items = [];
+  const itemIds = new Set();
   for (let index = 0; index < count; index += 1) {
     const offset = reader.offset;
     reader.need(ITEM_HEADER_BYTES, "Kin received a truncated state from its household engine.");
@@ -53,8 +54,12 @@ function records(reader, count) {
     } catch {
       throw invalid("Kin received invalid item text from its household engine.");
     }
+    const itemId = idToHex(bytes.subarray(offset, offset + 16));
+    // A duplicate would make Steps attach to the wrong record below.
+    if (itemIds.has(itemId)) throw invalid("Kin received an invalid item record from its household engine.");
+    itemIds.add(itemId);
     items.push({
-      itemId: idToHex(bytes.subarray(offset, offset + 16)),
+      itemId,
       createdBy: idToHex(bytes.subarray(offset + 16, offset + 32)),
       createdAt,
       classification: CLASSIFICATIONS[classificationCode],
@@ -62,6 +67,7 @@ function records(reader, count) {
       areaId: null,
       steps: [],
       planningDate: null,
+      lastChangedAt: null,
       text,
     });
     reader.offset = recordEnd;

@@ -60,6 +60,18 @@ impl AbiState {
 }
 
 impl AbiState {
+    /// Drops every retained buffer (`kin_clear`). Revision counters survive:
+    /// a later projection must never reuse a revision a host may still hold,
+    /// and without a previous projection every section counts as changed.
+    fn clear(&mut self) {
+        self.allocations.clear();
+        self.result = Vec::new();
+        self.error = Vec::new();
+        self.projection = None;
+        self.previous = Vec::new();
+        self.previous_projection = None;
+    }
+
     /// Publishes an operation's outcome as the result or error buffer and
     /// returns the status code.
     fn publish(&mut self, outcome: Result<Vec<u8>, KinError>, locate: Option<Locate>) -> i32 {
@@ -277,15 +289,7 @@ pub extern "C" fn kin_result_ptr() -> u32 {
 /// Drops retained buffers on host lock, without claiming memory zeroization.
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
 pub extern "C" fn kin_clear() {
-    let mut state = lock_state();
-    state.allocations.clear();
-    state.result = Vec::new();
-    state.error = Vec::new();
-    // Counters survive: a later projection must never reuse a revision a host
-    // may still hold. Without a previous projection every section changes.
-    state.projection = None;
-    state.previous = Vec::new();
-    state.previous_projection = None;
+    lock_state().clear();
 }
 
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
@@ -365,8 +369,7 @@ mod tests {
         let item = item_record(1, 0x11, b"Milk", 1);
         assert_eq!(emit(&mut state, std::slice::from_ref(&item)), vec![1; 14]);
         // kin_clear drops buffers but keeps counters.
-        state.projection = None;
-        state.result = Vec::new();
+        state.clear();
         assert_eq!(emit(&mut state, std::slice::from_ref(&item)), vec![2; 14]);
     }
 

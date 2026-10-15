@@ -328,3 +328,12 @@ fn every_truncated_event_header_and_payload_is_rejected() {
         Err(KinError::MalformedProtocol)
     );
 }
+
+#[test]
+fn a_present_cursor_must_name_an_event() {
+    let records = [item_record(1, 0x11, b"Milk", 1)];
+    let mut request = kine(&records, 0, TEST_DATE, Some(numbered_id(1)));
+    assert!(replay(&request).is_ok());
+    request[24..40].fill(0); // flag still says present
+    assert_eq!(replay(&request).unwrap_err(), KinError::MalformedProtocol);
+}

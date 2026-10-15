@@ -105,8 +105,8 @@ export class RefreshController {
   }
   // One snapshot of the focused control (shared/focus.js), taken before the
   // refresh rebuilds anything. A list or the routines view also describes
-  // it, so it can find the equivalent control when that row was rebuilt;
-  // composers keep focus in their input, since their lists are rebuilt below.
+  // it, so it can find the equivalent control when that row was rebuilt; in a
+  // composer (Quick capture, Handoffs, Talk) focus falls back to its input.
   captureRefreshFocus() {
     const focus = captureFocus(this.app);
     if (!focus) return null;
@@ -120,7 +120,9 @@ export class RefreshController {
     if (!focus) return;
     const { owner, composer } = focus;
     if (composer) {
-      composer.focusInput();
+      // A list that did not change is not rebuilt, so the control may still be
+      // there; otherwise the composer's input takes focus.
+      if (!restoreFocus(focus)) composer.focusInput();
     } else if (owner) {
       owner.restoreFocus(focus.ownerFocus);
       if (owner !== this.app.routines && !this.app.contains(document.activeElement)) {

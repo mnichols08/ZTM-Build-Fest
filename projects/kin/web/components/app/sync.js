@@ -143,8 +143,12 @@ export class SyncController {
       const memberIds = [...new Set(value.memberIds)];
       const previousMembers = new Set(this.app.activeMemberIds ?? []);
       const membershipChanged = memberIds.length !== previousMembers.size || memberIds.some((id) => !previousMembers.has(id));
-      this.app.activeMemberIds = memberIds;
-      if (membershipChanged) this.app.renderState();
+      // Keep the old array when nothing changed: responsibilityContext() and
+      // the views it feeds skip work by identity, and this runs on every poll.
+      if (membershipChanged) {
+        this.app.activeMemberIds = memberIds;
+        this.app.renderState();
+      }
       void this.reconcileResponsibilityMembers();
     }
     // The sync chip already shows routine progress. Toast only meaningful

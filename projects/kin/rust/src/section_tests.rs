@@ -87,9 +87,6 @@ fn revisions_wrap_past_zero() {
 #[test]
 fn a_one_byte_change_anywhere_in_a_section_is_a_change() {
     let base = projection(&[item_record(1, 0x11, b"Milk and bread for the week", 1)]);
-    let mut stamped = base.clone();
-    let mut revisions = SectionRevisions::new();
-    revisions.stamp(&mut stamped, None).unwrap();
     let items = section_ranges(&base).unwrap()[0].clone();
     for offset in items {
         let mut changed = base.clone();
@@ -100,4 +97,24 @@ fn a_one_byte_change_anywhere_in_a_section_is_a_change() {
         tracker.stamp(&mut changed, Some(&first)).unwrap();
         assert_eq!(revision(&changed, 0), 2, "byte {offset}");
     }
+}
+
+#[test]
+fn every_count_and_summary_field_of_the_header_belongs_to_a_section() {
+    // If a header field moves, `Section::header_fields` must move with it, or
+    // equal section bytes with different counts would keep their revision.
+    // Not owned: magic and version (0..8), mode and its padding (68..72).
+    let mut owned = [false; 96];
+    for section in crate::sections::SECTIONS {
+        for &(start, end) in section.header_fields() {
+            for byte in &mut owned[start..end] {
+                assert!(!*byte, "header byte claimed twice");
+                *byte = true;
+            }
+        }
+    }
+    let expected: Vec<bool> = (0..96)
+        .map(|at| !(at < 8 || (68..72).contains(&at)))
+        .collect();
+    assert_eq!(owned.to_vec(), expected);
 }

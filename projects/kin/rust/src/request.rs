@@ -86,7 +86,8 @@ pub fn decode_request(bytes: &[u8]) -> Result<DecodedRequest, KinError> {
     let cursor_id = read_id(bytes, 24)?;
     let summary_cursor = match bytes[20] {
         0 if cursor_id == [0; 16] => None,
-        1 => Some(EventId(cursor_id)),
+        // A present cursor names a real event; event IDs are never all zero.
+        1 if cursor_id != [0; 16] => Some(EventId(cursor_id)),
         _ => return Err(KinError::MalformedProtocol),
     };
     let civil_date = CivilDate::from_encoded(read_u32(bytes, 40)?)?;

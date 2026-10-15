@@ -219,9 +219,13 @@ unchanged section.
   that describe it (its counts; for the summary also the total and through
   event, bytes 24–51). An unchanged section keeps its revision.
 - The previous projection is the buffer the instance already retains as its
-  last result, moved aside rather than copied, so tracking costs one byte
-  comparison per section and no additional retained memory. A non-projection
-  call in between keeps it as the comparison basis. `kin_clear` drops it but
+  last result (for a command, the whole KCMT result), moved aside rather than
+  copied. Tracking costs one byte comparison per section. While a projection
+  call runs, the old and the new result are both alive, so peak memory is up
+  to two results instead of one. Between calls one result is retained, as
+  before. A non-projection call in between keeps the old projection as the
+  comparison basis, so it can outlive that call until the next projection or
+  `kin_clear`. `kin_clear` drops it but
   keeps the counters, so a later projection advances every section instead of
   reusing a revision the host may still hold.
 - Revision 0 means unversioned. The pure encoder and the KIMP projection

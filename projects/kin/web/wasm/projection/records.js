@@ -1,8 +1,17 @@
 // The household record sections: Areas, Notes, Pins, Playbooks, Reference
 // Records, Maintenance events, Attachments and Responsibilities. References
 // to other sections are checked after every section is decoded.
-import { assertCivilDate, idToHex, strictTextDecoder, ZERO_ID } from "../wire.js";
+import { idToHex, isCivilDate, MAX_TIMESTAMP, strictTextDecoder, ZERO_ID } from "../wire.js";
 import { invalid } from "./reader.js";
+
+// Strict UTF-8 text, failing closed with `message` like every other decoder.
+function text(bytes, start, end, message) {
+  try {
+    return strictTextDecoder.decode(bytes.subarray(start, end));
+  } catch {
+    throw invalid(message);
+  }
+}
 
 const optionalId = (bytes) => (bytes.every((byte) => byte === 0) ? null : idToHex(bytes));
 
@@ -47,11 +56,14 @@ export function decodeNotes(reader, { noteCount }) {
     let title, body;
     try { title = strictTextDecoder.decode(bytes.subarray(headerEnd, headerEnd + titleLength)); body = strictTextDecoder.decode(bytes.subarray(headerEnd + titleLength, end)); }
     catch { throw invalid("Kin received invalid Note text."); }
+    const createdAt = Number(view.getBigInt64(offset + 48, true)), updatedAt = Number(view.getBigInt64(offset + 56, true));
+    if (![createdAt, updatedAt].every((time) => Number.isSafeInteger(time) && Math.abs(time) <= MAX_TIMESTAMP))
+      throw invalid("Kin received an invalid Note.");
     if (noteId === ZERO_ID || !title.trim() || title.trim() !== title || [...title].length > 80 || [...title].some((character) => /\p{Cc}/u.test(character)) || [...body].some((character) => /\p{Cc}/u.test(character) && !["\n", "\r", "\t"].includes(character)))
       throw invalid("Kin received invalid Note text.");
     notes.push({ noteId, title, body, areaId: optionalId(area), archived: archived === 1,
       createdBy: idToHex(bytes.subarray(offset + 16, offset + 32)), updatedBy: idToHex(bytes.subarray(offset + 32, offset + 48)),
-      createdAt: Number(view.getBigInt64(offset + 48, true)), updatedAt: Number(view.getBigInt64(offset + 56, true)) });
+      createdAt, updatedAt });
     noteIds.add(noteId);
     reader.offset = end;
   }
@@ -96,7 +108,7 @@ export function decodePlaybooks(reader, { playbookCount }) {
     offset += 22;
     const titleEnd = offset + titleLength;
     if (titleEnd > reader.end) throw invalid("Kin received a truncated Playbook title.");
-    const title = strictTextDecoder.decode(bytes.subarray(offset, titleEnd));
+    const title = text(bytes, offset, titleEnd, "Kin received invalid Playbook text.");
     offset = titleEnd;
     const entries = [];
     for (let entry = 0; entry < entryCount; entry += 1) {
@@ -104,7 +116,7 @@ export function decodePlaybooks(reader, { playbookCount }) {
       const length = view.getUint16(offset, true);
       offset += 2;
       if (length < 1 || length > 256 || offset + length > reader.end) throw invalid("Kin received an invalid Playbook entry.");
-      entries.push(strictTextDecoder.decode(bytes.subarray(offset, offset + length)));
+      entries.push(text(bytes, offset, offset + length, "Kin received invalid Playbook text."));
       offset += length;
     }
     playbooks.push({ playbookId, title, entries, archived: archived === 1 });
@@ -131,7 +143,7 @@ export function decodeReferenceRecords(reader, { referenceRecordCount }) {
     referenceIds.add(recordId);
     offset += 36;
     if (offset + titleLength > reader.end) throw invalid("Kin received a truncated reference record title.");
-    const title = strictTextDecoder.decode(bytes.subarray(offset, offset + titleLength));
+    const title = text(bytes, offset, offset + titleLength, "Kin received invalid reference record text.");
     offset += titleLength;
     const fields = [];
     for (let fieldIndex = 0; fieldIndex < fieldCount; fieldIndex += 1) {
@@ -143,9 +155,9 @@ export function decodeReferenceRecords(reader, { referenceRecordCount }) {
       if (fieldId === ZERO_ID || referenceFieldIds.has(fieldId) || labelLength < 1 || labelLength > 64 || valueLength > 1024 || offset + labelLength + valueLength > reader.end)
         throw invalid("Kin received an invalid reference field.");
       referenceFieldIds.add(fieldId);
-      const label = strictTextDecoder.decode(bytes.subarray(offset, offset + labelLength));
+      const label = text(bytes, offset, offset + labelLength, "Kin received invalid reference record text.");
       offset += labelLength;
-      const value = strictTextDecoder.decode(bytes.subarray(offset, offset + valueLength));
+      const value = text(bytes, offset, offset + valueLength, "Kin received invalid reference record text.");
       offset += valueLength;
       fields.push({ fieldId, label, value });
     }
@@ -170,10 +182,10 @@ export function decodeMaintenance(reader, { maintenanceEventCount }) {
     const end = offset + 60 + summaryLength;
     if (maintenanceId === ZERO_ID || maintenanceIds.has(maintenanceId) || archived > 1 || bytes[offset + 57] !== 0 || summaryLength < 1 || summaryLength > 240 || end > reader.end)
       throw invalid("Kin received an invalid maintenance record.");
-    assertCivilDate(performedOn);
     const nextOn = nextOnCode === 0 ? null : nextOnCode;
-    if (nextOn != null && nextOn < performedOn) throw invalid("Kin received invalid maintenance dates.");
-    const summary = strictTextDecoder.decode(bytes.subarray(offset + 60, end));
+    if (!isCivilDate(performedOn) || (nextOn != null && (!isCivilDate(nextOn) || nextOn < performedOn)))
+      throw invalid("Kin received invalid maintenance dates.");
+    const summary = text(bytes, offset + 60, end, "Kin received invalid maintenance text.");
     if (!summary.trim() || summary.trim() !== summary || [...summary].some((character) => /\p{Cc}/u.test(character)))
       throw invalid("Kin received invalid maintenance text.");
     maintenanceIds.add(maintenanceId);
