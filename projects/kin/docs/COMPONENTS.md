@@ -55,12 +55,32 @@ lives in part classes in a folder named after the element:
 | `<kin-household>` | `household/`: `api.js` (connection, requests, sync status), `auth.js` (passkey registration and login, WebAuthn helpers), `pairing.js`, `membership.js` (devices, members, invitations), `lifecycle.js` (deletion, leaving), `views.js` |
 | `<kin-security>` | `security/`: `views.js`, `protection.js` (setup, replacement, passkeys), `unlock.js`, `archive.js` |
 | `<kin-today>` | `today/`: `sections.js` (the Today composition), `selection.js` (bulk selection), `focus.js` (keeping focus across re-renders) |
+| `<kin-item-detail>` | `item-detail/`: `sections.js` (checklist, files, planning, responsibility, Area, reminder, pin, archive) |
+| `<kin-notes>` | `notes/`: `notes.js` (the Note form and list), `references.js` (reference records and their maintenance log) |
 
 The element builds its parts once, in its constructor, from a `PARTS` table,
 with one shared context `{ host, ...parts }`. A part reaches the element as
 `this.host` and the other parts as `this.ctx.<part>`. A part never holds state
 of its own: fields stay on the element, so the lifecycle callbacks and the
 lock path see all of it in one place.
+
+`<kin-playbook-editor>` (the reusable-checklist form with its validation) and
+`<kin-routine-schedule>` (one Routine's schedule disclosure) are small
+elements inside `<kin-routines>`. Each dispatches its household command
+(`kin:save-playbook`, `kin:change-routine-schedule`) itself and reports
+cancel, toggle and draft changes to `<kin-routines>` as non-bubbling events,
+so which schedule is open and its unsaved choice survive re-renders.
+`<kin-routines>` keeps the editor's controls under their older field names
+(`playbookTitle`, `playbookEntries`, …) for the regression scripts. Both
+elements keep their own disabled state, because a schedule's Change button
+also depends on whether the choice differs.
+
+`<kin-item-detail>` takes its inputs through `defineProps` too. Methods that
+change what it shows without changing an input (`setFeedback`,
+`clearFeedback`) schedule a render themselves, so the next `update()` shows
+them even when every input is unchanged. A component that builds its DOM in
+`setup()` must not name a field after a built-in `HTMLElement` property such
+as `title`.
 
 `<kin-bulk-bar>` (`kin-bulk-bar.js`) is the To do and Shopping bulk bar. It
 owns its controls, text, visibility and focus handoff, and it reports button

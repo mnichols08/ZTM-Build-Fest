@@ -97,6 +97,23 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
   empty array. `update()` renders at once. Selecting an Item uses `update()`
   so focus can return to the rebuilt row.
 
+### Slice 6 — The engine holds the history; detail, routines and notes split
+
+- Rust keeps each engine instance's canonical history (`history.rs`). The
+  bridge's `HistoryMirror` appends only the records added since the last
+  call, truncates for a shorter view, and rolls back `historyWith` extras
+  after one replay. New exports: `kin_history_reset`, `kin_history_append`,
+  `kin_history_truncate`, `kin_project`, `kin_execute`. The whole-history
+  `kin_apply_events` and `kin_execute_command` are removed. Allocations sit in
+  a fixed 8-slot table. A refresh after one new event appends 0.01 ms of
+  history instead of re-encoding and copying all of it (store refresh at
+  10k × 4 KB about −33%).
+- `<kin-item-detail>` 481 → 263 lines with `item-detail/sections.js`, and its
+  setters move to `defineProps`. `<kin-routines>` 500 → 414 with
+  `<kin-playbook-editor>` and `<kin-routine-schedule>`. `<kin-notes>` 471 →
+  131 with `notes/notes.js` and `notes/references.js`.
+- `defineProps` rejects a field named like its property.
+
 ## Unreleased — v0.47.0 — Household Identity & Shared Appearance
 
 - Record the household founder as durable owner for new households while leaving legacy ownership unresolved and fail-closed.

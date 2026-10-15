@@ -20,6 +20,8 @@ const PENDING = Symbol("kinRenderPending");
 export function defineProps(Class, specs) {
   for (const [name, spec] of Object.entries(specs)) {
     const field = spec.field ?? `_${name}`;
+    // A field named like the property would make its getter read itself.
+    if (field === name) throw new Error(`defineProps: ${name} needs a field of another name`);
     const coerce = spec.coerce ?? ((value) => value);
     Object.defineProperty(Class.prototype, name, {
       configurable: true,

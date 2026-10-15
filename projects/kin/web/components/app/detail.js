@@ -82,7 +82,8 @@ export class DetailController {
         this.app.detailMode = null;
         return;
       }
-      this.app.detail.mode = mode;
+      // update() renders now: focus may move into the detail right after.
+      this.app.detail.update({ mode });
       if (mode === "sheet") {
         this.app.detailPanel.hidden = true;
         this.app.detailPanel.classList.remove("detail-panel-inline", "detail-panel-side");
@@ -97,7 +98,7 @@ export class DetailController {
         this.app.main?.classList.toggle("has-detail-side", mode === "side");
         this.app.main?.classList.toggle("has-detail-inline", mode === "inline");
       }
-      this.app.detail.closeLabel = this.app.selection.origin === "search" ? "Back to search" : mode === "inline" ? "Back to list" : "Close";
+      this.app.detail.update({ closeLabel: this.app.selection.origin === "search" ? "Back to search" : mode === "inline" ? "Back to list" : "Close" });
       this.app.detailMode = mode;
     } finally {
       this.app.rehomingDetail = false;

@@ -1,8 +1,9 @@
-import { validatePlaybook } from "../household-validation.js";
 import { ROUTINE_PERIOD_LABELS } from "../today-view.js";
-import { REPEAT_HINTS, REPEAT_OPTIONS, describeNextOccurrence, describeRepeat } from "../recurrence.js";
+import { describeNextOccurrence } from "../recurrence.js";
+import "./kin-playbook-editor.js";
 import "./kin-reminder.js";
 import "./kin-responsibility.js";
+import "./kin-routine-schedule.js";
 import { captureFocus, restoreFocus } from "./shared/focus.js";
 
 // Routines page. Existing routines are the main content; creation sits behind
@@ -19,7 +20,6 @@ class KinRoutines extends HTMLElement {
     this.records = [];
     this.playbookRecords = [];
     this.reminderMap = new Map();
-    this.editingPlaybookId = null;
     this.isDisabled = false;
     this.mode = "normal";
     this.currentView = "all";
@@ -140,56 +140,20 @@ class KinRoutines extends HTMLElement {
     this.newPlaybookButton.setAttribute("aria-controls", `${this.instanceId}-playbook-editor`);
     this.newPlaybookButton.addEventListener("click", () => { if (this.editorOpen && !this.editingPlaybookId) this.closePlaybookEditor(); else { this.clearPlaybookEditor(); this.openPlaybookEditor(); } });
     playbookToolbar.append(this.newPlaybookButton);
-    const playbookForm = document.createElement("form");
-    playbookForm.className = "compose-form playbook-form";
-    playbookForm.id = `${this.instanceId}-playbook-editor`;
-    playbookForm.noValidate = true;
-    playbookForm.hidden = true;
-    this.playbookForm = playbookForm;
-    const playbookTitleId = `${this.instanceId}-playbook-title`;
-    const playbookTitleLabel = document.createElement("label"); playbookTitleLabel.htmlFor = playbookTitleId; playbookTitleLabel.textContent = "Checklist name";
-    this.playbookTitle = document.createElement("input"); this.playbookTitle.id = playbookTitleId; this.playbookTitle.placeholder = "For example: Leaving for a trip";
-    this.playbookTitleError = document.createElement("small"); this.playbookTitleError.id = `${this.instanceId}-playbook-title-error`; this.playbookTitleError.setAttribute("role", "alert"); this.playbookTitleError.hidden = true; this.playbookTitle.setAttribute("aria-describedby", this.playbookTitleError.id);
-    const playbookEntriesId = `${this.instanceId}-playbook-entries`;
-    const playbookEntriesLabel = document.createElement("label"); playbookEntriesLabel.htmlFor = playbookEntriesId; playbookEntriesLabel.textContent = "Steps (one per line)";
-    this.playbookEntries = document.createElement("textarea"); this.playbookEntries.id = playbookEntriesId; this.playbookEntries.rows = 4; this.playbookEntries.placeholder = "One step per line";
-    this.playbookCountError = document.createElement("small"); this.playbookCountError.id = `${this.instanceId}-playbook-count-error`; this.playbookCountError.setAttribute("role", "alert"); this.playbookCountError.hidden = true;
-    this.playbookEntryErrors = document.createElement("div"); this.playbookEntryErrors.className = "field-errors";
-    this.playbookEntries.setAttribute("aria-describedby", this.playbookCountError.id);
-    this.playbookSave = document.createElement("button"); this.playbookSave.type = "submit"; this.playbookSave.className = "add-button"; this.playbookSave.textContent = "Save checklist";
-    const playbookCancel = document.createElement("button"); playbookCancel.type = "button"; playbookCancel.textContent = "Cancel";
-    playbookCancel.addEventListener("click", () => { this.clearPlaybookEditor(); this.closePlaybookEditor(); this.newPlaybookButton.focus(); });
-    playbookForm.addEventListener("submit", (event) => {
-      event.preventDefault();
-      if (this.isDisabled) return;
-      const entries = this.playbookEntries.value.split(/\r?\n/);
-      const result = validatePlaybook(this.playbookTitle.value, entries);
-      this.showValidationError(this.playbookTitle, this.playbookTitleError, result.errors.title);
-      this.showValidationError(this.playbookEntries, this.playbookCountError, result.errors.count);
-      this.playbookEntryErrors.replaceChildren();
-      const entryErrorIds = [];
-      result.errors.entries.forEach((message, index) => {
-        if (!message) return;
-        const error = document.createElement("small");
-        error.id = `${this.instanceId}-playbook-entry-error-${index}`;
-        error.setAttribute("role", "alert");
-        error.textContent = `Step ${index + 1}: ${message}`;
-        entryErrorIds.push(error.id);
-        this.playbookEntryErrors.append(error);
-      });
-      this.playbookEntries.setAttribute("aria-describedby", [this.playbookCountError.id, ...entryErrorIds].join(" "));
-      if (entryErrorIds.length && !this.playbookEntries.hasAttribute("aria-invalid")) this.playbookEntries.setAttribute("aria-invalid", "true");
-      if (!entryErrorIds.length && !result.errors.count) this.playbookEntries.removeAttribute("aria-invalid");
-      if (!result.valid) { (result.errors.title ? this.playbookTitle : this.playbookEntries).focus(); return; }
-      this.dispatch("save-playbook", { playbookId: this.editingPlaybookId, title: result.title, entries: result.entries });
+    // The checklist form is its own element; its controls keep their older
+    // names here because the regression scripts use them.
+    const editor = document.createElement("kin-playbook-editor");
+    editor.setup(this.instanceId);
+    editor.addEventListener("playbook-editor-cancel", () => { this.clearPlaybookEditor(); this.newPlaybookButton.focus(); });
+    this.playbookEditor = editor;
+    Object.assign(this, {
+      playbookForm: editor.form, playbookTitle: editor.titleInput, playbookTitleError: editor.titleError,
+      playbookEntries: editor.entriesInput, playbookCountError: editor.countError,
+      playbookEntryErrors: editor.entryErrors, playbookSave: editor.save,
     });
-    const playbookActions = document.createElement("div");
-    playbookActions.className = "form-actions";
-    playbookActions.append(this.playbookSave, playbookCancel);
-    playbookForm.append(playbookTitleLabel, this.playbookTitle, this.playbookTitleError, playbookEntriesLabel, this.playbookEntries, this.playbookCountError, this.playbookEntryErrors, playbookActions);
     this.playbookList = document.createElement("ul"); this.playbookList.className = "item-list playbook-list";
     this.playbookEmpty = document.createElement("p"); this.playbookEmpty.className = "empty-state"; this.playbookEmpty.textContent = "No reusable checklists yet.";
-    checklistsView.append(playbookHeading, playbookHint, playbookToolbar, playbookForm, this.playbookEmpty, this.playbookList);
+    checklistsView.append(playbookHeading, playbookHint, playbookToolbar, editor, this.playbookEmpty, this.playbookList);
 
     this.routinesView = routinesView;
     this.checklistsView = checklistsView;
@@ -239,13 +203,17 @@ class KinRoutines extends HTMLElement {
   set disabled(value) {
     this.isDisabled = Boolean(value);
     for (const control of this.querySelectorAll("input, textarea, select, button")) {
-      if (control.closest("kin-reminder")) continue;
+      if (control.closest("kin-reminder, kin-playbook-editor, kin-routine-schedule")) continue;
       control.disabled = this.isDisabled || control.dataset.domainDisabled === "true";
     }
     for (const control of this.reminderControls.values()) control.disabled = this.isDisabled;
+    // These keep their own state (a schedule's Change button also depends on
+    // whether the choice differs), so they are told rather than overwritten.
+    if (this.playbookEditor) this.playbookEditor.disabled = this.isDisabled;
+    for (const schedule of this.querySelectorAll("kin-routine-schedule")) schedule.disabled = this.isDisabled;
   }
   get hasDraft() {
-    return Boolean(this.input?.value.trim() || this.playbookTitle?.value.trim() || this.playbookEntries?.value.trim()) || this.scheduleDrafts.size > 0 ||
+    return Boolean(this.input?.value.trim() || this.playbookEditor?.hasDraft) || this.scheduleDrafts.size > 0 ||
       [...this.reminderControls.values()].some((control) => control.hasDraft);
   }
 
@@ -310,21 +278,11 @@ class KinRoutines extends HTMLElement {
     this.newPlaybookButton.setAttribute("aria-expanded", "false");
   }
   clearPlaybookEditor() {
-    this.editingPlaybookId = null;
-    this.playbookTitle.value = "";
-    this.playbookEntries.value = "";
-    this.playbookSave.textContent = "Save checklist";
-    this.showValidationError(this.playbookTitle, this.playbookTitleError, "");
-    this.showValidationError(this.playbookEntries, this.playbookCountError, "");
-    this.playbookEntryErrors.replaceChildren();
+    this.playbookEditor.clear();
     if (this.editorOpen) this.closePlaybookEditor();
   }
-  showValidationError(control, messageNode, message) {
-    messageNode.textContent = message;
-    messageNode.hidden = !message;
-    if (message) control.setAttribute("aria-invalid", "true");
-    else control.removeAttribute("aria-invalid");
-  }
+  // The checklist being edited, or null for a new one.
+  get editingPlaybookId() { return this.playbookEditor?.editingId ?? null; }
   dispatch(action, detail) {
     if (!this.isDisabled) this.dispatchEvent(new CustomEvent(`kin:${action}`, { detail, bubbles: true, composed: true }));
   }
@@ -410,71 +368,27 @@ class KinRoutines extends HTMLElement {
     this.restoreFocus(focus);
     this.renderPlaybooks();
   }
-  // The minimal recurrence editor. Rust has no schedule-change event and
-  // history is never rewritten, so a change explicitly starts a new schedule
-  // today and stops this one; stopping keeps every past completion.
+  // One row's schedule editor (kin-routine-schedule.js). Which editor is open
+  // and its unsaved choice live here, so a re-render keeps them.
   createScheduleEditor(record) {
-    const id = `${this.instanceId}-schedule-${record.routineId}`;
-    const details = document.createElement("details");
-    details.className = "routine-schedule";
-    details.open = this.scheduleOpenId === record.routineId;
-    const summary = document.createElement("summary");
-    summary.textContent = "Schedule";
-    summary.setAttribute("aria-label", `Schedule for ${record.text}`);
-    details.append(summary);
-    details.addEventListener("toggle", () => {
-      if (details.open) this.scheduleOpenId = record.routineId;
+    const schedule = document.createElement("kin-routine-schedule");
+    schedule.setup(record, {
+      idPrefix: `${this.instanceId}-schedule-${record.routineId}`,
+      civilDate: this.civilDate,
+      mode: this.mode,
+      open: this.scheduleOpenId === record.routineId,
+      draft: this.scheduleDrafts.get(record.routineId) ?? null,
+      disabled: this.isDisabled,
+    });
+    schedule.addEventListener("schedule-toggle", (event) => {
+      if (event.detail.open) this.scheduleOpenId = record.routineId;
       else if (this.scheduleOpenId === record.routineId) this.scheduleOpenId = null;
     });
-    const form = document.createElement("form");
-    form.className = "routine-schedule-form";
-    form.noValidate = true;
-    const current = document.createElement("p");
-    const next = describeNextOccurrence(record.nextOn, this.civilDate);
-    current.textContent = `${describeRepeat(record.cadence)}.${next && this.mode === "normal" ? ` ${next}.` : ""}`;
-    const label = document.createElement("label");
-    label.htmlFor = `${id}-cadence`;
-    label.textContent = "Repeat";
-    const select = document.createElement("select");
-    select.id = `${id}-cadence`;
-    select.dataset.routineId = record.routineId;
-    for (const { value, label: text } of REPEAT_OPTIONS.slice(1)) select.append(new Option(text, value));
-    select.value = this.scheduleDrafts.get(record.routineId) ?? record.cadence;
-    const scope = document.createElement("p");
-    scope.id = `${id}-scope`;
-    select.setAttribute("aria-describedby", scope.id);
-    const save = document.createElement("button");
-    save.type = "submit";
-    save.className = "add-button";
-    save.textContent = "Change schedule";
-    save.dataset.routineId = record.routineId;
-    save.dataset.action = "change-routine-schedule";
-    const describeScope = () => {
-      const changed = select.value !== record.cadence;
-      save.dataset.domainDisabled = String(!changed);
-      save.disabled = this.isDisabled || !changed;
-      scope.textContent = changed
-        ? `${REPEAT_HINTS[select.value]} The new schedule starts today. Past completions stay with the current schedule, and ${record.occurrenceStatus === "completed" ? "this period's done mark" : "the open occurrence"} does not carry over.`
-        : "Choose a different schedule to change it, or use Stop repeating to end it. Past completions are always kept.";
-    };
-    select.addEventListener("change", () => {
-      if (select.value === record.cadence) this.scheduleDrafts.delete(record.routineId);
-      else this.scheduleDrafts.set(record.routineId, select.value);
-      describeScope();
+    schedule.addEventListener("schedule-draft", (event) => {
+      if (event.detail.cadence === null) this.scheduleDrafts.delete(record.routineId);
+      else this.scheduleDrafts.set(record.routineId, event.detail.cadence);
     });
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      if (this.isDisabled || select.value === record.cadence) return;
-      this.dispatch("change-routine-schedule", { routineId: record.routineId, cadence: select.value });
-    });
-    const buttons = document.createElement("div");
-    buttons.className = "routine-schedule-actions";
-    buttons.append(save);
-    form.append(current, label, select, scope, buttons);
-    details.append(form);
-    select.disabled = this.isDisabled;
-    describeScope();
-    return details;
+    return schedule;
   }
   renderPlaybooks() {
     if (!this.playbookList) return;
@@ -490,7 +404,7 @@ class KinRoutines extends HTMLElement {
       const actions = document.createElement("div"); actions.className = "item-action";
       const add = (label, action, callback) => { const button = document.createElement("button"); button.type = "button"; button.textContent = label; button.setAttribute("aria-label", `${label}: ${record.title}`); button.disabled = this.isDisabled; button.dataset.playbookId = record.playbookId; button.dataset.action = action; button.addEventListener("click", callback); actions.append(button); };
       add("Use checklist", "instantiate", () => this.dispatch("instantiate-playbook", { playbookId: record.playbookId }));
-      add("Edit", "edit", () => { this.editingPlaybookId = record.playbookId; this.playbookTitle.value = record.title; this.playbookEntries.value = record.entries.join("\n"); this.playbookSave.textContent = "Save changes"; this.openPlaybookEditor(); });
+      add("Edit", "edit", () => { this.playbookEditor.edit(record); this.openPlaybookEditor(); });
       add("Archive", "archive", () => this.dispatch("archive-playbook", { playbookId: record.playbookId }));
       row.append(content, actions); this.playbookList.append(row);
     }

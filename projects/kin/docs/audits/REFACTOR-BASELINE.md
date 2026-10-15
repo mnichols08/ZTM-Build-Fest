@@ -203,3 +203,43 @@ unlock) run code Slice 5 does not touch. The view stages fall either side of
 the parent depending on the run. No stage is consistently slower. The Slice 4
 numbers above came from a quieter run, so they are not directly comparable
 with these.
+
+## Slice 6 — the engine holds the history
+
+The Node stages change with the ABI. A refresh used to encode the whole
+history into a request and copy it into WASM memory. Now the instance keeps
+the history, and the host appends what changed:
+
+| Node stage (ms) | 1k | 10k | 10k × 4 KB |
+| --- | ---: | ---: | ---: |
+| Before: request encode + copy, every replay | 0.3 | 0.9 | 15.7 |
+| After: load the whole history, once per session or epoch | 0.3 | 2.3 | 24.6 |
+| After: append one event, per refresh | 0.00 | 0.00 | 0.01 |
+| Rust replay + encode (before / after) | 1.1 / 1.0 | 9.9 / 9.9 | 79.3 / 64.9 |
+
+Replay itself did not change; its 10k × 4 KB difference is run-to-run noise.
+
+Measured back to back against the Slice 5 commit (dab2332):
+
+| Browser stage (ms) | 10k before | 10k after | 10k × 4 KB before | 10k × 4 KB after |
+| --- | ---: | ---: | ---: | ---: |
+| Store refresh | 39 | 31 | 209 | 140 |
+| Store command | 64 | 50 | 265 | 207 |
+| App peer refresh, nothing changed | 660 | 570 | 632 | 598 |
+| App peer refresh, one new Handoff | 510 | 575 | 414 | 383 |
+| App full render | 3,164 | 2,822 | 2,288 | 2,075 |
+| Store unlock → projection | 2,227 | 1,676 | 10,876 | 11,694 |
+| App unlock (recovery key) | 5,822 | 4,534 | 15,508 | 16,187 |
+
+- Store refresh and command, the stages this slice targets, are 21–33%
+  faster. They no longer copy the history into WASM on every call.
+- Loading the whole history (unlock, a new store generation) validates every
+  record once, in Rust, on append. It costs about what the old per-call
+  encode and copy cost.
+- The app stages and unlock moved in both directions between sizes. That is
+  the same ±20% machine noise recorded for Slice 5, not a pattern: the
+  slice's view changes do not touch those paths.
+- Rust holds a copy of the history in WASM memory with an eighth of
+  headroom. Before, each replay's request copy was freed but never zeroed,
+  and WASM memory never shrinks, so the resident size is about the same
+  (THREAT-MODEL.md).
