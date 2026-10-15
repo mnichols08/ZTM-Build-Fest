@@ -227,6 +227,7 @@ class KinToday extends HTMLElement {
     result.className = "bulk-result";
     const message = document.createElement("p");
     message.className = "bulk-result-message";
+    message.id = `bulk-result-${this.display}`;
     message.setAttribute("role", "status");
     message.setAttribute("aria-live", "polite");
     const resultActions = document.createElement("div");
@@ -238,6 +239,9 @@ class KinToday extends HTMLElement {
       this.bulkAction("bulk-dismiss");
       this.bulkBar.selectMode.focus();
     });
+    // Focus moves to Undo or Retry as the outcome arrives, which can cut off
+    // the polite announcement; the focused button then reads it instead.
+    for (const control of [undo, retry, dismiss]) control.setAttribute("aria-describedby", message.id);
     resultActions.append(undo, retry, dismiss);
     result.append(message, resultActions);
     container.append(selectMode, toolbar, result);

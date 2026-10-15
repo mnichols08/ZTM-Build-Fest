@@ -284,3 +284,116 @@ fn paused_household_mode_rejects_occurrence_changes() {
         KinError::InvalidEvent
     );
 }
+
+// A schedule change is create-replacement then archive-original, so two
+// devices changing one Routine offline each archive the same original. These
+// pin today's behaviour (a documented PR 53 limitation, see
+// docs/DAILY-UX-HARDENING.md); they are not a statement of the desired rule.
+fn change_schedule(
+    base: &[EventEnvelope],
+    replacement: RoutineId,
+    cadence: Cadence,
+    device: u8,
+    logical: u64,
+) -> Vec<EventEnvelope> {
+    let created = run(
+        base,
+        C::CreateRoutine {
+            id: replacement,
+            text: "Pack lunches".into(),
+            cadence,
+            created_on: day(20261014),
+        },
+        context(10 + device, device, logical),
+        20261014,
+    )
+    .unwrap();
+    let mut seen = base.to_vec();
+    seen.push(created.clone());
+    let archived = run(
+        &seen,
+        C::ArchiveRoutine(ROUTINE),
+        context(20 + device, device, logical + 1),
+        20261014,
+    )
+    .unwrap();
+    vec![created, archived]
+}
+
+#[test]
+fn concurrent_schedule_changes_at_one_logical_time_keep_both_replacements_in_any_order() {
+    let base = create(Cadence::Daily, 20261012);
+    let a = change_schedule(&base, RoutineId([6; 16]), Cadence::Weekly, 1, 2);
+    let b = change_schedule(&base, RoutineId([7; 16]), Cadence::Weekdays, 2, 2);
+    let orders = [
+        [base.clone(), a.clone(), b.clone()].concat(),
+        [base.clone(), b.clone(), a.clone()].concat(),
+        [b.clone(), base.clone(), a.clone()].concat(),
+        [a[1..].to_vec(), b.clone(), base.clone(), a[..1].to_vec()].concat(),
+    ];
+    let first = project(&orders[0], 20261014);
+    for events in &orders {
+        // Same event set, same projection on every device. (The encoded
+        // catch-up summary describes the request's own order, so only the
+        // projection is compared.)
+        assert_eq!(project(events, 20261014), first);
+    }
+    // No history is lost: the original is stopped once, and BOTH
+    // replacements remain active. This is the known limitation.
+    let routine = |id: RoutineId| first.routines.iter().find(|r| r.routine_id == id).unwrap();
+    assert_eq!(first.routines.len(), 3);
+    assert!(routine(ROUTINE).archived);
+    assert!(!routine(RoutineId([6; 16])).archived);
+    assert!(!routine(RoutineId([7; 16])).archived);
+    assert_eq!(routine(RoutineId([6; 16])).cadence, Cadence::Weekly);
+    assert_eq!(routine(RoutineId([7; 16])).cadence, Cadence::Weekdays);
+}
+
+#[test]
+fn concurrent_schedule_changes_at_different_logical_times_reject_the_merge_in_any_order() {
+    let base = create(Cadence::Daily, 20261012);
+    let a = change_schedule(&base, RoutineId([6; 16]), Cadence::Weekly, 1, 2);
+    // Device B did more offline work first, so its archive is later.
+    let b = change_schedule(&base, RoutineId([7; 16]), Cadence::Weekdays, 2, 4);
+    for events in [
+        [base.clone(), a.clone(), b.clone()].concat(),
+        [base.clone(), b.clone(), a.clone()].concat(),
+    ] {
+        // The second archive of one Routine is invalid outside the equal
+        // logical-time window, so a full replay refuses the set as a whole:
+        // nothing is partially applied. Sync quarantines that remote event.
+        assert_eq!(
+            rebuild_distributed_on(&events, AS_OF, day(20261014)).unwrap_err(),
+            KinError::InvalidEvent
+        );
+    }
+    // Each device's own history still replays on its own.
+    for own in [&a, &b] {
+        let state = project(&[base.clone(), own.to_vec()].concat(), 20261014);
+        assert_eq!(state.routines.iter().filter(|r| !r.archived).count(), 1);
+    }
+}
+
+#[test]
+fn weekdays_skip_the_weekend_across_both_daylight_saving_transitions() {
+    // US DST starts Sun 2026-03-08 and ends Sun 2026-11-01. Keys are civil
+    // dates, so a 23- or 25-hour weekend neither adds nor drops a weekday.
+    for (friday, saturday, sunday, monday) in [
+        (20260306, 20260307, 20260308, 20260309),
+        (20261030, 20261031, 20261101, 20261102),
+    ] {
+        let events = create(Cadence::Weekdays, friday);
+        let state = project(&events, friday);
+        assert_eq!(state.routines[0].occurrence_key, Some(day(friday)));
+        assert_eq!(state.routines[0].next_start, Some(day(monday)));
+        for weekend in [saturday, sunday] {
+            let state = project(&events, weekend);
+            assert_eq!(state.routines[0].occurrence_key, None);
+            assert_eq!(state.routines[0].next_start, Some(day(monday)));
+        }
+        assert_eq!(
+            project(&events, monday).routines[0].occurrence_key,
+            Some(day(monday))
+        );
+    }
+}

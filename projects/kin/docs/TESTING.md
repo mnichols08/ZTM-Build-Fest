@@ -88,6 +88,22 @@ after the keyboard suite, through the real store and WASM. It covers:
   resume without a duplicate; a stale change; 320px targets and overflow; and
   Stop repeating.
 
+## Daily UX hardening coverage
+
+`scripts/daily-ux-hardening-regression.mjs` runs inside
+`browser-regression.mjs` after the repeating-tasks suite. It covers offline
+Quick add with an at-rest plaintext scan and a reload; lock during a pending
+Quick add write; a schedule change interrupted by lock and resumed after
+unlock; reminders and permission prompts across lock; household settings that
+settle after lock; the phone-width Quick add trigger's accessible name;
+disclosure markers in forced colors; bulk outcome descriptions; the palette's
+fallback when its opener is removed; reflow at 320, 375, 768 and 1280px; and
+it prints `METRIC daily-ux-hardening` samples with median and p95.
+`rust/src/recurring_task_tests.rs` and `web/storage/remote-replay.test.mjs`
+pin concurrent schedule changes, the Weekdays DST weekend, and that an
+unreadable or unsupported remote event stops a batch instead of being
+quarantined. See [DAILY-UX-HARDENING](DAILY-UX-HARDENING.md).
+
 ## Keyboard shortcuts and command palette coverage
 
 `web/keyboard-commands.test.mjs` covers the command allowlist against the

@@ -16,6 +16,16 @@ Locked startup does not load/replay household plaintext. The content-free
 Minimal routing IDs, format/lock state, ciphertext lengths and root wrappers remain
 visible. Recovery secrets are user-held and never persisted or sent to the relay.
 
+Local reminders are in-memory timers in one tab only and are never persisted.
+A lock suspends them. While locked, Kin keeps only each reminder's record id,
+due time and local vault id; it keeps no title and no timer, so nothing can
+notify. Unlocking the same vault re-arms them with titles read from the
+freshly decrypted records. A reminder that came due while locked fires once
+after unlock. Reminders for records that were archived or removed are dropped,
+as are reminders from another vault. Logout, leaving or deletion of the
+household, and restoring an export discard reminders entirely. Reload and tab
+close also discard them.
+
 Same-origin tabs may exchange the fixed `events-changed` notification over `BroadcastChannel` after a committed write. The notification contains no household or event content; each tab reloads the event log from IndexedDB and reconstructs its own view locally.
 
 Since You Last Looked stores only a local event cursor and local timestamp in the existing `local_context` singleton. A cursor means that this installation explicitly advanced through a boundary; it does not identify a person or assert that a named member read anything. Viewing or marking the summary does not write a household event. The additional `view-state-changed` BroadcastChannel message is a fixed, content-free marker; it carries no cursor, IDs, count, text, actor, or device.
