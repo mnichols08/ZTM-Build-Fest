@@ -13,14 +13,38 @@
 //!
 //! Append batch layout: u32 record count, then one u32 length per record,
 //! then the records' bytes back to back.
+//!
+//! Checkpoint: the history also keeps the `Replay` of its first N records
+//! (replay/mod.rs), built in one identity context (target household and
+//! bindings). A projection then applies only the records after N, provided
+//! all of them come strictly later in replay order than the last record
+//! applied. Equal logical times could make an earlier decision concurrent
+//! with a new archive, so those rebuild instead. A different context, or a
+//! truncation below N, also rebuilds. Either way the result equals a replay
+//! of the whole history.
 use crate::error::KinError;
+use crate::event::HouseholdId;
+use crate::event::IdentityBinding;
 use crate::event_decode::decode_event;
+use crate::replay::Replay;
 use crate::request::DecodedRequest;
 use crate::wire::{read_u32, MAX_EVENT_COUNT, MAX_PROTOCOL_BYTES};
 
 pub struct History {
     bytes: Vec<u8>,
     spans: Vec<(u32, u32)>,
+    checkpoint: Option<Checkpoint>,
+    /// Whether the last replay() reused the checkpoint (tests only).
+    #[cfg(test)]
+    reused: bool,
+}
+
+/// The replay of the first `records` records in one identity context.
+struct Checkpoint {
+    records: usize,
+    target_household_id: Option<HouseholdId>,
+    identity_bindings: Vec<IdentityBinding>,
+    replay: Replay,
 }
 
 impl Default for History {
@@ -34,6 +58,9 @@ impl History {
         Self {
             bytes: Vec::new(),
             spans: Vec::new(),
+            checkpoint: None,
+            #[cfg(test)]
+            reused: false,
         }
     }
 
@@ -115,6 +142,13 @@ impl History {
         if count > self.len() {
             return Err(KinError::InvalidAbi);
         }
+        if self
+            .checkpoint
+            .as_ref()
+            .is_some_and(|checkpoint| checkpoint.records > count)
+        {
+            self.checkpoint = None;
+        }
         let end = self
             .spans
             .get(count)
@@ -131,6 +165,49 @@ impl History {
         self.bytes.fill(0);
         self.bytes = Vec::new();
         self.spans = Vec::new();
+        self.checkpoint = None;
+    }
+
+    /// The replay of every held record, as decoded into `request` (from
+    /// `request()`, so `request.events` are these records in arrival order),
+    /// reusing and then advancing the checkpoint when it is valid. On an
+    /// error the checkpoint is dropped, since it may be partly applied.
+    pub fn replay(&mut self, request: &DecodedRequest) -> Result<&Replay, KinError> {
+        let events = &request.events;
+        let reusable = self.checkpoint.take().filter(|checkpoint| {
+            checkpoint.records <= events.len()
+                && checkpoint.target_household_id == request.target_household_id
+                && checkpoint.identity_bindings == request.identity_bindings
+                && events[checkpoint.records..]
+                    .iter()
+                    .all(|event| event.logical_time > checkpoint.replay.last_logical_time())
+        });
+        #[cfg(test)]
+        {
+            self.reused = reusable.is_some();
+        }
+        let (mut replay, from) = match reusable {
+            Some(checkpoint) => (checkpoint.replay, checkpoint.records),
+            None => (Replay::new(), 0),
+        };
+        let mut newer = events[from..].to_vec();
+        newer.sort_by_key(|event| (event.logical_time, event.device_id, event.event_id));
+        replay.note_archives(&newer);
+        for event in &newer {
+            replay.apply(event)?;
+        }
+        let checkpoint = self.checkpoint.insert(Checkpoint {
+            records: events.len(),
+            target_household_id: request.target_household_id,
+            identity_bindings: request.identity_bindings.clone(),
+            replay,
+        });
+        Ok(&checkpoint.replay)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_replay_reused(&self) -> bool {
+        self.reused
     }
 
     /// `context` (from a record-less KINE request) with this history's events.

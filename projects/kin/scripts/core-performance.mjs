@@ -6,8 +6,9 @@
 //
 // Node stages (real release WASM, no storage): loading a whole history into
 // the instance (batch build, copy, Rust validation), appending one more event,
-// Rust replay + projection encode of the held history, and copy-out + JS
-// decode. Since Slice 6 the instance holds the history, so a refresh pays the
+// Rust replay + projection encode of the held history (a full replay, then
+// one more event replayed from the checkpoint the first left), and copy-out +
+// JS decode. Since Slice 6 the instance holds the history, so a refresh pays the
 // one-event append, not the load.
 // Browser stages (real IndexedDB, Web Crypto and the shipped app): native IDB
 // read of the protected rows, decryption of every row, first unlock to a
@@ -76,18 +77,21 @@ async function nodeStages() {
       logicalTime: BigInt(index + 1), text, classification: "need",
     }));
     const last = appendBatch(records.slice(-1));
-    const stage = { load: [], append: [], replay: [], decode: [] };
+    const stage = { load: [], append: [], replay: [], incremental: [], decode: [] };
     for (let sample = 0; sample < 8; sample += 1) {
       let start = performance.now();
       abi.kin_history_reset();
       assert.equal(callExport(abi, "kin_history_append", appendBatch(records.slice(0, -1))), 0);
       const load = performance.now() - start;
       start = performance.now();
+      assert.equal(callExport(abi, "kin_project", context), 0);
+      const replay = performance.now() - start; // full replay; leaves a checkpoint
+      start = performance.now();
       assert.equal(callExport(abi, "kin_history_append", last), 0);
       const append = performance.now() - start;
       start = performance.now();
       assert.equal(callExport(abi, "kin_project", context), 0);
-      const replay = performance.now() - start;
+      const incremental = performance.now() - start; // one event after the checkpoint
       start = performance.now();
       const output = new Uint8Array(abi.memory.buffer, abi.kin_result_ptr(), abi.kin_result_len()).slice();
       const state = decodeProjection(output);
@@ -95,13 +99,14 @@ async function nodeStages() {
       assert.equal(state.items.length, dataset.count);
       if (sample === 0) continue; // warm-up
       stage.load.push(load); stage.append.push(append);
-      stage.replay.push(replay); stage.decode.push(decode);
+      stage.replay.push(replay); stage.incremental.push(incremental); stage.decode.push(decode);
     }
     results.push({
       dataset: dataset.name, events: dataset.count,
       canonicalBytes: records.reduce((total, row) => total + row.length, 0),
       historyLoadMs: median(stage.load), appendOneMs: median(stage.append),
-      replayEncodeMs: median(stage.replay), jsDecodeMs: median(stage.decode), samples: stage.replay.length,
+      replayEncodeMs: median(stage.replay), incrementalReplayMs: median(stage.incremental),
+      jsDecodeMs: median(stage.decode), samples: stage.replay.length,
     });
   }
   abi.kin_clear();

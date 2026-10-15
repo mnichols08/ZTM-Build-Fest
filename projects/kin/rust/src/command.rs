@@ -380,10 +380,28 @@ pub struct CommandResult {
 
 /// Full validation happens before the adapter persists anything. Historical
 /// replay remains idempotent; a stale local Routine intent is rejected here.
+/// A command against a whole request: the projections before and after the
+/// new event are full replays.
 pub fn execute(
     command: &HouseholdCommand,
     context: CommandContext,
+    request: DecodedRequest,
+) -> Result<CommandResult, KinError> {
+    execute_with(command, context, request, project, |request, _| {
+        project(request)
+    })
+}
+
+/// Validates and builds a command's event. `current` projects `request`'s
+/// history; `candidate` projects it with the new event appended (the event is
+/// already the last of `request.events` then, and comes strictly later than
+/// every other event).
+pub fn execute_with(
+    command: &HouseholdCommand,
+    context: CommandContext,
     mut request: DecodedRequest,
+    current: impl FnOnce(&DecodedRequest) -> Result<HouseholdState, KinError>,
+    candidate: impl FnOnce(&DecodedRequest, &EventEnvelope) -> Result<HouseholdState, KinError>,
 ) -> Result<CommandResult, KinError> {
     if request.events.len() >= MAX_EVENT_COUNT
         || !valid_timestamp(context.timestamp)
@@ -403,7 +421,7 @@ pub fn execute(
     {
         return Err(KinError::InvalidEvent);
     }
-    let current = project(&request)?;
+    let current = current(&request)?;
     if let HouseholdCommand::ChangeResponsibility {
         target_kind,
         target_id,
@@ -695,7 +713,7 @@ pub fn execute(
     }
     let event = create_event(command, context)?;
     request.events.push(event.clone());
-    let projection = project(&request)?;
+    let projection = candidate(&request, &event)?;
     let encoded_projection = encode_projection(&request, &projection)?;
     Ok(CommandResult {
         event,
@@ -1127,7 +1145,7 @@ pub fn encode_command(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
 /// the new event once it is stored.
 pub fn execute_history(
     bytes: &[u8],
-    history: &crate::history::History,
+    history: &mut crate::history::History,
 ) -> Result<Vec<u8>, KinError> {
     if bytes.len() > MAX_PROTOCOL_BYTES {
         return Err(KinError::SizeLimit);
@@ -1140,7 +1158,21 @@ pub fn execute_history(
     let request = history.request(crate::request::decode_context(
         bytes.get(end..).ok_or(KinError::MalformedProtocol)?,
     )?)?;
-    command_result(execute(&command, context, request)?)
+    // The held history's checkpoint gives the current state; the candidate
+    // applies the one new event to a copy of it.
+    let replay = history.replay(&request)?;
+    command_result(execute_with(
+        &command,
+        context,
+        request,
+        |request| replay.finalize(request.as_of, request.civil_date),
+        |request, event| {
+            let mut candidate = replay.clone();
+            candidate.note_archives(std::slice::from_ref(event));
+            candidate.apply(event)?;
+            candidate.finalize(request.as_of, request.civil_date)
+        },
+    )?)
 }
 
 /// The same command against a whole KINE request (tests).

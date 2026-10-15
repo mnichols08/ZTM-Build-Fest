@@ -243,3 +243,31 @@ Measured back to back against the Slice 5 commit (dab2332):
   headroom. Before, each replay's request copy was freed but never zeroed,
   and WASM memory never shrinks, so the resident size is about the same
   (THREAT-MODEL.md).
+
+## Slice 7 — replay checkpoint
+
+| Node stage (ms) | 1k | 10k | 10k × 4 KB |
+| --- | ---: | ---: | ---: |
+| Full replay + encode (Slice 6 / Slice 7) | 1.0 / 0.9 | 9.6 / 9.7 | 67.5 / 62.1 |
+| Replay + encode after one more event, from the checkpoint | 0.4 | 3.6 | 30.2 |
+
+What remains of the incremental projection is decoding every held record
+(the summary and command checks still read them), copying the state in
+`finalize`, and encoding. Slice 8's zero-copy decoding targets the first.
+
+Browser stages, two runs of the Slice 6 commit (54fa162) and two of Slice 7:
+
+| Stage (ms) | 10k before | 10k after | 10k × 4 KB before | 10k × 4 KB after |
+| --- | ---: | ---: | ---: | ---: |
+| Store refresh | 38 / 35 | 22 / 28 | 172 / 151 | 118 / 97 |
+| Store command | 50 / — | 40 / 48 | 186 / — | 146 / 137 |
+| App peer refresh, nothing changed | 462 / 527 | 513 / 518 | 594 / 653 | 634 / 561 |
+| App peer refresh, one new Handoff | 412 / 483 | 445 / 493 | 330 / 337 | 334 / 294 |
+| App full render | 2,240 / 2,292 | 2,059 / 2,243 | 2,494 / 2,496 | 2,098 / 2,160 |
+
+- Store refresh and command, which replay in the engine, are consistently
+  faster.
+- The app stages are dominated by the DOM (the busy toggle over 10,000 rows)
+  and overlap between the two builds. A first single-run comparison showed
+  app refresh at 10k short +12%. The second baseline run put both builds in
+  the same range, so it is noise, not a regression.

@@ -58,7 +58,8 @@ whose history is a separate one being imported.
   and 64 MiB.
 - `kin_history_truncate(count)` keeps the first `count` records (status 1 if
   `count` exceeds the history). It touches neither result nor error buffer.
-- `kin_history_reset()` empties the history, zero-filling its bytes.
+- `kin_history_reset()` empties the history, zero-filling its bytes, and drops
+  its checkpoint.
 - `kin_project(ptr, len)` takes a KINE request whose `event_count` is 0 and
   which carries no records: its as_of, cursor, civil date, target household
   and bindings are the replay context. It publishes the KINS projection with
@@ -66,6 +67,17 @@ whose history is a separate one being imported.
 - `kin_execute(ptr, len)` takes `intent length:u32`, the KCMD intent, then such
   a record-less KINE context, and publishes KCMT. The history is not changed;
   the host appends the new event once it is stored.
+
+The history also keeps a checkpoint (Slice 7): the replay state of its first
+N records, built in one identity context (target household and bindings). A
+projection or command applies only the records after N, if each of them has a
+logical time strictly greater than the checkpoint's last one. A record at an
+equal logical time could make an earlier decision concurrent with a new
+archive, so it rebuilds instead. So does a different identity context, a
+truncation below N, or an apply error. The result always equals a replay of
+the whole history; `rust/src/history_tests.rs` checks this after every record
+of every golden fixture. `kin_project` advances the checkpoint to the whole
+history. `kin_execute` uses it and applies the command's event to a copy.
 
 The bridge keeps the instance's history equal to what a caller asks it to
 replay (`web/wasm/history-mirror.js`). Views of the same session arena and

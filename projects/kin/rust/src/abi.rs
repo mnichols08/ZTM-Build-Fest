@@ -291,12 +291,7 @@ pub extern "C" fn kin_history_truncate(count: u32) -> i32 {
 /// publishes the KINS projection with its section revisions.
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
 pub extern "C" fn kin_project(pointer: u32, length: u32) -> i32 {
-    run(
-        pointer,
-        length,
-        |context, history| crate::core::replay_history(context, history),
-        Some(whole),
-    )
+    run(pointer, length, crate::core::replay_history, Some(whole))
 }
 
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
@@ -322,7 +317,7 @@ pub extern "C" fn kin_execute(pointer: u32, length: u32) -> i32 {
     run(
         pointer,
         length,
-        |request, history| crate::command::execute_history(request, history),
+        crate::command::execute_history,
         Some(command_projection),
     )
 }

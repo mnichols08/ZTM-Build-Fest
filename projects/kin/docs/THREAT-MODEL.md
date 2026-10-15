@@ -35,6 +35,11 @@ WASM memory and freed it afterwards, without zeroing it. WASM memory never
 shrinks, so those bytes could stay resident until something overwrote them. The copy is
 zero-filled and dropped on `kin_history_reset` and on lock (`kin_clear` from
 `engine.dispose()`). As with the arena, zero-filling covers that buffer only.
+From Slice 7 the instance also keeps the replayed household state of that
+history (its checkpoint: Item and Note text and other derived values) between
+calls. It is dropped, not zero-filled, on the same reset and lock. That state
+is what every projection already produced and returned, so this lengthens how
+long one copy lives, not what an unlocked engine holds.
 
 Incremental rendering (Slice 4) adds no new plaintext copy. The engine keeps
 its last projection buffer between calls, as its result buffer already did, to

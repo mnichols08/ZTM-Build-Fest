@@ -2,8 +2,10 @@
 // that matches a whole KINE request byte for byte.
 use std::path::PathBuf;
 
+use crate::command::{execute, execute_with, CommandContext, HouseholdCommand};
 use crate::core::{replay, replay_history};
 use crate::error::KinError;
+use crate::event::{ActorId, DeviceId, EventId, HouseholdId, ItemClassification, ItemId};
 use crate::history::History;
 use crate::test_support::*;
 use crate::wire::{BINDING_BYTES, EVENT_HEADER_BYTES, MAX_EVENT_COUNT, REQUEST_HEADER_BYTES};
@@ -51,7 +53,7 @@ fn replaying_held_history_matches_the_whole_request_for_every_golden_fixture() {
         history.append(&batch(&records[half..])).unwrap();
         assert_eq!(history.len(), records.len(), "{name}");
         assert_eq!(
-            replay_history(&context, &history).unwrap(),
+            replay_history(&context, &mut history).unwrap(),
             replay(&request).unwrap(),
             "{name}"
         );
@@ -120,9 +122,174 @@ fn a_bad_record_or_layout_leaves_the_history_unchanged() {
 fn a_projection_context_must_carry_no_records() {
     let records = [item_record(1, 0x11, b"Milk", 1)];
     let request = kine(&records, 0, TEST_DATE, None);
-    let history = History::new();
+    let mut history = History::new();
     assert_eq!(
-        replay_history(&request, &history).unwrap_err(),
+        replay_history(&request, &mut history).unwrap_err(),
         KinError::MalformedProtocol
     );
+}
+
+/// The whole KINE request for `context` (record-less) and `records`.
+fn whole(context: &[u8], records: &[Vec<u8>]) -> Vec<u8> {
+    let mut request = context.to_vec();
+    request[8..12].copy_from_slice(&(records.len() as u32).to_le_bytes());
+    for record in records {
+        request.extend_from_slice(record);
+    }
+    request
+}
+
+fn golden(name: &str) -> (Vec<u8>, Vec<Vec<u8>>) {
+    let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("rust/fixtures/golden");
+    split(&std::fs::read(fixtures.join(format!("{name}.kine"))).unwrap())
+}
+
+#[test]
+fn the_checkpoint_matches_a_full_replay_after_every_appended_record() {
+    for name in ["full", "distributed", "pulse-expiry", "bulk"] {
+        let (context, records) = golden(name);
+        let mut history = History::new();
+        let mut reused = 0;
+        for n in 0..records.len() {
+            history.append(&batch(&records[n..=n])).unwrap();
+            // A prefix in arrival order may itself be invalid (an event can
+            // need one that arrived later but replays earlier); then both
+            // replays must fail the same way.
+            assert_eq!(
+                replay_history(&context, &mut history),
+                replay(&whole(&context, &records[..=n])),
+                "{name} after record {n}"
+            );
+            reused += usize::from(history.last_replay_reused());
+        }
+        // Single-device histories grow strictly in replay order, so every
+        // projection after the first reuses the checkpoint.
+        if name == "bulk" {
+            assert_eq!(reused, records.len() - 1, "{name}");
+        }
+    }
+}
+
+#[test]
+fn equal_logical_times_another_context_or_a_truncation_rebuild() {
+    let (context, records) = golden("bulk");
+    // The first prefix of at least 10 records that is valid on its own.
+    let k = (10..records.len())
+        .find(|&k| replay(&whole(&context, &records[..k])).is_ok())
+        .unwrap();
+    let mut history = History::new();
+    history.append(&batch(&records[..k])).unwrap();
+    replay_history(&context, &mut history).unwrap();
+
+    // A record at the checkpoint's last logical time could be concurrent with
+    // an earlier decision: rebuild.
+    let mut equal_time = records[k].clone();
+    equal_time[72..80].copy_from_slice(&records[k - 1][72..80]);
+    history
+        .append(&batch(std::slice::from_ref(&equal_time)))
+        .unwrap();
+    let mut expected = records[..k].to_vec();
+    expected.push(equal_time);
+    assert_eq!(
+        replay_history(&context, &mut history),
+        replay(&whole(&context, &expected))
+    );
+    assert!(!history.last_replay_reused());
+
+    // Truncating below the checkpoint drops it.
+    history.truncate(k).unwrap();
+    replay_history(&context, &mut history).unwrap();
+    assert!(!history.last_replay_reused());
+    replay_history(&context, &mut history).unwrap();
+    assert!(history.last_replay_reused(), "nothing new, same context");
+
+    // Another identity context (a target household) rebuilds.
+    let mut targeted = context.clone();
+    targeted[44..60].copy_from_slice(&records[0][20..36]);
+    assert_eq!(
+        replay_history(&targeted, &mut history).unwrap(),
+        replay(&whole(&targeted, &records[..k])).unwrap()
+    );
+    assert!(!history.last_replay_reused());
+}
+
+#[test]
+fn a_rejected_record_drops_the_checkpoint_and_the_next_replay_rebuilds() {
+    let records = vec![item_record(1, 0x11, b"Milk", 1)];
+    let context = kine(&[], 0, TEST_DATE, None);
+    let mut history = History::new();
+    history.append(&batch(&records)).unwrap();
+    replay_history(&context, &mut history).unwrap();
+    // Decodes, but completes an Item that does not exist.
+    let orphan = reference_record(2, 9, 0x77);
+    history
+        .append(&batch(std::slice::from_ref(&orphan)))
+        .unwrap();
+    assert_eq!(
+        replay_history(&context, &mut history).unwrap_err(),
+        replay(&whole(&context, &[records[0].clone(), orphan])).unwrap_err()
+    );
+    history.truncate(1).unwrap();
+    assert_eq!(
+        replay_history(&context, &mut history).unwrap(),
+        replay(&whole(&context, &records)).unwrap()
+    );
+    assert!(!history.last_replay_reused());
+}
+
+#[test]
+fn a_command_from_the_checkpoint_matches_one_from_a_full_replay() {
+    let context = |sequence: u8| CommandContext {
+        event_id: EventId([sequence; 16]),
+        household_id: HouseholdId([1; 16]),
+        actor_id: ActorId([2; 16]),
+        device_id: DeviceId([3; 16]),
+        timestamp: 1_234 + i64::from(sequence),
+        logical_time: u64::from(sequence),
+    };
+    let add = |id: u8| HouseholdCommand::AddItem {
+        id: ItemId([id; 16]),
+        text: format!("Item {id}"),
+        classification: ItemClassification::Need,
+    };
+    let request = |records: &[Vec<u8>]| {
+        crate::request::decode_request(&kine(records, 5_000, TEST_DATE, None)).unwrap()
+    };
+    let mut records = Vec::new();
+    for (sequence, command) in [
+        (1, add(0x41)),
+        (2, add(0x42)),
+        (3, HouseholdCommand::ArchiveItem(ItemId([0x41; 16]))),
+    ] {
+        records.push(
+            execute(&command, context(sequence), request(&records))
+                .unwrap()
+                .event
+                .canonical_bytes,
+        );
+    }
+    let mut history = History::new();
+    history.append(&batch(&records)).unwrap();
+    let next = HouseholdCommand::CompleteItem(ItemId([0x42; 16]));
+    let full = execute(&next, context(4), request(&records)).unwrap();
+    let held = history.request(request(&[])).unwrap();
+    let replayed = history.replay(&held).unwrap().clone();
+    let from_checkpoint = execute_with(
+        &next,
+        context(4),
+        held,
+        |request| replayed.finalize(request.as_of, request.civil_date),
+        |request, event| {
+            let mut candidate = replayed.clone();
+            candidate.note_archives(std::slice::from_ref(event));
+            candidate.apply(event)?;
+            candidate.finalize(request.as_of, request.civil_date)
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        from_checkpoint.event.canonical_bytes,
+        full.event.canonical_bytes
+    );
+    assert_eq!(from_checkpoint.encoded_projection, full.encoded_projection);
 }

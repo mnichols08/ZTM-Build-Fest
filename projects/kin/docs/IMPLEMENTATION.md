@@ -39,7 +39,27 @@ projects/kin/
 
 The v0.1.0 implementation uses this layout. The generated `target/` tree and `web/wasm/kin_engine.wasm` are local build artifacts and are ignored by Git. Avoid a general framework or extra component/module unless a scoped requirement needs it.
 
-## Module responsibilities
+## Rust modules today (refactor track)
+
+The layout above is the v0.1.0 starting point. Since the refactor track the
+Rust core is organised as follows:
+
+- `wire.rs`, `request.rs`, `event_decode.rs`: the protocol-24 request and
+  canonical event decoding.
+- `history.rs`: the history an engine instance holds, and its replay
+  checkpoint.
+- `replay/`: the reducers. `Replay::apply` checks every event and dispatches
+  it to `items.rs`, `conversations.rs`, `routines.rs`, `records.rs` or
+  `household.rs`. `Replay::finalize` derives the time-dependent values
+  (Pulse expiry, Routine occurrences) for one evaluation time and date.
+- `state.rs`: the household state types and text normalization;
+  `state/summary.rs` is the catch-up summary.
+- `state_encode.rs` and `sections.rs`: the KINS projection and its section
+  revisions.
+- `command.rs`, `codec.rs`, `archive.rs`, `abi.rs`: commands, canonical
+  encoding, archives and the manual ABI.
+
+## Module responsibilities (v0.1.0)
 
 - **`rust/src/event.rs`:** event kinds, typed classification, envelope representation, and normalized payloads.
 - **`rust/src/state.rs`:** deterministic reducer and projection of ordered events into classified Item state and dedicated Handoff and Talk state.

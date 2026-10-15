@@ -36,6 +36,13 @@
   extras are rolled back, and a new epoch, another arena or an array sends
   the history whole. `web/wasm/abi-test-support.mjs` (not shipped) lets raw
   ABI tests replay a whole KINE request: reset, append, project.
+- **Replay checkpoint (Slice 7).** `rust/src/history_tests.rs` replays every
+  golden fixture one appended record at a time and requires the same result
+  (bytes or error) as a whole replay of that prefix. A single-device history
+  reuses the checkpoint after its first projection. An equal logical time,
+  another identity context, a truncation below the checkpoint and a rejected
+  record each rebuild. A command executed from the checkpoint equals one
+  executed from a full replay.
 - **Section revisions.** `rust/src/section_tests.rs` covers the contiguous
   section layout, the table and revision wrapping. The `abi.rs` tests check
   that revisions advance only for changed sections across calls, survive a

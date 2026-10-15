@@ -114,6 +114,21 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
   131 with `notes/notes.js` and `notes/references.js`.
 - `defineProps` rejects a field named like its property.
 
+### Slice 7 — Replay struct, finalize and checkpoint
+
+- The 1,040-line `rebuild_with_context` becomes `rust/src/replay/`. `Replay`
+  checks every event and dispatches it to one of five domain reducers, whose
+  match arms moved verbatim. `finalize(as_of, civil_date)` derives the only
+  time-dependent values (Pulse expiry, Routine occurrence and next start)
+  without changing the replay. `state.rs` keeps the types; the summary and
+  tests move to `state/`.
+- The engine's history keeps a replay checkpoint. A projection after new
+  events with later logical times applies only those. Anything else rebuilds,
+  so results always equal a whole replay. Commands use the checkpoint for the
+  current state and apply their event to a copy, instead of two full replays.
+  Projecting after one new event: 3.6 ms instead of 9.7 at 10k events, 30
+  instead of 62 at 10k × 4 KB. Store refresh is 28–44% faster.
+
 ## Unreleased — v0.47.0 — Household Identity & Shared Appearance
 
 - Record the household founder as durable owner for new households while leaving legacy ownership unresolved and fail-closed.
