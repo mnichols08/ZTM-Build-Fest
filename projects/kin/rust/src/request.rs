@@ -107,6 +107,14 @@ impl DecodedRequest {
         if self.events.len() >= MAX_EVENT_COUNT {
             return Err(KinError::SizeLimit);
         }
+        let event = self.decode_bound(record)?;
+        self.events.push(event);
+        Ok(())
+    }
+
+    /// Decodes one canonical record with its replay identity normalized
+    /// through this request's bindings, without adding it to `events`.
+    pub fn decode_bound(&self, record: &[u8]) -> Result<EventEnvelope, KinError> {
         let mut event = decode_event(record)?;
         if let Some(target_household_id) = self.target_household_id {
             if let Some(binding) = self.identity_bindings.iter().find(|binding| {
@@ -121,8 +129,7 @@ impl DecodedRequest {
                 return Err(KinError::InvalidEvent);
             }
         }
-        self.events.push(event);
-        Ok(())
+        Ok(event)
     }
 }
 

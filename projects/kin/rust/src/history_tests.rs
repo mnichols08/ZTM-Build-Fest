@@ -2,11 +2,13 @@
 // that matches a whole KINE request byte for byte.
 use std::path::PathBuf;
 
-use crate::command::{execute, execute_with, CommandContext, HouseholdCommand};
+use crate::command::{execute, execute_with, CommandContext, HeldHistory, HouseholdCommand};
 use crate::core::{replay, replay_history};
 use crate::error::KinError;
 use crate::event::{ActorId, DeviceId, EventId, HouseholdId, ItemClassification, ItemId};
+use crate::event_decode::EventView;
 use crate::history::History;
+use crate::state::SummaryInput;
 use crate::test_support::*;
 use crate::wire::{BINDING_BYTES, EVENT_HEADER_BYTES, MAX_EVENT_COUNT, REQUEST_HEADER_BYTES};
 
@@ -272,24 +274,52 @@ fn a_command_from_the_checkpoint_matches_one_from_a_full_replay() {
     history.append(&batch(&records)).unwrap();
     let next = HouseholdCommand::CompleteItem(ItemId([0x42; 16]));
     let full = execute(&next, context(4), request(&records)).unwrap();
-    let held = history.request(request(&[])).unwrap();
-    let replayed = history.replay(&held).unwrap().clone();
-    let from_checkpoint = execute_with(
-        &next,
-        context(4),
-        held,
-        |request| replayed.finalize(request.as_of, request.civil_date),
-        |request, event| {
-            let mut candidate = replayed.clone();
-            candidate.note_archives(std::slice::from_ref(event));
-            candidate.apply(event)?;
-            candidate.finalize(request.as_of, request.civil_date)
-        },
-    )
-    .unwrap();
+    let mut held = HeldHistory::new(&mut history, request(&[])).unwrap();
+    let from_checkpoint = execute_with(&next, context(4), &mut held).unwrap();
     assert_eq!(
         from_checkpoint.event.canonical_bytes,
         full.event.canonical_bytes
     );
     assert_eq!(from_checkpoint.encoded_projection, full.encoded_projection);
+
+    // Conflicts are judged the same way: a logical time that is not later,
+    // an event ID already held, or another household.
+    let stale = CommandContext {
+        logical_time: 3,
+        ..context(9)
+    };
+    let reused = CommandContext {
+        event_id: EventId([2; 16]),
+        ..context(9)
+    };
+    let foreign = CommandContext {
+        household_id: HouseholdId([8; 16]),
+        ..context(9)
+    };
+    for bad in [stale, reused, foreign] {
+        let mut held = HeldHistory::new(&mut history, request(&[])).unwrap();
+        assert_eq!(
+            execute_with(&next, bad, &mut held).unwrap_err(),
+            execute(&next, bad, request(&records)).unwrap_err()
+        );
+    }
+}
+
+#[test]
+fn reading_a_record_in_place_gives_the_summary_what_decoding_gives() {
+    for name in ["empty", "full", "distributed", "pulse-expiry", "bulk"] {
+        let (_, records) = golden(name);
+        for record in &records {
+            let view = EventView::new(record).unwrap();
+            let event = view.decode().unwrap();
+            assert_eq!(view.event_id(), event.event_id, "{name}");
+            assert_eq!(view.logical_time(), event.logical_time, "{name}");
+            assert_eq!(
+                SummaryInput::from_view(&view),
+                SummaryInput::from_kind(&event.kind),
+                "{name}: {:?}",
+                event.kind
+            );
+        }
+    }
 }

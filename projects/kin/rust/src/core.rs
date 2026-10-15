@@ -28,9 +28,10 @@ pub fn replay(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
 /// Replay of the history an engine instance holds, in the context a
 /// record-less KINE request gives (`kin_project`).
 pub fn replay_history(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
-    let request = history.request(decode_context(context)?)?;
+    let context = decode_context(context)?;
     let state = history
-        .replay(&request)?
-        .finalize(request.as_of, request.civil_date)?;
-    encode_projection(&request, &state)
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    let summary = history.summary(&context, &state, None)?;
+    crate::state_encode::encode_state(&state, &summary)
 }

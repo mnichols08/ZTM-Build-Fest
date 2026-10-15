@@ -132,6 +132,9 @@ pub fn encode_state(state: &HouseholdState, summary: &CatchUpSummary) -> Result<
         bytes: Vec::new(),
         section_ends: Vec::with_capacity(SECTION_COUNT),
     };
+    // One allocation for the common case instead of repeated doubling, which
+    // copied a 40 MB projection several times over.
+    out.reserve(estimated_size(state, summary).min(MAX_PROTOCOL_BYTES))?;
     header(&mut out, state, summary)?;
     out.bytes(&[0; SECTION_TABLE_BYTES])?;
     // Section order must match `sections::SECTIONS` exactly: the table and the
@@ -203,6 +206,39 @@ fn header(
     out.count(state.maintenance_events.len())?;
     out.count(state.attachments.len())?;
     out.count(state.responsibilities.len())
+}
+
+/// The projection's size from its fixed record sizes and text lengths. An
+/// estimate only: what it misses grows the buffer as usual.
+fn estimated_size(state: &HouseholdState, summary: &CatchUpSummary) -> usize {
+    let items: usize = state
+        .items
+        .iter()
+        .map(|item| {
+            76 + item.text.len()
+                + item
+                    .steps
+                    .iter()
+                    .map(|step| 40 + step.text.len())
+                    .sum::<usize>()
+        })
+        .sum();
+    let texts = |lengths: &mut dyn Iterator<Item = usize>| lengths.sum::<usize>();
+    RESULT_HEADER_BYTES
+        + SECTION_TABLE_BYTES
+        + items
+        + texts(&mut state.handoffs.iter().map(|handoff| 48 + handoff.text.len()))
+        + texts(&mut state.talks.iter().map(|talk| 48 + talk.text.len()))
+        + state.pulses.len() * 40
+        + texts(&mut state.routines.iter().map(|routine| 60 + routine.text.len()))
+        + texts(
+            &mut state
+                .notes
+                .iter()
+                .map(|note| 92 + note.title.len() + note.body.len()),
+        )
+        + texts(&mut summary.entries.iter().map(|entry| 24 + entry.text.len()))
+        + 4096
 }
 
 /// Structural checks on the derived state that must hold before encoding; a

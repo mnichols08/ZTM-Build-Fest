@@ -13,6 +13,67 @@ use crate::wire::{
     MAX_PROTOCOL_BYTES,
 };
 
+/// A canonical event record read in place: the fixed header fields and the
+/// payload slice, without copying or decoding the payload. Header layout
+/// (88 bytes): version u16 @0, kind u16 @2, event ID @4, household @20,
+/// actor @36, device @52 (16 bytes each), timestamp i64 @68, logical time
+/// u64 @76, payload length u32 @84.
+///
+/// `new` checks only the framing (header present, payload length exact).
+/// The history an engine holds checks every record fully (`decode_event`)
+/// when it is appended, so views of it are views of valid events; `decode`
+/// gives the owned event when a reducer needs one.
+#[derive(Clone, Copy, Debug)]
+pub struct EventView<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> EventView<'a> {
+    pub fn new(bytes: &'a [u8]) -> Result<Self, KinError> {
+        if bytes.len() < EVENT_HEADER_BYTES
+            || read_u32(bytes, 84)? as usize != bytes.len() - EVENT_HEADER_BYTES
+        {
+            return Err(KinError::MalformedProtocol);
+        }
+        Ok(Self { bytes })
+    }
+
+    pub fn bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// (event schema version, event kind code).
+    pub fn kind_code(&self) -> (u16, u16) {
+        (
+            u16::from_le_bytes([self.bytes[0], self.bytes[1]]),
+            u16::from_le_bytes([self.bytes[2], self.bytes[3]]),
+        )
+    }
+
+    pub fn event_id(&self) -> EventId {
+        EventId(self.id_at(4))
+    }
+
+    pub fn logical_time(&self) -> u64 {
+        u64::from_le_bytes(self.bytes[76..84].try_into().unwrap_or([0; 8]))
+    }
+
+    pub fn payload(&self) -> &'a [u8] {
+        &self.bytes[EVENT_HEADER_BYTES..]
+    }
+
+    /// The owned, fully validated event.
+    pub fn decode(&self) -> Result<EventEnvelope, KinError> {
+        decode_event(self.bytes)
+    }
+
+    fn id_at(&self, offset: usize) -> [u8; 16] {
+        self.bytes[offset..offset + 16]
+            .try_into()
+            .unwrap_or([0; 16])
+    }
+}
+
 /// Decodes one canonical protocol-24 event record. `canonical_bytes` keeps an
 /// exact copy of the record; the envelope's identity fields are decoded from it.
 pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {

@@ -380,6 +380,108 @@ pub struct CommandResult {
 
 /// Full validation happens before the adapter persists anything. Historical
 /// replay remains idempotent; a stale local Routine intent is rejected here.
+/// What a command needs from the history it extends.
+pub trait CommandHistory {
+    /// The replay context: as_of, civil date, cursor, target household.
+    fn context(&self) -> &DecodedRequest;
+    /// How many events the history holds.
+    fn event_count(&self) -> usize;
+    /// Whether some event rules out a new event with `context`: it belongs to
+    /// another household, is not earlier, or has the same event ID.
+    fn conflicts_with(&self, context: &CommandContext) -> bool;
+    /// The household as the history projects it.
+    fn current(&mut self) -> Result<HouseholdState, KinError>;
+    /// The household with `event` appended (it comes strictly later than
+    /// every event held), and its KINS projection bytes.
+    fn with_event(&mut self, event: &EventEnvelope) -> Result<(HouseholdState, Vec<u8>), KinError>;
+}
+
+/// A whole decoded request: both projections are full replays (tests).
+pub struct WholeRequest(pub DecodedRequest);
+
+impl CommandHistory for WholeRequest {
+    fn context(&self) -> &DecodedRequest {
+        &self.0
+    }
+    fn event_count(&self) -> usize {
+        self.0.events.len()
+    }
+    fn conflicts_with(&self, context: &CommandContext) -> bool {
+        self.0.events.iter().any(|event| {
+            event.household_id != context.household_id
+                || event.logical_time >= context.logical_time
+                || event.event_id == context.event_id
+        })
+    }
+    fn current(&mut self) -> Result<HouseholdState, KinError> {
+        project(&self.0)
+    }
+    fn with_event(&mut self, event: &EventEnvelope) -> Result<(HouseholdState, Vec<u8>), KinError> {
+        self.0.events.push(event.clone());
+        let projection = project(&self.0)?;
+        let encoded = encode_projection(&self.0, &projection)?;
+        Ok((projection, encoded))
+    }
+}
+
+/// The history an engine instance holds: the checkpoint gives the current
+/// state, the new event is applied to a copy of it, and the summary reads the
+/// records in place.
+pub struct HeldHistory<'h> {
+    history: &'h mut crate::history::History,
+    context: DecodedRequest,
+}
+
+impl<'h> HeldHistory<'h> {
+    /// Brings the history's replay up to date for `context`.
+    pub fn new(
+        history: &'h mut crate::history::History,
+        context: DecodedRequest,
+    ) -> Result<Self, KinError> {
+        history.replay(&context)?;
+        Ok(Self { history, context })
+    }
+
+    fn replay(&self) -> Result<&crate::replay::Replay, KinError> {
+        self.history.replayed().ok_or(KinError::Internal)
+    }
+}
+
+impl CommandHistory for HeldHistory<'_> {
+    fn context(&self) -> &DecodedRequest {
+        &self.context
+    }
+    fn event_count(&self) -> usize {
+        self.history.len()
+    }
+    // Every applied event shares the replay's household, its last logical
+    // time is the greatest, and it knows every applied event ID.
+    fn conflicts_with(&self, context: &CommandContext) -> bool {
+        let Ok(replay) = self.replay() else {
+            return true;
+        };
+        !self.history.is_empty()
+            && (replay.household_id() != Some(context.household_id)
+                || replay.last_logical_time() >= context.logical_time
+                || replay.contains_event(context.event_id))
+    }
+    fn current(&mut self) -> Result<HouseholdState, KinError> {
+        self.replay()?
+            .finalize(self.context.as_of, self.context.civil_date)
+    }
+    fn with_event(&mut self, event: &EventEnvelope) -> Result<(HouseholdState, Vec<u8>), KinError> {
+        let mut candidate = self.replay()?.clone();
+        candidate.note_archives(std::slice::from_ref(event));
+        candidate.apply(event)?;
+        let projection = candidate.finalize(self.context.as_of, self.context.civil_date)?;
+        let summary = self
+            .history
+            .summary(&self.context, &projection, Some(event))?;
+        let encoded = crate::state_encode::encode_state(&projection, &summary)?;
+        Ok((projection, encoded))
+    }
+}
+
 /// A command against a whole request: the projections before and after the
 /// new event are full replays.
 pub fn execute(
@@ -387,41 +489,31 @@ pub fn execute(
     context: CommandContext,
     request: DecodedRequest,
 ) -> Result<CommandResult, KinError> {
-    execute_with(command, context, request, project, |request, _| {
-        project(request)
-    })
+    execute_with(command, context, &mut WholeRequest(request))
 }
 
-/// Validates and builds a command's event. `current` projects `request`'s
-/// history; `candidate` projects it with the new event appended (the event is
-/// already the last of `request.events` then, and comes strictly later than
-/// every other event).
+/// Validates and builds a command's event against `history`.
 pub fn execute_with(
     command: &HouseholdCommand,
     context: CommandContext,
-    mut request: DecodedRequest,
-    current: impl FnOnce(&DecodedRequest) -> Result<HouseholdState, KinError>,
-    candidate: impl FnOnce(&DecodedRequest, &EventEnvelope) -> Result<HouseholdState, KinError>,
+    history: &mut dyn CommandHistory,
 ) -> Result<CommandResult, KinError> {
-    if request.events.len() >= MAX_EVENT_COUNT
+    if history.event_count() >= MAX_EVENT_COUNT
         || !valid_timestamp(context.timestamp)
         || context.logical_time == 0
         || context.logical_time > crate::state::MAX_LOGICAL_TIME
     {
         return Err(KinError::InvalidEvent);
     }
-    if request
+    if history
+        .context()
         .target_household_id
         .is_some_and(|household| household != context.household_id)
-        || request.events.iter().any(|event| {
-            event.household_id != context.household_id
-                || event.logical_time >= context.logical_time
-                || event.event_id == context.event_id
-        })
+        || history.conflicts_with(&context)
     {
         return Err(KinError::InvalidEvent);
     }
-    let current = current(&request)?;
+    let current = history.current()?;
     if let HouseholdCommand::ChangeResponsibility {
         target_kind,
         target_id,
@@ -707,14 +799,12 @@ pub fn execute_with(
         _ => {}
     }
     if let HouseholdCommand::CreateRoutine { created_on, .. } = command {
-        if request.civil_date != *created_on {
+        if history.context().civil_date != *created_on {
             return Err(KinError::InvalidEvent);
         }
     }
     let event = create_event(command, context)?;
-    request.events.push(event.clone());
-    let projection = candidate(&request, &event)?;
-    let encoded_projection = encode_projection(&request, &projection)?;
+    let (projection, encoded_projection) = history.with_event(&event)?;
     Ok(CommandResult {
         event,
         projection,
@@ -1155,24 +1245,10 @@ pub fn execute_history(
         .checked_add(command_length)
         .ok_or(KinError::MalformedProtocol)?;
     let (command, context) = decode_command(bytes.get(4..end).ok_or(KinError::MalformedProtocol)?)?;
-    let request = history.request(crate::request::decode_context(
-        bytes.get(end..).ok_or(KinError::MalformedProtocol)?,
-    )?)?;
-    // The held history's checkpoint gives the current state; the candidate
-    // applies the one new event to a copy of it.
-    let replay = history.replay(&request)?;
-    command_result(execute_with(
-        &command,
-        context,
-        request,
-        |request| replay.finalize(request.as_of, request.civil_date),
-        |request, event| {
-            let mut candidate = replay.clone();
-            candidate.note_archives(std::slice::from_ref(event));
-            candidate.apply(event)?;
-            candidate.finalize(request.as_of, request.civil_date)
-        },
-    )?)
+    let replay_context =
+        crate::request::decode_context(bytes.get(end..).ok_or(KinError::MalformedProtocol)?)?;
+    let mut held = HeldHistory::new(history, replay_context)?;
+    command_result(execute_with(&command, context, &mut held)?)
 }
 
 /// The same command against a whole KINE request (tests).

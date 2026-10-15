@@ -25,9 +25,10 @@
 use crate::error::KinError;
 use crate::event::HouseholdId;
 use crate::event::IdentityBinding;
-use crate::event_decode::decode_event;
+use crate::event_decode::{decode_event, EventView};
 use crate::replay::Replay;
 use crate::request::DecodedRequest;
+use crate::state::{summarize, CatchUpSummary, HouseholdState, SummaryInput};
 use crate::wire::{read_u32, MAX_EVENT_COUNT, MAX_PROTOCOL_BYTES};
 
 pub struct History {
@@ -70,6 +71,13 @@ impl History {
 
     pub fn is_empty(&self) -> bool {
         self.spans.is_empty()
+    }
+
+    /// Each record read in place (event_decode.rs). Every record was fully
+    /// checked when appended, so a view never fails here.
+    pub fn views(&self) -> impl Iterator<Item = EventView<'_>> {
+        self.records()
+            .filter_map(|record| EventView::new(record).ok())
     }
 
     pub fn records(&self) -> impl Iterator<Item = &[u8]> {
@@ -168,19 +176,19 @@ impl History {
         self.checkpoint = None;
     }
 
-    /// The replay of every held record, as decoded into `request` (from
-    /// `request()`, so `request.events` are these records in arrival order),
-    /// reusing and then advancing the checkpoint when it is valid. On an
-    /// error the checkpoint is dropped, since it may be partly applied.
-    pub fn replay(&mut self, request: &DecodedRequest) -> Result<&Replay, KinError> {
-        let events = &request.events;
+    /// The replay of every held record in `context`'s identity (a decoded
+    /// record-less request), reusing and then advancing the checkpoint when
+    /// it is valid. Only records the checkpoint has not applied are decoded.
+    /// On an error the checkpoint is dropped, since it may be partly applied.
+    pub fn replay(&mut self, context: &DecodedRequest) -> Result<&Replay, KinError> {
         let reusable = self.checkpoint.take().filter(|checkpoint| {
-            checkpoint.records <= events.len()
-                && checkpoint.target_household_id == request.target_household_id
-                && checkpoint.identity_bindings == request.identity_bindings
-                && events[checkpoint.records..]
-                    .iter()
-                    .all(|event| event.logical_time > checkpoint.replay.last_logical_time())
+            checkpoint.records <= self.spans.len()
+                && checkpoint.target_household_id == context.target_household_id
+                && checkpoint.identity_bindings == context.identity_bindings
+                && self
+                    .views()
+                    .skip(checkpoint.records)
+                    .all(|view| view.logical_time() > checkpoint.replay.last_logical_time())
         });
         #[cfg(test)]
         {
@@ -190,35 +198,58 @@ impl History {
             Some(checkpoint) => (checkpoint.replay, checkpoint.records),
             None => (Replay::new(), 0),
         };
-        let mut newer = events[from..].to_vec();
+        let mut newer = Vec::new();
+        newer
+            .try_reserve_exact(self.spans.len() - from)
+            .map_err(|_| KinError::SizeLimit)?;
+        for record in self.records().skip(from) {
+            newer.push(context.decode_bound(record)?);
+        }
         newer.sort_by_key(|event| (event.logical_time, event.device_id, event.event_id));
         replay.note_archives(&newer);
         for event in &newer {
             replay.apply(event)?;
         }
         let checkpoint = self.checkpoint.insert(Checkpoint {
-            records: events.len(),
-            target_household_id: request.target_household_id,
-            identity_bindings: request.identity_bindings.clone(),
+            records: self.spans.len(),
+            target_household_id: context.target_household_id,
+            identity_bindings: context.identity_bindings.clone(),
             replay,
         });
         Ok(&checkpoint.replay)
     }
 
+    /// The checkpoint's replay, after `replay()` brought it up to date.
+    pub fn replayed(&self) -> Option<&Replay> {
+        self.checkpoint
+            .as_ref()
+            .map(|checkpoint| &checkpoint.replay)
+    }
+
+    /// The catch-up summary of the held records, plus `extra` (a command's
+    /// new event) when given, read from the records in place.
+    pub fn summary(
+        &self,
+        context: &DecodedRequest,
+        state: &HouseholdState,
+        extra: Option<&crate::event::EventEnvelope>,
+    ) -> Result<CatchUpSummary, KinError> {
+        let mut inputs = Vec::new();
+        inputs
+            .try_reserve_exact(self.spans.len() + 1)
+            .map_err(|_| KinError::SizeLimit)?;
+        inputs.extend(
+            self.views()
+                .map(|view| (view.event_id(), SummaryInput::from_view(&view))),
+        );
+        if let Some(event) = extra {
+            inputs.push((event.event_id, SummaryInput::from_kind(&event.kind)));
+        }
+        summarize(&inputs, context.summary_cursor, state)
+    }
+
     #[cfg(test)]
     pub(crate) fn last_replay_reused(&self) -> bool {
         self.reused
-    }
-
-    /// `context` (from a record-less KINE request) with this history's events.
-    pub fn request(&self, mut context: DecodedRequest) -> Result<DecodedRequest, KinError> {
-        context
-            .events
-            .try_reserve_exact(self.len())
-            .map_err(|_| KinError::SizeLimit)?;
-        for record in self.records() {
-            context.push_record(record)?;
-        }
-        Ok(context)
     }
 }

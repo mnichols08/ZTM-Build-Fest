@@ -87,9 +87,20 @@ impl Replay {
         Self::default()
     }
 
-    /// The logical time of the last applied event (0 before any).
+    /// The logical time of the last applied event (0 before any). Replay
+    /// order never goes back, so it is the greatest logical time applied.
     pub fn last_logical_time(&self) -> u64 {
         self.last_logical_time
+    }
+
+    /// The household every applied event belongs to (after bindings).
+    pub fn household_id(&self) -> Option<HouseholdId> {
+        self.household_id
+    }
+
+    /// Whether an event with this ID has been applied.
+    pub fn contains_event(&self, event_id: EventId) -> bool {
+        self.event_bytes.contains_key(&event_id)
     }
 
     /// Records the archive events among `events` for the concurrent-archive

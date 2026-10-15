@@ -10,7 +10,7 @@ use crate::event::{
 use crate::recurrence::{Cadence, CivilDate};
 
 mod summary;
-pub use summary::summarize_validated;
+pub use summary::{summarize, summarize_validated, SummaryInput};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoutineState {
