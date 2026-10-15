@@ -96,7 +96,8 @@ class KinHousehold extends HTMLElement {
   set disabled(value) {
     this.toggleAttribute("data-disabled", Boolean(value));
     for (const control of this.querySelectorAll("button, input"))
-      control.disabled = Boolean(value);
+      control.disabled =
+        Boolean(value) || control.hasAttribute("data-gated");
   }
 
   get disabled() {
@@ -104,6 +105,12 @@ class KinHousehold extends HTMLElement {
   }
 
   get busy() { return this.operations.busy; }
+
+  // The control stays disabled until its own prerequisite clears, regardless of busy state.
+  setControlDisabled(control, value) {
+    control.toggleAttribute("data-gated", Boolean(value));
+    control.disabled = this.disabled || Boolean(value);
+  }
 
   run(action) { return this.operations.run(() => action()); }
 

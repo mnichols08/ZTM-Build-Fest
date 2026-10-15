@@ -26,6 +26,12 @@ class ElementStub {
       ? this.children.find((child) => child.className === "household-message") ?? null
       : null;
   }
+  querySelectorAll(selector) {
+    const tags = new Set(selector.split(",").map((value) => value.trim()));
+    const descendants = (children) =>
+      children.flatMap((child) => [child, ...descendants(child.children ?? [])]);
+    return descendants(this.children).filter((child) => tags.has(child.tagName));
+  }
 }
 
 globalThis.HTMLElement = class extends ElementStub {};
@@ -36,6 +42,27 @@ globalThis.document = {
 };
 await import("./kin-household.js");
 const KinHousehold = globalThis.KinHouseholdUnderTest;
+
+test("busy-state changes preserve controls gated by a local prerequisite", () => {
+  const component = new KinHousehold();
+  const gated = document.createElement("button");
+  const available = document.createElement("button");
+  component.append(gated, available);
+
+  component.setControlDisabled(gated, true);
+  assert.equal(gated.hasAttribute("data-gated"), true);
+  component.disabled = true;
+  assert.equal(gated.disabled, true);
+  assert.equal(available.disabled, true);
+
+  component.disabled = false;
+  assert.equal(gated.disabled, true, "the prerequisite still gates its control");
+  assert.equal(available.disabled, false, "the busy-only control becomes available");
+
+  component.setControlDisabled(gated, false);
+  assert.equal(gated.disabled, false);
+  assert.equal(gated.hasAttribute("data-gated"), false);
+});
 
 test("Limited and Temporary members get a clearly named Leave household button", async () => {
   for (const kind of ["limited", "temporary"]) {
@@ -81,6 +108,86 @@ test("device revocation control names its target", async () => {
   const descendants = (items) => items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
   const revoke = descendants(component.children).find((child) => child.textContent?.startsWith("Revoke "));
   assert.equal(revoke.textContent, "Revoke Kitchen tablet");
+});
+
+test("device trust refuses a forced click until its displayed code is confirmed", async () => {
+  const component = new KinHousehold();
+  component.identity = {
+    householdId: "household",
+    memberId: "adult",
+    deviceId: "current-device",
+  };
+  component.assertConnection = () => {};
+  const expected = {
+    householdId: "household",
+    memberId: "partner",
+    deviceId: "partner-device",
+    publicKeys: { encryption: "key" },
+    fingerprint: "a".repeat(64),
+  };
+  const pinned = [];
+  component.syncKeyStore = {
+    getPinnedDevice: async () => null,
+    pinTrustedDevice: async (value) => pinned.push(value),
+  };
+  component.ctx.api.openSyncKeyStore = async () => {};
+  component.ctx.api.requestSync = () => {};
+  component.api = async (path) => {
+    if (path === "/api/devices")
+      return {
+        canManageMembers: false,
+        devices: [
+          {
+            id: "partner-device",
+            memberId: "partner",
+            label: "Partner phone",
+            revokedAt: null,
+          },
+        ],
+      };
+    if (path === "/api/sync/devices")
+      return {
+        devices: [
+          {
+            memberId: expected.memberId,
+            deviceId: expected.deviceId,
+            publicKeys: expected.publicKeys,
+            fingerprint: expected.fingerprint,
+          },
+        ],
+      };
+    throw new Error(`Unexpected API path: ${path}`);
+  };
+
+  await component.showDevices();
+  const descendants = (items) =>
+    items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
+  const verify = descendants(component.children).find(
+    (child) => child.textContent === "Verify device",
+  );
+  verify.listeners.click();
+  const confirmation = descendants(component.children).find(
+    (child) => child.tagName === "input" && child.type === "checkbox",
+  );
+  const trust = descendants(component.children).find(
+    (child) => child.textContent === "Trust this device",
+  );
+
+  trust.disabled = false;
+  await trust.listeners.click();
+  assert.equal(pinned.length, 0);
+  const refusal = component.children.find(
+    (child) => child.className === "household-message",
+  );
+  assert.equal(refusal.attributes.role, "alert");
+  assert.equal(
+    refusal.textContent,
+    "Compare the codes on both devices before trusting this device.",
+  );
+
+  confirmation.checked = true;
+  await trust.listeners.click();
+  assert.deepEqual(pinned, [expected]);
 });
 
 test("self-leave requests a passkey and cancellation leaves local authority intact", async () => {

@@ -143,10 +143,13 @@ export class HouseholdViews {
       const activate = this.host.makeButton("Activate with passkey", () =>
         this.host.activateClaim(),
       );
-      activate.disabled = !this.host.verifiedInviterFingerprint;
+      this.host.setControlDisabled(
+        activate,
+        !this.host.verifiedInviterFingerprint,
+      );
       confirmation.addEventListener("change", () => {
         this.host.verifiedInviterFingerprint = confirmation.checked;
-        activate.disabled = !confirmation.checked;
+        this.host.setControlDisabled(activate, !confirmation.checked);
       });
       this.host.append(label, activate);
       return;
@@ -305,8 +308,10 @@ export class HouseholdViews {
         const approve = this.host.makeButton("Approve with passkey", () =>
           this.ctx.pairing.approve(),
         );
-        approve.disabled =
-          !fingerprint || this.host.verifiedFingerprint !== fingerprint;
+        this.host.setControlDisabled(
+          approve,
+          !fingerprint || this.host.verifiedFingerprint !== fingerprint,
+        );
         if (fingerprint) {
           const label = document.createElement("label");
           const confirmation = document.createElement("input");
@@ -316,7 +321,7 @@ export class HouseholdViews {
             this.host.verifiedFingerprint = confirmation.checked
               ? fingerprint
               : null;
-            approve.disabled = !confirmation.checked;
+            this.host.setControlDisabled(approve, !confirmation.checked);
           });
           label.append(
             confirmation,

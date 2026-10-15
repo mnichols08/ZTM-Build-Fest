@@ -166,9 +166,10 @@ async function pageApprove({ joiningKey }) {
   let { shownKey, approve, confirmation } = controls();
   if (!shownKey || shownKey !== joiningKey)
     throw new Error("The approver's displayed fingerprint differs from the joining device's own display");
-  // P-005: render() re-enables every button, so the visual disabled state is
-  // not reliable here. Record it, but assert the gate the handler enforces.
   const visuallyGated = approve.disabled;
+  h.disabled = true;
+  h.disabled = false;
+  const gateSurvivedBusyCycle = approve.disabled;
   if (confirmation.checked) throw new Error("Approval fingerprint confirmation started checked");
   const versionBefore = h.pairing.version;
   approve.disabled = false;
@@ -190,7 +191,7 @@ async function pageApprove({ joiningKey }) {
   if (h.pairing.state !== "Confirmed")
     throw new Error("Approval did not confirm: " + (h.querySelector(".household-message")?.textContent ?? h.pairing.state));
   return { memberId: h.pairing.confirmedMemberId, deviceId: h.pairing.confirmedDeviceId,
-    refusedBeforeConfirmation, visuallyGated, shownKey };
+    refusedBeforeConfirmation, visuallyGated, gateSurvivedBusyCycle, shownKey };
 }
 
 async function pageActivate({ approvingKey }) {
@@ -208,18 +209,76 @@ async function pageActivate({ approvingKey }) {
     .find((label) => label.textContent.includes("I compared this fingerprint on both devices."))
     ?.querySelector('input[type="checkbox"]');
   if (!activate || !confirmation) throw new Error("Activation verification controls are missing");
-  if (!activate.disabled || confirmation.checked)
+  const visuallyGated = activate.disabled;
+  h.disabled = true;
+  h.disabled = false;
+  const gateSurvivedBusyCycle = activate.disabled;
+  if (!visuallyGated || !gateSurvivedBusyCycle || confirmation.checked)
     throw new Error("Activation was available before fingerprint confirmation");
   confirmation.click();
   if (activate.disabled) throw new Error("Activation stayed disabled after fingerprint confirmation");
-  // Activation navigates to "/" on success, destroying this context.
-  activate.click();
-  for (let i = 0; i < 400; i++) {
-    const alert = h.querySelector(".household-message");
-    if (alert?.getAttribute("role") === "alert") throw new Error("Activation failed: " + alert.textContent);
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  return "no-navigation";
+  // Return the gate evidence before activation navigates and destroys this
+  // execution context. The caller then waits for the real navigation.
+  setTimeout(() => activate.click(), 100);
+  return { visuallyGated, gateSurvivedBusyCycle };
+}
+
+async function pageTrustDevice(deviceLabel) {
+  const app = document.querySelector("kin-app");
+  const h = app.household;
+  const listed = await h.api("/api/devices");
+  const device = listed.devices.find((entry) => entry.label === deviceLabel);
+  if (!device) throw new Error(`Trusted-device list is missing ${deviceLabel}`);
+  await h.showDevices();
+  const item = [...h.querySelectorAll("li")].find((entry) =>
+    entry.textContent.includes(`${deviceLabel} — Trusted`),
+  );
+  const verify = [...(item?.querySelectorAll("button") ?? [])].find(
+    (button) => button.textContent === "Verify device",
+  );
+  if (!verify) throw new Error(`Verify device is unavailable for ${deviceLabel}`);
+  verify.click();
+  const trust = [...item.querySelectorAll("button")].find(
+    (button) => button.textContent === "Trust this device",
+  );
+  const confirmation = [...item.querySelectorAll("label")]
+    .find((label) => label.textContent.includes("The codes match."))
+    ?.querySelector('input[type="checkbox"]');
+  if (!trust || !confirmation)
+    throw new Error(`Device trust confirmation controls are missing for ${deviceLabel}`);
+  const visuallyGated = trust.disabled;
+  h.disabled = true;
+  h.disabled = false;
+  const gateSurvivedBusyCycle = trust.disabled;
+
+  trust.disabled = false;
+  trust.click();
+  for (let i = 0; i < 400 && h.busy; i++)
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  const refusal = h.querySelector('.household-message[role="alert"]')?.textContent ?? "";
+  const refusedBeforeConfirmation =
+    refusal === "Compare the codes on both devices before trusting this device.";
+  const unpinnedBeforeConfirmation = !(await h.syncKeyStore.getPinnedDevice(
+    h.identity.householdId,
+    device.id,
+  ));
+
+  confirmation.click();
+  if (trust.disabled)
+    throw new Error("Device trust stayed disabled after code confirmation");
+  trust.click();
+  for (let i = 0; i < 400 && h.busy; i++)
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  const pinnedAfterConfirmation = Boolean(
+    await h.syncKeyStore.getPinnedDevice(h.identity.householdId, device.id),
+  );
+  return {
+    visuallyGated,
+    gateSurvivedBusyCycle,
+    refusedBeforeConfirmation,
+    unpinnedBeforeConfirmation,
+    pinnedAfterConfirmation,
+  };
 }
 
 async function pageHousehold() {
@@ -639,10 +698,9 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       claimed.shownOwnKey === claimed.fingerprint,
     `${deviceLabel} and its approver render matching fingerprints for both device keys`);
     const approved = await inviter.call(pageApprove, { joiningKey: claimed.shownOwnKey });
-    check(approved.refusedBeforeConfirmation && approved.shownKey === claimed.fingerprint,
-      `${deviceLabel} approval is refused until the approver confirms the compared fingerprint`);
-    if (!approved.visuallyGated)
-      console.log(`NOTE ${deviceLabel}: Approve was not visually disabled before confirmation (P-005)`);
+    check(approved.visuallyGated && approved.gateSurvivedBusyCycle &&
+      approved.refusedBeforeConfirmation && approved.shownKey === claimed.fingerprint,
+      `${deviceLabel} approval stays visibly and functionally gated until the approver confirms the compared fingerprint`);
     return { approved, approverKey };
   };
   const join = async ({ inviter, invitee, kind, expiresAt, deviceLabel }) => {
@@ -651,12 +709,9 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(/^[a-f0-9]{32}$/.test(approved.memberId) && /^[a-f0-9]{32}$/.test(approved.deviceId), `${deviceLabel} approval confirms member and device identities`);
     // pageActivate also refuses to continue unless activation is gated until
     // the joining device confirms the approver fingerprint.
-    const activation = await invitee.call(pageActivate, { approvingKey: approverKey }).catch((error) => {
-      // Successful activation destroys the execution context mid-wait.
-      if (/Execution context was destroyed|Cannot find context|Inspected target navigated/i.test(error.message)) return "navigated";
-      throw error;
-    });
-    check(activation !== "no-navigation", `${deviceLabel} activation navigates to the household shell`);
+    const activation = await invitee.call(pageActivate, { approvingKey: approverKey });
+    check(activation.visuallyGated && activation.gateSurvivedBusyCycle,
+      `${deviceLabel} activation stays disabled through a busy cycle until the approver fingerprint is confirmed`);
     const loaded = await invitee.waitForReloadAndUnlock();
     check(loaded.identity?.memberId === approved.memberId && loaded.identity?.deviceId === approved.deviceId,
       `${deviceLabel} holds the approved identity after reload and local unlock`);
@@ -721,6 +776,13 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     result = await a.call(pageSync);
     result = await c.call(pageSync);
     check(result.started && result.last?.state !== "paused", "Limited C syncs after Adult A provisions it: " + JSON.stringify(result.last));
+    const bTrustsC = await b.call(pageTrustDevice, "Client C");
+    check(bTrustsC.visuallyGated && bTrustsC.gateSurvivedBusyCycle,
+      "Adult B's Trust this device control stays disabled through a busy cycle until code confirmation");
+    check(bTrustsC.refusedBeforeConfirmation && bTrustsC.unpinnedBeforeConfirmation,
+      "Adult B's forced unconfirmed device-trust click is refused without pinning Client C");
+    check(bTrustsC.pinnedAfterConfirmation,
+      "Adult B pins Client C exactly after confirming the displayed device code");
     await c.call(pageAddItem, "C1 limited member item");
     result = await c.call(pageSync);
     result = await a.call(pageSync);
@@ -906,11 +968,9 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     const { approved: dApproved, approverKey: dApproverKey } =
       await verifyAndApprove({ inviter: a, invitee: d, invitation, deviceLabel: "Client D" });
     check(dApproved.memberId === aBoot.identity.memberId, "device pairing binds D to Adult A's membership");
-    const dActivation = await d.call(pageActivate, { approvingKey: dApproverKey }).catch((error) => {
-      if (/Execution context was destroyed|Cannot find context|Inspected target navigated/i.test(error.message)) return "navigated";
-      throw error;
-    });
-    check(dActivation !== "no-navigation", "D activation navigates to the household shell");
+    const dActivation = await d.call(pageActivate, { approvingKey: dApproverKey });
+    check(dActivation.visuallyGated && dActivation.gateSurvivedBusyCycle,
+      "D activation stays disabled through a busy cycle until the approver fingerprint is confirmed");
     const dLoaded = await d.waitForReloadAndUnlock();
     check(dLoaded.identity?.deviceId === dApproved.deviceId, "D holds the approved same-member device identity");
     result = await a.call(pageSync); // rotation + provisioning for D (all epochs for a same-member device)
