@@ -54,16 +54,16 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
       const at = new Date(year, month - 1, day, 12).getTime();
       if (!window.__kinRealNow) window.__kinRealNow = Date.now;
       Date.now = () => at;
-      if (!Object.hasOwn(app, "schedulePulseRefresh")) app.schedulePulseRefresh = () => clearTimeout(app.pulseTimer);
+      if (!Object.hasOwn(app.ctx.refresh, "schedulePulseRefresh")) app.ctx.refresh.schedulePulseRefresh = () => clearTimeout(app.pulseTimer);
       clearTimeout(app.pulseTimer);
     }, year, month, day);
-    await page(() => document.querySelector("kin-app").refreshFromEvents());
+    await page(() => document.querySelector("kin-app").ctx.refresh.refreshFromEvents());
     await idle();
   };
   const restoreClock = () => page(() => {
     const app = document.querySelector("kin-app");
     if (window.__kinRealNow) { Date.now = window.__kinRealNow; delete window.__kinRealNow; }
-    if (Object.hasOwn(app, "schedulePulseRefresh")) delete app.schedulePulseRefresh;
+    if (Object.hasOwn(app.ctx.refresh, "schedulePulseRefresh")) delete app.ctx.refresh.schedulePulseRefresh;
   });
   // A clock-driven wake refresh can briefly disable controls (the app's own
   // busy guard), swallowing a key press. Act only while idle, and act again
@@ -89,8 +89,8 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
   const recordStatus = () => page(() => {
     const app = document.querySelector("kin-app");
     window.__statusLog = [];
-    if (Object.hasOwn(app, "setStatus")) return;
-    app.setStatus = function (message) { window.__statusLog.push(message); return Object.getPrototypeOf(this).setStatus.call(this, message); };
+    if (Object.hasOwn(app.ctx.status, "setStatus")) return;
+    app.ctx.status.setStatus = function (message) { window.__statusLog.push(message); return Object.getPrototypeOf(this).setStatus.call(this, message); };
   });
   const announced = () => page(() => { const log = window.__statusLog ?? []; window.__statusLog = []; return log; });
   const focused = () => page(() => {
@@ -103,7 +103,7 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
   try {
     await page(async () => {
       const app = document.querySelector("kin-app");
-      if ((app.state.mode ?? "normal") !== "normal") await app.appendCommand({ type: "set-household-mode", mode: "normal" });
+      if ((app.state.mode ?? "normal") !== "normal") await app.ctx.append.appendCommand({ type: "set-household-mode", mode: "normal" });
     });
     await viewport(1280, 900, false);
     await setClock(2026, 10, 9); // Friday
@@ -128,7 +128,7 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
     }, await eventCount(), "one-off Quick add");
     const oneOffState = await page((text) => {
       const app = document.querySelector("kin-app");
-      return { items: app.state.items.filter((item) => item.text === text).map((item) => item.planningDate), routines: app.state.routines.length, today: app.currentCivilDate(), open: app.quickAdd.dialog.open };
+      return { items: app.state.items.filter((item) => item.text === text).map((item) => item.planningDate), routines: app.state.routines.length, today: app.ctx.navigation.currentCivilDate(), open: app.quickAdd.dialog.open };
     }, oneOff);
     check(oneOffState.items.length === 1 && oneOffState.items[0] === oneOffState.today && oneOffState.routines === beforeRoutines && !oneOffState.open,
       "title + Enter still creates exactly one one-off task for Today and no repeating task", oneOffState);
@@ -201,7 +201,7 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
     // 4. Bulk complete + undo in To do never touches the repeating occurrence.
     await visit("lists/todo");
     const bulkText = `Bulk beside routine ${stamp}`;
-    await page(async (text) => { const app = document.querySelector("kin-app"); await app.appendCommand({ type: "add", text, classification: "need" }); app.renderState(); }, bulkText);
+    await page(async (text) => { const app = document.querySelector("kin-app"); await app.ctx.append.appendCommand({ type: "add", text, classification: "need" }); app.ctx.render.renderState(); }, bulkText);
     await idle();
     const bulkId = await page((text) => document.querySelector("kin-app").state.items.find((item) => item.text === text).itemId, bulkText);
     const bulkBefore = await eventCount();
@@ -243,7 +243,7 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
 
     // 6. A stale completion of the same occurrence is refused and explained.
     const staleCount = await eventCount();
-    await page((id) => document.querySelector("kin-app").saveRoutine({ type: "complete-routine-occurrence", routineId: id, occurrenceKey: 20261009 }), routine.routineId);
+    await page((id) => document.querySelector("kin-app").ctx.routines.saveRoutine({ type: "complete-routine-occurrence", routineId: id, occurrenceKey: 20261009 }), routine.routineId);
     await idle();
     check((await eventCount()) === staleCount && (await routineByText(title))[0].occurrenceStatus === "completed",
       "a repeated completion of a done occurrence records nothing", await announced());
@@ -317,9 +317,9 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
     const changeCount = await eventCount();
     await page(() => {
       const app = document.querySelector("kin-app");
-      const original = app.appendCommand;
-      app.appendCommand = async function (command) {
-        if (command.type === "archive-routine") { app.appendCommand = original; throw Object.assign(new Error("Simulated storage failure"), { userMessage: "Simulated storage failure" }); }
+      const original = app.ctx.append.appendCommand;
+      app.ctx.append.appendCommand = async function (command) {
+        if (command.type === "archive-routine") { app.ctx.append.appendCommand = original; throw Object.assign(new Error("Simulated storage failure"), { userMessage: "Simulated storage failure" }); }
         return original.call(this, command);
       };
     });
@@ -353,7 +353,7 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
     // 11. A stale request against the stopped schedule changes nothing.
     const staleChange = await eventCount();
     await announced();
-    await page((id) => document.querySelector("kin-app").changeRoutineSchedule({ routineId: id, cadence: "monthly" }), routine.routineId);
+    await page((id) => document.querySelector("kin-app").ctx.routines.changeRoutineSchedule({ routineId: id, cadence: "monthly" }), routine.routineId);
     await idle();
     messages = await announced();
     check((await eventCount()) === staleChange && messages.some((message) => message.includes("already stopped repeating")),
@@ -397,9 +397,9 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
       (await announced()).includes("Stopped repeating. Past completions are kept."),
       "Stop repeating ends future occurrences, keeps history and is announced", versions);
   } finally {
-    await page(() => { const app = document.querySelector("kin-app"); if (Object.hasOwn(app, "setStatus")) delete app.setStatus; delete window.__statusLog; });
+    await page(() => { const app = document.querySelector("kin-app"); if (Object.hasOwn(app.ctx.status, "setStatus")) delete app.ctx.status.setStatus; delete window.__statusLog; });
     await restoreClock();
-    await page(() => document.querySelector("kin-app").refreshFromEvents());
+    await page(() => document.querySelector("kin-app").ctx.refresh.refreshFromEvents());
     await idle();
     await client.send("Emulation.clearDeviceMetricsOverride").catch(() => {});
   }

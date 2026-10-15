@@ -126,7 +126,7 @@ async function offlineReloadChecks(recovery) {
     steps: [],
     text: "Synthetic Staples lock sentinel",
   }];
-  app.lockHousehold();
+  app.ctx.session.lockHousehold();
   let denied = false;
   try {
     oldEngine.applyEvents([], 1234, null, 20261003);
@@ -238,7 +238,7 @@ async function browserUiChecks() {
     "browser IDB has ciphertext only",
   );
   const oldStore = app.store;
-  app.lockHousehold();
+  app.ctx.session.lockHousehold();
   check(
     app.state === null &&
       app.engine === null &&
@@ -429,7 +429,7 @@ async function browserUiChecks() {
   // Destroy only these test-owned databases in the isolated temporary profile.
   // Restore into a separately created root to exercise actual portable recovery.
   const sourceRecovery = recovery;
-  app.lockHousehold();
+  app.ctx.session.lockHousehold();
   for (const name of ["kin", "kin-crypto-keys"]) {
     await new Promise((resolve, reject) => {
       const request = indexedDB.deleteDatabase(name);
@@ -553,7 +553,7 @@ async function browserUiChecks() {
         (await app.store.loadEvents()).length === 0,
         `archive ${stage} pending leaves target untouched`,
       );
-      app.lockHousehold();
+      app.ctx.session.lockHousehold();
       releaseSource();
       const outcome = await pendingImport;
       check(
@@ -583,7 +583,7 @@ async function browserUiChecks() {
     );
   }
   location.hash = "#household/privacy";
-  app.showPageFromLocation();
+  app.ctx.navigation.showPageFromLocation();
   app.security.showRestore();
   const restoreFile = app.security.querySelector("#archive-file");
   const transfer = new DataTransfer();
@@ -600,7 +600,7 @@ async function browserUiChecks() {
   confirmation.click();
   await wait(() => app.state?.items?.[0]?.text === "Synthetic protected household secret" && !app.security.busy);
   const imported = { eventCount: (await app.store.loadEvents()).length };
-  await app.initialize();
+  await app.ctx.session.initialize();
   check(
     imported.eventCount === 1 &&
       app.state.items[0].text === "Synthetic protected household secret" &&
@@ -703,7 +703,7 @@ async function browserUiChecks() {
     const peerRead = peerStore.loadEvents().then(() => false, () => true);
     try {
       await peerReadStarted;
-      app.lockHousehold();
+      app.ctx.session.lockHousehold();
       await wait(() => peerApp.state === null && peerApp.vault === null);
       await app.lockBarrier;
       check(await peerRead, "peer lock intent aborts a crypto-held read before the durable epoch write can deadlock");
@@ -756,7 +756,7 @@ async function browserUiChecks() {
       app.state === null && app.engine === null,
       "unlock does not project before crypto completion",
     );
-    app.lockHousehold();
+    app.ctx.session.lockHousehold();
     release();
     await pending;
     check(

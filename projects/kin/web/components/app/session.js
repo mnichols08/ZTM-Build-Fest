@@ -38,13 +38,13 @@ export class SessionController {
       await this.app.security.initialize();
       if (session.generation !== this.app.securityGeneration || this.app.vault) return;
       this.ctx.status.setBusy(false);
-      this.app.setStatus("Household locked.");
+      this.ctx.status.setStatus("Household locked.");
       return;
     }
     const retrying = !this.app.retryButton.hidden;
     this.ctx.status.setBusy(true);
-    this.app.clearAlert();
-    this.app.setStatus("Starting Kin…");
+    this.ctx.status.clearAlert();
+    this.ctx.status.setStatus("Starting Kin…");
     try {
       this.app.syncCoordinator?.stop();
       this.app.syncCoordinator = null;
@@ -66,20 +66,20 @@ export class SessionController {
       }
       this.app.store = store;
       session.store = store;
-      this.app.openPeerChannel();
+      this.ctx.peers.openPeerChannel();
       const snapshot = await store.getCatchUpState();
       this.assertCurrentSession(session);
       this.ctx.refresh.applyCatchUpSnapshot(snapshot);
       await this.ctx.appearance.restoreCachedHouseholdDefaults(snapshot.syncIdentity, session);
-      this.app.renderState();
+      this.ctx.render.renderState();
       void this.ctx.attachments.refreshAttachmentRows();
       this.app.main.hidden = false;
       this.app.nav.hidden = false;
       this.app.siteTools.hidden = false;
       this.app.peoplePage.append(this.app.household);
       this.app.privacyPage.append(this.app.security);
-      this.app.showPageFromLocation();
-      this.app.setStatus("Ready.");
+      this.ctx.navigation.showPageFromLocation();
+      this.ctx.status.setStatus("Ready.");
       // Reminders suspended by a lock of this same vault come back with
       // titles from the fresh state; another vault's are discarded.
       if (this.isCurrentSession(session)) {
@@ -89,10 +89,10 @@ export class SessionController {
       this.ctx.sync.updateSyncChip();
       if (navigator.onLine === false) this.app.onOffline();
       this.app.retryButton.hidden = true;
-      void this.app.configureSyncCoordinator();
+      void this.ctx.sync.configureSyncCoordinator();
     } catch (error) {
       if (this.isCurrentSession(session)) {
-        this.app.lockHousehold();
+        this.ctx.session.lockHousehold();
         this.app.security.error(error.userMessage ? error : new Error(START_ERROR));
       }
     } finally {
@@ -107,17 +107,17 @@ export class SessionController {
     // Re-opening without a lock still ends the previous session's timers;
     // initialize() resumes them only if this is the same vault.
     this.app.localReminders.suspendAll(this.app.vault?.vaultId ?? null);
-    this.app.clearAppliedAppearance();
+    this.ctx.appearance.clearAppliedAppearance();
     vault.assertUnlocked();
     this.app.vault = vault;
     this.app.securityGeneration++;
     setActiveVault(vault);
     this.app.removeLockListener?.();
-    this.app.removeLockListener = vault.onLock(() => this.app.lockHousehold(false));
+    this.app.removeLockListener = vault.onLock(() => this.ctx.session.lockHousehold(false));
     const generation = this.app.securityGeneration;
     this.app.attachmentPreviews?.clear();
     this.app.attachmentPreviews = new AttachmentPreviewCache((record) => this.ctx.attachments.loadPreviewBlob(record));
-    await this.app.initialize();
+    await this.ctx.session.initialize();
     this.assertCurrentSession({ vault, generation });
     vault.assertUnlocked();
     if (!this.app.store)
@@ -129,11 +129,11 @@ export class SessionController {
       this.app.personalAppearance = appearance;
       const editorValue = appearance.version === 2 ? { ...DEFAULT_APPEARANCE, owner: appearance.owner } : appearance;
       this.app.appearance.initialize(editorValue);
-      this.app.applyEffectiveAppearance();
+      this.ctx.appearance.applyEffectiveAppearance();
     } catch (error) {
       this.assertCurrentSession(session);
       this.app.appearance.initialize({ version: 1, owner: null, mode: "system", colorSource: "default", seed: "#984D38", manual: null, image: null });
-      this.app.setStatus("Kin couldn't load your saved appearance, so the default is in use.");
+      this.ctx.status.setStatus("Kin couldn't load your saved appearance, so the default is in use.");
     }
     this.scheduleAutoLock();
     this.ctx.status.renderOnboarding();
@@ -145,7 +145,7 @@ export class SessionController {
       // peers before the epoch write queues behind that read, so they abort it
       // promptly. The later committed epoch remains authoritative if delivery
       // is missed. Numbered intent also cannot revoke a newer unlock epoch.
-      this.app.notifyPeerLock((this.app.vault?.securityEpoch ?? this.app.security?.manifest?.lockEpoch ?? -1) + 1);
+      this.ctx.session.notifyPeerLock((this.app.vault?.securityEpoch ?? this.app.security?.manifest?.lockEpoch ?? -1) + 1);
       this.app.lockBarrier = Promise.resolve(this.app.lockBarrier)
         .then(() => EventStore.lockAll())
         .then((lockEpoch) => {
@@ -161,7 +161,7 @@ export class SessionController {
         });
     }
     this.app.securityGeneration++;
-    this.app.clearAppliedAppearance();
+    this.ctx.appearance.clearAppliedAppearance();
     this.app.removeLockListener?.();
     this.app.removeLockListener = null;
     const vault = this.app.vault ?? getActiveVault();
@@ -174,10 +174,10 @@ export class SessionController {
     clearTimeout(this.app.autoLockTimer);
     this.app.autoLockTimer = null;
     this.ctx.attachments.closeViewer();
-    this.app.closeItemDetail({ restoreFocus: false });
+    this.ctx.detail.closeItemDetail({ restoreFocus: false });
     this.app.commandPalette?.dismiss();
     this.app.commandGeneration = null;
-    this.app.clearBulkOutcome();
+    this.ctx.bulk.clearBulkOutcome();
     this.app.pendingCapture = null;
     // pendingScheduleChange holds only random ids and a cadence. It survives
     // a lock so that unlocking the same vault can finish a half-saved change
@@ -213,7 +213,7 @@ export class SessionController {
     this.app.startingGeneration = null;
     clearTimeout(this.app.pulseTimer);
     clearTimeout(this.app.focusTimer);
-    this.app.clearAlert();
+    this.ctx.status.clearAlert();
     clearLegacyDrafts();
     this.app.quickAdd?.reset();
     if (this.app.main) {
@@ -244,7 +244,7 @@ export class SessionController {
       this.ctx.views.buildViews(this.app.main);
       if (!this.app.stateNotice.isConnected) this.app.main.prepend(this.app.stateNotice);
       this.ctx.status.setBusy(false);
-      this.app.setStatus("Household locked.");
+      this.ctx.status.setStatus("Household locked.");
       if (!preserveSecurityOperation) this.app.security.locked();
     }
   }
@@ -271,8 +271,8 @@ export class SessionController {
     this.app.autoLockTimer = setTimeout(() => {
       this.app.autoLockTimer = null;
       if (vault !== this.app.vault || generation !== this.app.securityGeneration || vault.locked) return;
-      this.app.lockHousehold();
-      this.app.setStatus("Kin locked after inactivity. Unlock to continue.");
+      this.ctx.session.lockHousehold();
+      this.ctx.status.setStatus("Kin locked after inactivity. Unlock to continue.");
     }, this.app.autoLockMinutes * 60_000);
   }
 }

@@ -28,6 +28,15 @@
   checks that the bridge fails closed on every truncation of a golden
   projection, on trailing bytes, on invalid header fields and on a section
   table that does not cover the body.
+- **Test hook (Slice 8).** Browser scripts reach the application through
+  `document.querySelector("kin-app").ctx`, the controller context
+  (COMPONENTS.md). There are no element methods for tests to call or replace;
+  replace a controller method on `app.ctx.<key>` and restore it afterwards.
+- **Reading events in place (Slice 8).** `history_tests.rs` checks that an
+  `EventView` gives the same event ID, logical time and summary input as a
+  full decode for every record of every golden fixture. A command executed
+  against the held history must equal one executed against the whole request,
+  including the conflicts it rejects.
 - **Instance history (Slice 6).** `rust/src/history_tests.rs` checks append
   batches, truncation and atomic rejection, and that replaying the held
   history matches replaying the whole request for every golden fixture.

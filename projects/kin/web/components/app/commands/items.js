@@ -37,9 +37,9 @@ export class ItemCommands {
     if (pending && !matches(pending.draft)) {
       composer.showPendingCapture?.({
         finish: pending.retry,
-        startNew: () => { this.app.pendingCapture = null; composer.clearResult?.(); this.app.handleAddItem(event); },
+        startNew: () => { this.app.pendingCapture = null; composer.clearResult?.(); this.ctx.items.handleAddItem(event); },
       });
-      this.app.setStatus("An earlier item is partly saved. Finish it or choose Start a new item.");
+      this.ctx.status.setStatus("An earlier item is partly saved. Finish it or choose Start a new item.");
       return;
     }
     const submittedDraft = Object.freeze({
@@ -51,40 +51,40 @@ export class ItemCommands {
     // The capture form that submitted owns clearing and focus; the Today form
     // is the default for retries that carry no composer.
     const destination = CLASSIFICATION_LABELS[submittedDraft.classification] ?? "your lists";
-    const retry = () => this.app.handleAddItem({ detail: { ...submittedDraft, composer } });
+    const retry = () => this.ctx.items.handleAddItem({ detail: { ...submittedDraft, composer } });
     if (pending) pending.retry = retry;
     this.ctx.status.setBusy(true);
-    this.app.clearAlert();
-    this.app.setStatus("Saving…");
+    this.ctx.status.clearAlert();
+    this.ctx.status.setStatus("Saving…");
     let restoreComposeFocus = false;
     let step = null;
     try {
       // A repeating task is a Routine: one create command, nothing partial.
       const steps = submittedDraft.cadence ? remainingRecurringSteps(this.app.state, submittedDraft) : remainingCaptureSteps(this.app.state, submittedDraft);
       for (step of steps) {
-        await this.app.appendCommand(step);
+        await this.ctx.append.appendCommand(step);
         this.ctx.session.assertCurrentSession(session);
       }
       step = null;
-      this.app.renderState();
+      this.ctx.render.renderState();
       if (!sourceList) composer.clearIfMatches(submittedDraft);
-      const where = submittedDraft.planningDate === this.app.currentCivilDate() ? `${destination} and Today` : destination;
+      const where = submittedDraft.planningDate === this.ctx.navigation.currentCivilDate() ? `${destination} and Today` : destination;
       const recurring = submittedDraft.cadence ? this.app.state.routines?.find((routine) => routine.routineId === submittedDraft.id) : null;
-      this.app.setStatus(`${recurring ? describeRecurringCapture(recurring, this.app.currentCivilDate()) : `Added to ${where}.`}${this.ctx.sync.offlineSyncSuffix()}`);
+      this.ctx.status.setStatus(`${recurring ? describeRecurringCapture(recurring, this.ctx.navigation.currentCivilDate()) : `Added to ${where}.`}${this.ctx.sync.offlineSyncSuffix()}`);
       if (!sourceList) composer.showResult?.(this.app.syncCoordinator ? "Saved here. Waiting to sync." : "Saved on this device.");
       if (this.app.pendingCapture?.draft.id === submittedDraft.id) this.app.pendingCapture = null;
-      this.app.broadcastEventChange();
+      this.ctx.peers.broadcastEventChange();
       restoreComposeFocus = !sourceList;
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.app.pendingRefresh = true;
-      this.app.renderState();
+      this.ctx.render.renderState();
       const partial = step && step.type !== "add" && step.type !== "create-routine";
       const inline = step ? describePartialCapture(step, destination) : INLINE_SAVE_FAILED;
       if (!sourceList) this.app.pendingCapture = { draft: submittedDraft, composer, retry };
       this.ctx.status.showAlert(partial ? inline : (error.userMessage ?? SAVE_ERROR), retry);
       if (!sourceList && composer.showResult) { composer.showResult(inline, { kind: "error", retry }); this.app.feedback.classList.add("app-feedback-inline"); }
-      this.app.setStatus("");
+      this.ctx.status.setStatus("");
       restoreComposeFocus = !sourceList;
     } finally {
       if (this.ctx.session.isCurrentSession(session)) {
@@ -111,10 +111,10 @@ export class ItemCommands {
     if (!staple) {
       this.app.pendingRefresh = true;
       this.ctx.peers.flushPeerRefresh();
-      this.app.setStatus("That staple is no longer available. Updating the list.");
+      this.ctx.status.setStatus("That staple is no longer available. Updating the list.");
       return;
     }
-    return this.app.handleAddItem({
+    return this.ctx.items.handleAddItem({
       detail: {
         text: staple.text,
         classification: "shopping",
@@ -135,21 +135,21 @@ export class ItemCommands {
     const restoreListFocus = Boolean(activeList) || detailFocused;
     activeList?.rememberFocus();
     this.ctx.status.setBusy(true);
-    this.app.clearAlert();
-    this.app.setStatus("Saving…");
+    this.ctx.status.clearAlert();
+    this.ctx.status.setStatus("Saving…");
     let restoreComposeFocus = false;
     try {
-      await this.app.appendCommand({ type, itemId: submittedItemId });
+      await this.ctx.append.appendCommand({ type, itemId: submittedItemId });
       this.ctx.session.assertCurrentSession(session);
-      this.app.renderState();
-      this.app.setStatus(
+      this.ctx.render.renderState();
+      this.ctx.status.setStatus(
         type === "complete"
           ? "Marked complete."
           : type === "reopen"
             ? "Reopened."
             : "Archived.",
       );
-      this.app.broadcastEventChange();
+      this.ctx.peers.broadcastEventChange();
       restoreComposeFocus = true;
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
@@ -158,10 +158,10 @@ export class ItemCommands {
       }
       this.ctx.status.showAlert(
         error.userMessage ?? SAVE_ERROR,
-        () => this.app.handleItemAction(type, submittedItemId),
+        () => this.ctx.items.handleItemAction(type, submittedItemId),
         { type, itemId: submittedItemId },
       );
-      this.app.setStatus("");
+      this.ctx.status.setStatus("");
       restoreComposeFocus = true;
     } finally {
       if (this.ctx.session.isCurrentSession(session)) {
@@ -191,16 +191,16 @@ export class ItemCommands {
     });
     const submittedStep = command.type === "add-item-step" ? command.text : null;
     this.ctx.status.setBusy(true);
-    this.app.clearAlert();
-    this.app.setStatus("Saving…");
+    this.ctx.status.clearAlert();
+    this.ctx.status.setStatus("Saving…");
     try {
-      await this.app.appendCommand(command);
+      await this.ctx.append.appendCommand(command);
       this.ctx.session.assertCurrentSession(session);
-      this.app.renderState();
+      this.ctx.render.renderState();
       if (submittedStep != null) this.app.detail.clearStepDraft(command.itemId, submittedStep);
       this.app.detail.clearFeedback(command.itemId);
       this.ctx.detail.feedDetail();
-      this.app.setStatus(
+      this.ctx.status.setStatus(
         type === "add-item-step"
           ? "Step added."
           : type === "complete-item-step"
@@ -209,14 +209,14 @@ export class ItemCommands {
               ? "Step reopened."
               : "Step archived.",
       );
-      this.app.broadcastEventChange();
+      this.ctx.peers.broadcastEventChange();
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.app.pendingRefresh = true;
-      this.app.renderState();
+      this.ctx.render.renderState();
       this.ctx.append.showDetailActionError(command.itemId, error.userMessage ?? SAVE_ERROR,
         () => this.handleItemStep(type, command), command);
-      this.app.setStatus("");
+      this.ctx.status.setStatus("");
     } finally {
       if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
@@ -230,41 +230,41 @@ export class ItemCommands {
   }
   async handleCompleteItem(event) {
     this.app.localReminders.cancel(`item:${event.detail.itemId}`);
-    return this.app.handleItemAction("complete", event.detail.itemId);
+    return this.ctx.items.handleItemAction("complete", event.detail.itemId);
   }
   async handleReopenItem(event) {
-    return this.app.handleItemAction("reopen", event.detail.itemId);
+    return this.ctx.items.handleItemAction("reopen", event.detail.itemId);
   }
   async handleArchiveItem(event) {
     this.app.localReminders.cancel(`item:${event.detail.itemId}`);
-    return this.app.handleItemAction("archive", event.detail.itemId);
+    return this.ctx.items.handleItemAction("archive", event.detail.itemId);
   }
   async saveItemPlanningDate(detail, sourceList) {
     this.app.localReminders.cancel(`item:${detail.itemId}`);
     if (this.app.busy || !this.app.store || !this.app.engine) return;
     const session = this.ctx.session.captureSession();
     this.ctx.status.setBusy(true);
-    this.app.clearAlert();
-    this.app.setStatus("Saving…");
+    this.ctx.status.clearAlert();
+    this.ctx.status.setStatus("Saving…");
     try {
-      await this.app.appendCommand({
+      await this.ctx.append.appendCommand({
         type: "set-item-planning-date",
         itemId: detail.itemId,
         planningDate: detail.planningDate,
       });
       this.ctx.session.assertCurrentSession(session);
-      this.app.renderState();
-      this.app.broadcastEventChange();
+      this.ctx.render.renderState();
+      this.ctx.peers.broadcastEventChange();
       this.app.detail.clearFeedback(detail.itemId);
       this.ctx.detail.feedDetail();
-      this.app.setStatus(detail.planningDate ? "Planned date saved." : "Planned date cleared.");
+      this.ctx.status.setStatus(detail.planningDate ? "Planned date saved." : "Planned date cleared.");
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.app.pendingRefresh = true;
-      this.app.renderState();
+      this.ctx.render.renderState();
       this.ctx.append.showDetailActionError(detail.itemId, error.userMessage ?? SAVE_ERROR,
         () => this.saveItemPlanningDate(detail, sourceList));
-      this.app.setStatus("");
+      this.ctx.status.setStatus("");
     } finally {
       if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
@@ -277,11 +277,11 @@ export class ItemCommands {
   }
   async handleChangeResponsibility(event) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
-    const session = this.ctx.session.captureSession(); this.ctx.status.setBusy(true); this.app.clearAlert();
+    const session = this.ctx.session.captureSession(); this.ctx.status.setBusy(true); this.ctx.status.clearAlert();
     try {
       const { targetKind, targetId, memberId } = event.detail;
-      await this.app.appendCommand({ type: "change-responsibility", targetKind, id: targetId, memberId });
-      this.ctx.session.assertCurrentSession(session); this.app.broadcastEventChange(); void this.app.syncCoordinator?.syncNow();
+      await this.ctx.append.appendCommand({ type: "change-responsibility", targetKind, id: targetId, memberId });
+      this.ctx.session.assertCurrentSession(session); this.ctx.peers.broadcastEventChange(); void this.app.syncCoordinator?.syncNow();
     } catch (error) { if (error.code !== "locked" && this.ctx.session.isCurrentSession(session)) this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); }
     finally { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setBusy(false); }
   }
@@ -293,19 +293,19 @@ export class ItemCommands {
     list?.rememberFocus();
     const detailFocused = this.app.detail?.contains(document.activeElement);
     this.ctx.status.setBusy(true);
-    this.app.clearAlert();
-    this.app.setStatus("Saving…");
+    this.ctx.status.clearAlert();
+    this.ctx.status.setStatus("Saving…");
     try {
-      await this.app.appendCommand(command);
+      await this.ctx.append.appendCommand(command);
       this.ctx.session.assertCurrentSession(session);
-      this.app.renderState();
-      this.app.setStatus(detail.pinned ? "Pinned for quick access." : "Unpinned.");
-      this.app.broadcastEventChange();
+      this.ctx.render.renderState();
+      this.ctx.status.setStatus(detail.pinned ? "Pinned for quick access." : "Unpinned.");
+      this.ctx.peers.broadcastEventChange();
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.app.pendingRefresh = true;
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.savePin(detail), command);
-      this.app.setStatus("");
+      this.ctx.status.setStatus("");
     } finally {
       if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
@@ -316,7 +316,7 @@ export class ItemCommands {
   }
   openPinnedItem(itemId, opener = null) {
     const item = this.app.state?.items.find((record) => record.itemId === itemId && record.status !== "archived");
-    if (!item) { this.app.setStatus("That item is no longer available."); return; }
-    this.app.openItemDetail(itemId, { opener });
+    if (!item) { this.ctx.status.setStatus("That item is no longer available."); return; }
+    this.ctx.detail.openItemDetail(itemId, { opener });
   }
 }

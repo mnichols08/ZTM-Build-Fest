@@ -20,24 +20,24 @@ export class AppendCommands {
   // The allowlisted command ids map onto the same methods the visible
   // navigation, Search link, and Quick add button use.
   runWorkspaceCommand(id, { opener = null } = {}) {
-    if (!this.app.workspaceReady()) return;
+    if (!this.ctx.navigation.workspaceReady()) return;
     switch (id) {
       case "today":
-        this.app.navigate("#today");
+        this.ctx.navigation.navigate("#today");
         this.app.pages.get("today")?.querySelector("h1")?.focus();
         return;
       case "todo":
       case "shopping":
-        this.app.navigate(routeHash("lists", id));
+        this.ctx.navigation.navigate(routeHash("lists", id));
         this.app.segmentNavs.get("lists")?.focusCurrent();
         return;
       case "search":
-        this.app.navigate("#search");
+        this.ctx.navigation.navigate("#search");
         this.app.search.focusInput?.();
         return;
       case "quick-add":
         if (this.app.quickAdd.isDisabled) {
-          this.app.setStatus("Quick add is available again once Kin finishes saving.");
+          this.ctx.status.setStatus("Quick add is available again once Kin finishes saving.");
           this.restoreCommandFocus(opener);
           return;
         }
@@ -50,7 +50,7 @@ export class AppendCommands {
     }
   }
   restoreCommandFocus(opener) {
-    if (!this.app.workspaceReady()) return;
+    if (!this.ctx.navigation.workspaceReady()) return;
     if (opener?.isConnected && !opener.closest("[hidden], [inert]") && opener.getClientRects().length) opener.focus();
     else this.app.main.querySelector(".app-view:not([hidden]) h1")?.focus();
   }

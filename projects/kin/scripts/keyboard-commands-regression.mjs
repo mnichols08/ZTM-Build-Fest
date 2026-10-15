@@ -72,7 +72,7 @@ export async function keyboardCommandRegressions(client, { visit, ready }) {
     const app = document.querySelector("kin-app");
     app.commandPalette.dismiss();
     if (app.quickAdd.dialog.open) app.quickAdd.reset();
-    app.closeItemDetail({ restoreFocus: false });
+    app.ctx.detail.closeItemDetail({ restoreFocus: false });
   });
 
   try {
@@ -198,14 +198,14 @@ export async function keyboardCommandRegressions(client, { visit, ready }) {
     const doubled = await page(async () => {
       const app = document.querySelector("kin-app");
       let runs = 0;
-      const original = app.runWorkspaceCommand;
-      app.runWorkspaceCommand = function (...args) { runs++; return original.apply(this, args); };
+      const original = app.ctx.append.runWorkspaceCommand;
+      app.ctx.append.runWorkspaceCommand = function (...args) { runs++; return original.apply(this, args); };
       app.commandPalette.openPalette({ opener: document.getElementById("today-title") });
       app.commandGeneration = app.securityGeneration;
       app.commandPalette.activate(0);
       app.commandPalette.activate(0);
       await new Promise((resolve) => setTimeout(resolve, 50));
-      app.runWorkspaceCommand = original;
+      app.ctx.append.runWorkspaceCommand = original;
       return { runs, open: document.querySelectorAll("dialog[open]").length };
     });
     check(doubled.runs === 1 && doubled.open === 0, "repeated activation runs a command once and leaves no overlay", doubled);
@@ -222,8 +222,8 @@ export async function keyboardCommandRegressions(client, { visit, ready }) {
     const findable = `Keyboard findable ${stamp}`;
     await page(async (text) => {
       const app = document.querySelector("kin-app");
-      await app.appendCommand({ type: "add", text, classification: "need" });
-      app.renderState();
+      await app.ctx.append.appendCommand({ type: "add", text, classification: "need" });
+      app.ctx.render.renderState();
     }, findable);
     await idle();
     await page(() => document.getElementById("household-search-query").focus());
@@ -267,7 +267,7 @@ export async function keyboardCommandRegressions(client, { visit, ready }) {
     await idle();
     const saved = await page((text) => {
       const app = document.querySelector("kin-app");
-      return { count: app.state.items.filter((item) => item.text === text).length, open: app.quickAdd.dialog.open, planned: app.state.items.find((item) => item.text === text)?.planningDate === app.currentCivilDate() };
+      return { count: app.state.items.filter((item) => item.text === text).length, open: app.quickAdd.dialog.open, planned: app.state.items.find((item) => item.text === text)?.planningDate === app.ctx.navigation.currentCivilDate() };
     }, quickTitle);
     check(saved.count === 1 && !saved.open && saved.planned, "Quick add opened with N saves exactly one task for Today with Enter", saved);
 
@@ -433,7 +433,7 @@ export async function keyboardCommandRegressions(client, { visit, ready }) {
     // A modal item sheet on phones keeps Ctrl+K and single keys out.
     await viewport(390, 760, true);
     await visit("lists/todo");
-    await page((itemId) => { const app = document.querySelector("kin-app"); app.openItemDetail(itemId, {}); }, detail.itemId);
+    await page((itemId) => { const app = document.querySelector("kin-app"); app.ctx.detail.openItemDetail(itemId, {}); }, detail.itemId);
     await settle();
     const sheet = await page(() => document.querySelector("kin-app").detailSheet.open);
     await ctrlK();
@@ -449,9 +449,9 @@ export async function keyboardCommandRegressions(client, { visit, ready }) {
     const inflight = `Saved during navigation ${stamp}`;
     const during = await page(async (text) => {
       const app = document.querySelector("kin-app");
-      const save = app.handleAddItem({ detail: { text, classification: "need" } });
+      const save = app.ctx.items.handleAddItem({ detail: { text, classification: "need" } });
       const wasBusy = app.busy;
-      app.runWorkspaceCommand("todo", {});
+      app.ctx.append.runWorkspaceCommand("todo", {});
       await save;
       for (let i = 0; (app.busy || app.refreshing) && i < 400; i++) await new Promise((resolve) => setTimeout(resolve, 10));
       return { wasBusy, hash: location.hash, count: app.state.items.filter((item) => item.text === text).length };
@@ -520,7 +520,7 @@ export async function keyboardCommandRegressions(client, { visit, ready }) {
     await ctrlK();
     const lockedOpen = await page(async () => {
       const app = document.querySelector("kin-app");
-      app.lockHousehold();
+      app.ctx.session.lockHousehold();
       await new Promise((resolve) => setTimeout(resolve, 50));
       return { open: document.querySelectorAll("dialog[open]").length, inMain: app.main.contains(document.activeElement), mainHidden: app.main.hidden, generation: app.commandGeneration };
     });
@@ -533,7 +533,7 @@ export async function keyboardCommandRegressions(client, { visit, ready }) {
     await press(KEYS.question);
     state = await snapshot();
     check(state.openDialogs === 0 && !state.quickAddOpen && state.hash === lockedHash, "a locked session ignores every workspace shortcut", state);
-    const lockedCommand = await page(() => { const app = document.querySelector("kin-app"); app.runWorkspaceCommand("shopping"); return location.hash; });
+    const lockedCommand = await page(() => { const app = document.querySelector("kin-app"); app.ctx.append.runWorkspaceCommand("shopping"); return location.hash; });
     check(lockedCommand === lockedHash, "workspace commands do nothing while locked", { lockedCommand, lockedHash });
     await ready(client);
     await visit("today");
@@ -548,7 +548,7 @@ export async function keyboardCommandRegressions(client, { visit, ready }) {
       app.commandPalette.input.value = "shopping";
       app.commandPalette.input.dispatchEvent(new Event("input"));
       app.commandPalette.activate(0);
-      app.lockHousehold();
+      app.ctx.session.lockHousehold();
       await new Promise((resolve) => setTimeout(resolve, 50));
       return { hash: location.hash, open: document.querySelectorAll("dialog[open]").length };
     });
@@ -563,9 +563,9 @@ export async function keyboardCommandRegressions(client, { visit, ready }) {
       palette.openPalette({ opener: document.getElementById("today-title") });
       palette.remove();
       await new Promise((resolve) => setTimeout(resolve, 30));
-      const result = { open: palette.isOpen, ready: app.workspaceReady() };
+      const result = { open: palette.isOpen, ready: app.ctx.navigation.workspaceReady() };
       app.append(palette);
-      result.reconnected = app.workspaceReady();
+      result.reconnected = app.ctx.navigation.workspaceReady();
       return result;
     });
     check(!detached.open && !detached.ready && detached.reconnected, "disconnection closes the palette and disables commands until it returns", detached);

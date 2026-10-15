@@ -20,22 +20,22 @@ export class ConversationCommands {
     const session = this.ctx.session.captureSession();
     const submitted = Object.freeze({ ...command });
     this.ctx.status.setBusy(true);
-    this.app.clearAlert();
-    this.app.setStatus("Saving…");
+    this.ctx.status.clearAlert();
+    this.ctx.status.setStatus("Saving…");
     try {
-      await this.app.appendCommand(submitted);
+      await this.ctx.append.appendCommand(submitted);
       this.ctx.session.assertCurrentSession(session);
-      this.app.renderState();
+      this.ctx.render.renderState();
       if (submitted.type === "add-handoff")
         this.app.handoffs.clearIfMatches(submitted);
-      this.app.setStatus(
+      this.ctx.status.setStatus(
         submitted.type === "add-handoff"
           ? "Handoff added."
           : submitted.type === "acknowledge-handoff"
             ? "Acknowledged."
             : "Handoff archived.",
       );
-      this.app.broadcastEventChange();
+      this.ctx.peers.broadcastEventChange();
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4 && submitted.handoffId) this.app.pendingRefresh = true;
@@ -44,7 +44,7 @@ export class ConversationCommands {
         () => this.saveHandoff(submitted),
         submitted.handoffId ? submitted : null,
       );
-      this.app.setStatus("");
+      this.ctx.status.setStatus("");
     } finally {
       if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
@@ -58,14 +58,14 @@ export class ConversationCommands {
     const session = this.ctx.session.captureSession();
     const submitted = Object.freeze({ ...command });
     this.ctx.status.setBusy(true);
-    this.app.clearAlert();
-    this.app.setStatus("Saving…");
+    this.ctx.status.clearAlert();
+    this.ctx.status.setStatus("Saving…");
     try {
-      await this.app.appendCommand(submitted);
+      await this.ctx.append.appendCommand(submitted);
       this.ctx.session.assertCurrentSession(session);
-      this.app.renderState();
+      this.ctx.render.renderState();
       if (submitted.type === "add-talk") this.app.talks.clearIfMatches(submitted);
-      this.app.setStatus(
+      this.ctx.status.setStatus(
         submitted.type === "add-talk"
           ? "Talk added."
           : submitted.type === "resolve-talk"
@@ -74,16 +74,16 @@ export class ConversationCommands {
               ? "Reopened."
               : "Talk archived.",
       );
-      this.app.broadcastEventChange();
+      this.ctx.peers.broadcastEventChange();
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4 && submitted.talkId) this.app.pendingRefresh = true;
       this.ctx.status.showAlert(
         error.userMessage ?? SAVE_ERROR,
-        () => this.app.saveTalk(submitted),
+        () => this.ctx.conversations.saveTalk(submitted),
         submitted.talkId ? submitted : null,
       );
-      this.app.setStatus("");
+      this.ctx.status.setStatus("");
     } finally {
       if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
@@ -97,23 +97,23 @@ export class ConversationCommands {
     const session = this.ctx.session.captureSession();
     const submitted = Object.freeze({ ...command });
     this.ctx.status.setBusy(true);
-    this.app.clearAlert();
-    this.app.setStatus("Saving…");
+    this.ctx.status.clearAlert();
+    this.ctx.status.setStatus("Saving…");
     try {
-      await this.app.appendCommand(submitted);
+      await this.ctx.append.appendCommand(submitted);
       this.ctx.session.assertCurrentSession(session);
-      this.app.renderState();
+      this.ctx.render.renderState();
       this.app.pulse.saved();
-      this.app.setStatus(
+      this.ctx.status.setStatus(
         submitted.type === "set-pulse" ? "Pulse set." : "Pulse cleared.",
       );
-      this.app.broadcastEventChange();
+      this.ctx.peers.broadcastEventChange();
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () =>
-        this.app.savePulse(submitted),
+        this.ctx.conversations.savePulse(submitted),
       );
-      this.app.setStatus("");
+      this.ctx.status.setStatus("");
     } finally {
       if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
@@ -125,7 +125,7 @@ export class ConversationCommands {
   // Kept for callers that switched the former Handoff/Talk tabs directly.
   showHandoffPanel(id, focus = false) {
     const segment = id === "talk" ? "talk" : "handoffs";
-    this.app.navigate(routeHash("updates", segment));
+    this.ctx.navigation.navigate(routeHash("updates", segment));
     if (focus) this.app.segmentNavs.get("updates")?.focusCurrent();
   }
 }

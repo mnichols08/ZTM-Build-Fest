@@ -36,7 +36,7 @@ export class RenderController {
     const mode = this.app.state.mode ?? "normal";
     this.app.modeSelect.value = mode;
     this.app.routines.householdMode = mode;
-    const civilDate = this.app.currentCivilDate();
+    const civilDate = this.ctx.navigation.currentCivilDate();
     const responsibilityContext = this.ctx.detail.responsibilityContext();
     this.app.catchUp.summary = this.app.state.summary;
     this.app.catchUp.lastLookedAt = this.app.catchUpCursor?.lastLookedAt;
@@ -102,7 +102,7 @@ export class RenderController {
     this.app.notes.routines = this.app.state.routines ?? [];
     this.app.notes.areas = this.app.state.areas ?? [];
     this.updateCalendarExportButton();
-    this.app.schedulePulseRefresh();
+    this.ctx.refresh.schedulePulseRefresh();
   }
   updateCalendarExportButton() {
     if (!this.app.calendarExportButton) return;

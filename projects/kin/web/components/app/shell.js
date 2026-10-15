@@ -47,7 +47,7 @@ export class ShellBuilder {
     this.app.lockButton.className = "header-lock";
     this.app.lockButton.innerHTML = `${LOCK_ICON}<span>Lock</span>`;
     this.app.lockButton.setAttribute("aria-label", "Lock Kin");
-    this.app.lockButton.addEventListener("click", () => this.app.lockHousehold());
+    this.app.lockButton.addEventListener("click", () => this.ctx.session.lockHousehold());
     tools.append(this.app.quickAdd, this.app.searchLink, this.app.syncChip, this.app.lockButton);
     this.app.siteTools = tools;
     header.append(brand, tools);
@@ -132,8 +132,17 @@ export class ShellBuilder {
     this.app.feedback = feedback;
 
     this.app.security = document.createElement("kin-security");
-    this.app.security.onUnlocked = (vault) => this.app.openUnlockedHousehold(vault);
-    this.app.security.onLockRequested = () => this.app.lockHousehold();
+    this.app.security.onUnlocked = (vault) => this.ctx.session.openUnlockedHousehold(vault);
+    this.app.security.onLockRequested = () => this.ctx.session.lockHousehold();
+    // What <kin-security> may ask of the application, and nothing more.
+    this.app.security.services = {
+      refreshFromEvents: () => this.ctx.refresh.refreshFromEvents(),
+      clearReminders: () => this.ctx.records.clearReminders(),
+      broadcastEventChange: () => this.ctx.peers.broadcastEventChange(),
+      notifyPeerLock: (lockEpoch) => this.ctx.session.notifyPeerLock(lockEpoch),
+      lockHousehold: (broadcast, options) => this.ctx.session.lockHousehold(broadcast, options),
+      setAutoLockMinutes: (minutes) => this.ctx.session.setAutoLockMinutes(minutes),
+    };
     this.app.replaceChildren(this.app.appearanceBackground, header, this.app.security, shell, feedback, this.app.routeAnnouncement);
     this.app.updateNotice = document.createElement("section");
     this.app.updateNotice.className = "update-notice";
@@ -149,7 +158,7 @@ export class ShellBuilder {
       const hasDraft = this.app.compose?.input?.value.trim() || this.app.routines?.hasDraft || this.app.detail?.hasDraft || this.app.notes?.editor?.title.trim() || this.app.notes?.editor?.body.trim() ||
         [this.app.needs, this.app.shopping, this.app.staples].some((list) => list.composer?.input?.value.trim());
       if (this.app.busy || focusedEditor || hasDraft) {
-        this.app.setStatus("Finish or save your current edit before updating Kin.");
+        this.ctx.status.setStatus("Finish or save your current edit before updating Kin.");
         return;
       }
       this.app.updateRequested = true;
@@ -169,12 +178,12 @@ export class ShellBuilder {
     this.app.append(this.app.detailSheet);
     this.app.commandPalette = document.createElement("kin-command-palette");
     this.app.commandPalette.onCommand = (id, { opener }) => {
-      if (this.app.commandGeneration === this.app.securityGeneration) this.app.runWorkspaceCommand(id, { opener });
+      if (this.app.commandGeneration === this.app.securityGeneration) this.ctx.append.runWorkspaceCommand(id, { opener });
     };
     this.app.commandPalette.onDismiss = ({ opener }) => this.ctx.append.restoreCommandFocus(opener);
     this.app.append(this.app.commandPalette);
     this.app.attachmentInput = this.ctx.attachments.buildAttachmentInput();
     this.app.append(this.app.attachmentInput);
-    this.app.showPageFromLocation();
+    this.ctx.navigation.showPageFromLocation();
   }
 }

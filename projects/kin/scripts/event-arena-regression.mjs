@@ -248,7 +248,7 @@ export async function eventArenaPeerRegressions(first, second, until) {
     window.arenaLengthBefore = app.store.arena.length;
     return true;
   })()`);
-  await first.evaluate(`document.querySelector('kin-app').handleAddItem({
+  await first.evaluate(`document.querySelector('kin-app').ctx.items.handleAddItem({
     detail: { text: 'Arena two-tab change', classification: 'need' }
   })`);
   await until(() => second.evaluate(`(() => {

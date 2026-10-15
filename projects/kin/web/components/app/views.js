@@ -245,6 +245,6 @@ export class ViewBuilder {
     this.app.detailPanel.setAttribute("aria-label", "Item details");
     this.app.detailPanel.hidden = true;
     main.append(this.app.detailPanel);
-    this.app.showPageFromLocation();
+    this.ctx.navigation.showPageFromLocation();
   }
 }

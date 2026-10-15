@@ -48,7 +48,7 @@ export class AppearanceController {
       const saved = await saveAppearance(session.store, session.vault, value);
       this.ctx.session.assertCurrentSession(session);
       this.app.personalAppearance = structuredClone(saved);
-      this.app.applyEffectiveAppearance();
+      this.ctx.appearance.applyEffectiveAppearance();
       complete(saved, null);
     } catch (error) {
       if (this.ctx.session.isCurrentSession(session)) complete(null, new Error("Kin couldn't save your appearance. Your previous saved appearance is unchanged."));
@@ -61,9 +61,9 @@ export class AppearanceController {
       this.ctx.session.assertCurrentSession(session);
       const effective = resolveAppearance(this.app.personalAppearance, this.app.householdSettings);
       this.app.appearance.initialize(effective);
-      this.app.applyAppearance(effective);
-      this.app.setStatus("Now following the household appearance on this device.");
-    } catch { if (this.ctx.session.isCurrentSession(session)) this.app.setStatus("Kin couldn't update your appearance. Your previous choice is unchanged."); }
+      this.ctx.appearance.applyAppearance(effective);
+      this.ctx.status.setStatus("Now following the household appearance on this device.");
+    } catch { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setStatus("Kin couldn't update your appearance. Your previous choice is unchanged."); }
   }
   async handleInheritAppearanceProperty(event) {
     const session = this.ctx.session.captureSession();
@@ -79,13 +79,13 @@ export class AppearanceController {
       this.ctx.session.assertCurrentSession(session);
       const effective = resolveAppearance(this.app.personalAppearance, this.app.householdSettings);
       this.app.appearance.initialize(effective);
-      this.app.applyAppearance(effective);
-      this.app.setStatus(`Now following the household ${event.detail.property} on this device.`);
-    } catch { if (this.ctx.session.isCurrentSession(session)) this.app.setStatus("Kin couldn't update your appearance. Your previous choice is unchanged."); }
+      this.ctx.appearance.applyAppearance(effective);
+      this.ctx.status.setStatus(`Now following the household ${event.detail.property} on this device.`);
+    } catch { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setStatus("Kin couldn't update your appearance. Your previous choice is unchanged."); }
   }
   applyEffectiveAppearance() {
     const effective = resolveAppearance(this.app.personalAppearance, this.app.householdSettings);
-    this.app.applyAppearance(effective);
+    this.ctx.appearance.applyAppearance(effective);
     this.setHouseholdIdentity(this.app.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME);
   }
   setHouseholdIdentity(name) {
@@ -103,8 +103,8 @@ export class AppearanceController {
       this.ctx.session.assertCurrentSession(session);
       if (result.value && (this.app.householdSettings?.revision ?? -1) <= result.value.revision) this.app.householdSettings = result.value;
       this.app.householdDefaults.initialize({ ...result, value: this.app.householdSettings });
-      this.app.applyEffectiveAppearance();
-    } catch { if (this.ctx.session.isCurrentSession(session)) this.app.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded."); }
+      this.ctx.appearance.applyEffectiveAppearance();
+    } catch { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded."); }
   }
   async restoreCachedHouseholdDefaults(identity, session = this.ctx.session.captureSession()) {
     if (!identity) return;
@@ -113,9 +113,9 @@ export class AppearanceController {
       this.ctx.session.assertCurrentSession(session);
       if (value && (this.app.householdSettings?.revision ?? -1) <= value.revision) this.app.householdSettings = value;
       this.app.householdDefaults.initialize({ admin: false, adminRecorded: false, value: this.app.householdSettings });
-      this.app.applyEffectiveAppearance();
+      this.ctx.appearance.applyEffectiveAppearance();
     } catch {
-      if (this.ctx.session.isCurrentSession(session)) this.app.setStatus("Kin couldn't restore the last shared appearance. Local household information is still available.");
+      if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setStatus("Kin couldn't restore the last shared appearance. Local household information is still available.");
     }
   }
   async handleSaveHouseholdDefaults(event) {
@@ -126,7 +126,7 @@ export class AppearanceController {
       const saved = await this.app.syncCoordinator.saveHouseholdSettings(value);
       this.ctx.session.assertCurrentSession(session);
       this.app.householdSettings = saved;
-      this.app.applyEffectiveAppearance();
+      this.ctx.appearance.applyEffectiveAppearance();
       complete(saved, null);
     } catch (error) {
       // A save settling after lock or a household re-open (including the

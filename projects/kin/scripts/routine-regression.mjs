@@ -85,7 +85,7 @@ export async function routineRegressions() {
       JSON.stringify(app.state.summary) === summary,
       "time advance creates no summary entry",
     );
-    await app.saveRoutine({
+    await app.ctx.routines.saveRoutine({
       type: "complete-routine-occurrence",
       routineId: dailyId,
       occurrenceKey: 20261002,
@@ -113,7 +113,7 @@ export async function routineRegressions() {
     };
     const delayedCount = (await rows()).length;
     try {
-      await app.saveRoutine({
+      await app.ctx.routines.saveRoutine({
         type: "complete-routine-occurrence",
         routineId: dailyId,
         occurrenceKey: 20261003,
@@ -132,21 +132,21 @@ export async function routineRegressions() {
       "sampled context commits the intended occurrence",
     );
     now = new Date(2026, 9, 3, 12).getTime();
-    await app.refreshFromEvents();
+    await app.ctx.refresh.refreshFromEvents();
 
-    await app.saveRoutine({
+    await app.ctx.routines.saveRoutine({
       type: "create-routine",
       text: "Weekly kitchen",
       cadence: "weekly",
     });
     const weeklyId = app.state.routines.at(-1).routineId;
-    await app.saveRoutine({
+    await app.ctx.routines.saveRoutine({
       type: "complete-routine-occurrence",
       routineId: weeklyId,
       occurrenceKey: 20260928,
     });
     now = new Date(2026, 9, 4, 23, 59).getTime();
-    await app.refreshFromEvents();
+    await app.ctx.refresh.refreshFromEvents();
     check(
       app.state.routines.find((r) => r.routineId === weeklyId)
         .occurrenceStatus === "completed",
@@ -177,7 +177,7 @@ export async function routineRegressions() {
       "clock rollback replays original period",
     );
 
-    await app.saveRoutine({
+    await app.ctx.routines.saveRoutine({
       type: "create-routine",
       text: "Change sheets",
       cadence: "biweekly",
@@ -188,13 +188,13 @@ export async function routineRegressions() {
         ui.textContent.includes("Every two weeks · Open this two-week period"),
       "biweekly creation-date anchor and truthful status",
     );
-    await app.saveRoutine({
+    await app.ctx.routines.saveRoutine({
       type: "complete-routine-occurrence",
       routineId: biweekly.routineId,
       occurrenceKey: 20261003,
     });
     now = new Date(2026, 9, 17, 12).getTime();
-    await app.refreshFromEvents();
+    await app.ctx.refresh.refreshFromEvents();
     check(
       app.state.routines.find(r => r.routineId === biweekly.routineId)
         .occurrenceKey === 20261017 &&
@@ -204,7 +204,7 @@ export async function routineRegressions() {
     );
 
     now = new Date(2024, 0, 31, 12).getTime();
-    await app.saveRoutine({
+    await app.ctx.routines.saveRoutine({
       type: "create-routine",
       text: "Replace filter",
       cadence: "monthly",
@@ -215,13 +215,13 @@ export async function routineRegressions() {
         ui.textContent.includes("Monthly · Open this month"),
       "monthly cadence uses calendar month occurrence keys",
     );
-    await app.saveRoutine({
+    await app.ctx.routines.saveRoutine({
       type: "complete-routine-occurrence",
       routineId: monthly.routineId,
       occurrenceKey: 20240101,
     });
     now = new Date(2024, 1, 29, 12).getTime();
-    await app.refreshFromEvents();
+    await app.ctx.refresh.refreshFromEvents();
     check(
       app.state.routines.find(r => r.routineId === monthly.routineId)
         .occurrenceKey === 20240201 &&
@@ -230,7 +230,7 @@ export async function routineRegressions() {
       "monthly completion resets on leap-day month boundary",
     );
     now = new Date(2026, 9, 3, 12).getTime();
-    await app.refreshFromEvents();
+    await app.ctx.refresh.refreshFromEvents();
 
     const originalAdd = IDBObjectStore.prototype.add;
     const target = {
@@ -238,7 +238,7 @@ export async function routineRegressions() {
       routineId: dailyId,
       occurrenceKey: 20261003,
     };
-    await app.saveRoutine({ ...target, type: "reopen-routine-occurrence" });
+    await app.ctx.routines.saveRoutine({ ...target, type: "reopen-routine-occurrence" });
     for (const mode of ["quota", "abort"]) {
       const count = (await rows()).length;
       const counter = (await app.store.ensureContext()).next_logical_time;
@@ -251,7 +251,7 @@ export async function routineRegressions() {
         return request;
       };
       try {
-        await app.saveRoutine(target);
+        await app.ctx.routines.saveRoutine(target);
       } finally {
         IDBObjectStore.prototype.add = originalAdd;
       }
@@ -270,7 +270,7 @@ export async function routineRegressions() {
         (await rows()).length === count + 1,
         "retry commits exactly one fact",
       );
-      await app.saveRoutine({ ...target, type: "reopen-routine-occurrence" });
+      await app.ctx.routines.saveRoutine({ ...target, type: "reopen-routine-occurrence" });
     }
 
     // Preserve the frozen key through refresh failures, then retire it at a new boundary.
@@ -279,7 +279,7 @@ export async function routineRegressions() {
       throw new Error("Synthetic write");
     };
     try {
-      await app.saveRoutine(target);
+      await app.ctx.routines.saveRoutine(target);
     } finally {
       app.store.append = originalAppend;
     }
@@ -288,8 +288,8 @@ export async function routineRegressions() {
       throw new Error("Synthetic read");
     };
     try {
-      await app.refreshFromEvents();
-      await app.refreshFromEvents();
+      await app.ctx.refresh.refreshFromEvents();
+      await app.ctx.refresh.refreshFromEvents();
       check(
         app.suspendedRetry?.intent.occurrenceKey === 20261003,
         "failed refresh retains original occurrence key",
@@ -298,7 +298,7 @@ export async function routineRegressions() {
       app.store.getCatchUpState = originalRead;
     }
     now = new Date(2026, 9, 5, 12).getTime();
-    await app.refreshFromEvents();
+    await app.ctx.refresh.refreshFromEvents();
     check(
       app.retryAction === null && app.suspendedRetry === null,
       "new period retires stale suspended retry",
@@ -307,24 +307,24 @@ export async function routineRegressions() {
     ui.input.value = "Draft retained";
     ui.cadence.value = "weekly";
     ui.saveDraft();
-    await app.refreshFromEvents();
+    await app.ctx.refresh.refreshFromEvents();
     check(
       ui.input.value === "Draft retained" && ui.cadence.value === "weekly",
       "refresh preserves Routine draft",
     );
-    const originalRender = app.renderState.bind(app);
+    const originalRender = app.ctx.render.renderState.bind(app.ctx.render);
     const beforeCommittedFailure = (await rows()).length;
-    app.renderState = () => {
+    app.ctx.render.renderState = () => {
       throw new Error("Synthetic render after commit");
     };
     try {
-      await app.saveRoutine({
+      await app.ctx.routines.saveRoutine({
         type: "complete-routine-occurrence",
         routineId: dailyId,
         occurrenceKey: 20261005,
       });
     } finally {
-      app.renderState = originalRender;
+      app.ctx.render.renderState = originalRender;
     }
     check(
       (await rows()).length === beforeCommittedFailure + 1 &&
@@ -338,26 +338,26 @@ export async function routineRegressions() {
           .occurrenceStatus === "completed",
       "refresh retry never repeats committed write",
     );
-    await app.saveRoutine({ type: "archive-routine", routineId: dailyId });
+    await app.ctx.routines.saveRoutine({ type: "archive-routine", routineId: dailyId });
     check(
       !ui.querySelector(`[data-routine-id="${dailyId}"]`),
       "archive hides tombstone",
     );
     const count = (await rows()).length;
-    await app.saveRoutine({ ...target, occurrenceKey: 20261005 });
+    await app.ctx.routines.saveRoutine({ ...target, occurrenceKey: 20261005 });
     await idle();
     check(
       (await rows()).length === count,
       "archived occurrence action does not append",
     );
-    await app.saveRoutine({ type: "archive-routine", routineId: weeklyId });
+    await app.ctx.routines.saveRoutine({ type: "archive-routine", routineId: weeklyId });
     ui.input.value = "";
     ui.saveDraft();
   } finally {
     Date.now = originalNow;
-    await app.refreshFromEvents();
+    await app.ctx.refresh.refreshFromEvents();
   }
-  await app.saveRoutine({
+  await app.ctx.routines.saveRoutine({
     type: "create-routine",
     text: "Routine keyboard fixture",
     cadence: "daily",
@@ -378,11 +378,11 @@ export async function routinePeerRegressions(first, second, until) {
     );
   await Promise.all([idle(first), idle(second)]);
   await first.evaluate(
-    `document.querySelector('kin-app').saveRoutine({type:'create-routine',text:'Peer routine',cadence:'daily'})`,
+    `document.querySelector('kin-app').ctx.routines.saveRoutine({type:'create-routine',text:'Peer routine',cadence:'daily'})`,
   );
   await idle(first);
   await second.evaluate(
-    "document.querySelector('kin-app').refreshFromEvents()",
+    "document.querySelector('kin-app').ctx.refresh.refreshFromEvents()",
   );
   await until(() => second.evaluate("document.querySelector('kin-app').state.routines.some(r=>r.text==='Peer routine')"));
   await Promise.all([idle(first), idle(second)]);
@@ -403,7 +403,7 @@ export async function routinePeerRegressions(first, second, until) {
   assert.deepEqual(await append(second, command), { ok: false, code: 4 });
   await Promise.all(
     [first, second].map((client) =>
-      client.evaluate("document.querySelector('kin-app').refreshFromEvents()"),
+      client.evaluate("document.querySelector('kin-app').ctx.refresh.refreshFromEvents()"),
     ),
   );
   await Promise.all([idle(first), idle(second)]);
@@ -428,7 +428,7 @@ export async function routinePeerRegressions(first, second, until) {
   assert.deepEqual(await append(second, reopen), { ok: false, code: 4 });
   await Promise.all(
     [first, second].map((client) =>
-      client.evaluate("document.querySelector('kin-app').refreshFromEvents()"),
+      client.evaluate("document.querySelector('kin-app').ctx.refresh.refreshFromEvents()"),
     ),
   );
   await Promise.all([idle(first), idle(second)]);
@@ -446,11 +446,11 @@ export async function routinePeerRegressions(first, second, until) {
       "open",
     );
   await first.evaluate(
-    `document.querySelector('kin-app').saveRoutine({type:'archive-routine',routineId:'${command.routineId}'})`,
+    `document.querySelector('kin-app').ctx.routines.saveRoutine({type:'archive-routine',routineId:'${command.routineId}'})`,
   );
   await idle(first);
   await second.evaluate(
-    `document.querySelector('kin-app').saveRoutine(${JSON.stringify(command)})`,
+    `document.querySelector('kin-app').ctx.routines.saveRoutine(${JSON.stringify(command)})`,
   );
   await idle(second);
   assert.equal(

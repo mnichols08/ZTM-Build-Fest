@@ -4,9 +4,8 @@
 
 ## `<kin-app>` structure (refactor track)
 
-`web/components/kin-app.js` is a small element: lifecycle callbacks, three
-symmetric listener tables (element, document, window) and one-line stubs for
-the methods called from outside it. Its behavior lives in plain controller
+`web/components/kin-app.js` is a small element: lifecycle callbacks and three
+symmetric listener tables (element, document, window). Its behavior lives in plain controller
 classes under `web/components/app/`, each constructed with one explicit
 context object from `app/context.js`:
 
@@ -28,12 +27,18 @@ The element keeps the state and DOM references (`app.store`, `app.state`,
 `app.today`, …). `initializeAppState(app)` sets them and the bound handler
 properties; controllers read and write them through `this.app`. There are no
 mixins or prototype patches: a controller reaches another only as
-`this.ctx.<key>`. Methods that regression scripts or `<kin-security>` call on
-the element (for example `appendCommand`, `refreshFromEvents`,
-`lockHousehold`, `notifyPeerLock`) keep element stubs, and controllers call
-them through the element so a test that replaces one still intercepts every
-internal call. Slice 8 replaces the script-facing stubs with one documented
-test hook.
+`this.ctx.<key>`.
+
+**The test hook (Slice 8).** The element exposes no methods for scripts.
+Regression scripts use the controller context: `app.ctx.<key>.<method>`
+(for example `app.ctx.append.appendCommand(...)` or
+`app.ctx.navigation.navigate("#today")`). A script that replaces
+`app.ctx.<key>.<method>` intercepts every call, because every caller goes
+through `ctx`. Restore the original afterwards. The context table above maps
+each controller key to its module. `<kin-security>` is application code, not
+a test, so it does not use the hook: `shell.js` gives it a
+`security.services` object with the six operations it needs (refresh after a
+restore, clear reminders, tell peers, lock, set the auto-lock delay).
 
 Shared component helpers live in `web/components/shared/`: `dom.js`
 (`button`, `text`, `section`, `message`, `field`), `icons.js`, `focus.js`

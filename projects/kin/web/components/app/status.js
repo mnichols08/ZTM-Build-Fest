@@ -75,7 +75,7 @@ export class StatusController {
     const passkeys = this.app.security?.passkeyWrappers?.length ?? 0;
     const heading = document.createElement("h2");
     const goTo = (intent) => {
-      this.app.navigate("#household/people");
+      this.ctx.navigation.navigate("#household/people");
       this.app.household?.startIntent?.(intent);
     };
     if (status && !status.identity && !status.claimState && status.lifecycle !== "deleted" && status.lifecycle !== "deletion_pending") {
@@ -112,7 +112,7 @@ export class StatusController {
       const open = document.createElement("button");
       open.type = "button";
       open.textContent = "Open People & devices";
-      open.addEventListener("click", () => { this.app.navigate("#household/people"); this.app.household?.scrollIntoView?.({ block: "start" }); });
+      open.addEventListener("click", () => { this.ctx.navigation.navigate("#household/people"); this.app.household?.scrollIntoView?.({ block: "start" }); });
       card.append(heading, intro, open);
       card.hidden = false;
       return;
@@ -130,7 +130,7 @@ export class StatusController {
         try {
           await this.app.security.run(() => this.app.security.addPasskey());
           if (this.app.security.alert.textContent) this.showAlert(this.app.security.alert.textContent);
-          else this.app.setStatus("Passkey unlock is on for this device.");
+          else this.ctx.status.setStatus("Passkey unlock is on for this device.");
         } finally { this.renderOnboarding(); }
       });
       const later = document.createElement("button");

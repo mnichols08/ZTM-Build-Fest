@@ -271,3 +271,30 @@ Browser stages, two runs of the Slice 6 commit (54fa162) and two of Slice 7:
   and overlap between the two builds. A first single-run comparison showed
   app refresh at 10k short +12%. The second baseline run put both builds in
   the same range, so it is noise, not a regression.
+
+## Slice 8 — reading events in place
+
+Two runs each of the Slice 7 commit (e98d489) and of Slice 8:
+
+| Node stage (ms) | 10k before | 10k after | 10k × 4 KB before | 10k × 4 KB after |
+| --- | ---: | ---: | ---: | ---: |
+| Full replay + encode | 9.7 / 10.0 | 8.9 / 9.2 | 69.6 / 65.3 | 46.8 / 54.3 |
+| Replay + encode after one more event | 3.7 / 3.7 | 2.6 / 2.6 | 35.3 / 32.4 | 15.9 / 17.9 |
+
+Natively, decoding the held records for an incremental projection at
+10k × 4 KB fell from 38 ms to 0.1 ms. The rest of that projection is the
+`finalize` copy and encoding; reserving the encode buffer once removed its
+repeated growth copies.
+
+| Browser stage (ms) | 10k before | 10k after | 10k × 4 KB before | 10k × 4 KB after |
+| --- | ---: | ---: | ---: | ---: |
+| Store refresh | 29 / 28 | 29 / 29 | 121 / 120 | 102 / 134 |
+| Store command | 52 / 45 | 46 / 50 | 166 / 162 | 142 / 156 |
+| App peer refresh, nothing changed | 566 / 559 | 518 / 614 | 570 / 646 | 636 / 709 |
+| App full render | 3,360 / 2,268 | 2,247 / 3,294 | 2,221 / 3,242 | 2,919 / 3,344 |
+
+- The engine stages halved at 10k × 4 KB.
+- The browser stages are dominated by IndexedDB, JS decoding of the
+  projection and the DOM. This machine's run-to-run spread is wider than any
+  difference between the builds (full render ranges over 1 s within one
+  build), so they show neither a gain nor a regression.

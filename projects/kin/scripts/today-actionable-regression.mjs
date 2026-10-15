@@ -34,7 +34,7 @@ export async function todayActionableRegressions(recovery) {
     .map((kind) => [kind, view.querySelectorAll(`[data-section="${kind}"] kin-item`).length]));
   // Independent oracle over the Rust projection, used only to check the UI.
   const expected = () => {
-    const today = app.currentCivilDate();
+    const today = app.ctx.navigation.currentCivilDate();
     const live = app.state.items.filter((item) => item.status !== "archived" && item.classification !== "staple");
     const isToday = (item) => item.planningDate === today || (item.classification === "today" && item.planningDate == null);
     return {
@@ -52,10 +52,10 @@ export async function todayActionableRegressions(recovery) {
     return same ? true : JSON.stringify(state);
   };
   const add = async (text, planningDate) => {
-    await app.appendCommand({ type: "add", text, classification: "need" });
+    await app.ctx.append.appendCommand({ type: "add", text, classification: "need" });
     const item = app.state.items.find((entry) => entry.text === text);
-    if (planningDate != null) await app.appendCommand({ type: "set-item-planning-date", itemId: item.itemId, planningDate });
-    app.renderState();
+    if (planningDate != null) await app.ctx.append.appendCommand({ type: "set-item-planning-date", itemId: item.itemId, planningDate });
+    app.ctx.render.renderState();
     await idle();
     return app.state.items.find((entry) => entry.itemId === item.itemId);
   };
@@ -150,9 +150,9 @@ export async function todayActionableRegressions(recovery) {
   noUpcoming.remove();
 
   // A. Quick add from an empty state reuses the universal composer.
-  app.navigate("#today");
+  app.ctx.navigation.navigate("#today");
   const quick = app.quickAdd;
-  const host = mount({ today: app.currentCivilDate(), items: [] });
+  const host = mount({ today: app.ctx.navigation.currentCivilDate(), items: [] });
   const opener = host.querySelector(".today-quick-add");
   opener.focus();
   opener.click();
@@ -165,7 +165,7 @@ export async function todayActionableRegressions(recovery) {
   quick.form.requestSubmit();
   await idle();
   const quickItem = app.state.items.filter((item) => item.text === quickText);
-  check(quickItem.length === 1 && quickItem[0].planningDate === app.currentCivilDate() && !quick.dialog.open && document.activeElement === opener &&
+  check(quickItem.length === 1 && quickItem[0].planningDate === app.ctx.navigation.currentCivilDate() && !quick.dialog.open && document.activeElement === opener &&
     sectionOf(quickItem[0].itemId) === "today",
   "A. Quick add from an empty state creates one task for today, shows it on Today and returns focus to the action");
   opener.click();
@@ -178,11 +178,11 @@ export async function todayActionableRegressions(recovery) {
   // B. Live Today over the real store and WASM projection.
   const earlierA = await add(`Earlier A ${stamp}`, shift(-3));
   const earlierB = await add(`Earlier B ${stamp}`, shift(-2));
-  const dueToday = await add(`Due today ${stamp}`, app.currentCivilDate());
-  const dueTodayTwo = await add(`Due today two ${stamp}`, app.currentCivilDate());
+  const dueToday = await add(`Due today ${stamp}`, app.ctx.navigation.currentCivilDate());
+  const dueTodayTwo = await add(`Due today two ${stamp}`, app.ctx.navigation.currentCivilDate());
   const later = await add(`Coming soon ${stamp}`, shift(4));
   const laterTwo = await add(`Coming next ${stamp}`, shift(6));
-  app.navigate("#today");
+  app.ctx.navigation.navigate("#today");
   check(sectionOf(earlierA.itemId) === "earlier" && sectionOf(dueToday.itemId) === "today" && sectionOf(later.itemId) === "upcoming",
     "B. real records are grouped into earlier, today and coming up");
   let result = consistent();
@@ -243,8 +243,8 @@ export async function todayActionableRegressions(recovery) {
   const peerText = `Peer task ${stamp}`;
   const peerAdd = await app.store.append({ type: "add", text: peerText, classification: "need" }, app.engine);
   const peerId = peerAdd.state.items.find((item) => item.text === peerText).itemId;
-  await app.store.append({ type: "set-item-planning-date", itemId: peerId, planningDate: app.currentCivilDate() }, app.engine);
-  await app.refreshFromEvents();
+  await app.store.append({ type: "set-item-planning-date", itemId: peerId, planningDate: app.ctx.navigation.currentCivilDate() }, app.engine);
+  await app.ctx.refresh.refreshFromEvents();
   await idle();
   result = consistent();
   check(sectionOf(peerId) === "today" && result === true, `B. a replayed peer change appears on Today with no stale counts (${result})`);
@@ -256,8 +256,8 @@ export async function todayActionableRegressions(recovery) {
   const peerTwoText = `Peer during save ${stamp}`;
   const peerTwo = await realAppend.call(app.store, { type: "add", text: peerTwoText, classification: "need" }, app.engine);
   const peerTwoId = peerTwo.state.items.find((item) => item.text === peerTwoText).itemId;
-  await realAppend.call(app.store, { type: "set-item-planning-date", itemId: peerTwoId, planningDate: app.currentCivilDate() }, app.engine);
-  void app.refreshFromEvents();
+  await realAppend.call(app.store, { type: "set-item-planning-date", itemId: peerTwoId, planningDate: app.ctx.navigation.currentCivilDate() }, app.engine);
+  void app.ctx.refresh.refreshFromEvents();
   check(app.pendingRefresh, "B. a refresh requested mid-save is deferred, not interleaved");
   releaseRemote();
   await idle();
@@ -266,15 +266,15 @@ export async function todayActionableRegressions(recovery) {
     `B. both the local completion and the newer change are shown once, with matching counts (${result})`);
 
   // Navigating away mid-save neither loses the save nor pulls focus back.
-  const navigateTask = await add(`Navigate mid-save ${stamp}`, app.currentCivilDate());
+  const navigateTask = await add(`Navigate mid-save ${stamp}`, app.ctx.navigation.currentCivilDate());
   const releaseNavigate = gateComplete(app.store, navigateTask.itemId);
   rowIn(app.today, navigateTask.itemId).querySelector(".complete-button").click();
-  app.navigate("#lists/todo");
+  app.ctx.navigation.navigate("#lists/todo");
   releaseNavigate();
   await idle();
   check(statusOf(navigateTask.itemId) === "completed" && !app.today.contains(document.activeElement) && app.dataset.route === "lists/todo",
     "B. navigating during a pending completion keeps the result and does not pull focus back to Today");
-  app.navigate("#today");
+  app.ctx.navigation.navigate("#today");
   check(consistent() === true, "B. Today is current when the person returns");
 
   // Details opened from Today keep their own origin and return focus there.
@@ -288,13 +288,13 @@ export async function todayActionableRegressions(recovery) {
   await frame(); await frame();
   check(app.selection === null && document.activeElement === rowIn(app.today, earlierB.itemId)?.querySelector(".item-details-button"),
     "B. closing details returns focus to the same Today row");
-  app.navigate("#search");
+  app.ctx.navigation.navigate("#search");
   app.search.queryInput.value = stamp;
   app.search.queryInput.dispatchEvent(new Event("input"));
   [...app.search.resultsList.querySelectorAll("[data-result-id]")].find((node) => node.dataset.resultId === laterTwo.itemId).click();
   await frame();
   check(app.selection?.origin === "search", "B. a Search result opens with a Search origin");
-  app.navigate("#today");
+  app.ctx.navigation.navigate("#today");
   rowIn(app.today, laterTwo.itemId).querySelector(".item-details-button").click();
   await frame();
   check(app.selection?.itemId === laterTwo.itemId && app.selection.origin === null && app.detail.querySelector(".item-detail-close").textContent !== "Back to search",
@@ -308,12 +308,12 @@ export async function todayActionableRegressions(recovery) {
   const renderMs = performance.now() - renderStarted;
 
   // C. Lifecycle: lock or a household re-open during a pending completion.
-  const lockTask = await add(`Lock mid-save ${stamp}`, app.currentCivilDate());
+  const lockTask = await add(`Lock mid-save ${stamp}`, app.ctx.navigation.currentCivilDate());
   const releaseLock = gateComplete(app.store, lockTask.itemId);
   rowIn(app.today, lockTask.itemId).querySelector(".complete-button").click();
   check(app.busy, "C. the completion is pending before lock");
   const todayBeforeLock = app.today;
-  app.lockHousehold();
+  app.ctx.session.lockHousehold();
   await app.lockBarrier;
   releaseLock();
   await new Promise((resolve) => setTimeout(resolve, 150));
@@ -322,23 +322,23 @@ export async function todayActionableRegressions(recovery) {
   "C. a completion settling after lock cannot update or reveal the locked interface");
   await app.security.run(() => app.security.unlockRecovery(recovery));
   await wait(() => app.store && app.state && !app.busy && !app.security.busy, "unlock after pending completion");
-  app.navigate("#today");
+  app.ctx.navigation.navigate("#today");
   const lockSection = sectionOf(lockTask.itemId);
   result = consistent();
   check(app.today !== todayBeforeLock && app.alert.hidden && result === true &&
     (statusOf(lockTask.itemId) === "completed" ? lockSection === "completed" : lockSection === "today"),
   `C. after unlocking, Today shows exactly what the encrypted store holds (${JSON.stringify({ status: statusOf(lockTask.itemId), lockSection, result })})`);
 
-  const reopenTask = await add(`Reopen mid-save ${stamp}`, app.currentCivilDate());
+  const reopenTask = await add(`Reopen mid-save ${stamp}`, app.ctx.navigation.currentCivilDate());
   const oldStore = app.store;
   const releaseReopen = gateComplete(oldStore, reopenTask.itemId);
   rowIn(app.today, reopenTask.itemId).querySelector(".complete-button").click();
-  const reopened = app.openUnlockedHousehold(app.vault);
+  const reopened = app.ctx.session.openUnlockedHousehold(app.vault);
   releaseReopen();
   await reopened;
   await idle();
   await wait(() => app.state && !app.busy, "household re-open");
-  app.navigate("#today");
+  app.ctx.navigation.navigate("#today");
   const reopenSection = sectionOf(reopenTask.itemId);
   result = consistent();
   check(app.store !== oldStore && app.alert.hidden && result === true &&
@@ -379,10 +379,10 @@ export async function todayLifecycleRegressions(client, { visit, ready }) {
   const create = (text, offset) => page(async (text, offset) => {
     const app = document.querySelector("kin-app");
     const d = new Date(); d.setDate(d.getDate() + offset);
-    await app.appendCommand({ type: "add", text, classification: "need" });
+    await app.ctx.append.appendCommand({ type: "add", text, classification: "need" });
     const item = app.state.items.find((entry) => entry.text === text);
-    await app.appendCommand({ type: "set-item-planning-date", itemId: item.itemId, planningDate: d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate() });
-    app.renderState();
+    await app.ctx.append.appendCommand({ type: "set-item-planning-date", itemId: item.itemId, planningDate: d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate() });
+    app.ctx.render.renderState();
     return item.itemId;
   }, text, offset);
   const stamp = (await page(() => crypto.randomUUID())).slice(0, 6);
@@ -519,7 +519,7 @@ export async function todayLifecycleRegressions(client, { visit, ready }) {
         completed: app.state.items.find((item) => item.itemId === otherId)?.status,
         mode: app.detailMode,
       };
-      app.closeItemDetail({ restoreFocus: false });
+      app.ctx.detail.closeItemDetail({ restoreFocus: false });
       return result;
     }, later, todayRow);
     check(state.selection && state.draft === "unsent step draft" && state.completed === "completed",

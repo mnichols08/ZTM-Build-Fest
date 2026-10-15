@@ -65,16 +65,16 @@ export class RefreshController {
     const previousRetry = previousFailure.action;
     const previousRetryIntent = previousFailure.intent;
     const previousAlert = previousFailure.message;
-    this.app.clearAlert();
+    this.ctx.status.clearAlert();
     // The common case is another tab's write; the same text covers the timer,
     // focus and Retry refreshes, which finish too quickly to need their own.
-    this.app.setStatus("Updating from another tab…");
+    this.ctx.status.setStatus("Updating from another tab…");
     try {
       const snapshot = await session.store.getCatchUpState();
       this.ctx.session.assertCurrentSession(session);
       this.applyCatchUpSnapshot(snapshot);
-      this.app.renderState();
-      this.app.setStatus("");
+      this.ctx.render.renderState();
+      this.ctx.status.setStatus("");
       if (previousRetry) {
         // Offer the failed command again only if its target still exists, is
         // not archived and (for a Routine) is still in the same period;
@@ -87,7 +87,7 @@ export class RefreshController {
             (previousRetryIntent.occurrenceKey !== undefined &&
               target.occurrenceKey !== previousRetryIntent.occurrenceKey))
         ) {
-          this.app.setStatus(changedTargetMessage(previousRetryIntent));
+          this.ctx.status.setStatus(changedTargetMessage(previousRetryIntent));
         } else {
           this.ctx.status.showAlert(previousAlert, previousRetry, previousRetryIntent);
         }
@@ -100,7 +100,7 @@ export class RefreshController {
         this.app.retryRefresh,
       );
       this.app.suspendedRetry = previousRetry ? previousFailure : null;
-      this.app.setStatus("");
+      this.ctx.status.setStatus("");
     } finally {
       if (this.ctx.session.isCurrentSession(session)) {
         this.app.refreshing = false;
@@ -188,20 +188,20 @@ export class RefreshController {
     const boundary = this.app.snapshotBoundary;
     const restoreCatchUpFocus = document.activeElement === this.app.catchUp.button;
     this.ctx.status.setBusy(true);
-    this.app.clearAlert();
-    this.app.setStatus("Saving catch-up state…");
+    this.ctx.status.clearAlert();
+    this.ctx.status.setStatus("Saving catch-up state…");
     let committed = false;
     try {
       await session.store.markCaughtUpThrough(boundary);
       this.ctx.session.assertCurrentSession(session);
       committed = true;
       // Peers must learn about the commit even if this tab cannot reload it.
-      this.app.broadcastViewStateChange();
+      this.ctx.peers.broadcastViewStateChange();
       const snapshot = await session.store.getCatchUpState();
       this.ctx.session.assertCurrentSession(session);
       this.applyCatchUpSnapshot(snapshot);
-      this.app.renderState();
-      this.app.setStatus(
+      this.ctx.render.renderState();
+      this.ctx.status.setStatus(
         this.app.state.summary.totalCount === 0
           ? "Caught up."
           : "Catch-up summary updated.",
@@ -213,9 +213,9 @@ export class RefreshController {
           ? "Your catch-up position was saved, but Kin could not refresh the summary. Try again to reload it."
           : (error.userMessage ??
               "Kin could not update this browser's catch-up position. Your saved household information was not deleted."),
-        committed ? this.app.retryRefresh : () => this.app.handleCaughtUp(),
+        committed ? this.app.retryRefresh : () => this.ctx.refresh.handleCaughtUp(),
       );
-      this.app.setStatus("");
+      this.ctx.status.setStatus("");
     } finally {
       if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);

@@ -79,6 +79,15 @@ the whole history; `rust/src/history_tests.rs` checks this after every record
 of every golden fixture. `kin_project` advances the checkpoint to the whole
 history. `kin_execute` uses it and applies the command's event to a copy.
 
+Records stay where they were appended: the history keeps one buffer and an
+`(offset, length)` span per record, and reads them as `EventView`s
+(`event_decode.rs`). A view gives the header fields and the payload slice
+without copying or decoding. Since Slice 8 only the records the checkpoint
+has not applied are decoded into owned events. The catch-up summary reads the
+event ID and a small borrowed extract (`SummaryInput`) from each view. Command
+checks use what the replay already knows (its household, last logical time
+and event IDs) instead of scanning the history.
+
 The bridge keeps the instance's history equal to what a caller asks it to
 replay (`web/wasm/history-mirror.js`). Views of the same session arena and
 epoch send only the records added since the last call, or truncate for a

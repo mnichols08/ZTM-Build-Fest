@@ -29,7 +29,7 @@ export class AttachmentController {
     const { parentKind, parentId, label } = event.detail ?? {};
     if (!parentKind || !parentId || !this.app.attachmentInput) return;
     if (!this.app.vault || this.app.vault.locked || !this.app.store) { this.ctx.status.showAlert("Unlock Kin before attaching a file."); return; }
-    this.app.clearAlert();
+    this.ctx.status.clearAlert();
     this.app.attachmentTarget = { parentKind, parentId, label: label ?? "" };
     this.app.attachmentInput.value = "";
     this.app.attachmentInput.click();
@@ -80,13 +80,13 @@ export class AttachmentController {
     }
     const session = this.ctx.session.captureSession();
     const { parentKind, parentId } = target;
-    this.ctx.status.setBusy(true); this.app.clearAlert();
+    this.ctx.status.setBusy(true); this.ctx.status.clearAlert();
     this.reportAttachmentProgress(target, "saving", "Saving securely…");
     try {
-      const saved = await captureAttachment({ file, parentKind, parentId, identity: this.app.syncCoordinator?.identity ?? this.app.household?.identity, store: session.store, keyStore: this.app.syncCoordinator?.keyStore, append: (command) => this.app.appendCommand(command) });
+      const saved = await captureAttachment({ file, parentKind, parentId, identity: this.app.syncCoordinator?.identity ?? this.app.household?.identity, store: session.store, keyStore: this.app.syncCoordinator?.keyStore, append: (command) => this.ctx.append.appendCommand(command) });
       this.ctx.session.assertCurrentSession(session);
       this.app.attachmentRows = [...this.app.attachmentRows.filter((row) => row.attachmentId !== saved.attachmentId), { ...saved, parentKind, parentId }];
-      this.app.renderState(); this.app.broadcastEventChange();
+      this.ctx.render.renderState(); this.ctx.peers.broadcastEventChange();
       this.reportAttachmentProgress(target, "saved", this.app.syncCoordinator
         ? `${saved.name} is saved on this device and waiting to sync to your household.`
         : `${saved.name} is saved on this device.`);
@@ -126,14 +126,14 @@ export class AttachmentController {
   }
   async handleRemoveAttachment(event) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
-    const session = this.ctx.session.captureSession(); this.ctx.status.setBusy(true); this.app.clearAlert();
+    const session = this.ctx.session.captureSession(); this.ctx.status.setBusy(true); this.ctx.status.clearAlert();
     try {
-      await removeAttachment({ attachmentId: event.detail.attachmentId, append: (command) => this.app.appendCommand(command), store: session.store });
+      await removeAttachment({ attachmentId: event.detail.attachmentId, append: (command) => this.ctx.append.appendCommand(command), store: session.store });
       this.ctx.session.assertCurrentSession(session);
       this.app.attachmentPreviews?.forget(event.detail.attachmentId);
       if (this.app.viewerDetail?.attachmentId === event.detail.attachmentId) this.closeViewer();
       this.app.attachmentRows = this.app.attachmentRows.filter((row) => row.attachmentId !== event.detail.attachmentId);
-      this.app.renderState(); this.app.broadcastEventChange(); void this.app.syncCoordinator?.syncNow();
+      this.ctx.render.renderState(); this.ctx.peers.broadcastEventChange(); void this.app.syncCoordinator?.syncNow();
     } catch (error) { if (error.code !== "locked" && this.ctx.session.isCurrentSession(session)) this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); }
     finally { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setBusy(false); }
   }
@@ -158,7 +158,7 @@ export class AttachmentController {
     try {
       const rows = await loadLocalAttachmentRows({ store: session.store, state: this.app.state });
       if (!this.ctx.session.isCurrentSession(session)) return;
-      this.app.attachmentRows = rows; this.app.renderState();
+      this.app.attachmentRows = rows; this.ctx.render.renderState();
     } catch { /* A later sync retries attachment indexing. */ }
   }
   // Synchronous on purpose: a peek must return the cached entry itself, not a

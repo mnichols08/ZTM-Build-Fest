@@ -99,7 +99,7 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
     const first = await tapChooser(itemId);
     check(first.target.label === `Add a photo or file to Fridge shelf photo` && first.target.text === "Add photo" && first.target.rowInputs === 0 && first.target.appInputs === 1,
       "rows carry one labelled button each and the only file input belongs to the app");
-    await page(() => { const app = document.querySelector("kin-app"); app.renderState(); return app.attachmentTarget?.parentId; });
+    await page(() => { const app = document.querySelector("kin-app"); app.ctx.render.renderState(); return app.attachmentTarget?.parentId; });
     await client.send("DOM.setFileInputFiles", { files: [jpegPath], backendNodeId: first.opened.backendNodeId });
     const saved = await page(async (itemId, otherId) => {
       const app = document.querySelector("kin-app");
@@ -108,10 +108,10 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
       // The row carries a compact thumbnail strip; name, kind and state are in
       // the detail view's full tile. Open and close it first: closing re-renders
       // the list, so row elements are queried afterwards.
-      app.openItemDetail(itemId);
+      app.ctx.detail.openItemDetail(itemId);
       const fullTile = app.detail.querySelector(".attachment-tile") ?? null;
       const detailResult = { name: fullTile?.querySelector(".attachment-name")?.textContent ?? null, meta: fullTile?.querySelector(".attachment-meta")?.textContent ?? null };
-      app.closeItemDetail({ restoreFocus: false });
+      app.ctx.detail.closeItemDetail({ restoreFocus: false });
       const item = [...app.shopping.querySelectorAll("kin-item")].find((node) => node.record?.itemId === itemId);
       const other = [...app.shopping.querySelectorAll("kin-item")].find((node) => node.record?.itemId === otherId);
       const tile = item?.querySelector(".attachment-tile") ?? null;
@@ -179,12 +179,12 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
       await client.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
     };
     await page(async (itemId) => {
-      const app = document.querySelector("kin-app"); app.openItemDetail(itemId);
+      const app = document.querySelector("kin-app"); app.ctx.detail.openItemDetail(itemId);
       app.detail.stepInput.value = "viewer preserves this draft";
       app.detail.querySelector(".attachment-thumb").click();
       for (let i = 0; i < 400 && !app.viewer.open; i++) await new Promise((r) => setTimeout(r, 10));
       if (!app.viewer.open) throw Error("viewer did not open above mobile details");
-      app.renderState();
+      app.ctx.render.renderState();
     }, itemId);
     await escape();
     const mobileEscape = await page(async (itemId) => {
@@ -209,8 +209,8 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
       "phone: the next native Escape closes details through the sheet path after the viewer is already gone");
 
     await client.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false });
-    await page((itemId) => { const app = document.querySelector("kin-app"); app.openItemDetail(itemId); app.detail.stepInput.value = "desktop viewer draft"; app.detail.querySelector(".attachment-thumb").click(); }, itemId);
-    await page(async () => { const app = document.querySelector("kin-app"); for (let i = 0; i < 400 && !app.viewer.open; i++) await new Promise((r) => setTimeout(r, 10)); if (!app.viewer.open) throw Error("desktop viewer did not open"); app.renderState(); });
+    await page((itemId) => { const app = document.querySelector("kin-app"); app.ctx.detail.openItemDetail(itemId); app.detail.stepInput.value = "desktop viewer draft"; app.detail.querySelector(".attachment-thumb").click(); }, itemId);
+    await page(async () => { const app = document.querySelector("kin-app"); for (let i = 0; i < 400 && !app.viewer.open; i++) await new Promise((r) => setTimeout(r, 10)); if (!app.viewer.open) throw Error("desktop viewer did not open"); app.ctx.render.renderState(); });
     await escape();
     const desktopViewerClosed = await page(async (itemId) => {
       const app = document.querySelector("kin-app"); for (let i = 0; i < 200 && (app.viewer.open || app.viewerUrl); i++) await new Promise((r) => setTimeout(r, 10));
@@ -238,7 +238,7 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
       toggle().click(); const whileOpen = Boolean(tile()) && app.selection?.itemId === itemId && app.detail.querySelectorAll(".attachment-add").length === 1 && app.querySelectorAll('input[type="file"]').length === 1;
       app.detail.querySelector(".item-detail-close").click(); const afterClose = Boolean(tile()) && app.selection === null;
       const before = app.attachmentRows.length;
-      app.handleSyncState({ state: "syncing", attachmentRows: [] });
+      app.ctx.sync.handleSyncState({ state: "syncing", attachmentRows: [] });
       const afterStale = app.attachmentRows.length === before && Boolean(tile());
       return { afterNavigation, whileOpen, afterClose, afterStale };
     }, itemId);
@@ -247,13 +247,13 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
     check(kept.afterStale, "a sync refresh computed before the save cannot drop the newer attachment row");
     const relocked = await page(async (itemId, recovery) => {
       const app = document.querySelector("kin-app");
-      app.lockHousehold();
+      app.ctx.session.lockHousehold();
       await app.lockBarrier;
       const lockedState = { rows: app.attachmentRows.length, previews: app.attachmentPreviews, target: app.attachmentTarget, progress: window.__kinProgressLog.at(-1)?.[1] ?? null };
       await app.security.run(() => app.security.unlockRecovery(recovery));
       const wait = async (condition) => { for (let i = 0; i < 400 && !condition(); i++) await new Promise((r) => setTimeout(r, 25)); return condition(); };
       await wait(() => app.store && !app.busy && app.attachmentRows.some((row) => row.parentId === itemId));
-      location.hash = "#lists/shopping"; app.showPageFromLocation();
+      location.hash = "#lists/shopping"; app.ctx.navigation.showPageFromLocation();
       const item = () => [...app.shopping.querySelectorAll("kin-item")].find((node) => node.record?.itemId === itemId);
       const thumb = () => item()?.querySelector(".attachment-thumb");
       const tileBack = await wait(() => Boolean(thumb()));

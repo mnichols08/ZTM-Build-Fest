@@ -75,11 +75,11 @@ export class SecurityArchive {
           const restored = await restoreValidatedHouseholdArchive({ stage: staged.stage, engine, vault, store: app.store });
           this.host.restoreStage = null;
           this.host.assertCurrentOperation(confirmOperation);
-          await app.refreshFromEvents();
+          await this.host.services.refreshFromEvents();
           this.host.assertCurrentOperation(confirmOperation);
           // Restored history replaces what reminders pointed at; end them.
-          app.clearReminders();
-          app.broadcastEventChange();
+          this.host.services.clearReminders();
+          this.host.services.broadcastEventChange();
           this.host.render();
           this.host.message.textContent = restored.alreadyPresent
             ? "This household already contains the export's history and attachments. Nothing was duplicated."

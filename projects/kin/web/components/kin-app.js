@@ -100,19 +100,19 @@ class KinApp extends HTMLElement {
     this.wideQuery?.addEventListener("change", this.onLayoutChange);
     this.systemAppearance?.addEventListener("change", this.onSystemAppearance);
     this.authorizationTimer = setInterval(() => void this.ctx.sync.checkHouseholdAuthorization(), 30_000);
-    this.openPeerChannel();
+    this.ctx.peers.openPeerChannel();
     if (this.store) {
       // Reconnecting must not restart the engine or unlock an in-flight save.
       this.pendingRefresh = true;
       this.ctx.peers.flushPeerRefresh();
-      void this.configureSyncCoordinator();
+      void this.ctx.sync.configureSyncCoordinator();
     } else {
-      this.initialize();
+      this.ctx.session.initialize();
     }
   }
 
   disconnectedCallback() {
-    this.lockHousehold(false, { endSession: true });
+    this.ctx.session.lockHousehold(false, { endSession: true });
     for (const [type, handler] of WINDOW_EVENTS) window.removeEventListener(type, this[handler]);
     navigator.serviceWorker?.removeEventListener("message", this.onServiceWorkerMessage);
     navigator.serviceWorker?.removeEventListener("controllerchange", this.onControllerChange);
@@ -125,59 +125,11 @@ class KinApp extends HTMLElement {
     this.authorizationTimer = null;
     clearTimeout(this.pulseTimer);
     clearTimeout(this.focusTimer);
-    this.closePeerChannel();
+    this.ctx.peers.closePeerChannel();
     this.syncCoordinator?.stop();
     this.syncCoordinator = null;
   }
 
-  // Called from outside the element (regression scripts, <kin-security>);
-  // each delegates to its controller. Scripts may replace these, so the
-  // controllers call them through the element.
-  setAutoLockMinutes(...args) { return this.ctx.session.setAutoLockMinutes(...args); }
-  handleViewAttachment(...args) { return this.ctx.attachments.handleViewAttachment(...args); }
-  navigate(...args) { return this.ctx.navigation.navigate(...args); }
-  showPageFromLocation(...args) { return this.ctx.navigation.showPageFromLocation(...args); }
-  workspaceReady(...args) { return this.ctx.navigation.workspaceReady(...args); }
-  runWorkspaceCommand(...args) { return this.ctx.append.runWorkspaceCommand(...args); }
-  currentCivilDate(...args) { return this.ctx.navigation.currentCivilDate(...args); }
-  openItemDetail(...args) { return this.ctx.detail.openItemDetail(...args); }
-  closeItemDetail(...args) { return this.ctx.detail.closeItemDetail(...args); }
-  clearReminders(...args) { return this.ctx.records.clearReminders(...args); }
-  handleOpenSearchResult(...args) { return this.ctx.navigation.handleOpenSearchResult(...args); }
-  initialize(...args) { return this.ctx.session.initialize(...args); }
-  configureSyncCoordinator(...args) { return this.ctx.sync.configureSyncCoordinator(...args); }
-  handleSyncState(...args) { return this.ctx.sync.handleSyncState(...args); }
-  handleAddItem(...args) { return this.ctx.items.handleAddItem(...args); }
-  handleAddHandoff(...args) { return this.ctx.conversations.handleAddHandoff(...args); }
-  handleHandoffAction(...args) { return this.ctx.conversations.handleHandoffAction(...args); }
-  saveTalk(...args) { return this.ctx.conversations.saveTalk(...args); }
-  savePulse(...args) { return this.ctx.conversations.savePulse(...args); }
-  saveRoutine(...args) { return this.ctx.routines.saveRoutine(...args); }
-  changeRoutineSchedule(...args) { return this.ctx.routines.changeRoutineSchedule(...args); }
-  instantiatePlaybook(...args) { return this.ctx.routines.instantiatePlaybook(...args); }
-  handleLocalReminder(...args) { return this.ctx.records.handleLocalReminder(...args); }
-  schedulePulseRefresh(...args) { return this.ctx.refresh.schedulePulseRefresh(...args); }
-  clearBulkOutcome(...args) { return this.ctx.bulk.clearBulkOutcome(...args); }
-  readAuthoritativeState(...args) { return this.ctx.refresh.readAuthoritativeState(...args); }
-  handleItemAction(...args) { return this.ctx.items.handleItemAction(...args); }
-  openPeerChannel(...args) { return this.ctx.peers.openPeerChannel(...args); }
-  appendCommand(...args) { return this.ctx.append.appendCommand(...args); }
-  handleCaughtUp(...args) { return this.ctx.refresh.handleCaughtUp(...args); }
-  closePeerChannel(...args) { return this.ctx.peers.closePeerChannel(...args); }
-  broadcastEventChange(...args) { return this.ctx.peers.broadcastEventChange(...args); }
-  broadcastViewStateChange(...args) { return this.ctx.peers.broadcastViewStateChange(...args); }
-  handlePeerMessage(...args) { return this.ctx.peers.handlePeerMessage(...args); }
-  refreshFromEvents(...args) { return this.ctx.refresh.refreshFromEvents(...args); }
-  renderState(...args) { return this.ctx.render.renderState(...args); }
-  setStatus(...args) { return this.ctx.status.setStatus(...args); }
-  clearAlert(...args) { return this.ctx.status.clearAlert(...args); }
-  openUnlockedHousehold(...args) { return this.ctx.session.openUnlockedHousehold(...args); }
-  applyAppearance(...args) { return this.ctx.appearance.applyAppearance(...args); }
-  applyEffectiveAppearance(...args) { return this.ctx.appearance.applyEffectiveAppearance(...args); }
-  refreshHouseholdDefaults(...args) { return this.ctx.appearance.refreshHouseholdDefaults(...args); }
-  clearAppliedAppearance(...args) { return this.ctx.appearance.clearAppliedAppearance(...args); }
-  lockHousehold(...args) { return this.ctx.session.lockHousehold(...args); }
-  notifyPeerLock(...args) { return this.ctx.session.notifyPeerLock(...args); }
 }
 
 customElements.define("kin-app", KinApp);

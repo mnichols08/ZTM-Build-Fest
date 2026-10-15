@@ -36,7 +36,7 @@ export class DetailController {
     if (!detail || !this.app.selection) return;
     const item = record ?? this.app.state?.items.find((candidate) => candidate.itemId === this.app.selection.itemId) ?? null;
     detail.update({
-      today: this.app.currentCivilDate(),
+      today: this.ctx.navigation.currentCivilDate(),
       previews: this.app.previewProvider,
       areaOptions: this.app.state?.areas ?? [],
       pinned: (this.app.state?.pins ?? []).some((pin) => pin.targetKind === "item" && pin.targetId === this.app.selection.itemId),
@@ -119,7 +119,7 @@ export class DetailController {
     restoreScroll();
     if (!restoreFocus) return;
     if (selection.origin === "search" && this.app.route?.page !== "search") {
-      this.app.navigate("#search");
+      this.ctx.navigation.navigate("#search");
       requestAnimationFrame(() => {
         ([...this.app.search.querySelectorAll("[data-result-id]")].find((node) => node.dataset.resultId === selection.originId) ?? this.app.search.queryInput)?.focus();
       });
@@ -150,9 +150,9 @@ export class DetailController {
       // close() delivers this event asynchronously, so a re-home or an app-
       // initiated close leaves a flag that outlives the synchronous call.
       if (this.app.sheetClosingProgrammatically) { this.app.sheetClosingProgrammatically = false; return; }
-      this.app.closeItemDetail({ restoreFocus: true, fromDialog: true });
+      this.ctx.detail.closeItemDetail({ restoreFocus: true, fromDialog: true });
     });
-    dialog.addEventListener("cancel", (event) => { event.preventDefault(); if (!this.app.rehomingDetail) this.app.closeItemDetail({ restoreFocus: true }); });
+    dialog.addEventListener("cancel", (event) => { event.preventDefault(); if (!this.app.rehomingDetail) this.ctx.detail.closeItemDetail({ restoreFocus: true }); });
     return dialog;
   }
 }

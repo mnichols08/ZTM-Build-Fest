@@ -50,7 +50,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
   const copies = (title) => page((title) => document.querySelector("kin-app").state.items.filter((item) => item.text === title).length, title);
   const lockAndSettle = () => page(async () => {
     const app = document.querySelector("kin-app");
-    app.lockHousehold();
+    app.ctx.session.lockHousehold();
     await app.lockBarrier;
   });
   const unlock = async () => { await ready(client); await idle(); };
@@ -107,7 +107,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
   try {
     await page(async () => {
       const app = document.querySelector("kin-app");
-      if ((app.state.mode ?? "normal") !== "normal") await app.appendCommand({ type: "set-household-mode", mode: "normal" });
+      if ((app.state.mode ?? "normal") !== "normal") await app.ctx.append.appendCommand({ type: "set-household-mode", mode: "normal" });
     });
     await viewport(1280, 900, false);
     await visit("today");
@@ -131,7 +131,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     const afterReload = await page((title) => {
       const app = document.querySelector("kin-app");
       const item = app.state.items.find((entry) => entry.text === title);
-      return { copies: app.state.items.filter((entry) => entry.text === title).length, today: item?.planningDate === app.currentCivilDate(), shown: [...app.today.querySelectorAll("kin-item")].filter((node) => node.record?.text === title).length };
+      return { copies: app.state.items.filter((entry) => entry.text === title).length, today: item?.planningDate === app.ctx.navigation.currentCivilDate(), shown: [...app.today.querySelectorAll("kin-item")].filter((node) => node.record?.text === title).length };
     }, offlineTitle);
     check(afterReload.copies === 1 && afterReload.today && afterReload.shown === 1,
       "after an offline reload and local unlock the task replays once, still planned for today, with one Today row", afterReload);
@@ -181,8 +181,8 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     const originalId = await page(async (text) => {
       const app = document.querySelector("kin-app");
       const routineId = crypto.randomUUID().replaceAll("-", "");
-      await app.appendCommand({ type: "create-routine", routineId, text, cadence: "daily" });
-      await app.refreshFromEvents();
+      await app.ctx.append.appendCommand({ type: "create-routine", routineId, text, cadence: "daily" });
+      await app.ctx.refresh.refreshFromEvents();
       return routineId;
     }, routineTitle);
     await idle();
@@ -201,7 +201,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
         }
         return original.call(store, command, engine);
       };
-      void app.changeRoutineSchedule({ routineId, cadence: "weekly" });
+      void app.ctx.routines.changeRoutineSchedule({ routineId, cadence: "weekly" });
     }, originalId);
     await until(() => window.__gate.reached, "schedule change archive pending");
     await lockAndSettle();
@@ -212,7 +212,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     const interrupted = await page((text) => document.querySelector("kin-app").state.routines.filter((routine) => routine.text === text).map((routine) => ({ id: routine.routineId, cadence: routine.cadence, status: routine.status })), routineTitle);
     check(interrupted.length === 2 && interrupted.filter((routine) => routine.status !== "archived").length === 2,
       "a lock between the schedule-change steps leaves the durable replacement and the still-repeating original", interrupted);
-    await page((routineId) => document.querySelector("kin-app").changeRoutineSchedule({ routineId, cadence: "weekly" }), originalId);
+    await page((routineId) => document.querySelector("kin-app").ctx.routines.changeRoutineSchedule({ routineId, cadence: "weekly" }), originalId);
     await idle();
     const resumed = await page((text) => document.querySelector("kin-app").state.routines.filter((routine) => routine.text === text).map((routine) => ({ id: routine.routineId, cadence: routine.cadence, status: routine.status })), routineTitle);
     const active = resumed.filter((routine) => routine.status !== "archived");
@@ -238,7 +238,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     });
     const remind = (id, title, inMs) => page(async (id, title, inMs) => {
       const at = Date.now() + inMs;
-      await document.querySelector("kin-app").handleLocalReminder({ id, title, at });
+      await document.querySelector("kin-app").ctx.records.handleLocalReminder({ id, title, at });
       return at;
     }, id, title, inMs);
     const reminders = (id, title) => page((id, title) => {
@@ -314,8 +314,8 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     const archivedTitle = `Remind then archive ${stamp}`;
     const archivedId = await page(async (text) => {
       const app = document.querySelector("kin-app"), id = crypto.randomUUID().replaceAll("-", "");
-      await app.appendCommand({ type: "add", id, text, classification: "need" });
-      await app.refreshFromEvents();
+      await app.ctx.append.appendCommand({ type: "add", id, text, classification: "need" });
+      await app.ctx.refresh.refreshFromEvents();
       return id;
     }, archivedTitle);
     await idle();
@@ -324,7 +324,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     const other = await openTab();
     const archivedStatus = await other.evaluate(`(async () => {
       const app = document.querySelector("kin-app");
-      await app.handleItemAction("archive", ${JSON.stringify(archivedId)});
+      await app.ctx.items.handleItemAction("archive", ${JSON.stringify(archivedId)});
       return app.state.items.find((item) => item.itemId === ${JSON.stringify(archivedId)})?.status;
     })()`);
     check(archivedStatus === "archived", "another tab archives the item while this tab is locked", archivedStatus);
@@ -366,7 +366,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
       const app = document.querySelector("kin-app");
       window.__permission.value = "default";
       const item = app.state.items.find((entry) => entry.status === "active");
-      window.__late = app.handleLocalReminder({ id: `item:${item.itemId}`, title: item.text, at: Date.now() + 300 });
+      window.__late = app.ctx.records.handleLocalReminder({ id: `item:${item.itemId}`, title: item.text, at: Date.now() + 300 });
     });
     await until(() => window.__permission.resolvers.length === 1, "permission prompt open");
     await lockAndSettle();
@@ -384,7 +384,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
       const app = document.querySelector("kin-app");
       window.__permission.value = "default";
       const item = app.state.items.find((entry) => entry.status === "active");
-      window.__late = app.handleLocalReminder({ id: `item:${item.itemId}`, title: item.text, at: Date.now() + 60_000 });
+      window.__late = app.ctx.records.handleLocalReminder({ id: `item:${item.itemId}`, title: item.text, at: Date.now() + 60_000 });
       return { id: `item:${item.itemId}`, title: item.text };
     });
     await until(() => window.__permission.resolvers.length === 1, "stale permission prompt open");
@@ -410,7 +410,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
         const pending = new Promise((resolve, reject) => { window.__settings.resolve = resolve; window.__settings.reject = reject; });
         window.__realCoordinator = app.syncCoordinator;
         app.syncCoordinator = { loadHouseholdSettings: () => pending, stop() {} };
-        window.__refresh = app.refreshHouseholdDefaults();
+        window.__refresh = app.ctx.appearance.refreshHouseholdDefaults();
       });
       await lockAndSettle();
       await page(async (outcome) => {
@@ -479,7 +479,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     }
 
     check(await startSave(), "settings save during a household re-open is pending");
-    await page(async () => { const app = document.querySelector("kin-app"); await app.openUnlockedHousehold(app.vault); });
+    await page(async () => { const app = document.querySelector("kin-app"); await app.ctx.session.openUnlockedHousehold(app.vault); });
     await idle();
     await settleSave("resolve");
     const replaced = await editorView();
@@ -506,7 +506,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
       app.syncCoordinator = window.__settingsCoordinator;
       delete window.__settingsCoordinator;
       app.householdSettings = null;
-      app.applyEffectiveAppearance();
+      app.ctx.appearance.applyEffectiveAppearance();
       app.householdDefaults.initialize({ admin: false, adminRecorded: false, value: null });
       app.householdDefaults.feedback.textContent = "";
     });
@@ -605,9 +605,9 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     await page(async (text) => {
       const app = document.querySelector("kin-app");
       const itemId = crypto.randomUUID().replaceAll("-", "");
-      await app.appendCommand({ type: "add", id: itemId, text, classification: "need" });
-      await app.appendCommand({ type: "set-item-planning-date", itemId, planningDate: app.currentCivilDate() });
-      await app.refreshFromEvents();
+      await app.ctx.append.appendCommand({ type: "add", id: itemId, text, classification: "need" });
+      await app.ctx.append.appendCommand({ type: "set-item-planning-date", itemId, planningDate: app.ctx.navigation.currentCivilDate() });
+      await app.ctx.refresh.refreshFromEvents();
     }, longTitle);
     await idle();
     for (const [width, height] of [[320, 640], [375, 740], [768, 1024], [1280, 900]]) {
@@ -683,7 +683,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
       await idle();
       projection.push(await page(async () => {
         const started = performance.now();
-        await document.querySelector("kin-app").refreshFromEvents();
+        await document.querySelector("kin-app").ctx.refresh.refreshFromEvents();
         return performance.now() - started;
       }));
     }
@@ -711,10 +711,10 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
           const app = document.querySelector("kin-app"), ids = [];
           for (let index = 0; index < count; index++) {
             const itemId = crypto.randomUUID().replaceAll("-", "");
-            await app.appendCommand({ type: "add", id: itemId, text: `${label} ${index}`, classification: "need" });
+            await app.ctx.append.appendCommand({ type: "add", id: itemId, text: `${label} ${index}`, classification: "need" });
             ids.push(itemId);
           }
-          await app.refreshFromEvents();
+          await app.ctx.refresh.refreshFromEvents();
           return ids;
         }, count, `Bulk ${count}/${run} ${stamp}`);
         await idle();
@@ -732,7 +732,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
         }, ids);
         check(ms > 0, `bulk completion of ${count} items finishes every target`);
         samples.push(ms);
-        await page(() => document.querySelector("kin-app").clearBulkOutcome());
+        await page(() => document.querySelector("kin-app").ctx.bulk.clearBulkOutcome());
       }
       metrics.push([`bulk-complete-${count}`, { ...stats(samples), perItem: Number((stats(samples).median / count).toFixed(2)) }]);
     }

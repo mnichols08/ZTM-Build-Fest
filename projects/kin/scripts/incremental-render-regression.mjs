@@ -14,7 +14,7 @@ export async function incrementalRenderPeerRegressions(first, second, until) {
   })()`);
 
   // A Handoff changes the Handoffs and summary sections only.
-  await first.evaluate("document.querySelector('kin-app').handleAddHandoff({ detail: { text: 'Incremental render Handoff' } })");
+  await first.evaluate("document.querySelector('kin-app').ctx.conversations.handleAddHandoff({ detail: { text: 'Incremental render Handoff' } })");
   await until(() => second.evaluate(`(() => {
     const app = document.querySelector('kin-app');
     return !app.busy && !app.refreshing && app.state.handoffs.some((row) => row.text === 'Incremental render Handoff');
@@ -29,7 +29,7 @@ export async function incrementalRenderPeerRegressions(first, second, until) {
     throw new Error(`a Handoff refresh must reuse Items and keep their rows: ${JSON.stringify(handoff)}`);
 
   // An Item changes the Items section: the lists render the new Item.
-  await first.evaluate("document.querySelector('kin-app').handleAddItem({ detail: { text: 'Incremental render Item', classification: 'need' } })");
+  await first.evaluate("document.querySelector('kin-app').ctx.items.handleAddItem({ detail: { text: 'Incremental render Item', classification: 'need' } })");
   await until(() => second.evaluate(`(() => {
     const app = document.querySelector('kin-app');
     return !app.busy && !app.refreshing && app.state.items.some((item) => item.text === 'Incremental render Item');

@@ -35,7 +35,7 @@ export class BulkCommands {
     const { action, itemIds } = event.detail ?? {};
     if (!list || !BULK_ACTIONS[action] || !Array.isArray(itemIds)) return;
     if (this.app.busy || this.app.bulkRunning || !this.app.store || !this.app.engine || !this.app.state) return;
-    this.app.clearBulkOutcome();
+    this.ctx.bulk.clearBulkOutcome();
     const plan = planBulk(action, itemIds, this.app.state.items);
     await this.runBulk({ list, action, targets: plan.targets, skipped: plan.skipped.length });
   }
@@ -58,14 +58,14 @@ export class BulkCommands {
     const started = performance.now();
     this.app.bulkRunning = true;
     this.ctx.status.setBusy(true);
-    this.app.clearAlert();
-    this.app.setStatus("");
+    this.ctx.status.clearAlert();
+    this.ctx.status.setStatus("");
     list.setBulkResult(null);
     try {
       for (const [index, itemId] of targets.entries()) {
         list.setBulkProgress(`${action === "complete" ? "Completing" : "Reopening"} ${index + 1} of ${targets.length}…`);
         try {
-          await this.app.appendCommand({ type: spec.command, itemId });
+          await this.ctx.append.appendCommand({ type: spec.command, itemId });
           const record = this.app.state.items.find((item) => item.itemId === itemId);
           succeeded.push({ itemId, to: spec.to, changedAt: record?.lastChangedAt ?? null });
           if (action === "complete") this.app.localReminders.cancel(`item:${itemId}`);
@@ -82,7 +82,7 @@ export class BulkCommands {
       if (this.ctx.session.isCurrentSession(session)) {
         this.app.lastBulkMetric = { action, count: targets.length, ms: performance.now() - started };
         list.setBulkProgress("");
-        if (succeeded.length) { this.app.renderState(); this.app.broadcastEventChange(); }
+        if (succeeded.length) { this.ctx.render.renderState(); this.ctx.peers.broadcastEventChange(); }
         list.deselect(succeeded.map((change) => change.itemId));
         const changes = [...carried, ...succeeded];
         if (changes.length) this.armBulkUndo({ list, action, changes, generation: session.generation });
@@ -111,7 +111,7 @@ export class BulkCommands {
     const record = this.app.bulkUndo;
     if (!list || !record || record.list !== list || record.generation !== this.app.securityGeneration) return;
     if (this.app.busy || this.app.bulkRunning || !this.app.store || !this.app.engine) return;
-    this.app.clearBulkOutcome();
+    this.ctx.bulk.clearBulkOutcome();
     const session = this.ctx.session.captureSession();
     const undone = [];
     const conflicts = [];
@@ -119,12 +119,12 @@ export class BulkCommands {
     let unverified = false;
     this.app.bulkRunning = true;
     this.ctx.status.setBusy(true);
-    this.app.clearAlert();
+    this.ctx.status.clearAlert();
     list.setBulkResult(null);
     try {
       let items;
       try {
-        items = (await this.app.readAuthoritativeState(session)).items;
+        items = (await this.ctx.refresh.readAuthoritativeState(session)).items;
       } catch (error) {
         if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
         // Fail closed: the rendered projection may be stale, so checking
@@ -137,7 +137,7 @@ export class BulkCommands {
         list.setBulkProgress(`Undoing ${index + 1} of ${record.changes.length}…`);
         if (undoStatus(change, items) !== "ready") { conflicts.push(change); continue; }
         try {
-          await this.app.appendCommand({ type: undoCommand(change), itemId: change.itemId });
+          await this.ctx.append.appendCommand({ type: undoCommand(change), itemId: change.itemId });
           items = this.app.state.items;
           undone.push(change);
         } catch (error) {
@@ -151,7 +151,7 @@ export class BulkCommands {
       this.app.bulkRunning = false;
       if (this.ctx.session.isCurrentSession(session)) {
         list.setBulkProgress("");
-        if (undone.length) { this.app.renderState(); this.app.broadcastEventChange(); }
+        if (undone.length) { this.ctx.render.renderState(); this.ctx.peers.broadcastEventChange(); }
         // Items failed for a local reason (not a conflict) can be undone again.
         const retryable = unverified ? record.changes : failed;
         if (retryable.length) this.armBulkUndo({ ...record, changes: retryable, generation: session.generation });

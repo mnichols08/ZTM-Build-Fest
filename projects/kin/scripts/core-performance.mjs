@@ -222,24 +222,24 @@ async function appStages() {
   const renders = [], refreshes = [], changeRefreshes = [], fullRenders = [];
   for (let sample = 0; sample < 6; sample += 1) {
     let start = performance.now();
-    app.renderState();
+    app.ctx.render.renderState();
     const render = performance.now() - start;
     await idle();
     start = performance.now();
-    await app.refreshFromEvents();
+    await app.ctx.refresh.refreshFromEvents();
     const refresh = performance.now() - start;
     await idle();
     await app.store.append({ type: "add-handoff", text: `Benchmark handoff ${sample}` }, app.engine);
     start = performance.now();
-    await app.refreshFromEvents();
+    await app.ctx.refresh.refreshFromEvents();
     const changeRefresh = performance.now() - start;
     await idle();
     app.state = copyArrays(app.state);
     start = performance.now();
-    app.renderState();
+    app.ctx.render.renderState();
     const fullRender = performance.now() - start;
     await idle();
-    await app.refreshFromEvents(); // re-seeds reusable sections after the copy
+    await app.ctx.refresh.refreshFromEvents(); // re-seeds reusable sections after the copy
     await idle();
     if (sample) { renders.push(render); refreshes.push(refresh); changeRefreshes.push(changeRefresh); fullRenders.push(fullRender); }
   }

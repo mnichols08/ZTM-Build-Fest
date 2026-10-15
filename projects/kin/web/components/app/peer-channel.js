@@ -52,7 +52,7 @@ export class PeerChannel {
         !this.app.vault ||
         peerEpoch > (this.app.vault.securityEpoch ?? -1)
       )
-        this.app.lockHousehold(false);
+        this.ctx.session.lockHousehold(false);
       return;
     }
     if (!this.app.vault || this.app.vault.locked) return;
@@ -63,7 +63,7 @@ export class PeerChannel {
       this.app.pendingRefresh = true;
       return;
     }
-    this.app.refreshFromEvents();
+    this.ctx.refresh.refreshFromEvents();
   }
   // Runs the refresh deferred while busy (`pendingRefresh`), once nothing else
   // is running. Every operation calls it when it finishes, not only peer
@@ -76,7 +76,7 @@ export class PeerChannel {
     this.app.pendingRefresh = false;
     const session = this.ctx.session.captureSession();
     queueMicrotask(() => {
-      if (this.ctx.session.isCurrentSession(session)) this.app.refreshFromEvents();
+      if (this.ctx.session.isCurrentSession(session)) this.ctx.refresh.refreshFromEvents();
     });
   }
 }

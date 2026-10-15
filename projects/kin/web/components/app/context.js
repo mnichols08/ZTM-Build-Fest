@@ -2,12 +2,14 @@
 // `app` is the element: it owns the state and DOM references the controllers
 // read and write.
 //
-// How controllers call each other:
-// - Through `this.ctx.<key>` (for example `this.ctx.status.setBusy(true)`).
-// - Except for methods with a stub on the element (kin-app.js, "Called from
-//   outside the element"), such as `renderState`, `refreshFromEvents` or
-//   `lockHousehold`. Those are always called as `this.app.<method>()`, because
-//   regression scripts replace them on the element and must see every call.
+// How controllers call each other: always through `this.ctx.<key>` (for
+// example `this.ctx.status.setBusy(true)`), never through the element.
+//
+// The test hook: regression scripts use this same context, as
+// `document.querySelector("kin-app").ctx.<key>.<method>`. Replacing a method
+// on a controller instance intercepts every call to it, because every caller
+// goes through ctx. <kin-security> does not use ctx; shell.js hands it the
+// few operations it needs as `security.services`.
 //
 // Where element fields come from:
 // - Plain state and bound handlers: initializeAppState() below.
@@ -95,8 +97,8 @@ export function initializeAppState(app) {
     app.retryAction = null;
     app.retryIntent = null;
     app.suspendedRetry = null;
-    app.retryRefresh = () => app.refreshFromEvents();
-    app.onAddItem = (event) => app.handleAddItem(event);
+    app.retryRefresh = () => app.ctx.refresh.refreshFromEvents();
+    app.onAddItem = (event) => app.ctx.items.handleAddItem(event);
     app.onAddAttachment = (event) => app.ctx.attachments.handleAddAttachment(event);
     app.onPickAttachment = (event) => app.ctx.attachments.handlePickAttachment(event);
     // One file input for the whole app: it is never re-rendered, so a list
@@ -105,7 +107,7 @@ export function initializeAppState(app) {
     app.attachmentTarget = null;
     app.attachmentProgressTimers = new Map();
     app.onOpenAttachment = (event) => app.ctx.attachments.handleOpenAttachment(event);
-    app.onViewAttachment = (event) => app.handleViewAttachment(event);
+    app.onViewAttachment = (event) => app.ctx.attachments.handleViewAttachment(event);
     app.onRemoveAttachment = (event) => app.ctx.attachments.handleRemoveAttachment(event);
     // Thumbnails are session-scoped object URLs; the cache is created on unlock
     // and emptied on lock so no decrypted preview outlives the vault.
@@ -123,7 +125,7 @@ export function initializeAppState(app) {
     app.autoLockTimer = null;
     app.lastActivityAt = null;
     app.onActivity = () => { if (app.autoLockTimer) app.ctx.session.scheduleAutoLock(); };
-    app.onRetryAttachments = () => { if (app.syncCoordinator) void app.syncCoordinator.syncNow(); else void app.configureSyncCoordinator(); };
+    app.onRetryAttachments = () => { if (app.syncCoordinator) void app.syncCoordinator.syncNow(); else void app.ctx.sync.configureSyncCoordinator(); };
     app.onChangeResponsibility = (event) => app.ctx.items.handleChangeResponsibility(event);
     app.onReplenishStaple = (event) => app.ctx.items.handleReplenishStaple(event);
     app.syncState = null;
@@ -142,9 +144,9 @@ export function initializeAppState(app) {
       app.stateNotice.hidden = true;
       app.ctx.sync.updateSyncChip();
       if (!app.vault || app.vault.locked || !app.store) return;
-      app.setStatus(app.syncCoordinator ? "Back online. Syncing…" : "Back online.");
+      app.ctx.status.setStatus(app.syncCoordinator ? "Back online. Syncing…" : "Back online.");
       if (app.syncCoordinator) void app.syncCoordinator.syncNow();
-      else void app.configureSyncCoordinator();
+      else void app.ctx.sync.configureSyncCoordinator();
     };
     app.onCompleteItem = (event) => app.ctx.items.handleCompleteItem(event);
     app.onReopenItem = (event) => app.ctx.items.handleReopenItem(event);
@@ -153,26 +155,26 @@ export function initializeAppState(app) {
     app.onCompleteItemStep = (event) => app.ctx.items.handleItemStep("complete-item-step", event.detail);
     app.onReopenItemStep = (event) => app.ctx.items.handleItemStep("reopen-item-step", event.detail);
     app.onArchiveItemStep = (event) => app.ctx.items.handleItemStep("archive-item-step", event.detail);
-    app.onAddHandoff = (event) => app.handleAddHandoff(event);
+    app.onAddHandoff = (event) => app.ctx.conversations.handleAddHandoff(event);
     app.onAcknowledgeHandoff = (event) =>
-      app.handleHandoffAction("acknowledge-handoff", event.detail.handoffId);
+      app.ctx.conversations.handleHandoffAction("acknowledge-handoff", event.detail.handoffId);
     app.onArchiveHandoff = (event) =>
-      app.handleHandoffAction("archive-handoff", event.detail.handoffId);
+      app.ctx.conversations.handleHandoffAction("archive-handoff", event.detail.handoffId);
     app.onAddTalk = (event) =>
-      app.saveTalk({ type: "add-talk", text: event.detail.text });
+      app.ctx.conversations.saveTalk({ type: "add-talk", text: event.detail.text });
     app.onResolveTalk = (event) =>
-      app.saveTalk({ type: "resolve-talk", talkId: event.detail.talkId });
+      app.ctx.conversations.saveTalk({ type: "resolve-talk", talkId: event.detail.talkId });
     app.onReopenTalk = (event) =>
-      app.saveTalk({ type: "reopen-talk", talkId: event.detail.talkId });
+      app.ctx.conversations.saveTalk({ type: "reopen-talk", talkId: event.detail.talkId });
     app.onArchiveTalk = (event) =>
-      app.saveTalk({ type: "archive-talk", talkId: event.detail.talkId });
+      app.ctx.conversations.saveTalk({ type: "archive-talk", talkId: event.detail.talkId });
     // Several handlers derive the command type from the event name: every
     // component event is "kin:<command>", so `event.type.slice(4)` drops "kin:".
     app.onRoutineIntent = (event) => {
       if (event.type === "kin:archive-routine" || event.type === "kin:complete-routine-occurrence") app.localReminders.cancel(`routine:${event.detail.routineId}`);
-      app.saveRoutine({ ...event.detail, type: event.type.slice(4) });
+      app.ctx.routines.saveRoutine({ ...event.detail, type: event.type.slice(4) });
     };
-    app.onChangeRoutineSchedule = (event) => app.changeRoutineSchedule(event.detail);
+    app.onChangeRoutineSchedule = (event) => app.ctx.routines.changeRoutineSchedule(event.detail);
     app.onOpenRoutineSchedule = (event) => app.ctx.routines.openRoutineSchedule(event.detail.routineId);
     app.onAreaIntent = (event) => app.ctx.records.saveArea(event.detail);
     app.onNoteIntent = (event) => app.ctx.records.saveNote(event.type.slice(4), event.detail);
@@ -186,17 +188,17 @@ export function initializeAppState(app) {
     // Today's empty states reuse the universal Quick add; focus returns to the
     // button that opened it, or to the Today heading once that button is gone.
     app.onOpenQuickAdd = (event) => app.quickAdd.open({ opener: event.detail?.opener, fallback: () => app.today.querySelector('[data-section="today"] h2') });
-    app.onOpenItem = (event) => app.openItemDetail(event.detail.itemId, { opener: event.detail.opener ?? event.target });
-    app.onCloseItemDetail = () => app.closeItemDetail({ restoreFocus: true });
-    app.onOpenSearchResult = (event) => app.handleOpenSearchResult(event.detail);
+    app.onOpenItem = (event) => app.ctx.detail.openItemDetail(event.detail.itemId, { opener: event.detail.opener ?? event.target });
+    app.onCloseItemDetail = () => app.ctx.detail.closeItemDetail({ restoreFocus: true });
+    app.onOpenSearchResult = (event) => app.ctx.navigation.handleOpenSearchResult(event.detail);
     app.onPlaybookIntent = (event) => app.ctx.routines.handlePlaybookIntent(event);
-    app.onLocalReminder = (event) => app.handleLocalReminder(event.detail);
-    app.onCancelLocalReminder = (event) => { app.localReminders.cancel(event.detail.id); app.ctx.records.renderReminders(); app.setStatus("Reminder canceled on this device."); };
+    app.onLocalReminder = (event) => app.ctx.records.handleLocalReminder(event.detail);
+    app.onCancelLocalReminder = (event) => { app.localReminders.cancel(event.detail.id); app.ctx.records.renderReminders(); app.ctx.status.setStatus("Reminder canceled on this device."); };
     app.onModeChange = () => app.ctx.records.saveMode(app.modeSelect.value);
     app.pulseTimer = null;
     app.catchUpCursor = null;
     app.snapshotBoundary = null;
-    app.onCaughtUp = () => app.handleCaughtUp();
+    app.onCaughtUp = () => app.ctx.refresh.handleCaughtUp();
     app.onSyncEnabled = (event) => app.ctx.sync.startSyncCoordinator(event.detail);
     app.onSyncNow = () => void app.syncCoordinator?.syncNow();
     app.onSyncStop = (event) => {
@@ -204,10 +206,10 @@ export function initializeAppState(app) {
       app.syncCoordinator = null;
       app.syncState = null;
       app.ctx.sync.updateSyncChip();
-      app.setStatus(event.detail?.message ?? "Household sync has stopped.");
+      app.ctx.status.setStatus(event.detail?.message ?? "Household sync has stopped.");
     };
-    app.onSyncState = (value) => app.handleSyncState(value);
-    app.onHashChange = () => app.showPageFromLocation();
+    app.onSyncState = (value) => app.ctx.sync.handleSyncState(value);
+    app.onHashChange = () => app.ctx.navigation.showPageFromLocation();
     app.onNavigationClick = (event) => {
       const link = event.target.closest?.("a[href^='#']");
       if (
@@ -215,7 +217,7 @@ export function initializeAppState(app) {
         event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
       ) return;
       event.preventDefault();
-      app.navigate(link.getAttribute("href"));
+      app.ctx.navigation.navigate(link.getAttribute("href"));
     };
     // Selection: one canonical item id plus where it was opened from. The
     // same <kin-item-detail> element is re-homed between the mobile sheet,
@@ -233,7 +235,7 @@ export function initializeAppState(app) {
       if (event.defaultPrevented || event.key !== "Escape" || app.viewer?.open || event.target.closest?.("dialog[open]")) return;
       if (app.selection && app.detailMode !== "sheet") {
         event.preventDefault();
-        app.closeItemDetail({ restoreFocus: true });
+        app.ctx.detail.closeItemDetail({ restoreFocus: true });
       }
     };
     app.onShortcutKeydown = (event) => app.ctx.navigation.handleShortcutKeydown(event);
@@ -245,7 +247,7 @@ export function initializeAppState(app) {
     app.onBulkItemAction = (event) => app.ctx.bulk.handleBulkItemAction(event);
     app.onBulkUndo = (event) => app.ctx.bulk.handleBulkUndo(event);
     app.onBulkRetry = (event) => app.ctx.bulk.handleBulkRetry(event);
-    app.onBulkDismiss = () => app.clearBulkOutcome();
+    app.onBulkDismiss = () => app.ctx.bulk.clearBulkOutcome();
     const platform = typeof navigator === "undefined" ? "" : navigator.userAgentData?.platform ?? navigator.platform ?? "";
     app.macShortcuts = /mac|iphone|ipad|ipod/i.test(platform);
     app.commandGeneration = null;
@@ -253,7 +255,7 @@ export function initializeAppState(app) {
       const timestamp = Date.now();
       const hours = event.detail.hours;
       if (![1, 4, 8].includes(hours)) return;
-      app.savePulse({
+      app.ctx.conversations.savePulse({
         type: "set-pulse",
         value: event.detail.value,
         timestamp,
@@ -265,7 +267,7 @@ export function initializeAppState(app) {
       clearTimeout(app.focusTimer);
       app.focusTimer = setTimeout(app.onTimeWake, 150);
     };
-    app.onClearPulse = () => app.savePulse({ type: "clear-pulse" });
+    app.onClearPulse = () => app.ctx.conversations.savePulse({ type: "clear-pulse" });
     // Runs on window focus, visibility changes and the Pulse/midnight timer.
     // Three duties, in order: lock if the auto-lock time passed while away;
     // lock if another tab locked (the durable security epoch moved); otherwise
@@ -277,8 +279,8 @@ export function initializeAppState(app) {
       const generation = app.securityGeneration;
       if (app.autoLockMinutes && app.lastActivityAt !== null &&
         Date.now() - app.lastActivityAt >= app.autoLockMinutes * 60_000) {
-        app.lockHousehold();
-        app.setStatus("Kin locked after inactivity. Unlock to continue.");
+        app.ctx.session.lockHousehold();
+        app.ctx.status.setStatus("Kin locked after inactivity. Unlock to continue.");
         return;
       }
       // The vault becomes visible just before EventStore.open binds its durable
@@ -289,28 +291,28 @@ export function initializeAppState(app) {
         await EventStore.checkSecurityEpoch(vault);
       } catch {
         if (vault === app.vault && generation === app.securityGeneration)
-          app.lockHousehold(false);
+          app.ctx.session.lockHousehold(false);
         return;
       }
       if (vault !== app.vault || generation !== app.securityGeneration)
         return;
-      app.refreshFromEvents();
+      app.ctx.refresh.refreshFromEvents();
       void app.ctx.sync.checkHouseholdAuthorization();
     };
-    app.onPeerMessage = (event) => app.handlePeerMessage(event);
+    app.onPeerMessage = (event) => app.ctx.peers.handlePeerMessage(event);
     // Logout and leaving the household end the session for good; a plain
     // lock request only suspends it.
-    app.onLockRequest = (event) => app.lockHousehold(true, { endSession: event?.detail?.endSession === true });
-    app.onAppearancePreview = (event) => app.applyAppearance(event.detail.value);
+    app.onLockRequest = (event) => app.ctx.session.lockHousehold(true, { endSession: event?.detail?.endSession === true });
+    app.onAppearancePreview = (event) => app.ctx.appearance.applyAppearance(event.detail.value);
     app.onSaveAppearance = (event) => app.ctx.appearance.handleSaveAppearance(event);
     app.onUseHouseholdAppearance = (event) => app.ctx.appearance.handleUseHouseholdAppearance(event);
     app.onInheritAppearanceProperty = (event) => app.ctx.appearance.handleInheritAppearanceProperty(event);
-    app.onHouseholdDefaultsPreview = (event) => { app.ctx.appearance.setHouseholdIdentity(event.detail.name); app.applyAppearance(event.detail.appearance); };
-    app.onHouseholdDefaultsCancel = () => app.applyEffectiveAppearance();
+    app.onHouseholdDefaultsPreview = (event) => { app.ctx.appearance.setHouseholdIdentity(event.detail.name); app.ctx.appearance.applyAppearance(event.detail.appearance); };
+    app.onHouseholdDefaultsCancel = () => app.ctx.appearance.applyEffectiveAppearance();
     app.onSaveHouseholdDefaults = (event) => app.ctx.appearance.handleSaveHouseholdDefaults(event);
     app.systemAppearance = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : null;
-    app.onSystemAppearance = () => { if (app.currentAppearance?.mode === "system") app.applyAppearance(app.currentAppearance); };
-    app.onPageHide = () => app.lockHousehold(false);
+    app.onSystemAppearance = () => { if (app.currentAppearance?.mode === "system") app.ctx.appearance.applyAppearance(app.currentAppearance); };
+    app.onPageHide = () => app.ctx.session.lockHousehold(false);
     app.updateRegistration = null;
     app.updateRequested = false;
     app.onServiceWorkerMessage = (event) => {

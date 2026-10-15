@@ -129,6 +129,21 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
   Projecting after one new event: 3.6 ms instead of 9.7 at 10k events, 30
   instead of 62 at 10k × 4 KB. Store refresh is 28–44% faster.
 
+### Slice 8 — Reading events in place; one test hook
+
+- `EventView` reads a canonical record in place (header fields, payload
+  slice), and the history keeps records as `(offset, length)` spans. A
+  projection decodes only the records its checkpoint has not applied. The
+  summary reads borrowed extracts and copies text only for the 8 entries it
+  keeps. Commands check conflicts against the replay instead of every event
+  (`CommandHistory`: `WholeRequest` for tests, `HeldHistory` for the engine).
+  The projection buffer is reserved once instead of growing by doubling.
+  Projecting after one new event at 10k × 4 KB: about 20 ms (was 30).
+- `<kin-app>` loses its 45 script-facing stubs. Controllers call each other
+  only through `ctx`. Regression scripts use `app.ctx` as the one documented
+  test hook. `<kin-security>` gets its six operations from `shell.js` as
+  `security.services` instead of calling methods on the element.
+
 ## Unreleased — v0.47.0 — Household Identity & Shared Appearance
 
 - Record the household founder as durable owner for new households while leaving legacy ownership unresolved and fail-closed.

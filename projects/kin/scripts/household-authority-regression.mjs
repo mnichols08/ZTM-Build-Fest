@@ -241,12 +241,12 @@ async function pagePauseAutomaticSync() {
   const app = document.querySelector("kin-app");
   app.syncCoordinator?.stop();
   app.syncCoordinator = null;
-  app.configureSyncCoordinator = async () => {};
+  app.ctx.sync.configureSyncCoordinator = async () => {};
 }
 
 async function pageResumeAutomaticSync() {
   const app = document.querySelector("kin-app");
-  delete app.configureSyncCoordinator;
+  delete app.ctx.sync.configureSyncCoordinator;
 }
 
 async function pageShiftClock(offsetMs) {
@@ -272,7 +272,7 @@ async function pageEnableSync() {
 async function pageSync() {
   const app = document.querySelector("kin-app");
   if (!app.store) throw new Error("Cannot sync a locked profile.");
-  if (!app.syncCoordinator) await app.configureSyncCoordinator();
+  if (!app.syncCoordinator) await app.ctx.sync.configureSyncCoordinator();
   const coordinator = app.syncCoordinator;
   if (!coordinator) return { started: false, items: app.state?.items.map((item) => item.text) ?? [] };
   // start() binds device keys and runs its own first sync; wait for that run
@@ -413,7 +413,7 @@ async function pageRestoreArchive({ base64, secret, clockOffset = 0 }) {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   location.hash = "#household/privacy";
-  app.showPageFromLocation();
+  app.ctx.navigation.showPageFromLocation();
   app.security.showRestore();
   const file = app.security.querySelector("#archive-file");
   const transfer = new DataTransfer();

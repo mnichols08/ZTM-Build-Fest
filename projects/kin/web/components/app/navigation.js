@@ -13,7 +13,7 @@ export class NavigationController {
   navigate(hash) {
     const route = resolveRoute({ hash, pathname: location.pathname });
     if (location.hash !== route.hash) history.pushState(null, "", route.hash);
-    this.app.showPageFromLocation();
+    this.ctx.navigation.showPageFromLocation();
   }
   showPageFromLocation() {
     if (!this.app.pages || !this.app.navLinks) return;
@@ -38,7 +38,7 @@ export class NavigationController {
     }
     if (route.page === "routines") this.app.routines.view = route.segment;
     // Details stay open only within the page that opened them.
-    if (this.app.selection && this.app.selection.page !== route.page) this.app.closeItemDetail({ restoreFocus: false });
+    if (this.app.selection && this.app.selection.page !== route.page) this.ctx.detail.closeItemDetail({ restoreFocus: false });
     this.ctx.detail.mountDetail();
     if (changed && previous) {
       const remembered = this.app.pageScroll.get(route.canonical) ?? 0;
@@ -53,7 +53,7 @@ export class NavigationController {
       this.app.siteTools && !this.app.siteTools.hidden && this.app.commandPalette?.isConnected);
   }
   handleShortcutKeydown(event) {
-    if (event.defaultPrevented || !this.app.workspaceReady()) return;
+    if (event.defaultPrevented || !this.ctx.navigation.workspaceReady()) return;
     const shortcut = shortcutForKey(event, { mac: this.app.macShortcuts });
     if (!shortcut) return;
     const openDialogs = [...this.app.querySelectorAll("dialog[open]")];
@@ -71,7 +71,7 @@ export class NavigationController {
     }
     if (openDialogs.length || isTypingContext(event, active)) return;
     event.preventDefault();
-    this.app.runWorkspaceCommand(shortcut, { opener });
+    this.ctx.append.runWorkspaceCommand(shortcut, { opener });
   }
   layoutMode() {
     if (this.app.phoneQuery?.matches) return "sheet";
@@ -81,9 +81,9 @@ export class NavigationController {
   // Search results open the real record by canonical id.
   handleOpenSearchResult(detail) {
     if (!this.app.state) return;
-    const unavailable = () => this.app.setStatus("That record is no longer available. It may have been archived or removed.");
+    const unavailable = () => this.ctx.status.setStatus("That record is no longer available. It may have been archived or removed.");
     const reveal = (hash, selector) => {
-      this.app.navigate(hash);
+      this.ctx.navigation.navigate(hash);
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const target = this.app.main.querySelector(selector);
         if (!target) { unavailable(); return; }
@@ -99,8 +99,8 @@ export class NavigationController {
         const itemId = detail.kind === "step" ? detail.itemId : detail.id;
         const item = this.app.state.items.find((record) => record.itemId === itemId && record.status !== "archived");
         if (!item) { unavailable(); return; }
-        this.app.navigate(routeHash("lists", listSegmentForClassification(item.classification)));
-        this.app.openItemDetail(itemId, { opener: detail.opener, stepId: detail.kind === "step" ? detail.stepId : null, origin: "search" });
+        this.ctx.navigation.navigate(routeHash("lists", listSegmentForClassification(item.classification)));
+        this.ctx.detail.openItemDetail(itemId, { opener: detail.opener, stepId: detail.kind === "step" ? detail.stepId : null, origin: "search" });
         this.app.selection.originId = detail.id;
         return;
       }

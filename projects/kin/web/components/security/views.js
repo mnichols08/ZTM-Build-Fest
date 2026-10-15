@@ -194,7 +194,7 @@ export class SecurityViews {
     }
     lockSelect.value = String(app?.autoLockMinutes ?? 0);
     lockSelect.addEventListener("change", () => {
-      app?.setAutoLockMinutes(Number(lockSelect.value));
+      this.host.services?.setAutoLockMinutes(Number(lockSelect.value));
       this.host.message.textContent = Number(lockSelect.value)
         ? "Kin will lock after that much inactivity. Closing or reloading always locks it."
         : "Kin locks whenever you close or reload.";

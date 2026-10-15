@@ -22,26 +22,26 @@ export class RecordCommands {
     const type = types[action];
     if (!type) return;
     this.ctx.status.setBusy(true);
-    this.app.clearAlert();
-    this.app.setStatus("Saving…");
+    this.ctx.status.clearAlert();
+    this.ctx.status.setStatus("Saving…");
     try {
-      await this.app.appendCommand({
+      await this.ctx.append.appendCommand({
         type,
         name: detail.name,
         areaId: detail.areaId,
         itemId: detail.itemId,
       });
       this.ctx.session.assertCurrentSession(session);
-      this.app.renderState();
-      this.app.broadcastEventChange();
-      this.app.setStatus(action === "create-area" ? "Area added."
+      this.ctx.render.renderState();
+      this.ctx.peers.broadcastEventChange();
+      this.ctx.status.setStatus(action === "create-area" ? "Area added."
         : action === "rename-area" ? "Area renamed."
         : action === "archive-area" ? "Area archived. Existing links are kept."
         : detail.areaId ? "Area updated." : "Area cleared.");
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR);
-      this.app.setStatus("");
+      this.ctx.status.setStatus("");
     } finally {
       if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
@@ -61,15 +61,15 @@ export class RecordCommands {
     const type = { "create-note": "create-note", "update-note": "update-note", "archive-note": "archive-note" }[action];
     if (!type) return;
     const noteId = detail.noteId ?? crypto.randomUUID().replaceAll("-", "");
-    this.ctx.status.setBusy(true); this.app.clearAlert(); this.app.setStatus("Saving…");
+    this.ctx.status.setBusy(true); this.ctx.status.clearAlert(); this.ctx.status.setStatus("Saving…");
     try {
-      await this.app.appendCommand({ type, ...detail, noteId, id: noteId });
+      await this.ctx.append.appendCommand({ type, ...detail, noteId, id: noteId });
       this.ctx.session.assertCurrentSession(session);
       this.app.notes.clearEditor();
       this.app.notes.pendingFocus = action === "archive-note" ? this.app.notes.pendingFocus : "title";
-      this.app.renderState();
-      this.app.broadcastEventChange();
-      this.app.setStatus(action === "archive-note"
+      this.ctx.render.renderState();
+      this.ctx.peers.broadcastEventChange();
+      this.ctx.status.setStatus(action === "archive-note"
         ? "Note archived on this device."
         : navigator.onLine
           ? "Note saved on this device."
@@ -77,7 +77,7 @@ export class RecordCommands {
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR);
-      this.app.setStatus("");
+      this.ctx.status.setStatus("");
       this.app.notes.pendingFocus = "title";
     } finally {
       if (this.ctx.session.isCurrentSession(session)) {
@@ -91,30 +91,30 @@ export class RecordCommands {
     const session = this.ctx.session.captureSession();
     const recordId = detail.recordId ?? crypto.randomUUID().replaceAll("-", "");
     const type = action === "archive-reference-record" ? action : "save-reference-record";
-    this.ctx.status.setBusy(true); this.app.clearAlert(); this.app.setStatus("Saving…");
+    this.ctx.status.setBusy(true); this.ctx.status.clearAlert(); this.ctx.status.setStatus("Saving…");
     try {
-      await this.app.appendCommand({ type, ...detail, recordId, id: recordId });
+      await this.ctx.append.appendCommand({ type, ...detail, recordId, id: recordId });
       this.ctx.session.assertCurrentSession(session);
       if (action === "save-reference-record") this.app.notes.clearReferenceEditor();
-      this.app.renderState(); this.app.broadcastEventChange();
-      this.app.setStatus(action === "archive-reference-record" ? "Reference archived." : "Reference saved on this device.");
+      this.ctx.render.renderState(); this.ctx.peers.broadcastEventChange();
+      this.ctx.status.setStatus(action === "archive-reference-record" ? "Reference archived." : "Reference saved on this device.");
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); this.app.setStatus("");
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); this.ctx.status.setStatus("");
     } finally { if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); } }
   }
   async saveMaintenanceEvent(action, detail) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
     const session = this.ctx.session.captureSession();
     const type = action === "archive-maintenance-event" ? action : "save-maintenance-event";
-    this.ctx.status.setBusy(true); this.app.clearAlert(); this.app.setStatus("Saving maintenance history…");
+    this.ctx.status.setBusy(true); this.ctx.status.clearAlert(); this.ctx.status.setStatus("Saving maintenance history…");
     try {
-      await this.app.appendCommand({ ...detail, type, id: detail.maintenanceId });
-      this.ctx.session.assertCurrentSession(session); this.app.renderState(); this.app.broadcastEventChange();
-      this.app.setStatus(action === "archive-maintenance-event" ? "Maintenance event archived." : "Maintenance saved on this device.");
+      await this.ctx.append.appendCommand({ ...detail, type, id: detail.maintenanceId });
+      this.ctx.session.assertCurrentSession(session); this.ctx.render.renderState(); this.ctx.peers.broadcastEventChange();
+      this.ctx.status.setStatus(action === "archive-maintenance-event" ? "Maintenance event archived." : "Maintenance saved on this device.");
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); this.app.setStatus("");
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); this.ctx.status.setStatus("");
     } finally { if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); } }
   }
   async saveMode(mode) {
@@ -122,19 +122,19 @@ export class RecordCommands {
     const session = this.ctx.session.captureSession();
     const command = Object.freeze({ type: "set-household-mode", mode });
     this.ctx.status.setBusy(true);
-    this.app.clearAlert();
-    this.app.setStatus("Saving…");
+    this.ctx.status.clearAlert();
+    this.ctx.status.setStatus("Saving…");
     try {
-      await this.app.appendCommand(command);
+      await this.ctx.append.appendCommand(command);
       this.ctx.session.assertCurrentSession(session);
-      this.app.renderState();
-      this.app.setStatus("Household mode updated.");
-      this.app.broadcastEventChange();
+      this.ctx.render.renderState();
+      this.ctx.status.setStatus("Household mode updated.");
+      this.ctx.peers.broadcastEventChange();
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       this.app.modeSelect.value = this.app.state?.mode ?? "normal";
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.saveMode(mode));
-      this.app.setStatus("");
+      this.ctx.status.setStatus("");
     } finally {
       if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
@@ -158,7 +158,7 @@ export class RecordCommands {
       this.renderReminders();
       for (const control of this.app.querySelectorAll("kin-reminder")) if (control.targetRecord?.id === id) control.saved(result === "granted" ? at : null);
       if (itemId) this.app.detail?.reminderDrafts?.delete(itemId);
-      this.app.setStatus(result === "granted" ? "Reminder set on this device while Kin is open." : result === "denied" ? "Notifications are blocked in browser settings. Kin still works normally." :
+      this.ctx.status.setStatus(result === "granted" ? "Reminder set on this device while Kin is open." : result === "denied" ? "Notifications are blocked in browser settings. Kin still works normally." :
         result === "stale" ? "That task changed before the reminder was set. Nothing was scheduled." : "Reminders are unavailable in this browser. Kin still works normally.");
     } catch (error) {
       if (this.ctx.session.isCurrentSession(session)) this.ctx.status.showAlert(error.message ?? "Choose a future reminder time.");
@@ -203,11 +203,11 @@ export class RecordCommands {
       link.href = url;
       link.download = "kin-planned-items.ics";
       link.click();
-      this.app.setStatus("Calendar file prepared for download.");
+      this.ctx.status.setStatus("Calendar file prepared for download.");
     } catch (error) {
       if (url) URL.revokeObjectURL(url);
       this.ctx.status.showAlert(error.message || "Kin could not prepare the calendar file.");
-      this.app.setStatus("");
+      this.ctx.status.setStatus("");
       return;
     }
     setTimeout(() => URL.revokeObjectURL(url), 1000);

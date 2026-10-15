@@ -54,7 +54,7 @@ export class SyncController {
       )
         return;
       // The device no longer belongs to a household (removed, left, deleted).
-      this.app.lockHousehold(true, { endSession: true });
+      this.ctx.session.lockHousehold(true, { endSession: true });
     } catch {
       // Keep local household use available while the service is unreachable.
     } finally {
@@ -77,20 +77,20 @@ export class SyncController {
           this.ctx.session.isCurrentSession(session) &&
           this.app.syncCoordinator === coordinator
         )
-          this.app.handleSyncState(value);
+          this.ctx.sync.handleSyncState(value);
       },
     });
     this.app.syncCoordinator = coordinator;
     this.updateSyncChip();
     try {
       await coordinator.start();
-      if (this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator) await this.app.refreshHouseholdDefaults();
+      if (this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator) await this.ctx.appearance.refreshHouseholdDefaults();
     } catch (error) {
       if (
         this.ctx.session.isCurrentSession(session) &&
         this.app.syncCoordinator === coordinator
       ) {
-        this.app.handleSyncState({
+        this.ctx.sync.handleSyncState({
           state: "paused",
           code: error.code,
           message: error.message || "Device sync is paused.",
@@ -115,7 +115,7 @@ export class SyncController {
       }
     } else if (["ready", "disabled"].includes(value.state)) {
       this.app.stateNotice.hidden = true;
-      if (value.state === "ready") void this.app.refreshHouseholdDefaults();
+      if (value.state === "ready") void this.ctx.appearance.refreshHouseholdDefaults();
     }
     if (value.projection && value.added > 0) {
       if (this.app.busy) {
@@ -123,8 +123,8 @@ export class SyncController {
       } else {
         this.app.state = value.projection;
         this.app.snapshotBoundary = value.snapshotBoundary;
-        this.app.renderState();
-        if (value.snapshotBoundary) this.app.broadcastEventChange();
+        this.ctx.render.renderState();
+        if (value.snapshotBoundary) this.ctx.peers.broadcastEventChange();
       }
     }
     if (Array.isArray(value.attachmentRows)) {
@@ -136,7 +136,7 @@ export class SyncController {
       });
       if (!sameRows) {
         this.app.attachmentRows = rows;
-        this.app.renderState();
+        this.ctx.render.renderState();
       }
     }
     if (Array.isArray(value.memberIds)) {
@@ -147,7 +147,7 @@ export class SyncController {
       // the views it feeds skip work by identity, and this runs on every poll.
       if (membershipChanged) {
         this.app.activeMemberIds = memberIds;
-        this.app.renderState();
+        this.ctx.render.renderState();
       }
       void this.reconcileResponsibilityMembers();
     }
@@ -155,7 +155,7 @@ export class SyncController {
     // incoming changes or an unusual state, not every five-second idle poll.
     if (value.message && value.state !== "paused" &&
         (value.quarantined > 0 || !["syncing", "ready", "disabled"].includes(value.state)))
-      this.app.setStatus(value.message);
+      this.ctx.status.setStatus(value.message);
   }
   updateSyncChip() {
     if (!this.app.syncChip) return;
@@ -184,9 +184,9 @@ export class SyncController {
     try {
       for (const entry of stale) {
         if (!this.app.activeMemberIds.includes(this.app.syncCoordinator?.identity?.memberId)) break;
-        await this.app.appendCommand({ type: "change-responsibility", targetKind: entry.targetKind, id: entry.targetId, memberId: null });
+        await this.ctx.append.appendCommand({ type: "change-responsibility", targetKind: entry.targetKind, id: entry.targetId, memberId: null });
       }
-      this.app.broadcastEventChange();
+      this.ctx.peers.broadcastEventChange();
       void this.app.syncCoordinator?.syncNow();
     } catch { /* Another device may have cleared the same removed member concurrently. */ }
     finally { this.app.reconcilingResponsibility = false; }

@@ -114,9 +114,10 @@ export class SecurityProtection {
     try {
       ({ vault: candidate } = await LocalVault.createRotation(source, secret));
       this.host.assertCurrentOperation(operation);
+      // Read below, during the rotation, to tell peer tabs the new epoch.
       const app = this.host.closest("kin-app");
-      app.notifyPeerLock(source.securityEpoch + 1);
-      app.lockHousehold(false, { preserveSecurityOperation: true });
+      this.host.services.notifyPeerLock(source.securityEpoch + 1);
+      this.host.services.lockHousehold(false, { preserveSecurityOperation: true });
       this.host.phase = "protecting";
       this.host.render();
       engine = await loadKinEngine();
