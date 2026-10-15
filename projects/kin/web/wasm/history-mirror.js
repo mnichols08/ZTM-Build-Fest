@@ -92,7 +92,7 @@ export class HistoryMirror {
       this.reset();
       this.appendView(view, 0);
     } else if (view.length < this.length) {
-      this.truncate(view.length);
+      if (!this.truncate(view.length)) this.appendView(view, 0);
     } else if (view.length > this.length) {
       this.appendView(view, this.length);
     }
@@ -133,10 +133,11 @@ export class HistoryMirror {
 
   truncate(length) {
     if (this.exports.kin_history_truncate(length) !== 0) {
-      // Cannot happen while this mirror is accurate; start over next time.
+      // Cannot happen while this mirror is accurate; forget the reset history.
       this.reset();
-      return;
+      return false;
     }
     this.length = length;
+    return true;
   }
 }
