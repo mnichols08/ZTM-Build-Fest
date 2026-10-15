@@ -23,3 +23,15 @@ test("extreme and neutral seeds generate readable paired tokens", () => {
     }
   }
 });
+
+test("essential control boundaries meet non-text contrast in every palette", () => {
+  const seeds = [...APPEARANCE_PRESETS.map(({ seed }) => seed), "#000000", "#FFFFFF", "#808080", "#FF0000", "#00FF00", "#0000FF"];
+  for (const seed of seeds) {
+    for (const mode of ["light", "dark"]) {
+      const palette = paletteForSeed(seed, mode);
+      for (const adjacent of ["surface", "bg"]) {
+        assert.ok(contrastRatio(palette["line-strong"], palette[adjacent]) >= 3, `${seed} ${mode} control boundary on ${adjacent}`);
+      }
+    }
+  }
+});

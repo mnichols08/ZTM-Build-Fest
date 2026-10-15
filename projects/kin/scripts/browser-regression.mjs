@@ -1946,6 +1946,31 @@ try {
     custom:{saved:"#256A91",error:"false"},
   }, "appearance saves validate the active color source and clear stale hex errors");
   console.log("PASS appearance color-source validation");
+  assert.deepEqual(await first.evaluate(`(async()=>{
+    const app=document.querySelector('kin-app');
+    const original=structuredClone(app.currentAppearance);
+    const {contrastRatio}=await import('/appearance/palette.js');
+    const cases=[];
+    for(const [name,mode,seed,colorSource] of [
+      ['default light','light','#984D38','default'],
+      ['default dark','dark','#984D38','default'],
+      ['generated light','light','#16756F','custom'],
+    ]){
+      app.ctx.appearance.applyAppearance({version:2,owner:null,mode,colorSource,seed,manual:null,image:null});
+      const root=getComputedStyle(document.documentElement),control=getComputedStyle(app.compose.input);
+      const token=root.getPropertyValue('--line-strong').trim(),surface=root.getPropertyValue('--surface').trim(),bg=root.getPropertyValue('--bg').trim();
+      const probe=document.createElement('span');probe.style.color='var(--line-strong)';document.body.append(probe);
+      const expected=getComputedStyle(probe).color;probe.remove();
+      cases.push({name,boundaryMatches:control.borderTopColor===expected,surface:contrastRatio(token,surface)>=3,bg:contrastRatio(token,bg)>=3});
+    }
+    app.ctx.appearance.applyAppearance(original);
+    return cases;
+  })()`), [
+    {name:'default light',boundaryMatches:true,surface:true,bg:true},
+    {name:'default dark',boundaryMatches:true,surface:true,bg:true},
+    {name:'generated light',boundaryMatches:true,surface:true,bg:true},
+  ], "essential control boundaries keep 3:1 contrast across default and generated palettes");
+  console.log("PASS essential control-boundary contrast");
   assert.deepEqual(await first.evaluate(`(()=>{
     const app=document.querySelector('kin-app');
     app.ctx.appearance.clearAppliedAppearance();
