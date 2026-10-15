@@ -57,7 +57,10 @@ Rust core is organised as follows:
 - `state_encode.rs` and `sections.rs`: the KINS projection and its section
   revisions.
 - `command.rs`, `codec.rs`, `archive.rs`, `abi.rs`: commands, canonical
-  encoding, archives and the manual ABI.
+  encoding, archives (KARC framing and the import plan of the held history)
+  and the manual ABI. The archive's segment format and encryption are the
+  browser's: `web/security/archive-stream.js`, used by
+  `web/security/archive.js`.
 
 ## Module responsibilities (v0.1.0)
 

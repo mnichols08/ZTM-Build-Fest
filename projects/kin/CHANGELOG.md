@@ -144,6 +144,27 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
   test hook. `<kin-security>` gets its six operations from `shell.js` as
   `security.services` instead of calling methods on the element.
 
+### Slice 9 — Streaming archives
+
+- Exports are package format 3: the same contents, sealed as segments inside
+  the KARC v1 container (the context, one per attachment record, then 256
+  events per segment) under one HKDF-derived key per archive, with each
+  segment's index and finality authenticated. Package format 2 archives from
+  v0.47 still restore. Canonical records are bytes, not base64 text, so an
+  archive is about 30% smaller.
+- Export reads the history from the session arena instead of decrypting the
+  store again, and writes the archive into one buffer of its final size.
+  Restore opens segments one at a time into one event arena and protects
+  rows 256 events at a time; the single atomic write is unchanged.
+- `kin_plan_import` replays the engine's held history (the mirror sends it in
+  batches of about 4 MiB) and archive checks decode only the plan's
+  attachment bindings.
+- Export, check and restore report progress; the security panel shows a
+  labelled progress bar.
+- At 10,000 events with 4 KB of text: export 0.2 s (was 20 s) with +151 MB of
+  private memory (was +955 MB); restore 15 s (was 26 s) with +166–219 MB
+  (was +525 MB).
+
 ## Unreleased — v0.47.0 — Household Identity & Shared Appearance
 
 - Record the household founder as durable owner for new households while leaving legacy ownership unresolved and fail-closed.

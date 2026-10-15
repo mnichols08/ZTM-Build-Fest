@@ -28,6 +28,16 @@
   checks that the bridge fails closed on every truncation of a golden
   projection, on trailing bytes, on invalid header fields and on a section
   table that does not cover the body.
+- **Streaming archives (Slice 9).** `web/security/archive-stream.test.mjs`
+  round-trips histories of 0, 1, 256, 257 and 517 events exactly and refuses
+  a changed byte in any segment, a dropped, repeated or swapped segment,
+  wrong counts and a too-short length; the archive key must depend on the
+  root, salt and metadata. `archive.rs` checks that the held-history import
+  plan equals the whole-request plan for every golden fixture.
+  `security-ui-regression.mjs` opens a package-format-3 export, checks that a
+  package-format-2 export from v0.47 still validates, and tampers with the
+  manifest. `history-mirror.test.mjs` checks that a whole history goes to the
+  engine in bounded batches.
 - **Test hook (Slice 8).** Browser scripts reach the application through
   `document.querySelector("kin-app").ctx`, the controller context
   (COMPONENTS.md). There are no element methods for tests to call or replace;
@@ -567,7 +577,11 @@ a Rust/WASM product-version bump.
 
 The storage runner includes legacy-key migration checks. Optional `--performance`
 and `--maximum-payload` measure 10,000-event migration/unlock and encrypted archive
-round trips. The WebAuthn runner uses a CDP virtual authenticator supporting PRF,
+round trips. Since Slice 9 each archive phase (export, restore) reports its
+time and the renderers' peak working set and private bytes inside it, next to
+the level before it; the timing run exposes `gc` and collects before each
+phase, and the round trip compares per-record digests so no fixture copy stays
+alive. The WebAuthn runner uses a CDP virtual authenticator supporting PRF,
 real browser ceremonies and the real server verifier; it is not physical hardware
 or cross-platform certification. Preserve prior feature suites when changing
 startup/draft expectations: security must not weaken domain, rollback or a11y checks.

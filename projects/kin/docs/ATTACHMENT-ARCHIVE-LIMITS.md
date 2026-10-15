@@ -29,3 +29,9 @@ Package format v2 adds bounded event and attachment counts/byte totals to the
 authenticated encrypted manifest. It retains KARC v1 framing and the same full
 archive limit. Attachment ciphertext and its existing SHA-256 digest remain
 inside the authenticated payload; a digest mismatch rejects the whole package.
+
+Package format 3 (refactor Slice 9) keeps these limits and the KARC v1
+container, and seals the contents as segments: the context, one per
+attachment record, then 256 events per segment. One segment may not exceed
+32 MiB. Canonical event records are stored as bytes rather than base64 text,
+so the same household makes an archive about 30% smaller.

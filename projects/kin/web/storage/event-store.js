@@ -166,23 +166,53 @@ export class EventStore {
     finally { database.close(); }
   }
 
-  static async validateArchiveSnapshot({ snapshot, engine, vault }) {
+  /**
+   * Validates archive parts (see archivePartsFromSnapshot) against `vault`,
+   * which must open their local attachment data, and returns their counts.
+   */
+  static async validateArchiveParts({ parts, engine, vault, bindings = null }) {
     vault.assertUnlocked();
-    const plan = validateArchiveSnapshot(snapshot, engine);
+    // `bindings` from an earlier check of the same history and context
+    // (validateArchiveParts' result) saves a second replay; every other
+    // check still runs.
+    bindings = validateArchiveParts(parts, engine, bindings);
     await validateAttachmentArchivePayloads(
-      snapshot.attachments ?? [],
-      plan.state.attachments ?? [],
+      parts.attachments,
+      bindings,
       (id, sealed) => vault.open(sealed, { store: "attachment-file", id }),
     );
     vault.assertUnlocked();
     return {
-      eventCount: snapshot.events.length,
-      attachmentCount: snapshot.attachments?.length ?? 0,
-      attachmentBytes: (snapshot.attachments ?? []).reduce(
+      bindings,
+      eventCount: parts.history.length,
+      attachmentCount: parts.attachments.length,
+      attachmentBytes: parts.attachments.reduce(
         (total, row) => total + (row.ciphertext?.byteLength ?? 0),
         0,
       ),
     };
+  }
+
+  /**
+   * An empty history for an archive being read, and `append(sequences,
+   * records)`, which checks one chunk of it (local order, the event limit,
+   * Rust-derived metadata) and copies it in. The caller wipes `arena`.
+   */
+  static archiveHistory(engine) {
+    const arena = new EventArena();
+    arena.reset(null);
+    return {
+      arena,
+      append: (sequences, records) => appendRecords(arena, sequences, records, engine),
+      // Room for `records` records of at most `bytes` bytes in all, so the
+      // arena is allocated once instead of doubling past its size.
+      reserve: (records, bytes) => arena.reserve(Math.min(records, MAX_EVENT_COUNT), Math.min(bytes, 64 * 1024 * 1024)),
+    };
+  }
+
+  /** Archive parts from the historical snapshot shape (package format 2). */
+  static archivePartsFromSnapshot(snapshot, engine) {
+    return archivePartsFromSnapshot(snapshot, engine, { owned: true });
   }
 
   static async prepareSecurity(manifest) {
@@ -487,35 +517,69 @@ export class EventStore {
     return transactionResult(transaction, (finish) => { request.onsuccess = () => { if (request.result) store.delete(attachmentId); finish(Boolean(request.result)); }; request.onerror = () => abortWith(transaction, storageError(request.error)); });
   }
 
-  async snapshotForArchive({ portableMembership } = {}) {
-    const snapshot = await snapshotStores(this.database, [EVENT_STORE, CONTEXT_STORE, "attachment_records"]);
-    const archive = { formatVersion: 2, events: snapshot.events, local_context: snapshot.local_context, attachments: snapshot.attachment_records };
-    if (portableMembership !== undefined) {
-      validatePortableMembership(portableMembership);
-      archive.local_context[0].portable_membership = structuredClone(portableMembership);
-    }
-    const plan = validateArchiveSnapshot(archive, this.engine);
-    await validateAttachmentArchivePayloads(archive.attachments, plan.state.attachments ?? [], (id, sealed) => this.openAttachmentData(id, sealed));
-    return archive;
+  /**
+   * What an export holds, read in one transaction: the context and
+   * attachment records, and the history as a view of the session arena
+   * (`history`), so nothing is decrypted a second time. The view stays valid
+   * while the arena is only appended to; a rebuild (another tab's restore or
+   * rotation) makes it throw StaleHistoryError.
+   */
+  async readArchiveParts() {
+    const transaction = this.database.transaction([EVENT_STORE, CONTEXT_STORE, "attachment_records"], "readonly");
+    const history = historyRequest(this, transaction);
+    const contexts = transaction.objectStore(CONTEXT_STORE).getAll();
+    const attachments = transaction.objectStore("attachment_records").getAll();
+    return transactionResult(transaction, (finish) => {
+      let waiting = 3;
+      const ready = () => {
+        if (--waiting) return;
+        finish({ formatVersion: 2, history: history.result, local_context: contexts.result, attachments: attachments.result });
+      };
+      history.onsuccess = ready;
+      contexts.onsuccess = ready;
+      attachments.onsuccess = ready;
+    });
   }
 
-  async containsSameHouseholdArchive(snapshot, { engine, vault }) {
+  /**
+   * The household's archive parts, validated for export. A given
+   * `portableMembership` (the server's membership directory) replaces the
+   * context's membership snapshot.
+   */
+  async archiveParts({ portableMembership } = {}) {
+    const parts = await this.readArchiveParts();
+    if (portableMembership !== undefined) {
+      validatePortableMembership(portableMembership);
+      parts.local_context[0].portable_membership = structuredClone(portableMembership);
+    }
+    const bindings = validateArchiveParts(parts, this.engine);
+    await validateAttachmentArchivePayloads(parts.attachments, bindings, (id, sealed) => this.openAttachmentData(id, sealed));
+    return parts;
+  }
+
+  /** archiveParts() in the historical row shape, for tests and diagnostics. */
+  async snapshotForArchive(options) {
+    const parts = await this.archiveParts(options);
+    return { formatVersion: 2, events: parts.history.rows(), local_context: parts.local_context, attachments: parts.attachments };
+  }
+
+  async containsSameHouseholdArchive(parts, { engine, vault }) {
     vault.assertUnlocked();
     this.engine = engine;
-    const incomingContext = snapshot?.local_context?.[0];
-    const current = await this.snapshotForArchive();
+    const incomingContext = parts?.local_context?.[0];
+    const current = await this.readArchiveParts();
     const currentContext = current.local_context?.[0];
     const incomingHousehold = incomingContext?.sync_household_id ?? incomingContext?.household_id;
     const currentHousehold = currentContext?.sync_household_id ?? currentContext?.household_id;
     if (!incomingHousehold || !currentHousehold || !bytesEqual(incomingHousehold, currentHousehold))
       return false;
-    const currentEvents = new Map(current.events.map((row) => [idToHex(row.event_id), row.encoded_event]));
-    for (const row of snapshot.events ?? []) {
-      const existing = currentEvents.get(idToHex(row.event_id));
-      if (!existing || !bytesEqual(existing, row.encoded_event)) return false;
+    const incoming = parts.history, held = current.history;
+    for (let index = 0; index < incoming.length; index += 1) {
+      const at = held.indexOfEventId(incoming.id(index, "event_id"));
+      if (at < 0 || !bytesEqual(held.record(at), incoming.record(index))) return false;
     }
     const currentAttachments = new Map((current.attachments ?? []).map((row) => [row.attachment_id, row]));
-    for (const row of snapshot.attachments ?? []) {
+    for (const row of parts.attachments ?? []) {
       const existing = currentAttachments.get(row.attachment_id);
       if (!existing) return false;
       if (row.ciphertext || existing.ciphertext) {
@@ -539,14 +603,30 @@ export class EventStore {
     return true;
   }
 
+  /** Restores an empty household from a snapshot in the historical row
+   * shape (tests and fixtures); see restoreArchive. */
   static async restoreEmpty({ vault, engine, snapshot, manifest, ownedSnapshot = false }) {
     vault.assertUnlocked();
-    // Authenticated archive decoding can transfer its private result to this
-    // operation. Public callers retain defensive cloning against later mutation.
-    const source = ownedSnapshot ? snapshot : structuredClone(snapshot);
-    let plan = validateArchiveSnapshot(source, engine);
-    await validateAttachmentArchivePayloads(source.attachments ?? [], plan.state.attachments ?? [], (id, sealed) => vault.open(sealed, { store: "attachment-file", id }));
-    const context = source.local_context[0];
+    // The history is copied into a new arena either way; the context and
+    // attachment rows are cloned unless the caller hands them over.
+    const parts = archivePartsFromSnapshot(snapshot, engine, { owned: ownedSnapshot });
+    try { return await EventStore.restoreArchive({ vault, engine, parts, manifest }); }
+    finally { parts.arena.wipe(); }
+  }
+
+  /**
+   * Replaces an empty household with archive parts, which this takes over
+   * (the context row is rewritten). Every row is protected before one native
+   * transaction checks that the household is still empty and writes them, so
+   * a failure changes nothing. The history is protected 256 events at a time
+   * from its arena; `onProgress({ done, total })` reports events protected.
+   */
+  static async restoreArchive({ vault, engine, parts, manifest, bindings = null, onProgress }) {
+    vault.assertUnlocked();
+    // Staged parts pass the bindings their check found (see
+    // validateArchiveParts); the rewritten context below is replayed again.
+    await validateAttachmentArchivePayloads(parts.attachments, validateArchiveParts(parts, engine, bindings), (id, sealed) => vault.open(sealed, { store: "attachment-file", id }));
+    const context = parts.local_context[0];
     // An archive contains history, not device authorization. New local actions
     // use fresh anonymous IDs while the historical replay household stays stable.
     const householdId = randomId(), actorId = randomId(), deviceId = randomId();
@@ -557,10 +637,23 @@ export class EventStore {
       sync_identity_bindings: [...(context.sync_identity_bindings ?? [])],
       archive_imported: true,
     });
-    plan = validateArchiveSnapshot(source, engine);
-    await validateAttachmentArchivePayloads(source.attachments ?? [], plan.state.attachments ?? [], (id, sealed) => vault.open(sealed, { store: "attachment-file", id }));
-    const rows = { events: source.events, local_context: source.local_context, attachment_records: source.attachments ?? [] };
-    const protectedRows = await protectRows(vault, EVENT_STORE_DEFINITIONS, rows, { check: () => EventStore.checkSecurityEpoch(vault) });
+    await validateAttachmentArchivePayloads(parts.attachments, validateArchiveParts(parts, engine), (id, sealed) => vault.open(sealed, { store: "attachment-file", id }));
+    const check = () => EventStore.checkSecurityEpoch(vault);
+    const history = parts.history;
+    const events = [];
+    for (let from = 0; from < history.length; from += ARCHIVE_CHUNK_EVENTS) {
+      const to = Math.min(from + ARCHIVE_CHUNK_EVENTS, history.length);
+      const rows = [];
+      for (let index = from; index < to; index += 1) rows.push(history.row(index));
+      try { events.push(...(await protectRows(vault, EVENT_STORE_DEFINITIONS, { events: rows }, { check })).events); }
+      finally { zeroRows(rows); }
+      onProgress?.({ done: to, total: history.length });
+    }
+    const protectedRows = {
+      events,
+      ...await protectRows(vault, EVENT_STORE_DEFINITIONS,
+        { local_context: parts.local_context, attachment_records: parts.attachments }, { check }),
+    };
     const database = await openEventDatabase();
     try {
       const names = [...Object.keys(EVENT_STORE_DEFINITIONS), SECURITY_STORE];
@@ -587,7 +680,7 @@ export class EventStore {
               for (const record of records) store.put(record);
             }
             bumpEventGeneration(transaction);
-            finish({ eventCount: source.events.length, localOnly: true });
+            finish({ eventCount: history.length, localOnly: true });
           } catch (error) { abortWith(transaction, error); }
         };
         for (const name of names) {
@@ -2640,40 +2733,88 @@ function validateRotationRows(rows, engine) {
   } finally { arena.wipe(); }
 }
 
-function validateArchiveSnapshot(snapshot, engine) {
-  const onlyFields = (value, names) => value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).every((key) => names.includes(key));
+const onlyFields = (value, names) => value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).every((key) => names.includes(key));
+// Archive histories are read, protected and written this many events at a
+// time (security/archive-stream.js CHUNK_EVENTS).
+const ARCHIVE_CHUNK_EVENTS = 256;
+
+/**
+ * Archive parts from the historical snapshot shape ({ formatVersion, events,
+ * local_context, attachments }): package-format-2 archives and test fixtures.
+ * The event rows are checked like stored rows and copied into a new arena,
+ * which the caller wipes (`parts.arena`). Context and attachment rows are
+ * cloned unless `owned`.
+ */
+function archivePartsFromSnapshot(snapshot, engine, { owned = false } = {}) {
   if (!engine || !onlyFields(snapshot, ["formatVersion", "events", "local_context", "attachments"]) || snapshot.formatVersion !== 2 || !Array.isArray(snapshot.attachments) ||
-      !Array.isArray(snapshot.local_context) || snapshot.local_context.length !== 1)
+      !Array.isArray(snapshot.local_context) || snapshot.local_context.length !== 1 || !Array.isArray(snapshot.events))
     throw new EventStoreError("Kin could not validate this archive's household records.");
-  const rows = validateEventRows(snapshot.events);
-  const attachments = validateAttachmentRows(snapshot.attachments ?? []);
   const eventFields = ["local_sequence", "event_id", "household_id", "actor_id", "device_id", "timestamp", "logical_time", "kind", "event_version", "encoded_event"];
-  if (rows.some((row) => !onlyFields(row, eventFields)) || rows.reduce((size, row) => size + asBytes(row.encoded_event).byteLength, 0) > 64 * 1024 * 1024)
+  if (snapshot.events.some((row) => !onlyFields(row, eventFields)))
     throw new EventStoreError("Kin found unsupported archive event fields or size.");
-  const context = snapshot.local_context[0];
+  const arena = new EventArena();
+  arena.reset(null);
+  try { appendRows(arena, snapshot.events, engine); }
+  catch (error) { arena.wipe(); throw error; }
+  return {
+    formatVersion: 2, history: arena.view(), arena,
+    local_context: owned ? snapshot.local_context : structuredClone(snapshot.local_context),
+    attachments: owned ? snapshot.attachments : structuredClone(snapshot.attachments),
+  };
+}
+
+/** Appends one checked chunk of archive records (local sequences and
+ * canonical bytes) to `arena`; see EventStore.archiveHistory. */
+function appendRecords(arena, sequences, records, engine) {
+  if (records.length !== sequences.length || arena.length + records.length > MAX_EVENT_COUNT) throw invalidEventHistory();
+  let previous = arena.tail;
+  for (const sequence of sequences) {
+    if (!Number.isSafeInteger(sequence) || sequence <= previous)
+      throw new EventStoreError("Kin found an invalid local event order. The stored data was preserved.");
+    previous = sequence;
+  }
+  const metadata = engine.eventMetadataBatch(records);
+  records.forEach((record, index) => arena.append(sequences[index], record, metadata[index]));
+}
+
+/**
+ * Checks archive parts ({ formatVersion: 2, history, local_context,
+ * attachments }, plus `arena` when they own one) and returns the attachment
+ * bindings of Rust's import plan. The history is a HistoryView whose records
+ * were checked when they entered its arena; the plan replays it from the
+ * engine's own history. Given `bindings` from an earlier check of the same
+ * history and context, the replay is skipped and the other checks run.
+ */
+function validateArchiveParts(parts, engine, bindings = null) {
+  if (!engine || !onlyFields(parts, ["formatVersion", "history", "local_context", "attachments", "arena"]) || parts.formatVersion !== 2 ||
+      typeof parts.history?.copyRecordsTo !== "function" || !Array.isArray(parts.attachments) ||
+      !Array.isArray(parts.local_context) || parts.local_context.length !== 1)
+    throw new EventStoreError("Kin could not validate this archive's household records.");
+  const view = parts.history;
+  const attachments = validateAttachmentRows(parts.attachments);
+  if (view.length > MAX_EVENT_COUNT || view.byteLength > 64 * 1024 * 1024)
+    throw new EventStoreError("Kin found unsupported archive event fields or size.");
+  const context = parts.local_context[0];
   if (!onlyFields(context, ["key", "household_id", "actor_id", "device_id", "next_logical_time", "last_looked_event_id", "last_looked_local_sequence", "last_looked_at", "sync_household_id", "sync_member_id", "sync_device_id", "sync_identity_bindings", "archive_imported", "portable_membership"]))
     throw new EventStoreError("Kin found unsupported archive context fields.");
   if (context.portable_membership !== undefined) validatePortableMembership(context.portable_membership);
   if (context.archive_imported !== undefined && context.archive_imported !== true)
     throw new EventStoreError("Kin found an invalid archive restore marker.");
   validateContext(context);
-  const { arena, view } = historyFromRows(rows);
-  try {
-    validateCursorBoundary(context, view);
-  } finally { arena.wipe(); }
-  if (rows.some((row) => row.logical_time >= context.next_logical_time))
+  validateCursorBoundary(context, view);
+  if (view.length && view.maxLogicalTime() >= context.next_logical_time)
     throw new EventStoreError("The archive logical counter cannot safely continue its history.");
   const bindingFields = ["legacyHouseholdId", "legacyActorId", "legacyDeviceId", "householdId", "actorId", "deviceId"];
   if ((context.sync_identity_bindings ?? []).some((binding) => !onlyFields(binding, bindingFields) || Object.keys(binding).length !== bindingFields.length))
     throw new EventStoreError("Kin found unsupported archive identity bindings.");
   const { asOf, civilDate } = projectionContext();
-  const plan = engine.planImport(rows.map((row) => row.encoded_event), asOf,
-    context.last_looked_event_id === null ? null : idToHex(context.last_looked_event_id), civilDate, syncIdentityFromContext(context));
-  const bound = new Set((plan.state.attachments ?? []).map((attachment) => attachment.attachmentId));
+  bindings ??= engine.importBindings(view, asOf,
+    context.last_looked_event_id === null ? null : idToHex(context.last_looked_event_id), civilDate, syncIdentityFromContext(context)).attachments;
+  const bound = new Set(bindings.map((attachment) => attachment.attachmentId));
   if (attachments.some((attachment) => !bound.has(attachment.attachment_id))) throw new EventStoreError("Kin found attachment data without matching household history.");
   const included = new Set(attachments.map((attachment) => attachment.attachment_id));
-  if ((plan.state.attachments ?? []).some((attachment) => !attachment.removed && !included.has(attachment.attachmentId))) throw new EventStoreError("Kin cannot export this household yet because an attachment needs to be downloaded to this device.");
-  return plan;
+  if (bindings.some((attachment) => !attachment.removed && !included.has(attachment.attachmentId))) throw new EventStoreError("Kin cannot export this household yet because an attachment needs to be downloaded to this device.");
+  return bindings;
 }
 
 export function validatePortableMembership(members) {

@@ -58,7 +58,7 @@ lives in part classes in a folder named after the element:
 | Element | Parts |
 | --- | --- |
 | `<kin-household>` | `household/`: `api.js` (connection, requests, sync status), `auth.js` (passkey registration and login, WebAuthn helpers), `pairing.js`, `membership.js` (devices, members, invitations), `lifecycle.js` (deletion, leaving), `views.js` |
-| `<kin-security>` | `security/`: `views.js`, `protection.js` (setup, replacement, passkeys), `unlock.js`, `archive.js` |
+| `<kin-security>` | `security/`: `views.js`, `protection.js` (setup, replacement, passkeys), `unlock.js`, `archive.js` (export and restore, with a labelled `<progress>` bar under the status message while one runs) |
 | `<kin-today>` | `today/`: `sections.js` (the Today composition), `selection.js` (bulk selection), `focus.js` (keeping focus across re-renders) |
 | `<kin-item-detail>` | `item-detail/`: `sections.js` (checklist, files, planning, responsibility, Area, reminder, pin, archive) |
 | `<kin-notes>` | `notes/`: `notes.js` (the Note form and list), `references.js` (reference records and their maintenance log) |

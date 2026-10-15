@@ -132,8 +132,19 @@ Manifest format 2 and local-envelope v2 bind `root-version`, its decimal value,
 store and record identity in both HKDF info and AES-GCM AAD. Purpose labels remain
 the existing explicit local-storage/local-wrapper v1 strings; AAD's envelope
 version advances to 2. Root 1 retains the exact published manifest/envelope v1
-encoding. KARC framing and archive crypto remain v1; authenticated archive
+encoding. KARC framing remains v1; authenticated archive
 metadata includes the source manifest/root version.
+
+Package format 3 (refactor Slice 9) seals an archive as numbered segments
+under one key per archive: HKDF-SHA-256 from the root with purpose
+`kin/archive-stream/v1`, a fresh 256-bit salt and the authenticated archive
+metadata in the info, so a changed manifest derives a different key. Segment
+`i` uses AES-256-GCM with nonce `prefix:8 || i:u32` (a random prefix per
+archive; the key is already unique) and additional data naming the purpose,
+vault ID, `i` and whether it is the final segment. This is the STREAM
+construction: the reader marks only the last segment it finds as final, so
+truncation, reordering, repetition and splicing fail authentication. Package
+format 2 archives (one `kin/archive/v1` payload) are still opened.
 
 During staging, the candidate root may encrypt the source root for exact restart
 recovery. The reverse bridge never exists. The source bridge and old wrappers are

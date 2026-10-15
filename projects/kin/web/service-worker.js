@@ -15,7 +15,7 @@ const SHELL = [
   "/routes.js", "/today-view.js", "/reminder-time.js", "/capture-plan.js", "/keyboard-commands.js", "/bulk-actions.js", "/recurrence.js",
   "/attachments/attachment-crypto.js", "/attachments/attachment-lifecycle.js", "/attachments/attachment-preview.js", "/attachments/attachment-progress.js",
   "/storage/event-store.js", "/storage/event-arena.js", "/storage/encrypted-idb.js", "/storage/root-rotation.js",
-  "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js",
+  "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js", "/security/archive-stream.js",
   "/appearance/palette.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js",
   "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js",
   ...["app", "appearance", "household-defaults", "security", "household", "quick-add", "command-palette", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility", "bulk-bar", "playbook-editor", "routine-schedule"].map((name) => `/components/kin-${name}.js`),

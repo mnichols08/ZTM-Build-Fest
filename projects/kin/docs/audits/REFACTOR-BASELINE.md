@@ -298,3 +298,37 @@ repeated growth copies.
   projection and the DOM. This machine's run-to-run spread is wider than any
   difference between the builds (full render ranges over 1 s within one
   build), so they show neither a gain nor a regression.
+
+## Slice 9 — streaming archives
+
+`node scripts/security-storage-regression.mjs <edge> --performance-only
+--maximum-payload` (per-phase memory added in the Slice 9 prep commit).
+Memory is the renderers' growth inside the phase over the sample just before
+it, after a forced collection; the before figures are the prep commit
+(71ce7a0), the after figures two runs of Slice 9.
+
+| 10k × 4 KB | Before | After |
+| --- | ---: | ---: |
+| Export time | 20.0 s | 0.22 / 0.23 s |
+| Export, private bytes growth | +955 MB | +147 / +151 MB |
+| Export, working set growth | +790 MB | +147 / +132 MB |
+| Restore (check + write) time | 26.1 s | 15.0 / 14.6 s |
+| Restore, private bytes growth | +525 MB | +219 / +166 MB |
+| Restore, working set growth | +511 MB | +221 / +167 MB |
+| Archive size | 60.2 MB | 42.2 MB |
+
+- Gate (peak memory at least halved): export is at 16% of its old growth,
+  restore at 32–42%. Both round trips are exact (per-record SHA-256).
+- Export no longer decrypts the store or serializes the household as one
+  value: it reads the session arena and seals 256-event segments into one
+  buffer. Restore is now dominated by protecting each row for IndexedDB
+  (about 14 s of the 15); the rows must all be ready before the single atomic
+  write, so they are held until it.
+- At 10k short events the archive fell from 6.06 to 1.59 MB.
+
+`core-performance.mjs`, the prep commit and Slice 9 back to back (three
+pairs): the Node stages are unchanged (10k × 4 KB full replay 55.9 / 60.3
+ms, history load 29.3 / 30.0 ms, within run-to-run spread). The browser
+stages overlap between builds; 1k app unlock, which read 100–150 ms slower in
+two pairs, read 512 / 488 ms in the third. The mirror's 4 MiB batches only
+change how a whole history enters the engine.

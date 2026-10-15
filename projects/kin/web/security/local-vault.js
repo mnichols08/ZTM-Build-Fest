@@ -219,6 +219,24 @@ export class LocalVault {
     } finally { bytes.fill(0); }
   }
 
+  /**
+   * The AES-256-GCM key for one streaming archive (package format 3,
+   * security/archive-stream.js), derived from this root with HKDF under the
+   * purpose `kin/archive-stream/v1`. The archive's random 32-byte salt makes
+   * it a one-archive key; `metadata` (the authenticated archive metadata) is
+   * bound into the derivation, so a changed manifest opens nothing. The key
+   * is non-extractable and only encrypts or decrypts.
+   */
+  async archiveStreamKey(salt, metadata) {
+    this.assertUnlocked();
+    if (!(salt instanceof Uint8Array) || salt.length !== 32 || !(metadata instanceof Uint8Array))
+      throw new VaultError("The protected archive key context is invalid.");
+    const key = await deriveKey(this.root, salt, "kin/archive-stream/v1", this.vaultId,
+      ["archive", "3", toBase64Url(metadata)]);
+    this.assertUnlocked();
+    return key;
+  }
+
   async openArchive(envelope, metadata = new Uint8Array(), { ownedCiphertext = false } = {}) {
     this.assertUnlocked();
     // The archive adapter transfers its private copied ciphertext buffer. Other

@@ -22,7 +22,12 @@ export class SecurityArchive {
       portableMembership = portableMembershipFromDirectory((await response.json()).members);
     }
     this.host.assertCurrentOperation(operation);
-    const bytes = await exportHouseholdArchive({ store: app.store, engine: app.engine, vault: getActiveVault(), portableMembership });
+    this.host.message.textContent = "Preparing your Kin export…";
+    const progress = this.progress("Export progress");
+    let bytes;
+    try {
+      bytes = await exportHouseholdArchive({ store: app.store, engine: app.engine, vault: getActiveVault(), portableMembership, onProgress: progress.update });
+    } finally { progress.remove(); }
     this.host.assertCurrentOperation(operation);
     const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
     const link = document.createElement("a");
@@ -31,6 +36,21 @@ export class SecurityArchive {
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     this.host.message.textContent = "Kin export prepared. Keep it and its recovery key safe.";
+  }
+
+  // A progress bar after the status message while an archive operation runs.
+  // The archive functions report `{ done, total }` events about every 256.
+  progress(label) {
+    const bar = document.createElement("progress");
+    bar.className = "archive-progress";
+    bar.max = 1;
+    bar.value = 0;
+    bar.setAttribute("aria-label", label);
+    this.host.message.after(bar);
+    return {
+      update: ({ done, total }) => { bar.max = Math.max(total, 1); bar.value = done; },
+      remove: () => bar.remove(),
+    };
   }
 
   showRestore() {
@@ -58,7 +78,11 @@ export class SecurityArchive {
         this.host.message.textContent = "Checking your Kin export…";
         const bytes = new Uint8Array(await selected.arrayBuffer());
         this.host.assertCurrentOperation(operation);
-        const staged = await validateHouseholdArchive({ bytes, recoverySecret: secret, engine, vault });
+        const checking = this.progress("Export check progress");
+        let staged;
+        try {
+          staged = await validateHouseholdArchive({ bytes, recoverySecret: secret, engine, vault, onProgress: checking.update });
+        } finally { checking.remove(); }
         this.host.assertCurrentOperation(operation);
         this.host.restoreStage = staged.stage;
         form.remove();
@@ -72,7 +96,12 @@ export class SecurityArchive {
         cancel.type = "button";
         cancel.textContent = "Cancel";
         confirm.addEventListener("click", () => void this.host.run(async (confirmOperation) => {
-          const restored = await restoreValidatedHouseholdArchive({ stage: staged.stage, engine, vault, store: app.store });
+          this.host.message.textContent = "Restoring your household… Keep this tab open.";
+          const restoring = this.progress("Restore progress");
+          let restored;
+          try {
+            restored = await restoreValidatedHouseholdArchive({ stage: staged.stage, engine, vault, store: app.store, onProgress: restoring.update });
+          } finally { restoring.remove(); }
           this.host.restoreStage = null;
           this.host.assertCurrentOperation(confirmOperation);
           await this.host.services.refreshFromEvents();

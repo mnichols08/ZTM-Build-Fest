@@ -148,10 +148,21 @@ export class EventArena {
     return true;
   }
 
-  #reserve(records, bytes) {
+  /**
+   * Capacity for `records` records and exactly `bytes` record bytes, ahead
+   * of appends whose size is known (an archive's history), so the byte
+   * buffer is allocated once instead of doubling past what it needs. Record
+   * tables still grow to a power of two (the event ID table needs one).
+   */
+  reserve(records, bytes) {
+    this.#reserve(records, bytes, true);
+  }
+
+  #reserve(records, bytes, exact = false) {
     const recordCapacity = this.sequences.length;
     if (bytes > this.bytes.length) {
       let size = Math.max(this.bytes.length, INITIAL_BYTES);
+      if (exact) size = bytes;
       while (size < bytes) size *= 2;
       const next = new Uint8Array(size);
       next.set(this.bytes.subarray(0, this.used));
