@@ -1,26 +1,9 @@
-import { projectionContext } from "../browser-time.js";
-import { LocalReminders } from "../reminders.js";
-import { createCalendarExport } from "../calendar-export.js";
-import { attachmentFileProblem, captureAttachment, loadLocalAttachmentRows, openAttachment, removeAttachment } from "../attachments/attachment-lifecycle.js";
-import { clearAttachmentProgress, setAttachmentProgress } from "../attachments/attachment-progress.js";
-import { AttachmentPreviewCache, isImageAttachment } from "../attachments/attachment-preview.js";
-import { CLASSIFICATION_LABELS } from "./kin-compose.js";
-import { passkeyUnlockSupported } from "../security/passkey-unlock.js";
-import { listSegmentForClassification, PRIMARY_DESTINATIONS, resolveRoute, routeHash, SEGMENTS } from "../routes.js";
-import { formatCivilDate } from "../today-view.js";
-import { describePartialCapture, remainingCaptureSteps } from "../capture-plan.js";
-import { describeNextOccurrence, describeRecurringCapture, describeScheduleChanged, isCadence, planScheduleChange, remainingRecurringSteps, SCHEDULE_MESSAGES } from "../recurrence.js";
 import "./kin-routines.js";
 import "./kin-areas.js";
 import "./kin-notes.js";
-import { loadKinEngine, randomId } from "../wasm/kin-engine.js";
-import { EventStore } from "../storage/event-store.js";
-import { loadCachedHouseholdSettings, SyncCoordinator } from "../sync/sync-coordinator.js";
 import "./kin-compose.js";
 import "./kin-quick-add.js";
 import "./kin-command-palette.js";
-import { isTypingContext, shortcutForKey } from "../keyboard-commands.js";
-import { BULK_ACTIONS, describeBulkOutcome, planBulk, undoCommand, undoStatus } from "../bulk-actions.js";
 import "./kin-item.js";
 import "./kin-item-detail.js";
 import "./kin-today.js";
@@ -35,48 +18,33 @@ import "./kin-household.js";
 import "./kin-security.js";
 import "./kin-appearance.js";
 import "./kin-household-defaults.js";
+import { projectionContext } from "../browser-time.js";
+import { LocalReminders } from "../reminders.js";
+import { createCalendarExport } from "../calendar-export.js";
+import { attachmentFileProblem, captureAttachment, loadLocalAttachmentRows, openAttachment, removeAttachment } from "../attachments/attachment-lifecycle.js";
+import { clearAttachmentProgress, setAttachmentProgress } from "../attachments/attachment-progress.js";
+import { AttachmentPreviewCache, isImageAttachment } from "../attachments/attachment-preview.js";
+import { CLASSIFICATION_LABELS } from "./kin-compose.js";
+import { listSegmentForClassification, resolveRoute, routeHash } from "../routes.js";
+import { describePartialCapture, remainingCaptureSteps } from "../capture-plan.js";
+import { describeNextOccurrence, describeRecurringCapture, describeScheduleChanged, isCadence, planScheduleChange, remainingRecurringSteps, SCHEDULE_MESSAGES } from "../recurrence.js";
+import { loadKinEngine, randomId } from "../wasm/kin-engine.js";
+import { EventStore } from "../storage/event-store.js";
+import { loadCachedHouseholdSettings, SyncCoordinator } from "../sync/sync-coordinator.js";
+import { isTypingContext, shortcutForKey } from "../keyboard-commands.js";
+import { BULK_ACTIONS, describeBulkOutcome, planBulk, undoCommand, undoStatus } from "../bulk-actions.js";
 import { clearLegacyDrafts } from "./kin-security.js";
-import { LOCK_ICON, NAV_ICONS, SEARCH_ICON } from "./shared/icons.js";
 import { paletteCss, paletteForSeed } from "../appearance/palette.js";
 import { DEFAULT_APPEARANCE, loadAppearance, saveAppearance } from "../appearance/store.js";
 import { DEFAULT_HOUSEHOLD_NAME, resolveAppearance } from "../appearance/household.js";
-import {
-  getActiveVault,
-  setActiveVault,
-  VaultError,
-} from "../security/local-vault.js";
-
-const START_ERROR =
-  "Kin could not start its household engine or local storage. Your saved information was not intentionally deleted.";
-const SAVE_ERROR =
-  "Kin could not save that change locally. Your existing information was not intentionally deleted.";
-const ATTACHMENT_OPEN_ERROR =
-  "We couldn't open this attachment. Your existing household information hasn't been deleted.";
-const AUTO_LOCK_KEY = "kin.auto-lock-minutes";
-const INLINE_SAVE_FAILED = "Couldn't save. Your text is still here.";
-
-// Plain-language explanations for sync pauses. The code is kept on the state
-// object for debugging and tests; only the wording changes here.
-const SYNC_PAUSE_MESSAGES = {
-  device_not_trusted: "This device no longer has access to household updates. Everything already saved here stays on this device.",
-  membership_removed: "This device no longer has access to household updates. Everything already saved here stays on this device.",
-  authentication_required: "Sign in to your household again to keep syncing. Your changes are saved on this device until then.",
-  connection_unavailable: "Your changes are saved on this device and will sync when you're connected.",
-};
-
-function readAutoLockPreference() {
-  try {
-    const value = Number(localStorage.getItem(AUTO_LOCK_KEY));
-    return [0, 5, 15, 60].includes(value) ? value : 0;
-  } catch { return 0; }
-}
-
-const BULK_UNDO_WINDOW_MS = 10 * 60_000;
-const BULK_UNDO_UNVERIFIED = "Unable to verify the latest item state. No changes were undone. Try again.";
+import { getActiveVault, setActiveVault, VaultError } from "../security/local-vault.js";
+import { ATTACHMENT_OPEN_ERROR, AUTO_LOCK_KEY, BULK_UNDO_UNVERIFIED, BULK_UNDO_WINDOW_MS, INLINE_SAVE_FAILED, SAVE_ERROR, START_ERROR, SYNC_PAUSE_MESSAGES, readAutoLockPreference } from "./app/constants.js";
+import { createAppContext } from "./app/context.js";
 
 class KinApp extends HTMLElement {
   constructor() {
     super();
+    this.ctx = createAppContext(this);
     this.engine = null;
     this.store = null;
     this.attachmentRows = [];
@@ -119,8 +87,8 @@ class KinApp extends HTMLElement {
     this.pendingScheduleChange = null;
     this.householdStatus = null;
     this.passkeyPromptDismissed = false;
-    this.onHouseholdStatus = (event) => { this.householdStatus = event.detail; this.renderOnboarding(); this.updateSyncChip(); };
-    this.onSecurityChanged = () => this.renderOnboarding();
+    this.onHouseholdStatus = (event) => { this.householdStatus = event.detail; this.ctx.status.renderOnboarding(); this.updateSyncChip(); };
+    this.onSecurityChanged = () => this.ctx.status.renderOnboarding();
     this.autoLockMinutes = readAutoLockPreference();
     this.autoLockTimer = null;
     this.lastActivityAt = null;
@@ -310,7 +278,7 @@ class KinApp extends HTMLElement {
     this.updateRegistration = null;
     this.updateRequested = false;
     this.onServiceWorkerMessage = (event) => {
-      if (event.data?.type === "KIN_UPDATE_READY") this.showUpdateNotice();
+      if (event.data?.type === "KIN_UPDATE_READY") this.ctx.status.showUpdateNotice();
     };
     this.onControllerChange = () => {
       if (this.updateRequested) window.location.reload();
@@ -318,7 +286,6 @@ class KinApp extends HTMLElement {
     this.onBeforeInstallPrompt = (event) => { event.preventDefault(); this.deferredInstallPrompt = event; if (this.installButton) this.installButton.hidden = false; };
     this.onAppInstalled = () => { this.deferredInstallPrompt = null; if (this.installButton) this.installButton.hidden = true; };
   }
-
   connectedCallback() {
     window.addEventListener("beforeinstallprompt", this.onBeforeInstallPrompt);
     window.addEventListener("appinstalled", this.onAppInstalled);
@@ -328,11 +295,11 @@ class KinApp extends HTMLElement {
       const release = document.querySelector('meta[name="kin-version"]')?.content;
       void navigator.serviceWorker.register(`/service-worker.js?v=${encodeURIComponent(release ?? "")}`).then((registration) => {
         this.updateRegistration = registration;
-        if (registration.waiting && navigator.serviceWorker.controller) this.showUpdateNotice();
+        if (registration.waiting && navigator.serviceWorker.controller) this.ctx.status.showUpdateNotice();
         registration.addEventListener("updatefound", () => {
           const worker = registration.installing;
           worker?.addEventListener("statechange", () => {
-            if (worker.state === "installed" && navigator.serviceWorker.controller) this.showUpdateNotice();
+            if (worker.state === "installed" && navigator.serviceWorker.controller) this.ctx.status.showUpdateNotice();
           });
         });
       }).catch(() => {
@@ -340,7 +307,7 @@ class KinApp extends HTMLElement {
       });
     }
     if (!this.initialized) {
-      this.initializeElements();
+      this.ctx.shell.initializeElements();
       this.initialized = true;
     }
     this.addEventListener("kin:add-item", this.onAddItem);
@@ -442,7 +409,6 @@ class KinApp extends HTMLElement {
       this.initialize();
     }
   }
-
   async handleReplenishStaple(event) {
     const staple = this.state?.items.find(
       (item) =>
@@ -464,175 +430,6 @@ class KinApp extends HTMLElement {
       },
     });
   }
-
-  initializeElements() {
-    clearLegacyDrafts();
-    const header = document.createElement("header");
-    header.className = "site-header";
-    const brand = document.createElement("a");
-    brand.className = "brand";
-    brand.href = "#today";
-    brand.setAttribute("aria-label", "Kin — Today");
-    const mark = document.createElement("img");
-    mark.className = "brand-mark";
-    mark.src = "/icon.svg";
-    mark.alt = "";
-    const title = document.createElement("span");
-    title.textContent = "Kin";
-    title.className = "brand-name";
-    this.brandTitle = title;
-    brand.append(mark, title);
-    brand.addEventListener("click", this.onNavigationClick);
-    // Header tools exist only while unlocked: search entry, truthful sync
-    // state, and a lock action that is always one tap away.
-    const tools = document.createElement("div");
-    tools.className = "site-tools";
-    tools.hidden = true;
-    this.searchLink = document.createElement("a");
-    this.searchLink.className = "header-search";
-    this.searchLink.href = "#search";
-    this.searchLink.innerHTML = `${SEARCH_ICON}<span>Search</span>`;
-    this.searchLink.setAttribute("aria-label", "Search household");
-    this.searchLink.setAttribute("aria-keyshortcuts", "/");
-    this.searchLink.addEventListener("click", this.onNavigationClick);
-    this.syncChip = document.createElement("kin-sync-status");
-    this.quickAdd = document.createElement("kin-quick-add");
-    this.lockButton = document.createElement("button");
-    this.lockButton.type = "button";
-    this.lockButton.className = "header-lock";
-    this.lockButton.innerHTML = `${LOCK_ICON}<span>Lock</span>`;
-    this.lockButton.setAttribute("aria-label", "Lock Kin");
-    this.lockButton.addEventListener("click", () => this.lockHousehold());
-    tools.append(this.quickAdd, this.searchLink, this.syncChip, this.lockButton);
-    this.siteTools = tools;
-    header.append(brand, tools);
-    this.header = header;
-
-    this.appearanceBackground = document.createElement("img");
-    this.appearanceBackground.className = "personal-background";
-    this.appearanceBackground.alt = "";
-    this.appearanceBackground.setAttribute("aria-hidden", "true");
-
-    const shell = document.createElement("div");
-    shell.className = "application-shell";
-    this.shell = shell;
-
-    const nav = document.createElement("nav");
-    nav.className = "primary-nav";
-    nav.setAttribute("aria-label", "Main");
-    nav.hidden = true;
-    this.navLinks = new Map();
-    for (const { id, label } of PRIMARY_DESTINATIONS) {
-      const link = document.createElement("a");
-      link.className = "nav-link";
-      link.href = routeHash(id);
-      link.dataset.page = id;
-      link.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_ICONS[id]}</svg><span>${label}</span>`;
-      nav.append(link);
-      this.navLinks.set(id, link);
-    }
-    this.nav = nav;
-    nav.addEventListener("click", this.onNavigationClick);
-
-    const main = document.createElement("main");
-    main.id = "main";
-    main.tabIndex = -1;
-    main.setAttribute("aria-busy", "true");
-    main.hidden = true;
-    main.addEventListener("click", this.onNavigationClick);
-    this.main = main;
-    this.catchUp = document.createElement("kin-catch-up");
-    this.today = document.createElement("kin-today");
-    this.needs = document.createElement("kin-today");
-    this.shopping = document.createElement("kin-today");
-    this.staples = document.createElement("kin-today");
-    this.compose = document.createElement("kin-compose");
-    this.handoffs = document.createElement("kin-handoff-list");
-    this.talks = document.createElement("kin-talk-list");
-    this.search = document.createElement("kin-search");
-    this.pulse = document.createElement("kin-pulse");
-    this.routines = document.createElement("kin-routines");
-    this.areas = document.createElement("kin-areas");
-    this.detail = document.createElement("kin-item-detail");
-    this.buildViews(main);
-    shell.append(nav, main);
-
-    const feedback = document.createElement("div");
-    feedback.className = "app-feedback";
-    this.status = document.createElement("p");
-    this.status.className = "status-message";
-    this.status.setAttribute("role", "status");
-    this.status.setAttribute("aria-live", "polite");
-    this.alert = document.createElement("p");
-    this.alert.className = "error-message";
-    this.alert.setAttribute("role", "alert");
-    this.alert.hidden = true;
-    this.stateNotice = document.createElement("p");
-    this.stateNotice.className = "state-notice";
-    this.stateNotice.setAttribute("role", "status");
-    this.stateNotice.setAttribute("aria-live", "polite");
-    this.stateNotice.hidden = true;
-    main.prepend(this.stateNotice);
-    this.routeAnnouncement = document.createElement("p");
-    this.routeAnnouncement.className = "visually-hidden";
-    this.routeAnnouncement.setAttribute("role", "status");
-    this.routeAnnouncement.setAttribute("aria-live", "polite");
-    this.routeAnnouncement.setAttribute("aria-atomic", "true");
-    this.retryButton = document.createElement("button");
-    this.retryButton.type = "button";
-    this.retryButton.className = "retry-button";
-    this.retryButton.textContent = "Try again";
-    this.retryButton.hidden = true;
-    feedback.append(this.status, this.alert, this.retryButton);
-    this.feedback = feedback;
-
-    this.security = document.createElement("kin-security");
-    this.security.onUnlocked = (vault) => this.openUnlockedHousehold(vault);
-    this.security.onLockRequested = () => this.lockHousehold();
-    this.replaceChildren(this.appearanceBackground, header, this.security, shell, feedback, this.routeAnnouncement);
-    this.updateNotice = document.createElement("section");
-    this.updateNotice.className = "update-notice";
-    this.updateNotice.setAttribute("aria-label", "Application update");
-    this.updateNotice.setAttribute("role", "status");
-    const updateMessage = document.createElement("span");
-    updateMessage.textContent = "A new Kin version is ready.";
-    const updateNow = document.createElement("button");
-    updateNow.type = "button";
-    updateNow.textContent = "Update now";
-    updateNow.addEventListener("click", () => {
-      const focusedEditor = document.activeElement?.matches?.("input, textarea, select, [contenteditable='true']");
-      const hasDraft = this.compose?.input?.value.trim() || this.routines?.hasDraft || this.detail?.hasDraft || this.notes?.editor?.title.trim() || this.notes?.editor?.body.trim() ||
-        [this.needs, this.shopping, this.staples].some((list) => list.composer?.input?.value.trim());
-      if (this.busy || focusedEditor || hasDraft) {
-        this.setStatus("Finish or save your current edit before updating Kin.");
-        return;
-      }
-      this.updateRequested = true;
-      this.updateRegistration?.waiting?.postMessage({ type: "KIN_SKIP_WAITING" });
-    });
-    const updateLater = document.createElement("button");
-    updateLater.type = "button";
-    updateLater.textContent = "Later";
-    updateLater.addEventListener("click", () => { this.updateNotice.hidden = true; });
-    this.updateNotice.append(updateMessage, updateNow, updateLater);
-    this.updateNotice.hidden = true;
-    this.prepend(this.updateNotice);
-    this.retryButton.addEventListener("click", () => this.retryAction?.());
-    this.viewer = this.buildAttachmentViewer();
-    this.append(this.viewer);
-    this.detailSheet = this.buildDetailSheet();
-    this.append(this.detailSheet);
-    this.commandPalette = document.createElement("kin-command-palette");
-    this.commandPalette.onCommand = (id, { opener }) => {
-      if (this.commandGeneration === this.securityGeneration) this.runWorkspaceCommand(id, { opener });
-    };
-    this.commandPalette.onDismiss = ({ opener }) => this.restoreCommandFocus(opener);
-    this.append(this.commandPalette);
-    this.attachmentInput = this.buildAttachmentInput();
-    this.append(this.attachmentInput);
-    this.showPageFromLocation();
-  }
-
   buildAttachmentInput() {
     const input = document.createElement("input");
     input.type = "file";
@@ -645,19 +442,17 @@ class KinApp extends HTMLElement {
     input.addEventListener("cancel", () => { this.attachmentTarget = null; });
     return input;
   }
-
   // Runs synchronously inside the tap on an Add photo button, which is what
   // lets the browser open its native picker.
   handlePickAttachment(event) {
     const { parentKind, parentId, label } = event.detail ?? {};
     if (!parentKind || !parentId || !this.attachmentInput) return;
-    if (!this.vault || this.vault.locked || !this.store) { this.showAlert("Unlock Kin before attaching a file."); return; }
+    if (!this.vault || this.vault.locked || !this.store) { this.ctx.status.showAlert("Unlock Kin before attaching a file."); return; }
     this.clearAlert();
     this.attachmentTarget = { parentKind, parentId, label: label ?? "" };
     this.attachmentInput.value = "";
     this.attachmentInput.click();
   }
-
   handleAttachmentChosen() {
     const target = this.attachmentTarget;
     this.attachmentTarget = null;
@@ -666,11 +461,6 @@ class KinApp extends HTMLElement {
     if (!target || !file) return;
     void this.saveChosenAttachment(file, target);
   }
-
-  showUpdateNotice() {
-    if (this.updateNotice) this.updateNotice.hidden = false;
-  }
-
   buildAttachmentViewer() {
     const dialog = document.createElement("dialog");
     dialog.className = "attachment-viewer";
@@ -708,7 +498,6 @@ class KinApp extends HTMLElement {
     dialog.viewerImage = image;
     return dialog;
   }
-
   // The mobile presentation of item details: a full-height modal sheet that
   // hosts the same <kin-item-detail> element the other layouts use.
   buildDetailSheet() {
@@ -724,7 +513,6 @@ class KinApp extends HTMLElement {
     dialog.addEventListener("cancel", (event) => { event.preventDefault(); if (!this.rehomingDetail) this.closeItemDetail({ restoreFocus: true }); });
     return dialog;
   }
-
   releaseViewer() {
     if (this.viewerUrl) URL.revokeObjectURL(this.viewerUrl);
     this.viewerUrl = null;
@@ -746,97 +534,15 @@ class KinApp extends HTMLElement {
     const next = matches(this.detail) ?? matches(this);
     next?.focus();
   }
-
   closeViewer() {
     if (this.viewer?.open) this.viewer.close();
     else this.releaseViewer();
   }
-
-  // The onboarding card on Today explains the next step until the device has a
-  // household and a passkey; every action it offers is the ordinary flow.
-  renderOnboarding() {
-    const card = this.onboarding;
-    if (!card || !this.vault || this.vault.locked) return;
-    card.replaceChildren();
-    const status = this.householdStatus;
-    const passkeys = this.security?.passkeyWrappers?.length ?? 0;
-    const heading = document.createElement("h2");
-    const goTo = (intent) => {
-      this.navigate("#household/people");
-      this.household?.startIntent?.(intent);
-    };
-    if (status && !status.identity && !status.claimState && status.lifecycle !== "deleted" && status.lifecycle !== "deletion_pending") {
-      heading.textContent = "Get started";
-      const intro = document.createElement("p");
-      intro.textContent = "This device is protected. Next, connect it to your household so it can sync with other people and devices.";
-      const choices = document.createElement("div");
-      choices.className = "household-choices";
-      for (const [label, intent, className] of [
-        ["Create a household", "create", "primary-action"],
-        ["Join an existing household", "join", ""],
-        ["Add this device to my existing membership", "device", ""],
-      ]) {
-        const button = document.createElement("button");
-        button.type = "button";
-        button.textContent = label;
-        if (className) button.className = className;
-        button.addEventListener("click", () => goTo(intent));
-        choices.append(button);
-      }
-      const note = document.createElement("p");
-      note.className = "section-hint";
-      note.textContent = "You can keep using Kin on this device meanwhile; everything stays encrypted here.";
-      card.append(heading, intro, choices, note);
-      card.hidden = false;
-      return;
-    }
-    if (status?.claimState === "Claimed" || status?.claimState === "Confirmed") {
-      heading.textContent = status.claimState === "Confirmed" ? "Almost there" : "Waiting for approval";
-      const intro = document.createElement("p");
-      intro.textContent = status.claimState === "Confirmed"
-        ? "Your device was approved. Open Household → People & devices to compare the device key and finish activating this device."
-        : "This device needs approval from an existing household member. Keep Kin open on both devices and compare the device keys together.";
-      const open = document.createElement("button");
-      open.type = "button";
-      open.textContent = "Open People & devices";
-      open.addEventListener("click", () => { this.navigate("#household/people"); this.household?.scrollIntoView?.({ block: "start" }); });
-      card.append(heading, intro, open);
-      card.hidden = false;
-      return;
-    }
-    if (status?.identity && passkeys === 0 && passkeyUnlockSupported() && !this.passkeyPromptDismissed) {
-      heading.textContent = "Unlock faster next time";
-      const intro = document.createElement("p");
-      intro.textContent = "Turn on passkey unlock so your face, fingerprint, or screen lock opens Kin on this device. Your recovery key stays as a backup.";
-      const turnOn = document.createElement("button");
-      turnOn.type = "button";
-      turnOn.className = "primary-action";
-      turnOn.textContent = "Turn on passkey unlock";
-      turnOn.addEventListener("click", async () => {
-        turnOn.disabled = true;
-        try {
-          await this.security.run(() => this.security.addPasskey());
-          if (this.security.alert.textContent) this.showAlert(this.security.alert.textContent);
-          else this.setStatus("Passkey unlock is on for this device.");
-        } finally { this.renderOnboarding(); }
-      });
-      const later = document.createElement("button");
-      later.type = "button";
-      later.textContent = "Not now";
-      later.addEventListener("click", () => { this.passkeyPromptDismissed = true; this.renderOnboarding(); });
-      card.append(heading, intro, turnOn, later);
-      card.hidden = false;
-      return;
-    }
-    card.hidden = true;
-  }
-
   setAutoLockMinutes(minutes) {
     this.autoLockMinutes = [0, 5, 15, 60].includes(minutes) ? minutes : 0;
     try { localStorage.setItem(AUTO_LOCK_KEY, String(this.autoLockMinutes)); } catch { /* Preference only; lock-on-close still applies. */ }
     this.scheduleAutoLock();
   }
-
   scheduleAutoLock() {
     clearTimeout(this.autoLockTimer);
     this.autoLockTimer = null;
@@ -854,7 +560,6 @@ class KinApp extends HTMLElement {
       this.setStatus("Kin locked after inactivity. Unlock to continue.");
     }, this.autoLockMinutes * 60_000);
   }
-
   // Synchronous on purpose: a peek must return the cached entry itself, not a
   // promise, so tiles can paint immediately after a re-render.
   provideAttachmentPreview(record, { peek = false } = {}) {
@@ -862,7 +567,6 @@ class KinApp extends HTMLElement {
     if (peek) return this.attachmentPreviews.peek(record.attachmentId);
     return this.attachmentPreviews.get(record);
   }
-
   async loadAttachmentForView(detail, session) {
     const binding = this.state?.attachments?.find((item) => item.attachmentId === detail.attachmentId && !item.removed);
     if (!binding || binding.parentKind !== detail.parentKind || binding.parentId !== detail.parentId) throw new Error(ATTACHMENT_OPEN_ERROR);
@@ -871,9 +575,8 @@ class KinApp extends HTMLElement {
     this.assertCurrentSession(session);
     return opened;
   }
-
   async handleViewAttachment(event) {
-    if (!this.store || !this.viewer) { this.showAlert(ATTACHMENT_OPEN_ERROR); return; }
+    if (!this.store || !this.viewer) { this.ctx.status.showAlert(ATTACHMENT_OPEN_ERROR); return; }
     const session = this.captureSession();
     const detail = event.detail;
     try {
@@ -891,256 +594,14 @@ class KinApp extends HTMLElement {
       this.viewer.showModal();
       this.viewer.querySelector(".attachment-viewer-close")?.focus();
     } catch (error) {
-      if (error.code !== "locked" && this.isCurrentSession(session)) this.showAlert(ATTACHMENT_OPEN_ERROR);
+      if (error.code !== "locked" && this.isCurrentSession(session)) this.ctx.status.showAlert(ATTACHMENT_OPEN_ERROR);
     }
   }
-
-  buildViews(main) {
-    const page = (id, title, description = null) => {
-      const section = document.createElement("section");
-      section.className = "app-view";
-      section.id = id;
-      section.dataset.page = id;
-      section.setAttribute("aria-labelledby", `${id}-title`);
-      const intro = document.createElement("header");
-      intro.className = "page-intro";
-      const heading = document.createElement("h1");
-      heading.id = `${id}-title`;
-      heading.tabIndex = -1;
-      heading.textContent = title;
-      intro.append(heading);
-      if (description) {
-        const supporting = document.createElement("p");
-        supporting.className = "page-lead";
-        supporting.textContent = description;
-        intro.append(supporting);
-      }
-      section.append(intro);
-      return section;
-    };
-    const segmentNav = (pageId, label) => {
-      const nav = document.createElement("kin-segment-nav");
-      nav.setAttribute("label", label);
-      nav.segments = SEGMENTS[pageId].map((entry) => ({ id: entry.id, label: entry.id === "hub" ? "Overview" : entry.label, hash: routeHash(pageId, entry.id) }));
-      return nav;
-    };
-    this.pages = new Map();
-    this.segmentNavs = new Map();
-    this.segmentPanels = new Map();
-
-    // Today: a practical heading (the date), the capture field, catch-up, the
-    // onboarding card while it applies, and the composition.
-    const today = page("today", "Today");
-    this.todayDate = document.createElement("p");
-    this.todayDate.className = "page-lead today-date";
-    today.querySelector(".page-intro").append(this.todayDate);
-    this.compose.setAttribute("mode", "today");
-    this.compose.setAttribute("scope", "today");
-    this.catchUp.setAttribute("aria-label", "Catch up since you last looked");
-    this.today.display = "today";
-    this.today.previews = this.previewProvider;
-    this.onboarding = document.createElement("section");
-    this.onboarding.className = "today-section onboarding-card";
-    this.onboarding.hidden = true;
-    today.append(this.compose, this.catchUp, this.onboarding, this.today);
-
-    // Lists: one list at a time, each with its own quick-add; export lives in
-    // the list actions with its warning at the point of use.
-    const lists = page("lists", "Lists");
-    const listsNav = segmentNav("lists", "Lists");
-    this.segmentNavs.set("lists", listsNav);
-    lists.append(listsNav);
-    const listActions = document.createElement("details");
-    listActions.className = "list-actions";
-    const listActionsSummary = document.createElement("summary");
-    listActionsSummary.textContent = "List actions";
-    this.calendarExportButton = document.createElement("button");
-    this.calendarExportButton.type = "button";
-    this.calendarExportButton.className = "calendar-export-button";
-    this.calendarExportButton.textContent = "Download calendar (.ics)";
-    this.calendarExportButton.setAttribute("aria-label", "Download active planned Items as an all-day calendar");
-    this.calendarExportButton.disabled = true;
-    this.calendarExportButton.addEventListener("click", () => this.downloadCalendar());
-    const calendarExportNote = document.createElement("p");
-    calendarExportNote.className = "section-hint";
-    calendarExportNote.textContent = "Exports every open item that has a planned date, from all lists. The downloaded .ics file is not encrypted and contains the item text.";
-    listActions.append(listActionsSummary, this.calendarExportButton, calendarExportNote);
-    lists.append(listActions);
-    this.needs.display = "need";
-    this.shopping.display = "shopping";
-    this.staples.display = "staple";
-    const listPanels = new Map([["todo", this.needs], ["shopping", this.shopping], ["staples", this.staples]]);
-    for (const [segment, list] of listPanels) {
-      list.previews = this.previewProvider;
-      list.dataset.segment = segment;
-      lists.append(list);
-    }
-    this.segmentPanels.set("lists", listPanels);
-
-    const search = page("search", "Search");
-    search.append(this.search);
-
-    const routines = page("routines", "Routines");
-    const routinesNav = segmentNav("routines", "Routines");
-    this.segmentNavs.set("routines", routinesNav);
-    routines.append(routinesNav, this.routines);
-
-    const updates = page("updates", "Updates", "Handoffs pass context to someone; Talk keeps topics for a calm moment.");
-    const updatesNav = segmentNav("updates", "Updates");
-    this.segmentNavs.set("updates", updatesNav);
-    const handoffPanel = document.createElement("section");
-    handoffPanel.id = "handoffs-panel";
-    handoffPanel.setAttribute("aria-label", "Handoffs");
-    const talkPanel = document.createElement("section");
-    talkPanel.id = "talk-panel";
-    talkPanel.setAttribute("aria-label", "Talk");
-    handoffPanel.append(this.handoffs);
-    talkPanel.append(this.talks);
-    updates.append(updatesNav, handoffPanel, talkPanel);
-    this.segmentPanels.set("updates", new Map([["handoffs", handoffPanel], ["talk", talkPanel]]));
-
-    // Household: an overview plus secondary destinations. Appearance remains
-    // personal while the five primary destinations stay unchanged.
-    const household = page("household", "Household");
-    const householdNav = segmentNav("household", "Household");
-    this.segmentNavs.set("household", householdNav);
-    household.append(householdNav);
-    const hub = document.createElement("section");
-    hub.className = "household-hub";
-    hub.setAttribute("aria-label", "Household overview");
-    this.householdGlance = document.createElement("p");
-    this.householdGlance.className = "household-glance";
-    const hubLinks = document.createElement("ul");
-    hubLinks.className = "hub-links";
-    for (const [segment, description] of [
-      ["notes", "Notes, reference details, and maintenance history."],
-      ["areas", "Areas, household mode, and Pulse."],
-      ["people", "Members, pairing, trusted devices, and access."],
-      ["privacy", "Lock, passkeys, recovery key, export, and restore."],
-      ["appearance", "Your colors and optional background on this device."],
-    ]) {
-      const entry = SEGMENTS.household.find((candidate) => candidate.id === segment);
-      const item = document.createElement("li");
-      const link = document.createElement("a");
-      link.className = "hub-link";
-      link.href = routeHash("household", segment);
-      const name = document.createElement("span");
-      name.className = "hub-link-name";
-      name.textContent = entry.label;
-      const text = document.createElement("span");
-      text.className = "hub-link-text";
-      text.textContent = description;
-      link.append(name, text);
-      item.append(link);
-      hubLinks.append(item);
-    }
-    hub.append(this.householdGlance, hubLinks);
-    const hubTools = document.createElement("div");
-    hubTools.className = "hub-tools";
-    this.installButton = document.createElement("button");
-    this.installButton.type = "button";
-    this.installButton.textContent = "Install Kin";
-    this.installButton.hidden = true;
-    this.installButton.addEventListener("click", async () => {
-      const prompt = this.deferredInstallPrompt;
-      if (!prompt) return;
-      this.deferredInstallPrompt = null;
-      this.installButton.hidden = true;
-      await prompt.prompt();
-      await prompt.userChoice;
-    });
-    if (this.deferredInstallPrompt) this.installButton.hidden = false;
-    const searchLink = document.createElement("a");
-    searchLink.className = "more-search-link";
-    searchLink.href = "#search";
-    searchLink.textContent = "Search household";
-    hubTools.append(searchLink, this.installButton);
-    hub.append(hubTools);
-
-    const notesPage = document.createElement("section");
-    notesPage.className = "household-subpage";
-    notesPage.setAttribute("aria-label", "Notes & reference");
-    this.notes = document.createElement("kin-notes");
-    this.notes.previews = this.previewProvider;
-    notesPage.append(this.notes);
-
-    const areasPage = document.createElement("section");
-    areasPage.className = "household-subpage";
-    areasPage.setAttribute("aria-label", "Areas & status");
-    const modeSection = document.createElement("section");
-    modeSection.className = "today-section household-mode";
-    const modeHeading = document.createElement("h2");
-    modeHeading.textContent = "Household mode";
-    const modeLabel = document.createElement("label");
-    modeLabel.htmlFor = "household-mode";
-    modeLabel.textContent = "Current mode";
-    this.modeSelect = document.createElement("select");
-    this.modeSelect.id = "household-mode";
-    for (const [value, label] of [
-      ["normal", "Normal"],
-      ["vacation", "Vacation"],
-      ["guests", "Guests"],
-      ["rest", "Rest"],
-    ]) {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = label;
-      this.modeSelect.append(option);
-    }
-    this.modeSelect.addEventListener("change", this.onModeChange);
-    const modeHint = document.createElement("p");
-    modeHint.className = "section-hint";
-    modeHint.textContent = "Routines pause while the household is in Vacation, Guests, or Rest; their definitions stay as they are. Nothing else changes: lists, handoffs, and access are unaffected, and Guests does not add a member.";
-    modeSection.append(modeHeading, modeLabel, this.modeSelect, modeHint);
-    areasPage.append(this.areas, modeSection, this.pulse);
-
-    const peoplePage = document.createElement("section");
-    peoplePage.className = "household-subpage";
-    peoplePage.setAttribute("aria-label", "People & devices");
-    this.household = document.createElement("kin-household");
-    this.peoplePage = peoplePage;
-
-    const privacyPage = document.createElement("section");
-    privacyPage.className = "household-subpage";
-    privacyPage.setAttribute("aria-label", "Privacy & recovery");
-    const privacyLead = document.createElement("p");
-    privacyLead.className = "section-hint";
-    privacyLead.textContent = "Your household is encrypted on this device. Lock Kin whenever you step away; closing or reloading always locks it.";
-    privacyPage.append(privacyLead);
-    this.privacyPage = privacyPage;
-    // Kept for callers that still address the former More security block.
-    this.moreSecurity = privacyPage;
-
-    const appearancePage = document.createElement("section");
-    appearancePage.className = "household-subpage appearance-page";
-    appearancePage.setAttribute("aria-label", "Personal appearance");
-    this.appearance = document.createElement("kin-appearance");
-    this.householdDefaults = document.createElement("kin-household-defaults");
-    this.householdDefaults.hidden = true;
-    appearancePage.append(this.householdDefaults, this.appearance);
-
-    household.append(hub, notesPage, areasPage, peoplePage, privacyPage, appearancePage);
-    this.segmentPanels.set("household", new Map([["hub", hub], ["notes", notesPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));
-
-    for (const section of [today, lists, search, routines, updates, household]) {
-      this.pages.set(section.id, section);
-      main.append(section);
-    }
-    // The conditional side/inline column for item details.
-    this.detailPanel = document.createElement("aside");
-    this.detailPanel.className = "detail-panel";
-    this.detailPanel.setAttribute("aria-label", "Item details");
-    this.detailPanel.hidden = true;
-    main.append(this.detailPanel);
-    this.showPageFromLocation();
-  }
-
   navigate(hash) {
     const route = resolveRoute({ hash, pathname: location.pathname });
     if (location.hash !== route.hash) history.pushState(null, "", route.hash);
     this.showPageFromLocation();
   }
-
   showPageFromLocation() {
     if (!this.pages || !this.navLinks) return;
     const route = resolveRoute({ hash: location.hash, pathname: location.pathname });
@@ -1172,16 +633,12 @@ class KinApp extends HTMLElement {
       if (route.page === "search") this.search.focusInput?.();
     }
   }
-
-  // --- Keyboard commands --------------------------------------------------
-
   // Shortcuts and palette commands act only on an unlocked, rendered
   // workspace; the security screen and its fields never see them.
   workspaceReady() {
     return Boolean(this.vault && !this.vault.locked && this.store && this.main && !this.main.hidden &&
       this.siteTools && !this.siteTools.hidden && this.commandPalette?.isConnected);
   }
-
   handleShortcutKeydown(event) {
     if (event.defaultPrevented || !this.workspaceReady()) return;
     const shortcut = shortcutForKey(event, { mac: this.macShortcuts });
@@ -1203,7 +660,6 @@ class KinApp extends HTMLElement {
     event.preventDefault();
     this.runWorkspaceCommand(shortcut, { opener });
   }
-
   // The allowlisted command ids map onto the same methods the visible
   // navigation, Search link, and Quick add button use.
   runWorkspaceCommand(id, { opener = null } = {}) {
@@ -1236,30 +692,23 @@ class KinApp extends HTMLElement {
         return;
     }
   }
-
   restoreCommandFocus(opener) {
     if (!this.workspaceReady()) return;
     if (opener?.isConnected && !opener.closest("[hidden], [inert]") && opener.getClientRects().length) opener.focus();
     else this.main.querySelector(".app-view:not([hidden]) h1")?.focus();
   }
-
   // Kept for callers that switched the former Handoff/Talk tabs directly.
   showHandoffPanel(id, focus = false) {
     const segment = id === "talk" ? "talk" : "handoffs";
     this.navigate(routeHash("updates", segment));
     if (focus) this.segmentNavs.get("updates")?.focusCurrent();
   }
-
-  // --- Item details -------------------------------------------------------
-
   currentCivilDate() { return projectionContext().civilDate; }
-
   layoutMode() {
     if (this.phoneQuery?.matches) return "sheet";
     if (this.wideQuery?.matches) return "side";
     return "inline";
   }
-
   openItemDetail(itemId, { opener = null, stepId = null, origin = null } = {}) {
     if (!this.state || !this.vault || this.vault.locked) return;
     const record = this.state.items.find((item) => item.itemId === itemId) ?? null;
@@ -1281,7 +730,6 @@ class KinApp extends HTMLElement {
     if (stepId) this.detail.revealStep(stepId);
     else if (!sameItem) this.detail.focusHeading();
   }
-
   feedDetail(record = null) {
     const detail = this.detail;
     if (!detail || !this.selection) return;
@@ -1299,12 +747,10 @@ class KinApp extends HTMLElement {
     });
     detail.disabled = this.busy || !this.store;
   }
-
   responsibilityContext() {
     const memberId = this.syncCoordinator?.identity?.memberId ?? this.store?.actorId ?? null;
     return { responsibilities: this.state?.responsibilities ?? [], memberId, memberIds: this.activeMemberIds ?? (memberId ? [memberId] : []) };
   }
-
   // Places the single detail element according to the current layout.
   mountDetail() {
     if (!this.detail || !this.detailPanel || !this.detailSheet) return;
@@ -1344,7 +790,6 @@ class KinApp extends HTMLElement {
       this.rehomingDetail = false;
     }
   }
-
   closeItemDetail({ restoreFocus = true, fromDialog = false } = {}) {
     const selection = this.selection;
     if (!selection) return;
@@ -1376,24 +821,20 @@ class KinApp extends HTMLElement {
     restoreScroll();
     requestAnimationFrame(restoreScroll);
   }
-
   renderSelection() {
     const selected = this.selection?.itemId ?? null;
     for (const list of [this.today, this.needs, this.shopping, this.staples]) if (list) list.selected = selected;
   }
-
   // Logout, leaving or deleting the household, and restore end reminders.
   clearReminders() {
     this.localReminders.clearAll();
     this.renderReminders();
   }
-
   renderReminders() {
     const reminders = new Map([...this.localReminders.entries].map(([id, entry]) => [id, { at: entry.at }]));
     if (this.routines) this.routines.reminders = reminders;
     if (this.selection) this.detail.reminder = reminders.get(`item:${this.selection.itemId}`) ?? null;
   }
-
   // Search results open the real record by canonical id.
   handleOpenSearchResult(detail) {
     if (!this.state) return;
@@ -1444,7 +885,6 @@ class KinApp extends HTMLElement {
         unavailable();
     }
   }
-
   updateSyncChip() {
     if (!this.syncChip) return;
     if (!this.vault || this.vault.locked || !this.store) { this.syncChip.state = null; return; }
@@ -1453,7 +893,6 @@ class KinApp extends HTMLElement {
     const state = this.syncState?.state;
     this.syncChip.state = state === "syncing" ? "syncing" : state === "paused" || state === "deleted" ? "paused" : state === "ready" ? "ready" : "syncing";
   }
-
   disconnectedCallback() {
     this.lockHousehold(false, { endSession: true });
     window.removeEventListener("beforeinstallprompt", this.onBeforeInstallPrompt);
@@ -1556,7 +995,6 @@ class KinApp extends HTMLElement {
     this.syncCoordinator?.stop();
     this.syncCoordinator = null;
   }
-
   captureSession() {
     return {
       generation: this.securityGeneration,
@@ -1565,7 +1003,6 @@ class KinApp extends HTMLElement {
       engine: this.engine,
     };
   }
-
   isCurrentSession(session) {
     return (
       session.generation === this.securityGeneration &&
@@ -1576,7 +1013,6 @@ class KinApp extends HTMLElement {
       (!Object.hasOwn(session, "engine") || session.engine === this.engine)
     );
   }
-
   assertCurrentSession(session) {
     if (!this.isCurrentSession(session))
       throw new VaultError(
@@ -1584,7 +1020,6 @@ class KinApp extends HTMLElement {
         "locked",
       );
   }
-
   async initialize() {
     if (this.starting && this.startingGeneration === this.securityGeneration)
       return this.starting;
@@ -1597,18 +1032,17 @@ class KinApp extends HTMLElement {
       if (this.starting === starting) this.starting = null;
     }
   }
-
   async loadApplication() {
     const session = { generation: this.securityGeneration, vault: this.vault };
     if (!session.vault || session.vault.locked) {
       await this.security.initialize();
       if (session.generation !== this.securityGeneration || this.vault) return;
-      this.setBusy(false);
+      this.ctx.status.setBusy(false);
       this.setStatus("Household locked.");
       return;
     }
     const retrying = !this.retryButton.hidden;
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Starting Kin…");
     try {
@@ -1663,13 +1097,12 @@ class KinApp extends HTMLElement {
       }
     } finally {
       if (this.isCurrentSession(session)) {
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         if (retrying && this.store) this.compose.focusInput();
         this.flushPeerRefresh();
       }
     }
   }
-
   async configureSyncCoordinator() {
     if (!this.vault || this.vault.locked || !this.store) return;
     const session = this.captureSession();
@@ -1690,7 +1123,6 @@ class KinApp extends HTMLElement {
       // Local household use remains available while the service is unreachable.
     }
   }
-
   async checkHouseholdAuthorization() {
     if (!this.vault || this.vault.locked) return;
     const session = this.captureSession();
@@ -1723,7 +1155,6 @@ class KinApp extends HTMLElement {
       if (this.isCurrentSession(session)) this.checkingAuthorization = false;
     }
   }
-
   async startSyncCoordinator(identity) {
     if (!this.vault || this.vault.locked || !this.store || !this.engine) return;
     const session = this.captureSession();
@@ -1767,7 +1198,6 @@ class KinApp extends HTMLElement {
         coordinator.stop();
     }
   }
-
   handleSyncState(value) {
     if (!this.vault || this.vault.locked) return;
     if (value.state) { this.syncState = value; this.updateSyncChip(); }
@@ -1817,7 +1247,6 @@ class KinApp extends HTMLElement {
         (value.quarantined > 0 || !["syncing", "ready", "disabled"].includes(value.state)))
       this.setStatus(value.message);
   }
-
   async handleAddItem(event) {
     if (this.busy || !this.store || !this.engine) {
       return;
@@ -1859,7 +1288,7 @@ class KinApp extends HTMLElement {
     const destination = CLASSIFICATION_LABELS[submittedDraft.classification] ?? "your lists";
     const retry = () => this.handleAddItem({ detail: { ...submittedDraft, composer } });
     if (pending) pending.retry = retry;
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     let restoreComposeFocus = false;
@@ -1888,13 +1317,13 @@ class KinApp extends HTMLElement {
       const partial = step && step.type !== "add" && step.type !== "create-routine";
       const inline = step ? describePartialCapture(step, destination) : INLINE_SAVE_FAILED;
       if (!sourceList) this.pendingCapture = { draft: submittedDraft, composer, retry };
-      this.showAlert(partial ? inline : (error.userMessage ?? SAVE_ERROR), retry);
+      this.ctx.status.showAlert(partial ? inline : (error.userMessage ?? SAVE_ERROR), retry);
       if (!sourceList && composer.showResult) { composer.showResult(inline, { kind: "error", retry }); this.feedback.classList.add("app-feedback-inline"); }
       this.setStatus("");
       restoreComposeFocus = !sourceList;
     } finally {
       if (this.isCurrentSession(session)) {
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         if (sourceList) {
           const focusTarget = sourceList.querySelector(
             `[data-item-id="${submittedDraft.sourceStapleId}"][data-item-action="replenish"]`,
@@ -1907,26 +1336,22 @@ class KinApp extends HTMLElement {
       }
     }
   }
-
   // Only promise a later sync when this device actually syncs; otherwise a
   // change is simply saved here.
   offlineSyncSuffix() {
     return navigator.onLine === false && this.syncCoordinator ? " It will sync when you're connected." : "";
   }
-
   async handleAddHandoff(event) {
     return this.saveHandoff({ type: "add-handoff", text: event.detail.text });
   }
-
   async handleHandoffAction(type, handoffId) {
     return this.saveHandoff({ type, handoffId });
   }
-
   async saveHandoff(command) {
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
     const submitted = Object.freeze({ ...command });
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     try {
@@ -1946,7 +1371,7 @@ class KinApp extends HTMLElement {
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
       if (error.code === 4 && submitted.handoffId) this.pendingRefresh = true;
-      this.showAlert(
+      this.ctx.status.showAlert(
         error.userMessage ?? SAVE_ERROR,
         () => this.saveHandoff(submitted),
         submitted.handoffId ? submitted : null,
@@ -1954,18 +1379,17 @@ class KinApp extends HTMLElement {
       this.setStatus("");
     } finally {
       if (this.isCurrentSession(session)) {
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         this.handoffs.focusInput();
         this.flushPeerRefresh();
       }
     }
   }
-
   async saveTalk(command) {
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
     const submitted = Object.freeze({ ...command });
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     try {
@@ -1986,7 +1410,7 @@ class KinApp extends HTMLElement {
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
       if (error.code === 4 && submitted.talkId) this.pendingRefresh = true;
-      this.showAlert(
+      this.ctx.status.showAlert(
         error.userMessage ?? SAVE_ERROR,
         () => this.saveTalk(submitted),
         submitted.talkId ? submitted : null,
@@ -1994,18 +1418,17 @@ class KinApp extends HTMLElement {
       this.setStatus("");
     } finally {
       if (this.isCurrentSession(session)) {
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         this.talks.focusInput();
         this.flushPeerRefresh();
       }
     }
   }
-
   async savePulse(command) {
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
     const submitted = Object.freeze({ ...command });
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     try {
@@ -2019,24 +1442,23 @@ class KinApp extends HTMLElement {
       this.broadcastEventChange();
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
-      this.showAlert(error.userMessage ?? SAVE_ERROR, () =>
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () =>
         this.savePulse(submitted),
       );
       this.setStatus("");
     } finally {
       if (this.isCurrentSession(session)) {
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         this.pulse.focusInput();
         this.flushPeerRefresh();
       }
     }
   }
-
   async saveMode(mode) {
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
     const command = Object.freeze({ type: "set-household-mode", mode });
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     try {
@@ -2048,16 +1470,15 @@ class KinApp extends HTMLElement {
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
       this.modeSelect.value = this.state?.mode ?? "normal";
-      this.showAlert(error.userMessage ?? SAVE_ERROR, () => this.saveMode(mode));
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.saveMode(mode));
       this.setStatus("");
     } finally {
       if (this.isCurrentSession(session)) {
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         this.flushPeerRefresh();
       }
     }
   }
-
   async saveRoutine(command) {
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
@@ -2066,7 +1487,7 @@ class KinApp extends HTMLElement {
     if (todayFocused) this.today.rememberFocus();
     const focus = this.routines.captureFocus();
     let committed = false;
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     try {
@@ -2095,7 +1516,7 @@ class KinApp extends HTMLElement {
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
       if (error.code === 4 && submitted.routineId) this.pendingRefresh = true;
-      this.showAlert(
+      this.ctx.status.showAlert(
         committed
           ? "Your routine was saved. Try again to refresh the view."
           : (error.userMessage ?? SAVE_ERROR),
@@ -2105,7 +1526,7 @@ class KinApp extends HTMLElement {
       this.setStatus("");
     } finally {
       if (this.isCurrentSession(session)) {
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         if (todayFocused) { /* kin-today restored its own focus on render */ }
         else if (
           submitted.type === "create-routine" ||
@@ -2117,14 +1538,12 @@ class KinApp extends HTMLElement {
       }
     }
   }
-
   // From Today: show the task's schedule editor on the Routines page.
   openRoutineSchedule(routineId) {
     if (!this.workspaceReady()) return;
     this.navigate("#routines");
     if (!this.routines.openSchedule(routineId)) this.setStatus(SCHEDULE_MESSAGES.gone);
   }
-
   // A schedule change is a new Routine starting today plus stopping the old
   // one, each an ordinary Rust-validated command (see planScheduleChange).
   // The replacement id is kept until the change finishes, so a retry after a
@@ -2150,7 +1569,7 @@ class KinApp extends HTMLElement {
     this.pendingScheduleChange = change;
     let step = null;
     let appended = 0;
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     try {
@@ -2171,20 +1590,19 @@ class KinApp extends HTMLElement {
       if (error.code === 4) this.pendingRefresh = true;
       if (appended) this.broadcastEventChange();
       this.renderState();
-      this.showAlert(
+      this.ctx.status.showAlert(
         step && step.type !== "create-routine" ? SCHEDULE_MESSAGES.partial : (error.userMessage ?? SAVE_ERROR),
         () => this.changeRoutineSchedule(change),
       );
       this.setStatus("");
     } finally {
       if (this.isCurrentSession(session)) {
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         if (!this.pendingScheduleChange) this.routines.focusRoutine(change.replacementId);
         this.flushPeerRefresh();
       }
     }
   }
-
   async handlePlaybookIntent(event) {
     const action = event.type.slice(4);
     const detail = event.detail;
@@ -2199,19 +1617,18 @@ class KinApp extends HTMLElement {
       ? { type: action, id: detail.playbookId ?? crypto.randomUUID().replaceAll("-", ""), title: detail.title, entries: detail.entries }
       : { type: action, playbookId: detail.playbookId };
     if (action === "save-playbook") detail.playbookId = command.id;
-    this.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
+    this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
     try {
       await this.appendCommand(command); this.assertCurrentSession(session); this.routines.clearPlaybookEditor(); this.renderState(); this.broadcastEventChange();
       this.setStatus(action === "save-playbook" ? "Reusable checklist saved." : "Reusable checklist archived.");
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
-      this.showAlert(error.userMessage ?? SAVE_ERROR, () => this.handlePlaybookIntent(event), command); this.setStatus("");
-    } finally { if (this.isCurrentSession(session)) { this.setBusy(false); this.flushPeerRefresh(); } }
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.handlePlaybookIntent(event), command); this.setStatus("");
+    } finally { if (this.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.flushPeerRefresh(); } }
   }
-
   async instantiatePlaybook(batch) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession(); this.setBusy(true); this.clearAlert(); this.setStatus("Creating checklist…");
+    const session = this.captureSession(); this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Creating checklist…");
     try {
       let item = this.state?.items.find(record => record.itemId === batch.itemId);
       if (!item) { await this.appendCommand({ type: "add", id: batch.itemId, text: batch.title, classification: "need" }); item = this.state?.items.find(record => record.itemId === batch.itemId); }
@@ -2223,10 +1640,9 @@ class KinApp extends HTMLElement {
       this.assertCurrentSession(session); this.renderState(); this.broadcastEventChange(); this.setStatus("Checklist created under To do. It is now an ordinary household item.");
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
-      this.showAlert(error.userMessage ?? SAVE_ERROR, () => this.instantiatePlaybook(batch)); this.setStatus("");
-    } finally { if (this.isCurrentSession(session)) { this.setBusy(false); this.flushPeerRefresh(); } }
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.instantiatePlaybook(batch)); this.setStatus("");
+    } finally { if (this.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.flushPeerRefresh(); } }
   }
-
   async saveArea(detail) {
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
@@ -2239,7 +1655,7 @@ class KinApp extends HTMLElement {
     };
     const type = types[action];
     if (!type) return;
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     try {
@@ -2258,11 +1674,11 @@ class KinApp extends HTMLElement {
         : detail.areaId ? "Area updated." : "Area cleared.");
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
-      this.showAlert(error.userMessage ?? SAVE_ERROR);
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR);
       this.setStatus("");
     } finally {
       if (this.isCurrentSession(session)) {
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         if (action === "archive-area") this.areas.focus();
         if (action === "assign-item-area") {
           [...this.querySelectorAll(".item-area-select")]
@@ -2273,12 +1689,11 @@ class KinApp extends HTMLElement {
       }
     }
   }
-
   async saveItemPlanningDate(detail, sourceList) {
     this.localReminders.cancel(`item:${detail.itemId}`);
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     try {
@@ -2302,7 +1717,7 @@ class KinApp extends HTMLElement {
       this.setStatus("");
     } finally {
       if (this.isCurrentSession(session)) {
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         (sourceList ?? this.detail)?.querySelector?.(
           `.item-planning-date-input[data-item-id="${detail.itemId}"]`,
         )?.focus();
@@ -2310,7 +1725,6 @@ class KinApp extends HTMLElement {
       }
     }
   }
-
   // A reminder's live record in this session: its current title and a check
   // that it may still notify. Null once the record is gone or no longer live.
   reminderTarget(id, session) {
@@ -2323,7 +1737,6 @@ class KinApp extends HTMLElement {
     if (!current || !this.isCurrentSession(session)) return null;
     return { title: current.text, isCurrent: () => this.isCurrentSession(session) && Boolean(record()) };
   }
-
   async handleLocalReminder({ id, title, at }) {
     const itemId = id.startsWith("item:") ? id.slice(5) : null;
     // A reminder carries its decrypted title, so it may only notify while its
@@ -2343,10 +1756,9 @@ class KinApp extends HTMLElement {
       this.setStatus(result === "granted" ? "Reminder set on this device while Kin is open." : result === "denied" ? "Notifications are blocked in browser settings. Kin still works normally." :
         result === "stale" ? "That task changed before the reminder was set. Nothing was scheduled." : "Reminders are unavailable in this browser. Kin still works normally.");
     } catch (error) {
-      if (this.isCurrentSession(session)) this.showAlert(error.message ?? "Choose a future reminder time.");
+      if (this.isCurrentSession(session)) this.ctx.status.showAlert(error.message ?? "Choose a future reminder time.");
     }
   }
-
   downloadCalendar() {
     if (this.busy || !this.store || !this.state) return;
     const planned = this.state.items.filter(
@@ -2367,20 +1779,19 @@ class KinApp extends HTMLElement {
       this.setStatus("Calendar file prepared for download.");
     } catch (error) {
       if (url) URL.revokeObjectURL(url);
-      this.showAlert(error.message || "Kin could not prepare the calendar file.");
+      this.ctx.status.showAlert(error.message || "Kin could not prepare the calendar file.");
       this.setStatus("");
       return;
     }
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-
   async saveNote(action, detail) {
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
     const type = { "create-note": "create-note", "update-note": "update-note", "archive-note": "archive-note" }[action];
     if (!type) return;
     const noteId = detail.noteId ?? crypto.randomUUID().replaceAll("-", "");
-    this.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
+    this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
     try {
       await this.appendCommand({ type, ...detail, noteId, id: noteId });
       this.assertCurrentSession(session);
@@ -2395,23 +1806,22 @@ class KinApp extends HTMLElement {
           : "Note saved on this device. Sync is unavailable while offline.");
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
-      this.showAlert(error.userMessage ?? SAVE_ERROR);
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR);
       this.setStatus("");
       this.notes.pendingFocus = "title";
     } finally {
       if (this.isCurrentSession(session)) {
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         this.flushPeerRefresh();
       }
     }
   }
-
   async saveReferenceRecord(action, detail) {
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
     const recordId = detail.recordId ?? crypto.randomUUID().replaceAll("-", "");
     const type = action === "archive-reference-record" ? action : "save-reference-record";
-    this.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
+    this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
     try {
       await this.appendCommand({ type, ...detail, recordId, id: recordId });
       this.assertCurrentSession(session);
@@ -2420,25 +1830,23 @@ class KinApp extends HTMLElement {
       this.setStatus(action === "archive-reference-record" ? "Reference archived." : "Reference saved on this device.");
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
-      this.showAlert(error.userMessage ?? SAVE_ERROR); this.setStatus("");
-    } finally { if (this.isCurrentSession(session)) { this.setBusy(false); this.flushPeerRefresh(); } }
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); this.setStatus("");
+    } finally { if (this.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.flushPeerRefresh(); } }
   }
-
   async saveMaintenanceEvent(action, detail) {
     if (this.busy || !this.store || !this.engine) return;
     const session = this.captureSession();
     const type = action === "archive-maintenance-event" ? action : "save-maintenance-event";
-    this.setBusy(true); this.clearAlert(); this.setStatus("Saving maintenance history…");
+    this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Saving maintenance history…");
     try {
       await this.appendCommand({ ...detail, type, id: detail.maintenanceId });
       this.assertCurrentSession(session); this.renderState(); this.broadcastEventChange();
       this.setStatus(action === "archive-maintenance-event" ? "Maintenance event archived." : "Maintenance saved on this device.");
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
-      this.showAlert(error.userMessage ?? SAVE_ERROR); this.setStatus("");
-    } finally { if (this.isCurrentSession(session)) { this.setBusy(false); this.flushPeerRefresh(); } }
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); this.setStatus("");
+    } finally { if (this.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.flushPeerRefresh(); } }
   }
-
   schedulePulseRefresh() {
     clearTimeout(this.pulseTimer);
     if (
@@ -2464,7 +1872,6 @@ class KinApp extends HTMLElement {
     );
     this.pulseTimer = setTimeout(this.onTimeWake, delay);
   }
-
   // Programmatic entry (tests, future callers) that goes through the same
   // feedback and persistence path as a file chosen in the picker.
   handleAddAttachment(event) {
@@ -2472,7 +1879,6 @@ class KinApp extends HTMLElement {
     if (!file || !parentKind || !parentId) return;
     return this.saveChosenAttachment(file, { parentKind, parentId });
   }
-
   reportAttachmentProgress(target, phase, message) {
     const key = `${target.parentKind}:${target.parentId}`;
     clearTimeout(this.attachmentProgressTimers.get(key));
@@ -2486,32 +1892,30 @@ class KinApp extends HTMLElement {
       }, 8_000));
     }
   }
-
   async untilIdle(limitMs = 10_000) {
     const deadline = Date.now() + limitMs;
     while (this.busy && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
     return !this.busy;
   }
-
   async saveChosenAttachment(file, target) {
     const kind = isImageAttachment({ type: file?.type, name: file?.name }) ? "photo" : "file";
     const problem = attachmentFileProblem(file);
-    if (problem) { this.reportAttachmentProgress(target, "error", problem); this.showAlert(problem); return; }
+    if (problem) { this.reportAttachmentProgress(target, "error", problem); this.ctx.status.showAlert(problem); return; }
     const lockedMessage = `Unlock Kin before attaching a ${kind}.`;
     if (!this.vault || this.vault.locked || !this.store || !this.engine) {
-      this.reportAttachmentProgress(target, "error", lockedMessage); this.showAlert(lockedMessage); return;
+      this.reportAttachmentProgress(target, "error", lockedMessage); this.ctx.status.showAlert(lockedMessage); return;
     }
     this.reportAttachmentProgress(target, "preparing", `Preparing ${kind}…`);
     if (!(await this.untilIdle())) {
       const message = `Kin is still saving another change. Try adding the ${kind} again in a moment.`;
-      this.reportAttachmentProgress(target, "error", message); this.showAlert(message); return;
+      this.reportAttachmentProgress(target, "error", message); this.ctx.status.showAlert(message); return;
     }
     if (!this.vault || this.vault.locked || !this.store || !this.engine) {
       this.reportAttachmentProgress(target, "error", lockedMessage); return;
     }
     const session = this.captureSession();
     const { parentKind, parentId } = target;
-    this.setBusy(true); this.clearAlert();
+    this.ctx.status.setBusy(true); this.clearAlert();
     this.reportAttachmentProgress(target, "saving", "Saving securely…");
     try {
       const saved = await captureAttachment({ file, parentKind, parentId, identity: this.syncCoordinator?.identity ?? this.household?.identity, store: session.store, keyStore: this.syncCoordinator?.keyStore, append: (command) => this.appendCommand(command) });
@@ -2535,16 +1939,15 @@ class KinApp extends HTMLElement {
           ? `Kin couldn't save this ${kind} on this device. Check free storage space and try again.`
           : error.message || `Kin couldn't save this ${kind} on this device.`);
       this.reportAttachmentProgress(target, "error", message);
-      this.showAlert(message);
-    } finally { if (this.isCurrentSession(session)) this.setBusy(false); }
+      this.ctx.status.showAlert(message);
+    } finally { if (this.isCurrentSession(session)) this.ctx.status.setBusy(false); }
   }
-
   async handleOpenAttachment(event) {
-    if (!this.store) { this.showAlert(ATTACHMENT_OPEN_ERROR); return; }
+    if (!this.store) { this.ctx.status.showAlert(ATTACHMENT_OPEN_ERROR); return; }
     const session = this.captureSession();
     const detail = event.detail;
     const binding = this.state?.attachments?.find((item) => item.attachmentId === detail.attachmentId && !item.removed);
-    if (!binding || binding.parentKind !== detail.parentKind || binding.parentId !== detail.parentId) { this.showAlert(ATTACHMENT_OPEN_ERROR); return; }
+    if (!binding || binding.parentKind !== detail.parentKind || binding.parentId !== detail.parentId) { this.ctx.status.showAlert(ATTACHMENT_OPEN_ERROR); return; }
     const tab = detail.download ? null : window.open("about:blank", "_blank");
     if (tab) tab.opener = null;
     try {
@@ -2554,12 +1957,11 @@ class KinApp extends HTMLElement {
       else if (tab) tab.location.href = url;
       else { const link = document.createElement("a"); link.href = url; link.target = "_blank"; link.rel = "noopener"; link.click(); }
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (error) { tab?.close(); if (error.code !== "locked") this.showAlert(ATTACHMENT_OPEN_ERROR); }
+    } catch (error) { tab?.close(); if (error.code !== "locked") this.ctx.status.showAlert(ATTACHMENT_OPEN_ERROR); }
   }
-
   async handleRemoveAttachment(event) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession(); this.setBusy(true); this.clearAlert();
+    const session = this.captureSession(); this.ctx.status.setBusy(true); this.clearAlert();
     try {
       await removeAttachment({ attachmentId: event.detail.attachmentId, append: (command) => this.appendCommand(command), store: session.store });
       this.assertCurrentSession(session);
@@ -2567,10 +1969,9 @@ class KinApp extends HTMLElement {
       if (this.viewerDetail?.attachmentId === event.detail.attachmentId) this.closeViewer();
       this.attachmentRows = this.attachmentRows.filter((row) => row.attachmentId !== event.detail.attachmentId);
       this.renderState(); this.broadcastEventChange(); void this.syncCoordinator?.syncNow();
-    } catch (error) { if (error.code !== "locked" && this.isCurrentSession(session)) this.showAlert(error.userMessage ?? SAVE_ERROR); }
-    finally { if (this.isCurrentSession(session)) this.setBusy(false); }
+    } catch (error) { if (error.code !== "locked" && this.isCurrentSession(session)) this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); }
+    finally { if (this.isCurrentSession(session)) this.ctx.status.setBusy(false); }
   }
-
   // A sync pass describes attachments from the projection it started with. A
   // photo attached while that pass ran is missing from its rows, and one
   // removed meanwhile is still present; neither may override the newer local
@@ -2586,7 +1987,6 @@ class KinApp extends HTMLElement {
     }
     return rows;
   }
-
   async refreshAttachmentRows() {
     if (!this.store || !this.state || !this.vault || this.vault.locked) return;
     const session = this.captureSession();
@@ -2596,18 +1996,16 @@ class KinApp extends HTMLElement {
       this.attachmentRows = rows; this.renderState();
     } catch { /* A later sync retries attachment indexing. */ }
   }
-
   async handleChangeResponsibility(event) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession(); this.setBusy(true); this.clearAlert();
+    const session = this.captureSession(); this.ctx.status.setBusy(true); this.clearAlert();
     try {
       const { targetKind, targetId, memberId } = event.detail;
       await this.appendCommand({ type: "change-responsibility", targetKind, id: targetId, memberId });
       this.assertCurrentSession(session); this.broadcastEventChange(); void this.syncCoordinator?.syncNow();
-    } catch (error) { if (error.code !== "locked" && this.isCurrentSession(session)) this.showAlert(error.userMessage ?? SAVE_ERROR); }
-    finally { if (this.isCurrentSession(session)) this.setBusy(false); }
+    } catch (error) { if (error.code !== "locked" && this.isCurrentSession(session)) this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); }
+    finally { if (this.isCurrentSession(session)) this.ctx.status.setBusy(false); }
   }
-
   async reconcileResponsibilityMembers() {
     if (this.reconcilingResponsibility || this.busy || !this.activeMemberIds || !this.state?.responsibilities?.length) return;
     const active = new Set(this.activeMemberIds);
@@ -2629,12 +2027,10 @@ class KinApp extends HTMLElement {
     } catch { /* Another device may have cleared the same removed member concurrently. */ }
     finally { this.reconcilingResponsibility = false; }
   }
-
   async handleCompleteItem(event) {
     this.localReminders.cancel(`item:${event.detail.itemId}`);
     return this.handleItemAction("complete", event.detail.itemId);
   }
-
   async savePin(detail) {
     if (this.busy || !this.store || !this.engine || detail.targetKind !== "item") return;
     const session = this.captureSession();
@@ -2642,7 +2038,7 @@ class KinApp extends HTMLElement {
     const list = [this.today, this.needs, this.shopping, this.staples].find((candidate) => candidate.contains(document.activeElement));
     list?.rememberFocus();
     const detailFocused = this.detail?.contains(document.activeElement);
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     try {
@@ -2654,52 +2050,38 @@ class KinApp extends HTMLElement {
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
       if (error.code === 4) this.pendingRefresh = true;
-      this.showAlert(error.userMessage ?? SAVE_ERROR, () => this.savePin(detail), command);
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.savePin(detail), command);
       this.setStatus("");
     } finally {
       if (this.isCurrentSession(session)) {
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         if (detailFocused && !this.detail.contains(document.activeElement)) this.detail.querySelector(".pin-button")?.focus();
         this.flushPeerRefresh();
       }
     }
   }
-
   openPinnedItem(itemId, opener = null) {
     const item = this.state?.items.find((record) => record.itemId === itemId && record.status !== "archived");
     if (!item) { this.setStatus("That item is no longer available."); return; }
     this.openItemDetail(itemId, { opener });
   }
-
   async handleReopenItem(event) {
     return this.handleItemAction("reopen", event.detail.itemId);
   }
-
   async handleArchiveItem(event) {
     this.localReminders.cancel(`item:${event.detail.itemId}`);
     return this.handleItemAction("archive", event.detail.itemId);
   }
-
-  // --- Bulk complete / reopen and undo ------------------------------------
-  //
-  // A batch is a sequence of ordinary complete-item / reopen-item commands,
-  // one IndexedDB transaction each, so Rust validates every Item against the
-  // full local history (including synced remote events) at the moment it is
-  // written. Batches are not atomic: each committed change stays committed,
-  // and the outcome reports successes, failures, and skips separately.
-
   bulkListFrom(event) {
     const list = event.target?.closest?.("kin-today");
     return list && [this.needs, this.shopping].includes(list) && list.isBulkList ? list : null;
   }
-
   clearBulkOutcome() {
     clearTimeout(this.bulkUndoTimer);
     this.bulkUndoTimer = null;
     this.bulkUndo = null;
     this.bulkRetry = null;
   }
-
   // Undo is offered for ten minutes, until it runs, until the next bulk action
   // or Dismiss, or until lock, logout, or a household change ends the session.
   armBulkUndo(record) {
@@ -2711,7 +2093,6 @@ class KinApp extends HTMLElement {
       if (record.list.isConnected && record.list.bulkResult) record.list.setBulkResult({ ...record.list.bulkResult, canUndo: false });
     }, BULK_UNDO_WINDOW_MS);
   }
-
   async handleBulkItemAction(event) {
     const list = this.bulkListFrom(event);
     const { action, itemIds } = event.detail ?? {};
@@ -2721,7 +2102,6 @@ class KinApp extends HTMLElement {
     const plan = planBulk(action, itemIds, this.state.items);
     await this.runBulk({ list, action, targets: plan.targets, skipped: plan.skipped.length });
   }
-
   async handleBulkRetry(event) {
     const list = this.bulkListFrom(event);
     const record = this.bulkRetry;
@@ -2733,7 +2113,6 @@ class KinApp extends HTMLElement {
     const carried = this.bulkUndo?.list === list && this.bulkUndo.action === record.action ? this.bulkUndo.changes : [];
     await this.runBulk({ list, action: record.action, targets: plan.targets, skipped: plan.skipped.length, carried });
   }
-
   async runBulk({ list, action, targets, skipped, carried = [] }) {
     const spec = BULK_ACTIONS[action];
     const session = this.captureSession();
@@ -2741,7 +2120,7 @@ class KinApp extends HTMLElement {
     const failed = [];
     const started = performance.now();
     this.bulkRunning = true;
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("");
     list.setBulkResult(null);
@@ -2778,13 +2157,12 @@ class KinApp extends HTMLElement {
           undoLabel: action === "complete" ? "Undo: reopen these" : "Undo: complete these",
           canRetry: failed.length > 0,
         });
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         list.focusBulkResult();
         this.flushPeerRefresh();
       }
     }
   }
-
   // Undo is a new, authorized compensating command per Item, never a rewrite
   // of history. Before each one the Item must still be in the status this
   // device left it in and carry the same Rust-derived lastChangedAt; Rust then
@@ -2803,7 +2181,7 @@ class KinApp extends HTMLElement {
     const failed = [];
     let unverified = false;
     this.bulkRunning = true;
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     list.setBulkResult(null);
     try {
@@ -2849,13 +2227,12 @@ class KinApp extends HTMLElement {
           undoLabel: "Try undo again",
           canRetry: false,
         });
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         list.focusBulkResult();
         this.flushPeerRefresh();
       }
     }
   }
-
   // A fresh replay of the encrypted local log, without touching the rendered
   // projection, so undo checks the newest state including synced events.
   async readAuthoritativeState(session) {
@@ -2870,7 +2247,6 @@ class KinApp extends HTMLElement {
       snapshot.syncIdentity,
     );
   }
-
   async handleItemAction(type, itemId) {
     if (this.busy || !this.store || !this.engine) {
       return;
@@ -2883,7 +2259,7 @@ class KinApp extends HTMLElement {
     const detailFocused = this.detail?.contains(document.activeElement);
     const restoreListFocus = Boolean(activeList) || detailFocused;
     activeList?.rememberFocus();
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     let restoreComposeFocus = false;
@@ -2905,7 +2281,7 @@ class KinApp extends HTMLElement {
       if (error.code === 4) {
         this.pendingRefresh = true;
       }
-      this.showAlert(
+      this.ctx.status.showAlert(
         error.userMessage ?? SAVE_ERROR,
         () => this.handleItemAction(type, submittedItemId),
         { type, itemId: submittedItemId },
@@ -2914,7 +2290,7 @@ class KinApp extends HTMLElement {
       restoreComposeFocus = true;
     } finally {
       if (this.isCurrentSession(session)) {
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         if (detailFocused) {
           const next = this.detail.querySelector('[data-focus-id="primary"]') ?? this.detail.querySelector(".item-detail-close");
           next?.focus();
@@ -2925,7 +2301,6 @@ class KinApp extends HTMLElement {
       }
     }
   }
-
   async handleItemStep(type, detail) {
     if (this.busy || !this.store || !this.engine) return;
     const list = [this.today, this.needs, this.shopping, this.staples].find((candidate) => candidate.contains(document.activeElement)) ?? null;
@@ -2940,7 +2315,7 @@ class KinApp extends HTMLElement {
         : { stepId: detail.stepId }),
     });
     const submittedStep = command.type === "add-item-step" ? command.text : null;
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     try {
@@ -2969,7 +2344,7 @@ class KinApp extends HTMLElement {
       this.setStatus("");
     } finally {
       if (this.isCurrentSession(session)) {
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         if (stepFocus && !this.detail.contains(document.activeElement)) {
           const target = type === "add-item-step" ? this.detail.stepInput : [...this.detail.querySelectorAll("[data-focus-id]")].find((node) => node.dataset.focusId === stepFocus);
           (target && !target.disabled ? target : this.detail.stepInput)?.focus();
@@ -2978,13 +2353,11 @@ class KinApp extends HTMLElement {
       }
     }
   }
-
   showDetailActionError(itemId, message, retry, intent = null) {
-    if (!this.detail) { this.showAlert(message, retry, intent); return; }
+    if (!this.detail) { this.ctx.status.showAlert(message, retry, intent); return; }
     this.detail.setFeedback(itemId, { itemId, message, retry, intent });
     if (this.selection) this.feedDetail();
   }
-
   openPeerChannel() {
     if (
       !this.isConnected ||
@@ -3000,7 +2373,6 @@ class KinApp extends HTMLElement {
       this.channel = null;
     }
   }
-
   async appendCommand(command) {
     const session = this.captureSession();
     this.assertCurrentSession(session);
@@ -3010,7 +2382,6 @@ class KinApp extends HTMLElement {
     this.snapshotBoundary = result.snapshotBoundary;
     void this.syncCoordinator?.syncNow();
   }
-
   applyCatchUpSnapshot(snapshot) {
     if (!this.vault || this.vault.locked || !this.engine)
       throw new Error("Kin is locked.");
@@ -3039,13 +2410,12 @@ class KinApp extends HTMLElement {
         }
       : null;
   }
-
   async handleCaughtUp() {
     if (this.busy || !this.store || !this.snapshotBoundary) return;
     const session = this.captureSession();
     const boundary = this.snapshotBoundary;
     const restoreCatchUpFocus = document.activeElement === this.catchUp.button;
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving catch-up state…");
     let committed = false;
@@ -3066,7 +2436,7 @@ class KinApp extends HTMLElement {
       );
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
-      this.showAlert(
+      this.ctx.status.showAlert(
         committed
           ? "Your catch-up position was saved, but Kin could not refresh the summary. Try again to reload it."
           : (error.userMessage ??
@@ -3076,7 +2446,7 @@ class KinApp extends HTMLElement {
       this.setStatus("");
     } finally {
       if (this.isCurrentSession(session)) {
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         if (restoreCatchUpFocus) {
           (this.catchUp.button.hidden
             ? this.catchUp.heading
@@ -3087,13 +2457,11 @@ class KinApp extends HTMLElement {
       }
     }
   }
-
   closePeerChannel() {
     this.channel?.removeEventListener("message", this.onPeerMessage);
     this.channel?.close();
     this.channel = null;
   }
-
   broadcastEventChange() {
     try {
       this.channel?.postMessage({ type: "events-changed" });
@@ -3101,7 +2469,6 @@ class KinApp extends HTMLElement {
       // Cross-tab refresh is best-effort; IndexedDB remains authoritative.
     }
   }
-
   broadcastViewStateChange() {
     try {
       this.channel?.postMessage({ type: "view-state-changed" });
@@ -3109,7 +2476,6 @@ class KinApp extends HTMLElement {
       // Cursor convergence is recovered from local IndexedDB on reload or focus.
     }
   }
-
   handlePeerMessage(event) {
     if (event.data?.type === "household-locked") {
       const peerEpoch = event.data.lockEpoch;
@@ -3134,7 +2500,6 @@ class KinApp extends HTMLElement {
     }
     this.refreshFromEvents();
   }
-
   async refreshFromEvents() {
     if (!this.vault || this.vault.locked) return;
     if (!this.store || !this.engine || this.busy || this.refreshing) {
@@ -3146,7 +2511,7 @@ class KinApp extends HTMLElement {
     const focusedControl = this.contains(document.activeElement)
       ? document.activeElement
       : null;
-    this.setBusy(true);
+    this.ctx.status.setBusy(true);
     // A failed refresh must not replace the command awaiting recovery.
     const previousFailure = this.suspendedRetry ?? {
       action: this.retryAction !== this.retryRefresh ? this.retryAction : null,
@@ -3219,12 +2584,12 @@ class KinApp extends HTMLElement {
                   : "That item changed. Review its current state below.",
           );
         } else {
-          this.showAlert(previousAlert, previousRetry, previousRetryIntent);
+          this.ctx.status.showAlert(previousAlert, previousRetry, previousRetryIntent);
         }
       }
     } catch (error) {
       if (error.code === "locked" || !this.isCurrentSession(session)) return;
-      this.showAlert(
+      this.ctx.status.showAlert(
         error.userMessage ??
           "Kin could not refresh from local household storage. Your saved information was not deleted.",
         this.retryRefresh,
@@ -3234,7 +2599,7 @@ class KinApp extends HTMLElement {
     } finally {
       if (this.isCurrentSession(session)) {
         this.refreshing = false;
-        this.setBusy(false);
+        this.ctx.status.setBusy(false);
         if (focusedControl?.isConnected && !focusedControl.closest("[hidden]"))
           focusedControl.focus();
         else if (focusedControl && this.pulse.contains(focusedControl))
@@ -3252,7 +2617,6 @@ class KinApp extends HTMLElement {
       }
     }
   }
-
   flushPeerRefresh() {
     if (!this.vault || this.vault.locked) return;
     if (!this.pendingRefresh || this.busy || this.refreshing) {
@@ -3264,164 +2628,6 @@ class KinApp extends HTMLElement {
       if (this.isCurrentSession(session)) this.refreshFromEvents();
     });
   }
-
-  renderState() {
-    if (!this.vault || this.vault.locked || !this.state) return;
-    // Rendering reconciles the whole unlocked workspace and is also used for
-    // background sync. Suppress motion during that pass; navigation and
-    // explicitly opened detail sheets keep their separate entrance effects.
-    const renderToken = (this.quietRenderToken ?? 0) + 1;
-    this.quietRenderToken = renderToken;
-    this.setAttribute("data-quiet-render", "");
-    try {
-      this.renderStateContents();
-    } finally {
-      const clearQuietRender = () => {
-        if (this.quietRenderToken === renderToken) this.removeAttribute("data-quiet-render");
-      };
-      if (typeof globalThis.requestAnimationFrame === "function") globalThis.requestAnimationFrame(clearQuietRender);
-      else setTimeout(clearQuietRender, 0);
-    }
-  }
-
-  renderStateContents() {
-    const mode = this.state.mode ?? "normal";
-    this.modeSelect.value = mode;
-    this.routines.householdMode = mode;
-    const civilDate = this.currentCivilDate();
-    const responsibilityContext = this.responsibilityContext();
-    this.catchUp.summary = this.state.summary;
-    this.catchUp.lastLookedAt = this.catchUpCursor?.lastLookedAt;
-    this.todayDate.textContent = formatCivilDate(civilDate);
-    const selected = this.selection?.itemId ?? null;
-    for (const list of [this.needs, this.shopping, this.staples]) {
-      list.update({
-        today: civilDate,
-        items: this.state.items,
-        responsibilityContext,
-        areas: this.state.areas ?? [],
-        pins: this.state.pins ?? [],
-        attachments: this.attachmentRows,
-        selected,
-      });
-    }
-    this.today.update({
-      today: civilDate,
-      items: this.state.items,
-      responsibilityContext,
-      areas: this.state.areas ?? [],
-      pins: this.state.pins ?? [],
-      attachments: this.attachmentRows,
-      selected,
-      routines: this.state.routines ?? [],
-      handoffs: this.state.handoffs ?? [],
-      mode,
-    });
-    const waiting = (this.state.handoffs ?? []).filter((record) => record.status === "unacknowledged").length;
-    const updatesNav = this.segmentNavs?.get("updates");
-    if (updatesNav) updatesNav.segments = SEGMENTS.updates.map((entry) => ({ id: entry.id, label: entry.label, hash: routeHash("updates", entry.id), count: entry.id === "handoffs" ? waiting : 0, countLabel: "waiting" }));
-    if (updatesNav && this.route?.page === "updates") updatesNav.current = this.route.segment;
-    const activePulse = this.state.pulses.find((pulse) => pulse.actorId === this.store?.actorId && pulse.status === "active");
-    if (this.householdGlance) this.householdGlance.textContent = `Household mode: ${{ normal: "Normal", vacation: "Vacation", guests: "Guests", rest: "Rest" }[mode] ?? mode}${mode !== "normal" ? " (routines paused)" : ""}. Your pulse: ${activePulse ? activePulse.value.replace("-", " ") : "not set"}.`;
-    if (this.selection) {
-      const current = this.state.items.find((item) => item.itemId === this.selection.itemId) ?? null;
-      this.feedDetail(current);
-    }
-    this.renderReminders();
-    this.handoffs.handoffs = this.state.handoffs;
-    this.talks.talks = this.state.talks;
-    this.search.household = {
-      items: this.state.items,
-      handoffs: this.state.handoffs,
-      talks: this.state.talks,
-      notes: this.state.notes ?? [],
-      referenceRecords: this.state.referenceRecords ?? [],
-      maintenanceEvents: this.state.maintenanceEvents ?? [],
-      areas: this.state.areas ?? [],
-    };
-    this.pulse.pulse = this.state.pulses.find(
-      (pulse) => pulse.actorId === this.store?.actorId,
-    );
-    this.routines.today = civilDate;
-    this.routines.routines = this.state.routines ?? [];
-    this.routines.responsibilityContext = responsibilityContext;
-    this.routines.playbooks = this.state.playbooks ?? [];
-    this.areas.areas = this.state.areas ?? [];
-    this.notes.notes = this.state.notes ?? [];
-    this.notes.references = this.state.referenceRecords ?? [];
-    this.notes.maintenance = this.state.maintenanceEvents ?? [];
-    this.notes.attachments = this.attachmentRows;
-    this.notes.routines = this.state.routines ?? [];
-    this.notes.areas = this.state.areas ?? [];
-    this.updateCalendarExportButton();
-    this.schedulePulseRefresh();
-  }
-
-  updateCalendarExportButton() {
-    if (!this.calendarExportButton) return;
-    this.calendarExportButton.disabled = this.busy || !this.state?.items?.some(
-      (item) => item.status === "active" && item.planningDate != null,
-    );
-  }
-
-  setBusy(isBusy) {
-    this.busy = isBusy;
-    if (!this.isConnected) return;
-    this.updateCalendarExportButton();
-    this.main.setAttribute("aria-busy", String(isBusy));
-    this.compose.disabled = isBusy || !this.store;
-    this.quickAdd.disabled = isBusy || !this.store;
-    for (const button of this.onboarding?.querySelectorAll("button") ?? []) button.disabled = isBusy;
-    this.today.disabled = isBusy || !this.store;
-    this.needs.disabled = isBusy || !this.store;
-    this.shopping.disabled = isBusy || !this.store;
-    this.staples.disabled = isBusy || !this.store;
-    this.search.disabled = isBusy || !this.store;
-    this.handoffs.disabled = isBusy || !this.store;
-    this.talks.disabled = isBusy || !this.store;
-    this.pulse.disabled = isBusy || !this.store;
-    this.catchUp.disabled = isBusy || !this.store;
-    if (this.detail) this.detail.disabled = isBusy || !this.store;
-    if (this.lockButton) this.lockButton.disabled = isBusy;
-    this.routines.disabled = isBusy || !this.store;
-    this.areas.disabled = isBusy || !this.store;
-    this.notes.disabled = isBusy || !this.store;
-    if (this.modeSelect) this.modeSelect.disabled = isBusy || !this.store;
-    this.household.disabled = isBusy || !this.store;
-    if (this.appearance) this.appearance.disabled = isBusy || !this.store;
-    if (this.householdDefaults) this.householdDefaults.disabled = isBusy || !this.store;
-    if (this.installButton) this.installButton.disabled = isBusy;
-    for (const button of this.main.querySelectorAll("kin-responsibility button"))
-      button.disabled = isBusy;
-    this.retryButton.disabled = isBusy;
-  }
-
-  setStatus(message) {
-    this.status.textContent = message;
-    clearTimeout(this.statusTimer);
-    this.status.removeAttribute("data-stale");
-    if (message) this.statusTimer = setTimeout(() => this.status.setAttribute("data-stale", "true"), 6_000);
-  }
-
-  clearAlert() {
-    this.feedback?.classList.remove("app-feedback-inline");
-    this.alert.textContent = "";
-    this.alert.hidden = true;
-    this.retryButton.hidden = true;
-    this.retryAction = null;
-    this.retryIntent = null;
-    this.suspendedRetry = null;
-  }
-
-  showAlert(message, retryAction = null, retryIntent = null) {
-    if (!this.vault || this.vault.locked) return;
-    this.alert.textContent = message;
-    this.alert.hidden = false;
-    this.retryAction = retryAction;
-    this.retryIntent = retryIntent;
-    this.retryButton.hidden = typeof retryAction !== "function";
-  }
-
   async openUnlockedHousehold(vault) {
     // Re-opening without a lock still ends the previous session's timers;
     // initialize() resumes them only if this is the same vault.
@@ -3455,14 +2661,12 @@ class KinApp extends HTMLElement {
       this.setStatus("Kin couldn't load your saved appearance, so the default is in use.");
     }
     this.scheduleAutoLock();
-    this.renderOnboarding();
+    this.ctx.status.renderOnboarding();
     this.main.focus();
   }
-
   resolvedAppearanceMode(mode) {
     return mode === "system" ? (this.systemAppearance?.matches ? "dark" : "light") : mode;
   }
-
   applyAppearance(value) {
     if (!value || !this.vault || this.vault.locked) return;
     this.currentAppearance = structuredClone(value);
@@ -3490,7 +2694,6 @@ class KinApp extends HTMLElement {
       this.toggleAttribute("data-personal-background", Boolean(this.appearanceObjectUrl));
     }
   }
-
   async handleSaveAppearance(event) {
     const { value, complete } = event.detail;
     const session = this.captureSession();
@@ -3504,7 +2707,6 @@ class KinApp extends HTMLElement {
       if (this.isCurrentSession(session)) complete(null, new Error("Kin couldn't save your appearance. Your previous saved appearance is unchanged."));
     }
   }
-
   async handleUseHouseholdAppearance(event) {
     const session = this.captureSession();
     try {
@@ -3516,7 +2718,6 @@ class KinApp extends HTMLElement {
       this.setStatus("Now following the household appearance on this device.");
     } catch { if (this.isCurrentSession(session)) this.setStatus("Kin couldn't update your appearance. Your previous choice is unchanged."); }
   }
-
   async handleInheritAppearanceProperty(event) {
     const session = this.captureSession();
     const next = { ...this.personalAppearance, version: 2 };
@@ -3535,19 +2736,16 @@ class KinApp extends HTMLElement {
       this.setStatus(`Now following the household ${event.detail.property} on this device.`);
     } catch { if (this.isCurrentSession(session)) this.setStatus("Kin couldn't update your appearance. Your previous choice is unchanged."); }
   }
-
   applyEffectiveAppearance() {
     const effective = resolveAppearance(this.personalAppearance, this.householdSettings);
     this.applyAppearance(effective);
     this.setHouseholdIdentity(this.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME);
   }
-
   setHouseholdIdentity(name) {
     this.householdName = name;
     if (this.brandTitle) this.brandTitle.textContent = name;
     if (this.vault && !this.vault.locked) document.title = `${name} — Kin`;
   }
-
   async refreshHouseholdDefaults() {
     if (!this.syncCoordinator || !this.vault || this.vault.locked) return;
     // The load spans the network and IndexedDB; a lock or re-open meanwhile
@@ -3561,7 +2759,6 @@ class KinApp extends HTMLElement {
       this.applyEffectiveAppearance();
     } catch { if (this.isCurrentSession(session)) this.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded."); }
   }
-
   async restoreCachedHouseholdDefaults(identity, session = this.captureSession()) {
     if (!identity) return;
     try {
@@ -3574,7 +2771,6 @@ class KinApp extends HTMLElement {
       if (this.isCurrentSession(session)) this.setStatus("Kin couldn't restore the last shared appearance. Local household information is still available.");
     }
   }
-
   async handleSaveHouseholdDefaults(event) {
     const { value, complete } = event.detail;
     if (!this.syncCoordinator) { complete(null, new Error("Connect household sync before changing shared settings.")); return; }
@@ -3592,7 +2788,6 @@ class KinApp extends HTMLElement {
       if (this.isCurrentSession(session)) complete(null, error);
     }
   }
-
   clearAppliedAppearance() {
     this.currentAppearance = null;
     this.personalAppearance = null;
@@ -3611,14 +2806,12 @@ class KinApp extends HTMLElement {
     this.removeAttribute("data-personal-background");
     this.appearance?.clear();
   }
-
   async loadPreviewBlob(record) {
     const session = this.captureSession();
     this.assertCurrentSession(session);
     const opened = await this.loadAttachmentForView(record, session);
     return opened.blob;
   }
-
   lockHousehold(broadcast = true, { preserveSecurityOperation = false, endSession = false } = {}) {
     if (broadcast) {
       // A protected read holds a native transaction while crypto runs. Notify
@@ -3720,19 +2913,23 @@ class KinApp extends HTMLElement {
       this.detailMode = null;
       this.household.syncKeyStore?.close();
       this.household.remove();
-      this.buildViews(this.main);
+      this.ctx.views.buildViews(this.main);
       if (!this.stateNotice.isConnected) this.main.prepend(this.stateNotice);
-      this.setBusy(false);
+      this.ctx.status.setBusy(false);
       this.setStatus("Household locked.");
       if (!preserveSecurityOperation) this.security.locked();
     }
   }
-
   notifyPeerLock(lockEpoch) {
     if (!Number.isSafeInteger(lockEpoch) || lockEpoch < 1) return;
     try { this.channel?.postMessage({ type: "household-locked", lockEpoch }); }
     catch { /* The durable epoch still fences subsequent operations. */ }
   }
+
+  // Regression scripts call or replace these; each delegates to its controller.
+  renderState(...args) { return this.ctx.render.renderState(...args); }
+  setStatus(...args) { return this.ctx.status.setStatus(...args); }
+  clearAlert(...args) { return this.ctx.status.clearAlert(...args); }
 }
 
 customElements.define("kin-app", KinApp);
