@@ -1946,6 +1946,41 @@ try {
     custom:{saved:"#256A91",error:"false"},
   }, "appearance saves validate the active color source and clear stale hex errors");
   console.log("PASS appearance color-source validation");
+  await visit(first, "household/appearance");
+  assert.deepEqual(await first.evaluate(`(()=>{
+    const appearance=document.querySelector('kin-app').appearance;
+    window.__appearanceRadioSaved=structuredClone(appearance.saved);
+    appearance.initialize({...appearance.saved,colorSource:'default',seed:'#984D38',manual:null});
+    const radios=[...appearance.querySelectorAll('.appearance-swatch input[type="radio"]')];
+    return {
+      count:radios.length,
+      names:new Set(radios.map(input=>input.name)).size,
+      checked:radios.filter(input=>input.checked).map(input=>input.value),
+      labels:radios.every(input=>input.labels?.length===1&&input.labels[0].textContent.trim().length>0),
+      native:!appearance.swatches.hasAttribute('role')&&radios.every(input=>!input.hasAttribute('role')&&!input.hasAttribute('aria-checked')),
+    };
+  })()`), {count:8,names:1,checked:['default'],labels:true,native:true},
+  "appearance presets expose one labeled native radio group without emulated radio state");
+  await first.evaluate("document.querySelector('kin-app').appearance.querySelector('.appearance-follow').focus()");
+  await first.send("Input.dispatchKeyEvent", {type:"keyDown",key:"Tab",code:"Tab",windowsVirtualKeyCode:9});
+  await first.send("Input.dispatchKeyEvent", {type:"keyUp",key:"Tab",code:"Tab",windowsVirtualKeyCode:9});
+  assert.equal(await first.evaluate(`(()=>{const appearance=document.querySelector('kin-app').appearance;return document.activeElement===appearance.presetControls.get('default')})()`), true,
+    "one Tab from the preceding control enters the checked theme preset");
+  await first.send("Input.dispatchKeyEvent", {type:"keyDown",key:"ArrowLeft",code:"ArrowLeft",windowsVirtualKeyCode:37});
+  await first.send("Input.dispatchKeyEvent", {type:"keyUp",key:"ArrowLeft",code:"ArrowLeft",windowsVirtualKeyCode:37});
+  await until(() => first.evaluate(`document.querySelector('kin-app').appearance.draft.seed==='#596675'`));
+  assert.deepEqual(await first.evaluate(`(()=>{const appearance=document.querySelector('kin-app').appearance;const checked=[...appearance.querySelectorAll('.appearance-swatch input:checked')];return {checked:checked.map(input=>input.value),focus:document.activeElement?.value,source:appearance.draft.colorSource,feedback:appearance.feedback.textContent}})()`),
+    {checked:['slate'],focus:'slate',source:'preset',feedback:'Unsaved changes.'},
+    "native ArrowLeft wraps to Slate and previews that preset");
+  await first.send("Emulation.setDeviceMetricsOverride", {width:320,height:720,deviceScaleFactor:1,mobile:false});
+  assert.deepEqual(await first.evaluate(`(()=>{const appearance=document.querySelector('kin-app').appearance;const labels=[...appearance.querySelectorAll('.appearance-swatch')];return {overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth,targets:labels.every(label=>label.getBoundingClientRect().height>=44),checked:labels.filter(label=>label.querySelector('input').checked).length}})()`),
+    {overflow:false,targets:true,checked:1}, "theme preset radios reflow at 320px with one visible selection and 44px targets");
+  await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"active"}]});
+  await first.evaluate("document.querySelector('kin-app').appearance.presetControls.get('slate').focus()");
+  assert.equal(await first.evaluate("getComputedStyle(document.activeElement.closest('.appearance-swatch')).outlineWidth"), "3px", "theme preset focus remains visible in forced colors");
+  await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"none"}]});
+  await first.evaluate(`(()=>{const appearance=document.querySelector('kin-app').appearance;appearance.initialize(window.__appearanceRadioSaved);delete window.__appearanceRadioSaved})()`);
+  console.log("PASS native appearance preset radios, keyboard wrap, narrow reflow and forced colors");
   assert.deepEqual(await first.evaluate(`(async()=>{
     const app=document.querySelector('kin-app');
     const original=structuredClone(app.currentAppearance);
