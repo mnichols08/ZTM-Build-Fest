@@ -38,7 +38,7 @@ export function paletteForSeed(seed, mode) {
   const ink = dark ? "#F7F5F2" : "#252321";
   const muted = readableMuted(dark ? hslHex(h, 8, 70) : hslHex(h, 9, 42), surface, 4.5, dark);
   const line = hslHex(h, neutralSaturation + 2, dark ? 31 : 80);
-  const lineStrong = hslHex(h, Math.min(30, s * .28 + 8), dark ? 53 : 55);
+  const lineStrong = readableBoundary(h, Math.min(30, s * .28 + 8), [surface, bg], dark);
   const accent = readableAccent(h, Math.max(36, Math.min(78, s)), surface, dark);
   const accentInk = bestText(accent);
   const accentSoft = mixHex(accent, surface, dark ? .72 : .82);
@@ -60,7 +60,7 @@ function kinDefaultPalette(mode) {
     "header-bg": "#29352d", "header-ink": "#fff4eb", "header-muted": "#d7c9bd",
   } : {
     "bg": "#f3f1e9", "surface": "#fffdfa", "surface-secondary": "#f1e8de",
-    "ink": "#342d29", "ink-muted": "#766b63", "line": "#e2d1c4", "line-strong": "#b99d8b",
+    "ink": "#342d29", "ink-muted": "#766b63", "line": "#e2d1c4", "line-strong": "#9f806d",
     "accent": "#984d38", "accent-ink": "#fffaf6", "accent-soft": "#f1ded2",
     "header-bg": "#684033", "header-ink": "#fff9f3", "header-muted": "#ead2c2",
   });
@@ -82,6 +82,12 @@ function readableMuted(initial, surface, target, dark) {
     if (contrastRatio(value, surface) >= target) return value;
   }
   return dark ? "#FFFFFF" : "#000000";
+}
+
+function readableBoundary(hue, saturation, backgrounds, dark) {
+  const lightnesses = dark ? [53, 58, 63, 68, 73, 78] : [55, 50, 45, 40, 35, 30];
+  return lightnesses.map((lightness) => hslHex(hue, saturation, lightness))
+    .find((value) => backgrounds.every((background) => contrastRatio(value, background) >= 3.1)) ?? (dark ? "#FFFFFF" : "#000000");
 }
 
 function bestText(background) {
