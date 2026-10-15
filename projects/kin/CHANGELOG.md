@@ -45,6 +45,20 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
   and are part of the current sync flow (IDENTITY.md).
 - MIGRATIONS.md, TEST-VECTORS.md and ABI.md now describe a single baseline.
 
+### Slice 3 — Shared component helpers and the `<kin-app>` split
+
+- `web/components/shared/` adds DOM builders, icons, focus snapshots,
+  `defineProps`, `OperationGuard` and the session guard. `<kin-household>`,
+  `<kin-security>`, `<kin-item-detail>`, `<kin-today>` and `<kin-routines>`
+  use them instead of their own copies.
+- `kin-app.js` (3,747 lines) becomes a 183-line element. Its methods moved
+  verbatim into 18 controller classes under `web/components/app/` (largest
+  322 lines) that share one explicit context; state and DOM references stay
+  on the element. Listener wiring is three symmetric tables, and methods
+  called from outside the element keep one-line stubs.
+- The version check reads the service-worker registration from
+  `app/status.js`.
+
 ## Unreleased — v0.47.0 — Household Identity & Shared Appearance
 
 - Record the household founder as durable owner for new households while leaving legacy ownership unresolved and fail-closed.

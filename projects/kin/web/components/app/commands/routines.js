@@ -11,18 +11,18 @@ export class RoutineCommands {
 
   async saveRoutine(command) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const submitted = Object.freeze({ ...command });
     const todayFocused = this.app.today.contains(document.activeElement);
     if (todayFocused) this.app.today.rememberFocus();
     const focus = this.app.routines.captureFocus();
     let committed = false;
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     this.app.setStatus("Saving…");
     try {
       await this.app.appendCommand(submitted);
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       committed = true;
       this.app.broadcastEventChange();
       this.app.renderState();
@@ -44,9 +44,9 @@ export class RoutineCommands {
               : "Reopened for this period.",
       );
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4 && submitted.routineId) this.app.pendingRefresh = true;
-      this.app.ctx.status.showAlert(
+      this.ctx.status.showAlert(
         committed
           ? "Your routine was saved. Try again to refresh the view."
           : (error.userMessage ?? SAVE_ERROR),
@@ -55,8 +55,8 @@ export class RoutineCommands {
       );
       this.app.setStatus("");
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) {
-        this.app.ctx.status.setBusy(false);
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
         if (todayFocused) { /* kin-today restored its own focus on render */ }
         else if (
           submitted.type === "create-routine" ||
@@ -64,7 +64,7 @@ export class RoutineCommands {
         )
           this.app.routines.focusInput();
         else this.app.routines.restoreFocus(focus);
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -80,7 +80,7 @@ export class RoutineCommands {
   // partial save resumes instead of creating a second repeating task.
   async changeRoutineSchedule(detail) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const vaultId = this.app.vault?.vaultId ?? null;
     const pending = this.app.pendingScheduleChange?.vaultId === vaultId ? this.app.pendingScheduleChange : null;
     const resume = pending?.routineId === detail.routineId && pending.cadence === detail.cadence;
@@ -99,13 +99,13 @@ export class RoutineCommands {
     this.app.pendingScheduleChange = change;
     let step = null;
     let appended = 0;
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     this.app.setStatus("Saving…");
     try {
       for (step of plan.steps) {
         await this.app.appendCommand(step);
-        this.app.ctx.session.assertCurrentSession(session);
+        this.ctx.session.assertCurrentSession(session);
         appended++;
       }
       step = null;
@@ -116,20 +116,20 @@ export class RoutineCommands {
       this.app.renderState();
       this.app.setStatus(describeScheduleChanged(change.cadence));
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.app.pendingRefresh = true;
       if (appended) this.app.broadcastEventChange();
       this.app.renderState();
-      this.app.ctx.status.showAlert(
+      this.ctx.status.showAlert(
         step && step.type !== "create-routine" ? SCHEDULE_MESSAGES.partial : (error.userMessage ?? SAVE_ERROR),
         () => this.app.changeRoutineSchedule(change),
       );
       this.app.setStatus("");
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) {
-        this.app.ctx.status.setBusy(false);
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
         if (!this.app.pendingScheduleChange) this.app.routines.focusRoutine(change.replacementId);
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -142,23 +142,23 @@ export class RoutineCommands {
       const batch = { itemId: crypto.randomUUID().replaceAll("-", ""), title: playbook.title, steps: playbook.entries.map(text => ({ stepId: crypto.randomUUID().replaceAll("-", ""), text })) };
       return this.app.instantiatePlaybook(batch);
     }
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const command = action === "save-playbook"
       ? { type: action, id: detail.playbookId ?? crypto.randomUUID().replaceAll("-", ""), title: detail.title, entries: detail.entries }
       : { type: action, playbookId: detail.playbookId };
     if (action === "save-playbook") detail.playbookId = command.id;
-    this.app.ctx.status.setBusy(true); this.app.clearAlert(); this.app.setStatus("Saving…");
+    this.ctx.status.setBusy(true); this.app.clearAlert(); this.app.setStatus("Saving…");
     try {
-      await this.app.appendCommand(command); this.app.ctx.session.assertCurrentSession(session); this.app.routines.clearPlaybookEditor(); this.app.renderState(); this.app.broadcastEventChange();
+      await this.app.appendCommand(command); this.ctx.session.assertCurrentSession(session); this.app.routines.clearPlaybookEditor(); this.app.renderState(); this.app.broadcastEventChange();
       this.app.setStatus(action === "save-playbook" ? "Reusable checklist saved." : "Reusable checklist archived.");
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
-      this.app.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.handlePlaybookIntent(event), command); this.app.setStatus("");
-    } finally { if (this.app.ctx.session.isCurrentSession(session)) { this.app.ctx.status.setBusy(false); this.app.ctx.peers.flushPeerRefresh(); } }
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.handlePlaybookIntent(event), command); this.app.setStatus("");
+    } finally { if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); } }
   }
   async instantiatePlaybook(batch) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
-    const session = this.app.ctx.session.captureSession(); this.app.ctx.status.setBusy(true); this.app.clearAlert(); this.app.setStatus("Creating checklist…");
+    const session = this.ctx.session.captureSession(); this.ctx.status.setBusy(true); this.app.clearAlert(); this.app.setStatus("Creating checklist…");
     try {
       let item = this.app.state?.items.find(record => record.itemId === batch.itemId);
       if (!item) { await this.app.appendCommand({ type: "add", id: batch.itemId, text: batch.title, classification: "need" }); item = this.app.state?.items.find(record => record.itemId === batch.itemId); }
@@ -167,10 +167,10 @@ export class RoutineCommands {
         await this.app.appendCommand({ type: "add-item-step", itemId: batch.itemId, stepId: step.stepId, text: step.text });
         item = this.app.state?.items.find(record => record.itemId === batch.itemId);
       }
-      this.app.ctx.session.assertCurrentSession(session); this.app.renderState(); this.app.broadcastEventChange(); this.app.setStatus("Checklist created under To do. It is now an ordinary household item.");
+      this.ctx.session.assertCurrentSession(session); this.app.renderState(); this.app.broadcastEventChange(); this.app.setStatus("Checklist created under To do. It is now an ordinary household item.");
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
-      this.app.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.app.instantiatePlaybook(batch)); this.app.setStatus("");
-    } finally { if (this.app.ctx.session.isCurrentSession(session)) { this.app.ctx.status.setBusy(false); this.app.ctx.peers.flushPeerRefresh(); } }
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.app.instantiatePlaybook(batch)); this.app.setStatus("");
+    } finally { if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); } }
   }
 }

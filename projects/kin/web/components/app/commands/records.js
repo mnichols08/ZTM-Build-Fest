@@ -11,7 +11,7 @@ export class RecordCommands {
 
   async saveArea(detail) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const action = detail.action;
     const types = {
       "create-area": "create-area",
@@ -21,7 +21,7 @@ export class RecordCommands {
     };
     const type = types[action];
     if (!type) return;
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     this.app.setStatus("Saving…");
     try {
@@ -31,7 +31,7 @@ export class RecordCommands {
         areaId: detail.areaId,
         itemId: detail.itemId,
       });
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.app.renderState();
       this.app.broadcastEventChange();
       this.app.setStatus(action === "create-area" ? "Area added."
@@ -39,32 +39,32 @@ export class RecordCommands {
         : action === "archive-area" ? "Area archived. Existing links are kept."
         : detail.areaId ? "Area updated." : "Area cleared.");
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
-      this.app.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR);
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR);
       this.app.setStatus("");
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) {
-        this.app.ctx.status.setBusy(false);
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
         if (action === "archive-area") this.app.areas.focus();
         if (action === "assign-item-area") {
           [...this.app.querySelectorAll(".item-area-select")]
             .find((select) => select.dataset.itemId === detail.itemId && !select.closest("[hidden]"))
             ?.focus();
         }
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
   async saveNote(action, detail) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const type = { "create-note": "create-note", "update-note": "update-note", "archive-note": "archive-note" }[action];
     if (!type) return;
     const noteId = detail.noteId ?? crypto.randomUUID().replaceAll("-", "");
-    this.app.ctx.status.setBusy(true); this.app.clearAlert(); this.app.setStatus("Saving…");
+    this.ctx.status.setBusy(true); this.app.clearAlert(); this.app.setStatus("Saving…");
     try {
       await this.app.appendCommand({ type, ...detail, noteId, id: noteId });
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.app.notes.clearEditor();
       this.app.notes.pendingFocus = action === "archive-note" ? this.app.notes.pendingFocus : "title";
       this.app.renderState();
@@ -75,70 +75,70 @@ export class RecordCommands {
           ? "Note saved on this device."
           : "Note saved on this device. Sync is unavailable while offline.");
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
-      this.app.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR);
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR);
       this.app.setStatus("");
       this.app.notes.pendingFocus = "title";
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) {
-        this.app.ctx.status.setBusy(false);
-        this.app.ctx.peers.flushPeerRefresh();
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
   async saveReferenceRecord(action, detail) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const recordId = detail.recordId ?? crypto.randomUUID().replaceAll("-", "");
     const type = action === "archive-reference-record" ? action : "save-reference-record";
-    this.app.ctx.status.setBusy(true); this.app.clearAlert(); this.app.setStatus("Saving…");
+    this.ctx.status.setBusy(true); this.app.clearAlert(); this.app.setStatus("Saving…");
     try {
       await this.app.appendCommand({ type, ...detail, recordId, id: recordId });
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       if (action === "save-reference-record") this.app.notes.clearReferenceEditor();
       this.app.renderState(); this.app.broadcastEventChange();
       this.app.setStatus(action === "archive-reference-record" ? "Reference archived." : "Reference saved on this device.");
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
-      this.app.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); this.app.setStatus("");
-    } finally { if (this.app.ctx.session.isCurrentSession(session)) { this.app.ctx.status.setBusy(false); this.app.ctx.peers.flushPeerRefresh(); } }
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); this.app.setStatus("");
+    } finally { if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); } }
   }
   async saveMaintenanceEvent(action, detail) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const type = action === "archive-maintenance-event" ? action : "save-maintenance-event";
-    this.app.ctx.status.setBusy(true); this.app.clearAlert(); this.app.setStatus("Saving maintenance history…");
+    this.ctx.status.setBusy(true); this.app.clearAlert(); this.app.setStatus("Saving maintenance history…");
     try {
       await this.app.appendCommand({ ...detail, type, id: detail.maintenanceId });
-      this.app.ctx.session.assertCurrentSession(session); this.app.renderState(); this.app.broadcastEventChange();
+      this.ctx.session.assertCurrentSession(session); this.app.renderState(); this.app.broadcastEventChange();
       this.app.setStatus(action === "archive-maintenance-event" ? "Maintenance event archived." : "Maintenance saved on this device.");
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
-      this.app.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); this.app.setStatus("");
-    } finally { if (this.app.ctx.session.isCurrentSession(session)) { this.app.ctx.status.setBusy(false); this.app.ctx.peers.flushPeerRefresh(); } }
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); this.app.setStatus("");
+    } finally { if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); } }
   }
   async saveMode(mode) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const command = Object.freeze({ type: "set-household-mode", mode });
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     this.app.setStatus("Saving…");
     try {
       await this.app.appendCommand(command);
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.app.renderState();
       this.app.setStatus("Household mode updated.");
       this.app.broadcastEventChange();
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       this.app.modeSelect.value = this.app.state?.mode ?? "normal";
-      this.app.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.saveMode(mode));
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.saveMode(mode));
       this.app.setStatus("");
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) {
-        this.app.ctx.status.setBusy(false);
-        this.app.ctx.peers.flushPeerRefresh();
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -146,7 +146,7 @@ export class RecordCommands {
     const itemId = id.startsWith("item:") ? id.slice(5) : null;
     // A reminder carries its decrypted title, so it may only notify while its
     // record is live in this unlocked session (lock suspends every timer).
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const target = this.reminderTarget(id, session);
     const token = Symbol(id);
     try {
@@ -154,14 +154,14 @@ export class RecordCommands {
       // The permission prompt can outlast the session; never keep a timer or
       // report success into a locked or different household. The token makes
       // sure only this attempt's reminder is cancelled, never a newer one.
-      if (!this.app.ctx.session.isCurrentSession(session)) { this.app.localReminders.cancel(id, token); return; }
+      if (!this.ctx.session.isCurrentSession(session)) { this.app.localReminders.cancel(id, token); return; }
       this.renderReminders();
       for (const control of this.app.querySelectorAll("kin-reminder")) if (control.targetRecord?.id === id) control.saved(result === "granted" ? at : null);
       if (itemId) this.app.detail?.reminderDrafts?.delete(itemId);
       this.app.setStatus(result === "granted" ? "Reminder set on this device while Kin is open." : result === "denied" ? "Notifications are blocked in browser settings. Kin still works normally." :
         result === "stale" ? "That task changed before the reminder was set. Nothing was scheduled." : "Reminders are unavailable in this browser. Kin still works normally.");
     } catch (error) {
-      if (this.app.ctx.session.isCurrentSession(session)) this.app.ctx.status.showAlert(error.message ?? "Choose a future reminder time.");
+      if (this.ctx.session.isCurrentSession(session)) this.ctx.status.showAlert(error.message ?? "Choose a future reminder time.");
     }
   }
   // A reminder's live record in this session: its current title and a check
@@ -173,8 +173,8 @@ export class RecordCommands {
       ? this.app.state?.items?.find((item) => item.itemId === itemId && item.status === "active")
       : this.app.state?.routines?.find((routine) => routine.routineId === routineId && routine.status !== "archived");
     const current = record();
-    if (!current || !this.app.ctx.session.isCurrentSession(session)) return null;
-    return { title: current.text, isCurrent: () => this.app.ctx.session.isCurrentSession(session) && Boolean(record()) };
+    if (!current || !this.ctx.session.isCurrentSession(session)) return null;
+    return { title: current.text, isCurrent: () => this.ctx.session.isCurrentSession(session) && Boolean(record()) };
   }
   // Logout, leaving or deleting the household, and restore end reminders.
   clearReminders() {
@@ -206,7 +206,7 @@ export class RecordCommands {
       this.app.setStatus("Calendar file prepared for download.");
     } catch (error) {
       if (url) URL.revokeObjectURL(url);
-      this.app.ctx.status.showAlert(error.message || "Kin could not prepare the calendar file.");
+      this.ctx.status.showAlert(error.message || "Kin could not prepare the calendar file.");
       this.app.setStatus("");
       return;
     }

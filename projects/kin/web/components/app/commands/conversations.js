@@ -17,14 +17,14 @@ export class ConversationCommands {
   }
   async saveHandoff(command) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const submitted = Object.freeze({ ...command });
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     this.app.setStatus("Saving…");
     try {
       await this.app.appendCommand(submitted);
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.app.renderState();
       if (submitted.type === "add-handoff")
         this.app.handoffs.clearIfMatches(submitted);
@@ -37,32 +37,32 @@ export class ConversationCommands {
       );
       this.app.broadcastEventChange();
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4 && submitted.handoffId) this.app.pendingRefresh = true;
-      this.app.ctx.status.showAlert(
+      this.ctx.status.showAlert(
         error.userMessage ?? SAVE_ERROR,
         () => this.saveHandoff(submitted),
         submitted.handoffId ? submitted : null,
       );
       this.app.setStatus("");
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) {
-        this.app.ctx.status.setBusy(false);
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
         this.app.handoffs.focusInput();
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
   async saveTalk(command) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const submitted = Object.freeze({ ...command });
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     this.app.setStatus("Saving…");
     try {
       await this.app.appendCommand(submitted);
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.app.renderState();
       if (submitted.type === "add-talk") this.app.talks.clearIfMatches(submitted);
       this.app.setStatus(
@@ -76,32 +76,32 @@ export class ConversationCommands {
       );
       this.app.broadcastEventChange();
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4 && submitted.talkId) this.app.pendingRefresh = true;
-      this.app.ctx.status.showAlert(
+      this.ctx.status.showAlert(
         error.userMessage ?? SAVE_ERROR,
         () => this.app.saveTalk(submitted),
         submitted.talkId ? submitted : null,
       );
       this.app.setStatus("");
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) {
-        this.app.ctx.status.setBusy(false);
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
         this.app.talks.focusInput();
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
   async savePulse(command) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const submitted = Object.freeze({ ...command });
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     this.app.setStatus("Saving…");
     try {
       await this.app.appendCommand(submitted);
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.app.renderState();
       this.app.pulse.saved();
       this.app.setStatus(
@@ -109,16 +109,16 @@ export class ConversationCommands {
       );
       this.app.broadcastEventChange();
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
-      this.app.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () =>
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () =>
         this.app.savePulse(submitted),
       );
       this.app.setStatus("");
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) {
-        this.app.ctx.status.setBusy(false);
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
         this.app.pulse.focusInput();
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }

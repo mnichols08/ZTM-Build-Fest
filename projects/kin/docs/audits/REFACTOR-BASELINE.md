@@ -123,3 +123,22 @@ variance, not a regression. The store-level unlock, which is sampled more
 directly, is 1,416 ms against 1,447 ms. Replay itself is unchanged: decoding
 and encoding run the same protocol-24 code without version branches, and the
 golden fixtures are byte-identical.
+
+## Slice 3 — shared component helpers and the `<kin-app>` split
+
+| Stage (ms) | 1k short | 10k short | 10k × 4 KB |
+| --- | ---: | ---: | ---: |
+| Rust replay + encode | 1.10 | 9.88 | 64.88 |
+| Copy-out + JS decode | 3.98 | 30.80 | 58.47 |
+| Store unlock → projection | 142 | 1,453 | 9,703 |
+| Store refresh | 6 | 47 | 161 |
+| Store command | 7 | 54 | 202 |
+| App `renderState()` | 185 | 2,245 | 2,050 |
+| App peer refresh (incl. render) | 228 | 2,594 | 2,959 |
+| App unlock (recovery key) | 409 | 3,495 | 13,258 |
+
+The split moves code without changing it, and no stage moved by more than
+10% against Slice 2. The largest moves were app peer refresh at 10k × 4 KB
+(+9.7%) and render at 10k short (+4.7%), both inside the run-to-run spread
+recorded above. The added indirection (`this.ctx.<controller>`) is one
+property lookup per call.

@@ -11,19 +11,19 @@ export class SyncController {
 
   async configureSyncCoordinator() {
     if (!this.app.vault || this.app.vault.locked || !this.app.store) return;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     try {
       const identityResponse = await fetch("/api/status");
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       if (!identityResponse.ok) return;
       const { identity } = await identityResponse.json();
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       if (!identity) return;
       const syncResponse = await fetch("/api/sync/status");
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       if (!syncResponse.ok) return;
       const syncStatus = await syncResponse.json();
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       if (syncStatus.enabled) await this.startSyncCoordinator(identity);
     } catch {
       // Local household use remains available while the service is unreachable.
@@ -31,7 +31,7 @@ export class SyncController {
   }
   async checkHouseholdAuthorization() {
     if (!this.app.vault || this.app.vault.locked) return;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const household = this.app.household;
     const identity = household?.identity;
     if (
@@ -43,10 +43,10 @@ export class SyncController {
     this.app.checkingAuthorization = true;
     try {
       const response = await fetch("/api/status", { cache: "no-store" });
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       if (!response.ok) return;
       const status = await response.json();
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       if (
         this.app.household !== household ||
         household.identity !== identity ||
@@ -58,12 +58,12 @@ export class SyncController {
     } catch {
       // Keep local household use available while the service is unreachable.
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) this.app.checkingAuthorization = false;
+      if (this.ctx.session.isCurrentSession(session)) this.app.checkingAuthorization = false;
     }
   }
   async startSyncCoordinator(identity) {
     if (!this.app.vault || this.app.vault.locked || !this.app.store || !this.app.engine) return;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     if (this.app.syncCoordinator?.identity.deviceId === identity.deviceId)
       return this.app.syncCoordinator.syncNow();
     this.app.syncCoordinator?.stop();
@@ -74,7 +74,7 @@ export class SyncController {
       identity,
       onState: (value) => {
         if (
-          this.app.ctx.session.isCurrentSession(session) &&
+          this.ctx.session.isCurrentSession(session) &&
           this.app.syncCoordinator === coordinator
         )
           this.app.handleSyncState(value);
@@ -84,10 +84,10 @@ export class SyncController {
     this.updateSyncChip();
     try {
       await coordinator.start();
-      if (this.app.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator) await this.app.refreshHouseholdDefaults();
+      if (this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator) await this.app.refreshHouseholdDefaults();
     } catch (error) {
       if (
-        this.app.ctx.session.isCurrentSession(session) &&
+        this.ctx.session.isCurrentSession(session) &&
         this.app.syncCoordinator === coordinator
       ) {
         this.app.handleSyncState({
@@ -98,7 +98,7 @@ export class SyncController {
       }
     } finally {
       if (
-        !this.app.ctx.session.isCurrentSession(session) ||
+        !this.ctx.session.isCurrentSession(session) ||
         this.app.syncCoordinator !== coordinator
       )
         coordinator.stop();
@@ -128,7 +128,7 @@ export class SyncController {
       }
     }
     if (Array.isArray(value.attachmentRows)) {
-      const rows = this.app.mergeAttachmentRows(value.attachmentRows);
+      const rows = this.ctx.attachments.mergeAttachmentRows(value.attachmentRows);
       const sameRows = rows.length === this.app.attachmentRows.length && rows.every((row, index) => {
         const current = this.app.attachmentRows[index];
         return current && ["attachmentId", "parentKind", "parentId", "name", "size", "type", "state"]

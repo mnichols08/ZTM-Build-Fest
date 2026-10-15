@@ -52,12 +52,12 @@ export class BulkCommands {
   }
   async runBulk({ list, action, targets, skipped, carried = [] }) {
     const spec = BULK_ACTIONS[action];
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const succeeded = [];
     const failed = [];
     const started = performance.now();
     this.app.bulkRunning = true;
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     this.app.setStatus("");
     list.setBulkResult(null);
@@ -72,14 +72,14 @@ export class BulkCommands {
         } catch (error) {
           // Changes committed before a lock stay committed; nothing from the
           // old session may touch the new interface.
-          if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
+          if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
           if (error.code === 4) this.app.pendingRefresh = true;
           failed.push(itemId);
         }
       }
     } finally {
       this.app.bulkRunning = false;
-      if (this.app.ctx.session.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.app.lastBulkMetric = { action, count: targets.length, ms: performance.now() - started };
         list.setBulkProgress("");
         if (succeeded.length) { this.app.renderState(); this.app.broadcastEventChange(); }
@@ -94,9 +94,9 @@ export class BulkCommands {
           undoLabel: action === "complete" ? "Undo: reopen these" : "Undo: complete these",
           canRetry: failed.length > 0,
         });
-        this.app.ctx.status.setBusy(false);
+        this.ctx.status.setBusy(false);
         list.focusBulkResult();
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -112,13 +112,13 @@ export class BulkCommands {
     if (!list || !record || record.list !== list || record.generation !== this.app.securityGeneration) return;
     if (this.app.busy || this.app.bulkRunning || !this.app.store || !this.app.engine) return;
     this.app.clearBulkOutcome();
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const undone = [];
     const conflicts = [];
     const failed = [];
     let unverified = false;
     this.app.bulkRunning = true;
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     list.setBulkResult(null);
     try {
@@ -126,7 +126,7 @@ export class BulkCommands {
       try {
         items = (await this.app.readAuthoritativeState(session)).items;
       } catch (error) {
-        if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
+        if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
         // Fail closed: the rendered projection may be stale, so checking
         // against it could overwrite a newer change. Nothing is undone and
         // the whole undo set stays available to try again.
@@ -141,7 +141,7 @@ export class BulkCommands {
           items = this.app.state.items;
           undone.push(change);
         } catch (error) {
-          if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
+          if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
           // Rust rejected the status precondition: the Item changed in between.
           if (error.code === 4) { this.app.pendingRefresh = true; conflicts.push(change); }
           else failed.push(change);
@@ -149,7 +149,7 @@ export class BulkCommands {
       }
     } finally {
       this.app.bulkRunning = false;
-      if (this.app.ctx.session.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         list.setBulkProgress("");
         if (undone.length) { this.app.renderState(); this.app.broadcastEventChange(); }
         // Items failed for a local reason (not a conflict) can be undone again.
@@ -164,9 +164,9 @@ export class BulkCommands {
           undoLabel: "Try undo again",
           canRetry: false,
         });
-        this.app.ctx.status.setBusy(false);
+        this.ctx.status.setBusy(false);
         list.focusBulkResult();
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }

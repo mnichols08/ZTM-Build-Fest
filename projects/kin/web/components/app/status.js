@@ -11,7 +11,7 @@ export class StatusController {
   setBusy(isBusy) {
     this.app.busy = isBusy;
     if (!this.app.isConnected) return;
-    this.app.ctx.render.updateCalendarExportButton();
+    this.ctx.render.updateCalendarExportButton();
     this.app.main.setAttribute("aria-busy", String(isBusy));
     this.app.compose.disabled = isBusy || !this.app.store;
     this.app.quickAdd.disabled = isBusy || !this.app.store;
@@ -142,5 +142,25 @@ export class StatusController {
       return;
     }
     card.hidden = true;
+  }
+
+  // Registers the offline shell worker; an installed update shows a calm notice.
+  registerServiceWorker() {
+    if (!("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.addEventListener("message", this.app.onServiceWorkerMessage);
+    navigator.serviceWorker.addEventListener("controllerchange", this.app.onControllerChange);
+    const release = document.querySelector('meta[name="kin-version"]')?.content;
+    void navigator.serviceWorker.register(`/service-worker.js?v=${encodeURIComponent(release ?? "")}`).then((registration) => {
+      this.app.updateRegistration = registration;
+      if (registration.waiting && navigator.serviceWorker.controller) this.showUpdateNotice();
+      registration.addEventListener("updatefound", () => {
+        const worker = registration.installing;
+        worker?.addEventListener("statechange", () => {
+          if (worker.state === "installed" && navigator.serviceWorker.controller) this.showUpdateNotice();
+        });
+      });
+    }).catch(() => {
+      // Online use still follows the same security boundary without offline cache.
+    });
   }
 }

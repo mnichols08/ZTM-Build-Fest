@@ -14,12 +14,12 @@ export class RefreshController {
       this.app.pendingRefresh = true;
       return;
     }
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     this.app.refreshing = true;
     const focusedControl = this.app.contains(document.activeElement)
       ? document.activeElement
       : null;
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     // A failed refresh must not replace the command awaiting recovery.
     const previousFailure = this.app.suspendedRetry ?? {
       action: this.app.retryAction !== this.app.retryRefresh ? this.app.retryAction : null,
@@ -43,7 +43,7 @@ export class RefreshController {
     this.app.setStatus("Updating from another tab…");
     try {
       const snapshot = await session.store.getCatchUpState();
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.applyCatchUpSnapshot(snapshot);
       this.app.renderState();
       this.app.setStatus("");
@@ -92,12 +92,12 @@ export class RefreshController {
                   : "That item changed. Review its current state below.",
           );
         } else {
-          this.app.ctx.status.showAlert(previousAlert, previousRetry, previousRetryIntent);
+          this.ctx.status.showAlert(previousAlert, previousRetry, previousRetryIntent);
         }
       }
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
-      this.app.ctx.status.showAlert(
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
+      this.ctx.status.showAlert(
         error.userMessage ??
           "Kin could not refresh from local household storage. Your saved information was not deleted.",
         this.app.retryRefresh,
@@ -105,9 +105,9 @@ export class RefreshController {
       this.app.suspendedRetry = previousRetry ? previousFailure : null;
       this.app.setStatus("");
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.app.refreshing = false;
-        this.app.ctx.status.setBusy(false);
+        this.ctx.status.setBusy(false);
         if (focusedControl?.isConnected && !focusedControl.closest("[hidden]"))
           focusedControl.focus();
         else if (focusedControl && this.app.pulse.contains(focusedControl))
@@ -121,7 +121,7 @@ export class RefreshController {
           if (focusedList.closest("[hidden]") || focusedList === this.app.today) this.app.compose.focusInput();
           else focusedList.focusInput?.();
         }
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -155,21 +155,21 @@ export class RefreshController {
   }
   async handleCaughtUp() {
     if (this.app.busy || !this.app.store || !this.app.snapshotBoundary) return;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const boundary = this.app.snapshotBoundary;
     const restoreCatchUpFocus = document.activeElement === this.app.catchUp.button;
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     this.app.setStatus("Saving catch-up state…");
     let committed = false;
     try {
       await session.store.markCaughtUpThrough(boundary);
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       committed = true;
       // Peers must learn about the commit even if this tab cannot reload it.
       this.app.broadcastViewStateChange();
       const snapshot = await session.store.getCatchUpState();
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.applyCatchUpSnapshot(snapshot);
       this.app.renderState();
       this.app.setStatus(
@@ -178,8 +178,8 @@ export class RefreshController {
           : "Catch-up summary updated.",
       );
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
-      this.app.ctx.status.showAlert(
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
+      this.ctx.status.showAlert(
         committed
           ? "Your catch-up position was saved, but Kin could not refresh the summary. Try again to reload it."
           : (error.userMessage ??
@@ -188,15 +188,15 @@ export class RefreshController {
       );
       this.app.setStatus("");
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) {
-        this.app.ctx.status.setBusy(false);
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
         if (restoreCatchUpFocus) {
           (this.app.catchUp.button.hidden
             ? this.app.catchUp.heading
             : this.app.catchUp.button
           ).focus();
         }
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -204,7 +204,7 @@ export class RefreshController {
   // projection, so undo checks the newest state including synced events.
   async readAuthoritativeState(session) {
     const snapshot = await session.store.getCatchUpState();
-    this.app.ctx.session.assertCurrentSession(session);
+    this.ctx.session.assertCurrentSession(session);
     const { asOf, civilDate } = projectionContext();
     return session.engine.applyEvents(
       snapshot.events,

@@ -2,6 +2,46 @@
 
 **Status:** Current through v0.25.0 Search & Filters; earlier version sections are historical contracts.
 
+## `<kin-app>` structure (refactor track)
+
+`web/components/kin-app.js` is a small element: lifecycle callbacks, three
+symmetric listener tables (element, document, window) and one-line stubs for
+the methods called from outside it. Its behavior lives in plain controller
+classes under `web/components/app/`, each constructed with one explicit
+context object from `app/context.js`:
+
+| Context key | Module | Responsibility |
+| --- | --- | --- |
+| `session` | `session.js` | unlock, open, lock, auto-lock; the session guard |
+| `sync` | `sync.js` | sync coordinator, authorization checks, sync chip |
+| `peers` | `peer-channel.js` | content-free BroadcastChannel invalidation |
+| `refresh` | `refresh.js` | projection refresh, catch-up, timed refresh |
+| `append` | `commands/append.js` | the single command append path |
+| `items`, `bulk`, `conversations`, `routines`, `records` | `commands/*.js` | household commands by domain |
+| `attachments` | `attachments.js` | capture, viewer, previews, the one file input |
+| `navigation`, `detail` | `navigation.js`, `detail.js` | routes, shortcuts, the item-detail view |
+| `appearance` | `appearance.js` | personal and household appearance |
+| `status`, `render` | `status.js`, `render.js` | busy/status/alerts, onboarding, update notice; rendering |
+| `shell`, `views` | `shell.js`, `views.js` | building the persistent shell and pages |
+
+The element keeps the state and DOM references (`app.store`, `app.state`,
+`app.today`, …). `initializeAppState(app)` sets them and the bound handler
+properties; controllers read and write them through `this.app`. There are no
+mixins or prototype patches: a controller reaches another only as
+`this.ctx.<key>`. Methods that regression scripts or `<kin-security>` call on
+the element (for example `appendCommand`, `refreshFromEvents`,
+`lockHousehold`, `notifyPeerLock`) keep element stubs, and controllers call
+them through the element so a test that replaces one still intercepts every
+internal call. Slice 8 replaces the script-facing stubs with one documented
+test hook.
+
+Shared component helpers live in `web/components/shared/`: `dom.js`
+(`button`, `text`, `section`, `message`, `field`), `icons.js`, `focus.js`
+(`captureFocus` / `restoreFocus`), `props.js` (`defineProps` with
+microtask-coalesced rendering and `flushRender`), `operation.js`
+(`OperationGuard`, the guarded single-operation runner used by
+`<kin-household>` and `<kin-security>`) and `session-guard.js`.
+
 ## Household workspace candidate (unversioned)
 
 The desktop-first workspace revision keeps every boundary below and changes

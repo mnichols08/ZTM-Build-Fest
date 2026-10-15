@@ -71,9 +71,9 @@ export class PeerChannel {
       return;
     }
     this.app.pendingRefresh = false;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     queueMicrotask(() => {
-      if (this.app.ctx.session.isCurrentSession(session)) this.app.refreshFromEvents();
+      if (this.ctx.session.isCurrentSession(session)) this.app.refreshFromEvents();
     });
   }
 }

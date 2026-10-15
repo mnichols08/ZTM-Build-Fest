@@ -32,7 +32,7 @@ export class RenderController {
     this.app.modeSelect.value = mode;
     this.app.routines.householdMode = mode;
     const civilDate = this.app.currentCivilDate();
-    const responsibilityContext = this.app.responsibilityContext();
+    const responsibilityContext = this.ctx.detail.responsibilityContext();
     this.app.catchUp.summary = this.app.state.summary;
     this.app.catchUp.lastLookedAt = this.app.catchUpCursor?.lastLookedAt;
     this.app.todayDate.textContent = formatCivilDate(civilDate);
@@ -68,9 +68,9 @@ export class RenderController {
     if (this.app.householdGlance) this.app.householdGlance.textContent = `Household mode: ${{ normal: "Normal", vacation: "Vacation", guests: "Guests", rest: "Rest" }[mode] ?? mode}${mode !== "normal" ? " (routines paused)" : ""}. Your pulse: ${activePulse ? activePulse.value.replace("-", " ") : "not set"}.`;
     if (this.app.selection) {
       const current = this.app.state.items.find((item) => item.itemId === this.app.selection.itemId) ?? null;
-      this.app.feedDetail(current);
+      this.ctx.detail.feedDetail(current);
     }
-    this.app.ctx.records.renderReminders();
+    this.ctx.records.renderReminders();
     this.app.handoffs.handoffs = this.app.state.handoffs;
     this.app.talks.talks = this.app.state.talks;
     this.app.search.household = {

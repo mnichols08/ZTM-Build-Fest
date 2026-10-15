@@ -16,7 +16,7 @@ export class ItemCommands {
     if (this.app.busy || !this.app.store || !this.app.engine) {
       return;
     }
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     // Every capture carries a client-generated id (hex, like projection ids)
     // so a retry after a partial success resumes against the same record
     // instead of creating another.
@@ -53,7 +53,7 @@ export class ItemCommands {
     const destination = CLASSIFICATION_LABELS[submittedDraft.classification] ?? "your lists";
     const retry = () => this.app.handleAddItem({ detail: { ...submittedDraft, composer } });
     if (pending) pending.retry = retry;
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     this.app.setStatus("Saving…");
     let restoreComposeFocus = false;
@@ -63,32 +63,32 @@ export class ItemCommands {
       const steps = submittedDraft.cadence ? remainingRecurringSteps(this.app.state, submittedDraft) : remainingCaptureSteps(this.app.state, submittedDraft);
       for (step of steps) {
         await this.app.appendCommand(step);
-        this.app.ctx.session.assertCurrentSession(session);
+        this.ctx.session.assertCurrentSession(session);
       }
       step = null;
       this.app.renderState();
       if (!sourceList) composer.clearIfMatches(submittedDraft);
       const where = submittedDraft.planningDate === this.app.currentCivilDate() ? `${destination} and Today` : destination;
       const recurring = submittedDraft.cadence ? this.app.state.routines?.find((routine) => routine.routineId === submittedDraft.id) : null;
-      this.app.setStatus(`${recurring ? describeRecurringCapture(recurring, this.app.currentCivilDate()) : `Added to ${where}.`}${this.app.ctx.sync.offlineSyncSuffix()}`);
+      this.app.setStatus(`${recurring ? describeRecurringCapture(recurring, this.app.currentCivilDate()) : `Added to ${where}.`}${this.ctx.sync.offlineSyncSuffix()}`);
       if (!sourceList) composer.showResult?.(this.app.syncCoordinator ? "Saved here. Waiting to sync." : "Saved on this device.");
       if (this.app.pendingCapture?.draft.id === submittedDraft.id) this.app.pendingCapture = null;
       this.app.broadcastEventChange();
       restoreComposeFocus = !sourceList;
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.app.pendingRefresh = true;
       this.app.renderState();
       const partial = step && step.type !== "add" && step.type !== "create-routine";
       const inline = step ? describePartialCapture(step, destination) : INLINE_SAVE_FAILED;
       if (!sourceList) this.app.pendingCapture = { draft: submittedDraft, composer, retry };
-      this.app.ctx.status.showAlert(partial ? inline : (error.userMessage ?? SAVE_ERROR), retry);
+      this.ctx.status.showAlert(partial ? inline : (error.userMessage ?? SAVE_ERROR), retry);
       if (!sourceList && composer.showResult) { composer.showResult(inline, { kind: "error", retry }); this.app.feedback.classList.add("app-feedback-inline"); }
       this.app.setStatus("");
       restoreComposeFocus = !sourceList;
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) {
-        this.app.ctx.status.setBusy(false);
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
         if (sourceList) {
           const focusTarget = sourceList.querySelector(
             `[data-item-id="${submittedDraft.sourceStapleId}"][data-item-action="replenish"]`,
@@ -97,7 +97,7 @@ export class ItemCommands {
         } else if (restoreComposeFocus) {
           composer.focusInput();
         }
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -110,7 +110,7 @@ export class ItemCommands {
     );
     if (!staple) {
       this.app.pendingRefresh = true;
-      this.app.ctx.peers.flushPeerRefresh();
+      this.ctx.peers.flushPeerRefresh();
       this.app.setStatus("That staple is no longer available. Updating the list.");
       return;
     }
@@ -126,7 +126,7 @@ export class ItemCommands {
     if (this.app.busy || !this.app.store || !this.app.engine) {
       return;
     }
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const submittedItemId = itemId;
     const activeList = [this.app.today, this.app.needs, this.app.shopping, this.app.staples].find((list) =>
       list.contains(document.activeElement),
@@ -134,13 +134,13 @@ export class ItemCommands {
     const detailFocused = this.app.detail?.contains(document.activeElement);
     const restoreListFocus = Boolean(activeList) || detailFocused;
     activeList?.rememberFocus();
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     this.app.setStatus("Saving…");
     let restoreComposeFocus = false;
     try {
       await this.app.appendCommand({ type, itemId: submittedItemId });
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.app.renderState();
       this.app.setStatus(
         type === "complete"
@@ -152,11 +152,11 @@ export class ItemCommands {
       this.app.broadcastEventChange();
       restoreComposeFocus = true;
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) {
         this.app.pendingRefresh = true;
       }
-      this.app.ctx.status.showAlert(
+      this.ctx.status.showAlert(
         error.userMessage ?? SAVE_ERROR,
         () => this.app.handleItemAction(type, submittedItemId),
         { type, itemId: submittedItemId },
@@ -164,15 +164,15 @@ export class ItemCommands {
       this.app.setStatus("");
       restoreComposeFocus = true;
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) {
-        this.app.ctx.status.setBusy(false);
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
         if (detailFocused) {
           const next = this.app.detail.querySelector('[data-focus-id="primary"]') ?? this.app.detail.querySelector(".item-detail-close");
           next?.focus();
         } else if (restoreComposeFocus && !restoreListFocus) {
           this.app.compose.focusInput();
         }
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -181,7 +181,7 @@ export class ItemCommands {
     const list = [this.app.today, this.app.needs, this.app.shopping, this.app.staples].find((candidate) => candidate.contains(document.activeElement)) ?? null;
     if (list) list.rememberFocus();
     const stepFocus = this.app.detail?.contains(document.activeElement) ? (document.activeElement.dataset.focusId ?? "add-step") : null;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const command = Object.freeze({
       type,
       itemId: detail.itemId,
@@ -190,16 +190,16 @@ export class ItemCommands {
         : { stepId: detail.stepId }),
     });
     const submittedStep = command.type === "add-item-step" ? command.text : null;
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     this.app.setStatus("Saving…");
     try {
       await this.app.appendCommand(command);
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.app.renderState();
       if (submittedStep != null) this.app.detail.clearStepDraft(command.itemId, submittedStep);
       this.app.detail.clearFeedback(command.itemId);
-      this.app.feedDetail();
+      this.ctx.detail.feedDetail();
       this.app.setStatus(
         type === "add-item-step"
           ? "Step added."
@@ -211,20 +211,20 @@ export class ItemCommands {
       );
       this.app.broadcastEventChange();
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.app.pendingRefresh = true;
       this.app.renderState();
-      this.app.ctx.append.showDetailActionError(command.itemId, error.userMessage ?? SAVE_ERROR,
+      this.ctx.append.showDetailActionError(command.itemId, error.userMessage ?? SAVE_ERROR,
         () => this.handleItemStep(type, command), command);
       this.app.setStatus("");
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) {
-        this.app.ctx.status.setBusy(false);
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
         if (stepFocus && !this.app.detail.contains(document.activeElement)) {
           const target = type === "add-item-step" ? this.app.detail.stepInput : [...this.app.detail.querySelectorAll("[data-focus-id]")].find((node) => node.dataset.focusId === stepFocus);
           (target && !target.disabled ? target : this.app.detail.stepInput)?.focus();
         }
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -242,8 +242,8 @@ export class ItemCommands {
   async saveItemPlanningDate(detail, sourceList) {
     this.app.localReminders.cancel(`item:${detail.itemId}`);
     if (this.app.busy || !this.app.store || !this.app.engine) return;
-    const session = this.app.ctx.session.captureSession();
-    this.app.ctx.status.setBusy(true);
+    const session = this.ctx.session.captureSession();
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     this.app.setStatus("Saving…");
     try {
@@ -252,65 +252,65 @@ export class ItemCommands {
         itemId: detail.itemId,
         planningDate: detail.planningDate,
       });
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.app.renderState();
       this.app.broadcastEventChange();
       this.app.detail.clearFeedback(detail.itemId);
-      this.app.feedDetail();
+      this.ctx.detail.feedDetail();
       this.app.setStatus(detail.planningDate ? "Planned date saved." : "Planned date cleared.");
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.app.pendingRefresh = true;
       this.app.renderState();
-      this.app.ctx.append.showDetailActionError(detail.itemId, error.userMessage ?? SAVE_ERROR,
+      this.ctx.append.showDetailActionError(detail.itemId, error.userMessage ?? SAVE_ERROR,
         () => this.saveItemPlanningDate(detail, sourceList));
       this.app.setStatus("");
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) {
-        this.app.ctx.status.setBusy(false);
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
         (sourceList ?? this.app.detail)?.querySelector?.(
           `.item-planning-date-input[data-item-id="${detail.itemId}"]`,
         )?.focus();
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
   async handleChangeResponsibility(event) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
-    const session = this.app.ctx.session.captureSession(); this.app.ctx.status.setBusy(true); this.app.clearAlert();
+    const session = this.ctx.session.captureSession(); this.ctx.status.setBusy(true); this.app.clearAlert();
     try {
       const { targetKind, targetId, memberId } = event.detail;
       await this.app.appendCommand({ type: "change-responsibility", targetKind, id: targetId, memberId });
-      this.app.ctx.session.assertCurrentSession(session); this.app.broadcastEventChange(); void this.app.syncCoordinator?.syncNow();
-    } catch (error) { if (error.code !== "locked" && this.app.ctx.session.isCurrentSession(session)) this.app.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); }
-    finally { if (this.app.ctx.session.isCurrentSession(session)) this.app.ctx.status.setBusy(false); }
+      this.ctx.session.assertCurrentSession(session); this.app.broadcastEventChange(); void this.app.syncCoordinator?.syncNow();
+    } catch (error) { if (error.code !== "locked" && this.ctx.session.isCurrentSession(session)) this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); }
+    finally { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setBusy(false); }
   }
   async savePin(detail) {
     if (this.app.busy || !this.app.store || !this.app.engine || detail.targetKind !== "item") return;
-    const session = this.app.ctx.session.captureSession();
+    const session = this.ctx.session.captureSession();
     const command = { type: detail.pinned ? "pin" : "unpin", targetKind: "item", targetId: detail.targetId };
     const list = [this.app.today, this.app.needs, this.app.shopping, this.app.staples].find((candidate) => candidate.contains(document.activeElement));
     list?.rememberFocus();
     const detailFocused = this.app.detail?.contains(document.activeElement);
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     this.app.setStatus("Saving…");
     try {
       await this.app.appendCommand(command);
-      this.app.ctx.session.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.app.renderState();
       this.app.setStatus(detail.pinned ? "Pinned for quick access." : "Unpinned.");
       this.app.broadcastEventChange();
     } catch (error) {
-      if (error.code === "locked" || !this.app.ctx.session.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.app.pendingRefresh = true;
-      this.app.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.savePin(detail), command);
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.savePin(detail), command);
       this.app.setStatus("");
     } finally {
-      if (this.app.ctx.session.isCurrentSession(session)) {
-        this.app.ctx.status.setBusy(false);
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
         if (detailFocused && !this.app.detail.contains(document.activeElement)) this.app.detail.querySelector(".pin-button")?.focus();
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }

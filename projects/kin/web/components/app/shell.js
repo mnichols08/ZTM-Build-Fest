@@ -99,7 +99,7 @@ export class ShellBuilder {
     this.app.routines = document.createElement("kin-routines");
     this.app.areas = document.createElement("kin-areas");
     this.app.detail = document.createElement("kin-item-detail");
-    this.app.ctx.views.buildViews(main);
+    this.ctx.views.buildViews(main);
     shell.append(nav, main);
 
     const feedback = document.createElement("div");
@@ -163,17 +163,17 @@ export class ShellBuilder {
     this.app.updateNotice.hidden = true;
     this.app.prepend(this.app.updateNotice);
     this.app.retryButton.addEventListener("click", () => this.app.retryAction?.());
-    this.app.viewer = this.app.buildAttachmentViewer();
+    this.app.viewer = this.ctx.attachments.buildAttachmentViewer();
     this.app.append(this.app.viewer);
-    this.app.detailSheet = this.app.buildDetailSheet();
+    this.app.detailSheet = this.ctx.detail.buildDetailSheet();
     this.app.append(this.app.detailSheet);
     this.app.commandPalette = document.createElement("kin-command-palette");
     this.app.commandPalette.onCommand = (id, { opener }) => {
       if (this.app.commandGeneration === this.app.securityGeneration) this.app.runWorkspaceCommand(id, { opener });
     };
-    this.app.commandPalette.onDismiss = ({ opener }) => this.app.ctx.append.restoreCommandFocus(opener);
+    this.app.commandPalette.onDismiss = ({ opener }) => this.ctx.append.restoreCommandFocus(opener);
     this.app.append(this.app.commandPalette);
-    this.app.attachmentInput = this.app.buildAttachmentInput();
+    this.app.attachmentInput = this.ctx.attachments.buildAttachmentInput();
     this.app.append(this.app.attachmentInput);
     this.app.showPageFromLocation();
   }

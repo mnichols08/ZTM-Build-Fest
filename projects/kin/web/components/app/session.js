@@ -37,12 +37,12 @@ export class SessionController {
     if (!session.vault || session.vault.locked) {
       await this.app.security.initialize();
       if (session.generation !== this.app.securityGeneration || this.app.vault) return;
-      this.app.ctx.status.setBusy(false);
+      this.ctx.status.setBusy(false);
       this.app.setStatus("Household locked.");
       return;
     }
     const retrying = !this.app.retryButton.hidden;
-    this.app.ctx.status.setBusy(true);
+    this.ctx.status.setBusy(true);
     this.app.clearAlert();
     this.app.setStatus("Starting Kin…");
     try {
@@ -69,10 +69,10 @@ export class SessionController {
       this.app.openPeerChannel();
       const snapshot = await store.getCatchUpState();
       this.assertCurrentSession(session);
-      this.app.ctx.refresh.applyCatchUpSnapshot(snapshot);
-      await this.app.restoreCachedHouseholdDefaults(snapshot.syncIdentity, session);
+      this.ctx.refresh.applyCatchUpSnapshot(snapshot);
+      await this.ctx.appearance.restoreCachedHouseholdDefaults(snapshot.syncIdentity, session);
       this.app.renderState();
-      void this.app.refreshAttachmentRows();
+      void this.ctx.attachments.refreshAttachmentRows();
       this.app.main.hidden = false;
       this.app.nav.hidden = false;
       this.app.siteTools.hidden = false;
@@ -83,10 +83,10 @@ export class SessionController {
       // Reminders suspended by a lock of this same vault come back with
       // titles from the fresh state; another vault's are discarded.
       if (this.isCurrentSession(session)) {
-        this.app.localReminders.resumeAll(session.vault.vaultId ?? null, (id) => this.app.ctx.records.reminderTarget(id, session));
-        this.app.ctx.records.renderReminders();
+        this.app.localReminders.resumeAll(session.vault.vaultId ?? null, (id) => this.ctx.records.reminderTarget(id, session));
+        this.ctx.records.renderReminders();
       }
-      this.app.ctx.sync.updateSyncChip();
+      this.ctx.sync.updateSyncChip();
       if (navigator.onLine === false) this.app.onOffline();
       this.app.retryButton.hidden = true;
       void this.app.configureSyncCoordinator();
@@ -97,9 +97,9 @@ export class SessionController {
       }
     } finally {
       if (this.isCurrentSession(session)) {
-        this.app.ctx.status.setBusy(false);
+        this.ctx.status.setBusy(false);
         if (retrying && this.app.store) this.app.compose.focusInput();
-        this.app.ctx.peers.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -116,7 +116,7 @@ export class SessionController {
     this.app.removeLockListener = vault.onLock(() => this.app.lockHousehold(false));
     const generation = this.app.securityGeneration;
     this.app.attachmentPreviews?.clear();
-    this.app.attachmentPreviews = new AttachmentPreviewCache((record) => this.app.loadPreviewBlob(record));
+    this.app.attachmentPreviews = new AttachmentPreviewCache((record) => this.ctx.attachments.loadPreviewBlob(record));
     await this.app.initialize();
     this.assertCurrentSession({ vault, generation });
     vault.assertUnlocked();
@@ -136,7 +136,7 @@ export class SessionController {
       this.app.setStatus("Kin couldn't load your saved appearance, so the default is in use.");
     }
     this.scheduleAutoLock();
-    this.app.ctx.status.renderOnboarding();
+    this.ctx.status.renderOnboarding();
     this.app.main.focus();
   }
   lockHousehold(broadcast = true, { preserveSecurityOperation = false, endSession = false } = {}) {
@@ -173,7 +173,7 @@ export class SessionController {
     vault?.lock();
     clearTimeout(this.app.autoLockTimer);
     this.app.autoLockTimer = null;
-    this.app.closeViewer();
+    this.ctx.attachments.closeViewer();
     this.app.closeItemDetail({ restoreFocus: false });
     this.app.commandPalette?.dismiss();
     this.app.commandGeneration = null;
@@ -240,9 +240,9 @@ export class SessionController {
       this.app.detailMode = null;
       this.app.household.syncKeyStore?.close();
       this.app.household.remove();
-      this.app.ctx.views.buildViews(this.app.main);
+      this.ctx.views.buildViews(this.app.main);
       if (!this.app.stateNotice.isConnected) this.app.main.prepend(this.app.stateNotice);
-      this.app.ctx.status.setBusy(false);
+      this.ctx.status.setBusy(false);
       this.app.setStatus("Household locked.");
       if (!preserveSecurityOperation) this.app.security.locked();
     }

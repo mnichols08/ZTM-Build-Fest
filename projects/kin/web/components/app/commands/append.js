@@ -9,10 +9,10 @@ export class AppendCommands {
   }
 
   async appendCommand(command) {
-    const session = this.app.ctx.session.captureSession();
-    this.app.ctx.session.assertCurrentSession(session);
+    const session = this.ctx.session.captureSession();
+    this.ctx.session.assertCurrentSession(session);
     const result = await session.store.append(command, session.engine);
-    this.app.ctx.session.assertCurrentSession(session);
+    this.ctx.session.assertCurrentSession(session);
     this.app.state = result.state;
     this.app.snapshotBoundary = result.snapshotBoundary;
     void this.app.syncCoordinator?.syncNow();
@@ -55,8 +55,8 @@ export class AppendCommands {
     else this.app.main.querySelector(".app-view:not([hidden]) h1")?.focus();
   }
   showDetailActionError(itemId, message, retry, intent = null) {
-    if (!this.app.detail) { this.app.ctx.status.showAlert(message, retry, intent); return; }
+    if (!this.app.detail) { this.ctx.status.showAlert(message, retry, intent); return; }
     this.app.detail.setFeedback(itemId, { itemId, message, retry, intent });
-    if (this.app.selection) this.app.feedDetail();
+    if (this.app.selection) this.ctx.detail.feedDetail();
   }
 }
