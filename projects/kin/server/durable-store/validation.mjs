@@ -1,0 +1,112 @@
+// DurableStore validation of every stored row when the store opens.
+import { validateEventRow } from "./envelopes.mjs";
+import { DurableStoreError, parseJson, validAuditDetails } from "./shared.mjs";
+
+export const validationMethods = {
+  validate() {
+    this.assertAvailable();
+    try {
+      // One read transaction gives all cross-table checks the same snapshot,
+      // even during an online backup while another connection is committing.
+      return this.transaction(() => this.validateSnapshot());
+    } catch (error) {
+      this.failed = true;
+      if (error instanceof DurableStoreError) throw error;
+      throw new DurableStoreError("Kin durable service data is invalid.", {
+        cause: error,
+      });
+    }
+  },
+
+  validateSnapshot() {
+    this.verify();
+    const identity = this.loadIdentity();
+    const currentEpochs = new Map();
+    for (const householdId of identity.households.keys()) {
+      if (identity.households.get(householdId).lifecycleState === "deleted") {
+        const retainedRows = this.db
+          .prepare(
+            `SELECT
+               (SELECT COUNT(*) FROM sync_households WHERE household_id = ?) +
+               (SELECT COUNT(*) FROM sync_events WHERE household_id = ?) +
+               (SELECT COUNT(*) FROM sync_bindings WHERE household_id = ?) +
+               (SELECT COUNT(*) FROM security_audit WHERE household_id = ?) AS count`,
+          )
+          .get(householdId, householdId, householdId, householdId).count;
+        if (retainedRows !== 0)
+          throw new DurableStoreError("Kin deleted-household data is invalid.");
+        continue;
+      }
+      const state = this.loadSyncState(householdId, identity);
+      currentEpochs.set(householdId, state.currentEpoch);
+      let cursor = 0;
+      let scanned = 0;
+      // Schema v1 has no relay pruning: retained history must be gap-free,
+      // including events from devices that have since been revoked.
+      let nextRelaySequence = 1;
+      const deviceSequences = new Map();
+      while (true) {
+        const rows = this.statements.eventsAfter.all(householdId, cursor, 20);
+        if (!rows.length) break;
+        for (const row of rows) {
+          const { envelope, sequence } = validateEventRow(row, householdId);
+          const device = identity.devices.get(envelope.deviceId);
+          if (
+            sequence !== nextRelaySequence++ ||
+            device?.householdId !== householdId ||
+            envelope.keyEpoch > state.currentEpoch ||
+            envelope.keyEpoch < (device.syncHistoryFromEpoch ?? 1)
+          ) {
+            throw new DurableStoreError("Kin encrypted relay data is invalid.");
+          }
+          const expectedDeviceSequence =
+            (deviceSequences.get(envelope.deviceId) ?? 0) + 1;
+          if (envelope.deviceSequence !== expectedDeviceSequence) {
+            throw new DurableStoreError("Kin encrypted relay data is invalid.");
+          }
+          deviceSequences.set(envelope.deviceId, envelope.deviceSequence);
+        }
+        cursor = rows.at(-1).relay_sequence;
+        scanned += rows.length;
+      }
+      if (
+        scanned !== state.eventCount ||
+        state.nextSequence !== nextRelaySequence ||
+        [...state.deviceSequence].some(
+          ([deviceId, sequence]) => (deviceSequences.get(deviceId) ?? 0) !== sequence,
+        ) ||
+        [...deviceSequences].some(
+          ([deviceId, sequence]) =>
+            state.deviceSequence.get(deviceId) !== sequence,
+        )
+      ) {
+        throw new DurableStoreError("Kin encrypted relay data is invalid.");
+      }
+    }
+    for (const device of identity.devices.values()) {
+      const currentEpoch = currentEpochs.get(device.householdId);
+      if (
+        (device.syncHistoryFromEpoch ?? 1) > currentEpoch + 1 ||
+        device.syncProvisionedEpochs?.some((epoch) => epoch > currentEpoch)
+      )
+        throw new DurableStoreError("Kin synchronization data is invalid.");
+    }
+    for (const row of this.db
+      .prepare("SELECT * FROM security_audit ORDER BY sequence")
+      .all()) {
+      const details = parseJson(row.details_json);
+      if (
+        !identity.households.has(row.household_id) ||
+        !Number.isSafeInteger(row.sequence) ||
+        row.sequence < 1 ||
+        !Number.isSafeInteger(row.created_at) ||
+        row.created_at < 0 ||
+        typeof row.event_type !== "string" ||
+        !/^[a-z][a-z0-9_]{0,63}$/.test(row.event_type) ||
+        !validAuditDetails(details)
+      )
+        throw new DurableStoreError("Kin security audit data is invalid.");
+    }
+    return true;
+  },
+};
