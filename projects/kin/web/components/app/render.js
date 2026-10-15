@@ -70,7 +70,7 @@ export class RenderController {
       const current = this.app.state.items.find((item) => item.itemId === this.app.selection.itemId) ?? null;
       this.app.feedDetail(current);
     }
-    this.app.renderReminders();
+    this.app.ctx.records.renderReminders();
     this.app.handoffs.handoffs = this.app.state.handoffs;
     this.app.talks.talks = this.app.state.talks;
     this.app.search.household = {

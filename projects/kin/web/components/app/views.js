@@ -73,7 +73,7 @@ export class ViewBuilder {
     this.app.calendarExportButton.textContent = "Download calendar (.ics)";
     this.app.calendarExportButton.setAttribute("aria-label", "Download active planned Items as an all-day calendar");
     this.app.calendarExportButton.disabled = true;
-    this.app.calendarExportButton.addEventListener("click", () => this.app.downloadCalendar());
+    this.app.calendarExportButton.addEventListener("click", () => this.app.ctx.records.downloadCalendar());
     const calendarExportNote = document.createElement("p");
     calendarExportNote.className = "section-hint";
     calendarExportNote.textContent = "Exports every open item that has a planned date, from all lists. The downloaded .ics file is not encrypted and contains the item text.";

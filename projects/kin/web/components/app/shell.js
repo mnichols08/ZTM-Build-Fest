@@ -171,7 +171,7 @@ export class ShellBuilder {
     this.app.commandPalette.onCommand = (id, { opener }) => {
       if (this.app.commandGeneration === this.app.securityGeneration) this.app.runWorkspaceCommand(id, { opener });
     };
-    this.app.commandPalette.onDismiss = ({ opener }) => this.app.restoreCommandFocus(opener);
+    this.app.commandPalette.onDismiss = ({ opener }) => this.app.ctx.append.restoreCommandFocus(opener);
     this.app.append(this.app.commandPalette);
     this.app.attachmentInput = this.app.buildAttachmentInput();
     this.app.append(this.app.attachmentInput);

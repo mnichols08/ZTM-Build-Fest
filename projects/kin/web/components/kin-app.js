@@ -20,23 +20,17 @@ import "./kin-appearance.js";
 import "./kin-household-defaults.js";
 import { projectionContext } from "../browser-time.js";
 import { LocalReminders } from "../reminders.js";
-import { createCalendarExport } from "../calendar-export.js";
 import { attachmentFileProblem, captureAttachment, loadLocalAttachmentRows, openAttachment, removeAttachment } from "../attachments/attachment-lifecycle.js";
 import { clearAttachmentProgress, setAttachmentProgress } from "../attachments/attachment-progress.js";
 import { isImageAttachment } from "../attachments/attachment-preview.js";
-import { CLASSIFICATION_LABELS } from "./kin-compose.js";
 import { listSegmentForClassification, resolveRoute, routeHash } from "../routes.js";
-import { describePartialCapture, remainingCaptureSteps } from "../capture-plan.js";
-import { describeNextOccurrence, describeRecurringCapture, describeScheduleChanged, isCadence, planScheduleChange, remainingRecurringSteps, SCHEDULE_MESSAGES } from "../recurrence.js";
-import { randomId } from "../wasm/kin-engine.js";
 import { EventStore } from "../storage/event-store.js";
 import { loadCachedHouseholdSettings } from "../sync/sync-coordinator.js";
 import { isTypingContext, shortcutForKey } from "../keyboard-commands.js";
-import { BULK_ACTIONS, describeBulkOutcome, planBulk, undoCommand, undoStatus } from "../bulk-actions.js";
 import { paletteCss, paletteForSeed } from "../appearance/palette.js";
 import { saveAppearance } from "../appearance/store.js";
 import { DEFAULT_HOUSEHOLD_NAME, resolveAppearance } from "../appearance/household.js";
-import { ATTACHMENT_OPEN_ERROR, BULK_UNDO_UNVERIFIED, BULK_UNDO_WINDOW_MS, INLINE_SAVE_FAILED, SAVE_ERROR, readAutoLockPreference } from "./app/constants.js";
+import { ATTACHMENT_OPEN_ERROR, SAVE_ERROR, readAutoLockPreference } from "./app/constants.js";
 import { createAppContext } from "./app/context.js";
 
 class KinApp extends HTMLElement {
@@ -92,8 +86,8 @@ class KinApp extends HTMLElement {
     this.lastActivityAt = null;
     this.onActivity = () => { if (this.autoLockTimer) this.ctx.session.scheduleAutoLock(); };
     this.onRetryAttachments = () => { if (this.syncCoordinator) void this.syncCoordinator.syncNow(); else void this.configureSyncCoordinator(); };
-    this.onChangeResponsibility = (event) => this.handleChangeResponsibility(event);
-    this.onReplenishStaple = (event) => this.handleReplenishStaple(event);
+    this.onChangeResponsibility = (event) => this.ctx.items.handleChangeResponsibility(event);
+    this.onReplenishStaple = (event) => this.ctx.items.handleReplenishStaple(event);
     this.syncState = null;
     // Follows the browser's own offline/online events, like the state notice.
     this.offline = typeof navigator !== "undefined" && navigator.onLine === false;
@@ -114,13 +108,13 @@ class KinApp extends HTMLElement {
       if (this.syncCoordinator) void this.syncCoordinator.syncNow();
       else void this.configureSyncCoordinator();
     };
-    this.onCompleteItem = (event) => this.handleCompleteItem(event);
-    this.onReopenItem = (event) => this.handleReopenItem(event);
-    this.onArchiveItem = (event) => this.handleArchiveItem(event);
-    this.onAddItemStep = (event) => this.handleItemStep("add-item-step", event.detail);
-    this.onCompleteItemStep = (event) => this.handleItemStep("complete-item-step", event.detail);
-    this.onReopenItemStep = (event) => this.handleItemStep("reopen-item-step", event.detail);
-    this.onArchiveItemStep = (event) => this.handleItemStep("archive-item-step", event.detail);
+    this.onCompleteItem = (event) => this.ctx.items.handleCompleteItem(event);
+    this.onReopenItem = (event) => this.ctx.items.handleReopenItem(event);
+    this.onArchiveItem = (event) => this.ctx.items.handleArchiveItem(event);
+    this.onAddItemStep = (event) => this.ctx.items.handleItemStep("add-item-step", event.detail);
+    this.onCompleteItemStep = (event) => this.ctx.items.handleItemStep("complete-item-step", event.detail);
+    this.onReopenItemStep = (event) => this.ctx.items.handleItemStep("reopen-item-step", event.detail);
+    this.onArchiveItemStep = (event) => this.ctx.items.handleItemStep("archive-item-step", event.detail);
     this.onAddHandoff = (event) => this.handleAddHandoff(event);
     this.onAcknowledgeHandoff = (event) =>
       this.handleHandoffAction("acknowledge-handoff", event.detail.handoffId);
@@ -139,26 +133,26 @@ class KinApp extends HTMLElement {
       this.saveRoutine({ ...event.detail, type: event.type.slice(4) });
     };
     this.onChangeRoutineSchedule = (event) => this.changeRoutineSchedule(event.detail);
-    this.onOpenRoutineSchedule = (event) => this.openRoutineSchedule(event.detail.routineId);
-    this.onAreaIntent = (event) => this.saveArea(event.detail);
-    this.onNoteIntent = (event) => this.saveNote(event.type.slice(4), event.detail);
-    this.onReferenceIntent = (event) => this.saveReferenceRecord(event.type.slice(4), event.detail);
-    this.onMaintenanceIntent = (event) => this.saveMaintenanceEvent(event.type.slice(4), event.detail);
-    this.onItemAreaChange = (event) => this.saveArea({ ...event.detail, action: "assign-item-area" });
+    this.onOpenRoutineSchedule = (event) => this.ctx.routines.openRoutineSchedule(event.detail.routineId);
+    this.onAreaIntent = (event) => this.ctx.records.saveArea(event.detail);
+    this.onNoteIntent = (event) => this.ctx.records.saveNote(event.type.slice(4), event.detail);
+    this.onReferenceIntent = (event) => this.ctx.records.saveReferenceRecord(event.type.slice(4), event.detail);
+    this.onMaintenanceIntent = (event) => this.ctx.records.saveMaintenanceEvent(event.type.slice(4), event.detail);
+    this.onItemAreaChange = (event) => this.ctx.records.saveArea({ ...event.detail, action: "assign-item-area" });
     this.onItemPlanningDateChange = (event) =>
-      this.saveItemPlanningDate(event.detail, event.target.closest("kin-today, kin-item-detail"));
-    this.onPinIntent = (event) => this.savePin(event.detail);
-    this.onOpenPin = (event) => this.openPinnedItem(event.detail.itemId, event.detail.opener);
+      this.ctx.items.saveItemPlanningDate(event.detail, event.target.closest("kin-today, kin-item-detail"));
+    this.onPinIntent = (event) => this.ctx.items.savePin(event.detail);
+    this.onOpenPin = (event) => this.ctx.items.openPinnedItem(event.detail.itemId, event.detail.opener);
     // Today's empty states reuse the universal Quick add; focus returns to the
     // button that opened it, or to the Today heading once that button is gone.
     this.onOpenQuickAdd = (event) => this.quickAdd.open({ opener: event.detail?.opener, fallback: () => this.today.querySelector('[data-section="today"] h2') });
     this.onOpenItem = (event) => this.openItemDetail(event.detail.itemId, { opener: event.detail.opener ?? event.target });
     this.onCloseItemDetail = () => this.closeItemDetail({ restoreFocus: true });
     this.onOpenSearchResult = (event) => this.handleOpenSearchResult(event.detail);
-    this.onPlaybookIntent = (event) => this.handlePlaybookIntent(event);
+    this.onPlaybookIntent = (event) => this.ctx.routines.handlePlaybookIntent(event);
     this.onLocalReminder = (event) => this.handleLocalReminder(event.detail);
-    this.onCancelLocalReminder = (event) => { this.localReminders.cancel(event.detail.id); this.renderReminders(); this.setStatus("Reminder canceled on this device."); };
-    this.onModeChange = () => this.saveMode(this.modeSelect.value);
+    this.onCancelLocalReminder = (event) => { this.localReminders.cancel(event.detail.id); this.ctx.records.renderReminders(); this.setStatus("Reminder canceled on this device."); };
+    this.onModeChange = () => this.ctx.records.saveMode(this.modeSelect.value);
     this.pulseTimer = null;
     this.catchUpCursor = null;
     this.snapshotBoundary = null;
@@ -208,9 +202,9 @@ class KinApp extends HTMLElement {
     this.bulkUndo = null;
     this.bulkRetry = null;
     this.bulkUndoTimer = null;
-    this.onBulkItemAction = (event) => this.handleBulkItemAction(event);
-    this.onBulkUndo = (event) => this.handleBulkUndo(event);
-    this.onBulkRetry = (event) => this.handleBulkRetry(event);
+    this.onBulkItemAction = (event) => this.ctx.bulk.handleBulkItemAction(event);
+    this.onBulkUndo = (event) => this.ctx.bulk.handleBulkUndo(event);
+    this.onBulkRetry = (event) => this.ctx.bulk.handleBulkRetry(event);
     this.onBulkDismiss = () => this.clearBulkOutcome();
     const platform = typeof navigator === "undefined" ? "" : navigator.userAgentData?.platform ?? navigator.platform ?? "";
     this.macShortcuts = /mac|iphone|ipad|ipod/i.test(platform);
@@ -406,27 +400,6 @@ class KinApp extends HTMLElement {
     } else {
       this.initialize();
     }
-  }
-  async handleReplenishStaple(event) {
-    const staple = this.state?.items.find(
-      (item) =>
-        item.itemId === event.detail.itemId &&
-        item.classification === "staple" &&
-        item.status === "active",
-    );
-    if (!staple) {
-      this.pendingRefresh = true;
-      this.ctx.peers.flushPeerRefresh();
-      this.setStatus("That staple is no longer available. Updating the list.");
-      return;
-    }
-    return this.handleAddItem({
-      detail: {
-        text: staple.text,
-        classification: "shopping",
-        sourceStapleId: staple.itemId,
-      },
-    });
   }
   buildAttachmentInput() {
     const input = document.createElement("input");
@@ -636,49 +609,6 @@ class KinApp extends HTMLElement {
     event.preventDefault();
     this.runWorkspaceCommand(shortcut, { opener });
   }
-  // The allowlisted command ids map onto the same methods the visible
-  // navigation, Search link, and Quick add button use.
-  runWorkspaceCommand(id, { opener = null } = {}) {
-    if (!this.workspaceReady()) return;
-    switch (id) {
-      case "today":
-        this.navigate("#today");
-        this.pages.get("today")?.querySelector("h1")?.focus();
-        return;
-      case "todo":
-      case "shopping":
-        this.navigate(routeHash("lists", id));
-        this.segmentNavs.get("lists")?.focusCurrent();
-        return;
-      case "search":
-        this.navigate("#search");
-        this.search.focusInput?.();
-        return;
-      case "quick-add":
-        if (this.quickAdd.isDisabled) {
-          this.setStatus("Quick add is available again once Kin finishes saving.");
-          this.restoreCommandFocus(opener);
-          return;
-        }
-        this.quickAdd.open({ opener, fallback: () => this.main.querySelector(".app-view:not([hidden]) h1") });
-        return;
-      case "shortcuts":
-        this.commandGeneration = this.securityGeneration;
-        this.commandPalette.openHelp({ opener });
-        return;
-    }
-  }
-  restoreCommandFocus(opener) {
-    if (!this.workspaceReady()) return;
-    if (opener?.isConnected && !opener.closest("[hidden], [inert]") && opener.getClientRects().length) opener.focus();
-    else this.main.querySelector(".app-view:not([hidden]) h1")?.focus();
-  }
-  // Kept for callers that switched the former Handoff/Talk tabs directly.
-  showHandoffPanel(id, focus = false) {
-    const segment = id === "talk" ? "talk" : "handoffs";
-    this.navigate(routeHash("updates", segment));
-    if (focus) this.segmentNavs.get("updates")?.focusCurrent();
-  }
   currentCivilDate() { return projectionContext().civilDate; }
   layoutMode() {
     if (this.phoneQuery?.matches) return "sheet";
@@ -800,16 +730,6 @@ class KinApp extends HTMLElement {
   renderSelection() {
     const selected = this.selection?.itemId ?? null;
     for (const list of [this.today, this.needs, this.shopping, this.staples]) if (list) list.selected = selected;
-  }
-  // Logout, leaving or deleting the household, and restore end reminders.
-  clearReminders() {
-    this.localReminders.clearAll();
-    this.renderReminders();
-  }
-  renderReminders() {
-    const reminders = new Map([...this.localReminders.entries].map(([id, entry]) => [id, { at: entry.at }]));
-    if (this.routines) this.routines.reminders = reminders;
-    if (this.selection) this.detail.reminder = reminders.get(`item:${this.selection.itemId}`) ?? null;
   }
   // Search results open the real record by canonical id.
   handleOpenSearchResult(detail) {
@@ -963,601 +883,6 @@ class KinApp extends HTMLElement {
     this.syncCoordinator?.stop();
     this.syncCoordinator = null;
   }
-  async handleAddItem(event) {
-    if (this.busy || !this.store || !this.engine) {
-      return;
-    }
-    const session = this.ctx.session.captureSession();
-    // Every capture carries a client-generated id (hex, like projection ids)
-    // so a retry after a partial success resumes against the same record
-    // instead of creating another.
-    const composer = event.detail.composer?.isConnected ? event.detail.composer : this.compose;
-    const incoming = {
-      text: event.detail.text,
-      classification: event.detail.classification,
-      planningDate: Number.isSafeInteger(event.detail.planningDate) ? event.detail.planningDate : null,
-      pinned: Boolean(event.detail.pinned),
-      cadence: isCadence(event.detail.cadence) ? event.detail.cadence : null,
-      revision: event.detail.revision ?? 0,
-      ...(event.detail.sourceStapleId ? { sourceStapleId: event.detail.sourceStapleId } : {}),
-    };
-    let pending = this.pendingCapture;
-    const matches = (draft) => draft && draft.text === incoming.text && draft.classification === incoming.classification &&
-      draft.planningDate === incoming.planningDate && draft.pinned === incoming.pinned && draft.sourceStapleId === incoming.sourceStapleId && draft.cadence === incoming.cadence && draft.revision === incoming.revision;
-    if (pending && pending.composer !== composer) pending = null;
-    if (pending && !matches(pending.draft)) {
-      composer.showPendingCapture?.({
-        finish: pending.retry,
-        startNew: () => { this.pendingCapture = null; composer.clearResult?.(); this.handleAddItem(event); },
-      });
-      this.setStatus("An earlier item is partly saved. Finish it or choose Start a new item.");
-      return;
-    }
-    const submittedDraft = Object.freeze({
-      ...incoming,
-      id: pending?.draft.id ?? event.detail.id ?? crypto.randomUUID().replaceAll("-", ""),
-      revision: incoming.revision,
-    });
-    const sourceList = submittedDraft.sourceStapleId ? this.staples : null;
-    // The capture form that submitted owns clearing and focus; the Today form
-    // is the default for retries that carry no composer.
-    const destination = CLASSIFICATION_LABELS[submittedDraft.classification] ?? "your lists";
-    const retry = () => this.handleAddItem({ detail: { ...submittedDraft, composer } });
-    if (pending) pending.retry = retry;
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    this.setStatus("Saving…");
-    let restoreComposeFocus = false;
-    let step = null;
-    try {
-      // A repeating task is a Routine: one create command, nothing partial.
-      const steps = submittedDraft.cadence ? remainingRecurringSteps(this.state, submittedDraft) : remainingCaptureSteps(this.state, submittedDraft);
-      for (step of steps) {
-        await this.appendCommand(step);
-        this.ctx.session.assertCurrentSession(session);
-      }
-      step = null;
-      this.renderState();
-      if (!sourceList) composer.clearIfMatches(submittedDraft);
-      const where = submittedDraft.planningDate === this.currentCivilDate() ? `${destination} and Today` : destination;
-      const recurring = submittedDraft.cadence ? this.state.routines?.find((routine) => routine.routineId === submittedDraft.id) : null;
-      this.setStatus(`${recurring ? describeRecurringCapture(recurring, this.currentCivilDate()) : `Added to ${where}.`}${this.ctx.sync.offlineSyncSuffix()}`);
-      if (!sourceList) composer.showResult?.(this.syncCoordinator ? "Saved here. Waiting to sync." : "Saved on this device.");
-      if (this.pendingCapture?.draft.id === submittedDraft.id) this.pendingCapture = null;
-      this.broadcastEventChange();
-      restoreComposeFocus = !sourceList;
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      if (error.code === 4) this.pendingRefresh = true;
-      this.renderState();
-      const partial = step && step.type !== "add" && step.type !== "create-routine";
-      const inline = step ? describePartialCapture(step, destination) : INLINE_SAVE_FAILED;
-      if (!sourceList) this.pendingCapture = { draft: submittedDraft, composer, retry };
-      this.ctx.status.showAlert(partial ? inline : (error.userMessage ?? SAVE_ERROR), retry);
-      if (!sourceList && composer.showResult) { composer.showResult(inline, { kind: "error", retry }); this.feedback.classList.add("app-feedback-inline"); }
-      this.setStatus("");
-      restoreComposeFocus = !sourceList;
-    } finally {
-      if (this.ctx.session.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        if (sourceList) {
-          const focusTarget = sourceList.querySelector(
-            `[data-item-id="${submittedDraft.sourceStapleId}"][data-item-action="replenish"]`,
-          );
-          (focusTarget ?? sourceList.querySelector(".today-section h2"))?.focus();
-        } else if (restoreComposeFocus) {
-          composer.focusInput();
-        }
-        this.ctx.peers.flushPeerRefresh();
-      }
-    }
-  }
-  async handleAddHandoff(event) {
-    return this.saveHandoff({ type: "add-handoff", text: event.detail.text });
-  }
-  async handleHandoffAction(type, handoffId) {
-    return this.saveHandoff({ type, handoffId });
-  }
-  async saveHandoff(command) {
-    if (this.busy || !this.store || !this.engine) return;
-    const session = this.ctx.session.captureSession();
-    const submitted = Object.freeze({ ...command });
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    this.setStatus("Saving…");
-    try {
-      await this.appendCommand(submitted);
-      this.ctx.session.assertCurrentSession(session);
-      this.renderState();
-      if (submitted.type === "add-handoff")
-        this.handoffs.clearIfMatches(submitted);
-      this.setStatus(
-        submitted.type === "add-handoff"
-          ? "Handoff added."
-          : submitted.type === "acknowledge-handoff"
-            ? "Acknowledged."
-            : "Handoff archived.",
-      );
-      this.broadcastEventChange();
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      if (error.code === 4 && submitted.handoffId) this.pendingRefresh = true;
-      this.ctx.status.showAlert(
-        error.userMessage ?? SAVE_ERROR,
-        () => this.saveHandoff(submitted),
-        submitted.handoffId ? submitted : null,
-      );
-      this.setStatus("");
-    } finally {
-      if (this.ctx.session.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        this.handoffs.focusInput();
-        this.ctx.peers.flushPeerRefresh();
-      }
-    }
-  }
-  async saveTalk(command) {
-    if (this.busy || !this.store || !this.engine) return;
-    const session = this.ctx.session.captureSession();
-    const submitted = Object.freeze({ ...command });
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    this.setStatus("Saving…");
-    try {
-      await this.appendCommand(submitted);
-      this.ctx.session.assertCurrentSession(session);
-      this.renderState();
-      if (submitted.type === "add-talk") this.talks.clearIfMatches(submitted);
-      this.setStatus(
-        submitted.type === "add-talk"
-          ? "Talk added."
-          : submitted.type === "resolve-talk"
-            ? "Resolved."
-            : submitted.type === "reopen-talk"
-              ? "Reopened."
-              : "Talk archived.",
-      );
-      this.broadcastEventChange();
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      if (error.code === 4 && submitted.talkId) this.pendingRefresh = true;
-      this.ctx.status.showAlert(
-        error.userMessage ?? SAVE_ERROR,
-        () => this.saveTalk(submitted),
-        submitted.talkId ? submitted : null,
-      );
-      this.setStatus("");
-    } finally {
-      if (this.ctx.session.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        this.talks.focusInput();
-        this.ctx.peers.flushPeerRefresh();
-      }
-    }
-  }
-  async savePulse(command) {
-    if (this.busy || !this.store || !this.engine) return;
-    const session = this.ctx.session.captureSession();
-    const submitted = Object.freeze({ ...command });
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    this.setStatus("Saving…");
-    try {
-      await this.appendCommand(submitted);
-      this.ctx.session.assertCurrentSession(session);
-      this.renderState();
-      this.pulse.saved();
-      this.setStatus(
-        submitted.type === "set-pulse" ? "Pulse set." : "Pulse cleared.",
-      );
-      this.broadcastEventChange();
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () =>
-        this.savePulse(submitted),
-      );
-      this.setStatus("");
-    } finally {
-      if (this.ctx.session.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        this.pulse.focusInput();
-        this.ctx.peers.flushPeerRefresh();
-      }
-    }
-  }
-  async saveMode(mode) {
-    if (this.busy || !this.store || !this.engine) return;
-    const session = this.ctx.session.captureSession();
-    const command = Object.freeze({ type: "set-household-mode", mode });
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    this.setStatus("Saving…");
-    try {
-      await this.appendCommand(command);
-      this.ctx.session.assertCurrentSession(session);
-      this.renderState();
-      this.setStatus("Household mode updated.");
-      this.broadcastEventChange();
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      this.modeSelect.value = this.state?.mode ?? "normal";
-      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.saveMode(mode));
-      this.setStatus("");
-    } finally {
-      if (this.ctx.session.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        this.ctx.peers.flushPeerRefresh();
-      }
-    }
-  }
-  async saveRoutine(command) {
-    if (this.busy || !this.store || !this.engine) return;
-    const session = this.ctx.session.captureSession();
-    const submitted = Object.freeze({ ...command });
-    const todayFocused = this.today.contains(document.activeElement);
-    if (todayFocused) this.today.rememberFocus();
-    const focus = this.routines.captureFocus();
-    let committed = false;
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    this.setStatus("Saving…");
-    try {
-      await this.appendCommand(submitted);
-      this.ctx.session.assertCurrentSession(session);
-      committed = true;
-      this.broadcastEventChange();
-      this.renderState();
-      if (submitted.type === "create-routine")
-        this.routines.clearIfMatches(submitted);
-      if (submitted.type === "archive-routine") this.routines.closeSchedule(submitted.routineId);
-      // Feedback reads the Rust projection after the save, never a guess.
-      const saved = submitted.routineId
-        ? this.state.routines?.find((routine) => routine.routineId === submitted.routineId)
-        : this.state.routines?.at(-1);
-      const next = describeNextOccurrence(saved?.nextOn ?? null, this.currentCivilDate());
-      this.setStatus(
-        submitted.type === "create-routine"
-          ? describeRecurringCapture(saved, this.currentCivilDate())
-          : submitted.type === "archive-routine"
-            ? "Stopped repeating. Past completions are kept."
-            : submitted.type === "complete-routine-occurrence"
-              ? `Done for this period.${next ? ` ${next}.` : ""}`
-              : "Reopened for this period.",
-      );
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      if (error.code === 4 && submitted.routineId) this.pendingRefresh = true;
-      this.ctx.status.showAlert(
-        committed
-          ? "Your routine was saved. Try again to refresh the view."
-          : (error.userMessage ?? SAVE_ERROR),
-        committed ? this.retryRefresh : () => this.saveRoutine(submitted),
-        committed || !submitted.routineId ? null : submitted,
-      );
-      this.setStatus("");
-    } finally {
-      if (this.ctx.session.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        if (todayFocused) { /* kin-today restored its own focus on render */ }
-        else if (
-          submitted.type === "create-routine" ||
-          submitted.type === "archive-routine"
-        )
-          this.routines.focusInput();
-        else this.routines.restoreFocus(focus);
-        this.ctx.peers.flushPeerRefresh();
-      }
-    }
-  }
-  // From Today: show the task's schedule editor on the Routines page.
-  openRoutineSchedule(routineId) {
-    if (!this.workspaceReady()) return;
-    this.navigate("#routines");
-    if (!this.routines.openSchedule(routineId)) this.setStatus(SCHEDULE_MESSAGES.gone);
-  }
-  // A schedule change is a new Routine starting today plus stopping the old
-  // one, each an ordinary Rust-validated command (see planScheduleChange).
-  // The replacement id is kept until the change finishes, so a retry after a
-  // partial save resumes instead of creating a second repeating task.
-  async changeRoutineSchedule(detail) {
-    if (this.busy || !this.store || !this.engine) return;
-    const session = this.ctx.session.captureSession();
-    const vaultId = this.vault?.vaultId ?? null;
-    const pending = this.pendingScheduleChange?.vaultId === vaultId ? this.pendingScheduleChange : null;
-    const resume = pending?.routineId === detail.routineId && pending.cadence === detail.cadence;
-    const change = Object.freeze({
-      vaultId,
-      routineId: detail.routineId,
-      cadence: detail.cadence,
-      replacementId: resume ? pending.replacementId : crypto.randomUUID().replaceAll("-", ""),
-    });
-    const plan = planScheduleChange(this.state, change, pending);
-    if (plan.status !== "ready") {
-      if (resume) this.pendingScheduleChange = null;
-      this.setStatus(SCHEDULE_MESSAGES[plan.status]);
-      return;
-    }
-    this.pendingScheduleChange = change;
-    let step = null;
-    let appended = 0;
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    this.setStatus("Saving…");
-    try {
-      for (step of plan.steps) {
-        await this.appendCommand(step);
-        this.ctx.session.assertCurrentSession(session);
-        appended++;
-      }
-      step = null;
-      this.pendingScheduleChange = null;
-      this.localReminders.cancel(`routine:${change.routineId}`);
-      this.routines.closeSchedule(change.routineId);
-      this.broadcastEventChange();
-      this.renderState();
-      this.setStatus(describeScheduleChanged(change.cadence));
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      if (error.code === 4) this.pendingRefresh = true;
-      if (appended) this.broadcastEventChange();
-      this.renderState();
-      this.ctx.status.showAlert(
-        step && step.type !== "create-routine" ? SCHEDULE_MESSAGES.partial : (error.userMessage ?? SAVE_ERROR),
-        () => this.changeRoutineSchedule(change),
-      );
-      this.setStatus("");
-    } finally {
-      if (this.ctx.session.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        if (!this.pendingScheduleChange) this.routines.focusRoutine(change.replacementId);
-        this.ctx.peers.flushPeerRefresh();
-      }
-    }
-  }
-  async handlePlaybookIntent(event) {
-    const action = event.type.slice(4);
-    const detail = event.detail;
-    if (action === "instantiate-playbook") {
-      const playbook = this.state?.playbooks?.find(record => record.playbookId === detail.playbookId && !record.archived);
-      if (!playbook) return;
-      const batch = { itemId: crypto.randomUUID().replaceAll("-", ""), title: playbook.title, steps: playbook.entries.map(text => ({ stepId: crypto.randomUUID().replaceAll("-", ""), text })) };
-      return this.instantiatePlaybook(batch);
-    }
-    const session = this.ctx.session.captureSession();
-    const command = action === "save-playbook"
-      ? { type: action, id: detail.playbookId ?? crypto.randomUUID().replaceAll("-", ""), title: detail.title, entries: detail.entries }
-      : { type: action, playbookId: detail.playbookId };
-    if (action === "save-playbook") detail.playbookId = command.id;
-    this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
-    try {
-      await this.appendCommand(command); this.ctx.session.assertCurrentSession(session); this.routines.clearPlaybookEditor(); this.renderState(); this.broadcastEventChange();
-      this.setStatus(action === "save-playbook" ? "Reusable checklist saved." : "Reusable checklist archived.");
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.handlePlaybookIntent(event), command); this.setStatus("");
-    } finally { if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); } }
-  }
-  async instantiatePlaybook(batch) {
-    if (this.busy || !this.store || !this.engine) return;
-    const session = this.ctx.session.captureSession(); this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Creating checklist…");
-    try {
-      let item = this.state?.items.find(record => record.itemId === batch.itemId);
-      if (!item) { await this.appendCommand({ type: "add", id: batch.itemId, text: batch.title, classification: "need" }); item = this.state?.items.find(record => record.itemId === batch.itemId); }
-      for (const step of batch.steps) {
-        if (item?.steps?.some(record => record.stepId === step.stepId)) continue;
-        await this.appendCommand({ type: "add-item-step", itemId: batch.itemId, stepId: step.stepId, text: step.text });
-        item = this.state?.items.find(record => record.itemId === batch.itemId);
-      }
-      this.ctx.session.assertCurrentSession(session); this.renderState(); this.broadcastEventChange(); this.setStatus("Checklist created under To do. It is now an ordinary household item.");
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.instantiatePlaybook(batch)); this.setStatus("");
-    } finally { if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); } }
-  }
-  async saveArea(detail) {
-    if (this.busy || !this.store || !this.engine) return;
-    const session = this.ctx.session.captureSession();
-    const action = detail.action;
-    const types = {
-      "create-area": "create-area",
-      "rename-area": "rename-area",
-      "archive-area": "archive-area",
-      "assign-item-area": "change-item-area",
-    };
-    const type = types[action];
-    if (!type) return;
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    this.setStatus("Saving…");
-    try {
-      await this.appendCommand({
-        type,
-        name: detail.name,
-        areaId: detail.areaId,
-        itemId: detail.itemId,
-      });
-      this.ctx.session.assertCurrentSession(session);
-      this.renderState();
-      this.broadcastEventChange();
-      this.setStatus(action === "create-area" ? "Area added."
-        : action === "rename-area" ? "Area renamed."
-        : action === "archive-area" ? "Area archived. Existing links are kept."
-        : detail.areaId ? "Area updated." : "Area cleared.");
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR);
-      this.setStatus("");
-    } finally {
-      if (this.ctx.session.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        if (action === "archive-area") this.areas.focus();
-        if (action === "assign-item-area") {
-          [...this.querySelectorAll(".item-area-select")]
-            .find((select) => select.dataset.itemId === detail.itemId && !select.closest("[hidden]"))
-            ?.focus();
-        }
-        this.ctx.peers.flushPeerRefresh();
-      }
-    }
-  }
-  async saveItemPlanningDate(detail, sourceList) {
-    this.localReminders.cancel(`item:${detail.itemId}`);
-    if (this.busy || !this.store || !this.engine) return;
-    const session = this.ctx.session.captureSession();
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    this.setStatus("Saving…");
-    try {
-      await this.appendCommand({
-        type: "set-item-planning-date",
-        itemId: detail.itemId,
-        planningDate: detail.planningDate,
-      });
-      this.ctx.session.assertCurrentSession(session);
-      this.renderState();
-      this.broadcastEventChange();
-      this.detail.clearFeedback(detail.itemId);
-      this.feedDetail();
-      this.setStatus(detail.planningDate ? "Planned date saved." : "Planned date cleared.");
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      if (error.code === 4) this.pendingRefresh = true;
-      this.renderState();
-      this.showDetailActionError(detail.itemId, error.userMessage ?? SAVE_ERROR,
-        () => this.saveItemPlanningDate(detail, sourceList));
-      this.setStatus("");
-    } finally {
-      if (this.ctx.session.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        (sourceList ?? this.detail)?.querySelector?.(
-          `.item-planning-date-input[data-item-id="${detail.itemId}"]`,
-        )?.focus();
-        this.ctx.peers.flushPeerRefresh();
-      }
-    }
-  }
-  // A reminder's live record in this session: its current title and a check
-  // that it may still notify. Null once the record is gone or no longer live.
-  reminderTarget(id, session) {
-    const itemId = id.startsWith("item:") ? id.slice(5) : null;
-    const routineId = id.startsWith("routine:") ? id.slice(8) : null;
-    const record = () => itemId
-      ? this.state?.items?.find((item) => item.itemId === itemId && item.status === "active")
-      : this.state?.routines?.find((routine) => routine.routineId === routineId && routine.status !== "archived");
-    const current = record();
-    if (!current || !this.ctx.session.isCurrentSession(session)) return null;
-    return { title: current.text, isCurrent: () => this.ctx.session.isCurrentSession(session) && Boolean(record()) };
-  }
-  async handleLocalReminder({ id, title, at }) {
-    const itemId = id.startsWith("item:") ? id.slice(5) : null;
-    // A reminder carries its decrypted title, so it may only notify while its
-    // record is live in this unlocked session (lock suspends every timer).
-    const session = this.ctx.session.captureSession();
-    const target = this.reminderTarget(id, session);
-    const token = Symbol(id);
-    try {
-      const result = await this.localReminders.schedule({ id, title, at, isCurrent: target?.isCurrent ?? (() => false), token });
-      // The permission prompt can outlast the session; never keep a timer or
-      // report success into a locked or different household. The token makes
-      // sure only this attempt's reminder is cancelled, never a newer one.
-      if (!this.ctx.session.isCurrentSession(session)) { this.localReminders.cancel(id, token); return; }
-      this.renderReminders();
-      for (const control of this.querySelectorAll("kin-reminder")) if (control.targetRecord?.id === id) control.saved(result === "granted" ? at : null);
-      if (itemId) this.detail?.reminderDrafts?.delete(itemId);
-      this.setStatus(result === "granted" ? "Reminder set on this device while Kin is open." : result === "denied" ? "Notifications are blocked in browser settings. Kin still works normally." :
-        result === "stale" ? "That task changed before the reminder was set. Nothing was scheduled." : "Reminders are unavailable in this browser. Kin still works normally.");
-    } catch (error) {
-      if (this.ctx.session.isCurrentSession(session)) this.ctx.status.showAlert(error.message ?? "Choose a future reminder time.");
-    }
-  }
-  downloadCalendar() {
-    if (this.busy || !this.store || !this.state) return;
-    const planned = this.state.items.filter(
-      (item) => item.status === "active" && item.planningDate != null,
-    );
-    if (planned.length === 0) return;
-
-    let url;
-    try {
-      const contents = createCalendarExport(planned);
-      url = URL.createObjectURL(new Blob([contents], {
-        type: "text/calendar;charset=utf-8",
-      }));
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "kin-planned-items.ics";
-      link.click();
-      this.setStatus("Calendar file prepared for download.");
-    } catch (error) {
-      if (url) URL.revokeObjectURL(url);
-      this.ctx.status.showAlert(error.message || "Kin could not prepare the calendar file.");
-      this.setStatus("");
-      return;
-    }
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-  async saveNote(action, detail) {
-    if (this.busy || !this.store || !this.engine) return;
-    const session = this.ctx.session.captureSession();
-    const type = { "create-note": "create-note", "update-note": "update-note", "archive-note": "archive-note" }[action];
-    if (!type) return;
-    const noteId = detail.noteId ?? crypto.randomUUID().replaceAll("-", "");
-    this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
-    try {
-      await this.appendCommand({ type, ...detail, noteId, id: noteId });
-      this.ctx.session.assertCurrentSession(session);
-      this.notes.clearEditor();
-      this.notes.pendingFocus = action === "archive-note" ? this.notes.pendingFocus : "title";
-      this.renderState();
-      this.broadcastEventChange();
-      this.setStatus(action === "archive-note"
-        ? "Note archived on this device."
-        : navigator.onLine
-          ? "Note saved on this device."
-          : "Note saved on this device. Sync is unavailable while offline.");
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR);
-      this.setStatus("");
-      this.notes.pendingFocus = "title";
-    } finally {
-      if (this.ctx.session.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        this.ctx.peers.flushPeerRefresh();
-      }
-    }
-  }
-  async saveReferenceRecord(action, detail) {
-    if (this.busy || !this.store || !this.engine) return;
-    const session = this.ctx.session.captureSession();
-    const recordId = detail.recordId ?? crypto.randomUUID().replaceAll("-", "");
-    const type = action === "archive-reference-record" ? action : "save-reference-record";
-    this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
-    try {
-      await this.appendCommand({ type, ...detail, recordId, id: recordId });
-      this.ctx.session.assertCurrentSession(session);
-      if (action === "save-reference-record") this.notes.clearReferenceEditor();
-      this.renderState(); this.broadcastEventChange();
-      this.setStatus(action === "archive-reference-record" ? "Reference archived." : "Reference saved on this device.");
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); this.setStatus("");
-    } finally { if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); } }
-  }
-  async saveMaintenanceEvent(action, detail) {
-    if (this.busy || !this.store || !this.engine) return;
-    const session = this.ctx.session.captureSession();
-    const type = action === "archive-maintenance-event" ? action : "save-maintenance-event";
-    this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Saving maintenance history…");
-    try {
-      await this.appendCommand({ ...detail, type, id: detail.maintenanceId });
-      this.ctx.session.assertCurrentSession(session); this.renderState(); this.broadcastEventChange();
-      this.setStatus(action === "archive-maintenance-event" ? "Maintenance event archived." : "Maintenance saved on this device.");
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); this.setStatus("");
-    } finally { if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); } }
-  }
   // Programmatic entry (tests, future callers) that goes through the same
   // feedback and persistence path as a file chosen in the picker.
   handleAddAttachment(event) {
@@ -1676,342 +1001,6 @@ class KinApp extends HTMLElement {
       if (!this.ctx.session.isCurrentSession(session)) return;
       this.attachmentRows = rows; this.renderState();
     } catch { /* A later sync retries attachment indexing. */ }
-  }
-  async handleChangeResponsibility(event) {
-    if (this.busy || !this.store || !this.engine) return;
-    const session = this.ctx.session.captureSession(); this.ctx.status.setBusy(true); this.clearAlert();
-    try {
-      const { targetKind, targetId, memberId } = event.detail;
-      await this.appendCommand({ type: "change-responsibility", targetKind, id: targetId, memberId });
-      this.ctx.session.assertCurrentSession(session); this.broadcastEventChange(); void this.syncCoordinator?.syncNow();
-    } catch (error) { if (error.code !== "locked" && this.ctx.session.isCurrentSession(session)) this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); }
-    finally { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setBusy(false); }
-  }
-  async handleCompleteItem(event) {
-    this.localReminders.cancel(`item:${event.detail.itemId}`);
-    return this.handleItemAction("complete", event.detail.itemId);
-  }
-  async savePin(detail) {
-    if (this.busy || !this.store || !this.engine || detail.targetKind !== "item") return;
-    const session = this.ctx.session.captureSession();
-    const command = { type: detail.pinned ? "pin" : "unpin", targetKind: "item", targetId: detail.targetId };
-    const list = [this.today, this.needs, this.shopping, this.staples].find((candidate) => candidate.contains(document.activeElement));
-    list?.rememberFocus();
-    const detailFocused = this.detail?.contains(document.activeElement);
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    this.setStatus("Saving…");
-    try {
-      await this.appendCommand(command);
-      this.ctx.session.assertCurrentSession(session);
-      this.renderState();
-      this.setStatus(detail.pinned ? "Pinned for quick access." : "Unpinned.");
-      this.broadcastEventChange();
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      if (error.code === 4) this.pendingRefresh = true;
-      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.savePin(detail), command);
-      this.setStatus("");
-    } finally {
-      if (this.ctx.session.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        if (detailFocused && !this.detail.contains(document.activeElement)) this.detail.querySelector(".pin-button")?.focus();
-        this.ctx.peers.flushPeerRefresh();
-      }
-    }
-  }
-  openPinnedItem(itemId, opener = null) {
-    const item = this.state?.items.find((record) => record.itemId === itemId && record.status !== "archived");
-    if (!item) { this.setStatus("That item is no longer available."); return; }
-    this.openItemDetail(itemId, { opener });
-  }
-  async handleReopenItem(event) {
-    return this.handleItemAction("reopen", event.detail.itemId);
-  }
-  async handleArchiveItem(event) {
-    this.localReminders.cancel(`item:${event.detail.itemId}`);
-    return this.handleItemAction("archive", event.detail.itemId);
-  }
-  bulkListFrom(event) {
-    const list = event.target?.closest?.("kin-today");
-    return list && [this.needs, this.shopping].includes(list) && list.isBulkList ? list : null;
-  }
-  clearBulkOutcome() {
-    clearTimeout(this.bulkUndoTimer);
-    this.bulkUndoTimer = null;
-    this.bulkUndo = null;
-    this.bulkRetry = null;
-  }
-  // Undo is offered for ten minutes, until it runs, until the next bulk action
-  // or Dismiss, or until lock, logout, or a household change ends the session.
-  armBulkUndo(record) {
-    clearTimeout(this.bulkUndoTimer);
-    this.bulkUndo = record;
-    this.bulkUndoTimer = setTimeout(() => {
-      if (this.bulkUndo !== record) return;
-      this.bulkUndo = null;
-      if (record.list.isConnected && record.list.bulkResult) record.list.setBulkResult({ ...record.list.bulkResult, canUndo: false });
-    }, BULK_UNDO_WINDOW_MS);
-  }
-  async handleBulkItemAction(event) {
-    const list = this.bulkListFrom(event);
-    const { action, itemIds } = event.detail ?? {};
-    if (!list || !BULK_ACTIONS[action] || !Array.isArray(itemIds)) return;
-    if (this.busy || this.bulkRunning || !this.store || !this.engine || !this.state) return;
-    this.clearBulkOutcome();
-    const plan = planBulk(action, itemIds, this.state.items);
-    await this.runBulk({ list, action, targets: plan.targets, skipped: plan.skipped.length });
-  }
-  async handleBulkRetry(event) {
-    const list = this.bulkListFrom(event);
-    const record = this.bulkRetry;
-    if (!list || !record || record.list !== list || record.generation !== this.securityGeneration) return;
-    if (this.busy || this.bulkRunning || !this.store || !this.state) return;
-    this.bulkRetry = null;
-    const plan = planBulk(record.action, record.itemIds, this.state.items);
-    // Earlier successes of the same action stay undoable alongside the retry.
-    const carried = this.bulkUndo?.list === list && this.bulkUndo.action === record.action ? this.bulkUndo.changes : [];
-    await this.runBulk({ list, action: record.action, targets: plan.targets, skipped: plan.skipped.length, carried });
-  }
-  async runBulk({ list, action, targets, skipped, carried = [] }) {
-    const spec = BULK_ACTIONS[action];
-    const session = this.ctx.session.captureSession();
-    const succeeded = [];
-    const failed = [];
-    const started = performance.now();
-    this.bulkRunning = true;
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    this.setStatus("");
-    list.setBulkResult(null);
-    try {
-      for (const [index, itemId] of targets.entries()) {
-        list.setBulkProgress(`${action === "complete" ? "Completing" : "Reopening"} ${index + 1} of ${targets.length}…`);
-        try {
-          await this.appendCommand({ type: spec.command, itemId });
-          const record = this.state.items.find((item) => item.itemId === itemId);
-          succeeded.push({ itemId, to: spec.to, changedAt: record?.lastChangedAt ?? null });
-          if (action === "complete") this.localReminders.cancel(`item:${itemId}`);
-        } catch (error) {
-          // Changes committed before a lock stay committed; nothing from the
-          // old session may touch the new interface.
-          if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-          if (error.code === 4) this.pendingRefresh = true;
-          failed.push(itemId);
-        }
-      }
-    } finally {
-      this.bulkRunning = false;
-      if (this.ctx.session.isCurrentSession(session)) {
-        this.lastBulkMetric = { action, count: targets.length, ms: performance.now() - started };
-        list.setBulkProgress("");
-        if (succeeded.length) { this.renderState(); this.broadcastEventChange(); }
-        list.deselect(succeeded.map((change) => change.itemId));
-        const changes = [...carried, ...succeeded];
-        if (changes.length) this.armBulkUndo({ list, action, changes, generation: session.generation });
-        if (failed.length) this.bulkRetry = { list, action, itemIds: failed, generation: session.generation };
-        list.setBulkResult({
-          message: describeBulkOutcome(action, { succeeded: succeeded.length, failed: failed.length, skipped }),
-          error: failed.length > 0,
-          canUndo: changes.length > 0,
-          undoLabel: action === "complete" ? "Undo: reopen these" : "Undo: complete these",
-          canRetry: failed.length > 0,
-        });
-        this.ctx.status.setBusy(false);
-        list.focusBulkResult();
-        this.ctx.peers.flushPeerRefresh();
-      }
-    }
-  }
-  // Undo is a new, authorized compensating command per Item, never a rewrite
-  // of history. Before each one the Item must still be in the status this
-  // device left it in and carry the same Rust-derived lastChangedAt; Rust then
-  // re-checks the status atomically inside the append. The remaining gap: a
-  // change authored elsewhere that has not reached this device yet cannot be
-  // seen, and is reconciled by normal sync ordering afterwards.
-  async handleBulkUndo(event) {
-    const list = this.bulkListFrom(event);
-    const record = this.bulkUndo;
-    if (!list || !record || record.list !== list || record.generation !== this.securityGeneration) return;
-    if (this.busy || this.bulkRunning || !this.store || !this.engine) return;
-    this.clearBulkOutcome();
-    const session = this.ctx.session.captureSession();
-    const undone = [];
-    const conflicts = [];
-    const failed = [];
-    let unverified = false;
-    this.bulkRunning = true;
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    list.setBulkResult(null);
-    try {
-      let items;
-      try {
-        items = (await this.readAuthoritativeState(session)).items;
-      } catch (error) {
-        if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-        // Fail closed: the rendered projection may be stale, so checking
-        // against it could overwrite a newer change. Nothing is undone and
-        // the whole undo set stays available to try again.
-        unverified = true;
-        return;
-      }
-      for (const [index, change] of record.changes.entries()) {
-        list.setBulkProgress(`Undoing ${index + 1} of ${record.changes.length}…`);
-        if (undoStatus(change, items) !== "ready") { conflicts.push(change); continue; }
-        try {
-          await this.appendCommand({ type: undoCommand(change), itemId: change.itemId });
-          items = this.state.items;
-          undone.push(change);
-        } catch (error) {
-          if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-          // Rust rejected the status precondition: the Item changed in between.
-          if (error.code === 4) { this.pendingRefresh = true; conflicts.push(change); }
-          else failed.push(change);
-        }
-      }
-    } finally {
-      this.bulkRunning = false;
-      if (this.ctx.session.isCurrentSession(session)) {
-        list.setBulkProgress("");
-        if (undone.length) { this.renderState(); this.broadcastEventChange(); }
-        // Items failed for a local reason (not a conflict) can be undone again.
-        const retryable = unverified ? record.changes : failed;
-        if (retryable.length) this.armBulkUndo({ ...record, changes: retryable, generation: session.generation });
-        list.setBulkResult({
-          message: unverified
-            ? BULK_UNDO_UNVERIFIED
-            : describeBulkOutcome(record.action, { succeeded: undone.length, conflicts: conflicts.length, failed: failed.length, undo: true }),
-          error: unverified || failed.length > 0 || conflicts.length > 0,
-          canUndo: retryable.length > 0,
-          undoLabel: "Try undo again",
-          canRetry: false,
-        });
-        this.ctx.status.setBusy(false);
-        list.focusBulkResult();
-        this.ctx.peers.flushPeerRefresh();
-      }
-    }
-  }
-  async handleItemAction(type, itemId) {
-    if (this.busy || !this.store || !this.engine) {
-      return;
-    }
-    const session = this.ctx.session.captureSession();
-    const submittedItemId = itemId;
-    const activeList = [this.today, this.needs, this.shopping, this.staples].find((list) =>
-      list.contains(document.activeElement),
-    );
-    const detailFocused = this.detail?.contains(document.activeElement);
-    const restoreListFocus = Boolean(activeList) || detailFocused;
-    activeList?.rememberFocus();
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    this.setStatus("Saving…");
-    let restoreComposeFocus = false;
-    try {
-      await this.appendCommand({ type, itemId: submittedItemId });
-      this.ctx.session.assertCurrentSession(session);
-      this.renderState();
-      this.setStatus(
-        type === "complete"
-          ? "Marked complete."
-          : type === "reopen"
-            ? "Reopened."
-            : "Archived.",
-      );
-      this.broadcastEventChange();
-      restoreComposeFocus = true;
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      if (error.code === 4) {
-        this.pendingRefresh = true;
-      }
-      this.ctx.status.showAlert(
-        error.userMessage ?? SAVE_ERROR,
-        () => this.handleItemAction(type, submittedItemId),
-        { type, itemId: submittedItemId },
-      );
-      this.setStatus("");
-      restoreComposeFocus = true;
-    } finally {
-      if (this.ctx.session.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        if (detailFocused) {
-          const next = this.detail.querySelector('[data-focus-id="primary"]') ?? this.detail.querySelector(".item-detail-close");
-          next?.focus();
-        } else if (restoreComposeFocus && !restoreListFocus) {
-          this.compose.focusInput();
-        }
-        this.ctx.peers.flushPeerRefresh();
-      }
-    }
-  }
-  async handleItemStep(type, detail) {
-    if (this.busy || !this.store || !this.engine) return;
-    const list = [this.today, this.needs, this.shopping, this.staples].find((candidate) => candidate.contains(document.activeElement)) ?? null;
-    if (list) list.rememberFocus();
-    const stepFocus = this.detail?.contains(document.activeElement) ? (document.activeElement.dataset.focusId ?? "add-step") : null;
-    const session = this.ctx.session.captureSession();
-    const command = Object.freeze({
-      type,
-      itemId: detail.itemId,
-      ...(type === "add-item-step"
-        ? { stepId: detail.stepId ?? randomId(), text: detail.text }
-        : { stepId: detail.stepId }),
-    });
-    const submittedStep = command.type === "add-item-step" ? command.text : null;
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    this.setStatus("Saving…");
-    try {
-      await this.appendCommand(command);
-      this.ctx.session.assertCurrentSession(session);
-      this.renderState();
-      if (submittedStep != null) this.detail.clearStepDraft(command.itemId, submittedStep);
-      this.detail.clearFeedback(command.itemId);
-      this.feedDetail();
-      this.setStatus(
-        type === "add-item-step"
-          ? "Step added."
-          : type === "complete-item-step"
-            ? "Step completed."
-            : type === "reopen-item-step"
-              ? "Step reopened."
-              : "Step archived.",
-      );
-      this.broadcastEventChange();
-    } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      if (error.code === 4) this.pendingRefresh = true;
-      this.renderState();
-      this.showDetailActionError(command.itemId, error.userMessage ?? SAVE_ERROR,
-        () => this.handleItemStep(type, command), command);
-      this.setStatus("");
-    } finally {
-      if (this.ctx.session.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        if (stepFocus && !this.detail.contains(document.activeElement)) {
-          const target = type === "add-item-step" ? this.detail.stepInput : [...this.detail.querySelectorAll("[data-focus-id]")].find((node) => node.dataset.focusId === stepFocus);
-          (target && !target.disabled ? target : this.detail.stepInput)?.focus();
-        }
-        this.ctx.peers.flushPeerRefresh();
-      }
-    }
-  }
-  showDetailActionError(itemId, message, retry, intent = null) {
-    if (!this.detail) { this.ctx.status.showAlert(message, retry, intent); return; }
-    this.detail.setFeedback(itemId, { itemId, message, retry, intent });
-    if (this.selection) this.feedDetail();
-  }
-  async appendCommand(command) {
-    const session = this.ctx.session.captureSession();
-    this.ctx.session.assertCurrentSession(session);
-    const result = await session.store.append(command, session.engine);
-    this.ctx.session.assertCurrentSession(session);
-    this.state = result.state;
-    this.snapshotBoundary = result.snapshotBoundary;
-    void this.syncCoordinator?.syncNow();
   }
   resolvedAppearanceMode(mode) {
     return mode === "system" ? (this.systemAppearance?.matches ? "dark" : "light") : mode;
@@ -2164,12 +1153,26 @@ class KinApp extends HTMLElement {
 
   // Regression scripts call or replace these; each delegates to its controller.
   setAutoLockMinutes(...args) { return this.ctx.session.setAutoLockMinutes(...args); }
+  runWorkspaceCommand(...args) { return this.ctx.append.runWorkspaceCommand(...args); }
+  clearReminders(...args) { return this.ctx.records.clearReminders(...args); }
   initialize(...args) { return this.ctx.session.initialize(...args); }
   configureSyncCoordinator(...args) { return this.ctx.sync.configureSyncCoordinator(...args); }
   handleSyncState(...args) { return this.ctx.sync.handleSyncState(...args); }
+  handleAddItem(...args) { return this.ctx.items.handleAddItem(...args); }
+  handleAddHandoff(...args) { return this.ctx.conversations.handleAddHandoff(...args); }
+  handleHandoffAction(...args) { return this.ctx.conversations.handleHandoffAction(...args); }
+  saveTalk(...args) { return this.ctx.conversations.saveTalk(...args); }
+  savePulse(...args) { return this.ctx.conversations.savePulse(...args); }
+  saveRoutine(...args) { return this.ctx.routines.saveRoutine(...args); }
+  changeRoutineSchedule(...args) { return this.ctx.routines.changeRoutineSchedule(...args); }
+  instantiatePlaybook(...args) { return this.ctx.routines.instantiatePlaybook(...args); }
+  handleLocalReminder(...args) { return this.ctx.records.handleLocalReminder(...args); }
   schedulePulseRefresh(...args) { return this.ctx.refresh.schedulePulseRefresh(...args); }
+  clearBulkOutcome(...args) { return this.ctx.bulk.clearBulkOutcome(...args); }
   readAuthoritativeState(...args) { return this.ctx.refresh.readAuthoritativeState(...args); }
+  handleItemAction(...args) { return this.ctx.items.handleItemAction(...args); }
   openPeerChannel(...args) { return this.ctx.peers.openPeerChannel(...args); }
+  appendCommand(...args) { return this.ctx.append.appendCommand(...args); }
   handleCaughtUp(...args) { return this.ctx.refresh.handleCaughtUp(...args); }
   closePeerChannel(...args) { return this.ctx.peers.closePeerChannel(...args); }
   broadcastEventChange(...args) { return this.ctx.peers.broadcastEventChange(...args); }

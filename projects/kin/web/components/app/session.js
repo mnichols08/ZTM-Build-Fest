@@ -83,8 +83,8 @@ export class SessionController {
       // Reminders suspended by a lock of this same vault come back with
       // titles from the fresh state; another vault's are discarded.
       if (this.isCurrentSession(session)) {
-        this.app.localReminders.resumeAll(session.vault.vaultId ?? null, (id) => this.app.reminderTarget(id, session));
-        this.app.renderReminders();
+        this.app.localReminders.resumeAll(session.vault.vaultId ?? null, (id) => this.app.ctx.records.reminderTarget(id, session));
+        this.app.ctx.records.renderReminders();
       }
       this.app.ctx.sync.updateSyncChip();
       if (navigator.onLine === false) this.app.onOffline();
