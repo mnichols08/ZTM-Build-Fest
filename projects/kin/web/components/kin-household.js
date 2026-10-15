@@ -4,6 +4,8 @@ import {
   createDeviceAuthorizationCertificate,
   deviceKeyFingerprint,
 } from "../sync/crypto.js";
+import { button, message, text } from "./shared/dom.js";
+import { OperationGuard } from "./shared/operation.js";
 
 const MAX_ACTIVE_ADULTS = 4;
 const MAX_ACTIVE_LIMITED = 8;
@@ -72,7 +74,13 @@ class KinHousehold extends HTMLElement {
     this.claim = null;
     this.timer = null;
     this.poll = null;
-    this.busy = false;
+    // One authorization request at a time, only while the session is live.
+    this.operations = new OperationGuard(this, {
+      canStart: () => { try { this.assertConnection(); return true; } catch { return false; } },
+      onError: (error) => this.renderError(["NotAllowedError", "AbortError"].includes(error?.name)
+        ? new Error("The passkey was unavailable or the request was cancelled. No authorization change was made.")
+        : error),
+    });
     this.prefilledCode = "";
     this.routeCodeCaptured = false;
     this.syncKeyStore = null;
@@ -1367,24 +1375,8 @@ class KinHousehold extends HTMLElement {
     }
   }
 
-  async run(action) {
-    if (this.busy) return;
-    try { this.assertConnection(); } catch { return; }
-    this.busy = true;
-    this.setAttribute("aria-busy", "true");
-    try {
-      await action();
-    } catch (error) {
-      if (["NotAllowedError", "AbortError"].includes(error?.name))
-        error = new Error(
-          "The passkey was unavailable or the request was cancelled. No authorization change was made.",
-        );
-      this.renderError(error);
-    } finally {
-      this.busy = false;
-      this.setAttribute("aria-busy", "false");
-    }
-  }
+  get busy() { return this.operations.busy; }
+  run(action) { return this.operations.run(() => action()); }
   renderError(error) {
     if (!this.isConnected || this.connectionAbort.signal.aborted) return;
     this.message(
@@ -1392,12 +1384,7 @@ class KinHousehold extends HTMLElement {
       true,
     );
   }
-  text(value) {
-    const paragraph = document.createElement("p");
-    paragraph.textContent = value;
-    this.append(paragraph);
-    return paragraph;
-  }
+  text(value) { return text(value, { parent: this }); }
   showFingerprint(prompt, fingerprint) {
     if (typeof fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(fingerprint))
       return null;
@@ -1409,31 +1396,9 @@ class KinHousehold extends HTMLElement {
     this.append(paragraph);
     return paragraph;
   }
-  message(value, alert = false) {
-    let region = this.querySelector(".household-message");
-    if (!region) {
-      region = document.createElement("p");
-      region.className = "household-message";
-      this.append(region);
-    }
-    region.setAttribute("role", alert ? "alert" : "status");
-    region.textContent = value;
-    return region;
-  }
-  makeButton(label, action, className = "") {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = label;
-    button.className = className;
-    button.disabled = this.disabled;
-    button.addEventListener("click", action);
-    return button;
-  }
-  button(label, action, className) {
-    const button = this.makeButton(label, action, className);
-    this.append(button);
-    return button;
-  }
+  message(value, alert = false) { return message(this, value, { alert, className: "household-message" }); }
+  makeButton(label, action, className = "") { return button(label, action, { className, disabled: this.disabled }); }
+  button(label, action, className) { return button(label, action, { className, disabled: this.disabled, parent: this }); }
 }
 
 customElements.define("kin-household", KinHousehold);

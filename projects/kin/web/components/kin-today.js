@@ -4,6 +4,7 @@ import { composeToday, ROUTINE_PERIOD_LABELS } from "../today-view.js";
 import { CLASSIFICATION_LABELS } from "./kin-compose.js";
 import { isBulkEligible, reconcileSelection } from "../bulk-actions.js";
 import { describeNextOccurrence, describeRepeat } from "../recurrence.js";
+import { captureFocus, isVisible, revealWithin } from "./shared/focus.js";
 
 // A list view over the Rust projection. `display` selects one list
 // ("need" — To do, which also lists legacy `today` records — "shopping",
@@ -691,19 +692,21 @@ class KinToday extends HTMLElement {
   }
 
   captureFocus() {
-    const control = this.contains(document.activeElement) ? document.activeElement : this.deferredFocus?.isConnected ? this.deferredFocus : null;
-    if (!this.contains(control)) return null;
-    const row = control.closest("kin-item");
-    const section = control.closest("[data-section]");
-    return {
-      control,
-      itemId: control.dataset.itemId ?? control.dataset.routineId,
-      action: control.dataset.itemAction ?? control.dataset.action,
-      summary: control.dataset.summary,
-      index: row ? [...this.querySelectorAll("kin-item")].indexOf(row) : -1,
-      section: section?.dataset.section ?? null,
-      sectionIndex: row && section ? [...section.querySelectorAll("kin-item")].indexOf(row) : -1,
-    };
+    return captureFocus(this, {
+      fallback: this.deferredFocus,
+      describe: (control) => {
+        const row = control.closest("kin-item");
+        const section = control.closest("[data-section]");
+        return {
+          itemId: control.dataset.itemId ?? control.dataset.routineId,
+          action: control.dataset.itemAction ?? control.dataset.action,
+          summary: control.dataset.summary,
+          index: row ? [...this.querySelectorAll("kin-item")].indexOf(row) : -1,
+          section: section?.dataset.section ?? null,
+          sectionIndex: row && section ? [...section.querySelectorAll("kin-item")].indexOf(row) : -1,
+        };
+      },
+    });
   }
 
   // When a row leaves its Today section (an earlier or later plan that was
@@ -722,9 +725,8 @@ class KinToday extends HTMLElement {
 
   restoreFocus(focus) {
     if (!focus) return;
-    const reveal = (node) => { for (const details of ancestors(node, this)) if (!details.open) details.open = true; };
-    if (focus.control.isConnected && !focus.control.closest("[hidden]")) {
-      reveal(focus.control);
+    if (isVisible(focus.control)) {
+      revealWithin(focus.control, this);
       focus.control.focus();
       return;
     }
@@ -752,7 +754,7 @@ class KinToday extends HTMLElement {
       ?? controls[Math.min(Math.max(0, focus.index), controls.length - 1)];
     const next = target ?? this.querySelector("h2");
     if (!next) return;
-    reveal(next);
+    revealWithin(next, this);
     if (next.disabled) this.deferredFocus = next;
     else next.focus();
   }
@@ -762,7 +764,7 @@ class KinToday extends HTMLElement {
     const target = [...this.querySelectorAll(".item-details-button")].find((node) => node.dataset.itemId === itemId)
       ?? [...this.querySelectorAll(".item-open")].find((node) => node.dataset.itemId === itemId);
     if (!target) return false;
-    for (const details of ancestors(target, this)) if (!details.open) details.open = true;
+    revealWithin(target, this);
     if (!preventScroll) target.scrollIntoView?.({ block: "nearest" });
     target.focus({ preventScroll });
     return true;
@@ -792,14 +794,6 @@ class KinToday extends HTMLElement {
       list.append(listItem);
     }
     return list;
-  }
-}
-
-function* ancestors(node, root) {
-  let current = node?.parentElement;
-  while (current && current !== root) {
-    if (current.tagName === "DETAILS") yield current;
-    current = current.parentElement;
   }
 }
 

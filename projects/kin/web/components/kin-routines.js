@@ -3,6 +3,7 @@ import { ROUTINE_PERIOD_LABELS } from "../today-view.js";
 import { REPEAT_HINTS, REPEAT_OPTIONS, describeNextOccurrence, describeRepeat } from "../recurrence.js";
 import "./kin-reminder.js";
 import "./kin-responsibility.js";
+import { captureFocus, restoreFocus } from "./shared/focus.js";
 
 // Routines page. Existing routines are the main content; creation sits behind
 // an Add routine control. Reusable checklists (canonically "playbooks":
@@ -302,17 +303,20 @@ class KinRoutines extends HTMLElement {
     if (!this.isDisabled) this.dispatchEvent(new CustomEvent(`kin:${action}`, { detail, bubbles: true, composed: true }));
   }
   captureFocus() {
-    const control = document.activeElement;
-    return this.contains(control) ? { control, id: control.dataset.routineId ?? control.closest("[data-routine-id]")?.dataset.routineId, action: control.dataset.action } : null;
+    return captureFocus(this, {
+      describe: (control) => ({ id: control.dataset.routineId ?? control.closest("[data-routine-id]")?.dataset.routineId, action: control.dataset.action }),
+    });
   }
   restoreFocus(focus) {
-    if (!focus) return;
-    if (focus.control.isConnected && !focus.control.closest("[hidden]")) { focus.control.focus(); return; }
     // A completed row swaps Complete for Reopen (and back); buttons inside a
     // closed Schedule editor cannot take focus.
-    const counterpart = { "complete-routine-occurrence": "reopen-routine-occurrence", "reopen-routine-occurrence": "complete-routine-occurrence" }[focus.action];
-    const sameRow = [...this.querySelectorAll("button[data-routine-id]")].filter((button) => button.dataset.routineId === focus.id && !button.closest("details:not([open])"));
-    (sameRow.find((button) => button.dataset.action === focus.action) ?? sameRow.find((button) => button.dataset.action === counterpart) ?? sameRow[0] ?? (this.createOpen ? this.input : this.addButton)).focus();
+    restoreFocus(focus, {
+      find: ({ id, action }) => {
+        const counterpart = { "complete-routine-occurrence": "reopen-routine-occurrence", "reopen-routine-occurrence": "complete-routine-occurrence" }[action];
+        const sameRow = [...this.querySelectorAll("button[data-routine-id]")].filter((button) => button.dataset.routineId === id && !button.closest("details:not([open])"));
+        return sameRow.find((button) => button.dataset.action === action) ?? sameRow.find((button) => button.dataset.action === counterpart) ?? sameRow[0] ?? (this.createOpen ? this.input : this.addButton);
+      },
+    });
   }
   render() {
     if (!this.list) return;

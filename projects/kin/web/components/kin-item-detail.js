@@ -3,6 +3,7 @@ import { describePlanningDate, KIND_LABELS } from "../today-view.js";
 import "./kin-attachments.js";
 import "./kin-reminder.js";
 import "./kin-responsibility.js";
+import { button } from "./shared/dom.js";
 
 // The one shared detail view for an item. <kin-app> owns a single instance
 // and re-homes it between the mobile sheet, the inline column and the side
@@ -458,15 +459,7 @@ class KinItemDetail extends HTMLElement {
     return line;
   }
 
-  button(label, action, className = "") {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = label;
-    if (className) button.className = className;
-    button.disabled = this.isDisabled;
-    button.addEventListener("click", action);
-    return button;
-  }
+  button(label, action, className = "") { return button(label, action, { className, disabled: this.isDisabled }); }
 
   dispatchPlanningDate(planningDate) {
     if (this.record.planningDate === planningDate) return;

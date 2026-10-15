@@ -5,6 +5,8 @@ import { migrateSyncKeys, finalizeSyncKeyMigration, prepareRootRotationKeys, com
 import { loadKinEngine } from "../wasm/kin-engine.js";
 import { exportHouseholdArchive, validateHouseholdArchive, restoreValidatedHouseholdArchive, discardValidatedHouseholdArchive } from "../security/archive.js";
 import { portableMembershipFromDirectory } from "../sync/sync-coordinator.js";
+import { button, section, text } from "./shared/dom.js";
+import { OperationGuard } from "./shared/operation.js";
 
 export const AUTO_LOCK_OPTIONS = [
   [0, "Only when Kin closes"],
@@ -24,8 +26,22 @@ class KinSecurity extends HTMLElement {
     super();
     this.phase = "locked";
     this.manifest = null;
-    this.busy = false;
-    this.operation = 0;
+    // One security operation at a time; locking cancels the current one.
+    this.operations = new OperationGuard(this, {
+      onBusy: (busy) => {
+        if (busy) this.alert.textContent = "";
+        for (const element of this.querySelectorAll("button,input,select")) element.disabled = busy;
+      },
+      onError: async (error, operation) => {
+        if (this.phase !== "unlocked") {
+          const manifest = await EventStore.securityStatus().catch(() => this.manifest);
+          if (operation !== this.operation) return;
+          this.manifest = manifest;
+          this.render();
+        }
+        this.error(error);
+      },
+    });
     this.operationAbort = new AbortController();
     this.onUnlocked = null;
     this.onLockRequested = null;
@@ -33,6 +49,9 @@ class KinSecurity extends HTMLElement {
     // Presentation only: whether the secondary recovery form is expanded on the lock screen.
     this.recoveryExpanded = false;
   }
+
+  get busy() { return this.operations.busy; }
+  get operation() { return this.operations.current; }
 
   async initialize() {
     const operation = this.operation;
@@ -630,11 +649,10 @@ class KinSecurity extends HTMLElement {
   locked() {
     if (this.restoreStage) discardValidatedHouseholdArchive(this.restoreStage);
     this.restoreStage = null;
-    this.operation++;
+    this.operations.cancel();
     this.operationAbort.abort();
     this.operationAbort = new AbortController();
     this.phase = "locked";
-    this.busy = false;
     this.recoveryExpanded = false;
     this.setAttribute("aria-busy", "false");
     clearLegacyDrafts();
@@ -642,34 +660,10 @@ class KinSecurity extends HTMLElement {
     this.heading.focus();
   }
 
-  async run(action) {
-    if (this.busy) return;
-    const operation = ++this.operation;
-    this.busy = true;
-    this.setAttribute("aria-busy", "true");
-    this.alert.textContent = "";
-    for (const element of this.querySelectorAll("button,input,select")) element.disabled = true;
-    try { await action(operation); }
-    catch (error) {
-      if (operation !== this.operation) return;
-      if (this.phase !== "unlocked") {
-        const manifest = await EventStore.securityStatus().catch(() => this.manifest);
-        if (operation !== this.operation) return;
-        this.manifest = manifest;
-        this.render();
-      }
-      this.error(error);
-    } finally {
-      if (operation === this.operation) {
-        this.busy = false;
-        this.setAttribute("aria-busy", "false");
-        for (const element of this.querySelectorAll("button,input,select")) element.disabled = false;
-      }
-    }
-  }
+  run(action) { return this.operations.run(action); }
 
   assertCurrentOperation(operation) {
-    if (operation !== this.operation) throw new Error("This security operation was cancelled.");
+    this.operations.assertCurrent(operation, "This security operation was cancelled.");
   }
 
   error(error) {
@@ -677,23 +671,9 @@ class KinSecurity extends HTMLElement {
       ? "Authentication was cancelled or the credential was unavailable. Your saved data was not changed."
       : error.userMessage ?? error.message ?? "Kin could not complete security setup.";
   }
-  text(value, parent = this) { const p = document.createElement("p"); p.textContent = value; parent.append(p); return p; }
-  section(title) {
-    const section = document.createElement("section");
-    section.className = "security-section";
-    const heading = document.createElement("h3");
-    heading.textContent = title;
-    section.append(heading);
-    this.append(section);
-    return section;
-  }
-  button(label, action, className = "", parent = this) {
-    const button = document.createElement("button");
-    button.type = "button"; button.textContent = label;
-    if (className) button.className = className;
-    button.addEventListener("click", action); parent.append(button);
-    return button;
-  }
+  text(value, parent = this) { return text(value, { parent }); }
+  section(title) { return section(title, { className: "security-section", parent: this }); }
+  button(label, action, className = "", parent = this) { return button(label, action, { className, parent }); }
 }
 
 customElements.define("kin-security", KinSecurity);
