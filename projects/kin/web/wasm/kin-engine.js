@@ -15,7 +15,7 @@ import {
   ROUTINE_CADENCES,
   strictTextDecoder,
 } from "./wire.js";
-import { decodeProjection } from "./projection-decode.js";
+import { decodeAttachmentBindings, decodeProjection } from "./projection-decode.js";
 import { HistoryMirror } from "./history-mirror.js";
 
 export { idToHex, KinEngineError };
@@ -163,6 +163,13 @@ export function createEngine(instanceExports) {
     encodeArchive: (metadata, ciphertext) =>
       encodeArchive(exports, metadata, ciphertext),
     decodeArchive: (bytes) => decodeArchive(exports, bytes),
+    archiveHeader: (metadataLength, ciphertextLength) =>
+      archiveHeader(exports, metadataLength, ciphertextLength),
+    archiveLayout: (bytes) => archiveLayout(exports, bytes),
+    // The import plan of `records` (a history view or an array), replayed
+    // from the instance's history like applyEvents. An archive's history is
+    // a different arena, so the instance is reset to it; the next replay of
+    // the session's own history resets it back.
     planImport: (
       records,
       asOf,
@@ -172,11 +179,31 @@ export function createEngine(instanceExports) {
     ) =>
       planImport(
         exports,
+        mirror,
         records,
         asOf,
         cursorEventId,
         civilDate,
         syncIdentity,
+      ),
+    // The same plan with only its attachment bindings decoded
+    // ({ eventCount, nextLogicalTime, attachments }), for archive checks.
+    importBindings: (
+      records,
+      asOf,
+      cursorEventId = null,
+      civilDate,
+      syncIdentity = null,
+    ) =>
+      planImport(
+        exports,
+        mirror,
+        records,
+        asOf,
+        cursorEventId,
+        civilDate,
+        syncIdentity,
+        true,
       ),
     applyEvents: (
       records,
@@ -725,30 +752,33 @@ function executeCommand(
   };
 }
 
-function encodeArchive(exports, metadata, ciphertext) {
-  metadata = asBytes(metadata);
-  ciphertext = asBytes(ciphertext);
-  if (metadata.length + ciphertext.length + 16 > MAX_ARCHIVE_BYTES)
+// The 16-byte KARC header for a metadata and ciphertext of these lengths.
+// Rust checks the bounds; the payload itself never enters WASM.
+function archiveHeader(exports, metadataLength, ciphertextLength) {
+  if (metadataLength + ciphertextLength + 16 > MAX_ARCHIVE_BYTES)
     throw new KinEngineError(5, USER_MESSAGES.get(5));
   const lengths = new Uint8Array(8);
   const view = new DataView(lengths.buffer);
-  view.setUint32(0, metadata.length, true);
-  view.setUint32(4, ciphertext.length, true);
+  view.setUint32(0, metadataLength, true);
+  view.setUint32(4, ciphertextLength, true);
   const header = callCore(exports, "kin_archive_header", lengths);
   if (header.length !== 16)
     throw new KinEngineError(6, "Kin received an invalid archive header.");
+  return header;
+}
+
+function encodeArchive(exports, metadata, ciphertext) {
+  metadata = asBytes(metadata);
+  ciphertext = asBytes(ciphertext);
+  const header = archiveHeader(exports, metadata.length, ciphertext.length);
   const bytes = new Uint8Array(16 + metadata.length + ciphertext.length);
   bytes.set(header);
   bytes.set(metadata, 16);
   bytes.set(ciphertext, 16 + metadata.length);
   return bytes;
 }
-function planImport(exports, records, asOf, cursor, civilDate, syncIdentity) {
-  const bytes = callCore(
-    exports,
-    "kin_plan_import",
-    encodeRequest(records, asOf, cursor, civilDate, syncIdentity),
-  );
+function planImport(exports, mirror, records, asOf, cursor, civilDate, syncIdentity, bindingsOnly = false) {
+  const bytes = replayBytes(exports, mirror, records, asOf, cursor, civilDate, syncIdentity, "kin_plan_import");
   if (bytes.length < 24 || readAscii(bytes, 0, 4) !== "KIMP")
     throw new KinEngineError(6, "Kin received an invalid import plan.");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -758,13 +788,14 @@ function planImport(exports, records, asOf, cursor, civilDate, syncIdentity) {
     view.getUint32(20, true) + 24 !== bytes.length
   )
     throw new KinEngineError(6, "Kin received an invalid import plan.");
-  return {
-    eventCount: view.getUint32(8, true),
-    nextLogicalTime: view.getBigUint64(12, true),
-    state: decodeProjection(bytes.subarray(24)),
-  };
+  const plan = { eventCount: view.getUint32(8, true), nextLogicalTime: view.getBigUint64(12, true) };
+  if (bindingsOnly) return { ...plan, attachments: decodeAttachmentBindings(bytes.subarray(24)) };
+  return { ...plan, state: decodeProjection(bytes.subarray(24)) };
 }
-function decodeArchive(exports, bytes) {
+// The metadata and ciphertext lengths of a whole KARC archive, after Rust
+// checks its header against the buffer's length. Nothing is copied: a
+// streaming reader decrypts the ciphertext a segment at a time.
+function archiveLayout(exports, bytes) {
   bytes = asBytes(bytes);
   if (bytes.length > MAX_ARCHIVE_BYTES)
     throw new KinEngineError(5, USER_MESSAGES.get(5));
@@ -776,20 +807,23 @@ function decodeArchive(exports, bytes) {
   const output = callCore(exports, "kin_archive_layout", request);
   if (output.length !== 8)
     throw new KinEngineError(6, "Kin received an invalid archive result.");
-  const length = new DataView(
-    output.buffer,
-    output.byteOffset,
-    output.byteLength,
-  ).getUint32(0, true);
-  const ciphertextLength = new DataView(output.buffer, output.byteOffset, output.byteLength).getUint32(4, true);
-  if (16 + length + ciphertextLength !== bytes.length)
+  const view = new DataView(output.buffer, output.byteOffset, output.byteLength);
+  const metadataLength = view.getUint32(0, true);
+  const ciphertextLength = view.getUint32(4, true);
+  if (16 + metadataLength + ciphertextLength !== bytes.length)
     throw new KinEngineError(6, "Kin received an invalid archive result.");
+  return { metadataLength, ciphertextLength };
+}
+
+function decodeArchive(exports, bytes) {
+  bytes = asBytes(bytes);
+  const { metadataLength } = archiveLayout(exports, bytes);
   return {
     version: 1,
     // These copies deliberately detach caller-owned archive input before any
     // asynchronous authentication; no view escapes into mutable source bytes.
-    metadata: bytes.slice(16, 16 + length),
-    ciphertext: bytes.slice(16 + length),
+    metadata: bytes.slice(16, 16 + metadataLength),
+    ciphertext: bytes.slice(16 + metadataLength),
   };
 }
 
@@ -840,8 +874,9 @@ function callCore(exports, operation, request, { statusOnly = false } = {}) {
 
 // The KINS projection of `records` (a history view, a historyWith() result
 // or an array): the instance's history is brought up to date, then replayed
-// in the context of a record-less KINE request.
-function replayBytes(exports, mirror, records, asOf, cursorEventId, civilDate, syncIdentity) {
+// in the context of a record-less KINE request. `operation` is kin_project,
+// or kin_plan_import for an archive's import plan.
+function replayBytes(exports, mirror, records, asOf, cursorEventId, civilDate, syncIdentity, operation = "kin_project") {
   if (!exports)
     throw new KinEngineError(
       6,
@@ -853,7 +888,7 @@ function replayBytes(exports, mirror, records, asOf, cursorEventId, civilDate, s
   const context = encodeRequest([], asOf, cursorEventId, civilDate, syncIdentity);
   const release = mirror.hold(records);
   try {
-    return callCore(exports, "kin_project", context);
+    return callCore(exports, operation, context);
   } finally {
     release();
   }

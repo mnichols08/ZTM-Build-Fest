@@ -113,6 +113,30 @@ export function decodeProjection(bytes, { previous = null, stampedBy = null } = 
   return state;
 }
 
+/**
+ * Only the attachment bindings of a KINS projection, after the same header
+ * and section-table checks as a full decode. An archive's import plan needs
+ * nothing else, and skipping the other sections avoids decoding every
+ * Item's text (tens of MB at the history limit) to read a few bindings.
+ */
+export function decodeAttachmentBindings(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const header = decodeHeader(bytes, view);
+  const table = decodeTable(bytes, view);
+  let start = BODY_OFFSET;
+  for (let index = 0; index < SECTIONS.length; index += 1) {
+    const end = start + table.lengths[index];
+    if (SECTIONS[index][0] === "attachments") {
+      const reader = new SectionReader(bytes, view, start, end);
+      const attachments = decodeAttachments(reader, header);
+      reader.finish();
+      return attachments;
+    }
+    start = end;
+  }
+  throw invalid("Kin received an invalid state from its household engine.");
+}
+
 function decodeHeader(bytes, view) {
   if (bytes.length < BODY_OFFSET || bytes.length > MAX_PROTOCOL_BYTES || readAscii(bytes, 0, 4) !== "KINS")
     throw invalid("Kin received an invalid state from its household engine.");

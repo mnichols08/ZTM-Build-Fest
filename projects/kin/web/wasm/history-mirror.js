@@ -14,6 +14,11 @@
 // returns rolls them back.
 
 // Append batch layout (history.rs): u32 count, u32 length per record, bytes.
+// A whole history is sent in batches of about this many bytes, so the host
+// never builds one copy of it to pass in (a record larger than this goes
+// alone).
+export const APPEND_BATCH_BYTES = 4 * 1024 * 1024;
+
 function batchFromView(view, from, to) {
   const count = to - from;
   let bytes = 0;
@@ -85,15 +90,33 @@ export class HistoryMirror {
     const sameHistory = this.arena === view.arena && this.epoch === view.epoch;
     if (!sameHistory) {
       this.reset();
-      if (view.length) this.appendBatch(batchFromView(view, 0, view.length));
+      this.appendView(view, 0);
     } else if (view.length < this.length) {
       this.truncate(view.length);
     } else if (view.length > this.length) {
-      this.appendBatch(batchFromView(view, this.length, view.length));
+      this.appendView(view, this.length);
     }
     this.arena = view.arena;
     this.epoch = view.epoch;
     this.length = view.length;
+  }
+
+  // Appends records [from, view.length) in bounded batches. A failure after
+  // some batches went in leaves the instance holding part of the view, so
+  // the mirror forgets it and the next call resets.
+  appendView(view, from) {
+    try {
+      while (from < view.length) {
+        let to = from + 1;
+        let bytes = view.recordLength(from);
+        while (to < view.length && bytes + view.recordLength(to) <= APPEND_BATCH_BYTES) bytes += view.recordLength(to++);
+        this.appendBatch(batchFromView(view, from, to));
+        from = to;
+      }
+    } catch (error) {
+      this.forget();
+      throw error;
+    }
   }
 
   // A plain array is not tracked: it is sent whole, and the next view resets.

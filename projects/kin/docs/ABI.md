@@ -16,7 +16,7 @@ kin_execute(ptr, len)                command: length + KCMD + KINE context -> KC
 kin_encode_command(ptr, len)         KCMD -> canonical event bytes
 kin_event_metadata(ptr, len)         one canonical event -> KMET
 kin_event_metadata_batch(ptr, len)   KMDQ -> KMDL
-kin_plan_import(ptr, len)            decrypted KINE history -> KIMP
+kin_plan_import(ptr, len)            import plan of the history: KINE context -> KIMP
 kin_archive_header(ptr, len)         two lengths -> 16-byte KARC header
 kin_archive_layout(ptr, len)         KARC header + total length -> two lengths
 kin_encode_archive / kin_decode_archive   whole KARC framing (retained)
@@ -47,8 +47,11 @@ calls it.
 Each engine instance holds one canonical history (`rust/src/history.rs`):
 records in local arrival order, stored as received in one byte buffer with an
 `(offset, length)` span per record. Projections and commands replay this
-history; no call carries a whole history any more except `kin_plan_import`,
-whose history is a separate one being imported.
+history; no call carries a whole history any more. Since Slice 9
+`kin_plan_import` also takes a record-less context: the host fills the
+instance's history with the archive's records being imported (the mirror
+resets it to that history, in batches of about 4 MiB, and back to the
+session's history on the next replay) and the plan is computed from it.
 
 - `kin_history_append(ptr, len)` adds records after those held. Its input is
   `count:u32`, then `count` record lengths (u32 each), then the records back

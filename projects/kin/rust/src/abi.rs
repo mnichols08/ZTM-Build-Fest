@@ -342,9 +342,12 @@ pub extern "C" fn kin_archive_layout(pointer: u32, length: u32) -> i32 {
     operate(pointer, length, crate::archive::layout_request)
 }
 
+/// The import plan (KIMP) for the instance's history, which the host has
+/// filled with a decrypted archive's records, in the context of a
+/// record-less KINE request.
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
 pub extern "C" fn kin_plan_import(pointer: u32, length: u32) -> i32 {
-    operate(pointer, length, crate::archive::plan_import)
+    run(pointer, length, crate::archive::plan_import_history, None)
 }
 
 /// An operation on its input alone.

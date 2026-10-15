@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 
 import { createEngine, encodeAddedRecord, eventMetadata } from "./kin-engine.js";
 import { EventArena, historyWith } from "../storage/event-arena.js";
+import { APPEND_BATCH_BYTES } from "./history-mirror.js";
 
 const wasm = await readFile(new URL("./kin_engine.wasm", import.meta.url));
 const id = (value) => new Uint8Array(16).fill(value);
@@ -106,4 +107,25 @@ test("a rejected record leaves the engine consistent for the next replay", async
   // An unknown kind is reported as unsupported (code 3), as a whole request was.
   assert.throws(() => replay(engine, historyWith(arena.view(), [bad])), (error) => error.code === 3);
   assert.deepEqual(replay(engine, arena.view()).items, await freshItems(arena.view().records()));
+});
+
+test("a whole history goes in bounded batches", async () => {
+  const { engine, calls } = await countingEngine();
+  const arena = new EventArena();
+  arena.reset(0);
+  const records = [];
+  for (let n = 1; n <= 1_100; n += 1) {
+    const unique = (tag) => { const value = id(tag); new DataView(value.buffer).setUint32(0, n, true); return value; };
+    const bytes = encodeAddedRecord({ eventId: unique(1), householdId: id(0xaa), actorId: id(0xbb), deviceId: id(0xcc),
+      timestamp: 1_000 + n, logicalTime: n, itemId: unique(2), text: "x".repeat(4_096), classification: "need" });
+    arena.append(n, bytes, eventMetadata(bytes));
+    records.push(bytes);
+  }
+  const sent = (list) => list.filter((call) => call.startsWith("append")).map((call) => Number(call.split(" ")[1]));
+  const items = replay(engine, arena.view()).items;
+  const batches = sent(calls);
+  assert.ok(batches.length > 1, "more than one append");
+  assert.equal(batches.reduce((total, count) => total + count, 0), 1_100);
+  assert.ok(batches.every((count) => count * 4_200 <= APPEND_BATCH_BYTES + 4_200));
+  assert.deepEqual(items, await freshItems(records));
 });
