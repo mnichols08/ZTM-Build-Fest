@@ -13,6 +13,7 @@ import {
   MAX_ATTACHMENT_BYTES,
 } from "./durable-store.mjs";
 import { WebAuthn } from "./webauthn.mjs";
+import { readBody, readJsonBody } from "./http-body.mjs";
 import { isInsideRoot, resolveDurablePath, webRoot } from "./path-safety.mjs";
 
 const FLOW_TTL_MS = 2 * 60_000;
@@ -281,9 +282,9 @@ async function api(request, response, url, context) {
   const binaryUpload = (request.method === "POST" && /^\/api\/sync\/attachments\/[a-f0-9]{32}$/.test(url.pathname)) ||
     (request.method === "PUT" && url.pathname === "/api/household/settings");
   const body = binaryUpload
-    ? await readBinary(request)
+    ? await readBinary(request, response)
     : ["POST", "PUT", "DELETE"].includes(request.method)
-    ? await readJson(request)
+    ? await readJsonBody(request, response, MAX_JSON_BODY_BYTES)
     : {};
   const session = cookies(request).kin_session;
   const claimToken = cookies(request).kin_claim;
@@ -1175,37 +1176,14 @@ function cookies(request) {
   );
 }
 
-async function readJson(request) {
-  let size = 0;
-  const chunks = [];
-  for await (const chunk of request) {
-    size += chunk.length;
-    if (size > 256_000)
-      throw new PairingError(
-        "request_too_large",
-        "That request is too large.",
-        413,
-      );
-    chunks.push(chunk);
-  }
-  try {
-    return chunks.length ? JSON.parse(Buffer.concat(chunks)) : {};
-  } catch {
-    throw badRequest();
-  }
-}
+// JSON request bodies are small control messages; attachments and settings
+// are binary and bounded by the attachment limit (http-body.mjs).
+const MAX_JSON_BODY_BYTES = 256_000;
 
-async function readBinary(request) {
-  let size = 0;
-  const chunks = [];
-  for await (const chunk of request) {
-    size += chunk.length;
-    if (size > MAX_ATTACHMENT_BYTES)
-      throw new PairingError("request_too_large", "That attachment is larger than Kin supports.", 413);
-    chunks.push(chunk);
-  }
-  if (!size) throw badRequest();
-  return Buffer.concat(chunks, size);
+async function readBinary(request, response) {
+  const body = await readBody(request, response, MAX_ATTACHMENT_BYTES, "That attachment is larger than Kin supports.");
+  if (!body.length) throw badRequest();
+  return body;
 }
 
 function json(response, status, value) {
