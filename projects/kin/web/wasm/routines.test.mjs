@@ -117,7 +117,7 @@ test("current result decoder rejects truncation, fields, duplicates and trailing
   const run = () => engine.applyEvents(rows, 1234, null, 20261002);
   const valid = run(); const totalLength = actualLength;
   const write32 = (offset, value) => bytes => new DataView(bytes.buffer, bytes.byteOffset).setUint32(offset, value, true);
-  const resultBase = 136; // Protocol 23 extends the prior 88-byte header by eight bytes.
+  const resultBase = 248; // createdOn of the first Routine: 96-byte header, 112-byte section table, +40.
   const mutations = [write32(56, 10001), write32(resultBase, 20260229), write32(resultBase + 4, 20261001), write32(resultBase + 4, 0),
     bytes => bytes[resultBase + 4] = 0, ...[resultBase + 9, resultBase + 10].map(offset => bytes => bytes[offset] = 255), bytes => bytes[resultBase + 11] = 1,
     write32(resultBase + 12, 0), write32(resultBase + 12, 4097), write32(resultBase + 12, 0xffffffff), bytes => bytes[resultBase + 16] = 255,
@@ -136,9 +136,8 @@ test("current result decoder rejects truncation, fields, duplicates and trailing
   reportedLength = undefined;
   assert.deepEqual(run(), valid);
   rows.push(encodeRoutineCreatedRecord({ ...identity(2), routineId: id(0x22), text: "Other", cadence: "daily", createdOn: 20261002 }));
-  // Protocol 12 preserves the protocol-11 Step count after the protocol-10 Note count.
-  // Protocol 23's 96-byte header precedes the first Routine record and its title.
-  mutate = bytes => bytes.copyWithin(159, 96, 112);
+  // The header and section table precede the first Routine record and its title.
+  mutate = bytes => bytes.copyWithin(271, 208, 224);
   assert.throws(run, error => error.code === 6);
 });
 

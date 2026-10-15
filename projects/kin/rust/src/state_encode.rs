@@ -7,78 +7,107 @@
 //! and u32 counts for Pins, Playbooks, Reference Records, Maintenance events,
 //! Attachments and Responsibilities.
 //!
-//! Body, in order: Item, Handoff, Talk and Pulse records; one Area ID per Item;
-//! Routines; Areas; Notes; Steps grouped by Item; one planning date per Item;
-//! one last-changed timestamp per Item; Pins; Playbooks; Reference Records;
-//! Maintenance events; Attachments; Responsibilities; one next-occurrence date
-//! per Routine; then the catch-up summary entries. ABI.md has every field.
+//! Section table (112 bytes): one (u32 revision, u32 byte length) entry per
+//! domain section, in body order (`sections.rs`). This encoder writes
+//! revision 0; the ABI layer stamps real revisions.
+//!
+//! Body, one contiguous section per domain: Items (records, then one Area ID,
+//! the Steps, one planning date and one last-changed timestamp per Item);
+//! Handoffs; Talks; Pulses; Routines (records, then one next-occurrence date
+//! per Routine); Areas; Notes; Pins; Playbooks; Reference Records;
+//! Maintenance events; Attachments; Responsibilities; then the catch-up
+//! summary entries. ABI.md has every field.
+mod records;
+
 use crate::error::KinError;
 use crate::event::{valid_timestamp, ItemClassification};
-use crate::recurrence::CivilDate;
+use crate::sections::{SECTION_COUNT, SECTION_ENTRY_BYTES, SECTION_TABLE_BYTES};
 use crate::state::{
-    CatchUpSummary, HandoffStatus, HouseholdState, ItemStatus, NoteStatus, PulseStatus,
-    SummaryEntityKind, SummaryKind, TalkStatus, MAX_SUMMARY_ENTRIES,
+    CatchUpSummary, HouseholdState, SummaryEntityKind, SummaryKind, MAX_SUMMARY_ENTRIES,
 };
 use crate::wire::{
     push_u16, push_u32, MAX_EVENT_COUNT, MAX_ITEM_TEXT_BYTES, MAX_MAINTENANCE_EVENTS,
     MAX_PROTOCOL_BYTES, PROTOCOL_VERSION, RESULT_HEADER_BYTES,
 };
-
-const PULSE_BYTES: usize = 40;
-const SUMMARY_HEADER_BYTES: usize = 24;
+use records::*;
 
 /// Appends bounded sections, failing with `SizeLimit` before the result could
 /// exceed the 64 MiB protocol bound.
-struct Output(Vec<u8>);
+pub(super) struct Output {
+    bytes: Vec<u8>,
+    /// End offset of each finished section, in body order.
+    section_ends: Vec<usize>,
+}
 
 impl Output {
-    fn reserve(&mut self, additional: usize) -> Result<(), KinError> {
+    pub(super) fn reserve(&mut self, additional: usize) -> Result<(), KinError> {
         let total = self
-            .0
+            .bytes
             .len()
             .checked_add(additional)
             .ok_or(KinError::SizeLimit)?;
         if total > MAX_PROTOCOL_BYTES {
             return Err(KinError::SizeLimit);
         }
-        self.0
+        self.bytes
             .try_reserve(additional)
             .map_err(|_| KinError::SizeLimit)
     }
 
-    fn bytes(&mut self, bytes: &[u8]) -> Result<(), KinError> {
+    pub(super) fn bytes(&mut self, bytes: &[u8]) -> Result<(), KinError> {
         self.reserve(bytes.len())?;
-        self.0.extend_from_slice(bytes);
+        self.bytes.extend_from_slice(bytes);
         Ok(())
     }
 
-    fn u8(&mut self, value: u8) -> Result<(), KinError> {
+    pub(super) fn u8(&mut self, value: u8) -> Result<(), KinError> {
         self.bytes(&[value])
     }
 
-    fn u16(&mut self, value: u16) -> Result<(), KinError> {
+    pub(super) fn u16(&mut self, value: u16) -> Result<(), KinError> {
         self.reserve(2)?;
-        push_u16(&mut self.0, value);
+        push_u16(&mut self.bytes, value);
         Ok(())
     }
 
-    fn u32(&mut self, value: u32) -> Result<(), KinError> {
+    pub(super) fn u32(&mut self, value: u32) -> Result<(), KinError> {
         self.reserve(4)?;
-        push_u32(&mut self.0, value);
+        push_u32(&mut self.bytes, value);
         Ok(())
     }
 
-    fn count(&mut self, value: usize) -> Result<(), KinError> {
+    pub(super) fn count(&mut self, value: usize) -> Result<(), KinError> {
         self.u32(u32::try_from(value).map_err(|_| KinError::SizeLimit)?)
     }
 
-    fn text(&mut self, text: &str) -> Result<(), KinError> {
+    pub(super) fn text(&mut self, text: &str) -> Result<(), KinError> {
         self.count(text.len())?;
         self.bytes(text.as_bytes())
     }
+
+    pub(super) fn id_or_zero(&mut self, id: Option<[u8; 16]>) -> Result<(), KinError> {
+        self.bytes(&id.unwrap_or([0; 16]))
+    }
+
+    fn end_section(&mut self) {
+        self.section_ends.push(self.bytes.len());
+    }
+
+    /// Fills the section table's byte lengths; revisions stay 0.
+    fn finish(mut self) -> Vec<u8> {
+        debug_assert_eq!(self.section_ends.len(), SECTION_COUNT);
+        let mut start = RESULT_HEADER_BYTES + SECTION_TABLE_BYTES;
+        for (index, end) in self.section_ends.iter().enumerate() {
+            let at = RESULT_HEADER_BYTES + index * SECTION_ENTRY_BYTES + 4;
+            // Bounded by MAX_PROTOCOL_BYTES, so every length fits in u32.
+            self.bytes[at..at + 4].copy_from_slice(&((end - start) as u32).to_le_bytes());
+            start = *end;
+        }
+        self.bytes
+    }
 }
 
-fn classification_code(classification: ItemClassification) -> u8 {
+pub(super) fn classification_code(classification: ItemClassification) -> u8 {
     match classification {
         ItemClassification::Today => 0,
         ItemClassification::Need => 1,
@@ -89,13 +118,54 @@ fn classification_code(classification: ItemClassification) -> u8 {
 
 pub fn encode_state(state: &HouseholdState, summary: &CatchUpSummary) -> Result<Vec<u8>, KinError> {
     validate(state, summary)?;
+    let mut out = Output {
+        bytes: Vec::new(),
+        section_ends: Vec::with_capacity(SECTION_COUNT),
+    };
+    header(&mut out, state, summary)?;
+    out.bytes(&[0; SECTION_TABLE_BYTES])?;
+    items(&mut out, state)?;
+    out.end_section();
+    handoffs(&mut out, state)?;
+    out.end_section();
+    talks(&mut out, state)?;
+    out.end_section();
+    pulses(&mut out, state)?;
+    out.end_section();
+    routines(&mut out, state)?;
+    out.end_section();
+    areas(&mut out, state)?;
+    out.end_section();
+    notes(&mut out, state)?;
+    out.end_section();
+    pins(&mut out, state)?;
+    out.end_section();
+    playbooks(&mut out, state)?;
+    out.end_section();
+    reference_records(&mut out, state)?;
+    out.end_section();
+    maintenance(&mut out, state)?;
+    out.end_section();
+    attachments(&mut out, state)?;
+    out.end_section();
+    responsibilities(&mut out, state)?;
+    out.end_section();
+    summary_entries(&mut out, summary)?;
+    out.end_section();
+    Ok(out.finish())
+}
+
+fn header(
+    out: &mut Output,
+    state: &HouseholdState,
+    summary: &CatchUpSummary,
+) -> Result<(), KinError> {
     let step_count = state
         .items
         .iter()
         .map(|item| item.steps.len())
         .sum::<usize>();
-    let mut out = Output(Vec::new());
-    out.reserve(RESULT_HEADER_BYTES)?;
+    out.reserve(RESULT_HEADER_BYTES + SECTION_TABLE_BYTES)?;
     out.bytes(b"KINS")?;
     out.u16(PROTOCOL_VERSION)?;
     out.u16(0)?;
@@ -107,7 +177,7 @@ pub fn encode_state(state: &HouseholdState, summary: &CatchUpSummary) -> Result<
     out.u32(summary.total_count)?;
     out.u8(u8::from(summary.through_event_id.is_some()))?;
     out.bytes(&[0; 3])?;
-    out.bytes(&summary.through_event_id.map_or([0; 16], |id| id.0))?;
+    out.id_or_zero(summary.through_event_id.map(|id| id.0))?;
     out.count(state.routines.len())?;
     out.count(state.areas.len())?;
     out.count(state.notes.len())?;
@@ -119,193 +189,7 @@ pub fn encode_state(state: &HouseholdState, summary: &CatchUpSummary) -> Result<
     out.count(state.reference_records.len())?;
     out.count(state.maintenance_events.len())?;
     out.count(state.attachments.len())?;
-    out.count(state.responsibilities.len())?;
-
-    for item in &state.items {
-        out.bytes(&item.item_id.0)?;
-        out.bytes(&item.created_by.0)?;
-        out.bytes(&item.created_at.to_le_bytes())?;
-        out.u8(classification_code(item.classification))?;
-        out.u8(match item.status {
-            ItemStatus::Active => 0,
-            ItemStatus::Completed => 1,
-            ItemStatus::Archived => 2,
-        })?;
-        out.bytes(&[0; 2])?;
-        out.text(&item.text)?;
-    }
-    for handoff in &state.handoffs {
-        out.bytes(&handoff.handoff_id.0)?;
-        out.bytes(&handoff.created_by.0)?;
-        out.bytes(&handoff.created_at.to_le_bytes())?;
-        out.u8(match handoff.status {
-            HandoffStatus::Unacknowledged => 0,
-            HandoffStatus::Acknowledged => 1,
-            HandoffStatus::Archived => 2,
-        })?;
-        out.bytes(&[0; 3])?;
-        out.text(&handoff.text)?;
-    }
-    for talk in &state.talks {
-        out.bytes(&talk.talk_id.0)?;
-        out.bytes(&talk.created_by.0)?;
-        out.bytes(&talk.created_at.to_le_bytes())?;
-        out.u8(match talk.status {
-            TalkStatus::Open => 0,
-            TalkStatus::Resolved => 1,
-            TalkStatus::Archived => 2,
-        })?;
-        out.bytes(&[0; 3])?;
-        out.text(&talk.text)?;
-    }
-    for pulse in &state.pulses {
-        out.reserve(PULSE_BYTES)?;
-        out.bytes(&pulse.actor_id.0)?;
-        out.bytes(&pulse.set_at.to_le_bytes())?;
-        out.bytes(&pulse.expires_at.to_le_bytes())?;
-        out.u8(pulse.value as u8)?;
-        out.u8(match pulse.status {
-            PulseStatus::Active => 0,
-            PulseStatus::Expired => 1,
-        })?;
-        out.bytes(&[0; 6])?;
-    }
-    for item in &state.items {
-        out.bytes(&item.area_id.map_or([0; 16], |id| id.0))?;
-    }
-    for routine in &state.routines {
-        out.bytes(&routine.routine_id.0)?;
-        out.bytes(&routine.created_by.0)?;
-        out.bytes(&routine.created_at.to_le_bytes())?;
-        out.u32(routine.created_on.encoded())?;
-        out.u32(routine.occurrence_key.map_or(0, CivilDate::encoded))?;
-        out.u8(routine.cadence as u8)?;
-        out.u8(u8::from(routine.archived))?;
-        out.u8(if routine.occurrence_key.is_none() {
-            0
-        } else if routine.completed {
-            2
-        } else {
-            1
-        })?;
-        out.u8(0)?;
-        out.text(&routine.text)?;
-    }
-    for area in &state.areas {
-        let name = crate::state::normalize_area_name(&area.name)?;
-        out.bytes(&area.area_id.0)?;
-        out.u8(u8::from(area.archived))?;
-        out.bytes(&[0; 3])?;
-        out.text(&name)?;
-    }
-    for note in &state.notes {
-        let (title, body) = crate::state::normalize_note(&note.title, &note.body)?;
-        out.bytes(&note.note_id.0)?;
-        out.bytes(&note.created_by.0)?;
-        out.bytes(&note.updated_by.0)?;
-        out.bytes(&note.created_at.to_le_bytes())?;
-        out.bytes(&note.updated_at.to_le_bytes())?;
-        out.bytes(&note.area_id.map_or([0; 16], |id| id.0))?;
-        out.u8(u8::from(note.status == NoteStatus::Archived))?;
-        out.bytes(&[0; 3])?;
-        out.count(title.len())?;
-        out.count(body.len())?;
-        out.bytes(title.as_bytes())?;
-        out.bytes(body.as_bytes())?;
-    }
-    for item in &state.items {
-        for step in &item.steps {
-            let text = crate::state::normalize_step_text(&step.text)?;
-            out.bytes(&item.item_id.0)?;
-            out.bytes(&step.step_id.0)?;
-            out.u8(u8::from(step.completed))?;
-            out.u8(u8::from(step.archived))?;
-            out.bytes(&[0; 2])?;
-            out.text(&text)?;
-        }
-    }
-    for item in &state.items {
-        out.u32(item.planning_date.map_or(0, CivilDate::encoded))?;
-    }
-    for item in &state.items {
-        out.bytes(&item.last_changed_at.to_le_bytes())?;
-    }
-    for pin in &state.pins {
-        out.u8(pin.target_kind as u8)?;
-        out.bytes(&[0; 3])?;
-        out.bytes(&pin.target_id)?;
-    }
-    for record in &state.playbooks {
-        out.bytes(&record.playbook_id.0)?;
-        out.u8(u8::from(record.archived))?;
-        out.u8(record.entries.len() as u8)?;
-        out.u16(record.title.len() as u16)?;
-        out.bytes(&[0; 2])?;
-        out.bytes(record.title.as_bytes())?;
-        for entry in &record.entries {
-            out.u16(entry.len() as u16)?;
-            out.bytes(entry.as_bytes())?;
-        }
-    }
-    for record in &state.reference_records {
-        let (title, fields) = crate::state::normalize_reference_text(
-            &record.title,
-            &record
-                .fields
-                .iter()
-                .map(|field| (field.field_id, field.label.clone(), field.value.clone()))
-                .collect::<Vec<_>>(),
-        )?;
-        out.bytes(&record.record_id.0)?;
-        out.bytes(&record.area_id.map_or([0; 16], |id| id.0))?;
-        out.u16(title.len() as u16)?;
-        out.u8(fields.len() as u8)?;
-        out.u8(u8::from(record.archived))?;
-        out.bytes(title.as_bytes())?;
-        for field in fields {
-            out.bytes(&field.field_id.0)?;
-            out.u16(field.label.len() as u16)?;
-            out.u16(field.value.len() as u16)?;
-            out.bytes(field.label.as_bytes())?;
-            out.bytes(field.value.as_bytes())?;
-        }
-    }
-    for entry in &state.maintenance_events {
-        out.bytes(&entry.maintenance_id.0)?;
-        out.bytes(&entry.record_id.0)?;
-        out.u32(entry.performed_on.encoded())?;
-        out.u32(entry.next_on.map_or(0, CivilDate::encoded))?;
-        out.bytes(&entry.routine_id.map_or([0; 16], |id| id.0))?;
-        out.u8(u8::from(entry.archived))?;
-        out.u8(0)?;
-        out.u16(entry.summary.len() as u16)?;
-        out.bytes(entry.summary.as_bytes())?;
-    }
-    for entry in &state.attachments {
-        out.bytes(&entry.attachment_id.0)?;
-        out.u8(entry.parent_kind as u8)?;
-        out.u8(u8::from(entry.removed))?;
-        out.bytes(&[0; 2])?;
-        out.bytes(&entry.parent_id)?;
-    }
-    for entry in &state.responsibilities {
-        out.u8(entry.target_kind as u8)?;
-        out.bytes(&entry.target_id)?;
-        out.bytes(&entry.member_id.map_or([0; 16], |id| id.0))?;
-    }
-    for routine in &state.routines {
-        out.u32(routine.next_start.map_or(0, CivilDate::encoded))?;
-    }
-    for entry in &summary.entries {
-        out.reserve(SUMMARY_HEADER_BYTES + entry.text.len())?;
-        out.bytes(&entry.event_id.0)?;
-        out.u8(entry.kind as u8)?;
-        out.u8(entry.entity_kind as u8)?;
-        out.u8(entry.classification.map_or(u8::MAX, classification_code))?;
-        out.u8(0)?;
-        out.text(&entry.text)?;
-    }
-    Ok(out.0)
+    out.count(state.responsibilities.len())
 }
 
 /// Structural checks on the derived state that must hold before encoding; a

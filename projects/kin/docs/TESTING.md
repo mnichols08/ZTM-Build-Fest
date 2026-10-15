@@ -26,7 +26,16 @@
   Talk lifecycles) and `state_encode_tests.rs` (projection layout and limits)
   replace the per-version protocol tests. `web/wasm/projection-decode.test.mjs`
   checks that the bridge fails closed on every truncation of a golden
-  projection, on trailing bytes and on invalid header fields.
+  projection, on trailing bytes, on invalid header fields and on a section
+  table that does not cover the body.
+- **Section revisions.** `rust/src/section_tests.rs` covers the contiguous
+  section layout, the table and revision wrapping. The `abi.rs` tests check
+  that revisions advance only for changed sections across calls, survive a
+  non-projection call, never repeat after the basis is lost, and that command
+  results locate their projection. `projection-decode.test.mjs` checks that an
+  unchanged section is reused by identity and equals a full decode, that
+  revision 0 and another engine instance's state never reuse, and that reused
+  sections are still checked against counts and cross-section references.
 - **ABI ownership.** `web/wasm/abi-ownership.test.mjs` checks that every
   `kin_alloc` input is freed exactly once when the copy, the export, the result
   copy or the decode throws, for each operation family, and against the real

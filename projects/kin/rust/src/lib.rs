@@ -8,6 +8,7 @@ pub mod event;
 pub mod event_decode;
 pub mod recurrence;
 pub mod request;
+pub mod sections;
 pub mod state;
 pub mod state_encode;
 pub mod wire;
@@ -68,3 +69,6 @@ mod event_decode_tests;
 
 #[cfg(test)]
 mod state_encode_tests;
+
+#[cfg(test)]
+mod section_tests;

@@ -209,6 +209,8 @@ fn exact_empty_and_routine_result_layout_with_summary() {
     expected[32] = 1; // through present
     expected[36] = 1; // through event ID (sequence 1)
     expected[52] = 1; // routines
+    expected[96 + 4 * 8 + 4] = 61; // Routines section: record and next occurrence
+    expected[96 + 13 * 8 + 4] = 25; // Summary section
     expected.extend_from_slice(&[0x11; 16]);
     expected.extend_from_slice(&[0xbb; 16]);
     expected.extend_from_slice(&1234i64.to_le_bytes());

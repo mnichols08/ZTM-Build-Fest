@@ -602,8 +602,12 @@ fn fixture_path(name: &str) -> PathBuf {
 
 fn check(name: &str, scenario: &Scenario, as_of: i64, cursor: Option<EventId>) {
     let request = scenario.encode(as_of, cursor);
-    let projection =
+    let mut projection =
         replay(&request).unwrap_or_else(|error| panic!("{name} replay failed: {error:?}"));
+    // Revisions as a fresh engine instance stamps them: every section is new.
+    crate::sections::SectionRevisions::new()
+        .stamp(&mut projection, None)
+        .unwrap();
     let kine = fixture_path(&format!("{name}.kine"));
     let kins = fixture_path(&format!("{name}.kins"));
     if std::env::var_os("KIN_UPDATE_GOLDEN").is_some() {

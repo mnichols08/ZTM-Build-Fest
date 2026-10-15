@@ -3,11 +3,19 @@
 use crate::event::{ActorId, DeviceId, HouseholdId, IdentityBinding};
 use crate::wire::{PROTOCOL_VERSION, RESULT_HEADER_BYTES};
 
+/// Bytes in the section table after the header: 14 (revision, length) pairs.
+pub const SECTION_TABLE: usize = 14 * 8;
+
 /// The default civil date tests replay at, 2026-10-03.
 pub const TEST_DATE: u32 = 20261003;
 
 /// Offset of the first entity record (Items, then Handoffs, Talks, Pulses).
-pub const BODY: usize = RESULT_HEADER_BYTES;
+pub const BODY: usize = RESULT_HEADER_BYTES + SECTION_TABLE;
+
+/// The byte length a projection's section table records for section `index`.
+pub fn section_length(bytes: &[u8], index: usize) -> u32 {
+    header_u32(bytes, RESULT_HEADER_BYTES + index * 8 + 4)
+}
 
 /// A local (no target household) KINE request over raw canonical records.
 pub fn kine(records: &[Vec<u8>], as_of: i64, civil_date: u32, cursor: Option<[u8; 16]>) -> Vec<u8> {

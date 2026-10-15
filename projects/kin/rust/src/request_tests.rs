@@ -52,7 +52,7 @@ fn bound(records: &[Vec<u8>], bindings: &[crate::event::IdentityBinding]) -> Vec
 }
 
 #[test]
-fn empty_request_projects_the_empty_96_byte_header() {
+fn empty_request_projects_the_empty_header_and_section_table() {
     let result = replay(&kine(&[], 0, TEST_DATE, None)).unwrap();
     let mut expected = vec![0; BODY];
     expected[..6].copy_from_slice(b"KINS\x18\0");

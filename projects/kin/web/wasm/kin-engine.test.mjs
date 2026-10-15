@@ -1128,7 +1128,7 @@ test("copied result bytes outlive subsequent success, error and empty calls", as
   for (let n = 0; n < 8; n++) {
     apply(24, [pulseRecord(1)], 0, 2000);
     apply(24, [pulseRecord(1, "good", 1000)], 4);
-    assert.equal(apply(24, []).length, 96);
+    assert.equal(apply(24, []).length, 208, "empty header and section table");
     assert.deepEqual(copy, snapshot);
   }
 });

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 
-import { decodeProjection, KinEngineError } from "./kin-engine.js";
+import { decodeProjection, encodeAddedRecord, encodeHandoffAddedRecord, KinEngineError, loadKinEngine } from "./kin-engine.js";
 
 const fixtures = new URL("../../rust/fixtures/golden/", import.meta.url);
 const load = async (name) => new Uint8Array(await readFile(new URL(name, fixtures)));
@@ -53,4 +53,91 @@ test("other versions, reserved bytes, modes and summary flags fail closed", asyn
   const counted = empty.slice();
   new DataView(counted.buffer).setUint32(8, 1, true); // an Item with no record
   failsClosed(counted, "declared Item without a record");
+});
+
+// Incremental decoding: sections whose revision did not change are reused.
+const wasm = await readFile(new URL("./kin_engine.wasm", import.meta.url));
+const wasmUrl = `data:application/wasm;base64,${wasm.toString("base64")}`;
+const id = (value) => new Uint8Array(16).fill(value);
+const identity = (sequence) => ({ eventId: id(sequence), householdId: id(0xaa), actorId: id(0xbb), deviceId: id(0xcc), timestamp: 1234 + sequence, logicalTime: sequence });
+const item = (sequence, text) => encodeAddedRecord({ ...identity(sequence), itemId: id(0x40 + sequence), text, classification: "need" });
+const handoff = (sequence, text) => encodeHandoffAddedRecord({ ...identity(sequence), handoffId: id(0x60 + sequence), text });
+const SECTION_NAMES = ["items", "handoffs", "talks", "pulses", "routines", "areas", "notes", "pins", "playbooks", "referenceRecords", "maintenanceEvents"];
+
+test("unchanged sections keep their decoded objects; changed ones decode", async () => {
+  const engine = await loadKinEngine(wasmUrl);
+  const project = (rows, previous) => engine.applyEvents(rows, 5000, null, 20261014, null, previous);
+  const rows = [item(1, "Milk")];
+  const first = project(rows);
+  const same = project(rows, first);
+  assert.deepEqual(same, first);
+  for (const name of SECTION_NAMES) assert.equal(same[name], first[name], `${name} reused`);
+  assert.equal(same.summary, first.summary);
+  assert.notEqual(same, first, "each decode returns a new state object");
+
+  const withHandoff = project([...rows, handoff(2, "Bins are out")], same);
+  assert.equal(withHandoff.items, same.items, "Items unchanged");
+  assert.notEqual(withHandoff.handoffs, same.handoffs);
+  assert.notEqual(withHandoff.summary, same.summary, "the summary counts the Handoff");
+  assert.equal(withHandoff.handoffs[0].text, "Bins are out");
+  assert.deepEqual(withHandoff, project([...rows, handoff(2, "Bins are out")]), "equal to a full decode");
+
+  // Without `previous`, or with a state from another engine instance, nothing is reused.
+  assert.notEqual(project(rows).items, first.items);
+  const other = await loadKinEngine(wasmUrl);
+  const foreign = other.applyEvents(rows, 5000, null, 20261014);
+  assert.notEqual(project(rows, foreign).items, foreign.items);
+});
+
+// Rebuilds a projection from its sections with chosen revisions.
+function rebuild(bytes, { revisions, replace = {} }) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const sections = [];
+  let offset = 208;
+  for (let index = 0; index < 14; index += 1) {
+    const length = view.getUint32(96 + index * 8 + 4, true);
+    sections.push(replace[index] ?? bytes.slice(offset, offset + length));
+    offset += length;
+  }
+  const out = new Uint8Array(208 + sections.reduce((total, section) => total + section.length, 0));
+  out.set(bytes.subarray(0, 96));
+  const table = new DataView(out.buffer, 96, 112);
+  let at = 208;
+  sections.forEach((section, index) => {
+    table.setUint32(index * 8, revisions[index], true);
+    table.setUint32(index * 8 + 4, section.length, true);
+    out.set(section, at);
+    at += section.length;
+  });
+  return out;
+}
+
+test("revision 0 always decodes, and reused sections are still cross-checked", async () => {
+  const full = await load("full.kins");
+  const source = {};
+  const ones = Array(14).fill(1);
+  const first = decodeProjection(rebuild(full, { revisions: ones }), { source });
+  const unversioned = decodeProjection(rebuild(full, { revisions: Array(14).fill(0) }), { previous: first, source });
+  assert.notEqual(unversioned.items, first.items);
+  assert.deepEqual(unversioned, first);
+
+  // Items keep revision 1 and are reused, but the Areas they reference are gone.
+  assert.ok(first.items.some((entry) => entry.areaId));
+  const noAreas = rebuild(full, { revisions: ones.map((value, index) => (index === 5 ? 2 : value)), replace: { 5: new Uint8Array(0) } });
+  new DataView(noAreas.buffer).setUint32(56, 0, true);
+  failsClosed(noAreas, "parsed without previous state");
+  assert.throws(() => decodeProjection(noAreas, { previous: first, source }), (error) => error instanceof KinEngineError && error.code === 6);
+
+  // A reused section whose header count no longer matches fails closed.
+  const recounted = rebuild(full, { revisions: ones });
+  new DataView(recounted.buffer).setUint32(12, first.handoffs.length + 1, true);
+  assert.throws(() => decodeProjection(recounted, { previous: first, source }), /inconsistent state/);
+});
+
+test("the section table must cover the body exactly", async () => {
+  const empty = await load("empty.kins");
+  const longer = empty.slice();
+  new DataView(longer.buffer).setUint32(96 + 4, 1, true); // Items claims one byte
+  failsClosed(longer, "table longer than body");
+  failsClosed(Uint8Array.from([...empty, 0]), "body longer than table");
 });

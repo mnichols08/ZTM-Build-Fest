@@ -1,6 +1,6 @@
 # JavaScript–WASM ABI
 
-**Status:** Protocol 24 is the only replay format (refactor track, Slice 2; owner decision D3). Protocols 1–23 and the schema-1 `ITEM_ADDED` payload were removed, not migrated; their contracts survive only in the release records. The Rust sources that implement this contract are `rust/src/wire.rs`, `request.rs`, `event_decode.rs`, `state_encode.rs`, `codec.rs`, `command.rs`, `archive.rs` and `abi.rs`.
+**Status:** Protocol 24 is the only replay format (refactor track, Slice 2; owner decision D3). Protocols 1–23 and the schema-1 `ITEM_ADDED` payload were removed, not migrated; their contracts survive only in the release records. The Rust sources that implement this contract are `rust/src/wire.rs`, `request.rs`, `event_decode.rs`, `state_encode.rs` (with `state_encode/records.rs`), `sections.rs`, `codec.rs`, `command.rs`, `archive.rs` and `abi.rs`. Refactor Slice 4 added the KINS section table and regrouped the body into one contiguous section per domain; the version stays 24 because event encoding and the KINE request are unchanged.
 
 All multibyte integers are little-endian. IDs are exactly 16 opaque bytes and are never parsed, except for the bytewise tie-break in replay ordering. Text is strict UTF-8 with no terminator. Reserved fields must be zero. Decoders reject truncation, trailing bytes, overflow, unknown codes, invalid UTF-8 and unsupported versions; they never reinterpret a different layout.
 
@@ -147,49 +147,92 @@ The 96-byte header holds `"KINS"`, version 24, reserved 0, then u32 counts:
 84 maintenance events       88 attachments           92 responsibilities
 ```
 
-The body follows in this order:
+A 112-byte section table follows the header: one entry per domain section,
+`revision u32, byte length u32`, in body order (`rust/src/sections.rs`). The
+lengths cover the body exactly; a decoder rejects a table that does not.
 
-1. Items: item ID, created_by, created_at i64, classification u8, status u8
-   (0 active, 1 completed, 2 archived), 2 reserved, text length u32, text.
-2. Handoffs: handoff ID, created_by, created_at i64, status u8
-   (0 unacknowledged, 1 acknowledged, 2 archived), 3 reserved, text length, text.
-3. Talks: talk ID, created_by, created_at i64, status u8
-   (0 open, 1 resolved, 2 archived), 3 reserved, text length, text.
-4. Pulses (40 bytes each, ordered by actor): actor ID, set_at i64,
-   expires_at i64, value u8, status u8 (0 active, 1 expired), 6 reserved.
-5. One Area ID per Item (zero = none).
-6. Routines: routine ID, created_by, created_at i64, created_on u32,
-   occurrence key u32 (zero = none today), cadence u8, archived u8,
-   occurrence u8 (0 none, 1 open, 2 completed), reserved u8, text length, text.
-7. Areas: area ID, archived u8, 3 reserved, name length u32, name.
-8. Notes: note ID, created_by, updated_by, created_at i64, updated_at i64,
-   area ID, archived u8, 3 reserved, title length u32, body length u32, title, body.
-9. Steps, grouped by Item in Item order: item ID, step ID, completed u8,
-   archived u8, 2 reserved, text length u32, text.
-10. One planning date u32 per Item (zero = none).
-11. One last-changed timestamp i64 per Item (latest effective Item or Step event).
-12. Pins (20 bytes each): target kind u8, 3 reserved, target ID.
-13. Playbooks: playbook ID, archived u8, entry count u8, title length u16,
-    2 reserved, title, then entries as u16 length + text.
-14. Reference Records: record ID, area ID, title length u16, field count u8,
-    archived u8, title, then fields as field ID, label length u16, value
-    length u16, label, value.
-15. Maintenance events: maintenance ID, record ID, performed u32, next u32,
-    routine ID, archived u8, reserved u8, summary length u16, summary.
-16. Attachments (36 bytes each): attachment ID, parent kind u8, removed u8,
-    2 reserved, parent ID.
-17. Responsibilities (33 bytes each): target kind u8, target ID, member ID.
-18. One next-occurrence date u32 per Routine (zero when archived or past
-    9999-12-31; otherwise later than the current key).
-19. Summary entries (at most 8): event ID, kind u8 (1–15), entity kind u8
-    (1 Item, 2 Handoff, 3 Talk, 4 Routine), classification u8 (255 when
-    absent; present only for item-added), reserved u8, text length u32, text.
+| # | Section | Contents, in order |
+|---|---|---|
+| 0 | Items | Item records; one Area ID per Item; Steps; one planning date per Item; one last-changed timestamp per Item |
+| 1 | Handoffs | Handoff records |
+| 2 | Talks | Talk records |
+| 3 | Pulses | Pulse records |
+| 4 | Routines | Routine records; one next-occurrence date per Routine |
+| 5–12 | Areas, Notes, Pins, Playbooks, Reference Records, Maintenance events, Attachments, Responsibilities | their records |
+| 13 | Summary | summary entries |
+
+Records:
+
+- Items: item ID, created_by, created_at i64, classification u8, status u8
+  (0 active, 1 completed, 2 archived), 2 reserved, text length u32, text.
+  Then one Area ID per Item (zero = none); the Steps, grouped by Item in Item
+  order: item ID, step ID, completed u8, archived u8, 2 reserved, text length
+  u32, text; one planning date u32 per Item (zero = none); one last-changed
+  timestamp i64 per Item (latest effective Item or Step event).
+- Handoffs: handoff ID, created_by, created_at i64, status u8
+  (0 unacknowledged, 1 acknowledged, 2 archived), 3 reserved, text length, text.
+- Talks: talk ID, created_by, created_at i64, status u8
+  (0 open, 1 resolved, 2 archived), 3 reserved, text length, text.
+- Pulses (40 bytes each, ordered by actor): actor ID, set_at i64,
+  expires_at i64, value u8, status u8 (0 active, 1 expired), 6 reserved.
+- Routines: routine ID, created_by, created_at i64, created_on u32,
+  occurrence key u32 (zero = none today), cadence u8, archived u8,
+  occurrence u8 (0 none, 1 open, 2 completed), reserved u8, text length, text.
+  Then one next-occurrence date u32 per Routine (zero when archived or past
+  9999-12-31; otherwise later than the current key).
+- Areas: area ID, archived u8, 3 reserved, name length u32, name.
+- Notes: note ID, created_by, updated_by, created_at i64, updated_at i64,
+  area ID, archived u8, 3 reserved, title length u32, body length u32, title, body.
+- Pins (20 bytes each): target kind u8, 3 reserved, target ID.
+- Playbooks: playbook ID, archived u8, entry count u8, title length u16,
+  2 reserved, title, then entries as u16 length + text.
+- Reference Records: record ID, area ID, title length u16, field count u8,
+  archived u8, title, then fields as field ID, label length u16, value
+  length u16, label, value.
+- Maintenance events: maintenance ID, record ID, performed u32, next u32,
+  routine ID, archived u8, reserved u8, summary length u16, summary.
+- Attachments (36 bytes each): attachment ID, parent kind u8, removed u8,
+  2 reserved, parent ID.
+- Responsibilities (33 bytes each): target kind u8, target ID, member ID.
+- Summary entries (at most 8): event ID, kind u8 (1–15), entity kind u8
+  (1 Item, 2 Handoff, 3 Talk, 4 Routine), classification u8 (255 when
+  absent; present only for item-added), reserved u8, text length u32, text.
 
 Collections keep original add order and include archived tombstones, so the
 browser filters views without reducing state. An empty household is exactly
-the 96-byte header. Counts are bounded (10,000 combined entities, 32 Areas,
-128 Notes, 16 Steps per Item, 10 Pins, 32 Playbooks, 128 Reference Records,
-8,192 Maintenance events, 256 attachments) and the whole result by 64 MiB.
+the header and a table of zero lengths (208 bytes). Counts are bounded (10,000
+combined entities, 32 Areas, 128 Notes, 16 Steps per Item, 10 Pins, 32
+Playbooks, 128 Reference Records, 8,192 Maintenance events, 256 attachments)
+and the whole result by 64 MiB.
+
+### Section revisions
+
+A revision tells the host whether a section changed since the last projection
+from the same engine instance, so it can skip decoding and rendering an
+unchanged section.
+
+- The ABI stamps revisions on the projections returned by `kin_apply_events`
+  and `kin_execute_command`. Each section's counter starts at 0 per instance
+  and increases by one (wrapping past `u32::MAX` to 1, never 0) whenever that
+  section differs from the same section of the last projection the instance
+  emitted. The comparison is exact: the section bytes and the header fields
+  that describe it (its counts; for the summary also the total and through
+  event, bytes 24–51). An unchanged section keeps its revision.
+- The previous projection is the buffer the instance already retains as its
+  last result, moved aside rather than copied, so tracking costs one byte
+  comparison per section and no additional retained memory. A non-projection
+  call in between keeps it as the comparison basis. `kin_clear` drops it but
+  keeps the counters, so a later projection advances every section instead of
+  reusing a revision the host may still hold.
+- Revision 0 means unversioned. The pure encoder and the KIMP projection
+  write 0, and the host always decodes such a section.
+- Revisions are a rendering aid, not part of replay or authority. They do not
+  depend on event encoding, and equal history still yields identical section
+  bytes. The golden fixtures hold a fresh instance's first projection, where
+  every revision is 1.
+
+The bridge keys reuse on the engine instance as well as the revision. A
+revision is meaningful only within one instance.
 
 ## Side formats
 
@@ -223,8 +266,12 @@ the 96-byte header. Counts are bounded (10,000 combined entities, 32 Areas,
 ## JavaScript bridge
 
 `web/wasm/kin-engine.js` loads and checks the module, allocates and copies
-buffers, encodes KINE and KCMD, decodes KINS (`decodeProjection`) and converts
-status codes to safe messages. It never reduces events. A replay or command
+buffers, encodes KINE and KCMD, decodes KINS (`decodeProjection` in
+`projection-decode.js`, one module per section family under `projection/`) and
+converts status codes to safe messages. It never reduces events.
+`engine.applyEvents(..., previous)` reuses every decoded section of `previous`
+whose revision is unchanged, keeping those arrays' identity. Cross-section
+references are checked again on every decode. A replay or command
 history may be an array of canonical records or a contiguous source exposing
 `length`, `byteLength` and `copyTo(target, offset)` (the session event arena),
 copied in one operation; command requests encode the history once behind a
@@ -241,6 +288,7 @@ Notes, v11 Steps, v12 richer cadences, v13 Shopping, v14 Staples, v15 modes,
 v16 planning dates, v17 last-changed dates, v18 Pins, v19 Playbooks, v20
 Reference Records, v21 Maintenance, v22 attachments, v23 responsibility, and
 v24 Weekdays plus next-occurrence dates. Protocol 24's layout is the
-accumulation of those sections. The per-version contracts are in the release
+accumulation of those sections. Refactor Slice 4 regrouped the KINS body into
+per-domain sections behind a section table with revisions. The per-version contracts are in the release
 records (for example [V0.7.0](V0.7.0.md), [V0.9.0](V0.9.0.md),
 [V0.10.0](V0.10.0.md) and `releases/`).

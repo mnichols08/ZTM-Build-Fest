@@ -1,13 +1,22 @@
 use std::collections::BTreeMap;
+use std::ops::Range;
 use std::sync::Mutex;
 
 use crate::error::KinError;
+use crate::sections::SectionRevisions;
 use crate::wire::{ERROR_PROTOCOL_VERSION, MAX_PROTOCOL_BYTES};
 
 struct AbiState {
     allocations: BTreeMap<u32, Box<[u8]>>,
     result: Vec<u8>,
     error: Vec<u8>,
+    /// Where `result` holds a projection, when it does.
+    projection: Option<Range<usize>>,
+    /// The last emitted projection's buffer and range, kept after a later
+    /// non-projection call replaced `result`, so revisions stay comparable.
+    previous: Vec<u8>,
+    previous_projection: Option<Range<usize>>,
+    revisions: SectionRevisions,
 }
 
 impl AbiState {
@@ -16,8 +25,78 @@ impl AbiState {
             allocations: BTreeMap::new(),
             result: Vec::new(),
             error: Vec::new(),
+            projection: None,
+            previous: Vec::new(),
+            previous_projection: None,
+            revisions: SectionRevisions::new(),
         }
     }
+
+    /// Clears the published buffers before an operation. A projection in
+    /// `result` moves aside (no copy) as the basis for the next revisions.
+    fn begin(&mut self) {
+        if let Some(range) = self.projection.take() {
+            self.previous = std::mem::take(&mut self.result);
+            self.previous_projection = Some(range);
+        } else {
+            self.result.clear();
+        }
+        self.error.clear();
+    }
+
+    /// Stamps the section revisions of a projection inside `result`, then
+    /// drops the previous projection: `result` is the basis from now on.
+    fn stamp(&mut self, result: &mut [u8], range: Range<usize>) -> Result<(), KinError> {
+        let previous = self
+            .previous_projection
+            .as_ref()
+            .and_then(|range| self.previous.get(range.clone()));
+        self.revisions.stamp(&mut result[range.clone()], previous)?;
+        self.previous = Vec::new();
+        self.previous_projection = None;
+        self.projection = Some(range);
+        Ok(())
+    }
+}
+
+impl AbiState {
+    /// Publishes an operation's outcome as the result or error buffer and
+    /// returns the status code.
+    fn publish(&mut self, outcome: Result<Vec<u8>, KinError>, locate: Option<Locate>) -> i32 {
+        let outcome = outcome.and_then(|mut result| {
+            if let Some(range) = locate.and_then(|locate| locate(&result)) {
+                self.stamp(&mut result, range)?;
+            }
+            Ok(result)
+        });
+        match outcome {
+            Ok(result) => {
+                self.result = result;
+                0
+            }
+            Err(error) => {
+                self.error = error_buffer(error);
+                error.code()
+            }
+        }
+    }
+}
+
+/// Locates the projection inside an operation's result.
+type Locate = fn(&[u8]) -> Option<Range<usize>>;
+
+/// A KINS result is the projection itself.
+fn whole(result: &[u8]) -> Option<Range<usize>> {
+    Some(0..result.len())
+}
+
+/// A KCMT result ends with the projection, after the event and metadata.
+fn command_projection(result: &[u8]) -> Option<Range<usize>> {
+    let length = |at: usize| -> Option<usize> {
+        Some(u32::from_le_bytes(result.get(at..at + 4)?.try_into().ok()?) as usize)
+    };
+    let start = 20usize.checked_add(length(8)?)?.checked_add(length(12)?)?;
+    (start.checked_add(length(16)?)? == result.len()).then_some(start..result.len())
 }
 
 static ABI_STATE: Mutex<AbiState> = Mutex::new(AbiState::new());
@@ -94,7 +173,7 @@ pub extern "C" fn kin_free(pointer: u32, length: u32) -> i32 {
 
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
 pub extern "C" fn kin_apply_events(pointer: u32, length: u32) -> i32 {
-    operate(pointer, length, crate::core::replay)
+    operate_projection(pointer, length, crate::core::replay, whole)
 }
 
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
@@ -114,7 +193,12 @@ pub extern "C" fn kin_encode_command(pointer: u32, length: u32) -> i32 {
 
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
 pub extern "C" fn kin_execute_command(pointer: u32, length: u32) -> i32 {
-    operate(pointer, length, crate::command::execute_request)
+    operate_projection(
+        pointer,
+        length,
+        crate::command::execute_request,
+        command_projection,
+    )
 }
 
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
@@ -143,10 +227,29 @@ pub extern "C" fn kin_plan_import(pointer: u32, length: u32) -> i32 {
 }
 
 fn operate(pointer: u32, length: u32, operation: fn(&[u8]) -> Result<Vec<u8>, KinError>) -> i32 {
+    run(pointer, length, operation, None)
+}
+
+/// An operation whose result carries a projection: its section revisions are
+/// stamped against the last projection this instance emitted.
+fn operate_projection(
+    pointer: u32,
+    length: u32,
+    operation: fn(&[u8]) -> Result<Vec<u8>, KinError>,
+    locate: Locate,
+) -> i32 {
+    run(pointer, length, operation, Some(locate))
+}
+
+fn run(
+    pointer: u32,
+    length: u32,
+    operation: fn(&[u8]) -> Result<Vec<u8>, KinError>,
+    locate: Option<Locate>,
+) -> i32 {
     // Keep inputs and published buffers stable against concurrent free, clear, or calls.
     let mut state = lock_state();
-    state.result.clear();
-    state.error.clear();
+    state.begin();
     let outcome = if !request_length_is_supported(length) {
         Err(KinError::SizeLimit)
     } else if length == 0 {
@@ -163,16 +266,7 @@ fn operate(pointer: u32, length: u32, operation: fn(&[u8]) -> Result<Vec<u8>, Ki
                 }
             })
     };
-    match outcome {
-        Ok(result) => {
-            state.result = result;
-            0
-        }
-        Err(error) => {
-            state.error = error_buffer(error);
-            error.code()
-        }
-    }
+    state.publish(outcome, locate)
 }
 
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
@@ -187,6 +281,11 @@ pub extern "C" fn kin_clear() {
     state.allocations.clear();
     state.result = Vec::new();
     state.error = Vec::new();
+    // Counters survive: a later projection must never reuse a revision a host
+    // may still hold. Without a previous projection every section changes.
+    state.projection = None;
+    state.previous = Vec::new();
+    state.previous_projection = None;
 }
 
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
@@ -206,8 +305,87 @@ pub extern "C" fn kin_error_len() -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::request_length_is_supported;
-    use crate::wire::MAX_PROTOCOL_BYTES;
+    use super::*;
+    use crate::test_support::{item_record, kine, text_record, TEST_DATE};
+
+    /// One projection call through the ABI state, returning its revisions.
+    fn emit(state: &mut AbiState, records: &[Vec<u8>]) -> Vec<u32> {
+        state.begin();
+        let outcome = crate::core::replay(&kine(records, 0, TEST_DATE, None));
+        assert_eq!(state.publish(outcome, Some(whole)), 0);
+        revisions(&state.result)
+    }
+
+    fn revisions(projection: &[u8]) -> Vec<u32> {
+        (0..14)
+            .map(|index| {
+                let at = 96 + index * 8;
+                u32::from_le_bytes(projection[at..at + 4].try_into().unwrap())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn revisions_advance_only_for_changed_sections_across_calls() {
+        let mut state = AbiState::new();
+        let item = item_record(1, 0x11, b"Milk", 1);
+        let first = emit(&mut state, std::slice::from_ref(&item));
+        assert_eq!(
+            first,
+            vec![1; 14],
+            "a fresh instance stamps every section 1"
+        );
+        assert_eq!(emit(&mut state, std::slice::from_ref(&item)), first);
+
+        // A Handoff changes Handoffs and the catch-up summary, nothing else.
+        let handoff = text_record(5, 2, 0x12, b"Bins are out");
+        let second = emit(&mut state, &[item.clone(), handoff.clone()]);
+        let mut expected = first.clone();
+        expected[1] = 2;
+        expected[13] = 2;
+        assert_eq!(second, expected);
+
+        // A non-projection call in between keeps the comparison basis.
+        state.begin();
+        assert_ne!(state.publish(Err(KinError::InvalidEvent), Some(whole)), 0);
+        state.begin();
+        assert_eq!(state.publish(Ok(b"metadata".to_vec()), None), 0);
+        assert_eq!(emit(&mut state, &[item.clone(), handoff]), expected);
+
+        // Returning to earlier content is still a change: counters never go back.
+        let third = emit(&mut state, std::slice::from_ref(&item));
+        expected[1] = 3;
+        expected[13] = 3;
+        assert_eq!(third, expected);
+    }
+
+    #[test]
+    fn a_lost_basis_advances_every_section_and_never_reuses_a_revision() {
+        let mut state = AbiState::new();
+        let item = item_record(1, 0x11, b"Milk", 1);
+        assert_eq!(emit(&mut state, std::slice::from_ref(&item)), vec![1; 14]);
+        // kin_clear drops buffers but keeps counters.
+        state.projection = None;
+        state.result = Vec::new();
+        assert_eq!(emit(&mut state, std::slice::from_ref(&item)), vec![2; 14]);
+    }
+
+    #[test]
+    fn command_results_locate_their_trailing_projection() {
+        let mut result = b"KCMT   ".to_vec();
+        for length in [3u32, 2, 4] {
+            result.extend_from_slice(&length.to_le_bytes());
+        }
+        result.extend_from_slice(&[0xee; 9]);
+        assert_eq!(command_projection(&result), Some(25..29));
+        result.push(0);
+        assert_eq!(
+            command_projection(&result),
+            None,
+            "lengths must cover the result"
+        );
+        assert_eq!(command_projection(&result[..10]), None);
+    }
 
     #[test]
     fn request_size_is_bounded_before_pointer_dereference() {

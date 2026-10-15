@@ -6,10 +6,12 @@ import { readFile, readdir } from "node:fs/promises";
 
 const fixtures = new URL("../../rust/fixtures/golden/", import.meta.url);
 const wasm = await readFile(new URL("./kin_engine.wasm", import.meta.url));
-const { instance } = await WebAssembly.instantiate(wasm, {});
-const abi = instance.exports;
 
-function replay(request) {
+// Section revisions count per engine instance; the fixtures hold a fresh
+// instance's first projection, where every section is revision 1.
+async function replay(request) {
+  const { instance } = await WebAssembly.instantiate(wasm, {});
+  const abi = instance.exports;
   const pointer = abi.kin_alloc(request.length);
   assert.notEqual(pointer, 0);
   try {
@@ -31,6 +33,6 @@ for (const name of names) {
   test(`WASM reproduces the ${name} golden projection`, async () => {
     const request = new Uint8Array(await readFile(new URL(`${name}.kine`, fixtures)));
     const expected = new Uint8Array(await readFile(new URL(`${name}.kins`, fixtures)));
-    assert.deepEqual(replay(request), expected);
+    assert.deepEqual(await replay(request), expected);
   });
 }

@@ -69,7 +69,8 @@ fn handoff_and_talk_records_follow_items_in_order() {
         ],
         [1, 1, 1]
     );
-    let handoff = BODY + 48 + 4;
+    // The Items section ends with the Item's Area ID, planning date and last change.
+    let handoff = BODY + 48 + 4 + 16 + 4 + 8;
     assert_eq!(&bytes[handoff..handoff + 16], &numbered_id(0x11));
     assert_eq!(&bytes[handoff + 32..handoff + 40], &2i64.to_le_bytes());
     assert_eq!(&bytes[handoff + 40..handoff + 44], &[0; 4]); // unacknowledged
