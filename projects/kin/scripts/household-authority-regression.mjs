@@ -166,9 +166,10 @@ async function pageApprove({ joiningKey }) {
   let { shownKey, approve, confirmation } = controls();
   if (!shownKey || shownKey !== joiningKey)
     throw new Error("The approver's displayed fingerprint differs from the joining device's own display");
-  // P-005: render() re-enables every button, so the visual disabled state is
-  // not reliable here. Record it, but assert the gate the handler enforces.
   const visuallyGated = approve.disabled;
+  h.disabled = true;
+  h.disabled = false;
+  const gateSurvivedBusyCycle = approve.disabled;
   if (confirmation.checked) throw new Error("Approval fingerprint confirmation started checked");
   const versionBefore = h.pairing.version;
   approve.disabled = false;
@@ -190,7 +191,7 @@ async function pageApprove({ joiningKey }) {
   if (h.pairing.state !== "Confirmed")
     throw new Error("Approval did not confirm: " + (h.querySelector(".household-message")?.textContent ?? h.pairing.state));
   return { memberId: h.pairing.confirmedMemberId, deviceId: h.pairing.confirmedDeviceId,
-    refusedBeforeConfirmation, visuallyGated, shownKey };
+    refusedBeforeConfirmation, visuallyGated, gateSurvivedBusyCycle, shownKey };
 }
 
 async function pageActivate({ approvingKey }) {
@@ -639,10 +640,9 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       claimed.shownOwnKey === claimed.fingerprint,
     `${deviceLabel} and its approver render matching fingerprints for both device keys`);
     const approved = await inviter.call(pageApprove, { joiningKey: claimed.shownOwnKey });
-    check(approved.refusedBeforeConfirmation && approved.shownKey === claimed.fingerprint,
-      `${deviceLabel} approval is refused until the approver confirms the compared fingerprint`);
-    if (!approved.visuallyGated)
-      console.log(`NOTE ${deviceLabel}: Approve was not visually disabled before confirmation (P-005)`);
+    check(approved.visuallyGated && approved.gateSurvivedBusyCycle &&
+      approved.refusedBeforeConfirmation && approved.shownKey === claimed.fingerprint,
+      `${deviceLabel} approval stays visibly and functionally gated until the approver confirms the compared fingerprint`);
     return { approved, approverKey };
   };
   const join = async ({ inviter, invitee, kind, expiresAt, deviceLabel }) => {

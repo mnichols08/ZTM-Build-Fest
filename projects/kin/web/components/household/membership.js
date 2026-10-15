@@ -95,9 +95,9 @@ export class HouseholdMembership {
                 this.ctx.api.requestSync();
                 await this.host.showDevices();
               });
-              approve.disabled = true;
+              this.host.setControlDisabled(approve, true);
               confirmation.addEventListener("change", () => {
-                approve.disabled = !confirmation.checked;
+                this.host.setControlDisabled(approve, !confirmation.checked);
               });
               item.append(prompt, label, approve);
             });

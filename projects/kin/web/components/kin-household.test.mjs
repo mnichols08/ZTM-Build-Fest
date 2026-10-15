@@ -26,6 +26,12 @@ class ElementStub {
       ? this.children.find((child) => child.className === "household-message") ?? null
       : null;
   }
+  querySelectorAll(selector) {
+    const tags = new Set(selector.split(",").map((value) => value.trim()));
+    const descendants = (children) =>
+      children.flatMap((child) => [child, ...descendants(child.children ?? [])]);
+    return descendants(this.children).filter((child) => tags.has(child.tagName));
+  }
 }
 
 globalThis.HTMLElement = class extends ElementStub {};
@@ -36,6 +42,25 @@ globalThis.document = {
 };
 await import("./kin-household.js");
 const KinHousehold = globalThis.KinHouseholdUnderTest;
+
+test("busy-state changes preserve controls gated by a local prerequisite", () => {
+  const component = new KinHousehold();
+  const gated = document.createElement("button");
+  const available = document.createElement("button");
+  component.append(gated, available);
+
+  component.setControlDisabled(gated, true);
+  component.disabled = true;
+  assert.equal(gated.disabled, true);
+  assert.equal(available.disabled, true);
+
+  component.disabled = false;
+  assert.equal(gated.disabled, true, "the prerequisite still gates its control");
+  assert.equal(available.disabled, false, "the busy-only control becomes available");
+
+  component.setControlDisabled(gated, false);
+  assert.equal(gated.disabled, false);
+});
 
 test("Limited and Temporary members get a clearly named Leave household button", async () => {
   for (const kind of ["limited", "temporary"]) {
