@@ -1364,7 +1364,7 @@ try {
   console.log(await recurringTaskRegressions(first, { visit: (id) => visit(first, id), ready }));
   // The hardening suite also unlocks offline; the same probe filter applies.
   const hardeningOfflineStart = problems.length;
-  console.log(await dailyUxHardeningRegressions(first, { visit: (id) => visit(first, id), ready }));
+  console.log(await dailyUxHardeningRegressions(first, { visit: (id) => visit(first, id), ready, tab }));
   problems.push(...problems.splice(hardeningOfflineStart).filter((entry) => !offlineStatusProbe(entry)));
   await visit(first, "routines");
   console.log(await first.evaluate(`(${routineRegressions.toString()})()`));

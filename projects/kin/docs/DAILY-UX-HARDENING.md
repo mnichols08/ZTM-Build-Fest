@@ -33,8 +33,8 @@ worktree of `087c537`.
 
 | # | Severity | Defect | Fix |
 | --- | --- | --- | --- |
-| D1 | High (privacy) | **Routine reminders survived lock.** Lock never cancelled local reminder timers, and `LocalReminders.cancelAll` had no callers. A `routine:*` reminder's delivery check was always true. So a reminder set before lock showed an OS notification with the decrypted routine title while Kin was locked. On base, the suite observed a second notification after lock. | `lockHousehold` cancels every reminder. A reminder notifies only while its session is current and its item or routine is live. |
-| D2 | Medium | **A notification-permission prompt answered after lock** registered the reminder and replaced "Household locked." with "Reminder set on this device…". `handleLocalReminder` had no session capture. | Capture the session. After the await, a stale result cancels its own timer and reports nothing. |
+| D1 | High (privacy) | **Routine reminders survived lock.** Lock never cancelled local reminder timers, and `LocalReminders.cancelAll` had no callers. A `routine:*` reminder's delivery check was always true. So a reminder set before lock showed an OS notification with the decrypted routine title while Kin was locked. On base, the suite observed a second notification after lock. | **Lock suspends reminders.** Every timer stops and every title and closure is dropped; only `{ id, at, vaultId }` stays in memory. **Unlocking the same vault resumes them** once the fresh state loads, using the record's current title. A reminder that came due while locked fires once; one whose record is gone or archived is dropped. Resuming never prompts for permission, and without granted permission reminders stay suspended. **Another vault's reminders are discarded.** Logout, leaving or deleting the household, an element disconnect and restore clear reminders for good. Delivery also requires a live session and record. Review follow-up: the first version cancelled reminders on lock, so any lock, including auto-lock, silently deleted them. |
+| D2 | Medium | **A notification-permission prompt answered after lock** registered the reminder and replaced "Household locked." with "Reminder set on this device…". `handleLocalReminder` had no session capture. | Capture the session. `schedule` arms nothing once its record is no longer current. Review follow-up: the stale path cancels by attempt token, so it can never cancel a newer reminder that the next session set for the same item. Before this follow-up it cancelled by id. |
 | D3 | Medium (privacy) | **Household settings settling after lock wrote into the locked header.** `refreshHouseholdDefaults` awaited the network and IndexedDB without a session check. A late success put the decrypted household name in the locked header. On base the suite saw `brand: "Secret Household Name"`. A late failure replaced "Household locked." with an appearance error. `handleSaveHouseholdDefaults` had the same gap. | Assert the session after the load and the save. Gate the error status on the session too. Review follow-up: the save's `catch` also checks the session before calling the editor's `complete`. Previously a save settling after lock or a household re-open (including the stale-session assert itself) still reported to the editor, and a re-open keeps that editor for the new session. |
 | D4 | Medium (data) | **A lock between the two schedule-change commands created a duplicate repeating task on retry.** The change is create-replacement, then archive-original. Lock cleared the in-memory resume token. After unlock, choosing the same schedule minted a new replacement id, which left the original archived and **two weekly replacements active**. This was observed on base. | The resume token holds only random ids and a cadence. It now survives lock, bound to the vault that created it, so unlocking the same vault resumes the change. A different vault never sees it. |
 | D5 | Medium (a11y) | **The phone-width Quick add trigger was named "AddQuick add".** CSS generated content (`::before { content: "Add" }`) joined the accessible name. This was confirmed in Edge's accessibility tree. | `content: "Add" / ""` gives the decorative label empty alt text. A plain `content: "Add"` fallback is declared first for engines without the syntax. |
@@ -46,7 +46,7 @@ Production files changed: `web/components/kin-app.js` (D1–D4),
 
 ## 3. Regression coverage added
 
-### Browser: `scripts/daily-ux-hardening-regression.mjs` (41 checks)
+### Browser: `scripts/daily-ux-hardening-regression.mjs` (53 checks)
 
 This suite runs inside `browser-regression.mjs` after the repeating-tasks
 suite. It uses the real encrypted store and the WASM engine.
@@ -64,9 +64,25 @@ suite. It uses the real encrypted store and the WASM engine.
   makes it fail. Afterwards the replacement is durable and the original still
   repeats. Retrying after unlock gives one weekly replacement, with the
   original stopped.
-- **D1/D2.** A control reminder fires while unlocked. A pending routine
-  reminder does not fire after lock. A permission prompt answered after lock
-  registers nothing and announces nothing.
+- **D1/D2 reminders across lock.**
+  - A lock suspends a reminder as `{ id, at, vaultId }` only: no timer, no
+    title, no closure.
+  - Unlocking the same vault re-arms the reminder. Its Routines row shows the
+    same time as before the lock, and it fires at that time.
+  - A reminder that comes due while locked stays silent, then fires once
+    after unlock.
+  - Auto-lock suspends and restores in the same way.
+  - When a second tab archives the item while this tab is locked, the
+    reminder never fires.
+  - Reminders tagged for another vault are discarded. One origin holds one
+    vault, so a replaced vault is simulated by re-tagging the suspended entry;
+    `web/reminders.test.mjs` covers the mismatch directly.
+  - Logout restores and fires nothing.
+  - A permission prompt answered after lock registers nothing.
+  - A stale permission answer leaves the new session's reminder for the same
+    item intact.
+  - `web/reminders.test.mjs` adds unit tests for suspend, resume, overdue,
+    skip, vault mismatch, permission, `clearAll` and the token-guarded cancel.
 - **D3.** A household-settings load that resolves, or rejects, after lock
   leaves the locked brand, title and status untouched.
 - **D3 save path.** These checks drive the real editor's Save button against

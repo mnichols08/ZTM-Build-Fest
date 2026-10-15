@@ -603,6 +603,8 @@ class KinSecurity extends HTMLElement {
           this.assertCurrentOperation(confirmOperation);
           await app.refreshFromEvents();
           this.assertCurrentOperation(confirmOperation);
+          // Restored history replaces what reminders pointed at; end them.
+          app.clearReminders();
           app.broadcastEventChange();
           this.render();
           this.message.textContent = restored.alreadyPresent

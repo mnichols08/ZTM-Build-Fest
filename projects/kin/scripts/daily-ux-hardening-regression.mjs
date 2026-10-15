@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 // responsive regressions that cut across Quick add, Today, the palette, bulk
 // actions and repeating tasks, plus repeated performance samples. Runs on
 // the real encrypted store and WASM engine; see docs/DAILY-UX-HARDENING.md.
-export async function dailyUxHardeningRegressions(client, { visit, ready }) {
+export async function dailyUxHardeningRegressions(client, { visit, ready, tab: openTab }) {
   const page = (fn, ...args) => client.evaluate(`(${fn.toString()})(${args.map((value) => JSON.stringify(value)).join(",")})`);
   const passed = [];
   const metrics = [];
@@ -19,7 +19,6 @@ export async function dailyUxHardeningRegressions(client, { visit, ready }) {
   };
   const settle = () => page(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve, 0)))));
   const idle = () => until(() => { const app = document.querySelector("kin-app"); return Boolean(app?.state) && !app.busy && !app.bulkRunning && !app.refreshing && !app.pendingRefresh; }, "idle");
-  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const KEYS = {
     escape: { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 },
     n: { key: "n", code: "KeyN", windowsVirtualKeyCode: 78, text: "n" },
@@ -145,15 +144,18 @@ export async function dailyUxHardeningRegressions(client, { visit, ready }) {
       window.__gate = { reached: false };
       const gate = new Promise((resolve) => { window.__gate.release = resolve; });
       store.append = async (command, engine) => {
-        if (command.type === "add" && command.text === title) { window.__gate.reached = true; await gate; }
-        return original.call(store, command, engine);
+        if (command.type !== "add" || command.text !== title) return original.call(store, command, engine);
+        window.__gate.reached = true;
+        await gate;
+        try { return await original.call(store, command, engine); } finally { window.__gate.settled = true; }
       };
     }, pendingTitle);
     await quickAdd(pendingTitle);
     await until(() => window.__gate.reached, "quick add write pending");
     await lockAndSettle();
     await page(() => window.__gate.release());
-    await pause(300);
+    await until(() => window.__gate.settled, "held Quick add write settled");
+    await settle();
     const lockedView = await page((title) => {
       const app = document.querySelector("kin-app");
       return {
@@ -194,6 +196,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready }) {
         if (command.type === "archive-routine" && command.routineId === routineId) {
           window.__gate.reached = true;
           await gate;
+          window.__gate.settled = true;
           throw Object.assign(new Error("Kin was locked or reopened during the operation."), { code: "locked" });
         }
         return original.call(store, command, engine);
@@ -203,7 +206,8 @@ export async function dailyUxHardeningRegressions(client, { visit, ready }) {
     await until(() => window.__gate.reached, "schedule change archive pending");
     await lockAndSettle();
     await page(() => window.__gate.release());
-    await pause(100);
+    await until(() => window.__gate.settled, "held archive step settled");
+    await settle();
     await unlock();
     const interrupted = await page((text) => document.querySelector("kin-app").state.routines.filter((routine) => routine.text === text).map((routine) => ({ id: routine.routineId, cadence: routine.cadence, status: routine.status })), routineTitle);
     check(interrupted.length === 2 && interrupted.filter((routine) => routine.status !== "archived").length === 2,
@@ -216,47 +220,182 @@ export async function dailyUxHardeningRegressions(client, { visit, ready }) {
       "retrying the same schedule after unlock resumes the half-saved change: one weekly replacement, the original stopped, no second replacement", resumed);
     const replacementId = active[0].id;
 
-    // --- Local reminders never notify across a lock ------------------------
+    // --- Local reminders: a lock suspends them, unlocking resumes them -----
+    // Notifications go to a recording fake. A lock keeps only { id, at,
+    // vaultId }; unlocking the same vault re-arms each reminder from the fresh
+    // record's title. Logout and a different vault end them.
     await page(() => {
       const app = document.querySelector("kin-app");
       window.__notifications = [];
-      window.__permission = { value: "granted" };
+      window.__permission = { value: "granted", resolvers: [] };
       class FakeNotification {
-        constructor(title) { window.__notifications.push(title); }
+        constructor(title) { window.__notifications.push({ title, at: Date.now() }); }
         static get permission() { return window.__permission.value; }
-        static requestPermission() { return new Promise((resolve) => { window.__permission.resolve = resolve; }); }
+        static requestPermission() { return new Promise((resolve) => { window.__permission.resolvers.push(resolve); }); }
       }
       window.__realNotification = app.localReminders.notification;
       app.localReminders.notification = FakeNotification;
     });
-    await page(async (id, title) => { await document.querySelector("kin-app").handleLocalReminder({ id: `routine:${id}`, title, at: Date.now() + 150 }); }, replacementId, routineTitle);
+    const remind = (id, title, inMs) => page(async (id, title, inMs) => {
+      const at = Date.now() + inMs;
+      await document.querySelector("kin-app").handleLocalReminder({ id, title, at });
+      return at;
+    }, id, title, inMs);
+    const reminders = (id, title) => page((id, title) => {
+      const app = document.querySelector("kin-app"), local = app.localReminders;
+      const suspended = [...(local.suspended?.values() ?? [])];
+      return {
+        fired: window.__notifications.length, live: local.entries.get(id)?.at ?? null,
+        listed: app.routines.reminderMap?.get(id)?.at ?? null, shown: app.routines.reminderControls?.get(id)?.current?.at ?? null,
+        rowText: app.routines.reminderControls?.get(id)?.textContent.includes("Reminds") ?? false, suspended,
+        titleHeld: JSON.stringify(suspended).includes(title) || suspended.some((entry) => Object.keys(entry).sort().join() !== "at,id,vaultId"),
+        vaultId: app.vault?.vaultId ?? null,
+      };
+    }, id, title);
+    const clockPast = (at) => until((at) => Date.now() > at, "clock past due time", at);
+    const routineReminder = `routine:${replacementId}`;
+
+    await remind(routineReminder, routineTitle, 150);
     await until(() => window.__notifications.length === 1, "unlocked routine reminder fires");
     check(true, "control: an unlocked routine reminder notifies once");
-    await page(async (id, title) => { await document.querySelector("kin-app").handleLocalReminder({ id: `routine:${id}`, title, at: Date.now() + 400 }); }, replacementId, routineTitle);
-    check(await page(() => document.querySelector("kin-app").localReminders.entries.size) === 1, "a second routine reminder is scheduled");
+
+    // A future reminder survives lock and unlock and fires at its time.
+    const vaultBefore = await page(() => document.querySelector("kin-app").vault.vaultId);
+    let due = await remind(routineReminder, routineTitle, 3000);
+    await visit("routines");
+    const beforeLock = await reminders(routineReminder, routineTitle);
+    check(beforeLock.shown === due && beforeLock.rowText, "before the lock, the routine's row shows its reminder", beforeLock);
     await lockAndSettle();
-    await pause(700);
-    const afterLockReminder = await page(() => ({ fired: window.__notifications.length, pending: document.querySelector("kin-app").localReminders.entries.size }));
-    check(afterLockReminder.fired === 1 && afterLockReminder.pending === 0,
-      "locking cancels every reminder timer, so no notification can show a decrypted routine title while locked", afterLockReminder);
+    let state = await reminders(routineReminder, routineTitle);
+    check(state.live === null && state.suspended.length === 1 && state.suspended[0].at === due && state.suspended[0].vaultId === vaultBefore && !state.titleHeld && state.fired === 1,
+      "a lock suspends the reminder as { id, at, vaultId } only: no timer, no title, no closure", state);
     await unlock();
+    await visit("routines");
+    state = await reminders(routineReminder, routineTitle);
+    check(state.live === due && state.listed === due && state.shown === beforeLock.shown && state.rowText && state.suspended.length === 0,
+      "unlocking the same vault re-arms the reminder and its Routines row shows it again at its original time", state);
+    await until(() => window.__notifications.length === 2, "resumed reminder fires");
+    const resumedFire = await page(() => window.__notifications.at(-1));
+    check(resumedFire.title === routineTitle && resumedFire.at >= due, "the resumed reminder fires at its time with the current title", { resumedFire, due });
+
+    // A reminder that comes due while locked stays silent, then fires once.
+    due = await remind(routineReminder, routineTitle, 300);
+    await lockAndSettle();
+    await clockPast(due + 200);
+    state = await reminders(routineReminder, routineTitle);
+    check(state.fired === 2 && state.suspended.length === 1 && !state.titleHeld, "no notification fires while locked, even after the reminder's time passes", state);
+    await unlock();
+    await until(() => window.__notifications.length === 3, "overdue reminder fires after unlock");
+    await settle();
+    state = await reminders(routineReminder, routineTitle);
+    check(state.fired === 3 && state.live === null && state.suspended.length === 0, "a reminder that came due while locked fires exactly once after unlock", state);
+
+    // The auto-lock path suspends in the same way.
+    due = await remind(routineReminder, routineTitle, 2500);
+    const autoLocked = await page(async () => {
+      const app = document.querySelector("kin-app"), minutes = app.autoLockMinutes;
+      app.autoLockMinutes = 5;
+      app.lastActivityAt = Date.now() - 5 * 60_000 - 1000;
+      await app.onTimeWake();
+      app.autoLockMinutes = minutes;
+      await app.lockBarrier;
+      return { locked: !app.vault, status: app.status.textContent };
+    });
+    state = await reminders(routineReminder, routineTitle);
+    check(autoLocked.locked && autoLocked.status.startsWith("Kin locked after inactivity") && state.suspended.length === 1 && state.live === null && !state.titleHeld,
+      "auto-lock after inactivity suspends reminders without keeping titles", { autoLocked, state });
+    await unlock();
+    await visit("routines");
+    state = await reminders(routineReminder, routineTitle);
+    check(state.live === due && state.listed === due && state.shown === due, "unlocking after auto-lock restores the reminder and its row shows it", state);
+    await until(() => window.__notifications.length === 4, "reminder fires after auto-lock and unlock");
+
+    // Archived from another tab while this one is locked: nothing fires.
+    const archivedTitle = `Remind then archive ${stamp}`;
+    const archivedId = await page(async (text) => {
+      const app = document.querySelector("kin-app"), id = crypto.randomUUID().replaceAll("-", "");
+      await app.appendCommand({ type: "add", id, text, classification: "need" });
+      await app.refreshFromEvents();
+      return id;
+    }, archivedTitle);
+    await idle();
+    due = await remind(`item:${archivedId}`, archivedTitle, 1500);
+    await lockAndSettle();
+    const other = await openTab();
+    const archivedStatus = await other.evaluate(`(async () => {
+      const app = document.querySelector("kin-app");
+      await app.handleItemAction("archive", ${JSON.stringify(archivedId)});
+      return app.state.items.find((item) => item.itemId === ${JSON.stringify(archivedId)})?.status;
+    })()`);
+    check(archivedStatus === "archived", "another tab archives the item while this tab is locked", archivedStatus);
+    await other.send("Page.close").catch(() => {});
+    other.close();
+    await unlock();
+    await clockPast(due + 200);
+    state = await reminders(`item:${archivedId}`, archivedTitle);
+    check(state.live === null && state.suspended.length === 0 && state.fired === 4,
+      "after unlock a reminder whose item was archived elsewhere is dropped and never notifies", state);
+
+    // A different vault: entries tagged for another vault are never restored.
+    // (One origin holds one vault, so a replaced vault is simulated by tagging.)
+    due = await remind(routineReminder, routineTitle, 1500);
+    await lockAndSettle();
+    await page(() => { for (const entry of document.querySelector("kin-app").localReminders.suspended?.values() ?? []) entry.vaultId = "replaced-vault"; });
+    await unlock();
+    await clockPast(due + 200);
+    state = await reminders(routineReminder, routineTitle);
+    check(state.live === null && state.listed === null && !state.shown && state.suspended.length === 0 && state.fired === 4 && state.vaultId !== "replaced-vault",
+      "reminders suspended for another vault are discarded on unlock: nothing is listed or fired", state);
+
+    // Logout ends reminders for good.
+    due = await remind(routineReminder, routineTitle, 1500);
+    await page(async () => {
+      const app = document.querySelector("kin-app");
+      app.household.dispatchEvent(new CustomEvent("kin:lock", { bubbles: true, composed: true, detail: { endSession: true } }));
+      await app.lockBarrier;
+    });
+    state = await reminders(routineReminder, routineTitle);
+    check(state.live === null && state.suspended.length === 0, "logout clears live and suspended reminders", state);
+    await unlock();
+    await clockPast(due + 200);
+    state = await reminders(routineReminder, routineTitle);
+    check(state.live === null && state.listed === null && !state.shown && state.suspended.length === 0 && state.fired === 4, "after logout and unlock nothing is restored or fired", state);
+
+    // A permission prompt answered after lock registers and announces nothing.
     await page(() => {
       const app = document.querySelector("kin-app");
       window.__permission.value = "default";
       const item = app.state.items.find((entry) => entry.status === "active");
       window.__late = app.handleLocalReminder({ id: `item:${item.itemId}`, title: item.text, at: Date.now() + 300 });
     });
-    await until(() => typeof window.__permission.resolve === "function", "permission prompt open");
+    await until(() => window.__permission.resolvers.length === 1, "permission prompt open");
     await lockAndSettle();
-    await page(async () => { window.__permission.value = "granted"; window.__permission.resolve("granted"); await window.__late; });
-    await pause(500);
+    await page(async () => { window.__permission.value = "granted"; window.__permission.resolvers.shift()("granted"); await window.__late; });
     const lateGrant = await page(() => {
       const app = document.querySelector("kin-app");
-      return { fired: window.__notifications.length, pending: app.localReminders.entries.size, status: app.status.textContent, alert: app.alert.textContent };
+      return { fired: window.__notifications.length, live: app.localReminders.entries.size, suspended: app.localReminders.suspended?.size ?? 0, status: app.status.textContent, alert: app.alert.textContent };
     });
-    check(lateGrant.fired === 1 && lateGrant.pending === 0 && lateGrant.status === "Household locked." && !lateGrant.alert,
+    check(lateGrant.fired === 4 && lateGrant.live === 0 && lateGrant.suspended === 0 && lateGrant.status === "Household locked." && !lateGrant.alert,
       "a permission prompt answered after lock registers no reminder and announces nothing into the locked view", lateGrant);
     await unlock();
+
+    // The stale attempt's cancel cannot remove a newer reminder for the same item.
+    const staleTarget = await page(() => {
+      const app = document.querySelector("kin-app");
+      window.__permission.value = "default";
+      const item = app.state.items.find((entry) => entry.status === "active");
+      window.__late = app.handleLocalReminder({ id: `item:${item.itemId}`, title: item.text, at: Date.now() + 60_000 });
+      return { id: `item:${item.itemId}`, title: item.text };
+    });
+    await until(() => window.__permission.resolvers.length === 1, "stale permission prompt open");
+    await lockAndSettle();
+    await unlock();
+    await page(() => { window.__permission.value = "granted"; });
+    due = await remind(staleTarget.id, staleTarget.title, 2000);
+    await page(async () => { window.__permission.resolvers.shift()("granted"); await window.__late; });
+    state = await reminders(staleTarget.id, staleTarget.title);
+    check(state.live === due, "a permission answer from an expired session leaves the new session's reminder for the same item intact", { state, due });
+    await until(() => window.__notifications.length === 5, "new session's reminder fires");
     await page(() => {
       const app = document.querySelector("kin-app");
       app.localReminders.notification = window.__realNotification;
@@ -436,6 +575,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready }) {
       app.pages.get("today").prepend(button);
       button.focus();
     });
+    await idle();
     await press(KEYS.k);
     await until(() => document.querySelector("kin-app").commandPalette.isOpen, "palette open");
     await page(() => document.getElementById("hardening-transient-opener").remove());
@@ -447,8 +587,16 @@ export async function dailyUxHardeningRegressions(client, { visit, ready }) {
     });
     check(restored.open === 0 && restored.connected && !restored.body && restored.visible && !restored.inert,
       "when the palette's opener is removed, Escape closes it and focus falls back to a connected, visible heading", restored);
-    await press(KEYS.n);
-    const afterPalette = await page(() => { const q = document.querySelector("kin-app").quickAdd; return { open: q.dialog.open, focus: document.activeElement === q.input }; });
+    // A focus/visibility wake refresh (for example after the second tab
+    // closed) briefly sets busy and swallows a shortcut; press only while
+    // idle, and again only if Quick add did not open.
+    let afterPalette;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await idle();
+      await press(KEYS.n);
+      afterPalette = await page(() => { const q = document.querySelector("kin-app").quickAdd; return { open: q.dialog.open, focus: document.activeElement === q.input }; });
+      if (afterPalette.open) break;
+    }
     check(afterPalette.open && afterPalette.focus, "keyboard commands keep working after the palette fallback", afterPalette);
     await press(KEYS.escape);
 
@@ -575,7 +723,10 @@ export async function dailyUxHardeningRegressions(client, { visit, ready }) {
           const app = document.querySelector("kin-app");
           const started = performance.now();
           app.needs.bulkAction("bulk-item-action", { action: "complete", itemIds: ids });
-          while (app.bulkRunning || app.busy) await new Promise((resolve) => setTimeout(resolve, 5));
+          for (const deadline = performance.now() + 30_000; app.bulkRunning || app.busy;) {
+            if (performance.now() > deadline) return -1;
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
           const done = ids.every((id) => app.state.items.find((item) => item.itemId === id)?.status === "completed");
           return done ? performance.now() - started : -1;
         }, ids);

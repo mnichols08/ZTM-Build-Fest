@@ -22,7 +22,10 @@ archives being lost makes encrypted history permanently unrecoverable.
 
 Implemented protection after verified migration: an unauthorized person with persisted browser site data but
 without an authorized Kin credential/recovery mechanism cannot trivially recover
-household plaintext while Kin is locked. v0.9.3 does not provide this protection:
+household plaintext while Kin is locked. While locked, the running tab holds
+no reminder titles. It keeps only suspended reminders' record ids, due times and
+local vault id, and it cannot show a notification ([PRIVACY](PRIVACY.md)).
+v0.9.3 does not provide this protection:
 its canonical events, draft text and usable sync CryptoKeys survive logout.
 The [v0.10 record](V0.10.0.md) gates this claim on complete migration, including
 outbox duplicates and legacy provisioning/decryption capabilities.

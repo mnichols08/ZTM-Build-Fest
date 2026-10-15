@@ -1314,13 +1314,14 @@ class KinHousehold extends HTMLElement {
       this.message("Confirm with your passkey to leave the household.");
       await this.authenticateRemoval(this.identity.memberId);
       this.identity = null;
-      this.dispatchEvent(new CustomEvent("kin:lock", { bubbles: true, composed: true }));
+      this.dispatchEvent(new CustomEvent("kin:lock", { bubbles: true, composed: true, detail: { endSession: true } }));
       location.href = "/";
     });
   }
   async logout() {
     // Local lock is immediate and independent of network availability.
-    this.dispatchEvent(new CustomEvent("kin:lock", { bubbles: true, composed: true }));
+    // Logging out ends the session: nothing (such as reminders) resumes.
+    this.dispatchEvent(new CustomEvent("kin:lock", { bubbles: true, composed: true, detail: { endSession: true } }));
     await fetch("/api/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
   }
   pollPairing() {

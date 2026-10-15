@@ -303,7 +303,9 @@ class KinApp extends HTMLElement {
       void this.checkHouseholdAuthorization();
     };
     this.onPeerMessage = (event) => this.handlePeerMessage(event);
-    this.onLockRequest = () => this.lockHousehold();
+    // Logout and leaving the household end the session for good; a plain
+    // lock request only suspends it.
+    this.onLockRequest = (event) => this.lockHousehold(true, { endSession: event?.detail?.endSession === true });
     this.onAppearancePreview = (event) => this.applyAppearance(event.detail.value);
     this.onSaveAppearance = (event) => this.handleSaveAppearance(event);
     this.onUseHouseholdAppearance = (event) => this.handleUseHouseholdAppearance(event);
@@ -1389,6 +1391,12 @@ class KinApp extends HTMLElement {
     for (const list of [this.today, this.needs, this.shopping, this.staples]) if (list) list.selected = selected;
   }
 
+  // Logout, leaving or deleting the household, and restore end reminders.
+  clearReminders() {
+    this.localReminders.clearAll();
+    this.renderReminders();
+  }
+
   renderReminders() {
     const reminders = new Map([...this.localReminders.entries].map(([id, entry]) => [id, { at: entry.at }]));
     if (this.routines) this.routines.reminders = reminders;
@@ -1456,7 +1464,7 @@ class KinApp extends HTMLElement {
   }
 
   disconnectedCallback() {
-    this.lockHousehold(false);
+    this.lockHousehold(false, { endSession: true });
     window.removeEventListener("beforeinstallprompt", this.onBeforeInstallPrompt);
     window.removeEventListener("appinstalled", this.onAppInstalled);
     navigator.serviceWorker?.removeEventListener("message", this.onServiceWorkerMessage);
@@ -1647,6 +1655,12 @@ class KinApp extends HTMLElement {
       this.privacyPage.append(this.security);
       this.showPageFromLocation();
       this.setStatus("Ready.");
+      // Reminders suspended by a lock of this same vault come back with
+      // titles from the fresh state; another vault's are discarded.
+      if (this.isCurrentSession(session)) {
+        this.localReminders.resumeAll(session.vault.vaultId ?? null, (id) => this.reminderTarget(id, session));
+        this.renderReminders();
+      }
       this.updateSyncChip();
       if (navigator.onLine === false) this.onOffline();
       this.retryButton.hidden = true;
@@ -1710,7 +1724,8 @@ class KinApp extends HTMLElement {
         status.identity
       )
         return;
-      this.lockHousehold();
+      // The device no longer belongs to a household (removed, left, deleted).
+      this.lockHousehold(true, { endSession: true });
     } catch {
       // Keep local household use available while the service is unreachable.
     } finally {
@@ -2305,24 +2320,37 @@ class KinApp extends HTMLElement {
     }
   }
 
-  async handleLocalReminder({ id, title, at }) {
+  // A reminder's live record in this session: its current title and a check
+  // that it may still notify. Null once the record is gone or no longer live.
+  reminderTarget(id, session) {
     const itemId = id.startsWith("item:") ? id.slice(5) : null;
     const routineId = id.startsWith("routine:") ? id.slice(8) : null;
+    const record = () => itemId
+      ? this.state?.items?.find((item) => item.itemId === itemId && item.status === "active")
+      : this.state?.routines?.find((routine) => routine.routineId === routineId && routine.status !== "archived");
+    const current = record();
+    if (!current || !this.isCurrentSession(session)) return null;
+    return { title: current.text, isCurrent: () => this.isCurrentSession(session) && Boolean(record()) };
+  }
+
+  async handleLocalReminder({ id, title, at }) {
+    const itemId = id.startsWith("item:") ? id.slice(5) : null;
     // A reminder carries its decrypted title, so it may only notify while its
-    // record is live in this unlocked session (lock also cancels every timer).
+    // record is live in this unlocked session (lock suspends every timer).
     const session = this.captureSession();
-    const currentItem = () => this.isCurrentSession(session) && (itemId
-      ? this.state?.items?.some((item) => item.itemId === itemId && item.status === "active")
-      : !routineId || this.state?.routines?.some((routine) => routine.routineId === routineId && routine.status !== "archived"));
+    const target = this.reminderTarget(id, session);
+    const token = Symbol(id);
     try {
-      const result = await this.localReminders.schedule({ id, title, at, isCurrent: currentItem });
-      // The permission prompt can outlast the session; never register a timer
-      // or report success into a locked or different household.
-      if (!this.isCurrentSession(session)) { this.localReminders.cancel(id); return; }
+      const result = await this.localReminders.schedule({ id, title, at, isCurrent: target?.isCurrent ?? (() => false), token });
+      // The permission prompt can outlast the session; never keep a timer or
+      // report success into a locked or different household. The token makes
+      // sure only this attempt's reminder is cancelled, never a newer one.
+      if (!this.isCurrentSession(session)) { this.localReminders.cancel(id, token); return; }
       this.renderReminders();
       for (const control of this.querySelectorAll("kin-reminder")) if (control.targetRecord?.id === id) control.saved(result === "granted" ? at : null);
       if (itemId) this.detail?.reminderDrafts?.delete(itemId);
-      this.setStatus(result === "granted" ? "Reminder set on this device while Kin is open." : result === "denied" ? "Notifications are blocked in browser settings. Kin still works normally." : "Reminders are unavailable in this browser. Kin still works normally.");
+      this.setStatus(result === "granted" ? "Reminder set on this device while Kin is open." : result === "denied" ? "Notifications are blocked in browser settings. Kin still works normally." :
+        result === "stale" ? "That task changed before the reminder was set. Nothing was scheduled." : "Reminders are unavailable in this browser. Kin still works normally.");
     } catch (error) {
       if (this.isCurrentSession(session)) this.showAlert(error.message ?? "Choose a future reminder time.");
     }
@@ -3404,6 +3432,9 @@ class KinApp extends HTMLElement {
   }
 
   async openUnlockedHousehold(vault) {
+    // Re-opening without a lock still ends the previous session's timers;
+    // initialize() resumes them only if this is the same vault.
+    this.localReminders.suspendAll(this.vault?.vaultId ?? null);
     this.clearAppliedAppearance();
     vault.assertUnlocked();
     this.vault = vault;
@@ -3597,7 +3628,7 @@ class KinApp extends HTMLElement {
     return opened.blob;
   }
 
-  lockHousehold(broadcast = true, { preserveSecurityOperation = false } = {}) {
+  lockHousehold(broadcast = true, { preserveSecurityOperation = false, endSession = false } = {}) {
     if (broadcast) {
       // A protected read holds a native transaction while crypto runs. Notify
       // peers before the epoch write queues behind that read, so they abort it
@@ -3623,6 +3654,10 @@ class KinApp extends HTMLElement {
     this.removeLockListener?.();
     this.removeLockListener = null;
     const vault = this.vault ?? getActiveVault();
+    // Reminder timers hold decrypted titles; none may fire once locked. A lock
+    // suspends them as { id, at, vaultId } only; ending the session clears them.
+    if (endSession) this.localReminders.clearAll();
+    else this.localReminders.suspendAll(vault?.vaultId ?? null);
     this.vault = null;
     vault?.lock();
     clearTimeout(this.autoLockTimer);
@@ -3633,8 +3668,6 @@ class KinApp extends HTMLElement {
     this.commandGeneration = null;
     this.clearBulkOutcome();
     this.pendingCapture = null;
-    // Reminder timers hold decrypted titles; none may fire once locked.
-    this.localReminders.cancelAll();
     // pendingScheduleChange holds only random ids and a cadence. It survives
     // a lock so that unlocking the same vault can finish a half-saved change
     // instead of starting a second replacement; other vaults never see it.
