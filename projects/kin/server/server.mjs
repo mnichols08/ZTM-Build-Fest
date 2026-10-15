@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { PairingError, PairingService, requireTrustAuthority } from "./pairing-service.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
+import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
 import {
   DurableConflictError,
   DurableStore,
@@ -749,14 +750,26 @@ async function api(request, response, url, context) {
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/sync/events") {
-    binary(
-      response,
-      encodeEventPage(syncService.pull(
+    const { household } = service.authorize(session);
+    let page;
+    try {
+      page = syncService.pull(
         session,
         url.searchParams.get("cursor") ?? "",
         url.searchParams.get("limit") ?? "20",
-      )),
-    );
+      );
+      binary(response, encodeEventPage(page));
+    } catch (error) {
+      if (!(error instanceof EnvelopeWireError) &&
+          !(error instanceof DurableStoreError && error.code === "sync_store_invalid")) throw error;
+      const eventId = error.eventId ?? page?.events.find((row) => !isEventEnvelopeValid(row.envelope))?.envelope.eventId;
+      console.error(JSON.stringify({
+        event: "sync_store_invalid",
+        householdId: household.id,
+        eventId: isSyncId(eventId) ? eventId : null,
+      }));
+      throw new PairingError("sync_store_invalid", "Kin's stored sync history is invalid. Repair the development store before retrying.", 500);
+    }
     return;
   }
   const attachmentRoute = url.pathname.match(/^\/api\/sync\/attachments(?:\/([a-f0-9]{32}))?$/);

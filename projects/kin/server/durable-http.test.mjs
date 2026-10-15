@@ -81,8 +81,8 @@ test("HTTP stale-writer conflict returns 409 and permits a fresh durable retry",
     const fatal = await fetch(`${origin}/api/sync/events`, {
       headers: { Cookie: `kin_session=${identity.sessionToken}` },
     });
-    assert.equal(fatal.status, 503);
-    assert.equal((await fatal.json()).error, "durable_store_unavailable");
+    assert.equal(fatal.status, 500);
+    assert.equal((await fatal.json()).error, "sync_store_invalid");
     assert.equal(store.failed, true);
     assert.equal((await fetch(`${origin}/readiness`)).status, 503);
   } finally {

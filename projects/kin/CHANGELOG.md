@@ -2,6 +2,10 @@
 
 ## Unreleased — refactor track
 
+Development durable stores that accepted older JSON sync pushes should be
+wiped or restored from a fresh export. Non-canonical envelope text is now
+rejected; no data migration or event-skipping recovery is provided.
+
 Performance and maintainability work on `kin-refactor-track`. These slices
 carry no version of their own and are folded into regular feature minors when
 merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](docs/audits/REFACTOR-BASELINE.md).

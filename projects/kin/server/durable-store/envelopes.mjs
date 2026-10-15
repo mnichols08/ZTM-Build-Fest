@@ -2,6 +2,7 @@
 // envelopes and attachment ciphertext.
 import {
   CANONICAL_ENVELOPE_FIELDS,
+  canonicalEventEnvelope,
   isDurableGrantValid,
   isDurableRotationValid,
   isEventEnvelopeValid,
@@ -258,8 +259,12 @@ export const envelopeMethods = {
       const insertBinding = this.db.prepare(
         "INSERT INTO sync_bindings(household_id, event_id, canonical_envelope) VALUES (?, ?, ?)",
       );
-      for (const [eventId, binding] of state.bindings)
+      for (const [eventId, binding] of state.bindings) {
+        const envelope = decodeCanonicalEnvelope(binding.canonical);
+        if (envelope.eventId !== eventId || envelope.householdId !== householdId)
+          throw new DurableStoreError("Kin identity-binding data is invalid.");
         insertBinding.run(householdId, eventId, binding.canonical);
+      }
 
       const updateDevice = this.db.prepare(
         "UPDATE devices SET device_json = ?, token_hash = ?, revoked_at = ? WHERE id = ?",
@@ -344,6 +349,10 @@ export const envelopeMethods = {
       );
       let sequence = expectedNextSequence;
       for (const entry of entries) {
+        if (!isEventEnvelopeValid(entry.envelope) ||
+            entry.envelope.householdId !== householdId || entry.envelope.deviceId !== deviceId ||
+            canonicalEventEnvelope(entry.envelope) !== entry.canonical)
+          throw new DurableStoreError("Kin encrypted relay data is invalid.");
         insert.run(
           householdId,
           sequence++,
@@ -381,9 +390,16 @@ export const envelopeMethods = {
         cursor,
         limit,
       );
-      const records = scanned.map((row) =>
-        validateEventRow(row, householdId),
-      );
+      const records = scanned.map((row) => {
+        try { return validateEventRow(row, householdId); }
+        catch (error) {
+          if (error instanceof DurableStoreError) {
+            error.code = "sync_store_invalid";
+            error.eventId = row.event_id;
+          }
+          throw error;
+        }
+      });
       const lastScanned = records.at(-1)?.sequence ?? cursor;
       return {
         events: records

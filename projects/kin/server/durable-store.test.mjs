@@ -13,6 +13,7 @@ import {
 import { canParticipate, PairingService } from "./pairing-service.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
 import { openTestDatabase, sqlitePragma } from "./sqlite-test-utils.mjs";
+import { canonicalEventEnvelope } from "./sync-contract.mjs";
 
 function temporaryDirectory() {
   return mkdtempSync(join(tmpdir(), "kin-durable-store-"));
@@ -44,6 +45,32 @@ function createAcceptedEvent(store, credentialId = "durable-adult") {
   };
   sync.push(identity.sessionToken, [envelope]);
   return { pairing, identity, sync, envelope };
+}
+
+for (const path of ["event commit", "binding save"]) {
+  test(`durable ${path} rejects non-canonical envelopes before writing`, () => {
+    const store = new DurableStore(":memory:");
+    try {
+      const { pairing, identity, sync, envelope } = createAcceptedEvent(store);
+      const invalid = {
+        ...envelope, eventId: "b".repeat(32), deviceSequence: 2, logicalTime: "2",
+        signature: `${envelope.signature.slice(0, -1)}B`,
+      };
+      const canonical = canonicalEventEnvelope(invalid);
+      if (path === "event commit") {
+        assert.throws(() => store.commitEvents(identity.householdId, 2, identity.deviceId, 1,
+          [{ envelope: invalid, canonical }]), DurableStoreError);
+      } else {
+        const state = sync.state(identity.householdId);
+        state.bindings.set(invalid.eventId, { envelope: invalid, canonical });
+        assert.throws(() => store.saveSyncState(identity.householdId, state, pairing), DurableStoreError);
+      }
+      assert.equal(store.db.prepare("SELECT COUNT(*) AS count FROM sync_events").get().count, 1);
+      assert.equal(store.db.prepare("SELECT COUNT(*) AS count FROM sync_bindings").get().count, 0);
+    } finally {
+      store.close();
+    }
+  });
 }
 
 test("failed v0-to-v1 migration rolls back and permits a clean retry", () => {

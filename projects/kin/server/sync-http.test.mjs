@@ -8,6 +8,7 @@ import { PairingService } from "./pairing-service.mjs";
 import { createKinServer } from "./server.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
 import { DurableStore } from "./durable-store.mjs";
+import { canonicalEventEnvelope } from "./sync-contract.mjs";
 import { requestBody, responseBody } from "./sync-wire-test-utils.mjs";
 
 globalThis.crypto ??= webcrypto;
@@ -61,6 +62,45 @@ function eventEnvelope(identity, overrides = {}) {
     signature: Buffer.alloc(64, 3).toString("base64url"),
     ...overrides,
   };
+}
+
+for (const failure of ["durable row", "page encoding"]) {
+  test(`pull reports invalid ${failure} with event metadata but no ciphertext`, async (t) => {
+    const service = new PairingService();
+    const adult = service.bootstrap({ credential: credential(`bad-${failure}`), deviceLabel: "A" });
+    const app = await start(service);
+    const logs = t.mock.method(console, "error", () => {});
+    const envelope = eventEnvelope(adult);
+    try {
+      app.syncService.push(adult.sessionToken, [envelope]);
+      const invalid = { ...envelope, signature: `${envelope.signature.slice(0, -1)}B` };
+      if (failure === "durable row") {
+        app.store.db.prepare("UPDATE sync_events SET canonical_envelope = ? WHERE household_id = ? AND event_id = ?")
+          .run(canonicalEventEnvelope(invalid), adult.householdId, envelope.eventId);
+      } else {
+        t.mock.method(app.store, "readEvents", () => ({
+          events: [{ cursor: "AAAAAAAAAAE", envelope: invalid }],
+          nextCursor: "AAAAAAAAAAE", hasMore: false,
+        }));
+      }
+      const response = await fetch(`${app.url}/api/sync/events?cursor=&limit=20`, {
+        headers: { Cookie: `kin_session=${adult.sessionToken}` },
+      });
+      assert.equal(response.status, 500);
+      const body = await response.json();
+      assert.equal(body.error, "sync_store_invalid");
+      assert.equal(Object.hasOwn(body, "nextCursor"), false);
+      const lines = logs.mock.calls.map((call) => call.arguments[0]);
+      const diagnostic = lines.map((line) => JSON.parse(line)).find((line) => line.event === "sync_store_invalid");
+      assert.deepEqual(diagnostic, {
+        event: "sync_store_invalid", householdId: adult.householdId, eventId: envelope.eventId,
+      });
+      assert.ok(lines.every((line) => !line.includes(envelope.ciphertext)));
+      assert.equal(app.store.db.prepare("SELECT COUNT(*) AS count FROM sync_events").get().count, 1);
+    } finally {
+      await app.close();
+    }
+  });
 }
 
 test("HTTP sync operations require an active session and revoked devices cannot use stale cursors", async () => {
