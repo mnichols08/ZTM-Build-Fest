@@ -4,14 +4,13 @@ use crate::codec::{encode_event, encode_metadata};
 use crate::core::{encode_projection, project};
 use crate::error::KinError;
 use crate::event::*;
-use crate::protocol::{
-    decode_event, decode_request_with_summary, DecodedRequest, MAX_EVENT_COUNT, MAX_PROTOCOL_BYTES,
-    PROTOCOL_VERSION,
-};
+use crate::event_decode::decode_event;
 use crate::recurrence::{Cadence, CivilDate};
+use crate::request::{decode_request, DecodedRequest};
 use crate::state::{
     normalize_area_name, normalize_step_text, HouseholdState, ItemStatus, MAX_STEPS_PER_ITEM,
 };
+use crate::wire::{MAX_EVENT_COUNT, MAX_PROTOCOL_BYTES};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HouseholdCommand {
@@ -369,7 +368,7 @@ pub fn create_event(
         kind,
         canonical_bytes: Vec::new(),
     };
-    decode_event(&encode_event(&event)?, PROTOCOL_VERSION)
+    decode_event(&encode_event(&event)?)
 }
 
 #[derive(Debug)]
@@ -381,64 +380,140 @@ pub struct CommandResult {
 
 /// Full validation happens before the adapter persists anything. Historical
 /// replay remains idempotent; a stale local Routine intent is rejected here.
+/// What a command needs from the history it extends.
+pub trait CommandHistory {
+    /// The replay context: as_of, civil date, cursor, target household.
+    fn context(&self) -> &DecodedRequest;
+    /// How many events the history holds.
+    fn event_count(&self) -> usize;
+    /// Whether some event rules out a new event with `context`: it belongs to
+    /// another household, is not earlier, or has the same event ID.
+    fn conflicts_with(&self, context: &CommandContext) -> bool;
+    /// The household as the history projects it.
+    fn current(&mut self) -> Result<HouseholdState, KinError>;
+    /// The household with `event` appended (it comes strictly later than
+    /// every event held), and its KINS projection bytes.
+    fn with_event(&mut self, event: &EventEnvelope) -> Result<(HouseholdState, Vec<u8>), KinError>;
+}
+
+/// A whole decoded request: both projections are full replays (tests).
+pub struct WholeRequest(pub DecodedRequest);
+
+impl CommandHistory for WholeRequest {
+    fn context(&self) -> &DecodedRequest {
+        &self.0
+    }
+    fn event_count(&self) -> usize {
+        self.0.events.len()
+    }
+    fn conflicts_with(&self, context: &CommandContext) -> bool {
+        self.0.events.iter().any(|event| {
+            event.household_id != context.household_id
+                || event.logical_time >= context.logical_time
+                || event.event_id == context.event_id
+        })
+    }
+    fn current(&mut self) -> Result<HouseholdState, KinError> {
+        project(&self.0)
+    }
+    fn with_event(&mut self, event: &EventEnvelope) -> Result<(HouseholdState, Vec<u8>), KinError> {
+        self.0.events.push(event.clone());
+        let projection = project(&self.0)?;
+        let encoded = encode_projection(&self.0, &projection)?;
+        Ok((projection, encoded))
+    }
+}
+
+/// The history an engine instance holds: the checkpoint gives the current
+/// state, the new event is applied to a copy of it, and the summary reads the
+/// records in place.
+pub struct HeldHistory<'h> {
+    history: &'h mut crate::history::History,
+    context: DecodedRequest,
+}
+
+impl<'h> HeldHistory<'h> {
+    /// Brings the history's replay up to date for `context`.
+    pub fn new(
+        history: &'h mut crate::history::History,
+        context: DecodedRequest,
+    ) -> Result<Self, KinError> {
+        history.replay(&context)?;
+        Ok(Self { history, context })
+    }
+
+    fn replay(&self) -> Result<&crate::replay::Replay, KinError> {
+        self.history.replayed().ok_or(KinError::Internal)
+    }
+}
+
+impl CommandHistory for HeldHistory<'_> {
+    fn context(&self) -> &DecodedRequest {
+        &self.context
+    }
+    fn event_count(&self) -> usize {
+        self.history.len()
+    }
+    // Every applied event shares the replay's household, its last logical
+    // time is the greatest, and it knows every applied event ID.
+    fn conflicts_with(&self, context: &CommandContext) -> bool {
+        let Ok(replay) = self.replay() else {
+            return true;
+        };
+        !self.history.is_empty()
+            && (replay.household_id() != Some(context.household_id)
+                || replay.last_logical_time() >= context.logical_time
+                || replay.contains_event(context.event_id))
+    }
+    fn current(&mut self) -> Result<HouseholdState, KinError> {
+        self.replay()?
+            .finalize(self.context.as_of, self.context.civil_date)
+    }
+    fn with_event(&mut self, event: &EventEnvelope) -> Result<(HouseholdState, Vec<u8>), KinError> {
+        let mut candidate = self.replay()?.clone();
+        candidate.note_archives(std::slice::from_ref(event));
+        candidate.apply(event)?;
+        let projection = candidate.finalize(self.context.as_of, self.context.civil_date)?;
+        let summary = self
+            .history
+            .summary(&self.context, &projection, Some(event))?;
+        let encoded = crate::state_encode::encode_state(&projection, &summary)?;
+        Ok((projection, encoded))
+    }
+}
+
+/// A command against a whole request: the projections before and after the
+/// new event are full replays.
 pub fn execute(
     command: &HouseholdCommand,
     context: CommandContext,
-    mut request: DecodedRequest,
+    request: DecodedRequest,
 ) -> Result<CommandResult, KinError> {
-    if request.events.len() >= MAX_EVENT_COUNT
+    execute_with(command, context, &mut WholeRequest(request))
+}
+
+/// Validates and builds a command's event against `history`.
+pub fn execute_with(
+    command: &HouseholdCommand,
+    context: CommandContext,
+    history: &mut dyn CommandHistory,
+) -> Result<CommandResult, KinError> {
+    if history.event_count() >= MAX_EVENT_COUNT
         || !valid_timestamp(context.timestamp)
         || context.logical_time == 0
         || context.logical_time > crate::state::MAX_LOGICAL_TIME
     {
         return Err(KinError::InvalidEvent);
     }
-    if request
+    if history
+        .context()
         .target_household_id
         .is_some_and(|household| household != context.household_id)
-        || request.events.iter().any(|event| {
-            event.household_id != context.household_id
-                || event.logical_time >= context.logical_time
-                || event.event_id == context.event_id
-        })
+        || history.conflicts_with(&context)
     {
         return Err(KinError::InvalidEvent);
     }
-    let current = project(&request)?;
-    if matches!(
-        command,
-        HouseholdCommand::SavePlaybook { .. } | HouseholdCommand::ArchivePlaybook(_)
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V19
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(
-        command,
-        HouseholdCommand::SaveReferenceRecord { .. } | HouseholdCommand::ArchiveReferenceRecord(_)
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V20
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(
-        command,
-        HouseholdCommand::SaveMaintenanceEvent { .. }
-            | HouseholdCommand::ArchiveMaintenanceEvent(_)
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V21
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(
-        command,
-        HouseholdCommand::BindAttachment { .. } | HouseholdCommand::RemoveAttachment(_)
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V22
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(command, HouseholdCommand::ChangeResponsibility { .. })
-        && request.protocol_version < crate::protocol::PROTOCOL_V23
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
+    let current = history.current()?;
     if let HouseholdCommand::ChangeResponsibility {
         target_kind,
         target_id,
@@ -467,61 +542,6 @@ pub fn execute(
         {
             return Err(KinError::InvalidEvent);
         }
-    }
-    if matches!(
-        command,
-        HouseholdCommand::AddItemStep { .. }
-            | HouseholdCommand::CompleteItemStep { .. }
-            | HouseholdCommand::ReopenItemStep { .. }
-            | HouseholdCommand::ArchiveItemStep { .. }
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V11
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(
-        command,
-        HouseholdCommand::CreateRoutine {
-            cadence: Cadence::Biweekly | Cadence::Monthly,
-            ..
-        }
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V12
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(
-        command,
-        HouseholdCommand::CreateRoutine {
-            cadence: Cadence::Weekdays,
-            ..
-        }
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V24
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(
-        command,
-        HouseholdCommand::AddItem {
-            classification: ItemClassification::Staple,
-            ..
-        }
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V14
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(
-        command,
-        HouseholdCommand::AddItem {
-            classification: ItemClassification::Shopping,
-            ..
-        }
-    ) && request.protocol_version < crate::protocol::PROTOCOL_V13
-    {
-        return Err(KinError::UnsupportedVersion);
-    }
-    if matches!(command, HouseholdCommand::SetHouseholdMode(_))
-        && request.protocol_version < crate::protocol::PROTOCOL_V15
-    {
-        return Err(KinError::UnsupportedVersion);
     }
     if let HouseholdCommand::SetHouseholdMode(mode) = command {
         if current.mode == *mode {
@@ -559,9 +579,6 @@ pub fn execute(
             .ok_or(KinError::InvalidEvent)?;
         if item.status == ItemStatus::Archived || item.planning_date == *planning_date {
             return Err(KinError::InvalidEvent);
-        }
-        if request.protocol_version < crate::protocol::PROTOCOL_V16 {
-            return Err(KinError::UnsupportedVersion);
         }
     }
     let routine_intent = match command {
@@ -782,14 +799,12 @@ pub fn execute(
         _ => {}
     }
     if let HouseholdCommand::CreateRoutine { created_on, .. } = command {
-        if request.civil_date != Some(*created_on) {
+        if history.context().civil_date != *created_on {
             return Err(KinError::InvalidEvent);
         }
     }
     let event = create_event(command, context)?;
-    request.events.push(event.clone());
-    let projection = project(&request)?;
-    let encoded_projection = encode_projection(&request, &projection)?;
+    let (projection, encoded_projection) = history.with_event(&event)?;
     Ok(CommandResult {
         event,
         projection,
@@ -1214,6 +1229,29 @@ pub fn encode_command(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
     Ok(create_event(&command, context)?.canonical_bytes)
 }
 
+/// A command against the history an engine instance holds (`kin_execute`):
+/// u32 intent length, the KCMD intent, then a record-less KINE request giving
+/// the replay context. The history itself is not changed; the host appends
+/// the new event once it is stored.
+pub fn execute_history(
+    bytes: &[u8],
+    history: &mut crate::history::History,
+) -> Result<Vec<u8>, KinError> {
+    if bytes.len() > MAX_PROTOCOL_BYTES {
+        return Err(KinError::SizeLimit);
+    }
+    let command_length = u32::from_le_bytes(field(bytes, 0)?) as usize;
+    let end = 4usize
+        .checked_add(command_length)
+        .ok_or(KinError::MalformedProtocol)?;
+    let (command, context) = decode_command(bytes.get(4..end).ok_or(KinError::MalformedProtocol)?)?;
+    let replay_context =
+        crate::request::decode_context(bytes.get(end..).ok_or(KinError::MalformedProtocol)?)?;
+    let mut held = HeldHistory::new(history, replay_context)?;
+    command_result(execute_with(&command, context, &mut held)?)
+}
+
+/// The same command against a whole KINE request (tests).
 pub fn execute_request(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
     if bytes.len() > MAX_PROTOCOL_BYTES {
         return Err(KinError::SizeLimit);
@@ -1223,9 +1261,12 @@ pub fn execute_request(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
         .checked_add(command_length)
         .ok_or(KinError::MalformedProtocol)?;
     let (command, context) = decode_command(bytes.get(4..end).ok_or(KinError::MalformedProtocol)?)?;
-    let request =
-        decode_request_with_summary(bytes.get(end..).ok_or(KinError::MalformedProtocol)?)?;
-    let result = execute(&command, context, request)?;
+    let request = decode_request(bytes.get(end..).ok_or(KinError::MalformedProtocol)?)?;
+    command_result(execute(&command, context, request)?)
+}
+
+/// KCMT: the new event, its metadata and the candidate projection.
+fn command_result(result: CommandResult) -> Result<Vec<u8>, KinError> {
     let metadata = encode_metadata(&result.event.canonical_bytes)?;
     let length =
         20 + result.event.canonical_bytes.len() + metadata.len() + result.encoded_projection.len();

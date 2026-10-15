@@ -24,7 +24,7 @@ export const MAX_LOGICAL_TIME = 9_007_199_254_740_991n;
 export const MAX_LOGICAL_TIME_ADVANCE = 1_000_000n;
 
 export function isEventEnvelopeValid(envelope) {
-  return Boolean(
+  if (!(
     envelope &&
       typeof envelope === "object" &&
       Object.keys(envelope).length === CANONICAL_ENVELOPE_FIELDS.length &&
@@ -48,11 +48,14 @@ export function isEventEnvelopeValid(envelope) {
       typeof envelope.ciphertext === "string" &&
       /^[A-Za-z0-9_-]+$/.test(envelope.ciphertext) &&
       Buffer.byteLength(envelope.ciphertext) <= MAX_ENVELOPE_BYTES &&
-      /^[A-Za-z0-9_-]{86}$/.test(envelope.signature) &&
-      Buffer.from(envelope.nonce, "base64url").length === 12 &&
-      Buffer.from(envelope.signature, "base64url").length === 64 &&
-      Buffer.from(envelope.ciphertext, "base64url").length >= 16,
-  );
+      /^[A-Za-z0-9_-]{86}$/.test(envelope.signature)
+  )) return false;
+  const nonce = Buffer.from(envelope.nonce, "base64url");
+  const signature = Buffer.from(envelope.signature, "base64url");
+  const ciphertext = Buffer.from(envelope.ciphertext, "base64url");
+  return nonce.length === 12 && nonce.toString("base64url") === envelope.nonce &&
+    signature.length === 64 && signature.toString("base64url") === envelope.signature &&
+    ciphertext.length >= 16 && ciphertext.toString("base64url") === envelope.ciphertext;
 }
 
 export function isProvisioningPackageValid(value, expected) {

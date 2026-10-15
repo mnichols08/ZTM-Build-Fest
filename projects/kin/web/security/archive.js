@@ -1,18 +1,36 @@
-import { LocalVault, serializeProtectedValue, deserializeProtectedValue, VaultError } from "./local-vault.js";
+// Encrypted household archives (.kin): export, then validate and restore.
+//
+// Kin writes package format 3 (security/archive-stream.js): the household
+// sealed as a stream of segments, 256 events per segment, inside the KARC v1
+// container. It still reads package format 2 (one sealed value holding the
+// whole snapshot), which v0.47 and earlier wrote.
+//
+// Both formats decode to the same "archive parts" (event-store.js): the
+// local context row, the attachment records and the history as a view of an
+// event arena. Validation, staging and restore work on parts, so the
+// history is held once, as canonical bytes in one arena.
+import { LocalVault, serializeProtectedValue, deserializeProtectedValue, VaultError, fromBase64Url, toBase64Url } from "./local-vault.js";
 import { EventStore } from "../storage/event-store.js";
+import { readArchive, writeArchive } from "./archive-stream.js";
 
 const KIN_VERSION = "0.47.0";
+const PACKAGE_FORMAT = 3;
 const MAX_ARCHIVE_BYTES = 160 * 1024 * 1024;
 const MAX_EVENT_COUNT = 10_000;
 const MAX_ATTACHMENT_COUNT = 64;
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 const stagedArchives = new WeakMap();
 
-export async function exportHouseholdArchive({ store, engine, vault, portableMembership }) {
+/**
+ * The household as a package-format-3 archive. `onProgress({ done, total })`
+ * reports events sealed. The history is read from the store's session arena
+ * and sealed a chunk at a time into an output allocated once.
+ */
+export async function exportHouseholdArchive({ store, engine, vault, portableMembership, onProgress }) {
   await assertCurrentProtection(vault);
-  const snapshot = await store.snapshotForArchive({ portableMembership });
-  if (snapshot.local_context[0]?.sync_household_id &&
-      !Array.isArray(snapshot.local_context[0]?.portable_membership))
+  const parts = await store.archiveParts({ portableMembership });
+  const context = parts.local_context[0];
+  if (context?.sync_household_id && !Array.isArray(context?.portable_membership))
     throw new VaultError("Connect to your household before exporting so its membership history can be included.");
   const source = await EventStore.securityStatus();
   await assertCurrentProtection(vault);
@@ -21,9 +39,9 @@ export async function exportHouseholdArchive({ store, engine, vault, portableMem
     wrappers: source.wrappers.filter((wrapper) => wrapper.type === "recovery"), verifier: source.verifier,
   };
   if (!manifest.wrappers.length) throw new VaultError("Create a verified recovery path before exporting.");
-  const household = await EventStore.validateArchiveSnapshot({ snapshot, engine, vault });
+  const household = await EventStore.validateArchiveParts({ parts, engine, vault });
   const packageManifest = {
-    packageFormatVersion: 2,
+    packageFormatVersion: PACKAGE_FORMAT,
     kinVersion: KIN_VERSION,
     exportedAt: new Date().toISOString(),
     eventCount: household.eventCount,
@@ -31,79 +49,76 @@ export async function exportHouseholdArchive({ store, engine, vault, portableMem
     attachmentBytes: household.attachmentBytes,
     integrityVersion: 1,
   };
-  const payload = { packageFormatVersion: 2, snapshot };
-  const authenticatedMetadata = serializeProtectedValue({ archiveVersion: 2, manifest, packageManifest });
-  const envelope = await vault.sealArchive(payload, authenticatedMetadata, { rawCiphertext: true });
+  // The key is bound to this metadata; the framed metadata adds how to
+  // derive it again (salt) and the segments' nonce prefix.
+  const authenticatedMetadata = serializeProtectedValue({ archiveVersion: PACKAGE_FORMAT, manifest, packageManifest });
+  const salt = crypto.getRandomValues(new Uint8Array(32));
+  const noncePrefix = crypto.getRandomValues(new Uint8Array(8));
+  const key = await vault.archiveStreamKey(salt, authenticatedMetadata);
   await assertCurrentProtection(vault);
-  const { ciphertext, ...protection } = envelope;
-  const framedMetadata = serializeProtectedValue({
-    archiveVersion: 2, manifest, packageManifest, protection,
+  // The key derivation and the segments name the unlocked vault's ID, which
+  // is the manifest's; restore checks they agree.
+  const protection = { version: 1, vaultId: vault.vaultId, salt: toBase64Url(salt), noncePrefix: toBase64Url(noncePrefix) };
+  const metadata = serializeProtectedValue({ archiveVersion: PACKAGE_FORMAT, manifest, packageManifest, protection });
+  return writeArchive({
+    engine, metadata, key, noncePrefix, vaultId: vault.vaultId,
+    context, attachments: parts.attachments, view: parts.history,
+    check: () => assertCurrentProtection(vault), onProgress,
   });
-  return engine.encodeArchive(framedMetadata, ciphertext);
 }
 
-export async function validateHouseholdArchive({ bytes, recoverySecret, engine, vault }) {
+/**
+ * Opens an archive with its recovery key, validates it and stages it for
+ * restoreValidatedHouseholdArchive. Nothing is written. Local attachment
+ * data is re-sealed for `vault`. `onProgress({ done, total })` reports
+ * events read (package format 3).
+ */
+export async function validateHouseholdArchive({ bytes, recoverySecret, engine, vault, onProgress }) {
   await assertCurrentProtection(vault);
   if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_ARCHIVE_BYTES)
     throw new VaultError("Choose a Kin export no larger than 160 MiB.");
-  const { metadata, ciphertext } = engine.decodeArchive(bytes);
-  const header = deserializeProtectedValue(metadata);
+  const { metadataLength, ciphertextLength } = engine.archiveLayout(bytes);
+  const header = deserializeProtectedValue(bytes.slice(16, 16 + metadataLength));
   if (!header || typeof header !== "object" || Array.isArray(header))
     throw new VaultError("This file is damaged or incomplete.");
+  // Package formats 2 and 3 are read; development-era format 1 is refused.
   const archiveVersion = header.archiveVersion;
-  if (archiveVersion !== 1 && archiveVersion !== 2)
+  if (archiveVersion !== 2 && archiveVersion !== 3)
     throw new VaultError("This Kin export version is not supported.");
-  const expectedHeaderFields = archiveVersion === 1
-    ? ["archiveVersion", "manifest", "protection"]
-    : ["archiveVersion", "manifest", "packageManifest", "protection"];
-  if (!hasExactKeys(header, expectedHeaderFields) ||
-      !hasExactKeys(header.protection, ["nonce", "salt", "vaultId", "version"]))
+  if (!hasExactKeys(header, ["archiveVersion", "manifest", "packageManifest", "protection"]) ||
+      !hasExactKeys(header.protection, ["salt", "vaultId", "version", archiveVersion === 3 ? "noncePrefix" : "nonce"]))
     throw new VaultError("This file is damaged or incomplete.");
-  const packageManifest = archiveVersion === 2
-    ? validatePackageManifest(header.packageManifest)
-    : null;
+  const packageManifest = validatePackageManifest(header.packageManifest, archiveVersion);
   let sourceVault;
+  let parts;
   const unsubscribe = vault.onLock(() => sourceVault?.lock());
   try {
     sourceVault = await LocalVault.unlock(header.manifest, recoverySecret);
     await assertCurrentProtection(vault);
-    const authenticatedMetadata = archiveVersion === 1
-      ? serializeProtectedValue({ archiveVersion: 1, manifest: header.manifest })
-      : serializeProtectedValue({ archiveVersion: 2, manifest: header.manifest, packageManifest });
-    const decoded = await sourceVault.openArchive(
-      { ...header.protection, ciphertext },
-      authenticatedMetadata,
-      { ownedCiphertext: true },
-    );
-    await assertCurrentProtection(vault);
-    let snapshot;
-    if (archiveVersion === 1) {
-      snapshot = decoded;
-    } else {
-      if (!hasExactKeys(decoded, ["packageFormatVersion", "snapshot"]) ||
-          decoded.packageFormatVersion !== 2)
-        throw new VaultError("This Kin export version is not supported.");
-      snapshot = decoded.snapshot;
-    }
+    const authenticatedMetadata = serializeProtectedValue({ archiveVersion, manifest: header.manifest, packageManifest });
+    const source = { header, authenticatedMetadata, packageManifest, sourceVault, engine, vault };
+    const offset = 16 + metadataLength;
+    parts = archiveVersion === 3
+      ? await openStreamPackage({ ...source, bytes, offset, length: ciphertextLength, onProgress })
+      : await openWholePackage({ ...source, ciphertext: bytes.slice(offset) });
 
-    const sourceSummary = await EventStore.validateArchiveSnapshot({
-      snapshot, engine, vault: sourceVault,
+    const sourceSummary = await EventStore.validateArchiveParts({
+      parts, engine, vault: sourceVault,
     });
-    if (packageManifest && (
+    if ((
       packageManifest.eventCount !== sourceSummary.eventCount ||
       packageManifest.attachmentCount !== sourceSummary.attachmentCount ||
       packageManifest.attachmentBytes !== sourceSummary.attachmentBytes
     ))
       throw new VaultError("This file is damaged or incomplete.");
 
-    const stagedSnapshot = await rewrapLocalAttachments(snapshot, sourceVault, vault);
-    const summary = await EventStore.validateArchiveSnapshot({
-      snapshot: stagedSnapshot, engine, vault,
-    });
+    parts.attachments = await rewrapLocalAttachments(parts.attachments, sourceVault, vault);
+    // Same history and context: the bindings found above save a replay.
+    const summary = await EventStore.validateArchiveParts({ parts, engine, vault, bindings: sourceSummary.bindings });
     await assertCurrentProtection(vault);
     const stage = Object.freeze({});
     stagedArchives.set(stage, {
-      snapshot: stagedSnapshot,
+      parts,
       engine,
       vault,
       vaultId: vault.vaultId,
@@ -118,26 +133,91 @@ export async function validateHouseholdArchive({ bytes, recoverySecret, engine, 
       attachmentBytes: summary.attachmentBytes,
       packageFormatVersion: archiveVersion,
     });
+  } catch (error) {
+    if (parts) discardParts(parts);
+    throw error;
   } finally {
     unsubscribe();
     sourceVault?.lock();
   }
 }
 
-export async function restoreValidatedHouseholdArchive({ stage, engine, vault, store }) {
+// Package format 3: segments opened in order into the archive's own arena.
+async function openStreamPackage({ header, authenticatedMetadata, packageManifest, sourceVault, engine, vault, bytes, offset, length, onProgress }) {
+  const { protection } = header;
+  let salt, noncePrefix;
+  try {
+    salt = fromBase64Url(protection.salt);
+    noncePrefix = fromBase64Url(protection.noncePrefix);
+  } catch { throw new VaultError("This file is damaged or incomplete."); }
+  if (protection.version !== 1 || protection.vaultId !== header.manifest.vaultId ||
+      salt.length !== 32 || noncePrefix.length !== 8)
+    throw new VaultError("This file is damaged or incomplete.");
+  const key = await sourceVault.archiveStreamKey(salt, authenticatedMetadata);
+  await assertCurrentProtection(vault);
+  const history = EventStore.archiveHistory(engine);
+  const parts = { formatVersion: 2, history: null, local_context: [], attachments: [], arena: history.arena };
+  try {
+    await readArchive({
+      bytes, offset, length, key, noncePrefix, vaultId: protection.vaultId,
+      attachmentCount: packageManifest.attachmentCount, eventCount: packageManifest.eventCount,
+      onContext: (row) => parts.local_context.push(row),
+      onAttachment: (row) => parts.attachments.push(row),
+      onEvents: (sequences, records, remaining) => {
+        // The rest of the stream bounds the history's bytes: reserve them
+        // once, at the first chunk.
+        if (!history.arena.length) history.reserve(packageManifest.eventCount, remaining);
+        history.append(sequences, records);
+      },
+      check: async () => { sourceVault.assertUnlocked(); await assertCurrentProtection(vault); },
+      onProgress,
+    });
+  } catch (error) {
+    discardParts(parts);
+    throw error;
+  }
+  parts.history = history.arena.view();
+  return parts;
+}
+
+// Package format 2: one sealed value holding the whole snapshot.
+async function openWholePackage({ header, authenticatedMetadata, sourceVault, engine, vault, ciphertext }) {
+  const decoded = await sourceVault.openArchive(
+    { ...header.protection, ciphertext },
+    authenticatedMetadata,
+    { ownedCiphertext: true },
+  );
+  await assertCurrentProtection(vault);
+  if (!hasExactKeys(decoded, ["packageFormatVersion", "snapshot"]) ||
+      decoded.packageFormatVersion !== 2)
+    throw new VaultError("This Kin export version is not supported.");
+  try {
+    return EventStore.archivePartsFromSnapshot(decoded.snapshot, engine);
+  } finally {
+    // The arena holds the history now; these decoded rows go either way.
+    for (const row of Array.isArray(decoded.snapshot?.events) ? decoded.snapshot.events : [])
+      if (row?.encoded_event instanceof Uint8Array) row.encoded_event.fill(0);
+  }
+}
+
+/**
+ * Restores a staged archive into an empty household, or reports that this
+ * household already holds it. `onProgress({ done, total })` reports events
+ * protected for storage.
+ */
+export async function restoreValidatedHouseholdArchive({ stage, engine, vault, store, onProgress }) {
   await assertCurrentProtection(vault);
   const staged = stagedArchives.get(stage);
   if (!staged || staged.engine !== engine || staged.vault !== vault ||
       staged.vaultId !== vault.vaultId || staged.generation !== vault.generation)
     throw new VaultError("Check this Kin export again before restoring it.");
   try {
-    if (store && await store.containsSameHouseholdArchive(staged.snapshot, { engine, vault })) {
+    if (store && await store.containsSameHouseholdArchive(staged.parts, { engine, vault })) {
+      const eventCount = staged.parts.history.length;
       discardValidatedHouseholdArchive(stage);
-      return { eventCount: staged.snapshot.events.length, alreadyPresent: true };
+      return { eventCount, alreadyPresent: true };
     }
-    const result = await EventStore.restoreEmpty({
-      vault, engine, snapshot: staged.snapshot, ownedSnapshot: true,
-    });
+    const result = await EventStore.restoreArchive({ vault, engine, parts: staged.parts, bindings: staged.summary.bindings, onProgress });
     discardValidatedHouseholdArchive(stage);
     return result;
   } catch (error) {
@@ -150,7 +230,12 @@ export function discardValidatedHouseholdArchive(stage) {
   const staged = stagedArchives.get(stage);
   if (!staged) return;
   stagedArchives.delete(stage);
-  zeroByteValues(staged.snapshot, new Set());
+  discardParts(staged.parts);
+}
+
+function discardParts(parts) {
+  parts.arena?.wipe();
+  zeroByteValues({ context: parts.local_context, attachments: parts.attachments }, new Set());
 }
 
 export async function importHouseholdArchive({ bytes, recoverySecret, engine, vault, store }) {
@@ -158,7 +243,7 @@ export async function importHouseholdArchive({ bytes, recoverySecret, engine, va
   return restoreValidatedHouseholdArchive({ stage: staged.stage, engine, vault, store });
 }
 
-function validatePackageManifest(value) {
+function validatePackageManifest(value, packageFormatVersion) {
   const exportedAtIsCanonical = typeof value?.exportedAt === "string" &&
     value.exportedAt.length <= 32 &&
     Number.isFinite(Date.parse(value.exportedAt)) &&
@@ -166,7 +251,7 @@ function validatePackageManifest(value) {
   if (!hasExactKeys(value, [
     "packageFormatVersion", "kinVersion", "exportedAt", "eventCount",
     "attachmentCount", "attachmentBytes", "integrityVersion",
-  ]) || value.packageFormatVersion !== 2 || value.integrityVersion !== 1 ||
+  ]) || value.packageFormatVersion !== packageFormatVersion || value.integrityVersion !== 1 ||
       typeof value.kinVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(value.kinVersion) ||
       !exportedAtIsCanonical ||
       !Number.isSafeInteger(value.eventCount) || value.eventCount < 0 ||
@@ -184,9 +269,9 @@ function hasExactKeys(value, keys) {
     Object.keys(value).sort().join(",") === [...keys].sort().join(",");
 }
 
-async function rewrapLocalAttachments(snapshot, sourceVault, targetVault) {
-  const staged = structuredClone(snapshot);
-  for (const attachment of staged.attachments ?? []) {
+async function rewrapLocalAttachments(attachments, sourceVault, targetVault) {
+  const staged = structuredClone(attachments);
+  for (const attachment of staged) {
     if (attachment.ciphertext) continue;
     const saved = await sourceVault.open(attachment.localSealed, {
       store: "attachment-file", id: attachment.attachment_id,

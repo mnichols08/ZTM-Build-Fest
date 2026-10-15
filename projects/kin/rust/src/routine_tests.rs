@@ -1,10 +1,8 @@
 use crate::error::KinError;
-use crate::protocol::{
-    decode_request_with_summary, encode_state, encode_state_v11, encode_state_v12, encode_state_v6,
-    encode_state_v7, PROTOCOL_V11,
-};
 use crate::recurrence::CivilDate;
-use crate::state::{rebuild_at, rebuild_on, summarize_validated, HouseholdState};
+use crate::request::decode_request;
+use crate::state::{rebuild, summarize_validated, HouseholdState};
+use crate::test_support::{kine, BODY};
 
 // Independent wire fixtures; do not construct expected bytes with production writers.
 fn record(sequence: u32, kind: u16, cadence: u8, day: u32, text: &[u8]) -> Vec<u8> {
@@ -35,39 +33,12 @@ fn record(sequence: u32, kind: u16, cadence: u8, day: u32, text: &[u8]) -> Vec<u
 }
 
 fn request(records: &[Vec<u8>], day: u32) -> Vec<u8> {
-    let mut bytes = vec![0; 44];
-    bytes[..4].copy_from_slice(b"KINE");
-    bytes[4] = 7;
-    bytes[8..12].copy_from_slice(&(records.len() as u32).to_le_bytes());
-    bytes[12..20].copy_from_slice(&1234i64.to_le_bytes());
-    bytes[40..44].copy_from_slice(&day.to_le_bytes());
-    for record in records {
-        bytes.extend_from_slice(record);
-    }
-    bytes
+    kine(records, 1234, day, None)
 }
 
 fn project(records: &[Vec<u8>], day: u32) -> Result<HouseholdState, KinError> {
-    let req = decode_request_with_summary(&request(records, day))?;
-    rebuild_on(&req.events, req.as_of.unwrap(), req.civil_date.unwrap())
-}
-
-fn request_v12(records: &[Vec<u8>], day: u32) -> Vec<u8> {
-    let mut bytes = vec![0; 64];
-    bytes[..4].copy_from_slice(b"KINE");
-    bytes[4..6].copy_from_slice(&12u16.to_le_bytes());
-    bytes[8..12].copy_from_slice(&(records.len() as u32).to_le_bytes());
-    bytes[12..20].copy_from_slice(&1234i64.to_le_bytes());
-    bytes[40..44].copy_from_slice(&day.to_le_bytes());
-    for record in records {
-        bytes.extend_from_slice(record);
-    }
-    bytes
-}
-
-fn project_v12(records: &[Vec<u8>], day: u32) -> Result<HouseholdState, KinError> {
-    let req = decode_request_with_summary(&request_v12(records, day))?;
-    rebuild_on(&req.events, req.as_of.unwrap(), req.civil_date.unwrap())
+    let req = decode_request(&request(records, day))?;
+    rebuild(&req.events, req.as_of, req.civil_date)
 }
 
 #[test]
@@ -190,11 +161,14 @@ fn duplicate_conflicting_ids_order_and_household_are_preserved() {
         project(&[created.clone(), complete.clone(), conflict], 20261002),
         Err(KinError::InvalidEvent)
     );
-    let mut wrong_order = complete.clone();
-    wrong_order[76] = 1;
-    assert_eq!(
-        project(&[created.clone(), wrong_order], 20261002),
-        Err(KinError::InvalidEvent)
+    // Equal logical times are valid; replay orders them by device, then event ID.
+    let mut equal_time = complete.clone();
+    equal_time[76] = 1;
+    assert!(
+        project(&[created.clone(), equal_time], 20261002)
+            .unwrap()
+            .routines[0]
+            .completed
     );
     let mut wrong_household = complete;
     wrong_household[20] ^= 1;
@@ -221,51 +195,40 @@ fn future_recorded_period_and_clock_rollback_do_not_invalidate_history() {
 }
 
 #[test]
-fn v7_exact_empty_and_routine_result_layout_with_summary() {
+fn exact_empty_and_routine_result_layout_with_summary() {
     let rows = [record(1, 14, 0, 20261002, b"x")];
-    let decoded = decode_request_with_summary(&request(&rows, 20261002)).unwrap();
+    let decoded = decode_request(&request(&rows, 20261002)).unwrap();
     let state = project(&rows, 20261002).unwrap();
     let summary = summarize_validated(&decoded.events, None, &state).unwrap();
-    let result = encode_state_v7(&state, &summary).unwrap();
-    let mut expected = vec![0; 56];
+    let result = crate::state_encode::encode_state(&state, &summary).unwrap();
+    let mut expected = vec![0; BODY];
     expected[..4].copy_from_slice(b"KINS");
-    expected[4] = 7;
-    expected[24] = 1;
-    expected[28] = 1;
-    expected[32] = 1;
-    expected[36] = 1;
-    expected[52] = 1;
+    expected[4] = 24;
+    expected[24] = 1; // summary entries
+    expected[28] = 1; // summary total
+    expected[32] = 1; // through present
+    expected[36] = 1; // through event ID (sequence 1)
+    expected[52] = 1; // routines
+    expected[96 + 4 * 8 + 4] = 61; // Routines section: record and next occurrence
+    expected[96 + 13 * 8 + 4] = 25; // Summary section
     expected.extend_from_slice(&[0x11; 16]);
     expected.extend_from_slice(&[0xbb; 16]);
     expected.extend_from_slice(&1234i64.to_le_bytes());
     expected.extend_from_slice(&20261002u32.to_le_bytes());
     expected.extend_from_slice(&20261002u32.to_le_bytes());
     expected.extend_from_slice(&[0, 0, 1, 0, 1, 0, 0, 0, b'x']);
+    expected.extend_from_slice(&20261003u32.to_le_bytes()); // next occurrence
     expected.extend_from_slice(&[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     expected.extend_from_slice(&[12, 4, 255, 0, 1, 0, 0, 0, b'x']);
     assert_eq!(result, expected);
     let empty = project(&[], 20261002).unwrap();
     let empty_summary = summarize_validated(&[], None, &empty).unwrap();
-    let mut expected_empty = vec![0; 56];
+    let mut expected_empty = vec![0; BODY];
     expected_empty[..4].copy_from_slice(b"KINS");
-    expected_empty[4] = 7;
+    expected_empty[4] = 24;
     assert_eq!(
-        encode_state_v7(&empty, &empty_summary).unwrap(),
+        crate::state_encode::encode_state(&empty, &empty_summary).unwrap(),
         expected_empty
-    );
-    for version in 1..=5 {
-        assert_eq!(
-            encode_state(&state, version),
-            Err(KinError::UnsupportedVersion)
-        );
-    }
-    assert_eq!(
-        encode_state_v6(&state, &summary),
-        Err(KinError::UnsupportedVersion)
-    );
-    assert_eq!(
-        rebuild_at(&decoded.events, 1234),
-        Err(KinError::UnsupportedVersion)
     );
 }
 
@@ -276,7 +239,7 @@ fn routine_summary_counts_human_actions_not_period_transitions() {
         rows.push(record(seq, 15, 0, 20261002, b""));
     }
     rows.push(rows[1].clone());
-    let decoded = decode_request_with_summary(&request(&rows, 20261002)).unwrap();
+    let decoded = decode_request(&request(&rows, 20261002)).unwrap();
     let mut summaries = Vec::new();
     for date in [20261002, 20261003, 20270101] {
         let state = project(&rows, date).unwrap();
@@ -290,83 +253,36 @@ fn routine_summary_counts_human_actions_not_period_transitions() {
 }
 
 #[test]
-fn all_routine_kinds_fail_closed_in_earlier_protocols() {
-    for version in 1u16..=6 {
-        for kind in 14..=17 {
-            let row = record(1, kind, 0, 20261002, b"x");
-            let header = if version == 6 {
-                40
-            } else if version == 5 {
-                20
-            } else {
-                12
-            };
-            let mut req = request(&[], 20261002);
-            req.truncate(header);
-            req[4..6].copy_from_slice(&version.to_le_bytes());
-            req[8] = 1;
-            req.extend_from_slice(&row);
-            assert_eq!(
-                decode_request_with_summary(&req),
-                Err(KinError::UnsupportedVersion)
-            );
-        }
-    }
-}
-
-#[test]
-fn richer_routine_cadences_are_protocol_v12_only_and_roundtrip() {
+fn every_cadence_roundtrips_and_unknown_cadences_fail() {
     for (cadence, created_on, today, key) in [
         (2, 20240228, 20240313, 20240313),
         (3, 20240229, 20240229, 20240201),
+        (4, 20240228, 20240313, 20240313),
     ] {
         let rows = [record(1, 14, cadence, created_on, b"Schedule")];
-        let state = project_v12(&rows, today).unwrap();
+        let state = project(&rows, today).unwrap();
         assert_eq!(state.routines[0].occurrence_key.unwrap().encoded(), key);
-        let decoded = decode_request_with_summary(&request_v12(&rows, today)).unwrap();
+        let decoded = decode_request(&request(&rows, today)).unwrap();
         let summary = summarize_validated(&decoded.events, None, &state).unwrap();
-        assert_eq!(
-            encode_state(&state, PROTOCOL_V11),
-            Err(KinError::UnsupportedVersion)
-        );
-        let result = encode_state_v12(&state, &summary).unwrap();
-        assert_eq!(&result[..4], b"KINS");
-        assert_eq!(u16::from_le_bytes([result[4], result[5]]), 12);
-        assert_eq!(result[116], cadence);
+        let result = crate::state_encode::encode_state(&state, &summary).unwrap();
+        assert_eq!(&result[..6], b"KINS\x18\0");
+        assert_eq!(result[BODY + 48], cadence);
     }
-    let daily_rows = [record(1, 14, 0, 20240228, b"Daily")];
-    let daily_state = project(&daily_rows, 20240228).unwrap();
-    let daily_request = decode_request_with_summary(&request(&daily_rows, 20240228)).unwrap();
-    let daily_summary = summarize_validated(&daily_request.events, None, &daily_state).unwrap();
-    assert!(encode_state_v11(&daily_state, &daily_summary).is_ok());
-
-    let rich = record(1, 14, 2, 20240228, b"Biweekly");
-    let mut old_request = request_v12(std::slice::from_ref(&rich), 20240313);
-    old_request[4..6].copy_from_slice(&11u16.to_le_bytes());
-    assert_eq!(
-        decode_request_with_summary(&old_request),
-        Err(KinError::UnsupportedVersion)
-    );
-    let weekdays = record(1, 14, 4, 20240228, b"Weekdays");
-    assert_eq!(
-        decode_request_with_summary(&request_v12(&[weekdays], 20240313)),
-        Err(KinError::UnsupportedVersion)
-    );
     let malformed = record(1, 14, 5, 20240228, b"Unknown");
     assert_eq!(
-        decode_request_with_summary(&request_v12(&[malformed], 20240313)),
+        decode_request(&request(&[malformed], 20240313)),
         Err(KinError::MalformedProtocol)
     );
 }
 
 #[test]
-fn v7_all_request_truncations_and_fixed_payload_lengths() {
+fn all_request_truncations_and_fixed_payload_lengths() {
     for kind in 14..=17 {
         let row = record(1, kind, 0, 20261002, b"x");
         let req = request(std::slice::from_ref(&row), 20261002);
         for length in 0..req.len() {
             assert_eq!(
-                decode_request_with_summary(&req[..length]),
+                decode_request(&req[..length]),
                 Err(KinError::MalformedProtocol),
                 "{kind} {length}"
             );
@@ -379,7 +295,7 @@ fn v7_all_request_truncations_and_fixed_payload_lengths() {
             malformed.resize(88 + length, 0);
             malformed[84..88].copy_from_slice(&(length as u32).to_le_bytes());
             assert_eq!(
-                decode_request_with_summary(&request(&[malformed], 20261002)),
+                decode_request(&request(&[malformed], 20261002)),
                 Err(KinError::MalformedProtocol)
             );
         }
@@ -387,19 +303,16 @@ fn v7_all_request_truncations_and_fixed_payload_lengths() {
 }
 
 #[test]
-fn v7_invalid_header_date_cadence_reserved_schema_text_and_extreme_lengths() {
+fn invalid_header_date_cadence_reserved_schema_text_and_extreme_lengths() {
     let row = record(1, 14, 0, 20261002, b"x");
-    for offset in [6, 7, 21, 22, 23, 24, 39] {
+    for offset in [6, 7, 21, 22, 23, 24, 39, 62, 63] {
         let mut req = request(std::slice::from_ref(&row), 20261002);
         req[offset] = 1;
-        assert_eq!(
-            decode_request_with_summary(&req),
-            Err(KinError::MalformedProtocol)
-        );
+        assert_eq!(decode_request(&req), Err(KinError::MalformedProtocol));
     }
     for value in [0, 20260229, u32::MAX] {
         assert_eq!(
-            decode_request_with_summary(&request(std::slice::from_ref(&row), value)),
+            decode_request(&request(std::slice::from_ref(&row), value)),
             Err(KinError::MalformedProtocol)
         );
         assert_eq!(
@@ -408,10 +321,7 @@ fn v7_invalid_header_date_cadence_reserved_schema_text_and_extreme_lengths() {
         );
     }
     for cadence in 2..=4 {
-        assert_eq!(
-            project(&[record(1, 14, cadence, 20261002, b"x")], 20261002),
-            Err(KinError::UnsupportedVersion)
-        );
+        assert!(project(&[record(1, 14, cadence, 20261002, b"x")], 20261002).is_ok());
     }
     for cadence in 5..=255 {
         assert_eq!(
@@ -456,10 +366,7 @@ fn v7_invalid_header_date_cadence_reserved_schema_text_and_extreme_lengths() {
     );
     let mut trailing = request(&[], 20261002);
     trailing.push(0);
-    assert_eq!(
-        decode_request_with_summary(&trailing),
-        Err(KinError::MalformedProtocol)
-    );
+    assert_eq!(decode_request(&trailing), Err(KinError::MalformedProtocol));
 }
 
 #[test]
@@ -471,29 +378,32 @@ fn maximum_routine_replay_and_projection_are_bounded_and_deterministic() {
             row
         })
         .collect();
-    let req = decode_request_with_summary(&request(&rows, 20261002)).unwrap();
+    let req = decode_request(&request(&rows, 20261002)).unwrap();
     let state = project(&rows, 20261002).unwrap();
     assert_eq!(state.routines.len(), 10_000);
     assert_eq!(
         state,
-        rebuild_on(&req.events, 0, CivilDate::from_encoded(20261002).unwrap()).unwrap()
+        rebuild(&req.events, 0, CivilDate::from_encoded(20261002).unwrap()).unwrap()
     );
     let summary = summarize_validated(&req.events, None, &state).unwrap();
     assert_eq!(summary.total_count, 10_000);
-    assert!(encode_state_v7(&state, &summary).unwrap().len() < 64 * 1024 * 1024);
+    assert!(
+        crate::state_encode::encode_state(&state, &summary)
+            .unwrap()
+            .len()
+            < 64 * 1024 * 1024
+    );
     let mut too_many = request(&[], 20261002);
     too_many[8..12].copy_from_slice(&10_001u32.to_le_bytes());
-    assert_eq!(
-        decode_request_with_summary(&too_many),
-        Err(KinError::SizeLimit)
-    );
+    assert_eq!(decode_request(&too_many), Err(KinError::SizeLimit));
 }
 
 #[test]
-fn v071_mixed_history_preserves_legacy_entity_and_summary_bytes() {
-    let make = |sequence, kind, payload: &[u8]| {
+fn mixed_entities_share_opaque_ids_and_routines_stay_independent() {
+    let make = |sequence, kind, version: u8, payload: &[u8]| {
         let mut row = record(sequence, 17, 0, 0, b"");
         row.truncate(88);
+        row[0] = version;
         row[2..4].copy_from_slice(&u16::to_le_bytes(kind));
         row[84..88].copy_from_slice(&(payload.len() as u32).to_le_bytes());
         row.extend_from_slice(payload);
@@ -502,43 +412,27 @@ fn v071_mixed_history_preserves_legacy_entity_and_summary_bytes() {
     let mut text_payload = vec![0x11; 16];
     text_payload.extend_from_slice(&1u32.to_le_bytes());
     text_payload.push(b'x');
+    let mut item_payload = vec![0x11; 16];
+    item_payload.extend_from_slice(&[0, 0, 0, 0, 1, 0, 0, 0, b'x']);
     let mut pulse_payload = vec![0; 8];
     pulse_payload.extend_from_slice(&2000i64.to_le_bytes());
-    let legacy = [
-        make(1, 1, &text_payload),
-        make(2, 5, &text_payload),
-        make(3, 8, &text_payload),
-        make(4, 12, &pulse_payload),
+    let mut mixed = vec![
+        make(1, 1, 2, &item_payload),
+        make(2, 5, 1, &text_payload),
+        make(3, 8, 1, &text_payload),
+        make(4, 12, 1, &pulse_payload),
     ];
-    let mut v6 = request(&[], 20261002);
-    v6.truncate(40);
-    v6[4] = 6;
-    v6[8] = 4;
-    for row in &legacy {
-        v6.extend_from_slice(row);
-    }
-    let old = decode_request_with_summary(&v6).unwrap();
-    let old_state = rebuild_at(&old.events, 1234).unwrap();
-    let old_summary = summarize_validated(&old.events, None, &old_state).unwrap();
-    let old_bytes = encode_state_v6(&old_state, &old_summary).unwrap();
-    let new_state = project(&legacy, 20261002).unwrap();
-    assert_eq!(new_state, old_state);
-    let new_bytes = encode_state_v7(&new_state, &old_summary).unwrap();
-    assert_eq!(&new_bytes[8..52], &old_bytes[8..52]);
-    assert_eq!(&new_bytes[52..56], &[0; 4]);
-    assert_eq!(&new_bytes[56..], &old_bytes[52..]);
-
-    let mut mixed = legacy.to_vec();
+    let before = project(&mixed, 20261002).unwrap();
     // The same opaque entity bytes may identify an Item, Handoff, Talk and Routine.
     mixed.push(record(5, 14, 0, 20261002, b"Starter"));
     mixed.push(record(6, 15, 0, 20261002, b""));
-    mixed.push(make(7, 2, &[0x11; 16]));
+    mixed.push(make(7, 2, 1, &[0x11; 16]));
     let state = project(&mixed, 20261002).unwrap();
     assert!(state.routines[0].completed);
     assert_eq!(state.items[0].status, crate::state::ItemStatus::Completed);
-    assert_eq!(state.handoffs, old_state.handoffs);
-    assert_eq!(state.talks, old_state.talks);
-    assert_eq!(state.pulses, old_state.pulses);
+    assert_eq!(state.handoffs, before.handoffs);
+    assert_eq!(state.talks, before.talks);
+    assert_eq!(state.pulses, before.pulses);
     let tomorrow = project(&mixed, 20261003).unwrap();
     assert_eq!(tomorrow.items, state.items);
     assert_eq!(tomorrow.pulses, state.pulses);
@@ -546,13 +440,13 @@ fn v071_mixed_history_preserves_legacy_entity_and_summary_bytes() {
 }
 
 #[test]
-fn v071_routine_cursor_boundaries_deduplication_and_missing_cursor() {
+fn routine_cursor_boundaries_deduplication_and_missing_cursor() {
     let mut rows = vec![record(1, 14, 0, 20261002, b"Starter")];
     rows.push(record(2, 15, 0, 20261002, b""));
     rows.push(record(3, 16, 0, 20261002, b""));
     rows.push(record(4, 17, 0, 0, b""));
     rows.push(rows[1].clone());
-    let req = decode_request_with_summary(&request(&rows, 20261003)).unwrap();
+    let req = decode_request(&request(&rows, 20261003)).unwrap();
     let state = project(&rows, 20261003).unwrap();
     for (position, remaining) in [(0, 3), (1, 2), (2, 1), (3, 0)] {
         let summary =
@@ -571,22 +465,16 @@ fn v071_routine_cursor_boundaries_deduplication_and_missing_cursor() {
 }
 
 #[test]
-fn v071_all_cursor_flags_and_timestamp_extremes_fail_deterministically() {
+fn all_cursor_flags_and_timestamp_extremes_fail_deterministically() {
     for flag in 2..=255 {
         let mut req = request(&[], 20261002);
         req[20] = flag;
-        assert_eq!(
-            decode_request_with_summary(&req),
-            Err(KinError::MalformedProtocol)
-        );
+        assert_eq!(decode_request(&req), Err(KinError::MalformedProtocol));
     }
     for offset in 21..40 {
         let mut req = request(&[], 20261002);
         req[offset] = 255;
-        assert_eq!(
-            decode_request_with_summary(&req),
-            Err(KinError::MalformedProtocol)
-        );
+        assert_eq!(decode_request(&req), Err(KinError::MalformedProtocol));
     }
     for value in [
         i64::MIN,
@@ -596,10 +484,7 @@ fn v071_all_cursor_flags_and_timestamp_extremes_fail_deterministically() {
     ] {
         let mut req = request(&[], 20261002);
         req[12..20].copy_from_slice(&value.to_le_bytes());
-        assert_eq!(
-            decode_request_with_summary(&req),
-            Err(KinError::MalformedProtocol)
-        );
+        assert_eq!(decode_request(&req), Err(KinError::MalformedProtocol));
         for kind in 14..=17 {
             let mut row = record(1, kind, 0, 20261002, b"x");
             row[68..76].copy_from_slice(&value.to_le_bytes());
@@ -609,12 +494,12 @@ fn v071_all_cursor_flags_and_timestamp_extremes_fail_deterministically() {
     for value in [-8_640_000_000_000_000i64, 8_640_000_000_000_000] {
         let mut req = request(&[], 10101);
         req[12..20].copy_from_slice(&value.to_le_bytes());
-        assert!(decode_request_with_summary(&req).is_ok());
+        assert!(decode_request(&req).is_ok());
     }
 }
 
 #[test]
-fn v071_concurrent_intents_follow_logical_order_never_wall_clock_order() {
+fn concurrent_intents_follow_logical_order_never_wall_clock_order() {
     for cadence in [0, 1] {
         let key = if cadence == 0 { 20261002 } else { 20260928 };
         for (first, second, completed) in [(15, 16, false), (16, 15, true)] {

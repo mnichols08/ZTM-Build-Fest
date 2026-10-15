@@ -3,10 +3,23 @@ use crate::event::{
     ActorId, DeviceId, EventEnvelope, EventId, EventKind, HandoffId, HouseholdId,
     ItemClassification, ItemId, PulseValue, TalkId,
 };
-use crate::protocol::encode_state_v6;
+
 use crate::state::{
-    summarize, CatchUpSummary, SummaryEntityKind, SummaryEntry, SummaryKind, MAX_SUMMARY_ENTRIES,
+    rebuild, summarize_validated, CatchUpSummary, SummaryEntityKind, SummaryEntry, SummaryKind,
+    MAX_SUMMARY_ENTRIES,
 };
+
+fn summarize(
+    events: &[EventEnvelope],
+    cursor: Option<EventId>,
+) -> Result<CatchUpSummary, KinError> {
+    let state = rebuild(
+        events,
+        0,
+        crate::recurrence::CivilDate::from_encoded(20261003).unwrap(),
+    )?;
+    summarize_validated(events, cursor, &state)
+}
 
 fn id(value: u8) -> [u8; 16] {
     [value; 16]
@@ -248,7 +261,12 @@ fn conflicting_event_id_reuse_rejects_the_entire_summary() {
 
 #[test]
 fn v6_result_encoder_rejects_invalid_summary_counts_and_record_combinations() {
-    let state = crate::state::rebuild_at(&[], 0).unwrap();
+    let state = crate::state::rebuild(
+        &[],
+        0,
+        crate::recurrence::CivilDate::from_encoded(20261003).unwrap(),
+    )
+    .unwrap();
     let added = SummaryEntry {
         event_id: EventId(id(1)),
         kind: SummaryKind::ItemAdded,
@@ -323,7 +341,7 @@ fn v6_result_encoder_rejects_invalid_summary_counts_and_record_combinations() {
 
     for summary in invalid_summaries {
         assert_eq!(
-            encode_state_v6(&state, &summary),
+            crate::state_encode::encode_state(&state, &summary),
             Err(KinError::MalformedProtocol)
         );
     }

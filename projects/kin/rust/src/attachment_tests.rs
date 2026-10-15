@@ -1,8 +1,9 @@
 use crate::command::{execute, CommandContext, HouseholdCommand as C};
 use crate::event::*;
-use crate::protocol::{decode_event, DecodedRequest, PROTOCOL_V21, PROTOCOL_V22};
+use crate::event_decode::decode_event;
 use crate::recurrence::CivilDate;
-use crate::state::rebuild_distributed_on;
+use crate::request::DecodedRequest;
+use crate::state::rebuild;
 
 fn ctx(n: u8, device: u8) -> CommandContext {
     CommandContext {
@@ -14,13 +15,12 @@ fn ctx(n: u8, device: u8) -> CommandContext {
         logical_time: u64::from(n),
     }
 }
-fn req(events: Vec<EventEnvelope>, version: u16) -> DecodedRequest {
+fn req(events: Vec<EventEnvelope>) -> DecodedRequest {
     DecodedRequest {
-        protocol_version: version,
         events,
-        as_of: Some(1_791_475_200_000),
+        as_of: 1_791_475_200_000,
         summary_cursor: None,
-        civil_date: Some(CivilDate::from_encoded(20261009).unwrap()),
+        civil_date: CivilDate::from_encoded(20261009).unwrap(),
         target_household_id: None,
         identity_bindings: vec![],
     }
@@ -30,7 +30,7 @@ fn commit(
     command: C,
     n: u8,
 ) -> Result<(), crate::error::KinError> {
-    let event = execute(&command, ctx(n, 3), req(events.clone(), PROTOCOL_V22))?;
+    let event = execute(&command, ctx(n, 3), req(events.clone()))?;
     events.push(event.event);
     Ok(())
 }
@@ -60,24 +60,8 @@ fn attachment_binding_is_canonical_bounded_and_removable() {
         2,
     )
     .unwrap();
-    assert_eq!(
-        decode_event(&events[1].canonical_bytes, PROTOCOL_V22).unwrap(),
-        events[1]
-    );
-    assert_eq!(
-        execute(
-            &C::BindAttachment {
-                id,
-                parent_kind: AttachmentParentKind::ReferenceRecord,
-                parent_id: [4; 16]
-            },
-            ctx(3, 3),
-            req(events.clone(), PROTOCOL_V21)
-        )
-        .unwrap_err(),
-        crate::error::KinError::UnsupportedVersion
-    );
-    let state = rebuild_distributed_on(
+    assert_eq!(decode_event(&events[1].canonical_bytes).unwrap(), events[1]);
+    let state = rebuild(
         &events,
         1_791_475_200_003,
         CivilDate::from_encoded(20261009).unwrap(),
@@ -87,7 +71,7 @@ fn attachment_binding_is_canonical_bounded_and_removable() {
     assert!(!state.attachments[0].removed);
     commit(&mut events, C::RemoveAttachment(id), 3).unwrap();
     assert!(
-        rebuild_distributed_on(
+        rebuild(
             &events,
             1_791_475_200_004,
             CivilDate::from_encoded(20261009).unwrap()

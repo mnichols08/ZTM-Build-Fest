@@ -1,518 +1,366 @@
 # JavaScript–WASM ABI
 
-**Status:** Current through v0.34.0 Responsibility Ownership. Protocol 22 appends bounded attachment bindings, protocol 23 appends responsibility projection entries, and protocol 24 adds the Weekdays cadence and a per-Routine next-occurrence date. Event kinds 39–41 add attachment bind/remove and responsibility change events; earlier event bytes remain immutable. Protocol 21 appends maintenance history, protocol 20 Reference Records, and protocol 19 Playbooks.
+**Status:** Protocol 24 is the only replay format (refactor track, Slice 2; owner decision D3). Protocols 1–23 and the schema-1 `ITEM_ADDED` payload were removed, not migrated; their contracts survive only in the release records. The Rust sources that implement this contract are `rust/src/wire.rs`, `request.rs`, `event_decode.rs`, `history.rs`, `state_encode.rs` (with `state_encode/records.rs`), `sections.rs`, `codec.rs`, `command.rs`, `archive.rs` and `abi.rs`. Refactor Slice 4 added the KINS section table and regrouped the body into one contiguous section per domain. Slice 6 moved the history into the engine instance (`kin_history_*`, `kin_project`, `kin_execute`) and removed the whole-history `kin_apply_events` and `kin_execute_command`. The version stays 24 because event encoding and the KINE layout are unchanged.
 
-## Target and exports
+All multibyte integers are little-endian. IDs are exactly 16 opaque bytes and are never parsed, except for the bytewise tie-break in replay ordering. Text is strict UTF-8 with no terminator. Reserved fields must be zero. Decoders reject truncation, trailing bytes, overflow, unknown codes, invalid UTF-8 and unsupported versions; they never reinterpret a different layout.
 
-Compile Rust for `wasm32-unknown-unknown` and expose a narrow C-compatible ABI. Names below are the planned v0.1.0 names:
-
-```text
-kin_alloc(length: u32) -> ptr: u32
-kin_free(ptr: u32, length: u32) -> status: i32
-kin_apply_events(ptr: u32, length: u32) -> status: i32
-kin_result_ptr() -> ptr: u32
-kin_result_len() -> length: u32
-kin_error_ptr() -> ptr: u32
-kin_error_len() -> length: u32
-```
-
-Pointers are byte offsets into the current WebAssembly linear memory, represented as `u32`; JavaScript must not treat them as host pointers. `kin_apply_events` uses the stable status codes defined in the protocol section; `kin_free` returns `0` on success and `1` for an invalid range. Error text is diagnostic only; clients branch on codes.
-
-## Protocol version 1 (legacy)
-
-All multibyte integers are little-endian. IDs are exactly 16 opaque bytes; never parse or sort their internal bytes except for the explicit bytewise tie-break defined in [EVENTS](EVENTS.md). Text is strict UTF-8 with no terminator. Reserved fields must be zero. Reject truncated input, trailing bytes, integer overflow, unknown kind codes, invalid UTF-8, and unsupported versions; do not attempt to reinterpret a different layout.
-
-The request begins with a 12-byte header:
+## Exports and ownership
 
 ```text
-offset  size  field
-0       4     ASCII "KINE"
-4       2     protocol_version = 1
-6       2     reserved = 0
-8       4     event_count
+kin_alloc(length) -> ptr             kin_free(ptr, length) -> status
+kin_history_reset() -> status        empty the instance's history
+kin_history_append(ptr, len)         append a record batch to the history
+kin_history_truncate(count) -> status   keep the first `count` records
+kin_project(ptr, len)                replay the history: KINE context -> KINS
+kin_execute(ptr, len)                command: length + KCMD + KINE context -> KCMT
+kin_encode_command(ptr, len)         KCMD -> canonical event bytes
+kin_event_metadata(ptr, len)         one canonical event -> KMET
+kin_event_metadata_batch(ptr, len)   KMDQ -> KMDL
+kin_plan_import(ptr, len)            import plan of the history: KINE context -> KIMP
+kin_archive_header(ptr, len)         two lengths -> 16-byte KARC header
+kin_archive_layout(ptr, len)         KARC header + total length -> two lengths
+kin_encode_archive / kin_decode_archive   whole KARC framing (retained)
+kin_result_ptr/len, kin_error_ptr/len     the last call's result or error
+kin_clear()                               drop every retained buffer
 ```
 
-It is followed by exactly `event_count` consecutive records, each with an 88-byte fixed header and the declared payload:
+Pointers are byte offsets into the module's linear memory. Every operation
+accepts only the exact pointer and length of a live `kin_alloc` buffer, clears
+the previous result and error first, and publishes either a complete result or
+a KERR error, never a partial result. Result and error bytes stay valid until
+the next call or `kin_clear`; the host copies them before calling again and
+re-reads `memory.buffer` after every call, since memory may grow. The host
+frees each input exactly once on every exit path (`callCore` in
+`web/wasm/kin-engine.js`); `kin_free` returns 1 for an unknown or mismatched
+range and never frees an unrelated allocation. Requests and results are capped
+at 64 MiB and 10,000 events.
+
+`kin_alloc(0)` and a failed allocation return 0, which the host treats as
+failure. Live allocations sit in a fixed table of 8 slots. The host holds one
+input at a time, so a full table means a leaked allocation, and `kin_alloc`
+returns 0. `kin_clear` releases retained buffers and the history (whose bytes
+it zero-fills first); it does not promise physical erasure. `engine.dispose()`
+calls it.
+
+## Instance history (Slice 6)
+
+Each engine instance holds one canonical history (`rust/src/history.rs`):
+records in local arrival order, stored as received in one byte buffer with an
+`(offset, length)` span per record. Projections and commands replay this
+history; no call carries a whole history any more. Since Slice 9
+`kin_plan_import` also takes a record-less context: the host fills the
+instance's history with the archive's records being imported (the mirror
+resets it to that history, in batches of about 4 MiB, and back to the
+session's history on the next replay) and the plan is computed from it.
+
+- `kin_history_append(ptr, len)` adds records after those held. Its input is
+  `count:u32`, then `count` record lengths (u32 each), then the records back
+  to back. Every record is checked (`decode_event`) before any is appended,
+  so a failure leaves the history unchanged and publishes a KERR error. It
+  publishes no result on success. The history is capped at 10,000 records
+  and 64 MiB.
+- `kin_history_truncate(count)` keeps the first `count` records (status 1 if
+  `count` exceeds the history). It touches neither result nor error buffer.
+- `kin_history_reset()` empties the history, zero-filling its bytes, and drops
+  its checkpoint.
+- `kin_project(ptr, len)` takes a KINE request whose `event_count` is 0 and
+  which carries no records: its as_of, cursor, civil date, target household
+  and bindings are the replay context. It publishes the KINS projection with
+  stamped section revisions.
+- `kin_execute(ptr, len)` takes `intent length:u32`, the KCMD intent, then such
+  a record-less KINE context, and publishes KCMT. The history is not changed;
+  the host appends the new event once it is stored.
+
+The history also keeps a checkpoint (Slice 7): the replay state of its first
+N records, built in one identity context (target household and bindings). A
+projection or command applies only the records after N, if each of them has a
+logical time strictly greater than the checkpoint's last one. A record at an
+equal logical time could make an earlier decision concurrent with a new
+archive, so it rebuilds instead. So does a different identity context, a
+truncation below N, or an apply error. The result always equals a replay of
+the whole history; `rust/src/history_tests.rs` checks this after every record
+of every golden fixture. `kin_project` advances the checkpoint to the whole
+history. `kin_execute` uses it and applies the command's event to a copy.
+
+Records stay where they were appended: the history keeps one buffer and an
+`(offset, length)` span per record, and reads them as `EventView`s
+(`event_decode.rs`). A view gives the header fields and the payload slice
+without copying or decoding. Since Slice 8 only the records the checkpoint
+has not applied are decoded into owned events. The catch-up summary reads the
+event ID and a small borrowed extract (`SummaryInput`) from each view. Command
+checks use what the replay already knows (its household, last logical time
+and event IDs) instead of scanning the history.
+
+The bridge keeps the instance's history equal to what a caller asks it to
+replay (`web/wasm/history-mirror.js`). Views of the same session arena and
+epoch send only the records added since the last call, or truncate for a
+shorter view. Another arena, a new epoch or a plain array resets the instance
+and sends that history whole. `historyWith(view, extras)` appends the extras
+for one replay and truncates them afterwards. Growth reserves an eighth more
+than the history holds, so appending a few events copies nothing.
+
+## Status codes and KERR
+
+`0` success, `1` invalid ABI pointer or range, `2` malformed protocol or
+payload, `3` unsupported version or kind, `4` invalid domain event or state,
+`5` size or allocation limit, `6` internal error. The same failure always maps
+to the same code; messages are diagnostic only and never contain household
+text. The error buffer is `KERR | version:u16 = 1 | code:u16 | length:u32 |
+UTF-8 message`.
+
+## KINE replay request (protocol 24)
 
 ```text
-size  field
-2     event_version = 1
-2     event_kind (1 = ITEM_ADDED, 2 = ITEM_COMPLETED)
-16    event_id
-16    household_id
-16    actor_id
-16    device_id
-8     timestamp (signed UTC Unix milliseconds)
-8     logical_time (unsigned)
-4     payload_length in bytes
-N     payload bytes
+offset size field
+0      4    "KINE"
+4      2    protocol_version = 24
+6      2    reserved = 0
+8      4    event_count (<= 10,000)
+12     8    as_of: i64 UTC milliseconds (|value| <= 8.64e15)
+20     1    cursor_present (0 or 1)
+21     3    reserved = 0
+24     16   cursor event ID (all zero when absent)
+40     4    civil date YYYYMMDD (years 1-9999)
+44     16   target household ID (all zero = local replay)
+60     2    identity_binding_count (<= 256; must be 0 for local replay)
+62     2    reserved = 0
+64     96*n identity bindings, then event_count canonical event records
 ```
 
-The `ITEM_ADDED` payload is `item_id[16]`, `text_length:u32`, then exactly that many UTF-8 text bytes. Text length must be 1–4096 bytes. The `ITEM_COMPLETED` payload is exactly `item_id[16]`. Every request is limited to 10,000 events and 64 MiB total; results are subject to the same 64 MiB output limit. All events in one v0.1.0 request must have the same household ID and must appear in IndexedDB `local_sequence` order. The protocol does not encode local sequence; the caller supplies records in that order.
+A binding is three placeholder IDs (household, actor, device) followed by
+three authenticated IDs (household, member, device). Its authenticated
+household must equal the target; a duplicate placeholder tuple, a mismatch,
+or an event from another household without a binding fails with code 4.
+Bindings change only the replay identity; `canonical_bytes` keep the signed
+source event. They are how history created before sync (with placeholder IDs
+in its canonical bytes) replays after sync, so they are part of the current
+contract, not a migration ([IDENTITY](IDENTITY.md)).
 
-A successful state result begins with a 12-byte header:
+For `kin_project` and `kin_execute` the request is only the context: its
+`event_count` must be 0 and nothing may follow the bindings; the events are
+the instance history's records.
+
+Replay reduces an owned copy sorted by `(logical_time, device_id, event_id)`;
+equal logical times are valid. The catch-up summary uses input (local arrival)
+order: its through event is the last input event, and a present cursor must
+name an event in the input or the request fails with code 4. Exact duplicate
+events are ignored; one event ID with different bytes fails with code 4.
+
+## Canonical events
+
+Each record is an 88-byte envelope followed by its payload:
 
 ```text
-offset  size  field
-0       4     ASCII "KINS"
-4       2     protocol_version = 1
-6       2     reserved = 0
-8       4     item_count
+2  event_version (2 for ITEM_ADDED, 1 for every other kind)
+2  event_kind
+16 event_id
+16 household_id
+16 actor_id
+16 device_id
+8  timestamp: i64 UTC milliseconds
+8  logical_time: u64
+4  payload_length
+N  payload
 ```
 
-Each item record is 48 bytes followed by its UTF-8 text:
+| Kind | Name | Payload |
+| --- | --- | --- |
+| 1 | ITEM_ADDED (schema 2) | item ID, classification u8 (0 Today, 1 Need, 2 Shopping, 3 Staple), 3 reserved, text length u32, text (1–4096 bytes) |
+| 2–4 | ITEM_COMPLETED / REOPENED / ARCHIVED | item ID |
+| 5 | HANDOFF_ADDED | handoff ID, text length u32, text |
+| 6–7 | HANDOFF_ACKNOWLEDGED / ARCHIVED | handoff ID |
+| 8 | TALK_ADDED | talk ID, text length u32, text |
+| 9–11 | TALK_RESOLVED / REOPENED / ARCHIVED | talk ID |
+| 12 | PULSE_SET | value u8 (0–4), 7 reserved, expires_at i64 |
+| 13 | PULSE_CLEARED | empty |
+| 14 | ROUTINE_CREATED | routine ID, cadence u8 (0 Daily, 1 Weekly, 2 every two weeks, 3 Monthly, 4 Weekdays), 3 reserved, created_on u32, text length u32, text |
+| 15–16 | ROUTINE_OCCURRENCE_COMPLETED / REOPENED | routine ID, occurrence key u32 |
+| 17 | ROUTINE_ARCHIVED | routine ID |
+| 18–19 | AREA_CREATED / RENAMED | area ID, name length u32, name (1–96 bytes) |
+| 20 | AREA_ARCHIVED | area ID |
+| 21 | ITEM_AREA_CHANGED | item ID, area ID (zero clears) |
+| 22–23 | NOTE_CREATED / UPDATED | note ID, area ID (zero = none), title length u32, body length u32, title, body |
+| 24 | NOTE_ARCHIVED | note ID |
+| 25 | ITEM_STEP_ADDED | item ID, step ID, text length u32, text (≤ 256 bytes) |
+| 26–28 | ITEM_STEP_COMPLETED / REOPENED / ARCHIVED | item ID, step ID |
+| 29 | HOUSEHOLD_MODE_CHANGED | mode u8 (0 Normal, 1 Vacation, 2 Guests, 3 Rest) |
+| 30 | ITEM_PLANNING_DATE_CHANGED | item ID, date u32 (zero clears) |
+| 31–32 | PIN_ADDED / REMOVED | target kind u8 (1 Item, 2 Note, 3 Routine, 4 Area), 3 reserved, target ID |
+| 33 | PLAYBOOK_SAVED | playbook ID, title length u16, entry count u8 (1–16), reserved u8, title, then entries as u16 length + text |
+| 34 | PLAYBOOK_ARCHIVED | playbook ID |
+| 35 | REFERENCE_RECORD_SAVED | record ID, area ID, title length u16, field count u8 (1–16), reserved u8, title, then fields as field ID, label length u16, value length u16, label, value |
+| 36 | REFERENCE_RECORD_ARCHIVED | record ID |
+| 37 | MAINTENANCE_EVENT_SAVED | maintenance ID, record ID, performed u32, next u32 (zero = none), routine ID (zero = none), summary length u16, summary |
+| 38 | MAINTENANCE_EVENT_ARCHIVED | maintenance ID |
+| 39 | ATTACHMENT_BOUND | attachment ID, parent kind u8 (1 Note, 2 Reference Record, 3 Maintenance, 4 Item), parent ID |
+| 40 | ATTACHMENT_REMOVED | attachment ID |
+| 41 | RESPONSIBILITY_CHANGED | target kind u8 (1 Item, 2 Routine), target ID, member ID (zero clears) |
+
+Fixed-length payloads must have exactly their length. Text, title and bound
+details beyond the byte layout (trimming, scalar counts, controls, per-entity
+limits) are domain validation in `state.rs` and fail with code 4.
+
+## KINS projection (protocol 24)
+
+The 96-byte header holds `"KINS"`, version 24, reserved 0, then u32 counts:
 
 ```text
-size  field
-16    item_id
-16    created_by actor_id
-8     created_at UTC Unix milliseconds
-1     status (0 = active, 1 = completed)
-3     reserved = 0
-4     text_length in bytes
-N     text bytes
+8  items      12 handoffs   16 talks      20 pulses
+24 summary entries          28 summary total count
+32 through_present u8, 33-35 reserved, 36 through event ID (16)
+52 routines   56 areas      60 notes      64 steps
+68 mode u8, 69-71 reserved
+72 pins       76 playbooks  80 reference records
+84 maintenance events       88 attachments           92 responsibilities
 ```
 
-Items are serialized in `ITEM_ADDED` event order, not hash-map iteration order. Empty household state is a valid 12-byte `KINS` response with `item_count = 0`.
-
-On failure, the error buffer is:
-
-```text
-ASCII "KERR" | protocol_version:u16 | error_code:u16 | message_length:u32 | UTF-8 message
-```
-
-The error code is also returned from `kin_apply_events`: `0` success, `1` invalid ABI pointer/range, `2` malformed protocol/payload, `3` unsupported protocol/event version or kind, `4` invalid domain event/state, `5` size/allocation limit, `6` internal error. The same failure must always produce the same category; the message is not a machine-readable contract and must not contain household text.
-
-Protocol v1 is retained byte-for-byte for legacy callers. Its event kinds are only `ITEM_ADDED` (1) and `ITEM_COMPLETED` (2), event schema is v1, result status is `0 = active` or `1 = completed`, and all its reserved bytes remain zero. It does not reinterpret reserved bytes as classification or archived status.
-
-## Protocol version 2 (legacy classified Items)
-
-Protocol v2 uses the same `KINE`/`KINS` signatures, 12-byte outer headers, 88-byte event headers, little-endian encoding, 10,000-event limit, and 64 MiB request/result limits. Its header version is `2`; event envelope fields retain the protocol-v1 byte offsets. It supports legacy schema-v1 records and current event kinds 1–4; `ITEM_ADDED` schema v2 is the only new payload version.
-
-The v2 `ITEM_ADDED` payload is:
-
-```text
-size  field
-16    item_id
-1     classification (0 = Today, 1 = Need)
-3     reserved = 0
-4     text_length in bytes
-N     strict UTF-8 text
-```
-
-Text length remains 1–4096 bytes. Schema-v1 `ITEM_ADDED` retains its original payload and normalizes to Today without changing its source bytes. Event schema v1 carries `ITEM_COMPLETED` (kind 2), `ITEM_REOPENED` (kind 3), and `ITEM_ARCHIVED` (kind 4), each with an exact 16-byte item ID payload.
-
-A v2 result record is 48 bytes plus UTF-8 text:
-
-```text
-size  field
-16    item_id
-16    created_by actor_id
-8     created_at UTC Unix milliseconds
-1     classification (0 = Today, 1 = Need)
-1     status (0 = active, 1 = completed, 2 = archived)
-2     reserved = 0
-4     text_length in bytes
-N     text bytes
-```
-
-Items remain serialized in original add-event order, including archived tombstones so the caller can make a filtered view without becoming a reducer. The browser hides archived items from ordinary lists. Protocol 15 is the current browser writer; see the additive contracts below. `KERR` retains the v1 header/version and stable numeric error codes across all supported request protocol versions.
-
-## Ownership and lifetime
-
-- `kin_alloc(n)` allocates an input buffer owned by JavaScript. For `n == 0`, it returns `0`. Allocation failure returns `0`; the bridge treats that as failure and does not call apply.
-- JavaScript writes exactly `n` bytes within the current `memory.buffer`, refreshes its view after any operation that may grow memory, and calls `kin_apply_events(ptr, n)`.
-- `kin_apply_events` accepts only the exact pointer and length of a currently tracked `kin_alloc` input buffer. Rust reads from that owned allocation for the duration of the call and does not retain a caller pointer after return.
-- JavaScript calls `kin_free(ptr, n)` exactly once after apply returns, whether apply succeeds or fails. `(0, 0)` is a no-op; other invalid free ranges fail safely and never free an unrelated allocation.
-- Rust owns result/error buffers. `kin_result_ptr/len` refer to the most recent successful result; `kin_error_ptr/len` refer to the most recent failed call. The inactive pair returns `(0, 0)`.
-- Result/error bytes stay valid until the next `kin_apply_events` call or module teardown. JavaScript must copy them into host-owned memory before another call. The bridge must not retain a view that may become stale if WASM memory grows.
-- Each call clears the previous result and error before processing. Repeated calls are independent full replays; the module has no hidden household state between calls.
-- A valid empty household response is a non-empty protocol result containing zero entity counts (12 bytes for v1/v2, 16 for v3, 20 for v4; protocols 15–17 have a 72-byte header, protocol 18 has a 76-byte header, protocol 19 has an 80-byte header, and protocol 20 has an 84-byte header). A zero-length error/result accessor means that no buffer is available, not a successful empty state.
-- Output allocation is released by Rust on the next apply call/module teardown; JavaScript must not call `kin_free` on result/error pointers.
-
-## Call behavior
-
-`kin_apply_events` accepts the supported protocol versions 1–18. Protocols v1–v7 replay the supplied order; v8 and later sort a copy for distributed state replay while preserving input order for catch-up boundaries. It validates the entire request and reconstructs from scratch. On success it publishes a complete result in the requested protocol version and returns zero. On failure it publishes an error and no partial result; stored IndexedDB bytes remain untouched. Unknown protocol/event versions fail with a stable unsupported-version code; malformed payload, bounds overflow, and invalid state transitions fail deterministically.
-
-The function may grow memory while parsing or building output. JavaScript must reacquire `memory.buffer` after the call before copying result/error bytes. Length arithmetic is checked for overflow in both languages. Cap a request and result at 64 MiB, a request at 10,000 events, and individual item text at 4096 UTF-8 bytes for v0.1.0; reject larger input before unbounded allocation. The matching 10,000-event storage limit is specified in [STORAGE](STORAGE.md).
-
-## JavaScript bridge responsibilities
-
-The high-level bridge owns loading/instantiation, ABI export checks, buffer allocation/copy/free, memory view refresh, binary protocol encode/decode, and conversion of stable ABI errors to UI-safe messages. It must not implement event replay or state transitions.
-
-## Protocol version 3 (legacy Handoff)
-
-Requests retain the 12-byte KINE header and 88-byte envelope with explicit version 3. All v2 events plus schema-1 kinds 5 HANDOFF_ADDED, 6 HANDOFF_ACKNOWLEDGED, and 7 HANDOFF_ARCHIVED are supported. Add payload: handoff_id[16], text_length:u32, strict UTF-8 text (1–4096 bytes). Reference payloads: exactly handoff_id[16]. Existing codes/payloads are unchanged.
-
-KINS v3 header: magic[4], version:u16=3, reserved:u16=0, item_count:u32, handoff_count:u32 (16 bytes). All v2-layout Item records precede Handoff records. A Handoff record is handoff_id[16], created_by[16], created_at:i64, status:u8 (0 unacknowledged, 1 acknowledged, 2 archived), reserved[3]=0, text_length:u32, text. Fixed record size is 48 bytes. Collections retain original add order including tombstones; combined count is at most 10,000. The 64 MiB bound remains. Empty v3 output is 16 bytes. KERR stays version 1.
-
-Protocols v1/v2 reject Handoff events and cannot serialize Handoff projection, including archived state. They never silently omit it. Protocol v1 still rejects Needs/archived Item state. See [V0.3.0](V0.3.0.md).
-
-## v0.4.0 Talk
-
-Protocol v4 requests retain the 12-byte KINE header and 88-byte envelope, version 4. KINS header: magic[4], version:u16=4, reserved:u16=0, item_count:u32, handoff_count:u32, talk_count:u32 (20 bytes). All v2 Item records precede v3 Handoff records and Talk records. Talk: talk_id[16], created_by[16], created_at:i64, status:u8 (0 open, 1 resolved, 2 archived), reserved[3]=0, text_length:u32, text[N]. Combined count is at most 10,000; 64 MiB limits, little-endian integers, strict UTF-8, exact lengths and KERR v1 remain unchanged. Protocols 1–3 reject Talk events/state, including tombstones, with unsupported category 3. The current browser writes v7; see the v0.7.0 contract below. See [V0.4.0](V0.4.0.md).
-
-## v0.5.0 Pulse
-
-Protocol v5 KINE: magic[4], version:u16=5, reserved:u16=0, event_count:u32, as_of:i64 (20 bytes). KINS adds pulse_count:u32 after talk_count (24-byte header), followed by unchanged Item/Handoff/Talk records and 40-byte Pulse records: actor_id[16], set_at:i64, expires_at:i64, value:u8, status:u8, reserved[6]=0. Integers little-endian; Pulse/as_of timestamps in ±8,640,000,000,000,000ms and expiry > set_at. Protocols 1–4 unchanged and reject Pulse. KERR remains v1. Browser applyEvents(records, asOf) requires time. Full offsets/error categories are in the frozen contract. See [V0.5.0](V0.5.0.md).
-
-## v0.6.0 Since You Last Looked
-
-Protocol v6 is additive; v1–v5 request/result layouts and supported behavior remain unchanged. The v6 request is exactly 40 bytes: `KINE`, version 6, reserved zero, event_count:u32, explicit `as_of:i64`, cursor_present:u8, reserved[3]=0, cursor_event_id[16]. An absent cursor requires all-zero ID bytes. A present cursor must exactly match an event in the ordered stream or the request fails with invalid-event status 4.
-
-The v6 result header is exactly 52 bytes: `KINS`, version 6, reserved zero, Item/Handoff/Talk/Pulse counts, summary_count, summary_total_count, through-present:u8, reserved[3]=0, and summary_through_event_id[16] (all zero when absent). It is followed by unchanged v2 Item, v3 Handoff, v4 Talk and v5 Pulse records, then at most eight summary records. Each summary record is event_id[16], kind:u8 (1–11), entity_kind:u8, classification:u8 (0 Today, 1 Needs, 255 absent), reserved:u8=0, text_length:u32, and strict UTF-8 text. Pulse entries are excluded, but the through ID is the exact last event in the input stream, including Pulse. Full offsets, bounds, validation and ownership are in [V0.6.0](V0.6.0.md).
-
-## v0.7.0 Routines
-
-Protocol v7 adds an explicit civil date: 44-byte KINE header and 56-byte KINS header, unchanged exports/ownership, schema-1 Routine kinds 14–17, 56-byte Routine result records and summary kinds 12–15. Current browser calls `applyEvents(records, asOf, cursorEventId, civilDate)` with required explicit context. v1–v6 retain exact layouts/behavior; KERR stays v1. See [V0.7.0](V0.7.0.md) for authoritative offsets, validation and bounds.
-
-## v0.9.0 Distributed replay
-
-Protocol v8 is additive; v1–v7 request/result layouts remain unchanged. A v8 request begins with the v7 44-byte header and appends:
-
-```text
-offset  size  field
-44      16    authenticated target household ID
-60      2     identity_binding_count (0..256)
-62      2     reserved = 0
-```
-
-Then come `identity_binding_count` fixed 96-byte records, before the unchanged 88-byte event records:
-
-```text
-size  field
-16    legacy household ID
-16    legacy actor ID
-16    legacy device ID
-16    authenticated household ID (must equal request target)
-16    authenticated member/actor ID
-16    authenticated trusted-device ID
-```
-
-All IDs are opaque 16-byte values. Duplicate legacy tuple mappings, conflicting/ambiguous bindings, a target-household mismatch, missing binding for an event from a different household, truncated binding, nonzero reserved bytes, or more than 256 bindings fail closed. The JS caller supplies only bindings already verified by the encrypted/signature-checked control record; the ABI itself is not a cryptographic verifier. Event header/payload bytes and `canonical_bytes` are never rewritten.
-
-For v8 only, equal logical times are valid. Rust creates an owned copy and sorts that copy for household state reduction by `(logical_time, effective device_id bytewise, event_id bytewise)`. The decoded request retains input/local-arrival order; summary `through_event_id` and the Since You Last Looked cursor use that original order, not the reducer's sort. The v8 KINS result has the same 56-byte header and record layout as v7, with `version=8`. The KERR layout/statuses, 10,000-event bound, and 64 MiB request/result bounds remain unchanged.
-
-## v0.10 portable operations
-
-The dependency-free `kin` library remains both a native `rlib` and a WASM
-`cdylib`. `core::project`, `command::execute`, `codec::encode_event`,
-`codec::metadata`, `archive::decode`, and `archive::plan_import` are directly
-native-testable. No crate split, browser dependency or JSON dependency is needed.
-Browser authentication, randomness, time, Web Crypto, storage and networking stay
-outside Rust. Rust validation does not authenticate a caller; the application
-only gives an unlocked session access to its engine capability.
-
-The following exports use the same exact-live-allocation, status, result and
-error-buffer contract as `kin_apply_events`:
-
-| Export                         | Input                                          | Result                                                        |
-| ------------------------------ | ---------------------------------------------- | ------------------------------------------------------------- |
-| `kin_encode_command(ptr,len)`  | KCMD v1 intent                                 | Canonical event bytes                                         |
-| `kin_execute_command(ptr,len)` | Command length:u32, KCMD, KINE history/context | KCMT v1 event + metadata + projection                         |
-| `kin_event_metadata(ptr,len)`  | One complete canonical event                   | KMET v1 validated metadata                                    |
-| `kin_encode_archive(ptr,len)`  | Metadata length:u32, metadata, ciphertext      | KARC v1 archive                                               |
-| `kin_decode_archive(ptr,len)`  | Complete KARC v1 archive                       | Metadata length:u32, metadata, ciphertext                     |
-| `kin_plan_import(ptr,len)`     | Decrypted KINE history/context                 | KIMP v1 import plan                                           |
-| `kin_clear()`                  | No arguments                                   | No return value; releases retained allocations/results/errors |
-
-All operations are synchronous and bounded by the existing 64 MiB ABI limit.
-Every operation clears previous success/error results before validating its
-input. The host copies result bytes before another operation or memory growth.
-`kin_clear` releases intentionally retained buffers; it does not guarantee
-physical memory zeroization. `engine.dispose()` calls it, removes the shared
-codec capability when owned by that engine, and drops the instance reference.
-A disposed engine rejects replay and commands. Startup/lock ordering belongs to
-the security shell; Rust does not manufacture authentication from a boolean.
-
-## Protocol 11 — Checklist Steps
-
-Protocol 11 preserves the protocol-10 64-byte `KINE` request header and
-88-byte canonical event envelope. It adds schema-1 event kinds 25–28:
-`ITEM_STEP_ADDED`, `ITEM_STEP_COMPLETED`, `ITEM_STEP_REOPENED`, and
-`ITEM_STEP_ARCHIVED`. Protocols 1–10 retain their request/result layouts and
-reject these events.
-
-The protocol-11 `KINS` header is 68 bytes, adding `step_count:u32` at offset
-64 after the Notes count. After the existing Item/Handoff/Talk/Pulse,
-summary, per-Item Area IDs, Routines, Areas, and Notes sections, each Step is
-serialized as a 40-byte fixed header followed by strict UTF-8 text:
-
-```text
-16  parent Item ID
-16  Step ID
-1   completed (0 or 1)
-1   archived (0 or 1)
-2   reserved = 0
-4   text length in bytes
-N   text bytes (1–80 Unicode scalar values, <=256 UTF-8 bytes)
-```
-
-Records are grouped by parent Item in Item creation order and retain Step
-creation order within each parent. Count and total protocol bounds are
-validated; Step records are not included in the existing entity-count header.
-An old history emits zero Steps. Attempting to encode a projection containing
-Steps with a protocol before 11 fails closed.
-
-## Protocol 12 — Richer Routine Scheduling
-
-Protocol 12 preserves the protocol-11 64-byte `KINE` request header,
-88-byte canonical event envelope, 68-byte `KINS` result header, and all
-existing result sections. It adds no event kinds and changes no canonical
-event payload bytes. `ROUTINE_CREATED` cadence values 0 (Daily) and 1
-(Monday-start Weekly) retain their meaning; values 2 (creation-date-anchored
-every two weeks) and 3 (calendar Monthly) are supported only by protocol 12.
-Protocols 1–11 reject those newer cadence values instead of projecting
-misleading state. Protocol 12 reads existing histories without migration.
-
-## Protocol 13 — Shared Shopping Lists
-
-Protocol 13 preserves the protocol-12 request and result headers, sections,
-and canonical event envelope. Schema-v2 `ITEM_ADDED` retains its classification
-byte and payload size; code 2 now identifies Shopping (codes 0/1 remain Today
-and Needs). The Item result and catch-up summary classification fields use the
-same code. Protocols 1–12 reject code 2 in events and reject projections or
-summaries containing Shopping rather than returning incomplete state.
-Protocols 1–12 retain their prior behavior for Today/Needs-only history.
-No event kind, storage, archive, or encrypted sync-envelope migration is
-introduced.
-
-## Protocol 14 — Staples & Replenishment
-
-Protocol 14 preserves the protocol-13 request and result headers, sections,
-and canonical event envelope. Schema-v2 `ITEM_ADDED` retains its classification
-byte and payload size; code 3 identifies a reusable Staple (codes 0–2 remain
-Today, Needs, and Shopping). Item result and catch-up summary classification
-fields use the same code. Protocols 1–13 reject code 3 in events and reject
-Staple-bearing projections or summaries rather than returning incomplete
-state. Protocol 13 continues to carry Shopping; older supported data retains
-its prior layout and behavior. No event kind, storage, archive, or encrypted
-sync-envelope migration is introduced.
-
-## Protocol 15 — Household Modes
-
-Protocol 15 preserves the 64-byte `KINE` request header and the protocol-14
-event, Item, Routine, and summary sections. Its `KINS` result header is 72
-bytes: offset 68 contains the household mode (`0 = Normal`, `1 = Vacation`,
-`2 = Guests`, `3 = Rest`) followed by three reserved zero bytes. The canonical
-schema-1 `HOUSEHOLD_MODE_CHANGED` kind 29 payload is exactly one mode byte.
-Histories without this event project to Normal. Protocols 1–14 reject kind 29
-and reject non-Normal mode projections rather than omitting the state; older
-result layouts remain unchanged.
-
-The KCMD v1 `SetHouseholdMode` action uses action code 29, a zero entity ID,
-the mode value at offset 112, and no payload. It requires protocol 15 or later.
-The fixed mode enum has no implicit time window, automatic transition,
-reminder, or inferred state. Existing event-count and 64 MiB request/result
-bounds continue to apply.
-
-### KCMD v1 intent transport
-
-This is an independent command transport, not the canonical event layout. JS
-writes these explicit capability/context fields; Rust selects event schemas,
-constructs canonical payloads and validates command semantics.
-
-| Offset | Width | Field                                                               |
-| ------ | ----- | ------------------------------------------------------------------- |
-| 0      | 4     | `KCMD`                                                              |
-| 4      | 2     | Command transport version = 1                                       |
-| 6      | 2     | Reserved zero                                                       |
-| 8      | 2     | Action code (domain action code)                                   |
-| 10     | 2     | Reserved zero                                                       |
-| 12     | 16    | Supplied event ID                                                   |
-| 28     | 16    | Authorized household ID                                             |
-| 44     | 16    | Authorized actor ID                                                 |
-| 60     | 16    | Authorized device ID                                                |
-| 76     | 8     | Explicit timestamp:i64                                              |
-| 84     | 8     | Explicit logical time:u64                                           |
-| 92     | 16    | Entity ID; zero for Pulse                                           |
-| 108    | 4     | Routine date key or Item planning date; zero otherwise              |
-| 112    | 1     | Item classification, Pulse value, Routine cadence or mode; zero otherwise |
-| 113    | 3     | Reserved zero                                                       |
-| 116    | 8     | Pulse expiration:i64; zero otherwise                                |
-| 124    | 4     | Payload length; zero for no-payload actions                         |
-| 128    | N     | Action payload                                                      |
-
-For `AddItem`, the byte at offset 112 is 0 for Today, 1 for Needs, 2 for
-Shopping, or 3 for Staples. Code 2 requires protocol 13 or later; code 3
-requires protocol 14 or later. Older protocol requests fail closed.
-Household mode values are 0–3 and require protocol 15 or later; the mode
-command has a zero entity ID and no action payload.
-Planning-date intent 30 uses the entity-ID field for the Item ID and the
-four-byte date field at offset 108; zero clears the date and nonzero values
-require protocol 16 or later.
-
-IDs and time are explicit browser capabilities. Capture commands use a supplied
-random entity ID. Noncapture commands use the referenced entity ID. Step
-commands reuse the entity-ID field for `StepId`; their payload begins with the
-parent `ItemId` (16 bytes), followed for add by the UTF-8 Step text. Add payload
-length is `16 + text_bytes`; complete/reopen/archive payload length is exactly
-16. This keeps command transport distinct from the canonical event payload.
-All unused
-fields, reserved bytes, schema/enum/date/length values and strict UTF-8 are
-validated. The native `HouseholdCommand` separates household intent from browser
-identity/pairing operations. `execute` validates the existing corpus first,
-requires a new event ID and logical time greater than observed history, checks
-household context, rejects stale Routine occurrence intent and an Item completion
-or reopening that would not change the Item's status, then rebuilds and
-serializes the complete candidate. Persistence occurs only in the adapter's
-successful transaction. Historic repeated completion facts retain prior replay
-semantics.
-
-KCMT v1 consists of `KCMT`, version:u16=1, reserved:u16=0,
-event-length:u32, metadata-length:u32, projection-length:u32, then the three
-buffers exactly. The projection is the existing KINS format for the request's
-protocol. One command crossing returns all information needed for persistence.
-
-### KMET v1 validated metadata
-
-The result is exactly 92 bytes: `KMET`, version:u16=1, reserved:u16=0,
-event/household/actor/device IDs (16 bytes each), timestamp:i64,
-logical-time:u64, event-version:u16 and event-kind:u16. It is generated by Rust
-after decoding the full canonical event. Browser storage/sync code consumes
-structured metadata and never reads canonical offsets. Metadata is derived and
-must be compared to authoritative decrypted bytes; it is not another source of
-truth. Existing `encode*Record` JS exports are compatibility adapters over
-`kin_encode_command` and require a loaded engine; they contain no event encoder.
-
-`kin_event_metadata_batch(ptr,len)` validates a complete batch in one crossing.
-Input KMDQ v1: magic, version:u16=1, reserved:u16=0, count:u32, then each
-record length:u32 and canonical bytes. Output KMDL v1 has the same prefix/count
-and exactly `count` consecutive 92-byte KMET records. Bounds remain 10,000 events
-and 64 MiB. An invalid record rejects the complete batch. The JS
-`eventMetadataBatch(records)` helper (also on the engine) returns metadata in
-input order; EventStore uses it before replay to avoid one crossing per row.
-
-### KARC v1 encrypted archive framing
-
-v0.10.3 adds two compact framing operations while retaining the original
-`kin_encode_archive` and `kin_decode_archive` exports and their byte layouts.
-`kin_archive_header(ptr,len)` accepts exactly two little-endian u32 lengths
-(metadata and ciphertext) and returns the validated 16-byte KARC v1 header.
-`kin_archive_layout(ptr,len)` accepts that header plus the actual complete archive
-buffer length:u32 (20 bytes total), validates the same bounds/version/reserved
-fields/exact total length, and returns the two lengths (8 bytes). Rust remains
-the framing authority; the browser copies opaque payload sections directly into
-or out of its own buffers without routing their contents through WASM. These
-operations do not authenticate ciphertext. The adapter returns detached copies
-when decoding, so callers cannot mutate an archive input during asynchronous
-authentication. Host ownership and ordinary ABI result lifetimes still apply.
-
-Header: `KARC`, archive-version:u16=1, reserved:u16=0,
-metadata-length:u32, ciphertext-length:u32, followed by exactly those two opaque
-sections. Metadata must contain 1�1,048,576 bytes; ciphertext at least a 16-byte
-AEAD tag; total archive size at most 64 MiB. Unknown versions, nonzero flags,
-overflow/excess lengths, truncation and trailing bytes fail closed. Fixed single
-sections cannot contain duplicate section identifiers. Browser cryptography
-owns authentication and encrypted-body interpretation; successful framing parse
-alone is not an integrity/authenticity claim. The archive adapter must authenticate
-or compare all consequential public metadata before import.
-
-## Protocol version 9 — Areas
-
-Protocol 9 is additive; v1–v8 bytes and event meanings remain unchanged. Local
-and synchronized browser calls use a 64-byte KINE header, followed by the
-existing 96-byte identity bindings for synchronized requests. A zero target
-household ID means local replay without a v8-style verified target; synchronized
-requests provide the stable target and validated bindings. Request event rows
-remain exact canonical bytes. Area kinds 18–21 are event schema 1 and are
-rejected by protocols 1–8.
-
-The v9 KINS header is 60 bytes: the v8 56-byte header followed by
-`area_count:u32` (maximum 32). After the existing Item/Handoff/Talk/Pulse entity
-records, the result carries one optional Area ID (16 bytes; all-zero means none)
-per Item, the unchanged Routine records, then each Area as ID[16],
-archived:u8, reserved[3]=0, name-length:u32, UTF-8 name. Existing summary
-records follow. Area names are bounded to 96 UTF-8 bytes and 48 Unicode scalar
-values. Rust validates references and flags before the browser projects state.
-
-KCMD v1 adds intent numbers 18–21: create Area, rename Area, archive Area, and
-change Item Area. The last intent's 16-byte payload is the optional Area ID;
-all-zero clears the assignment. Existing intents and KERR remain unchanged.
-
-After authenticating/decrypting the archive, `kin_plan_import` validates the
-entire event history using the existing KINE contract. Duplicate event IDs
-(including exact duplicates), conflicting identities, invalid state, unsupported
-versions and an overflowing next logical counter fail before a plan is returned.
-KIMP v1 is `KIMP`, version:u16=1, reserved:u16=0, event-count:u32,
-next-logical-time:u64, projection-length:u32, and the KINS projection. It performs
-no writes. The browser requires explicit restore approval and applies the
-verified replacement atomically; a plan does not authorize restoring device trust.
-
-Validation: native command/codec/archive tests, all historical protocol fixtures,
-and `web/wasm/portable-core.test.mjs` exercise command variants, full
-canonical metadata decoding, stale Routine rejection, archive/import corruption,
-and disposed-engine capability rejection through the real release WASM.
-
-## Protocol version 16 — Item planning dates
-
-Request framing and the 88-byte event envelope remain unchanged. Schema-1
-event kind 30 has a fixed 20-byte payload containing the 16-byte Item ID and
-little-endian `u32` civil date. `00000000` clears the optional date;
-nonzero values must be Gregorian `YYYYMMDD` dates in years 1–9999.
-
-The result header remains 72 bytes. After the existing protocol-11 Step
-records, protocol 16 appends one little-endian `u32` per Item in Item order.
-Zero represents no date. Protocols 1–15 retain their exact layouts and reject
-date-bearing history/state instead of silently omitting the field.
-
-## Protocol version 17 — derived Item history date
-
-Request framing and canonical event bytes are unchanged. After the existing
-protocol-16 planning-date array, protocol 17 appends one little-endian `i64`
-timestamp per Item, in Item order. Each timestamp is the event clock of the
-latest effective Item or checklist-Step event in deterministic replay order.
-It is derived projection data: protocol 17 adds no event kind, persistent
-storage field, read receipt, actor attribution, exact-time UI, or history
-timeline. Its eight bytes per Item add at most 80,000 bytes under the existing
-10,000-entity limit; the 64 MiB protocol result bound still applies.
-Protocols 1–16 retain their exact layouts.
-
-## Protocol version 18 — Pins
-
-Schema-1 event kinds 31 and 32 add or remove a Pin. Their fixed 20-byte
-payload is `target-kind:u8`, three zero reserved bytes, and a stable 16-byte
-target ID. Target kinds are Item=1, Note=2, Routine=3, Area=4. The result
-header extends to 76 bytes with `pin-count:u32` at offset 72. After the
-protocol-17 per-Item timestamps, each Pin is encoded as the same 20-byte
-target-kind/reserved/ID record, in deterministic insertion order. The count
-is bounded at ten. Protocols 1–17 retain their layouts and reject Pin history
-or a state containing Pins rather than omitting it.
-
-## Protocol version 19 — Household Playbooks
-
-Schema-1 event kinds 33 and 34 save/edit or archive a Playbook. A save payload
-contains the stable 16-byte Playbook ID, a bounded UTF-8 title, and 1–16 ordered
-UTF-8 entries. The protocol-19 result header extends to 80 bytes with
-`playbook-count:u32` at offset 76. After protocol-18 Pin records, each
-Playbook contains its ID, archived flag, entry count, title byte length, two
-zero reserved bytes, title bytes, then length-prefixed entry bytes. Projection
-limits are 32 Playbooks, 128 title bytes, and 256 bytes per entry. Protocols
-1–18 retain their layouts and reject Playbook history or state rather than
-omitting templates.
-
-## Protocol version 20 — Home Reference Records
-
-Schema-1 event kinds 35 and 36 save/edit or archive a Reference Record. A save
-contains a stable record ID, optional Area ID, bounded title, and 1–16
-stable-ID labeled UTF-8 fields. The protocol-20 result header extends to 84
-bytes with `reference-record-count:u32` at offset 80. Records follow Playbooks
-and contain ID, Area ID (zero when absent), title length, field count, archive
-flag, title, then each field ID, label/value lengths and bytes. Limits are 128
-records, 128 title bytes, 64 label bytes, and 1,024 value bytes. Protocols
-1–19 retain their layouts and reject Reference Record history or state.
-
-## Protocol version 21 — Maintenance Records
-
-Schema-1 event kinds 37 and 38 save/correct or archive a maintenance event. A save contains maintenance ID, Reference Record ID, performed `CivilDate`, optional next `CivilDate` (zero when absent), optional Routine ID, summary byte length, and summary UTF-8 bytes. The result header extends to 88 bytes with `maintenance-event-count:u32` at offset 84. Each projected row is 60 bytes plus summary: maintenance ID, record ID, performed date, next date, Routine ID, archived byte, reserved zero byte, summary length, and summary. A maximum of 64 lifetime events per Reference Record and 8,192 projected events apply; summary is 1–240 UTF-8 bytes. Protocols 1–20 retain their layouts and reject maintenance event history or state.
-
-## Protocol version 24 — Repeating tasks
-
-Protocol 24 preserves the protocol-23 request header, 96-byte `KINS` result
-header, canonical event envelope and every existing result section. It adds
-`ROUTINE_CREATED` cadence value 4 (Weekdays) and appends, after the
-responsibility entries and before the catch-up summary, one little-endian
-`next_on:u32` civil date per Routine in Routine order. `next_on` is the date the
-next new occurrence opens (`Cadence::next_start`), always later than the
-current key; it is zero for an archived Routine or past 9999-12-31. Protocols
-1–23 reject Weekdays events and projections containing them.
+A 112-byte section table follows the header: one entry per domain section,
+`revision u32, byte length u32`, in body order (`rust/src/sections.rs`). The
+lengths cover the body exactly; a decoder rejects a table that does not.
+
+| # | Section | Contents, in order |
+|---|---|---|
+| 0 | Items | Item records; one Area ID per Item; Steps; one planning date per Item; one last-changed timestamp per Item |
+| 1 | Handoffs | Handoff records |
+| 2 | Talks | Talk records |
+| 3 | Pulses | Pulse records |
+| 4 | Routines | Routine records; one next-occurrence date per Routine |
+| 5–12 | Areas, Notes, Pins, Playbooks, Reference Records, Maintenance events, Attachments, Responsibilities | their records |
+| 13 | Summary | summary entries |
+
+Records:
+
+- Items: item ID, created_by, created_at i64, classification u8, status u8
+  (0 active, 1 completed, 2 archived), 2 reserved, text length u32, text.
+  Then one Area ID per Item (zero = none); the Steps, grouped by Item in Item
+  order: item ID, step ID, completed u8, archived u8, 2 reserved, text length
+  u32, text; one planning date u32 per Item (zero = none); one last-changed
+  timestamp i64 per Item (latest effective Item or Step event).
+- Handoffs: handoff ID, created_by, created_at i64, status u8
+  (0 unacknowledged, 1 acknowledged, 2 archived), 3 reserved, text length, text.
+- Talks: talk ID, created_by, created_at i64, status u8
+  (0 open, 1 resolved, 2 archived), 3 reserved, text length, text.
+- Pulses (40 bytes each, ordered by actor): actor ID, set_at i64,
+  expires_at i64, value u8, status u8 (0 active, 1 expired), 6 reserved.
+- Routines: routine ID, created_by, created_at i64, created_on u32,
+  occurrence key u32 (zero = none today), cadence u8, archived u8,
+  occurrence u8 (0 none, 1 open, 2 completed), reserved u8, text length, text.
+  Then one next-occurrence date u32 per Routine (zero when archived or past
+  9999-12-31; otherwise later than the current key).
+- Areas: area ID, archived u8, 3 reserved, name length u32, name.
+- Notes: note ID, created_by, updated_by, created_at i64, updated_at i64,
+  area ID, archived u8, 3 reserved, title length u32, body length u32, title, body.
+- Pins (20 bytes each): target kind u8, 3 reserved, target ID.
+- Playbooks: playbook ID, archived u8, entry count u8, title length u16,
+  2 reserved, title, then entries as u16 length + text.
+- Reference Records: record ID, area ID, title length u16, field count u8,
+  archived u8, title, then fields as field ID, label length u16, value
+  length u16, label, value.
+- Maintenance events: maintenance ID, record ID, performed u32, next u32,
+  routine ID, archived u8, reserved u8, summary length u16, summary.
+- Attachments (36 bytes each): attachment ID, parent kind u8, removed u8,
+  2 reserved, parent ID.
+- Responsibilities (33 bytes each): target kind u8, target ID, member ID.
+- Summary entries (at most 8): event ID, kind u8 (1–15), entity kind u8
+  (1 Item, 2 Handoff, 3 Talk, 4 Routine), classification u8 (255 when
+  absent; present only for item-added), reserved u8, text length u32, text.
+
+Collections keep original add order and include archived tombstones, so the
+browser filters views without reducing state. An empty household is exactly
+the header and a table of zero lengths (208 bytes). Counts are bounded (10,000
+combined entities, 32 Areas, 128 Notes, 16 Steps per Item, 10 Pins, 32
+Playbooks, 128 Reference Records, 8,192 Maintenance events, 256 attachments)
+and the whole result by 64 MiB.
+
+### Section revisions
+
+A revision tells the host whether a section changed since the last projection
+from the same engine instance, so it can skip decoding and rendering an
+unchanged section.
+
+- The ABI stamps revisions on the projections returned by `kin_project`
+  and `kin_execute`. Each section's counter starts at 0 per instance
+  and increases by one (wrapping past `u32::MAX` to 1, never 0) whenever that
+  section differs from the same section of the last projection the instance
+  emitted. The comparison is exact: the section bytes and the header fields
+  that describe it (its counts; for the summary also the total and through
+  event, bytes 24–51). An unchanged section keeps its revision.
+- The previous projection is the buffer the instance already retains as its
+  last result (for a command, the whole KCMT result), moved aside rather than
+  copied. Tracking costs one byte comparison per section. While a projection
+  call runs, the old and the new result are both alive, so peak memory is up
+  to two results instead of one. Between calls one result is retained, as
+  before. A non-projection call in between keeps the old projection as the
+  comparison basis, so it can outlive that call until the next projection or
+  `kin_clear`. `kin_clear` drops it but
+  keeps the counters, so a later projection advances every section instead of
+  reusing a revision the host may still hold.
+- Revision 0 means unversioned. The pure encoder and the KIMP projection
+  write 0, and the host always decodes such a section.
+- Revisions are a rendering aid, not part of replay or authority. They do not
+  depend on event encoding, and equal history still yields identical section
+  bytes. The golden fixtures hold a fresh instance's first projection, where
+  every revision is 1.
+
+The bridge keys reuse on the engine instance as well as the revision. A
+revision is meaningful only within one instance.
+
+## Side formats
+
+- **KCMD v1** (command intent): `"KCMD"`, version 1, reserved, action code u16,
+  reserved, then explicit event ID, household, actor, device, timestamp i64,
+  logical time u64, entity ID, a u32 date field (Routine key or planning
+  date), a u8 field (classification, Pulse value, cadence or mode), 3 reserved,
+  Pulse expiry i64, payload length u32 and the action payload (128-byte fixed
+  part). JS supplies identity, time and randomness; Rust chooses the event
+  schema, builds the canonical payload and validates the command. Step
+  commands carry the parent Item ID first in their payload.
+- **KCMT v1** (command result): `"KCMT"`, version 1, reserved, then event,
+  metadata and projection lengths (u32 each) and the three buffers. Execution
+  validates the history, requires a fresh event ID and a logical time above
+  history, rejects stale Routine intents and Item completions or reopenings
+  that would not change status, and returns the KINS projection of the
+  candidate history (the instance history plus the new event, which is not
+  kept).
+- **KMET v1** (92 bytes): `"KMET"`, version 1, reserved, event/household/
+  actor/device IDs, timestamp i64, logical time u64, event version u16, kind
+  u16. **KMDQ v1 / KMDL v1** batch these: `"KMDQ"`, version, reserved, count,
+  then length-prefixed events; the result is `"KMDL"` with the same prefix and
+  `count` KMET records. One invalid record rejects the batch.
+- **KIMP v1** (import plan): `"KIMP"`, version 1, reserved, event count u32,
+  next logical time u64, projection length u32, KINS projection. Duplicate
+  event IDs, including exact duplicates, fail.
+- **KARC v1** (archive container): `"KARC"`, version 1, reserved, metadata
+  length u32 (1–1 MiB), ciphertext length u32 (at least a 16-byte tag), then
+  both sections exactly; at most 160 MiB in total. Framing is not
+  authentication; the browser authenticates the package before using it.
+
+## JavaScript bridge
+
+`web/wasm/kin-engine.js` loads and checks the module, allocates and copies
+buffers, encodes KINE and KCMD, decodes KINS (`decodeProjection` in
+`projection-decode.js`, one module per section family under `projection/`) and
+converts status codes to safe messages. It never reduces events.
+The engine reuses every decoded section of the last state it produced whose
+revision is unchanged, keeping those arrays' identity. Cross-section
+references are checked again on every decode. A replay or command history may
+be a session-arena view, a `historyWith(view, extras)` source or an array of
+canonical records; the history mirror (above) brings the instance up to date
+with it before `kin_project` or `kin_execute`. `createEngine(exports)` wraps
+instantiated exports for tests, `web/wasm/abi-test-support.mjs` replays whole
+KINE requests through the raw ABI for tests, and `engine.projectionBytes(...)`
+returns exact KINS bytes for the projection-equivalence oracle.
+
+## History
+
+Protocols 1–23 were additive: v1 Items, v2 classification and archive, v3
+Handoff, v4 Talk, v5 Pulse with `as_of`, v6 catch-up summary, v7 Routines with
+a civil date, v8 distributed ordering and identity bindings, v9 Areas, v10
+Notes, v11 Steps, v12 richer cadences, v13 Shopping, v14 Staples, v15 modes,
+v16 planning dates, v17 last-changed dates, v18 Pins, v19 Playbooks, v20
+Reference Records, v21 Maintenance, v22 attachments, v23 responsibility, and
+v24 Weekdays plus next-occurrence dates. Protocol 24's layout is the
+accumulation of those sections. Refactor Slice 4 regrouped the KINS body into
+per-domain sections behind a section table with revisions. The per-version contracts are in the release
+records (for example [V0.7.0](V0.7.0.md), [V0.9.0](V0.9.0.md),
+[V0.10.0](V0.10.0.md) and `releases/`).

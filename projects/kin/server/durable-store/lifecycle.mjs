@@ -1,0 +1,229 @@
+// DurableStore household lifecycle: deletion requests, cancellation,
+// finalization and purge.
+import { DurableConflictError, DurableStoreError, isId, isTimestamp } from "./shared.mjs";
+
+export function purgeHouseholdData(database, householdId) {
+  database.prepare("UPDATE households SET owner_member_id = NULL WHERE id = ?").run(householdId);
+  database.prepare("DELETE FROM household_settings WHERE household_id = ?").run(householdId);
+  database.prepare("DELETE FROM sync_attachments WHERE household_id = ?").run(householdId);
+  database
+    .prepare("DELETE FROM provisioning_grants WHERE household_id = ?")
+    .run(householdId);
+  database
+    .prepare("DELETE FROM sync_events WHERE household_id = ?")
+    .run(householdId);
+  database
+    .prepare("DELETE FROM sync_bindings WHERE household_id = ?")
+    .run(householdId);
+  database
+    .prepare("DELETE FROM sync_device_sequences WHERE household_id = ?")
+    .run(householdId);
+  database
+    .prepare("DELETE FROM sync_households WHERE household_id = ?")
+    .run(householdId);
+  database
+    .prepare("DELETE FROM devices WHERE household_id = ?")
+    .run(householdId);
+  database
+    .prepare(
+      "DELETE FROM credentials WHERE member_id IN (SELECT id FROM members WHERE household_id = ?)",
+    )
+    .run(householdId);
+  database.prepare("DELETE FROM members WHERE household_id = ?").run(householdId);
+  database
+    .prepare("DELETE FROM security_audit WHERE household_id = ?")
+    .run(householdId);
+}
+
+export const lifecycleMethods = {
+  lifecycleInfo(householdId) {
+    this.assertAvailable();
+    const row = this.statements.getHousehold.get(householdId);
+    if (!row) return null;
+    return {
+      householdId,
+      state: row.lifecycle_state,
+      requestedAt: row.deletion_requested_at,
+      finalizeAt: row.deletion_finalize_at,
+      deletedAt: row.deleted_at,
+    };
+  },
+
+  householdPurgeStatus(householdId) {
+    this.assertAvailable();
+    if (!isId(householdId))
+      throw new DurableStoreError(
+        "A Kin household ID must be 32 lowercase hexadecimal characters.",
+      );
+    const lifecycle = this.lifecycleInfo(householdId);
+    if (!lifecycle)
+      throw new DurableStoreError("The Kin household does not exist.");
+    const count = (sql) => this.db.prepare(sql).get(householdId).count;
+    const counts = {
+      members: count(
+        "SELECT COUNT(*) AS count FROM members WHERE household_id = ?",
+      ),
+      credentials: count(
+        "SELECT COUNT(*) AS count FROM credentials WHERE member_id IN (SELECT id FROM members WHERE household_id = ?)",
+      ),
+      devices: count(
+        "SELECT COUNT(*) AS count FROM devices WHERE household_id = ?",
+      ),
+      settings: count(
+        "SELECT COUNT(*) AS count FROM household_settings WHERE household_id = ?",
+      ),
+      attachments: count(
+        "SELECT COUNT(*) AS count FROM sync_attachments WHERE household_id = ?",
+      ),
+      events: count(
+        "SELECT COUNT(*) AS count FROM sync_events WHERE household_id = ?",
+      ),
+      bindings: count(
+        "SELECT COUNT(*) AS count FROM sync_bindings WHERE household_id = ?",
+      ),
+      deviceSequences: count(
+        "SELECT COUNT(*) AS count FROM sync_device_sequences WHERE household_id = ?",
+      ),
+      syncState: count(
+        "SELECT COUNT(*) AS count FROM sync_households WHERE household_id = ?",
+      ),
+      provisioningGrants: count(
+        "SELECT COUNT(*) AS count FROM provisioning_grants WHERE household_id = ?",
+      ),
+      securityAudit: count(
+        "SELECT COUNT(*) AS count FROM security_audit WHERE household_id = ?",
+      ),
+    };
+    const ownerRecorded = this.db
+      .prepare(
+        "SELECT owner_member_id IS NOT NULL AS value FROM households WHERE id = ?",
+      )
+      .get(householdId).value === 1;
+    return {
+      ...lifecycle,
+      ownerRecorded,
+      counts,
+      purged:
+        lifecycle.state === "deleted" &&
+        !ownerRecorded &&
+        Object.values(counts).every((value) => value === 0),
+    };
+  },
+
+  forcePurgeHousehold(householdId, deletedAt) {
+    if (!isId(householdId) || !isTimestamp(deletedAt))
+      throw new DurableStoreError(
+        "Kin forced household deletion metadata is invalid.",
+      );
+    return this.transaction(() => {
+      const lifecycle = this.lifecycleInfo(householdId);
+      if (!lifecycle)
+        throw new DurableStoreError("The Kin household does not exist.");
+      if (lifecycle.state !== "deleted") {
+        purgeHouseholdData(this.db, householdId);
+        this.db
+          .prepare(
+            `UPDATE households
+             SET lifecycle_state = 'deleted',
+                 deletion_requested_at = NULL,
+                 deletion_finalize_at = NULL,
+                 deleted_at = ?
+             WHERE id = ?`,
+          )
+          .run(deletedAt, householdId);
+      }
+      const status = this.householdPurgeStatus(householdId);
+      if (!status.purged)
+        throw new DurableStoreError("Kin could not verify the household purge.");
+      return status;
+    });
+  },
+
+  requestHouseholdDeletion(householdId, requestedAt, finalizeAt) {
+    if (
+      !isId(householdId) ||
+      !isTimestamp(requestedAt) ||
+      !isTimestamp(finalizeAt) ||
+      finalizeAt <= requestedAt
+    )
+      throw new DurableStoreError("Kin household deletion metadata is invalid.");
+    const update = this.db
+      .prepare(
+        `UPDATE households
+         SET lifecycle_state = 'deletion_pending',
+             deletion_requested_at = ?,
+             deletion_finalize_at = ?
+         WHERE id = ? AND lifecycle_state = 'active'`,
+      )
+      .run(requestedAt, finalizeAt, householdId);
+    if (update.changes !== 1)
+      throw new DurableConflictError(
+        "household_lifecycle_conflict",
+        "This household is already being deleted or is no longer available.",
+      );
+    return this.lifecycleInfo(householdId);
+  },
+
+  cancelHouseholdDeletion(householdId, now) {
+    if (!isId(householdId) || !isTimestamp(now))
+      throw new DurableStoreError("Kin household deletion metadata is invalid.");
+    const update = this.db
+      .prepare(
+        `UPDATE households
+         SET lifecycle_state = 'active',
+             deletion_requested_at = NULL,
+             deletion_finalize_at = NULL
+         WHERE id = ? AND lifecycle_state = 'deletion_pending'
+           AND deletion_finalize_at > ?`,
+      )
+      .run(householdId, now);
+    if (update.changes !== 1)
+      throw new DurableConflictError(
+        "household_deletion_final",
+        "The household deletion can no longer be cancelled.",
+      );
+    return this.lifecycleInfo(householdId);
+  },
+
+  finalizeExpiredDeletions(now) {
+    if (!isTimestamp(now))
+      throw new DurableStoreError("Kin household deletion time is invalid.");
+    return this.transaction(() => {
+      const rows = this.db
+        .prepare(
+          `SELECT id FROM households
+           WHERE lifecycle_state = 'deletion_pending'
+             AND deletion_finalize_at <= ?
+           ORDER BY deletion_finalize_at, id`,
+        )
+        .all(now);
+      for (const { id: householdId } of rows) {
+        purgeHouseholdData(this.db, householdId);
+        this.db
+          .prepare(
+            `UPDATE households
+             SET lifecycle_state = 'deleted',
+                 deletion_requested_at = NULL,
+                 deletion_finalize_at = NULL,
+                 deleted_at = ?
+             WHERE id = ? AND lifecycle_state = 'deletion_pending'`,
+          )
+          .run(now, householdId);
+      }
+      return rows.map(({ id }) => id);
+    });
+  },
+
+  loadNonActiveHouseholds() {
+    this.assertAvailable();
+    return this.db
+      .prepare(
+        `SELECT id, version, lifecycle_state AS state,
+                deletion_requested_at AS requestedAt,
+                deletion_finalize_at AS finalizeAt,
+                deleted_at AS deletedAt
+         FROM households WHERE lifecycle_state <> 'active'`,
+      )
+      .all();
+  },
+};

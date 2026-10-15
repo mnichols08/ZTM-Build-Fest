@@ -23,6 +23,7 @@ import {
   createDeviceAuthorizationCertificate,
   deviceKeyFingerprint,
 } from "../web/sync/crypto.js";
+import { requestBody } from "./sync-wire-test-utils.mjs";
 
 globalThis.crypto ??= webcrypto;
 
@@ -350,13 +351,13 @@ async function startTestServer({
 }
 
 function apiRequest(server, path, { method = "GET", body, cookie } = {}) {
-  const headers = {};
-  if (body) headers["Content-Type"] = "application/json";
+  const request = requestBody(path, method, body);
+  const headers = { ...request.headers };
   if (cookie) headers.Cookie = cookie;
   return fetch(`${server.url}${path}`, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: request.body,
   });
 }
 

@@ -1,7 +1,8 @@
 //! Canonical encoding and validated metadata. Existing event bytes stay immutable.
 use crate::error::KinError;
 use crate::event::*;
-use crate::protocol::{decode_event, MAX_ITEM_TEXT_BYTES, PROTOCOL_VERSION};
+use crate::event_decode::decode_event;
+use crate::wire::MAX_ITEM_TEXT_BYTES;
 
 pub fn kind_code(kind: &EventKind) -> u16 {
     match kind {
@@ -58,8 +59,9 @@ fn push_text(payload: &mut Vec<u8>, text: &str) -> Result<(), KinError> {
     Ok(())
 }
 
-/// Encodes the supplied schema, including legacy Item schema 1. This never edits
-/// canonical source history; callers retain its original bytes when decoding.
+/// Encodes a protocol-24 canonical event (ITEM_ADDED schema 2, every other
+/// kind schema 1). This never edits canonical source history; callers retain
+/// its original bytes when decoding.
 pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
     let mut payload = Vec::new();
     match &event.kind {
@@ -68,22 +70,21 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             text,
             classification,
         } => {
-            payload.extend_from_slice(&item_id.0);
-            if event.event_version == 2 {
-                payload.extend_from_slice(&[
-                    match classification {
-                        ItemClassification::Today => 0,
-                        ItemClassification::Need => 1,
-                        ItemClassification::Shopping => 2,
-                        ItemClassification::Staple => 3,
-                    },
-                    0,
-                    0,
-                    0,
-                ]);
-            } else if event.event_version != 1 || *classification != ItemClassification::Today {
+            if event.event_version != 2 {
                 return Err(KinError::UnsupportedVersion);
             }
+            payload.extend_from_slice(&item_id.0);
+            payload.extend_from_slice(&[
+                match classification {
+                    ItemClassification::Today => 0,
+                    ItemClassification::Need => 1,
+                    ItemClassification::Shopping => 2,
+                    ItemClassification::Staple => 3,
+                },
+                0,
+                0,
+                0,
+            ]);
             push_text(&mut payload, text)?;
         }
         EventKind::ItemCompleted { item_id }
@@ -289,7 +290,7 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
     bytes.extend_from_slice(&event.logical_time.to_le_bytes());
     bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
     bytes.extend_from_slice(&payload);
-    decode_event(&bytes, PROTOCOL_VERSION)?;
+    decode_event(&bytes)?;
     Ok(bytes)
 }
 
@@ -306,7 +307,7 @@ pub struct EventMetadata {
 }
 
 pub fn metadata(bytes: &[u8]) -> Result<EventMetadata, KinError> {
-    let event = decode_event(bytes, PROTOCOL_VERSION)?;
+    let event = decode_event(bytes)?;
     Ok(EventMetadata {
         event_id: event.event_id,
         household_id: event.household_id,
@@ -337,7 +338,7 @@ pub fn encode_metadata(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
 /// A complete batch is validated before returning metadata. Each source record
 /// remains authoritative; there is no partial result for a corrupt row.
 pub fn encode_metadata_batch(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
-    use crate::protocol::{MAX_EVENT_COUNT, MAX_PROTOCOL_BYTES};
+    use crate::wire::{MAX_EVENT_COUNT, MAX_PROTOCOL_BYTES};
     if bytes.len() < 12 || bytes.len() > MAX_PROTOCOL_BYTES || &bytes[..4] != b"KMDQ" {
         return Err(KinError::MalformedProtocol);
     }

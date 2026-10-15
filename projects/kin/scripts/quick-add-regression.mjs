@@ -16,7 +16,7 @@ export async function quickAddRegressions() {
     await idle();
   };
 
-  app.navigate("#today");
+  app.ctx.navigation.navigate("#today");
   quick.trigger.focus();
   quick.trigger.click();
   check(quick.dialog.open && document.activeElement === quick.input, "opening focuses the labeled task title");
@@ -45,20 +45,20 @@ export async function quickAddRegressions() {
   quick.addButton.click();
   await idle();
   const todayItem = app.state.items.find((item) => item.text === imeText);
-  check(count(imeText) === 1 && todayItem?.planningDate === app.currentCivilDate() && !quick.dialog.open,
+  check(count(imeText) === 1 && todayItem?.planningDate === app.ctx.navigation.currentCivilDate() && !quick.dialog.open,
     "rapid mixed submission creates exactly one durable task visible on Today");
 
-  app.navigate("#lists/shopping");
+  app.ctx.navigation.navigate("#lists/shopping");
   const shoppingText = `Quick shopping ${crypto.randomUUID().slice(0, 6)}`;
   await add(shoppingText);
   check(count(shoppingText) === 1 && app.state.items.find((item) => item.text === shoppingText)?.classification === "shopping",
     "quick-add uses the current task-list destination and canonical defaults");
 
-  app.navigate("#lists/todo");
+  app.ctx.navigation.navigate("#lists/todo");
   const retryText = `Retry quick add ${crypto.randomUUID().slice(0, 6)}`;
-  const originalAppend = app.appendCommand;
+  const originalAppend = app.ctx.append.appendCommand;
   let attempts = 0;
-  app.appendCommand = async function (command) {
+  app.ctx.append.appendCommand = async function (command) {
     if (command.type === "add" && command.text === retryText && attempts++ === 0) throw new Error("forced local failure");
     return originalAppend.call(this, command);
   };
@@ -68,17 +68,17 @@ export async function quickAddRegressions() {
     `a local save failure preserves the title and permits retry (${JSON.stringify(failureState)})`);
   quick.form.requestSubmit();
   await idle();
-  app.appendCommand = originalAppend;
+  app.ctx.append.appendCommand = originalAppend;
   check(count(retryText) === 1 && !quick.dialog.open, "failed submission retries safely exactly once");
 
   // A Today capture is multi-command: the Item may be durable before its
   // planning date. Editing the title must expose the established recovery
   // choice instead of leaving Quick Add's local pending guard stuck.
-  app.navigate("#today");
+  app.ctx.navigation.navigate("#today");
   const partialA = `Partial task A ${crypto.randomUUID().slice(0, 6)}`;
   const nextB = `Next task B ${crypto.randomUUID().slice(0, 6)}`;
   let dateFailures = 1;
-  app.appendCommand = async function (command) {
+  app.ctx.append.appendCommand = async function (command) {
     if (command.type === "set-item-planning-date" && dateFailures-- > 0) throw new Error("forced date failure");
     return originalAppend.call(this, command);
   };
@@ -97,7 +97,7 @@ export async function quickAddRegressions() {
   finishPrevious.click();
   finishPrevious.click();
   await idle();
-  check(count(partialA) === 1 && app.state.items.find((item) => item.itemId === partialItem.itemId)?.planningDate === app.currentCivilDate() &&
+  check(count(partialA) === 1 && app.state.items.find((item) => item.itemId === partialItem.itemId)?.planningDate === app.ctx.navigation.currentCivilDate() &&
     app.pendingCapture == null && quick.input.value === nextB && quick.error.textContent.includes("Previous task finished"),
   "Finish previous task retries only the missing date and retains the new draft");
   quick.form.requestSubmit();
@@ -122,9 +122,9 @@ export async function quickAddRegressions() {
     "closing and reopening still resolves the app-owned partial capture before a new task");
   startNew.click();
   await idle();
-  app.appendCommand = originalAppend;
+  app.ctx.append.appendCommand = originalAppend;
   check(count(partialC) === 1 && app.state.items.find((item) => item.itemId === partialCItem.itemId)?.planningDate == null &&
-    count(nextD) === 1 && app.state.items.find((item) => item.text === nextD)?.planningDate === app.currentCivilDate() && !quick.dialog.open,
+    count(nextD) === 1 && app.state.items.find((item) => item.text === nextD)?.planningDate === app.ctx.navigation.currentCivilDate() && !quick.dialog.open,
   "Start new task explicitly retains the prior partial record and creates the new task once");
 
   return "PASS universal quick-add focus, validation, IME, duplicate guard, routing, durability, retry, and partial-capture recovery";

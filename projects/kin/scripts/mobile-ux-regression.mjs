@@ -23,7 +23,7 @@ export async function mobileUxRegressions(recovery) {
     }
     throw new Error(`mobile UX wait timed out: ${label}`);
   };
-  const visit = (id) => { location.hash = `#${id}`; app.showPageFromLocation(); };
+  const visit = (id) => { location.hash = `#${id}`; app.ctx.navigation.showPageFromLocation(); };
   const visible = (node) => Boolean(node) && !node.closest("[hidden]") && node.getClientRects().length > 0;
 
   // 1. The Today capture asks what the item is and when it matters; it never
@@ -42,7 +42,7 @@ export async function mobileUxRegressions(recovery) {
   app.compose.form.requestSubmit();
   await idle();
   const todayItem = app.state.items.find((item) => item.text === "Call the dentist");
-  check(todayItem?.classification === "need" && todayItem.planningDate === app.currentCivilDate() &&
+  check(todayItem?.classification === "need" && todayItem.planningDate === app.ctx.navigation.currentCivilDate() &&
     visible(app.today.querySelector(`.item-text[data-item-id="${todayItem.itemId}"]`)) &&
     app.needs.querySelector(`.item-text[data-item-id="${todayItem.itemId}"]`),
     "adding from Today creates a task planned for today that shows on Today and lives in To do");
@@ -159,26 +159,26 @@ export async function mobileUxRegressions(recovery) {
     "device protection and household membership are distinguished in plain language");
 
   // 5. Sync pauses, offline and attachment failures speak plainly and keep codes.
-  app.handleSyncState({ state: "paused", code: "device_not_trusted", message: "device_not_trusted" });
+  app.ctx.sync.handleSyncState({ state: "paused", code: "device_not_trusted", message: "device_not_trusted" });
   check(!app.stateNotice.hidden && app.stateNotice.textContent === "This device no longer has access to household updates. Everything already saved here stays on this device.",
     "revoked device access is explained without jargon");
-  app.handleSyncState({ state: "paused", code: "connection_unavailable", message: "fetch failed" });
+  app.ctx.sync.handleSyncState({ state: "paused", code: "connection_unavailable", message: "fetch failed" });
   check(app.stateNotice.textContent === "Your changes are saved on this device and will sync when you're connected.",
     "connection loss promises nothing beyond local saving");
-  app.handleSyncState({ state: "paused", code: "strange_code", message: "A custom server message." });
+  app.ctx.sync.handleSyncState({ state: "paused", code: "strange_code", message: "A custom server message." });
   check(app.stateNotice.textContent === "A custom server message.", "unknown pause codes keep the server message");
-  app.handleSyncState({ state: "ready" });
+  app.ctx.sync.handleSyncState({ state: "ready" });
   check(app.stateNotice.hidden, "a ready sync clears the notice");
   window.dispatchEvent(new Event("offline"));
   check(!app.stateNotice.hidden && app.stateNotice.textContent === "You're offline. Your changes are saved on this device." && !app.stateNotice.textContent.includes("sync"),
     `offline without a household does not promise sync: ${app.stateNotice.textContent}`);
   window.dispatchEvent(new Event("online"));
   check(app.stateNotice.hidden, "coming back online clears the offline notice");
-  app.clearAlert();
-  await app.handleViewAttachment({ detail: { attachmentId: "00".repeat(16), parentKind: "item", parentId: eggs.itemId } });
+  app.ctx.status.clearAlert();
+  await app.ctx.attachments.handleViewAttachment({ detail: { attachmentId: "00".repeat(16), parentKind: "item", parentId: eggs.itemId } });
   check(app.alert.textContent === "We couldn't open this attachment. Your existing household information hasn't been deleted.",
     "a missing attachment is explained without implying deletion");
-  app.clearAlert();
+  app.ctx.status.clearAlert();
 
   // 6. Security settings show passkey state and an inactivity lock preference.
   visit("household/privacy");
@@ -206,7 +206,7 @@ export async function mobileUxRegressions(recovery) {
   autoLock.value = "0";
   autoLock.dispatchEvent(new Event("change", { bubbles: true }));
   check(app.autoLockMinutes === 0 && app.autoLockTimer === null, "turning the inactivity lock off clears the timer");
-  app.setAutoLockMinutes(5);
+  app.ctx.session.setAutoLockMinutes(5);
   const storageDump = [...Object.keys(localStorage), ...Object.keys(sessionStorage)]
     .map((key) => `${key}=${localStorage.getItem(key) ?? sessionStorage.getItem(key)}`).join("\n");
   check(!/[a-f0-9]{64}/i.test(storageDump) && !storageDump.includes(recovery), "no recovery or key material reaches web storage");
@@ -241,7 +241,7 @@ export async function mobileUxRegressions(recovery) {
   visit("today");
   check(app.vault && !app.vault.locked && app.state !== null, "recovery unlock restores the household state after background lock");
   check(app.onboarding.hidden === false, "Get started returns after unlocking a device without a household");
-  app.setAutoLockMinutes(0);
+  app.ctx.session.setAutoLockMinutes(0);
   return "PASS Today/Lists capture defaults, list quick-add, item Details disclosure, get-started choices, plain-language state messages, security settings and lock screen";
 }
 

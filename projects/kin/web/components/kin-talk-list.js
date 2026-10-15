@@ -57,6 +57,7 @@ class KinTalkList extends HTMLElement {
   }
 
   set talks(value) {
+    if (value === this.records) return; // unchanged projection section
     this.records = value;
     this.render();
   }

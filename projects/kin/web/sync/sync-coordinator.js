@@ -1,3 +1,4 @@
+import { decodeEventPage, encodeEnvelopeBatch, ENVELOPE_CONTENT_TYPE } from "./envelope-wire.js";
 import {
   createHouseholdEpochKey,
   createProvisionedHouseholdEpoch,
@@ -85,12 +86,19 @@ export function portableMembershipFromDirectory(entries) {
       ...(expiresAt === undefined ? {} : { expiresAt }),
     };
     const prior = members.get(record.memberId);
-    if (prior && JSON.stringify(prior) !== JSON.stringify(record))
+    if (prior && !sameMembershipRecord(prior, record))
       throw new Error("Kin found conflicting membership records during export.");
     members.set(record.memberId, record);
   }
   return [...members.values()].sort((left, right) =>
     left.memberId < right.memberId ? -1 : left.memberId > right.memberId ? 1 : 0);
+}
+
+// Two portable membership records agree when every field does. Compared
+// field by field: a JSON string comparison also depends on key order.
+function sameMembershipRecord(left, right) {
+  return left.memberId === right.memberId && left.memberKind === right.memberKind &&
+    left.status === right.status && left.expiresAt === right.expiresAt;
 }
 
 const MAX_PUSH_BATCH = 20;
@@ -345,9 +353,10 @@ export class SyncCoordinator {
     let hasMore = true;
     while (hasMore && passes < MAX_PULL_PASSES) {
       const syncStateBefore = await this.store.getSyncState();
-      const page = await this.request(
+      const page = decodeEventPage(await this.request(
         `/api/sync/events?cursor=${encodeURIComponent(syncStateBefore.syncCursor)}&limit=${MAX_PUSH_BATCH}`,
-      );
+        { binary: true },
+      ));
       const verified = [];
       for (const item of page.events) {
         const envelope = item.envelope;
@@ -847,7 +856,8 @@ export class SyncCoordinator {
       }
       const acknowledgement = await this.request("/api/sync/events", {
         method: "POST",
-        body: JSON.stringify({ events: envelopes }),
+        body: encodeEnvelopeBatch(envelopes),
+        headers: { "Content-Type": ENVELOPE_CONTENT_TYPE },
       });
       for (const envelope of envelopes)
         await this.store.markOutboxAccepted(
@@ -987,7 +997,9 @@ function sameLegacyTuple(binding, identity) {
   );
 }
 
-async function api(path, options = {}) {
+// `binary: true` returns a successful response's body as bytes (the event
+// pages of envelope-wire.js); errors are JSON either way.
+async function api(path, { binary = false, ...options } = {}) {
   let response;
   try {
     response = await fetch(path, {
@@ -999,6 +1011,7 @@ async function api(path, options = {}) {
     error.code = "connection_unavailable";
     throw error;
   }
+  if (binary && response.ok) return new Uint8Array(await response.arrayBuffer());
   const value = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(

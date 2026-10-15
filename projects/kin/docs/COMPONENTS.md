@@ -2,6 +2,121 @@
 
 **Status:** Current through v0.25.0 Search & Filters; earlier version sections are historical contracts.
 
+## `<kin-app>` structure (refactor track)
+
+`web/components/kin-app.js` is a small element: lifecycle callbacks and three
+symmetric listener tables (element, document, window). Its behavior lives in plain controller
+classes under `web/components/app/`, each constructed with one explicit
+context object from `app/context.js`:
+
+| Context key | Module | Responsibility |
+| --- | --- | --- |
+| `session` | `session.js` | unlock, open, lock, auto-lock; the session guard |
+| `sync` | `sync.js` | sync coordinator, authorization checks, sync chip |
+| `peers` | `peer-channel.js` | content-free BroadcastChannel invalidation |
+| `refresh` | `refresh.js` | projection refresh, catch-up, timed refresh |
+| `append` | `commands/append.js` | the single command append path |
+| `items`, `bulk`, `conversations`, `routines`, `records` | `commands/*.js` | household commands by domain |
+| `attachments` | `attachments.js` | capture, viewer, previews, the one file input |
+| `navigation`, `detail` | `navigation.js`, `detail.js` | routes, shortcuts, the item-detail view |
+| `appearance` | `appearance.js` | personal and household appearance |
+| `status`, `render` | `status.js`, `render.js` | busy/status/alerts, onboarding, update notice; rendering |
+| `shell`, `views` | `shell.js`, `views.js` | building the persistent shell and pages |
+
+The element keeps the state and DOM references (`app.store`, `app.state`,
+`app.today`, …). `initializeAppState(app)` sets them and the bound handler
+properties; controllers read and write them through `this.app`. There are no
+mixins or prototype patches: a controller reaches another only as
+`this.ctx.<key>`.
+
+**The test hook (Slice 8).** The element exposes no methods for scripts.
+Regression scripts use the controller context: `app.ctx.<key>.<method>`
+(for example `app.ctx.append.appendCommand(...)` or
+`app.ctx.navigation.navigate("#today")`). A script that replaces
+`app.ctx.<key>.<method>` intercepts every call, because every caller goes
+through `ctx`. Restore the original afterwards. The context table above maps
+each controller key to its module. `<kin-security>` is application code, not
+a test, so it does not use the hook: `shell.js` gives it a
+`security.services` object with the six operations it needs (refresh after a
+restore, clear reminders, tell peers, lock, set the auto-lock delay).
+
+Shared component helpers live in `web/components/shared/`: `dom.js`
+(`button`, `text`, `section`, `message`, `field`), `icons.js`, `focus.js`
+(`captureFocus` / `restoreFocus`), `props.js` (`defineProps`: generated
+setters with microtask-coalesced rendering, identity skipping and
+`flushRender`), `operation.js` (`OperationGuard`, the guarded single-operation
+runner used by `<kin-household>` and `<kin-security>`) and `session-guard.js`.
+
+### Large components: element shell plus parts (refactor track, Slice 5)
+
+`<kin-household>`, `<kin-security>` and `<kin-today>` follow the same shape
+as `<kin-app>`. The element file keeps its lifecycle, its state, a few small
+UI helpers, and a one-line stub for every method called from outside it
+(regression scripts, `<kin-app>` controllers, unit tests). Everything else
+lives in part classes in a folder named after the element:
+
+| Element | Parts |
+| --- | --- |
+| `<kin-household>` | `household/`: `api.js` (connection, requests, sync status), `auth.js` (passkey registration and login, WebAuthn helpers), `pairing.js`, `membership.js` (devices, members, invitations), `lifecycle.js` (deletion, leaving), `views.js` |
+| `<kin-security>` | `security/`: `views.js`, `protection.js` (setup, replacement, passkeys), `unlock.js`, `archive.js` (export and restore, with a labelled `<progress>` bar under the status message while one runs) |
+| `<kin-today>` | `today/`: `sections.js` (the Today composition), `selection.js` (bulk selection), `focus.js` (keeping focus across re-renders) |
+| `<kin-item-detail>` | `item-detail/`: `sections.js` (checklist, files, planning, responsibility, Area, reminder, pin, archive) |
+| `<kin-notes>` | `notes/`: `notes.js` (the Note form and list), `references.js` (reference records and their maintenance log) |
+
+The element builds its parts once, in its constructor, from a `PARTS` table,
+with one shared context `{ host, ...parts }`. A part reaches the element as
+`this.host` and the other parts as `this.ctx.<part>`. A part never holds state
+of its own: fields stay on the element, so the lifecycle callbacks and the
+lock path see all of it in one place.
+
+`<kin-playbook-editor>` (the reusable-checklist form with its validation) and
+`<kin-routine-schedule>` (one Routine's schedule disclosure) are small
+elements inside `<kin-routines>`. Each dispatches its household command
+(`kin:save-playbook`, `kin:change-routine-schedule`) itself and reports
+cancel, toggle and draft changes to `<kin-routines>` as non-bubbling events,
+so which schedule is open and its unsaved choice survive re-renders.
+`<kin-routines>` keeps the editor's controls under their older field names
+(`playbookTitle`, `playbookEntries`, …) for the regression scripts. Both
+elements keep their own disabled state, because a schedule's Change button
+also depends on whether the choice differs.
+
+`<kin-item-detail>` takes its inputs through `defineProps` too. Methods that
+change what it shows without changing an input (`setFeedback`,
+`clearFeedback`) schedule a render themselves, so the next `update()` shows
+them even when every input is unchanged. A component that builds its DOM in
+`setup()` must not name a field after a built-in `HTMLElement` property such
+as `title`.
+
+`<kin-bulk-bar>` (`kin-bulk-bar.js`) is the To do and Shopping bulk bar. It
+owns its controls, text, visibility and focus handoff, and it reports button
+presses to its list as a non-bubbling `bulk-bar-action` event. The list keeps
+the selection and sends the `kin:bulk-*` commands, so `<kin-app>` sees the
+same events as before. Its controls stay reachable as `list.bulkBar.undo`,
+`.toolbar` and so on.
+
+### Incremental rendering (refactor track, Slice 4)
+
+The engine reuses every decoded projection section whose revision did not
+change ([ABI](ABI.md#section-revisions)), so an unchanged section reaches the
+views as the same array. Views skip work by identity: each data setter of
+`<kin-today>`, `<kin-routines>`, `<kin-notes>`, `<kin-areas>`,
+`<kin-handoff-list>`, `<kin-talk-list>`, `<kin-catch-up>`, `<kin-pulse>` and
+`<kin-search>` compares the incoming value with the one it holds and renders
+only when it differs. `<kin-today>` gets this from `defineProps`: a setter
+schedules one microtask render, and `update(props)` assigns several inputs
+and renders at once if any changed. Otherwise it only applies a focus that a
+command remembered for the render. The comparison is with the component's current value, not with what
+`renderState()` last passed, so a value assigned from elsewhere is still
+replaced by the next render. `responsibilityContext()` returns the same object
+while its inputs are unchanged. Decoded state is never mutated, because reused
+arrays are shared between states.
+
+`refreshFromEvents()` takes one focus snapshot (`captureFocus`) before busy
+disables the focused control, recording which list or composer owns it. After
+the refresh it restores focus to the same control if it survived. Otherwise
+the owning list or the routines view restores the equivalent control through
+its own `restoreFocus`, and a composer puts focus back in its input.
+
 ## Household workspace candidate (unversioned)
 
 The desktop-first workspace revision keeps every boundary below and changes

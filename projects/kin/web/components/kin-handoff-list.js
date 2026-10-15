@@ -57,6 +57,7 @@ class KinHandoffList extends HTMLElement {
   }
 
   set handoffs(value) {
+    if (value === this.records) return; // unchanged projection section
     this.records = value;
     this.render();
   }

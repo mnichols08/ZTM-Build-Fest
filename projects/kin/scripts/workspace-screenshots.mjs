@@ -76,7 +76,7 @@ const shot = async (name) => {
 };
 const viewport = (width, height, mobile) => client.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
 const scheme = (value) => client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value }] });
-const visit = async (hash) => { await client.evaluate(`document.querySelector('kin-app').navigate(${JSON.stringify(hash)})`); await delay(60); };
+const visit = async (hash) => { await client.evaluate(`document.querySelector('kin-app').ctx.navigation.navigate(${JSON.stringify(hash)})`); await delay(60); };
 
 try {
   const port = await until(async () => { try { return (await readFile(join(profile, "DevToolsActivePort"), "utf8")).split("\n")[0]; } catch { return false; } });
@@ -99,8 +99,8 @@ try {
   await client.evaluate(`(async () => {
     const app = document.querySelector("kin-app");
     const idle = async () => { for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh) && i < 400; i++) await new Promise((r) => setTimeout(r, 10)); };
-    const add = async (command) => { await app.appendCommand(command); await idle(); return app.state.items.at(-1); };
-    const today = app.currentCivilDate();
+    const add = async (command) => { await app.ctx.append.appendCommand(command); await idle(); return app.state.items.at(-1); };
+    const today = app.ctx.navigation.currentCivilDate();
     const yesterday = (() => { const d = new Date(); d.setDate(d.getDate() - 3); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); })();
     const tomorrow = (() => { const d = new Date(); d.setDate(d.getDate() + 1); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); })();
     const dentist = await add({ type: "add", text: "Call the dentist about Sam's retainer appointment and ask whether the Thursday slot is still open", classification: "need" });
@@ -121,12 +121,12 @@ try {
     const done = await add({ type: "add", text: "Water the plants", classification: "need" });
     await add({ type: "set-item-planning-date", itemId: done.itemId, planningDate: today });
     await add({ type: "complete", itemId: done.itemId });
-    await app.appendCommand({ type: "create-routine", text: "Take the recycling out", cadence: "weekly", createdOn: today }); await idle();
-    await app.appendCommand({ type: "create-routine", text: "Wipe the counters", cadence: "daily", createdOn: today }); await idle();
-    await app.appendCommand({ type: "add-handoff", text: "Pickup is 3:10 Thursday. Spare key is in the blue bowl." }); await idle();
-    await app.appendCommand({ type: "add-talk", text: "Holiday plans for December" }); await idle();
-    await app.appendCommand({ type: "create-note", noteId: crypto.randomUUID().replaceAll("-", ""), id: undefined, title: "Wi-Fi", body: "Network: Kinhouse\\nPassword is in the kitchen drawer", areaId: null }).catch(() => {}); await idle();
-    app.renderState();
+    await app.ctx.append.appendCommand({ type: "create-routine", text: "Take the recycling out", cadence: "weekly", createdOn: today }); await idle();
+    await app.ctx.append.appendCommand({ type: "create-routine", text: "Wipe the counters", cadence: "daily", createdOn: today }); await idle();
+    await app.ctx.append.appendCommand({ type: "add-handoff", text: "Pickup is 3:10 Thursday. Spare key is in the blue bowl." }); await idle();
+    await app.ctx.append.appendCommand({ type: "add-talk", text: "Holiday plans for December" }); await idle();
+    await app.ctx.append.appendCommand({ type: "create-note", noteId: crypto.randomUUID().replaceAll("-", ""), id: undefined, title: "Wi-Fi", body: "Network: Kinhouse\\nPassword is in the kitchen drawer", areaId: null }).catch(() => {}); await idle();
+    app.ctx.render.renderState();
     window.__kinSeed = { dentist: dentist.itemId, eggs: eggs.itemId, trip: trip.itemId, eggs2: eggs2.itemId };
   })()`);
   await visit("#today");
@@ -139,10 +139,10 @@ try {
     if (mode === "dark") continue;
     await visit("#lists/shopping");
     await shot("1440-shopping");
-    await client.evaluate(`document.querySelector('kin-app').openItemDetail(window.__kinSeed.trip)`);
+    await client.evaluate(`document.querySelector('kin-app').ctx.detail.openItemDetail(window.__kinSeed.trip)`);
     await delay(80);
     await visit("#lists/todo");
-    await client.evaluate(`document.querySelector('kin-app').openItemDetail(window.__kinSeed.trip)`);
+    await client.evaluate(`document.querySelector('kin-app').ctx.detail.openItemDetail(window.__kinSeed.trip)`);
     await delay(80);
     await shot("1440-todo-detail-open");
     await viewport(1920, 1080, false);
@@ -154,13 +154,13 @@ try {
     await viewport(390, 844, true);
     await delay(80);
     await shot("390-todo-detail-sheet");
-    await client.evaluate(`document.querySelector('kin-app').closeItemDetail({ restoreFocus: false })`);
+    await client.evaluate(`document.querySelector('kin-app').ctx.detail.closeItemDetail({ restoreFocus: false })`);
     await visit("#today");
     await shot("390-today");
-    await client.evaluate(`document.querySelector('kin-app').openItemDetail(window.__kinSeed.dentist)`);
+    await client.evaluate(`document.querySelector('kin-app').ctx.detail.openItemDetail(window.__kinSeed.dentist)`);
     await delay(80);
     await shot("390-today-item-sheet");
-    await client.evaluate(`document.querySelector('kin-app').closeItemDetail({ restoreFocus: false })`);
+    await client.evaluate(`document.querySelector('kin-app').ctx.detail.closeItemDetail({ restoreFocus: false })`);
     await viewport(360, 780, true);
     await shot("360-today");
     await visit("#lists/shopping");
@@ -194,7 +194,7 @@ try {
     await shot("1440-today-failed-save");
     await viewport(390, 844, true);
     await shot("390-today-failed-save");
-    await client.evaluate(`(() => { const app = document.querySelector("kin-app"); app.clearAlert(); app.compose.clearResult(); app.compose.input.value = ""; window.dispatchEvent(new Event("offline")); })()`);
+    await client.evaluate(`(() => { const app = document.querySelector("kin-app"); app.ctx.status.clearAlert(); app.compose.clearResult(); app.compose.input.value = ""; window.dispatchEvent(new Event("offline")); })()`);
     await shot("390-today-offline");
     await client.evaluate(`window.dispatchEvent(new Event("online"))`);
     await viewport(1440, 960, false);
@@ -228,7 +228,7 @@ try {
   await shot("appearance-390-manual-override-background");
   await client.evaluate(`(() => { const a=document.querySelector('kin-app').appearance; a.hex.value='#12';a.hex.dispatchEvent(new Event('input')); })()`);
   await shot("appearance-390-invalid-color");
-  await client.evaluate(`document.querySelector('kin-app').lockHousehold(false)`);
+  await client.evaluate(`document.querySelector('kin-app').ctx.session.lockHousehold(false)`);
   await delay(80);
   await shot("appearance-390-locked-cleared");
   await scheme("light");

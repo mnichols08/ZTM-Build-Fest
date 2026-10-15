@@ -24,7 +24,7 @@ export async function shoppingRegressions() {
   // Earlier suites leave other Shopping items behind; address rows by id.
   const rowFor = (list, itemId) => [...list.querySelectorAll("kin-item")].find((node) => node.record?.itemId === itemId) ?? null;
   // One list is shown at a time, so focus assertions need that list's route.
-  app.navigate("#lists/shopping");
+  app.ctx.navigation.navigate("#lists/shopping");
   app.compose.input.value = "Shopping regression item";
   app.compose.classification.value = "shopping";
   app.compose.plan.value = "none";
@@ -63,7 +63,7 @@ export async function shoppingRegressions() {
       "active",
     "Shopping item can be reopened",
   );
-  app.openItemDetail(item.itemId);
+  app.ctx.detail.openItemDetail(item.itemId);
   check(app.selection?.itemId === item.itemId && app.detail.querySelector(".archive-button"), "details expose Archive for the open item");
   app.detail.querySelector(".archive-button").click();
   await idle();
@@ -74,9 +74,9 @@ export async function shoppingRegressions() {
     "Archived Shopping item is retained but hidden",
   );
   check(app.detail.textContent.includes("archived") && !app.detail.querySelector(".archive-button"), "details explain an archived record instead of offering stale actions");
-  app.closeItemDetail({ restoreFocus: false });
+  app.ctx.detail.closeItemDetail({ restoreFocus: false });
 
-  app.navigate("#lists/staples");
+  app.ctx.navigation.navigate("#lists/staples");
   app.staples.composer.input.value = "Laundry detergent";
   app.staples.composer.form.requestSubmit();
   await idle();
@@ -146,10 +146,10 @@ export async function shoppingRegressions() {
     "Staples focus returns to Add to Shopping after persistence",
   );
 
-  app.openItemDetail(staple.itemId);
+  app.ctx.detail.openItemDetail(staple.itemId);
   app.detail.querySelector(".archive-button").click();
   await idle();
-  app.closeItemDetail({ restoreFocus: false });
+  app.ctx.detail.closeItemDetail({ restoreFocus: false });
   staple = app.state.items.find((record) => record.itemId === staple.itemId);
   check(
     staple.status === "archived" &&

@@ -42,14 +42,28 @@ fn note_lifecycle_preserves_identity_provenance_and_terminal_archive() {
         ),
         event(3, EventKind::NoteArchived { note_id: note }),
     ];
-    let projection = state::rebuild_at(&history, 0).unwrap();
+    let projection = state::rebuild(
+        &history,
+        0,
+        crate::recurrence::CivilDate::from_encoded(20261003).unwrap(),
+    )
+    .unwrap();
     assert_eq!(projection.notes.len(), 1);
     assert_eq!(projection.notes[0].note_id, note);
     assert_eq!(projection.notes[0].title, "Wi-Fi");
     assert_eq!(projection.notes[0].created_by, ActorId(id(1)));
     assert_eq!(projection.notes[0].updated_by, ActorId(id(2)));
     assert_eq!(projection.notes[0].status, NoteStatus::Archived);
-    assert_eq!(state::rebuild_at(&[], 0).unwrap().notes, Vec::new());
+    assert_eq!(
+        state::rebuild(
+            &[],
+            0,
+            crate::recurrence::CivilDate::from_encoded(20261003).unwrap()
+        )
+        .unwrap()
+        .notes,
+        Vec::new()
+    );
 }
 
 #[test]
@@ -80,8 +94,18 @@ fn note_validation_and_unknown_or_archived_lifecycle_fail_closed() {
             },
         ),
     ];
-    assert!(state::rebuild_at(&history, 0).is_err());
-    assert!(state::rebuild_at(&[event(1, EventKind::NoteArchived { note_id: note })], 0).is_err());
+    assert!(state::rebuild(
+        &history,
+        0,
+        crate::recurrence::CivilDate::from_encoded(20261003).unwrap()
+    )
+    .is_err());
+    assert!(state::rebuild(
+        &[event(1, EventKind::NoteArchived { note_id: note })],
+        0,
+        crate::recurrence::CivilDate::from_encoded(20261003).unwrap()
+    )
+    .is_err());
 }
 
 #[test]
@@ -112,7 +136,7 @@ fn concurrent_note_update_and_archive_converge_with_archive_winning_in_both_devi
         let mut archived = event(3, EventKind::NoteArchived { note_id });
         archived.logical_time = 2;
         archived.device_id = DeviceId(id(archive_device));
-        state::rebuild_distributed_on(
+        state::rebuild(
             &[created, updated, archived],
             0,
             crate::recurrence::CivilDate::from_encoded(20261005).unwrap(),
@@ -155,7 +179,7 @@ fn concurrent_note_archives_converge_but_sequential_rearchives_are_rejected() {
         } else {
             vec![created, first_archive, second_archive]
         };
-        state::rebuild_distributed_on(
+        state::rebuild(
             &history,
             0,
             crate::recurrence::CivilDate::from_encoded(20261005).unwrap(),
@@ -186,7 +210,7 @@ fn concurrent_note_archives_converge_but_sequential_rearchives_are_rejected() {
     let mut later_archive = event(3, EventKind::NoteArchived { note_id });
     later_archive.logical_time = 3;
     later_archive.device_id = DeviceId(id(20));
-    assert!(state::rebuild_distributed_on(
+    assert!(state::rebuild(
         &[created.clone(), archived.clone(), later_archive],
         0,
         crate::recurrence::CivilDate::from_encoded(20261005).unwrap(),
@@ -197,7 +221,7 @@ fn concurrent_note_archives_converge_but_sequential_rearchives_are_rejected() {
     let mut same_device_archive = event(3, EventKind::NoteArchived { note_id });
     same_device_archive.logical_time = 2;
     same_device_archive.device_id = DeviceId(id(10));
-    assert!(state::rebuild_distributed_on(
+    assert!(state::rebuild(
         &[created, archived, same_device_archive],
         0,
         crate::recurrence::CivilDate::from_encoded(20261005).unwrap(),
@@ -206,7 +230,7 @@ fn concurrent_note_archives_converge_but_sequential_rearchives_are_rejected() {
 }
 
 #[test]
-fn note_event_roundtrip_is_additive_to_protocol_ten() {
+fn note_event_roundtrips_through_the_codec() {
     let source = event(
         1,
         EventKind::NoteCreated {
@@ -218,12 +242,9 @@ fn note_event_roundtrip_is_additive_to_protocol_ten() {
     );
     let bytes = crate::codec::encode_event(&source).unwrap();
     assert_eq!(
-        crate::protocol::decode_event(&bytes, crate::protocol::PROTOCOL_V10)
-            .unwrap()
-            .kind,
+        crate::event_decode::decode_event(&bytes).unwrap().kind,
         source.kind
     );
-    assert!(crate::protocol::decode_event(&bytes, crate::protocol::PROTOCOL_V9).is_err());
 }
 
 #[test]
@@ -258,7 +279,12 @@ fn note_area_links_require_known_active_areas_and_survive_archive() {
             },
         ),
     ];
-    let projection = state::rebuild_at(&history, 0).unwrap();
+    let projection = state::rebuild(
+        &history,
+        0,
+        crate::recurrence::CivilDate::from_encoded(20261003).unwrap(),
+    )
+    .unwrap();
     assert_eq!(projection.notes[0].area_id, Some(area_id));
     assert!(projection.areas[0].archived);
 
@@ -271,7 +297,12 @@ fn note_area_links_require_known_active_areas_and_survive_archive() {
             area_id: Some(area_id),
         },
     )];
-    assert!(state::rebuild_at(&missing, 0).is_err());
+    assert!(state::rebuild(
+        &missing,
+        0,
+        crate::recurrence::CivilDate::from_encoded(20261003).unwrap()
+    )
+    .is_err());
     let archived_first = vec![
         event(
             1,
@@ -291,17 +322,21 @@ fn note_area_links_require_known_active_areas_and_survive_archive() {
             },
         ),
     ];
-    assert!(state::rebuild_at(&archived_first, 0).is_err());
+    assert!(state::rebuild(
+        &archived_first,
+        0,
+        crate::recurrence::CivilDate::from_encoded(20261003).unwrap()
+    )
+    .is_err());
 }
 
 #[test]
 fn note_command_projects_only_valid_commands_without_mutating_input_history() {
-    let request = crate::protocol::DecodedRequest {
-        protocol_version: crate::protocol::PROTOCOL_V10,
+    let request = crate::request::DecodedRequest {
         events: Vec::new(),
-        as_of: Some(0),
+        as_of: 0,
         summary_cursor: None,
-        civil_date: Some(crate::recurrence::CivilDate::from_encoded(20261005).unwrap()),
+        civil_date: crate::recurrence::CivilDate::from_encoded(20261005).unwrap(),
         target_household_id: None,
         identity_bindings: Vec::new(),
     };

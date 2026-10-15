@@ -1,49 +1,29 @@
-const PROTOCOL_VERSION = 24;
+import {
+  asBytes,
+  assertCivilDate,
+  assertTimestamp,
+  idToHex,
+  KinEngineError,
+  MAX_EVENT_COUNT,
+  MAX_ITEM_TEXT_BYTES,
+  MAX_PROTOCOL_BYTES,
+  MAX_STEP_TEXT_BYTES,
+  MAX_STEP_TEXT_CHARS,
+  PROTOCOL_VERSION,
+  PULSE_VALUES,
+  readAscii,
+  ROUTINE_CADENCES,
+  strictTextDecoder,
+} from "./wire.js";
+import { decodeAttachmentBindings, decodeProjection } from "./projection-decode.js";
+import { HistoryMirror } from "./history-mirror.js";
+
+export { idToHex, KinEngineError };
+
 const REQUEST_HEADER_BYTES = 64;
-const MAX_TIMESTAMP = 8_640_000_000_000_000;
-const PULSE_VALUES = ["good", "okay", "drained", "rough-day", "need-quiet"];
-const RESULT_HEADER_BYTES = 12;
-const ITEM_HEADER_BYTES = 48;
-const MAX_EVENT_COUNT = 10_000;
-const MAX_PROTOCOL_BYTES = 64 * 1024 * 1024;
 export const MAX_ARCHIVE_BYTES = 160 * 1024 * 1024;
 export const MAX_LOGICAL_TIME = 9_007_199_254_740_991n;
-const MAX_ITEM_TEXT_BYTES = 4096;
-const MAX_STEP_TEXT_BYTES = 256;
-const MAX_STEP_TEXT_CHARS = 80;
-const MAX_STEPS_PER_ITEM = 16;
-const MAX_SUMMARY_ENTRIES = 8;
-const SUMMARY_KINDS = [
-  "",
-  "item-added",
-  "item-completed",
-  "item-reopened",
-  "item-archived",
-  "handoff-added",
-  "handoff-acknowledged",
-  "handoff-archived",
-  "talk-added",
-  "talk-resolved",
-  "talk-reopened",
-  "talk-archived",
-  "routine-created",
-  "routine-occurrence-completed",
-  "routine-occurrence-reopened",
-  "routine-archived",
-];
 const textEncoder = new TextEncoder();
-const strictTextDecoder = new TextDecoder("utf-8", {
-  fatal: true,
-  ignoreBOM: true,
-});
-
-export class KinEngineError extends Error {
-  constructor(code, message) {
-    super(message);
-    this.name = "KinEngineError";
-    this.code = code;
-  }
-}
 
 const USER_MESSAGES = new Map([
   [1, "Kin could not safely access its household engine. Try again."],
@@ -69,6 +49,12 @@ const USER_MESSAGES = new Map([
   ],
 ]);
 
+// The exports of the most recently created engine. The module-level
+// eventMetadata()/eventMetadataBatch() below use it, for callers that have no
+// engine object at hand (snapshot helpers in storage). An EventStore passes
+// its own engine instead (event-store.js appendRows). Disposing the engine
+// that is current clears it, and those helpers then throw until another
+// engine is created; avoid making short-lived engines while a store is open.
 let sharedCodec = null;
 
 export async function loadKinEngine(
@@ -83,16 +69,25 @@ export async function loadKinEngine(
   }
   const bytes = await response.arrayBuffer();
   const { instance } = await WebAssembly.instantiate(bytes, {});
-  let exports = instance.exports;
+  return createEngine(instance.exports);
+}
+
+/** Wraps instantiated engine exports in the host API. Exposed separately so
+ * Node tests can exercise ABI ownership against a substitute export table. */
+export function createEngine(instanceExports) {
+  let exports = instanceExports;
   const requiredExports = [
     "memory",
     "kin_alloc",
     "kin_free",
-    "kin_apply_events",
+    "kin_history_reset",
+    "kin_history_append",
+    "kin_history_truncate",
+    "kin_project",
     "kin_event_metadata",
     "kin_event_metadata_batch",
     "kin_encode_command",
-    "kin_execute_command",
+    "kin_execute",
     "kin_encode_archive",
     "kin_decode_archive",
     "kin_archive_header",
@@ -112,12 +107,30 @@ export async function loadKinEngine(
   }
 
   sharedCodec = exports;
+  // The last state this engine decoded from a stamped projection. Each new
+  // replay or command reuses its unchanged sections (projection-decode.js),
+  // so states share those arrays; decoded states are never mutated.
+  // applyEvents and executeCommand advance it. planImport (unstamped, always
+  // decoded in full) and projectionBytes (no decode) do not; skipping an
+  // update is always safe, it only means less reuse next time. A decode that
+  // throws leaves the previous state in place for the same reason.
+  let lastState = null;
+  const decoded = (state) => (lastState = state);
+  // What the instance's own history holds; replays and commands bring it up
+  // to date with only the records that changed (history-mirror.js).
+  const mirror = new HistoryMirror(
+    exports,
+    (batch) => callCore(exports, "kin_history_append", batch, { statusOnly: true }),
+    asBytes,
+  );
   return {
     dispose() {
       if (exports) {
         exports.kin_clear();
+        mirror.forget();
         if (sharedCodec === exports) sharedCodec = null;
         exports = null;
+        lastState = null;
       }
     },
     eventMetadata: (bytes) =>
@@ -131,9 +144,10 @@ export async function loadKinEngine(
       cursorEventId = null,
       civilDate,
       syncIdentity = null,
-    ) =>
-      executeCommand(
+    ) => {
+      const result = executeCommand(
         exports,
+        mirror,
         command,
         identity,
         records,
@@ -141,10 +155,21 @@ export async function loadKinEngine(
         cursorEventId,
         civilDate,
         syncIdentity,
-      ),
+        lastState,
+      );
+      decoded(result.state);
+      return result;
+    },
     encodeArchive: (metadata, ciphertext) =>
       encodeArchive(exports, metadata, ciphertext),
     decodeArchive: (bytes) => decodeArchive(exports, bytes),
+    archiveHeader: (metadataLength, ciphertextLength) =>
+      archiveHeader(exports, metadataLength, ciphertextLength),
+    archiveLayout: (bytes) => archiveLayout(exports, bytes),
+    // The import plan of `records` (a history view or an array), replayed
+    // from the instance's history like applyEvents. An archive's history is
+    // a different arena, so the instance is reset to it; the next replay of
+    // the session's own history resets it back.
     planImport: (
       records,
       asOf,
@@ -154,11 +179,31 @@ export async function loadKinEngine(
     ) =>
       planImport(
         exports,
+        mirror,
         records,
         asOf,
         cursorEventId,
         civilDate,
         syncIdentity,
+      ),
+    // The same plan with only its attachment bindings decoded
+    // ({ eventCount, nextLogicalTime, attachments }), for archive checks.
+    importBindings: (
+      records,
+      asOf,
+      cursorEventId = null,
+      civilDate,
+      syncIdentity = null,
+    ) =>
+      planImport(
+        exports,
+        mirror,
+        records,
+        asOf,
+        cursorEventId,
+        civilDate,
+        syncIdentity,
+        true,
       ),
     applyEvents: (
       records,
@@ -167,14 +212,30 @@ export async function loadKinEngine(
       civilDate,
       syncIdentity = null,
     ) =>
-      applyEvents(
+      decoded(applyEvents(
         exports,
+        mirror,
         records,
         asOf,
         cursorEventId,
         civilDate,
         syncIdentity,
-      ),
+        lastState,
+      )),
+    // The exact protocol-24 projection bytes, for equivalence checks that must
+    // compare encodings rather than decoded objects. The section revisions in
+    // these bytes depend on this engine's earlier calls, so two calls compare
+    // equal only with nothing changed in between. This call moves Rust's
+    // comparison basis but not `lastState`; the next decode stays correct
+    // because a changed section always gets a new revision.
+    projectionBytes: (
+      records,
+      asOf,
+      cursorEventId = null,
+      civilDate,
+      syncIdentity = null,
+    ) =>
+      replayBytes(exports, mirror, records, asOf, cursorEventId, civilDate, syncIdentity),
   };
 }
 
@@ -182,50 +243,6 @@ export function randomId() {
   const id = new Uint8Array(16);
   crypto.getRandomValues(id);
   return id;
-}
-
-// Wire validation only. Rust owns recurrence and current-period selection.
-function assertCivilDate(value) {
-  if (!isCivilDate(value)) {
-    throw new KinEngineError(2, "Kin requires a valid civil date.");
-  }
-}
-
-function isCivilDate(value) {
-  const year = Math.floor(value / 10000);
-  const month = Math.floor(value / 100) % 100;
-  const day = value % 100;
-  const date = new Date(0);
-  date.setUTCFullYear(year, month - 1, day);
-  return !(
-    !Number.isInteger(value) ||
-    year < 1 ||
-    year > 9999 ||
-    date.getUTCFullYear() !== year ||
-    date.getUTCMonth() !== month - 1 ||
-    date.getUTCDate() !== day
-  );
-}
-
-// Wire cadence codes, in Rust's `Cadence` order. Weekdays needs protocol 24.
-const ROUTINE_CADENCES = Object.freeze(["daily", "weekly", "biweekly", "monthly", "weekdays"]);
-
-function civilOrdinal(value) {
-  const year = Math.floor(value / 10000);
-  const month = Math.floor(value / 100) % 100;
-  const previousYear = year - 1;
-  let days =
-    365 * previousYear +
-    Math.floor(previousYear / 4) -
-    Math.floor(previousYear / 100) +
-    Math.floor(previousYear / 400);
-  const monthLengths = [
-    31,
-    year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28,
-    31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
-  ];
-  for (let index = 0; index < month - 1; index += 1) days += monthLengths[index];
-  return days + (value % 100) - 1;
 }
 
 export function idFromHex(value) {
@@ -237,12 +254,6 @@ export function idFromHex(value) {
     id[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
   }
   return id;
-}
-
-export function idToHex(value) {
-  return [...asBytes(value)]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 // Compatibility helpers encode intent packets; Rust alone writes event bytes.
@@ -612,12 +623,9 @@ function encodePlaybookPayload(command) {
   return bytes;
 }
 
-function assertTimestamp(value) {
-  if (!Number.isSafeInteger(value) || Math.abs(value) > MAX_TIMESTAMP) {
-    throw new KinEngineError(2, "Kin needs a valid evaluation time.");
-  }
-}
-
+// KMET v1, 92 bytes (ABI.md): "KMET", version u16, reserved u16, then
+// event ID @8, household @24, actor @40, device @56 (16 bytes each),
+// timestamp i64 @72, logical time u64 @80, event version u16 @88, kind u16 @90.
 function decodeMetadata(bytes) {
   if (bytes.length !== 92 || readAscii(bytes, 0, 4) !== "KMET")
     throw new KinEngineError(6, "Kin received invalid event metadata.");
@@ -653,7 +661,7 @@ function metadataBatch(exports, records) {
   if (length > MAX_PROTOCOL_BYTES)
     throw new KinEngineError(5, USER_MESSAGES.get(5));
   const request = new Uint8Array(length);
-  request.set([75, 77, 68, 81, 1, 0, 0, 0]);
+  request.set([...textEncoder.encode("KMDQ"), 1, 0, 0, 0]); // magic, version 1, reserved
   const view = new DataView(request.buffer);
   view.setUint32(8, sources.length, true);
   let offset = 12;
@@ -686,6 +694,7 @@ function metadataBatch(exports, records) {
 
 function executeCommand(
   exports,
+  mirror,
   command,
   identity,
   records,
@@ -693,20 +702,35 @@ function executeCommand(
   cursor,
   civilDate,
   syncIdentity,
+  previous,
 ) {
   const intent = encodeIntentPacket(
     {
       ...command,
+      // Rust requires a new Routine's creation date to equal the request's
+      // civil date, so the bridge fills it from the same value.
       ...(command.type === "create-routine" ? { createdOn: civilDate } : {}),
     },
     identity,
   );
-  const history = encodeRequest(records, asOf, cursor, civilDate, syncIdentity);
-  const request = new Uint8Array(4 + intent.length + history.length);
+  // Request layout: u32 intent length, the KCMD intent, then a record-less
+  // KINE request giving the replay context; Rust validates the command
+  // against the history the instance holds, brought up to date first. The
+  // KCMT result is a 20-byte header ("KCMT", version, reserved, then event,
+  // metadata and projection lengths as u32 @8, @12, @16) followed by those
+  // three buffers.
+  if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
+  if (records.length > MAX_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  const request = encodeRequest([], asOf, cursor, civilDate, syncIdentity, 4 + intent.length);
   new DataView(request.buffer).setUint32(0, intent.length, true);
   request.set(intent, 4);
-  request.set(history, 4 + intent.length);
-  const bytes = callCore(exports, "kin_execute_command", request);
+  const release = mirror.hold(records);
+  let bytes;
+  try {
+    bytes = callCore(exports, "kin_execute", request);
+  } finally {
+    release();
+  }
   if (bytes.length < 20 || readAscii(bytes, 0, 4) !== "KCMT")
     throw new KinEngineError(6, "Kin received an invalid command result.");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -724,34 +748,37 @@ function executeCommand(
     metadata: decodeMetadata(
       bytes.subarray(20 + eventLength, 20 + eventLength + metadataLength),
     ),
-    state: decodeState(bytes.subarray(20 + eventLength + metadataLength)),
+    state: safeDecode(() => decodeProjection(bytes.subarray(20 + eventLength + metadataLength), { previous, stampedBy: exports })),
   };
+}
+
+// The 16-byte KARC header for a metadata and ciphertext of these lengths.
+// Rust checks the bounds; the payload itself never enters WASM.
+function archiveHeader(exports, metadataLength, ciphertextLength) {
+  if (metadataLength + ciphertextLength + 16 > MAX_ARCHIVE_BYTES)
+    throw new KinEngineError(5, USER_MESSAGES.get(5));
+  const lengths = new Uint8Array(8);
+  const view = new DataView(lengths.buffer);
+  view.setUint32(0, metadataLength, true);
+  view.setUint32(4, ciphertextLength, true);
+  const header = callCore(exports, "kin_archive_header", lengths);
+  if (header.length !== 16)
+    throw new KinEngineError(6, "Kin received an invalid archive header.");
+  return header;
 }
 
 function encodeArchive(exports, metadata, ciphertext) {
   metadata = asBytes(metadata);
   ciphertext = asBytes(ciphertext);
-  if (metadata.length + ciphertext.length + 16 > MAX_ARCHIVE_BYTES)
-    throw new KinEngineError(5, USER_MESSAGES.get(5));
-  const lengths = new Uint8Array(8);
-  const view = new DataView(lengths.buffer);
-  view.setUint32(0, metadata.length, true);
-  view.setUint32(4, ciphertext.length, true);
-  const header = callCore(exports, "kin_archive_header", lengths);
-  if (header.length !== 16)
-    throw new KinEngineError(6, "Kin received an invalid archive header.");
+  const header = archiveHeader(exports, metadata.length, ciphertext.length);
   const bytes = new Uint8Array(16 + metadata.length + ciphertext.length);
   bytes.set(header);
   bytes.set(metadata, 16);
   bytes.set(ciphertext, 16 + metadata.length);
   return bytes;
 }
-function planImport(exports, records, asOf, cursor, civilDate, syncIdentity) {
-  const bytes = callCore(
-    exports,
-    "kin_plan_import",
-    encodeRequest(records, asOf, cursor, civilDate, syncIdentity),
-  );
+function planImport(exports, mirror, records, asOf, cursor, civilDate, syncIdentity, bindingsOnly = false) {
+  const bytes = replayBytes(exports, mirror, records, asOf, cursor, civilDate, syncIdentity, "kin_plan_import");
   if (bytes.length < 24 || readAscii(bytes, 0, 4) !== "KIMP")
     throw new KinEngineError(6, "Kin received an invalid import plan.");
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -761,13 +788,14 @@ function planImport(exports, records, asOf, cursor, civilDate, syncIdentity) {
     view.getUint32(20, true) + 24 !== bytes.length
   )
     throw new KinEngineError(6, "Kin received an invalid import plan.");
-  return {
-    eventCount: view.getUint32(8, true),
-    nextLogicalTime: view.getBigUint64(12, true),
-    state: decodeState(bytes.subarray(24)),
-  };
+  const plan = { eventCount: view.getUint32(8, true), nextLogicalTime: view.getBigUint64(12, true) };
+  if (bindingsOnly) return { ...plan, attachments: decodeAttachmentBindings(bytes.subarray(24)) };
+  return { ...plan, state: decodeProjection(bytes.subarray(24)) };
 }
-function decodeArchive(exports, bytes) {
+// The metadata and ciphertext lengths of a whole KARC archive, after Rust
+// checks its header against the buffer's length. Nothing is copied: a
+// streaming reader decrypts the ciphertext a segment at a time.
+function archiveLayout(exports, bytes) {
   bytes = asBytes(bytes);
   if (bytes.length > MAX_ARCHIVE_BYTES)
     throw new KinEngineError(5, USER_MESSAGES.get(5));
@@ -779,24 +807,29 @@ function decodeArchive(exports, bytes) {
   const output = callCore(exports, "kin_archive_layout", request);
   if (output.length !== 8)
     throw new KinEngineError(6, "Kin received an invalid archive result.");
-  const length = new DataView(
-    output.buffer,
-    output.byteOffset,
-    output.byteLength,
-  ).getUint32(0, true);
-  const ciphertextLength = new DataView(output.buffer, output.byteOffset, output.byteLength).getUint32(4, true);
-  if (16 + length + ciphertextLength !== bytes.length)
+  const view = new DataView(output.buffer, output.byteOffset, output.byteLength);
+  const metadataLength = view.getUint32(0, true);
+  const ciphertextLength = view.getUint32(4, true);
+  if (16 + metadataLength + ciphertextLength !== bytes.length)
     throw new KinEngineError(6, "Kin received an invalid archive result.");
+  return { metadataLength, ciphertextLength };
+}
+
+function decodeArchive(exports, bytes) {
+  bytes = asBytes(bytes);
+  const { metadataLength } = archiveLayout(exports, bytes);
   return {
     version: 1,
     // These copies deliberately detach caller-owned archive input before any
     // asynchronous authentication; no view escapes into mutable source bytes.
-    metadata: bytes.slice(16, 16 + length),
-    ciphertext: bytes.slice(16 + length),
+    metadata: bytes.slice(16, 16 + metadataLength),
+    ciphertext: bytes.slice(16 + metadataLength),
   };
 }
 
-function callCore(exports, operation, request) {
+// `statusOnly`: the operation publishes no result on success
+// (kin_history_append); only a failure's KERR buffer is read.
+function callCore(exports, operation, request, { statusOnly = false } = {}) {
   if (!exports)
     throw new KinEngineError(
       6,
@@ -806,9 +839,17 @@ function callCore(exports, operation, request) {
     throw new KinEngineError(5, USER_MESSAGES.get(5));
   const pointer = exports.kin_alloc(request.length);
   if (!pointer) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  // Every exit, including a throwing copy, operation or decode, releases the
+  // input allocation exactly once. A free failure only surfaces on success so
+  // it never masks the original error.
+  let completed = false;
   try {
     new Uint8Array(exports.memory.buffer, pointer, request.length).set(request);
     const status = exports[operation](pointer, request.length);
+    if (status === 0 && statusOnly) {
+      completed = true;
+      return null;
+    }
     const bytes =
       status === 0
         ? copyWasmBytes(
@@ -822,21 +863,20 @@ function callCore(exports, operation, request) {
             exports.kin_error_len(),
           );
     if (status !== 0) throw decodeError(bytes, status);
+    completed = true;
     return bytes;
   } finally {
-    if (exports.kin_free(pointer, request.length) !== 0)
+    const freed = exports.kin_free(pointer, request.length);
+    if (freed !== 0 && completed)
       throw new KinEngineError(1, USER_MESSAGES.get(1));
   }
 }
 
-function applyEvents(
-  exports,
-  records,
-  asOf,
-  cursorEventId,
-  civilDate,
-  syncIdentity,
-) {
+// The KINS projection of `records` (a history view, a historyWith() result
+// or an array): the instance's history is brought up to date, then replayed
+// in the context of a record-less KINE request. `operation` is kin_project,
+// or kin_plan_import for an archive's import plan.
+function replayBytes(exports, mirror, records, asOf, cursorEventId, civilDate, syncIdentity, operation = "kin_project") {
   if (!exports)
     throw new KinEngineError(
       6,
@@ -845,64 +885,65 @@ function applyEvents(
   if (records.length > MAX_EVENT_COUNT) {
     throw new KinEngineError(5, USER_MESSAGES.get(5));
   }
-  const request = encodeRequest(
-    records,
-    asOf,
-    cursorEventId,
-    civilDate,
-    syncIdentity,
-  );
-  const inputPointer = exports.kin_alloc(request.length);
-  if (inputPointer === 0) {
-    throw new KinEngineError(5, USER_MESSAGES.get(5));
-  }
-
-  let result;
-  let operationError;
+  const context = encodeRequest([], asOf, cursorEventId, civilDate, syncIdentity);
+  const release = mirror.hold(records);
   try {
-    new Uint8Array(exports.memory.buffer, inputPointer, request.length).set(
-      request,
-    );
-    const status = exports.kin_apply_events(inputPointer, request.length);
-    const output =
-      status === 0
-        ? copyWasmBytes(
-            exports.memory,
-            exports.kin_result_ptr(),
-            exports.kin_result_len(),
-          )
-        : copyWasmBytes(
-            exports.memory,
-            exports.kin_error_ptr(),
-            exports.kin_error_len(),
-          );
-    if (status !== 0) {
-      throw decodeError(output, status);
-    }
-    result = decodeState(output);
-  } catch (error) {
-    operationError =
-      error instanceof KinEngineError
-        ? error
-        : new KinEngineError(
-            6,
-            "Kin could not complete a household-engine operation.",
-          );
+    return callCore(exports, operation, context);
+  } finally {
+    release();
   }
-
-  const freeStatus = exports.kin_free(inputPointer, request.length);
-  if (operationError) {
-    throw operationError;
-  }
-  if (freeStatus !== 0) {
-    throw new KinEngineError(1, USER_MESSAGES.get(1));
-  }
-  return result;
 }
 
-function encodeRequest(records, asOf, cursorEventId, civilDate, syncIdentity) {
+function applyEvents(
+  exports,
+  mirror,
+  records,
+  asOf,
+  cursorEventId,
+  civilDate,
+  syncIdentity,
+  previous,
+) {
+  return safeDecode(() => decodeProjection(
+    replayBytes(exports, mirror, records, asOf, cursorEventId, civilDate, syncIdentity),
+    { previous, stampedBy: exports },
+  ));
+}
+
+// Any unexpected error while producing a state becomes a code-6 engine error,
+// so callers always get a `code` and a safe message.
+function safeDecode(decode) {
+  try {
+    return decode();
+  } catch (error) {
+    if (error instanceof KinEngineError) throw error;
+    throw new KinEngineError(
+      6,
+      "Kin could not complete a household-engine operation.",
+    );
+  }
+}
+
+/**
+ * Builds a protocol-24 KINE request. `records` is an array of canonical event
+ * byte arrays, or a contiguous source exposing `length`, `byteLength` and
+ * `copyTo(target, offset)` (the session event arena), which is copied in one
+ * operation. `reserve` leaves that many leading bytes free for a caller prefix
+ * so the history is never copied a second time.
+ */
+function encodeRequest(
+  records,
+  asOf,
+  cursorEventId,
+  civilDate,
+  syncIdentity,
+  reserve = 0,
+) {
   assertTimestamp(asOf);
   assertCivilDate(civilDate);
+  // Identity bindings map pre-sync placeholder IDs to the authenticated ones
+  // (96 bytes each, at most 256). rust/src/request.rs documents the KINE
+  // layout these offsets follow; docs/IDENTITY.md explains the bindings.
   const identityBindings = syncIdentity?.bindings ?? [];
   if (
     syncIdentity &&
@@ -910,18 +951,24 @@ function encodeRequest(records, asOf, cursorEventId, civilDate, syncIdentity) {
   ) {
     throw new KinEngineError(2, "Kin received invalid sync identity context.");
   }
+  const contiguous = typeof records?.copyTo === "function";
   const headerBytes = REQUEST_HEADER_BYTES + identityBindings.length * 96;
   let length = headerBytes;
-  for (const record of records) {
-    length += asBytes(record).length;
-    if (!Number.isSafeInteger(length) || length > MAX_PROTOCOL_BYTES) {
-      throw new KinEngineError(5, USER_MESSAGES.get(5));
+  if (contiguous) {
+    length += records.byteLength;
+  } else {
+    for (const record of records) {
+      length += asBytes(record).length;
+      if (!Number.isSafeInteger(length) || length > MAX_PROTOCOL_BYTES) break;
     }
   }
+  if (!Number.isSafeInteger(length) || length > MAX_PROTOCOL_BYTES) {
+    throw new KinEngineError(5, USER_MESSAGES.get(5));
+  }
 
-  const bytes = new Uint8Array(length);
-  bytes.set([0x4b, 0x49, 0x4e, 0x45]);
-  const view = new DataView(bytes.buffer);
+  const bytes = new Uint8Array(reserve + length);
+  const view = new DataView(bytes.buffer, reserve);
+  bytes.set([0x4b, 0x49, 0x4e, 0x45], reserve);
   view.setUint16(4, PROTOCOL_VERSION, true);
   view.setUint16(6, 0, true);
   view.setUint32(8, records.length, true);
@@ -931,14 +978,14 @@ function encodeRequest(records, asOf, cursorEventId, civilDate, syncIdentity) {
       typeof cursorEventId === "string"
         ? idFromHex(cursorEventId)
         : assertId(cursorEventId);
-    bytes[20] = 1;
-    bytes.set(cursor, 24);
+    bytes[reserve + 20] = 1;
+    bytes.set(cursor, reserve + 24);
   }
   view.setUint32(40, civilDate, true);
   if (syncIdentity) {
-    bytes.set(idFromHex(syncIdentity.householdId), 44);
+    bytes.set(idFromHex(syncIdentity.householdId), reserve + 44);
     view.setUint16(60, identityBindings.length, true);
-    let bindingOffset = 64;
+    let bindingOffset = reserve + 64;
     for (const binding of identityBindings) {
       for (const id of [
         binding.legacyHouseholdId,
@@ -953,15 +1000,25 @@ function encodeRequest(records, asOf, cursorEventId, civilDate, syncIdentity) {
       }
     }
   }
-  let offset = headerBytes;
-  for (const record of records) {
-    const eventBytes = asBytes(record);
-    bytes.set(eventBytes, offset);
-    offset += eventBytes.length;
+  let offset = reserve + headerBytes;
+  if (contiguous) {
+    records.copyTo(bytes, offset);
+  } else {
+    for (const record of records) {
+      const eventBytes = asBytes(record);
+      bytes.set(eventBytes, offset);
+      offset += eventBytes.length;
+    }
   }
   return bytes;
 }
 
+// Stage-level access for the performance harness; production callers use the
+// engine API above.
+export { encodeRequest as encodeReplayRequest, decodeProjection };
+
+// Copies a published result or error out of WASM memory. Every result and
+// error format starts with a magic header, so an empty buffer is invalid.
 function copyWasmBytes(memory, pointer, length) {
   const start = Number(pointer);
   const size = Number(length);
@@ -998,727 +1055,6 @@ function decodeError(bytes, status) {
   );
 }
 
-function decodeState(bytes) {
-  if (
-    bytes.length < RESULT_HEADER_BYTES ||
-    bytes.length > MAX_PROTOCOL_BYTES ||
-    readAscii(bytes, 0, 4) !== "KINS"
-  ) {
-    throw new KinEngineError(
-      6,
-      "Kin received an invalid state from its household engine.",
-    );
-  }
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const protocolVersion = view.getUint16(4, true);
-  if (
-    ![
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-    ].includes(protocolVersion) ||
-    view.getUint16(6, true) !== 0
-  ) {
-    throw new KinEngineError(6, "Kin received an unsupported state format.");
-  }
-  const resultHeaderBytes =
-    protocolVersion >= 23 ? 96 : protocolVersion >= 22 ? 92 : protocolVersion >= 21 ? 88 : protocolVersion >= 20 ? 84 : protocolVersion >= 19 ? 80 : protocolVersion >= 18 ? 76 : protocolVersion >= 15 ? 72 : protocolVersion >= 11 ? 68 : protocolVersion >= 10 ? 64 : protocolVersion >= 9
-      ? 60
-      : protocolVersion >= 7
-      ? 56
-      : protocolVersion >= 6
-        ? 52
-        : protocolVersion === 5
-          ? 24
-          : protocolVersion === 4
-            ? 20
-            : protocolVersion === 3
-              ? 16
-              : 12;
-  if (bytes.length < resultHeaderBytes) {
-    throw new KinEngineError(6, "Kin received a truncated state header.");
-  }
-  const handoffCount = protocolVersion >= 3 ? view.getUint32(12, true) : 0;
-  const talkCount = protocolVersion >= 4 ? view.getUint32(16, true) : 0;
-  const pulseCount = protocolVersion >= 5 ? view.getUint32(20, true) : 0;
-  const itemCount = view.getUint32(8, true);
-  const routineCount = protocolVersion >= 7 ? view.getUint32(52, true) : 0;
-  const areaCount = protocolVersion >= 9 ? view.getUint32(56, true) : 0;
-  const noteCount = protocolVersion >= 10 ? view.getUint32(60, true) : 0;
-  const stepCount = protocolVersion >= 11 ? view.getUint32(64, true) : 0;
-  const modeCode = protocolVersion >= 15 ? view.getUint8(68) : 0;
-  const pinCount = protocolVersion >= 18 ? view.getUint32(72, true) : 0;
-  const playbookCount = protocolVersion >= 19 ? view.getUint32(76, true) : 0;
-  const referenceRecordCount = protocolVersion >= 20 ? view.getUint32(80, true) : 0;
-  const maintenanceEventCount = protocolVersion >= 21 ? view.getUint32(84, true) : 0;
-  const attachmentCount = protocolVersion >= 22 ? view.getUint32(88, true) : 0;
-  const responsibilityCount = protocolVersion >= 23 ? view.getUint32(92, true) : 0;
-  if (
-    protocolVersion >= 15 &&
-    (modeCode > 3 || bytes.subarray(69, 72).some((byte) => byte !== 0))
-  ) {
-    throw new KinEngineError(6, "Kin received an invalid household mode.");
-  }
-  const summaryCount = protocolVersion >= 6 ? view.getUint32(24, true) : 0;
-  const summaryTotalCount = protocolVersion >= 6 ? view.getUint32(28, true) : 0;
-  const summaryThroughPresent = protocolVersion >= 6 ? view.getUint8(32) : 0;
-  const summaryThroughBytes =
-    protocolVersion >= 6 ? bytes.subarray(36, 52) : null;
-  const summaryThroughEventId =
-    protocolVersion >= 6 && summaryThroughPresent === 1
-      ? idToHex(summaryThroughBytes)
-      : null;
-  if (
-    protocolVersion >= 6 &&
-    (summaryCount > MAX_SUMMARY_ENTRIES ||
-      summaryCount > summaryTotalCount ||
-      summaryTotalCount > MAX_EVENT_COUNT ||
-      summaryThroughPresent > 1 ||
-      (summaryTotalCount > 0 && summaryThroughPresent !== 1) ||
-      (summaryCount > 0 && summaryThroughPresent !== 1) ||
-      bytes.subarray(33, 36).some((byte) => byte !== 0) ||
-      (summaryThroughPresent === 0 &&
-        summaryThroughBytes.some((byte) => byte !== 0)))
-  ) {
-    throw new KinEngineError(6, "Kin received invalid summary metadata.");
-  }
-  if (
-    areaCount > 32 ||
-    noteCount > 128 ||
-    pinCount > 10 ||
-    playbookCount > 32 ||
-    referenceRecordCount > 128 ||
-    maintenanceEventCount > 8192 ||
-    attachmentCount > 256 ||
-    responsibilityCount > itemCount + routineCount ||
-    stepCount > MAX_EVENT_COUNT ||
-    stepCount > itemCount * MAX_STEPS_PER_ITEM ||
-      itemCount + handoffCount + talkCount + pulseCount + routineCount + noteCount + playbookCount + referenceRecordCount + maintenanceEventCount + attachmentCount + responsibilityCount >
-      MAX_EVENT_COUNT
-  ) {
-    throw new KinEngineError(
-      6,
-      "Kin received too many items from its household engine.",
-    );
-  }
-  const items = [];
-  let offset = resultHeaderBytes;
-  for (let index = 0; index < itemCount; index += 1) {
-    const headerEnd = offset + ITEM_HEADER_BYTES;
-    if (headerEnd > bytes.length) {
-      throw new KinEngineError(
-        6,
-        "Kin received a truncated state from its household engine.",
-      );
-    }
-    const textLength = view.getUint32(offset + 44, true);
-    const recordEnd = headerEnd + textLength;
-    const classificationCode = view.getUint8(offset + 40);
-    const statusCode =
-      protocolVersion === 1 ? classificationCode : view.getUint8(offset + 41);
-    const validStatus =
-      protocolVersion === 1
-        ? classificationCode <= 1 &&
-          view.getUint8(offset + 41) === 0 &&
-          view.getUint8(offset + 42) === 0 &&
-          view.getUint8(offset + 43) === 0
-        : classificationCode <= (protocolVersion >= 14 ? 3 : protocolVersion >= 13 ? 2 : 1) &&
-          statusCode <= 2 &&
-          view.getUint8(offset + 42) === 0 &&
-          view.getUint8(offset + 43) === 0;
-    if (
-      recordEnd > bytes.length ||
-      textLength < 1 ||
-      textLength > MAX_ITEM_TEXT_BYTES ||
-      !validStatus
-    ) {
-      throw new KinEngineError(
-        6,
-        "Kin received an invalid item record from its household engine.",
-      );
-    }
-    const createdAt = view.getBigInt64(offset + 32, true);
-    const createdAtNumber = Number(createdAt);
-    if (!Number.isSafeInteger(createdAtNumber)) {
-      throw new KinEngineError(
-        6,
-        "Kin received an invalid item timestamp from its household engine.",
-      );
-    }
-    let text;
-    try {
-      text = strictTextDecoder.decode(bytes.subarray(headerEnd, recordEnd));
-    } catch {
-      throw new KinEngineError(
-        6,
-        "Kin received invalid item text from its household engine.",
-      );
-    }
-    items.push({
-      itemId: idToHex(bytes.subarray(offset, offset + 16)),
-      createdBy: idToHex(bytes.subarray(offset + 16, offset + 32)),
-      createdAt: createdAtNumber,
-      classification:
-        protocolVersion === 1
-          ? "today"
-          : ["today", "need", "shopping", "staple"][classificationCode],
-      status: ["active", "completed", "archived"][statusCode],
-      ...(protocolVersion >= 9 ? { areaId: null } : {}),
-      ...(protocolVersion >= 11 ? { steps: [] } : {}),
-      ...(protocolVersion >= 16 ? { planningDate: null } : {}),
-      text,
-    });
-    offset = recordEnd;
-  }
-  const handoffs = [];
-  for (let index = 0; index < handoffCount; index += 1) {
-    const headerEnd = offset + 48;
-    if (headerEnd > bytes.length)
-      throw new KinEngineError(6, "Kin received a truncated handoff record.");
-    const textLength = view.getUint32(offset + 44, true);
-    const end = headerEnd + textLength;
-    const status = bytes[offset + 40];
-    const createdAt = Number(view.getBigInt64(offset + 32, true));
-    if (
-      end > bytes.length ||
-      textLength < 1 ||
-      textLength > MAX_ITEM_TEXT_BYTES ||
-      status > 2 ||
-      bytes.slice(offset + 41, offset + 44).some((value) => value !== 0) ||
-      !Number.isSafeInteger(createdAt)
-    ) {
-      throw new KinEngineError(6, "Kin received an invalid handoff record.");
-    }
-    let text;
-    try {
-      text = strictTextDecoder.decode(bytes.subarray(headerEnd, end));
-    } catch {
-      throw new KinEngineError(6, "Kin received invalid handoff text.");
-    }
-    handoffs.push({
-      handoffId: idToHex(bytes.subarray(offset, offset + 16)),
-      createdBy: idToHex(bytes.subarray(offset + 16, offset + 32)),
-      createdAt,
-      text,
-      status: ["unacknowledged", "acknowledged", "archived"][status],
-    });
-    offset = end;
-  }
-  const talks = [];
-  for (let index = 0; index < talkCount; index += 1) {
-    const headerEnd = offset + 48;
-    if (headerEnd > bytes.length)
-      throw new KinEngineError(6, "Kin received a truncated talk record.");
-    const textLength = view.getUint32(offset + 44, true);
-    const end = headerEnd + textLength;
-    const status = bytes[offset + 40];
-    const createdAt = Number(view.getBigInt64(offset + 32, true));
-    if (
-      end > bytes.length ||
-      textLength < 1 ||
-      textLength > MAX_ITEM_TEXT_BYTES ||
-      status > 2 ||
-      bytes.slice(offset + 41, offset + 44).some((value) => value !== 0) ||
-      !Number.isSafeInteger(createdAt)
-    ) {
-      throw new KinEngineError(6, "Kin received an invalid talk record.");
-    }
-    let text;
-    try {
-      text = strictTextDecoder.decode(bytes.subarray(headerEnd, end));
-    } catch {
-      throw new KinEngineError(6, "Kin received invalid talk text.");
-    }
-    talks.push({
-      talkId: idToHex(bytes.subarray(offset, offset + 16)),
-      createdBy: idToHex(bytes.subarray(offset + 16, offset + 32)),
-      createdAt,
-      text,
-      status: ["open", "resolved", "archived"][status],
-    });
-    offset = end;
-  }
-  const pulses = [];
-  let previousActor = null;
-  for (let index = 0; index < pulseCount; index += 1) {
-    if (offset + 40 > bytes.length)
-      throw new KinEngineError(6, "Kin received a truncated pulse record.");
-    const actorId = idToHex(bytes.subarray(offset, offset + 16));
-    const setAt = Number(view.getBigInt64(offset + 16, true));
-    const expiresAt = Number(view.getBigInt64(offset + 24, true));
-    const value = bytes[offset + 32];
-    const status = bytes[offset + 33];
-    if (
-      !Number.isSafeInteger(setAt) ||
-      !Number.isSafeInteger(expiresAt) ||
-      Math.abs(setAt) > MAX_TIMESTAMP ||
-      Math.abs(expiresAt) > MAX_TIMESTAMP ||
-      expiresAt <= setAt ||
-      value > 4 ||
-      status > 1 ||
-      bytes.subarray(offset + 34, offset + 40).some((byte) => byte !== 0) ||
-      (previousActor !== null && actorId <= previousActor)
-    ) {
-      throw new KinEngineError(6, "Kin received an invalid pulse record.");
-    }
-    pulses.push({
-      actorId,
-      setAt,
-      expiresAt,
-      value: PULSE_VALUES[value],
-      status: ["active", "expired"][status],
-    });
-    previousActor = actorId;
-    offset += 40;
-  }
-  if (protocolVersion >= 9) {
-    for (const item of items) {
-      if (offset + 16 > bytes.length)
-        throw new KinEngineError(6, "Kin received truncated Area assignments.");
-      const id = bytes.subarray(offset, offset + 16);
-      item.areaId = id.every((byte) => byte === 0) ? null : idToHex(id);
-      offset += 16;
-    }
-  }
-  const routines = [];
-  const routineIds = new Set();
-  for (let index = 0; index < routineCount; index += 1) {
-    const headerEnd = offset + 56;
-    if (headerEnd > bytes.length)
-      throw new KinEngineError(6, "Kin received a truncated routine.");
-    const length = view.getUint32(offset + 52, true);
-    const end = headerEnd + length;
-    const routineId = idToHex(bytes.subarray(offset, offset + 16));
-    const createdAt = Number(view.getBigInt64(offset + 32, true));
-    const createdOn = view.getUint32(offset + 40, true);
-    const key = view.getUint32(offset + 44, true);
-    const cadence = bytes[offset + 48],
-      status = bytes[offset + 49],
-      occurrence = bytes[offset + 50];
-    if (
-      length < 1 ||
-      length > 4096 ||
-      end > bytes.length ||
-      cadence > 4 ||
-      (protocolVersion < 12 && cadence > 1) ||
-      (protocolVersion < 24 && cadence > 3) ||
-      status > 1 ||
-      occurrence > 2 ||
-      bytes[offset + 51] !== 0 ||
-      (key === 0) !== (occurrence === 0) ||
-      (status === 1 && occurrence !== 0) ||
-      routineIds.has(routineId)
-    ) {
-      throw new KinEngineError(6, "Kin received an invalid routine.");
-    }
-    let text;
-    try {
-      assertTimestamp(createdAt);
-      assertCivilDate(createdOn);
-      if (key) assertCivilDate(key);
-      // Validate wire combinations without calculating the household's current period.
-      if (key && cadence === 0 && key < createdOn) throw new Error();
-      if (key && cadence === 1) {
-        const d = new Date(0);
-        d.setUTCFullYear(
-          Math.floor(key / 10000),
-          (Math.floor(key / 100) % 100) - 1,
-          key % 100,
-        );
-        if (d.getUTCDay() !== 1) throw new Error();
-        d.setUTCDate(d.getUTCDate() + 6);
-        const endKey =
-          d.getUTCFullYear() * 10000 +
-          (d.getUTCMonth() + 1) * 100 +
-          d.getUTCDate();
-        if (endKey < createdOn) throw new Error();
-      }
-      if (
-        key &&
-        cadence === 2 &&
-        (key < createdOn || (civilOrdinal(key) - civilOrdinal(createdOn)) % 14 !== 0)
-      ) throw new Error();
-      if (
-        key &&
-        cadence === 3 &&
-        (key % 100 !== 1 || key < Math.floor(createdOn / 100) * 100 + 1)
-      ) throw new Error();
-      // Weekdays: a Monday-Friday key on or after creation (ordinal 0 is a Monday).
-      if (key && cadence === 4 && (key < createdOn || civilOrdinal(key) % 7 >= 5)) throw new Error();
-      text = strictTextDecoder.decode(bytes.subarray(headerEnd, end));
-    } catch {
-      throw new KinEngineError(6, "Kin received invalid routine fields.");
-    }
-    routineIds.add(routineId);
-    routines.push({
-      routineId,
-      createdBy: idToHex(bytes.subarray(offset + 16, offset + 32)),
-      createdAt,
-      createdOn,
-      cadence: ROUTINE_CADENCES[cadence],
-      status: ["active", "archived"][status],
-      occurrenceKey: key || null,
-      occurrenceStatus: ["unavailable", "open", "completed"][occurrence],
-      nextOn: null,
-      text,
-    });
-    offset = end;
-  }
-  const areas = [];
-  const areaIds = new Set();
-  for (let index = 0; index < areaCount; index += 1) {
-    const headerEnd = offset + 24;
-    if (headerEnd > bytes.length) throw new KinEngineError(6, "Kin received a truncated Area.");
-    const areaId = idToHex(bytes.subarray(offset, offset + 16));
-    const archived = bytes[offset + 16];
-    const length = view.getUint32(offset + 20, true);
-    const end = headerEnd + length;
-    if (archived > 1 || bytes.subarray(offset + 17, offset + 20).some((byte) => byte !== 0) || length < 1 || length > 96 || end > bytes.length || areaIds.has(areaId))
-      throw new KinEngineError(6, "Kin received an invalid Area.");
-    let name;
-    try { name = strictTextDecoder.decode(bytes.subarray(headerEnd, end)); }
-    catch { throw new KinEngineError(6, "Kin received invalid Area text."); }
-    if (name.trim() !== name || [...name].length > 48 || /[\u0000-\u001f\u007f]/u.test(name))
-      throw new KinEngineError(6, "Kin received invalid Area text.");
-    areaIds.add(areaId);
-    areas.push({ areaId, name, archived: archived === 1 });
-    offset = end;
-  }
-  if (items.some((item) => item.areaId && !areaIds.has(item.areaId)))
-    throw new KinEngineError(6, "Kin received an unknown Area assignment.");
-  const notes = [];
-  const noteIds = new Set();
-  for (let index = 0; index < noteCount; index += 1) {
-    const headerEnd = offset + 92;
-    if (headerEnd > bytes.length) throw new KinEngineError(6, "Kin received a truncated Note.");
-    const titleLength = view.getUint32(offset + 84, true), bodyLength = view.getUint32(offset + 88, true), end = headerEnd + titleLength + bodyLength;
-    const noteId = idToHex(bytes.subarray(offset, offset + 16)), area = bytes.subarray(offset + 64, offset + 80), archived = bytes[offset + 80];
-    if (titleLength < 1 || titleLength > 256 || bodyLength > 4096 || end > bytes.length || archived > 1 || bytes.subarray(offset + 81, offset + 84).some(Boolean) || noteIds.has(noteId)) throw new KinEngineError(6, "Kin received an invalid Note.");
-    let title, body;
-    try { title = strictTextDecoder.decode(bytes.subarray(headerEnd, headerEnd + titleLength)); body = strictTextDecoder.decode(bytes.subarray(headerEnd + titleLength, end)); }
-    catch { throw new KinEngineError(6, "Kin received invalid Note text."); }
-    if (noteId === "00".repeat(16) || !title.trim() || title.trim() !== title || [...title].length > 80 || [...title].some((character) => /\p{Cc}/u.test(character)) || [...body].some((character) => /\p{Cc}/u.test(character) && !["\n", "\r", "\t"].includes(character))) throw new KinEngineError(6, "Kin received invalid Note text.");
-    notes.push({ noteId, title, body, areaId: area.every((byte) => byte === 0) ? null : idToHex(area), archived: archived === 1,
-      createdBy: idToHex(bytes.subarray(offset + 16, offset + 32)), updatedBy: idToHex(bytes.subarray(offset + 32, offset + 48)),
-      createdAt: Number(view.getBigInt64(offset + 48, true)), updatedAt: Number(view.getBigInt64(offset + 56, true)) });
-    noteIds.add(noteId); offset = end;
-  }
-  if (notes.some((note) => note.areaId && !areaIds.has(note.areaId))) throw new KinEngineError(6, "Kin received a Note with an unknown Area.");
-  if (protocolVersion >= 11) {
-    const itemById = new Map(items.map((item) => [item.itemId, item]));
-    const stepIds = new Set();
-    for (let index = 0; index < stepCount; index += 1) {
-      const headerEnd = offset + 40;
-      if (headerEnd > bytes.length)
-        throw new KinEngineError(6, "Kin received a truncated Step.");
-      const itemId = idToHex(bytes.subarray(offset, offset + 16));
-      const stepId = idToHex(bytes.subarray(offset + 16, offset + 32));
-      const completed = bytes[offset + 32];
-      const archived = bytes[offset + 33];
-      const textLength = view.getUint32(offset + 36, true);
-      const end = headerEnd + textLength;
-      const item = itemById.get(itemId);
-      if (
-        !item ||
-        stepId === "00".repeat(16) ||
-        stepIds.has(stepId) ||
-        item.steps.length >= MAX_STEPS_PER_ITEM ||
-        completed > 1 ||
-        archived > 1 ||
-        bytes.subarray(offset + 34, offset + 36).some(Boolean) ||
-        textLength < 1 ||
-        textLength > MAX_STEP_TEXT_BYTES ||
-        end > bytes.length
-      ) {
-        throw new KinEngineError(6, "Kin received an invalid Step.");
-      }
-      let text;
-      try {
-        text = strictTextDecoder.decode(bytes.subarray(headerEnd, end));
-      } catch {
-        throw new KinEngineError(6, "Kin received invalid Step text.");
-      }
-      if (
-        text.trim() !== text ||
-        [...text].length > MAX_STEP_TEXT_CHARS ||
-        [...text].some((character) => /\p{Cc}/u.test(character))
-      ) {
-        throw new KinEngineError(6, "Kin received invalid Step text.");
-      }
-      stepIds.add(stepId);
-      item.steps.push({ stepId, text, completed: completed === 1, archived: archived === 1 });
-      offset = end;
-    }
-  }
-  if (protocolVersion >= 16) {
-    for (const item of items) {
-      if (offset + 4 > bytes.length) {
-        throw new KinEngineError(6, "Kin received a truncated planning date.");
-      }
-      const planningDate = view.getUint32(offset, true);
-      if (planningDate !== 0 && !isCivilDate(planningDate)) {
-        throw new KinEngineError(6, "Kin received an invalid planning date.");
-      }
-      item.planningDate = planningDate === 0 ? null : planningDate;
-      offset += 4;
-    }
-  }
-  if (protocolVersion >= 17) {
-    for (const item of items) {
-      if (offset + 8 > bytes.length) {
-        throw new KinEngineError(6, "Kin received a truncated Item history date.");
-      }
-      const lastChangedAt = Number(view.getBigInt64(offset, true));
-      if (
-        !Number.isSafeInteger(lastChangedAt) ||
-        Math.abs(lastChangedAt) > MAX_TIMESTAMP
-      ) {
-        throw new KinEngineError(6, "Kin received an invalid Item history date.");
-      }
-      item.lastChangedAt = lastChangedAt;
-      offset += 8;
-    }
-  }
-  const pins = [];
-  const pinKeys = new Set();
-  if (protocolVersion >= 18) {
-    const targetNames = [null, "item", "note", "routine", "area"];
-    for (let index = 0; index < pinCount; index += 1) {
-      if (offset + 20 > bytes.length) throw new KinEngineError(6, "Kin received a truncated Pin.");
-      const kind = bytes[offset];
-      const idBytes = bytes.subarray(offset + 4, offset + 20);
-      const targetId = idToHex(idBytes);
-      const key = `${kind}:${targetId}`;
-      if (!targetNames[kind] || bytes.subarray(offset + 1, offset + 4).some(Boolean) || targetId === "00".repeat(16) || pinKeys.has(key))
-        throw new KinEngineError(6, "Kin received an invalid Pin.");
-      pinKeys.add(key);
-      pins.push({ targetKind: targetNames[kind], targetId });
-      offset += 20;
-    }
-  }
-  const summaryEntries = [];
-  const knownTargets = {
-    item: new Set(items.map((item) => item.itemId)),
-    note: new Set(notes.map((note) => note.noteId)),
-    routine: new Set(routines.map((routine) => routine.routineId)),
-    area: new Set(areas.map((area) => area.areaId)),
-  };
-  if (pins.some((pin) => !knownTargets[pin.targetKind]?.has(pin.targetId)))
-    throw new KinEngineError(6, "Kin received a Pin for an unknown household record.");
-  const playbooks = [];
-  const playbookIds = new Set();
-  for (let index = 0; index < playbookCount; index += 1) {
-    if (offset + 22 > bytes.length) throw new KinEngineError(6, "Kin received a truncated Playbook.");
-    const playbookId = idToHex(bytes.subarray(offset, offset + 16));
-    const archived = bytes[offset + 16];
-    const entryCount = bytes[offset + 17];
-    const titleLength = view.getUint16(offset + 18, true);
-    if (playbookId === "00".repeat(16) || playbookIds.has(playbookId) || archived > 1 || entryCount < 1 || entryCount > 16 || titleLength < 1 || titleLength > 128 || bytes.subarray(offset + 20, offset + 22).some(Boolean))
-      throw new KinEngineError(6, "Kin received an invalid Playbook.");
-    playbookIds.add(playbookId);
-    offset += 22;
-    const titleEnd = offset + titleLength;
-    if (titleEnd > bytes.length) throw new KinEngineError(6, "Kin received a truncated Playbook title.");
-    const title = strictTextDecoder.decode(bytes.subarray(offset, titleEnd)); offset = titleEnd;
-    const entries = [];
-    for (let item = 0; item < entryCount; item += 1) {
-      if (offset + 2 > bytes.length) throw new KinEngineError(6, "Kin received a truncated Playbook entry.");
-      const length = view.getUint16(offset, true); offset += 2;
-      if (length < 1 || length > 256 || offset + length > bytes.length) throw new KinEngineError(6, "Kin received an invalid Playbook entry.");
-      entries.push(strictTextDecoder.decode(bytes.subarray(offset, offset + length))); offset += length;
-    }
-    playbooks.push({ playbookId, title, entries, archived: archived === 1 });
-  }
-  const referenceRecords = [];
-  const referenceIds = new Set();
-  const referenceFieldIds = new Set();
-  for (let index = 0; index < referenceRecordCount; index += 1) {
-    if (offset + 36 > bytes.length) throw new KinEngineError(6, "Kin received a truncated reference record.");
-    const recordId = idToHex(bytes.subarray(offset, offset + 16));
-    const areaId = idToHex(bytes.subarray(offset + 16, offset + 32));
-    const titleLength = view.getUint16(offset + 32, true);
-    const fieldCount = bytes[offset + 34];
-    const archived = bytes[offset + 35];
-    if (recordId === "00".repeat(16) || referenceIds.has(recordId) || fieldCount < 1 || fieldCount > 16 || archived > 1 || titleLength < 1 || titleLength > 128)
-      throw new KinEngineError(6, "Kin received an invalid reference record.");
-    referenceIds.add(recordId); offset += 36;
-    if (offset + titleLength > bytes.length) throw new KinEngineError(6, "Kin received a truncated reference record title.");
-    const title = strictTextDecoder.decode(bytes.subarray(offset, offset + titleLength)); offset += titleLength;
-    const fields = [];
-    for (let fieldIndex = 0; fieldIndex < fieldCount; fieldIndex += 1) {
-      if (offset + 20 > bytes.length) throw new KinEngineError(6, "Kin received a truncated reference field.");
-      const fieldId = idToHex(bytes.subarray(offset, offset + 16));
-      const labelLength = view.getUint16(offset + 16, true); const valueLength = view.getUint16(offset + 18, true); offset += 20;
-      if (fieldId === "00".repeat(16) || referenceFieldIds.has(fieldId) || labelLength < 1 || labelLength > 64 || valueLength > 1024 || offset + labelLength + valueLength > bytes.length)
-        throw new KinEngineError(6, "Kin received an invalid reference field.");
-      referenceFieldIds.add(fieldId);
-      const label = strictTextDecoder.decode(bytes.subarray(offset, offset + labelLength)); offset += labelLength;
-      const value = strictTextDecoder.decode(bytes.subarray(offset, offset + valueLength)); offset += valueLength;
-      fields.push({ fieldId, label, value });
-    }
-    referenceRecords.push({ recordId, title, areaId: areaId === "00".repeat(16) ? null : areaId, fields, archived: archived === 1 });
-  }
-  if (referenceRecords.some((record) => record.areaId && !areas.some((area) => area.areaId === record.areaId)))
-    throw new KinEngineError(6, "Kin received a reference record for an unknown Area.");
-  const maintenanceEvents = [];
-  const maintenanceIds = new Set();
-  for (let index = 0; index < maintenanceEventCount; index += 1) {
-    if (offset + 60 > bytes.length) throw new KinEngineError(6, "Kin received a truncated maintenance record.");
-    const maintenanceId = idToHex(bytes.subarray(offset, offset + 16));
-    const recordId = idToHex(bytes.subarray(offset + 16, offset + 32));
-    const performedOn = view.getUint32(offset + 32, true), nextOnCode = view.getUint32(offset + 36, true);
-    const routineBytes = bytes.subarray(offset + 40, offset + 56);
-    const archived = bytes[offset + 56], summaryLength = view.getUint16(offset + 58, true);
-    const end = offset + 60 + summaryLength;
-    if (maintenanceId === "00".repeat(16) || maintenanceIds.has(maintenanceId) || !referenceRecords.some((record) => record.recordId === recordId) || archived > 1 || bytes[offset + 57] !== 0 || summaryLength < 1 || summaryLength > 240 || end > bytes.length)
-      throw new KinEngineError(6, "Kin received an invalid maintenance record.");
-    assertCivilDate(performedOn);
-    const performed = performedOn;
-    const nextOn = nextOnCode === 0 ? null : nextOnCode;
-    if (nextOn != null && nextOn < performed) throw new KinEngineError(6, "Kin received invalid maintenance dates.");
-    const summary = strictTextDecoder.decode(bytes.subarray(offset + 60, end));
-    if (!summary.trim() || summary.trim() !== summary || [...summary].some((character) => /\p{Cc}/u.test(character))) throw new KinEngineError(6, "Kin received invalid maintenance text.");
-    maintenanceIds.add(maintenanceId);
-    maintenanceEvents.push({ maintenanceId, recordId, performedOn: performed, summary, nextOn, routineId: routineBytes.every((byte) => byte === 0) ? null : idToHex(routineBytes), archived: archived === 1 });
-    offset = end;
-  }
-  const attachments = [];
-  const attachmentIds = new Set();
-  for (let index = 0; index < attachmentCount; index += 1) {
-    if (offset + 36 > bytes.length) throw new KinEngineError(6, "Kin received a truncated attachment binding.");
-    const attachmentId = idToHex(bytes.subarray(offset, offset + 16));
-    const parentKind = ["", "note", "reference-record", "maintenance", "item"][bytes[offset + 16]];
-    const removed = bytes[offset + 17];
-    const parentId = idToHex(bytes.subarray(offset + 20, offset + 36));
-    if (attachmentId === "00".repeat(16) || attachmentIds.has(attachmentId) || !parentKind || removed > 1 || bytes[offset + 18] || bytes[offset + 19]) throw new KinEngineError(6, "Kin received an invalid attachment binding.");
-    const exists = parentKind === "note" ? notes.some((item) => item.noteId === parentId) : parentKind === "reference-record" ? referenceRecords.some((item) => item.recordId === parentId) : parentKind === "maintenance" ? maintenanceEvents.some((item) => item.maintenanceId === parentId) : items.some((item) => item.itemId === parentId);
-    if (!exists) throw new KinEngineError(6, "Kin received an attachment for an unknown household record.");
-    attachmentIds.add(attachmentId);
-    attachments.push({ attachmentId, parentKind, parentId, removed: removed === 1 });
-    offset += 36;
-  }
-  const responsibilities = [];
-  const responsibilityIds = new Set();
-  for (let index = 0; index < responsibilityCount; index += 1) {
-    if (offset + 33 > bytes.length) throw new KinEngineError(6, "Kin received truncated responsibility data.");
-    const targetKind = ["", "item", "routine"][bytes[offset]];
-    const targetId = idToHex(bytes.subarray(offset + 1, offset + 17));
-    const memberId = idToHex(bytes.subarray(offset + 17, offset + 33));
-    const key = `${targetKind}:${targetId}`;
-    if (!targetKind || targetId === "00".repeat(16) || responsibilityIds.has(key) || !(targetKind === "item" ? items.some((item) => item.itemId === targetId) : routines.some((routine) => routine.routineId === targetId))) throw new KinEngineError(6, "Kin received invalid responsibility data.");
-    responsibilityIds.add(key);
-    responsibilities.push({ targetKind, targetId, memberId: memberId === "00".repeat(16) ? null : memberId });
-    offset += 33;
-  }
-  // Protocol 24: Rust's next-occurrence date per Routine, in Routine order.
-  // Presence and ordering are checked here; the date itself is never derived.
-  if (protocolVersion >= 24) {
-    if (offset + routines.length * 4 > bytes.length) throw new KinEngineError(6, "Kin received truncated routine schedule data.");
-    for (const routine of routines) {
-      const nextOn = view.getUint32(offset, true);
-      offset += 4;
-      try {
-        if (nextOn) assertCivilDate(nextOn);
-        if (routine.status === "archived" ? nextOn !== 0 : nextOn !== 0 && routine.occurrenceKey && nextOn <= routine.occurrenceKey) throw new Error();
-      } catch {
-        throw new KinEngineError(6, "Kin received invalid routine schedule data.");
-      }
-      routine.nextOn = nextOn || null;
-    }
-  }
-  const entityNames = ["", "item", "handoff", "talk", "routine"];
-  for (let index = 0; index < summaryCount; index += 1) {
-    const headerEnd = offset + 24;
-    if (headerEnd > bytes.length) {
-      throw new KinEngineError(6, "Kin received a truncated summary entry.");
-    }
-    const kindCode = bytes[offset + 16];
-    const entityCode = bytes[offset + 17];
-    const classificationCode = bytes[offset + 18];
-    const textLength = view.getUint32(offset + 20, true);
-    const end = headerEnd + textLength;
-    const expectedEntity =
-      kindCode >= 1 && kindCode <= 4
-        ? 1
-        : kindCode >= 5 && kindCode <= 7
-          ? 2
-          : kindCode >= 8 && kindCode <= 11
-            ? 3
-            : protocolVersion >= 7 && kindCode >= 12 && kindCode <= 15
-              ? 4
-              : 0;
-    const validClassification =
-      kindCode === 1
-        ? classificationCode <= (protocolVersion >= 14 ? 3 : protocolVersion >= 13 ? 2 : 1)
-        : classificationCode === 255;
-    if (
-      end > bytes.length ||
-      kindCode === 0 ||
-      expectedEntity === 0 ||
-      entityCode !== expectedEntity ||
-      !validClassification ||
-      bytes[offset + 19] !== 0 ||
-      textLength < 1 ||
-      textLength > MAX_ITEM_TEXT_BYTES
-    ) {
-      throw new KinEngineError(6, "Kin received an invalid summary entry.");
-    }
-    let text;
-    try {
-      text = strictTextDecoder.decode(bytes.subarray(headerEnd, end));
-    } catch {
-      throw new KinEngineError(6, "Kin received invalid summary text.");
-    }
-    summaryEntries.push({
-      eventId: idToHex(bytes.subarray(offset, offset + 16)),
-      kind: SUMMARY_KINDS[kindCode],
-      entityKind: entityNames[entityCode],
-      text,
-      classification:
-        classificationCode === 255
-          ? null
-          : classificationCode === 0
-            ? "today"
-            : classificationCode === 1
-              ? "need"
-              : classificationCode === 2
-                ? "shopping"
-                : "staple",
-    });
-    offset = end;
-  }
-  if (offset !== bytes.length) {
-    throw new KinEngineError(
-      6,
-      "Kin received trailing bytes from its household engine.",
-    );
-  }
-  if (protocolVersion >= 6) {
-    return {
-      items,
-      handoffs,
-      talks,
-      pulses,
-      ...(protocolVersion >= 7 ? { routines } : {}),
-      ...(protocolVersion >= 9 ? { areas } : {}),
-      ...(protocolVersion >= 10 ? { notes } : {}),
-      ...(protocolVersion >= 18 ? { pins } : {}),
-      ...(protocolVersion >= 19 ? { playbooks } : {}),
-      ...(protocolVersion >= 20 ? { referenceRecords } : {}),
-      ...(protocolVersion >= 21 ? { maintenanceEvents } : {}),
-      ...(protocolVersion >= 22 && attachments.length ? { attachments } : {}),
-      ...(protocolVersion >= 23 && responsibilities.length ? { responsibilities } : {}),
-      ...(modeCode === 0
-        ? {}
-        : { mode: ["normal", "vacation", "guests", "rest"][modeCode] }),
-      summary: {
-        entries: summaryEntries,
-        totalCount: summaryTotalCount,
-        throughEventId: summaryThroughEventId,
-      },
-    };
-  }
-  return { items, handoffs, talks, pulses };
-}
-
 function assertId(value) {
   const bytes = asBytes(value);
   if (bytes.length !== 16) {
@@ -1730,19 +1066,3 @@ function assertId(value) {
   return bytes;
 }
 
-function asBytes(value) {
-  if (value instanceof Uint8Array) {
-    return value;
-  }
-  if (value instanceof ArrayBuffer) {
-    return new Uint8Array(value);
-  }
-  if (ArrayBuffer.isView(value)) {
-    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  }
-  throw new KinEngineError(2, "Kin could not read a stored event record.");
-}
-
-function readAscii(bytes, offset, length) {
-  return String.fromCharCode(...bytes.subarray(offset, offset + length));
-}

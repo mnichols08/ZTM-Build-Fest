@@ -1,6 +1,6 @@
 # Portable Household Data
 
-**Status:** v0.40.1 preserves explicit Temporary-member removal separately from natural expiry in the v0.39/v0.40 package-v2 flow. v0.40.0 adds a package-format-v2 manifest in the existing KARC v1 encrypted container. Package metadata is authenticated with the encrypted payload. The payload keeps exact canonical event history, a validated membership snapshot when available, protected local context and attachment records, including ciphertext and digest metadata. Historical package-v1 archives remain readable. The complete package remains bounded to 160 MiB; attachments remain bounded to 64 records and 50 MiB ciphertext. Membership snapshots are descriptive data only; credentials, sessions, device trust and authorization are never restored from an archive. Earlier conceptual sections below are design history.
+**Status:** v0.40.1 preserves explicit Temporary-member removal separately from natural expiry in the v0.39/v0.40 package-v2 flow. v0.40.0 adds a package-format-v2 manifest in the existing KARC v1 encrypted container. Package metadata is authenticated with the encrypted payload. The payload keeps exact canonical event history, a validated membership snapshot when available, protected local context and attachment records, including ciphertext and digest metadata. Since refactor Slice 9 Kin writes package format 3, which seals the same contents as a stream of segments (below); it still reads package format 2, which v0.47 and earlier wrote. Development-era package-v1 files are refused (refactor track, D3). The complete package remains bounded to 160 MiB; attachments remain bounded to 64 records and 50 MiB ciphertext. Membership snapshots are descriptive data only; credentials, sessions, device trust and authorization are never restored from an archive. Earlier conceptual sections below are design history.
 
 Current attachment and export limits are in [ATTACHMENT-ARCHIVE-LIMITS](ATTACHMENT-ARCHIVE-LIMITS.md). The pre-v0.39 corrective line keeps attachment ciphertext at a 50 MiB household bound and permits a bounded 160 MiB complete `.kin` archive, including protected snapshot serialization and KARC framing. Rust and browser import/export validation share this archive ceiling; the earlier 64 MiB figure below is historical.
 
@@ -38,6 +38,37 @@ encryption/atomic import. The transaction checks that
 the target history and transport stores are still empty. Imported events remain
 byte-for-byte identical; fresh anonymous local actor/device IDs prevent new local
 commands from impersonating the source trusted device.
+
+### Streaming archives (package format 3, refactor Slice 9)
+
+Package format 3 keeps the KARC v1 container and the archive's contents but
+seals them as segments instead of one value, so export and restore never hold
+the whole household as one serialized value, one plaintext and one
+ciphertext. Inside the ciphertext region each segment is `length:u32` and its
+AES-256-GCM ciphertext, in this order: the local context row, one segment per
+attachment record, then the history in chunks of 256 events (each chunk:
+count, then local sequence and length per record, then the canonical
+records). Every other event row field is derived from the canonical bytes on
+restore. `web/security/archive-stream.js` documents the layout.
+
+All segments are sealed under one key for the archive, derived from the root
+with HKDF (purpose `kin/archive-stream/v1`, a fresh 32-byte salt, the
+authenticated metadata in the derivation info). Each nonce is a random 8-byte
+prefix and the segment's index; the additional data names the index and
+whether the segment is the last. The reader decides "last" from position, so
+a dropped, repeated, reordered or truncated segment fails to open, and the
+segment count and chunking must match the authenticated manifest's counts.
+
+Export reads the history from the session arena the unlocked app already
+holds (nothing is decrypted again) and writes the archive into one buffer of
+its final size. Restore opens segments one at a time into one event arena,
+replays it from the engine's own history for the import plan, then protects
+rows 256 events at a time before the same single atomic transaction as
+before. Both report progress, which the security panel shows as a progress
+bar. At 10,000 events with 4 KB of text, export took 0.2 s instead of 20 s
+and restore 15 s instead of 26 s, and each needed less than half the extra
+memory (docs/audits/REFACTOR-BASELINE.md, Slice 9). The archive is about 30%
+smaller because canonical records are no longer base64 text inside it.
 
 Restored history remains local until the device completes normal household
 approval. After approval, the ordinary encrypted sync path binds imported

@@ -46,11 +46,13 @@ class KinCatchUp extends HTMLElement {
   }
 
   set summary(value) {
+    if (value === this.value) return; // unchanged projection section
     this.value = value;
     this.render();
   }
 
   set lastLookedAt(value) {
+    if (value === this.lookedAt) return;
     this.lookedAt = value;
     this.render();
   }

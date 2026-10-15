@@ -6,7 +6,9 @@ class KinAreas extends HTMLElement {
   }
 
   set areas(value) {
-    this.records = Array.isArray(value) ? value : [];
+    const records = Array.isArray(value) ? value : [];
+    if (records === this.records) return; // unchanged projection section
+    this.records = records;
     this.render();
   }
 

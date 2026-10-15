@@ -1,0 +1,185 @@
+// Setting up and replacing local protection: the recovery-key setup and
+// replacement flows, the root rotation they run, and adding a passkey.
+// Part of <kin-security>: state stays on the element (`this.host`), and
+// `this.ctx.<part>` reaches the other parts (kin-security.js lists them).
+import { getActiveVault, LocalVault, randomRecoverySecret } from "../../security/local-vault.js";
+import { authenticatePrf } from "../../security/passkey-unlock.js";
+import { EventStore } from "../../storage/event-store.js";
+import { commitRootRotationKeys, prepareRootRotationKeys } from "../../sync/key-store.js";
+import { loadKinEngine } from "../../wasm/kin-engine.js";
+
+export class SecurityProtection {
+  constructor(ctx) {
+    this.ctx = ctx;
+    this.host = ctx.host;
+  }
+
+  showSetup() {
+    if (this.host.busy) return;
+    const secret = randomRecoverySecret();
+    this.host.render();
+    this.host.heading.textContent = "Save your recovery key";
+    this.host.text("This key is your backup way into Kin on this device if the passkey is ever lost. Save it somewhere safe outside Kin, such as a password manager.");
+    const warning = this.host.text("Anyone with the key can unlock this device's copy of the household. If every unlock method is lost, Kin cannot recover the data.");
+    warning.className = "security-note";
+    const output = document.createElement("code");
+    output.textContent = secret;
+    output.className = "recovery-key";
+    this.host.append(output);
+    if (navigator.clipboard?.writeText) {
+      this.host.button("Copy key", async () => {
+        try {
+          await navigator.clipboard.writeText(secret);
+          this.host.message.textContent = "Recovery key copied. Paste it somewhere safe before continuing.";
+        } catch {
+          this.host.message.textContent = "Copy is unavailable. Select the key and copy it manually.";
+        }
+      });
+    }
+    const form = document.createElement("form");
+    const label = document.createElement("label");
+    const confirmation = document.createElement("input");
+    confirmation.type = "password";
+    confirmation.id = "confirm-recovery";
+    confirmation.autocomplete = "off";
+    confirmation.spellcheck = false;
+    confirmation.required = true;
+    label.htmlFor = confirmation.id;
+    label.textContent = "Paste or type the saved key to confirm";
+    const button = document.createElement("button");
+    button.type = "submit";
+    button.className = "primary-action";
+    button.textContent = "Encrypt and continue";
+    form.append(label, confirmation, button);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (confirmation.value.trim() !== secret) return this.host.error(new Error("The recovery keys do not match. Save and re-enter the complete key."));
+      confirmation.value = "";
+      output.textContent = "";
+      void this.host.run(() => this.host.establishProtection(secret));
+    });
+    this.host.append(form);
+    confirmation.focus();
+  }
+
+  showReplacement() {
+    if (this.host.busy || this.host.phase !== "unlocked") return;
+    const secret = randomRecoverySecret();
+    this.host.render();
+    this.host.heading.textContent = "Replace recovery key";
+    this.host.text("Save this new recovery key outside Kin. It replaces your current recovery key for this browser. Add passkey unlock again afterward. Old backups still need their original recovery keys.");
+    const output = document.createElement("code");
+    output.className = "recovery-key";
+    output.textContent = secret;
+    const form = document.createElement("form");
+    const label = document.createElement("label");
+    label.htmlFor = "confirm-replacement";
+    label.textContent = "Re-enter the saved new recovery key";
+    const confirmation = document.createElement("input");
+    confirmation.id = label.htmlFor;
+    confirmation.type = "password";
+    confirmation.autocomplete = "off";
+    confirmation.spellcheck = false;
+    confirmation.required = true;
+    const button = document.createElement("button");
+    button.type = "submit";
+    button.textContent = "Confirm saved key";
+    form.append(label, confirmation, button);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (confirmation.value.trim() !== secret)
+        return this.host.error(new Error("The recovery keys do not match. Save and re-enter the complete new key."));
+      confirmation.value = "";
+      output.textContent = "";
+      void this.host.run(() => this.host.replaceProtection(secret));
+    });
+    this.host.append(output, form);
+    this.host.button("Cancel", () => this.host.render());
+    confirmation.focus();
+  }
+
+  async replaceProtection(secret) {
+    const operation = this.host.operation;
+    const signal = this.host.operationAbort.signal;
+    const active = getActiveVault();
+    await EventStore.checkSecurityEpoch(active);
+    this.host.assertCurrentOperation(operation);
+    // The operation owns these capabilities; clearing the application disposes
+    // its event/sync adapters and projection before rotation fences peer tabs.
+    const source = new LocalVault(active.vaultId, active.root, active.manifest);
+    source.securityEpoch = active.securityEpoch;
+    let candidate, engine;
+    const cancel = () => { source.lock(); candidate?.lock(); };
+    signal.addEventListener("abort", cancel, { once: true });
+    try {
+      ({ vault: candidate } = await LocalVault.createRotation(source, secret));
+      this.host.assertCurrentOperation(operation);
+      // Read below, during the rotation, to tell peer tabs the new epoch.
+      const app = this.host.closest("kin-app");
+      this.host.services.notifyPeerLock(source.securityEpoch + 1);
+      this.host.services.lockHousehold(false, { preserveSecurityOperation: true });
+      this.host.phase = "protecting";
+      this.host.render();
+      engine = await loadKinEngine();
+      this.host.assertCurrentOperation(operation);
+      await EventStore.rotateProtection({ sourceVault: source, candidateVault: candidate, engine,
+        prepareKeys: prepareRootRotationKeys, commitKeys: commitRootRotationKeys,
+        onPhase: async (phase) => {
+          this.host.assertCurrentOperation(operation);
+          if (phase === "begun") {
+            const status = await EventStore.securityStatus();
+            this.host.assertCurrentOperation(operation);
+            this.host.manifest = status;
+            app.channel?.postMessage({ type: "household-locked", lockEpoch: status.lockEpoch });
+          }
+        },
+      });
+      this.host.assertCurrentOperation(operation);
+      await this.ctx.unlock.finishUnlock(candidate, operation);
+      this.host.message.textContent = "Recovery protection updated. Use your new recovery key and add passkey unlock again if needed.";
+    } catch (error) {
+      candidate?.lock();
+      if (operation === this.host.operation) this.host.phase = "locked";
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", cancel);
+      source.lock();
+      engine?.dispose();
+    }
+  }
+
+  async establishProtection(secret) {
+    const operation = this.host.operation;
+    const { vault, manifest } = await LocalVault.create(secret);
+    try {
+      this.host.assertCurrentOperation(operation);
+      await EventStore.prepareSecurity(manifest);
+      this.host.assertCurrentOperation(operation);
+      const current = await EventStore.securityStatus();
+      this.host.assertCurrentOperation(operation);
+      this.host.manifest = current;
+      await this.ctx.unlock.finishUnlock(vault, operation);
+    } catch (error) { vault.lock(); throw error; }
+  }
+
+  async addPasskey() {
+    const operation = this.host.operation;
+    const vault = getActiveVault();
+    const { secret, credentialId, prfSalt } = await authenticatePrf(null, {
+      signal: this.host.operationAbort.signal,
+    });
+    try {
+      this.host.assertCurrentOperation(operation);
+      const manifest = await vault.addCredentialWrapper(secret, { credentialId, prfSalt });
+      this.host.assertCurrentOperation(operation);
+      await EventStore.updateSecurityManifest(manifest, vault);
+      this.host.assertCurrentOperation(operation);
+      const current = await EventStore.securityStatus();
+      this.host.assertCurrentOperation(operation);
+      this.host.manifest = current;
+      if (this.host.phase === "unlocked") this.host.render();
+      this.host.message.textContent = "Passkey unlock is on for this device. Your recovery key still works as a backup.";
+      this.host.dispatchEvent(new CustomEvent("kin:security-changed", { bubbles: true, composed: true }));
+    } finally { secret.fill(0); }
+  }
+}

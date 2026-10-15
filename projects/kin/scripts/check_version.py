@@ -71,7 +71,8 @@ def main() -> int:
     worker = (PROJECT_ROOT / "web/service-worker.js").read_text(encoding="utf-8")
     if 'const CACHE = `kin-static-v${RELEASE}`;' not in worker:
         raise ValueError("service worker cache name must derive from the release registration URL")
-    app = (PROJECT_ROOT / "web/components/kin-app.js").read_text(encoding="utf-8")
+    # The app shell registers the worker from its status controller.
+    app = (PROJECT_ROOT / "web/components/app/status.js").read_text(encoding="utf-8")
     if '/service-worker.js?v=${encodeURIComponent(release ?? "")}' not in app:
         raise ValueError("service worker registration must pass the document release version")
 

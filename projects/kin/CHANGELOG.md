@@ -1,5 +1,190 @@
 # Changelog
 
+## Unreleased — refactor track
+
+Development durable stores that accepted older JSON sync pushes should be
+wiped or restored from a fresh export. Non-canonical envelope text is now
+rejected; no data migration or event-skipping recovery is provided.
+
+Performance and maintainability work on `kin-refactor-track`. These slices
+carry no version of their own and are folded into regular feature minors when
+merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](docs/audits/REFACTOR-BASELINE.md).
+
+### Slice 1 — Measurement baseline and session plaintext arena
+
+- An unlocked tab keeps the decrypted event history in one contiguous
+  in-memory arena (`web/storage/event-arena.js`). Commands and refreshes
+  decrypt only rows added after the arena's tail instead of the whole log;
+  unlock decrypts once instead of twice. A plaintext store-generation counter
+  in `security_state`, bumped by migration, restore and root rotation, forces
+  a rebuild after any non-append change. Lock, close and peer-tab lock
+  zero-fill the arena.
+- Replay requests copy the arena's bytes in one operation, and command
+  requests no longer copy the history twice.
+- Every `kin_alloc` input is freed on every exit path, with tests.
+- Adds a projection-equivalence oracle, protocol-24 golden fixtures (native
+  and WASM), arena unit tests, a two-tab arena regression and a stage-level
+  `scripts/core-performance.mjs` that builds missing WASM.
+- Documents the arena in STORAGE, THREAT-MODEL and PRIVACY, and a
+  `RUSTUP_TOOLCHAIN=stable` fallback in DEVELOPMENT (the 1.93.0 pin is unchanged).
+
+### Slice 2 — Protocol 24 is the only format
+
+- Protocols 1–23, the 19 `encode_state_vN` wrappers, the legacy entity
+  encoder, the version-keyed decode branches and the pre-v8 replay entry
+  points are deleted. One replay path remains: `state::rebuild(events, as_of,
+  civil_date)` with distributed ordering, and `core::project` /
+  `encode_projection` each have one path. The number 24 is unchanged, and the
+  golden fixtures prove event and projection bytes are byte-identical.
+- `protocol.rs` (3,166 lines) is split into `wire.rs`, `request.rs`,
+  `event_decode.rs` and `state_encode.rs`, with protocol-24 tests in
+  `request_tests.rs`, `event_decode_tests.rs` and `state_encode_tests.rs`.
+- Schema-1 `ITEM_ADDED`, archive package format 1 and the v0.5→v0.6
+  catch-up-context backfill are removed. Development databases are wiped,
+  not migrated.
+- The bridge's `decodeState` decodes only protocol 24; new bridge tests cover
+  truncation, trailing bytes and invalid header fields on the golden
+  projections.
+- Identity-binding fields stay: they map placeholder IDs in pre-sync history
+  and are part of the current sync flow (IDENTITY.md).
+- MIGRATIONS.md, TEST-VECTORS.md and ABI.md now describe a single baseline.
+
+### Slice 3 — Shared component helpers and the `<kin-app>` split
+
+- `web/components/shared/` adds DOM builders, icons, focus snapshots,
+  `defineProps`, `OperationGuard` and the session guard. `<kin-household>`,
+  `<kin-security>`, `<kin-item-detail>`, `<kin-today>` and `<kin-routines>`
+  use them instead of their own copies.
+- `kin-app.js` (3,747 lines) becomes a 183-line element. Its methods moved
+  verbatim into 18 controller classes under `web/components/app/` (largest
+  322 lines) that share one explicit context; state and DOM references stay
+  on the element. Listener wiring is three symmetric tables, and methods
+  called from outside the element keep one-line stubs.
+- The version check reads the service-worker registration from
+  `app/status.js`.
+
+### Slice 4 — Incremental rendering
+
+- The protocol-24 projection gains a section table after its header: one
+  `(revision, byte length)` entry per domain section. The body is regrouped so
+  each domain is contiguous. Event encoding and the KINE request are
+  unchanged; only the golden `.kins` fixtures were regenerated, each checked
+  to be the old projection regrouped plus the table.
+- Revisions are per engine instance and advance only when a section's bytes
+  differ from the last projection that instance emitted. The comparison is
+  exact, against the result buffer the ABI already retains, so it needs no
+  hash and no extra memory.
+- The bridge decoder moves to `web/wasm/projection-decode.js` with one module
+  per section family (`kin-engine.js` 1,729 → 971 lines). The engine reuses
+  the decoded sections of the last state it produced whenever their revision
+  is unchanged, and re-checks counts and cross-section references on every
+  decode.
+- Views skip rendering when a setter receives the array they already hold. A
+  peer refresh in which only Handoffs changed keeps every Item row.
+  `refreshFromEvents` restores focus from one `shared/focus.js` snapshot
+  instead of five list-specific captures.
+- Adds Rust section and revision tests, decoder reuse tests and a two-tab
+  incremental-render regression. ABI.md documents the table and revisions.
+
+### Slice 5 — `<kin-household>`, `<kin-today>` and `<kin-security>` split
+
+- The three largest remaining components become element shells with part
+  classes, following `<kin-app>`'s shape. `kin-household.js` 1,404 → 158
+  lines plus six parts in `household/` (largest 368). `kin-security.js`
+  679 → 123 plus four parts in `security/` (largest 246). `kin-today.js`
+  841 → 262 plus three parts in `today/` (largest 338). The household and
+  security splits are pure moves.
+- `<kin-bulk-bar>` takes the bulk bar's controls, text and focus handoff out of
+  `<kin-today>`. The list keeps the selection and the `kin:bulk-*` commands.
+- `<kin-today>`'s setters are generated by `defineProps`, which now skips a
+  value identical to the current one and coerces missing lists to one shared
+  empty array. `update()` renders at once. Selecting an Item uses `update()`
+  so focus can return to the rebuilt row.
+
+### Slice 6 — The engine holds the history; detail, routines and notes split
+
+- Rust keeps each engine instance's canonical history (`history.rs`). The
+  bridge's `HistoryMirror` appends only the records added since the last
+  call, truncates for a shorter view, and rolls back `historyWith` extras
+  after one replay. New exports: `kin_history_reset`, `kin_history_append`,
+  `kin_history_truncate`, `kin_project`, `kin_execute`. The whole-history
+  `kin_apply_events` and `kin_execute_command` are removed. Allocations sit in
+  a fixed 8-slot table. A refresh after one new event appends 0.01 ms of
+  history instead of re-encoding and copying all of it (store refresh at
+  10k × 4 KB about −33%).
+- `<kin-item-detail>` 481 → 263 lines with `item-detail/sections.js`, and its
+  setters move to `defineProps`. `<kin-routines>` 500 → 414 with
+  `<kin-playbook-editor>` and `<kin-routine-schedule>`. `<kin-notes>` 471 →
+  131 with `notes/notes.js` and `notes/references.js`.
+- `defineProps` rejects a field named like its property.
+
+### Slice 7 — Replay struct, finalize and checkpoint
+
+- The 1,040-line `rebuild_with_context` becomes `rust/src/replay/`. `Replay`
+  checks every event and dispatches it to one of five domain reducers, whose
+  match arms moved verbatim. `finalize(as_of, civil_date)` derives the only
+  time-dependent values (Pulse expiry, Routine occurrence and next start)
+  without changing the replay. `state.rs` keeps the types; the summary and
+  tests move to `state/`.
+- The engine's history keeps a replay checkpoint. A projection after new
+  events with later logical times applies only those. Anything else rebuilds,
+  so results always equal a whole replay. Commands use the checkpoint for the
+  current state and apply their event to a copy, instead of two full replays.
+  Projecting after one new event: 3.6 ms instead of 9.7 at 10k events, 30
+  instead of 62 at 10k × 4 KB. Store refresh is 28–44% faster.
+
+### Slice 8 — Reading events in place; one test hook
+
+- `EventView` reads a canonical record in place (header fields, payload
+  slice), and the history keeps records as `(offset, length)` spans. A
+  projection decodes only the records its checkpoint has not applied. The
+  summary reads borrowed extracts and copies text only for the 8 entries it
+  keeps. Commands check conflicts against the replay instead of every event
+  (`CommandHistory`: `WholeRequest` for tests, `HeldHistory` for the engine).
+  The projection buffer is reserved once instead of growing by doubling.
+  Projecting after one new event at 10k × 4 KB: about 20 ms (was 30).
+- `<kin-app>` loses its 45 script-facing stubs. Controllers call each other
+  only through `ctx`. Regression scripts use `app.ctx` as the one documented
+  test hook. `<kin-security>` gets its six operations from `shell.js` as
+  `security.services` instead of calling methods on the element.
+
+### Slice 9 — Streaming archives
+
+- Exports are package format 3: the same contents, sealed as segments inside
+  the KARC v1 container (the context, one per attachment record, then 256
+  events per segment) under one HKDF-derived key per archive, with each
+  segment's index and finality authenticated. Package format 2 archives from
+  v0.47 still restore. Canonical records are bytes, not base64 text, so an
+  archive is about 30% smaller.
+- Export reads the history from the session arena instead of decrypting the
+  store again, and writes the archive into one buffer of its final size.
+  Restore opens segments one at a time into one event arena and protects
+  rows 256 events at a time; the single atomic write is unchanged.
+- `kin_plan_import` replays the engine's held history (the mirror sends it in
+  batches of about 4 MiB) and archive checks decode only the plan's
+  attachment bindings.
+- Export, check and restore report progress; the security panel shows a
+  labelled progress bar.
+- At 10,000 events with 4 KB of text: export 0.2 s (was 20 s) with +151 MB of
+  private memory (was +955 MB); restore 15 s (was 26 s) with +166–219 MB
+  (was +525 MB).
+
+### Slice 10 — Server hygiene
+
+- `/api/sync/events` carries envelopes as binary (`application/octet-stream`)
+  instead of base64url text in JSON; JSON is refused. The envelopes, their
+  signatures and the relay's storage and validation are unchanged, and one
+  codec (`web/sync/envelope-wire.js`) serves both sides. A 20-event batch is
+  27–48% smaller. SYNC.md documents the format.
+- Request bodies are refused at their limit while they stream: a declared
+  Content-Length over it gets 413 before the body is read, and a chunked
+  body is cut off as soon as it passes it (`server/http-body.mjs`).
+- `durable-store.mjs` (2,299 lines) and `pairing-service.mjs` (1,901) are split
+  into a core and method modules (`durable-store/`, `pairing-service/` by
+  flow stage); pure moves, attached with `server/mixins.mjs`.
+- Portable membership records are compared field by field instead of by
+  `JSON.stringify`.
+
 ## Unreleased — v0.47.0 — Household Identity & Shared Appearance
 
 - Record the household founder as durable owner for new households while leaving legacy ownership unresolved and fail-closed.

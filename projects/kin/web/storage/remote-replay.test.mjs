@@ -26,13 +26,13 @@ test("remote replay quarantines malformed and dependency-invalid events, advance
   });
   assert.equal(result.quarantined, 2);
   assert.equal(result.additions.length, 1);
-  assert.equal(engine.applyEvents(result.candidateRows.map((row) => row.encoded_event), 1_791_475_200_000, null, 20261009).items[0].text, "Buy milk");
+  assert.equal(engine.applyEvents(result.candidates, 1_791_475_200_000, null, 20261009).items[0].text, "Buy milk");
   const reordered = reconcileRemoteEvents({
     rows: [], received: [{ encodedEvent: valid }, { encodedEvent: poison }, { encodedEvent: new Uint8Array([1, 2, 3]) }],
     engine, context: contextRow, asOf: 1_791_475_200_000, civilDate: 20261009,
   });
   assert.equal(reordered.quarantined, result.quarantined);
-  assert.deepEqual(reordered.candidateRows.map((row) => [...row.event_id]), result.candidateRows.map((row) => [...row.event_id]));
+  assert.deepEqual(reordered.additions.map((row) => [...row.event_id]), result.additions.map((row) => [...row.event_id]));
   const duplicate = reconcileRemoteEvents({
     rows: [], received: [{ encodedEvent: valid }, { encodedEvent: valid }], engine,
     context: contextRow, asOf: 1_791_475_200_000, civilDate: 20261009,
@@ -68,7 +68,7 @@ test("two devices changing one repeating task's schedule offline: equal clocks k
     rows: [], received: received.map((encodedEvent) => ({ encodedEvent })), engine,
     context: { last_looked_event_id: null }, asOf: 1_791_475_200_000, civilDate: 20261014,
   });
-  const active = (result) => engine.applyEvents(result.candidateRows.map((row) => row.encoded_event), 1_791_475_200_000, null, 20261014)
+  const active = (result) => engine.applyEvents(result.candidates, 1_791_475_200_000, null, 20261014)
     .routines.filter((record) => record.status !== "archived").map((record) => record.cadence).sort();
 
   const sameClock = [original, ...deviceA, routine(2, 2, 2, 0x70, "weekdays"), archive(2, 3, 3)];

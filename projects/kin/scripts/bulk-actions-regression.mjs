@@ -39,10 +39,10 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     const app = document.querySelector("kin-app");
     const ids = [];
     for (const text of texts) {
-      await app.appendCommand({ type: "add", text, classification });
+      await app.ctx.append.appendCommand({ type: "add", text, classification });
       ids.push(app.state.items.find((item) => item.text === text).itemId);
     }
-    app.renderState();
+    app.ctx.render.renderState();
     return ids;
   }, texts, classification);
   const eventCount = () => page(async () => (await document.querySelector("kin-app").store.getCatchUpState()).events.length);
@@ -81,9 +81,9 @@ export async function bulkActionRegressions(client, { visit, ready }) {
   const mode = (on, list = "needs") => page((on, list) => { document.querySelector("kin-app")[list].setSelectionMode(on); }, on, list);
   const gateAppends = () => page(() => {
     const app = document.querySelector("kin-app");
-    const original = app.appendCommand;
+    const original = app.ctx.append.appendCommand;
     window.__bulkGate = { original, waiting: [] };
-    app.appendCommand = function (command) {
+    app.ctx.append.appendCommand = function (command) {
       return new Promise((resolve, reject) => window.__bulkGate.waiting.push(() => original.call(this, command).then(resolve, reject)));
     };
   });
@@ -91,7 +91,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
   const ungate = () => page(() => {
     const gate = window.__bulkGate;
     if (!gate) return;
-    document.querySelector("kin-app").appendCommand = gate.original;
+    document.querySelector("kin-app").ctx.append.appendCommand = gate.original;
     for (const run of gate.waiting.splice(0)) run();
     delete window.__bulkGate;
   });
@@ -99,9 +99,9 @@ export async function bulkActionRegressions(client, { visit, ready }) {
   // non-lock storage error, and counts every command append meanwhile.
   const holdReads = () => page(() => {
     const app = document.querySelector("kin-app");
-    window.__readGate = { read: app.readAuthoritativeState, append: app.appendCommand, waiting: [], appends: [] };
-    app.readAuthoritativeState = () => new Promise((resolve, reject) => window.__readGate.waiting.push(reject));
-    app.appendCommand = function (command) {
+    window.__readGate = { read: app.ctx.refresh.readAuthoritativeState, append: app.ctx.append.appendCommand, waiting: [], appends: [] };
+    app.ctx.refresh.readAuthoritativeState = () => new Promise((resolve, reject) => window.__readGate.waiting.push(reject));
+    app.ctx.append.appendCommand = function (command) {
       window.__readGate.appends.push(command);
       return window.__readGate.append.call(this, command);
     };
@@ -113,8 +113,8 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     const gate = window.__readGate;
     if (!gate) return [];
     const app = document.querySelector("kin-app");
-    app.readAuthoritativeState = gate.read;
-    app.appendCommand = gate.append;
+    app.ctx.refresh.readAuthoritativeState = gate.read;
+    app.ctx.append.appendCommand = gate.append;
     delete window.__readGate;
     return gate.appends;
   });
@@ -221,8 +221,8 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     await tick([a, b, c, d]);
     await page((failing) => {
       const app = document.querySelector("kin-app");
-      window.__original = app.appendCommand;
-      app.appendCommand = function (command) {
+      window.__original = app.ctx.append.appendCommand;
+      app.ctx.append.appendCommand = function (command) {
         if (failing.includes(command.itemId)) return Promise.reject(Object.assign(new Error("forced local failure"), { userMessage: "Couldn't save." }));
         return window.__original.call(this, command);
       };
@@ -234,7 +234,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     "a partial failure reports both counts, keeps failed items selected, and offers Retry and Undo", state);
     const undoSet = await page(() => document.querySelector("kin-app").bulkUndo.changes.map((change) => change.itemId));
     check(undoSet.length === 2 && undoSet.includes(a) && undoSet.includes(c), "only successful items enter the undo set", undoSet);
-    await page(() => { const app = document.querySelector("kin-app"); app.appendCommand = window.__original; });
+    await page(() => { const app = document.querySelector("kin-app"); app.ctx.append.appendCommand = window.__original; });
     await runAction("retry");
     state = await bar();
     const carried = await page(() => document.querySelector("kin-app").bulkUndo.changes.length);
@@ -244,8 +244,8 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     // Partial undo failure, then try again.
     await page((failing) => {
       const app = document.querySelector("kin-app");
-      window.__original = app.appendCommand;
-      app.appendCommand = function (command) {
+      window.__original = app.ctx.append.appendCommand;
+      app.ctx.append.appendCommand = function (command) {
         if (command.itemId === failing && command.type === "reopen") return Promise.reject(new Error("forced undo failure"));
         return window.__original.call(this, command);
       };
@@ -254,7 +254,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     state = await bar();
     check(state.result === "Undid 3 items. 1 item could not be undone." && state.undo && (await statusOf([c]))[0] === "completed",
       "a partial undo failure is reported and the failed item stays undoable", state);
-    await page(() => { document.querySelector("kin-app").appendCommand = window.__original; });
+    await page(() => { document.querySelector("kin-app").ctx.append.appendCommand = window.__original; });
     await runAction("undo");
     state = await bar();
     check(state.result === "Undid 1 item." && (await statusOf([a, b, c, d])).every((status) => status === "active"), "Try undo again finishes the remaining item", state);
@@ -282,7 +282,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     // Rust rejects a stale compensating command atomically.
     const rejected = await page(async (id) => {
       const app = document.querySelector("kin-app");
-      try { await app.appendCommand({ type: "complete", itemId: id }); return "appended"; } catch (error) { return error.code; }
+      try { await app.ctx.append.appendCommand({ type: "complete", itemId: id }); return "appended"; } catch (error) { return error.code; }
     }, e);
     check(rejected === 4, "Rust refuses a completion that would not change the item's status", { rejected });
     await idle();
@@ -339,7 +339,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     state = await bar();
     check(state.result === "1 item changed since then, so it was left as it is." && (await eventCount()) === before,
       "the retry re-reads the log and still detects the newer change", state);
-    await page(async (id) => { const app = document.querySelector("kin-app"); await app.refreshFromEvents(); await app.appendCommand({ type: "reopen", itemId: id }); app.renderState(); }, a);
+    await page(async (id) => { const app = document.querySelector("kin-app"); await app.ctx.refresh.refreshFromEvents(); await app.ctx.append.appendCommand({ type: "reopen", itemId: id }); app.ctx.render.renderState(); }, a);
     await idle();
 
     // --- Mixed selection ----------------------------------------------------
@@ -363,7 +363,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     // --- Ineligible ids never reach the store --------------------------------
     const [archived] = await create([`Bulk archived ${stamp}`]);
     const [staple] = await create([`Bulk staple ${stamp}`], "staple");
-    await page(async (id) => { const app = document.querySelector("kin-app"); await app.appendCommand({ type: "archive", itemId: id }); app.renderState(); }, archived);
+    await page(async (id) => { const app = document.querySelector("kin-app"); await app.ctx.append.appendCommand({ type: "archive", itemId: id }); app.ctx.render.renderState(); }, archived);
     await idle();
     before = await eventCount();
     await page((ids) => document.querySelector("kin-app").needs.bulkAction("bulk-item-action", { action: "complete", itemIds: ids }), [archived, staple, "00000000000000000000000000000000", a]);
@@ -381,8 +381,8 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     await page(async (id) => {
       const app = document.querySelector("kin-app");
       await app.store.append({ type: "archive", itemId: id }, app.engine);
-      app.broadcastEventChange();
-      await app.refreshFromEvents();
+      app.ctx.peers.broadcastEventChange();
+      await app.ctx.refresh.refreshFromEvents();
     }, c);
     await idle();
     state = await bar();
@@ -403,7 +403,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
       [...app.needs.querySelectorAll(".item-details-button")].find((node) => node.dataset.itemId === id).click();
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const opened = app.selection?.itemId === id && app.selection.page === "lists";
-      app.closeItemDetail({ restoreFocus: true });
+      app.ctx.detail.closeItemDetail({ restoreFocus: true });
       return { opened, stillSelecting: app.needs.selectionMode, focus: document.activeElement?.dataset.itemId === id };
     }, a);
     check(detailOrigin.opened && detailOrigin.stillSelecting && detailOrigin.focus, "Details still opens from a row in selection mode and returns to it", detailOrigin);
@@ -457,7 +457,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     const narrow = await page(() => {
       const list = document.querySelector("kin-app").needs;
       const bar = list.bulkBar;
-      const controls = [...bar.container.querySelectorAll("button, label.select-target")].filter((node) => node.getClientRects().length);
+      const controls = [...bar.querySelectorAll("button, label.select-target")].filter((node) => node.getClientRects().length);
       const rowBoxes = [...list.querySelectorAll(".select-target")].map((node) => node.getBoundingClientRect());
       return {
         overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
@@ -512,7 +512,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     const reloaded = await page(() => { const app = document.querySelector("kin-app"); return { undo: app.bulkUndo, mode: app.needs.selectionMode }; });
     check(JSON.stringify(await statusOf([a, b])) === JSON.stringify(["completed", "completed"]) && reloaded.undo === null && !reloaded.mode,
       "after reload the encrypted log replays the bulk change; undo and selection are not persisted", reloaded);
-    await page((ids) => { const app = document.querySelector("kin-app"); return Promise.all([]).then(async () => { for (const id of ids) await app.appendCommand({ type: "reopen", itemId: id }); app.renderState(); }); }, [a, b]);
+    await page((ids) => { const app = document.querySelector("kin-app"); return Promise.all([]).then(async () => { for (const id of ids) await app.ctx.append.appendCommand({ type: "reopen", itemId: id }); app.ctx.render.renderState(); }); }, [a, b]);
     await idle();
 
     // --- Lock during a batch, lock clears selection and undo ----------------
@@ -523,7 +523,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     await until(() => window.__bulkGate.waiting.length === 1, "gated append before lock");
     await releaseOne();
     await until(() => window.__bulkGate.waiting.length === 1, "second gated append before lock");
-    await page(() => document.querySelector("kin-app").lockHousehold());
+    await page(() => document.querySelector("kin-app").ctx.session.lockHousehold());
     await ungate();
     await new Promise((resolve) => setTimeout(resolve, 100));
     const lockedState = await page(() => { const app = document.querySelector("kin-app"); return { undo: app.bulkUndo, retry: app.bulkRetry, running: app.bulkRunning, locked: !app.vault }; });
@@ -563,9 +563,9 @@ export async function bulkActionRegressions(client, { visit, ready }) {
       before = await eventCount();
       await page((code) => {
         const app = document.querySelector("kin-app");
-        window.__readOriginal = app.readAuthoritativeState;
-        app.readAuthoritativeState = async function () {
-          this.lockHousehold();
+        window.__readOriginal = app.ctx.refresh.readAuthoritativeState;
+        app.ctx.refresh.readAuthoritativeState = async function () {
+          app.ctx.session.lockHousehold();
           throw Object.assign(new Error("read ended by lock"), { code });
         };
         app.needs.bulkBar.undo.click();
@@ -573,7 +573,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       const duringLock = await page(() => {
         const app = document.querySelector("kin-app");
-        app.readAuthoritativeState = window.__readOriginal;
+        app.ctx.refresh.readAuthoritativeState = window.__readOriginal;
         delete window.__readOriginal;
         return { locked: !app.vault, undo: app.bulkUndo, running: app.bulkRunning, result: app.needs.bulkResult };
       });
@@ -587,10 +587,10 @@ export async function bulkActionRegressions(client, { visit, ready }) {
       check(duringLock.locked && duringLock.undo === null && !duringLock.running && duringLock.result === null &&
         afterUnlock.undo === null && afterUnlock.result === null && afterUnlock.status === "completed" && (await eventCount()) === before,
       `a ${code} read failure across a lock cancels undo without updating the next session`, { duringLock, afterUnlock });
-      await page(async (id) => { const app = document.querySelector("kin-app"); await app.appendCommand({ type: "reopen", itemId: id }); app.renderState(); }, b);
+      await page(async (id) => { const app = document.querySelector("kin-app"); await app.ctx.append.appendCommand({ type: "reopen", itemId: id }); app.ctx.render.renderState(); }, b);
       await idle();
     }
-    await page((ids) => Promise.resolve().then(async () => { const app = document.querySelector("kin-app"); for (const id of ids) if (app.state.items.find((item) => item.itemId === id)?.status === "completed") await app.appendCommand({ type: "reopen", itemId: id }); app.renderState(); }), [a, b, d]);
+    await page((ids) => Promise.resolve().then(async () => { const app = document.querySelector("kin-app"); for (const id of ids) if (app.state.items.find((item) => item.itemId === id)?.status === "completed") await app.ctx.append.appendCommand({ type: "reopen", itemId: id }); app.ctx.render.renderState(); }), [a, b, d]);
     await idle();
   } finally {
     await ungate().catch(() => {});

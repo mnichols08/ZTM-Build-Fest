@@ -244,7 +244,7 @@ async function setupPasskey() {
       app.security.alert.textContent.includes("does not support secure PRF"),
       "unsupported PRF must be explicit: " + app.security.alert.textContent,
     );
-    app.lockHousehold();
+    app.ctx.session.lockHousehold();
     check(
       app.vault === null && app.state === null,
       "login cookie alone cannot unlock local data",
@@ -259,7 +259,7 @@ async function setupPasskey() {
     (await app.store.snapshotForArchive()).events.length === 1,
     "credential addition preserves corpus",
   );
-  app.lockHousehold();
+  app.ctx.session.lockHousehold();
   check(
     app.vault === null &&
       app.state === null &&
@@ -326,14 +326,14 @@ async function attachmentUiChecks(recovery) {
   // household component loads asynchronously after unlock.
   await wait(() => Boolean(app.household?.identity), "household identity");
   location.hash = "#today";
-  app.showPageFromLocation();
+  app.ctx.navigation.showPageFromLocation();
   app.compose.classification.value = "need";
   app.compose.plan.value = "today";
   app.compose.input.value = "Photo of the fridge";
   app.compose.form.requestSubmit();
   await wait(() => !app.busy && app.state.items.some((item) => item.text === "Photo of the fridge") && app.state.items.find((item) => item.text === "Photo of the fridge").planningDate !== null, "item add");
   const item = app.state.items.find((entry) => entry.text === "Photo of the fridge");
-  check(item.classification === "need" && item.planningDate === app.currentCivilDate() && app.today.querySelector(`.item-text[data-item-id="${item.itemId}"]`),
+  check(item.classification === "need" && item.planningDate === app.ctx.navigation.currentCivilDate() && app.today.querySelector(`.item-text[data-item-id="${item.itemId}"]`),
     "Today capture creates a task planned for today that is visible on Today");
   // A real 2x2 PNG so the thumbnail pipeline decodes genuine image bytes.
   const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DwHwqY/j9/j8EBABRiB/GKvM3kAAAAAElFTkSuQmCC"), (c) => c.charCodeAt(0));
@@ -393,9 +393,9 @@ async function attachmentUiChecks(recovery) {
   check(getComputedStyle(thumb()).height.replace("px", "") >= 48, "thumbnail is a comfortable touch target");
   check(app.attachmentPreviews.peek(row.attachmentId)?.url === img.src, "preview object URL is cached per session");
   // Kind, size and state live on the full tile in the shared detail view.
-  app.openItemDetail(item.itemId);
+  app.ctx.detail.openItemDetail(item.itemId);
   const metaText = app.detail.querySelector(`.attachment-tile .attachment-meta`)?.textContent ?? "";
-  app.closeItemDetail({ restoreFocus: false });
+  app.ctx.detail.closeItemDetail({ restoreFocus: false });
   check(metaText.includes("Photo") && metaText.includes("B"), "detail tile shows kind and size: " + metaText);
   check(thumb()?.getAttribute("aria-label").includes("Photo"), "the row thumbnail names the file kind for assistive technology");
   thumb().click();
@@ -418,18 +418,18 @@ async function attachmentUiChecks(recovery) {
   const pdfRow = [...app.today.querySelectorAll("kin-item .attachment-tile-document")].find((tile) => tile.querySelector("button")?.getAttribute("aria-label")?.startsWith("Open warranty.pdf"));
   check(Boolean(pdfRow) && !pdfRow.querySelector(".attachment-thumb") && pdfRow.querySelector("button").getAttribute("aria-label").includes("PDF"),
     "documents render as a recognizable compact control on the row, named with their kind");
-  app.openItemDetail(item.itemId);
+  app.ctx.detail.openItemDetail(item.itemId);
   const pdfTile = [...app.detail.querySelectorAll(".attachment-tile")].find((tile) => tile.textContent.includes("warranty.pdf"));
   check(pdfTile?.classList.contains("attachment-tile-document") && pdfTile.querySelector(".attachment-meta").textContent.includes("PDF") &&
     pdfTile.querySelector('button[aria-label="Open warranty.pdf"]') && pdfTile.querySelector('button[aria-label="Save warranty.pdf"]') &&
     !pdfTile.querySelector(".attachment-thumb"), "documents render as a recognizable tile with Open and Save in the detail view");
-  app.closeItemDetail({ restoreFocus: false });
-  app.clearAlert();
-  await app.handleViewAttachment({ detail: { attachmentId: "00".repeat(16), parentKind: "item", parentId: item.itemId } });
+  app.ctx.detail.closeItemDetail({ restoreFocus: false });
+  app.ctx.status.clearAlert();
+  await app.ctx.attachments.handleViewAttachment({ detail: { attachmentId: "00".repeat(16), parentKind: "item", parentId: item.itemId } });
   check(app.alert.textContent === "We couldn't open this attachment. Your existing household information hasn't been deleted." && !app.viewer.open,
     "a failed retrieval is explained without claiming data loss");
-  app.clearAlert();
-  app.lockHousehold();
+  app.ctx.status.clearAlert();
+  app.ctx.session.lockHousehold();
   check(app.attachmentPreviews === null && !app.viewer.open, "locking drops every cached preview");
   let previewRevoked = false;
   try { await fetch(img.src); } catch { previewRevoked = true; }
@@ -437,12 +437,12 @@ async function attachmentUiChecks(recovery) {
   await app.security.run(() => app.security.unlockRecovery(recovery));
   await wait(() => app.store && !app.busy && app.attachmentRows.some((entry) => entry.parentId === item.itemId), "re-unlock");
   location.hash = "#today";
-  app.showPageFromLocation();
+  app.ctx.navigation.showPageFromLocation();
   await wait(() => Boolean(thumb()), "tile after unlock");
   thumb().scrollIntoView({ block: "center" });
   await wait(() => thumb()?.querySelector("img")?.src.startsWith("blob:"), "thumbnail after unlock");
   check(thumb().querySelector("img").src !== img.src, "a fresh session derives a fresh preview rather than reusing a revoked one");
-  app.lockHousehold();
+  app.ctx.session.lockHousehold();
   return checks;
 }
 
@@ -459,7 +459,7 @@ async function unlockPasskey(success) {
       );
     if (!app.vault || app.security.phase !== "unlocked")
       throw Error("PRF unlock lacks key capability");
-    app.lockHousehold();
+    app.ctx.session.lockHousehold();
     return 2;
   }
   if (app.state !== null || app.vault !== null || app.engine !== null)
@@ -543,7 +543,7 @@ async function recoverPasskey(recovery) {
   await app.security.run(() => app.security.unlockRecovery(recovery));
   if (app.state?.items[0]?.text !== "Virtual passkey protected content")
     throw Error("Independent recovery path was lost");
-  app.lockHousehold();
+  app.ctx.session.lockHousehold();
   return 1;
 }
 

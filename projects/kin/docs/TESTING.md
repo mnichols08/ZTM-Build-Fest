@@ -1,5 +1,105 @@
 # Testing Contracts
 
+## Refactor track gates
+
+- **Projection-equivalence oracle.** `projectionOracle` in
+  `scripts/event-arena-regression.mjs` compares the projection bytes a store's
+  cached history produces with a fresh full read (native IndexedDB, decrypt of
+  every row) and full replay, for the same events, `as_of`, civil date, cursor
+  and identity. Any cached or incremental history path must pass it. The
+  storage runner exercises it across unlock, local appends, a second
+  connection's appends (checking that only rows after the tail are decrypted),
+  a non-append rewrite detected through the store generation (with a negative
+  control that shows the oracle fails without the bump), out-of-order
+  synchronized events, restore, root rotation and lock. `browser-regression.mjs`
+  runs `eventArenaPeerRegressions`: two real tabs, where the peer tab decrypts
+  exactly one row for one new event and matches the oracle.
+- **Protocol-24 golden fixtures.** `rust/src/golden_tests.rs` builds five
+  scenarios through the command path (empty, a household using every command
+  kind, bound pre-sync history with two diverging devices, an expired Pulse in
+  a paused mode, and 400 bulk Items) and freezes the complete KINE request and
+  the KINS projection under `rust/fixtures/golden/`. `web/wasm/golden.test.mjs`
+  replays the same requests through the release WASM. Regenerate only
+  deliberately with `KIN_UPDATE_GOLDEN=1 cargo test golden`.
+- **Protocol 24.** `rust/src/request_tests.rs` (framing, bindings, ordering,
+  bounds), `event_decode_tests.rs` (every kind's payload rules, Handoff and
+  Talk lifecycles) and `state_encode_tests.rs` (projection layout and limits)
+  replace the per-version protocol tests. `web/wasm/projection-decode.test.mjs`
+  checks that the bridge fails closed on every truncation of a golden
+  projection, on trailing bytes, on invalid header fields and on a section
+  table that does not cover the body.
+- **Server hygiene (Slice 10).** `server/http-body.test.mjs` checks that a
+  declared length over the limit is answered with 413 before any body byte
+  is sent, that a chunked body is refused once it passes the limit, and that
+  `/api/sync/events` refuses JSON (415) and malformed batches (400).
+  `web/sync/envelope-wire.test.mjs` round-trips real encrypted envelopes and
+  pull pages exactly and refuses every truncation and non-canonical input.
+  Server tests write push bodies as `{ events }` and read pull pages as
+  objects through `server/sync-wire-test-utils.mjs`. The server module
+  splits are pure moves: the server suite is unchanged.
+- **Streaming archives (Slice 9).** `web/security/archive-stream.test.mjs`
+  round-trips histories of 0, 1, 256, 257 and 517 events exactly and refuses
+  a changed byte in any segment, a dropped, repeated or swapped segment,
+  wrong counts and a too-short length; the archive key must depend on the
+  root, salt and metadata. `archive.rs` checks that the held-history import
+  plan equals the whole-request plan for every golden fixture.
+  `security-ui-regression.mjs` opens a package-format-3 export, checks that a
+  package-format-2 export from v0.47 still validates, and tampers with the
+  manifest. `history-mirror.test.mjs` checks that a whole history goes to the
+  engine in bounded batches.
+- **Test hook (Slice 8).** Browser scripts reach the application through
+  `document.querySelector("kin-app").ctx`, the controller context
+  (COMPONENTS.md). There are no element methods for tests to call or replace;
+  replace a controller method on `app.ctx.<key>` and restore it afterwards.
+- **Reading events in place (Slice 8).** `history_tests.rs` checks that an
+  `EventView` gives the same event ID, logical time and summary input as a
+  full decode for every record of every golden fixture. A command executed
+  against the held history must equal one executed against the whole request,
+  including the conflicts it rejects.
+- **Instance history (Slice 6).** `rust/src/history_tests.rs` checks append
+  batches, truncation and atomic rejection, and that replaying the held
+  history matches replaying the whole request for every golden fixture.
+  `web/wasm/history-mirror.test.mjs` checks over the real WASM that a growing
+  arena view sends only new records, a shorter one truncates, `historyWith`
+  extras are rolled back, and a new epoch, another arena or an array sends
+  the history whole. `web/wasm/abi-test-support.mjs` (not shipped) lets raw
+  ABI tests replay a whole KINE request: reset, append, project.
+- **Replay checkpoint (Slice 7).** `rust/src/history_tests.rs` replays every
+  golden fixture one appended record at a time and requires the same result
+  (bytes or error) as a whole replay of that prefix. A single-device history
+  reuses the checkpoint after its first projection. An equal logical time,
+  another identity context, a truncation below the checkpoint and a rejected
+  record each rebuild. A command executed from the checkpoint equals one
+  executed from a full replay.
+- **Section revisions.** `rust/src/section_tests.rs` covers the contiguous
+  section layout, the table and revision wrapping. The `abi.rs` tests check
+  that revisions advance only for changed sections across calls, survive a
+  non-projection call, never repeat after the basis is lost, and that command
+  results locate their projection. `projection-decode.test.mjs` checks that an
+  unchanged section is reused by identity and equals a full decode, that
+  revision 0 and another engine instance's state never reuse, and that reused
+  sections are still checked against counts and cross-section references.
+  `scripts/incremental-render-regression.mjs` (in the browser runner) checks
+  in two real tabs that a peer refresh after a new Handoff keeps the Items
+  array and its rendered rows, and that a new Item renders, with the
+  incremental state equal to a full decode of the same projection.
+- **ABI ownership.** `web/wasm/abi-ownership.test.mjs` checks that every
+  `kin_alloc` input is freed exactly once when the copy, the export, the result
+  copy or the decode throws, for each operation family, and against the real
+  engine.
+- **Arena unit tests.** `web/storage/event-arena.test.mjs` covers growth past
+  every initial capacity, subarray views, prefix stability across appends,
+  idempotent appends, lookups, detached rows, stale views after reset or wipe,
+  and zero-filling on wipe and growth.
+- **Stage timings.** `node scripts/core-performance.mjs [--browser <exe>]`
+  builds the release WASM if it is missing and prints per-stage medians; the
+  refactor baseline is in [audits/REFACTOR-BASELINE.md](audits/REFACTOR-BASELINE.md).
+
+Corruption tests that rewrite an already-read row in place (outside Kin's
+write paths) reset the store's arena first, because the arena detects such a
+change at the next full read rather than on the next command
+([THREAT-MODEL](THREAT-MODEL.md)).
+
 ## Daily UX baseline
 
 `web/daily-ux-fixtures.js` defines deterministic empty, overdue, due-today,
@@ -486,7 +586,11 @@ a Rust/WASM product-version bump.
 
 The storage runner includes legacy-key migration checks. Optional `--performance`
 and `--maximum-payload` measure 10,000-event migration/unlock and encrypted archive
-round trips. The WebAuthn runner uses a CDP virtual authenticator supporting PRF,
+round trips. Since Slice 9 each archive phase (export, restore) reports its
+time and the renderers' peak working set and private bytes inside it, next to
+the level before it; the timing run exposes `gc` and collects before each
+phase, and the round trip compares per-record digests so no fixture copy stays
+alive. The WebAuthn runner uses a CDP virtual authenticator supporting PRF,
 real browser ceremonies and the real server verifier; it is not physical hardware
 or cross-platform certification. Preserve prior feature suites when changing
 startup/draft expectations: security must not weaken domain, rollback or a11y checks.

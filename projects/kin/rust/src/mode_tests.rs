@@ -1,9 +1,8 @@
 use crate::command::{create_event, execute, CommandContext, HouseholdCommand};
 use crate::event::{ActorId, DeviceId, EventId, EventKind, HouseholdId, HouseholdMode};
-use crate::protocol::{
-    decode_event, decode_request_with_summary, encode_state_v14, PROTOCOL_V14, PROTOCOL_V15,
-};
-use crate::state::{rebuild_distributed_on, summarize_validated};
+use crate::event_decode::decode_event;
+use crate::request::decode_request;
+use crate::state::{rebuild, summarize_validated};
 
 fn context(device: u8, logical_time: u64) -> CommandContext {
     let mut event_id = [0; 16];
@@ -20,16 +19,7 @@ fn context(device: u8, logical_time: u64) -> CommandContext {
 }
 
 fn request(records: &[Vec<u8>]) -> Vec<u8> {
-    let mut bytes = vec![0; 64];
-    bytes[..4].copy_from_slice(b"KINE");
-    bytes[4..6].copy_from_slice(&PROTOCOL_V15.to_le_bytes());
-    bytes[8..12].copy_from_slice(&(records.len() as u32).to_le_bytes());
-    bytes[12..20].copy_from_slice(&1_760_000_000_000i64.to_le_bytes());
-    bytes[40..44].copy_from_slice(&20261009u32.to_le_bytes());
-    for record in records {
-        bytes.extend_from_slice(record);
-    }
-    bytes
+    crate::test_support::kine(records, 1_760_000_000_000, 20261009, None)
 }
 
 fn mode_event(device: u8, sequence: u64, mode: HouseholdMode) -> crate::event::EventEnvelope {
@@ -42,9 +32,9 @@ fn mode_event(device: u8, sequence: u64, mode: HouseholdMode) -> crate::event::E
 
 #[test]
 fn old_histories_default_to_normal_and_mode_changes_replay() {
-    let old = decode_request_with_summary(&request(&[])).unwrap();
+    let old = decode_request(&request(&[])).unwrap();
     assert_eq!(
-        rebuild_distributed_on(&old.events, old.as_of.unwrap(), old.civil_date.unwrap())
+        rebuild(&old.events, old.as_of, old.civil_date)
             .unwrap()
             .mode,
         HouseholdMode::Normal
@@ -54,7 +44,7 @@ fn old_histories_default_to_normal_and_mode_changes_replay() {
     let rest = mode_event(1, 2, HouseholdMode::Rest);
     let events = [vacation, rest];
     for _ in 0..2 {
-        let decoded = decode_request_with_summary(&request(
+        let decoded = decode_request(&request(
             &events
                 .iter()
                 .map(|event| event.canonical_bytes.clone())
@@ -62,13 +52,9 @@ fn old_histories_default_to_normal_and_mode_changes_replay() {
         ))
         .unwrap();
         assert_eq!(
-            rebuild_distributed_on(
-                &decoded.events,
-                decoded.as_of.unwrap(),
-                decoded.civil_date.unwrap()
-            )
-            .unwrap()
-            .mode,
+            rebuild(&decoded.events, decoded.as_of, decoded.civil_date)
+                .unwrap()
+                .mode,
             HouseholdMode::Rest
         );
     }
@@ -84,19 +70,14 @@ fn duplicate_replayed_mode_events_are_idempotent_and_conflicts_are_stable() {
         vec![first.clone(), second.clone()],
         vec![second, first.clone()],
     ] {
-        let decoded = decode_request_with_summary(&request(
+        let decoded = decode_request(&request(
             &records
                 .iter()
                 .map(|event| event.canonical_bytes.clone())
                 .collect::<Vec<_>>(),
         ))
         .unwrap();
-        let state = rebuild_distributed_on(
-            &decoded.events,
-            decoded.as_of.unwrap(),
-            decoded.civil_date.unwrap(),
-        )
-        .unwrap();
+        let state = rebuild(&decoded.events, decoded.as_of, decoded.civil_date).unwrap();
         if records.len() == 2 && records[0].event_id == records[1].event_id {
             assert_eq!(state.mode, HouseholdMode::Vacation);
         } else {
@@ -106,19 +87,16 @@ fn duplicate_replayed_mode_events_are_idempotent_and_conflicts_are_stable() {
 }
 
 #[test]
-fn mode_commands_use_protocol_fifteen_and_reject_legacy_clients() {
+fn mode_commands_project_the_mode_and_reject_repeats() {
     let vacation = mode_event(1, 1, HouseholdMode::Vacation);
     assert!(matches!(
-        decode_event(&vacation.canonical_bytes, PROTOCOL_V15)
-            .unwrap()
-            .kind,
+        decode_event(&vacation.canonical_bytes).unwrap().kind,
         EventKind::HouseholdModeChanged {
             mode: HouseholdMode::Vacation
         }
     ));
-    assert!(decode_event(&vacation.canonical_bytes, PROTOCOL_V14).is_err());
 
-    let initial_request = decode_request_with_summary(&request(&[])).unwrap();
+    let initial_request = decode_request(&request(&[])).unwrap();
     let result = execute(
         &HouseholdCommand::SetHouseholdMode(HouseholdMode::Vacation),
         context(1, 1),
@@ -126,7 +104,7 @@ fn mode_commands_use_protocol_fifteen_and_reject_legacy_clients() {
     )
     .unwrap();
     assert_eq!(result.projection.mode, HouseholdMode::Vacation);
-    assert_eq!(&result.encoded_projection[..6], b"KINS\x0f\0");
+    assert_eq!(&result.encoded_projection[..6], b"KINS\x18\0");
     assert_eq!(result.encoded_projection[68], HouseholdMode::Vacation as u8);
     assert_eq!(result.encoded_projection[69..72], [0; 3]);
     let summary = summarize_validated(
@@ -136,13 +114,13 @@ fn mode_commands_use_protocol_fifteen_and_reject_legacy_clients() {
     )
     .unwrap();
     assert_eq!(
-        encode_state_v14(&result.projection, &summary),
-        Err(crate::error::KinError::UnsupportedVersion)
+        crate::state_encode::encode_state(&result.projection, &summary).unwrap(),
+        result.encoded_projection
     );
     let repeated = execute(
         &HouseholdCommand::SetHouseholdMode(HouseholdMode::Vacation),
         context(1, 2),
-        decode_request_with_summary(&request(&[result.event.canonical_bytes])).unwrap(),
+        decode_request(&request(&[result.event.canonical_bytes])).unwrap(),
     );
     assert_eq!(repeated.unwrap_err(), crate::error::KinError::InvalidEvent);
 }

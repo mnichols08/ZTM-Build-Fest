@@ -1,7 +1,7 @@
 use crate::command::{execute, CommandContext, HouseholdCommand as C};
 use crate::event::*;
-use crate::protocol::{DecodedRequest, PROTOCOL_V22, PROTOCOL_V23};
 use crate::recurrence::CivilDate;
+use crate::request::DecodedRequest;
 
 fn context(n: u8, device: u8, logical: u64) -> CommandContext {
     CommandContext {
@@ -13,20 +13,19 @@ fn context(n: u8, device: u8, logical: u64) -> CommandContext {
         logical_time: logical,
     }
 }
-fn request(events: Vec<EventEnvelope>, version: u16) -> DecodedRequest {
+fn request(events: Vec<EventEnvelope>) -> DecodedRequest {
     DecodedRequest {
-        protocol_version: version,
         events,
-        as_of: Some(1_791_475_200_100),
+        as_of: 1_791_475_200_100,
         summary_cursor: None,
-        civil_date: Some(CivilDate::from_encoded(20261009).unwrap()),
+        civil_date: CivilDate::from_encoded(20261009).unwrap(),
         target_household_id: None,
         identity_bindings: vec![],
     }
 }
 fn append(events: &mut Vec<EventEnvelope>, command: C, ctx: CommandContext) {
     events.push(
-        execute(&command, ctx, request(events.clone(), PROTOCOL_V23))
+        execute(&command, ctx, request(events.clone()))
             .unwrap()
             .event,
     );
@@ -81,7 +80,7 @@ fn item_and_routine_responsibility_take_handoff_clear_and_replay() {
         },
         context(5, 2, 5),
     );
-    let state = crate::state::rebuild_distributed_on(
+    let state = crate::state::rebuild(
         &events,
         1_791_475_200_100,
         CivilDate::from_encoded(20261009).unwrap(),
@@ -105,19 +104,6 @@ fn item_and_routine_responsibility_take_handoff_clear_and_replay() {
             .member_id,
         Some(ActorId([2; 16]))
     );
-    assert_eq!(
-        execute(
-            &C::ChangeResponsibility {
-                target_kind: ResponsibilityTargetKind::Item,
-                target_id: [4; 16],
-                member_id: Some(ActorId([1; 16]))
-            },
-            context(6, 2, 6),
-            request(events.clone(), PROTOCOL_V22)
-        )
-        .unwrap_err(),
-        crate::error::KinError::UnsupportedVersion
-    );
 }
 
 #[test]
@@ -132,7 +118,7 @@ fn responsibility_racing_with_archive_is_a_stable_noop() {
                 classification: ItemClassification::Need,
             },
             context(1, 1, 1),
-            request(vec![], PROTOCOL_V23),
+            request(vec![]),
         )
         .unwrap()
         .event,
@@ -140,7 +126,7 @@ fn responsibility_racing_with_archive_is_a_stable_noop() {
     let archive = execute(
         &C::ArchiveItem(item_id),
         context(2, 1, 2),
-        request(base.clone(), PROTOCOL_V23),
+        request(base.clone()),
     )
     .unwrap()
     .event;
@@ -151,13 +137,13 @@ fn responsibility_racing_with_archive_is_a_stable_noop() {
             member_id: Some(ActorId([3; 16])),
         },
         context(3, 2, 2),
-        request(base.clone(), PROTOCOL_V23),
+        request(base.clone()),
     )
     .unwrap()
     .event;
     let events = [base[0].clone(), archive, assignment];
-    let forward = crate::state::rebuild_distributed_on(&events, 1_791_475_200_100, date).unwrap();
-    let reverse = crate::state::rebuild_distributed_on(
+    let forward = crate::state::rebuild(&events, 1_791_475_200_100, date).unwrap();
+    let reverse = crate::state::rebuild(
         &events.into_iter().rev().collect::<Vec<_>>(),
         1_791_475_200_100,
         date,
@@ -187,7 +173,7 @@ fn responsibility_concurrent_assignments_converge_by_event_order_and_archive_rej
             member_id: Some(ActorId([1; 16])),
         },
         context(2, 1, 2),
-        request(base.clone(), PROTOCOL_V23),
+        request(base.clone()),
     )
     .unwrap()
     .event;
@@ -198,17 +184,17 @@ fn responsibility_concurrent_assignments_converge_by_event_order_and_archive_rej
             member_id: Some(ActorId([2; 16])),
         },
         context(3, 2, 2),
-        request(base.clone(), PROTOCOL_V23),
+        request(base.clone()),
     )
     .unwrap()
     .event;
-    let forward = crate::state::rebuild_distributed_on(
+    let forward = crate::state::rebuild(
         &[base[0].clone(), a.clone(), b.clone()],
         1_791_475_200_100,
         CivilDate::from_encoded(20261009).unwrap(),
     )
     .unwrap();
-    let reverse = crate::state::rebuild_distributed_on(
+    let reverse = crate::state::rebuild(
         &[base[0].clone(), b, a],
         1_791_475_200_100,
         CivilDate::from_encoded(20261009).unwrap(),
@@ -228,7 +214,7 @@ fn responsibility_concurrent_assignments_converge_by_event_order_and_archive_rej
             member_id: Some(ActorId([1; 16]))
         },
         context(5, 1, 3),
-        request(archived, PROTOCOL_V23)
+        request(archived)
     )
     .is_err());
 }

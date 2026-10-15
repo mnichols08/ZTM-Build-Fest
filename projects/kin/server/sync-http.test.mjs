@@ -8,6 +8,8 @@ import { PairingService } from "./pairing-service.mjs";
 import { createKinServer } from "./server.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
 import { DurableStore } from "./durable-store.mjs";
+import { canonicalEventEnvelope } from "./sync-contract.mjs";
+import { requestBody, responseBody } from "./sync-wire-test-utils.mjs";
 
 globalThis.crypto ??= webcrypto;
 
@@ -62,6 +64,45 @@ function eventEnvelope(identity, overrides = {}) {
   };
 }
 
+for (const failure of ["durable row", "page encoding"]) {
+  test(`pull reports invalid ${failure} with event metadata but no ciphertext`, async (t) => {
+    const service = new PairingService();
+    const adult = service.bootstrap({ credential: credential(`bad-${failure}`), deviceLabel: "A" });
+    const app = await start(service);
+    const logs = t.mock.method(console, "error", () => {});
+    const envelope = eventEnvelope(adult);
+    try {
+      app.syncService.push(adult.sessionToken, [envelope]);
+      const invalid = { ...envelope, signature: `${envelope.signature.slice(0, -1)}B` };
+      if (failure === "durable row") {
+        app.store.db.prepare("UPDATE sync_events SET canonical_envelope = ? WHERE household_id = ? AND event_id = ?")
+          .run(canonicalEventEnvelope(invalid), adult.householdId, envelope.eventId);
+      } else {
+        t.mock.method(app.store, "readEvents", () => ({
+          events: [{ cursor: "AAAAAAAAAAE", envelope: invalid }],
+          nextCursor: "AAAAAAAAAAE", hasMore: false,
+        }));
+      }
+      const response = await fetch(`${app.url}/api/sync/events?cursor=&limit=20`, {
+        headers: { Cookie: `kin_session=${adult.sessionToken}` },
+      });
+      assert.equal(response.status, 500);
+      const body = await response.json();
+      assert.equal(body.error, "sync_store_invalid");
+      assert.equal(Object.hasOwn(body, "nextCursor"), false);
+      const lines = logs.mock.calls.map((call) => call.arguments[0]);
+      const diagnostic = lines.map((line) => JSON.parse(line)).find((line) => line.event === "sync_store_invalid");
+      assert.deepEqual(diagnostic, {
+        event: "sync_store_invalid", householdId: adult.householdId, eventId: envelope.eventId,
+      });
+      assert.ok(lines.every((line) => !line.includes(envelope.ciphertext)));
+      assert.equal(app.store.db.prepare("SELECT COUNT(*) AS count FROM sync_events").get().count, 1);
+    } finally {
+      await app.close();
+    }
+  });
+}
+
 test("HTTP sync operations require an active session and revoked devices cannot use stale cursors", async () => {
   const service = new PairingService();
   const adult = service.bootstrap({
@@ -85,9 +126,9 @@ test("HTTP sync operations require an active session and revoked devices cannot 
       method,
       headers: {
         ...(token ? { Cookie: `kin_session=${token}` } : {}),
-        ...(body ? { "Content-Type": "application/json" } : {}),
+        ...requestBody(path, method, body).headers,
       },
-      body: body ? JSON.stringify(body) : undefined,
+      body: requestBody(path, method, body).body,
     });
   try {
     assert.equal((await call("/api/sync/status", { token: null })).status, 401);
@@ -114,7 +155,7 @@ test("HTTP sync operations require an active session and revoked devices cannot 
     );
     const pulled = await call("/api/sync/events?cursor=&limit=1");
     assert.equal(
-      (await pulled.json()).events[0].envelope.eventId,
+      (await responseBody(pulled)).events[0].envelope.eventId,
       envelope.eventId,
     );
 
@@ -175,9 +216,9 @@ test("independent HTTP clients retain relay history while revoked devices fail o
       method,
       headers: {
         Cookie: `kin_session=${session}`,
-        ...(body ? { "Content-Type": "application/json" } : {}),
+        ...requestBody(path, method, body).headers,
       },
-      body: body ? JSON.stringify(body) : undefined,
+      body: requestBody(path, method, body).body,
     });
   const clientA = client(adultA.sessionToken);
   const clientB = client(adultB.sessionToken);
@@ -186,7 +227,7 @@ test("independent HTTP clients retain relay history while revoked devices fail o
     assert.equal((await clientA("/api/sync/events", { method: "POST", body: { events: [event] } })).status, 200);
     const firstPull = await clientB("/api/sync/events?cursor=&limit=20");
     assert.equal(firstPull.status, 200);
-    assert.deepEqual((await firstPull.json()).events.map((row) => row.envelope), [event]);
+    assert.deepEqual((await responseBody(firstPull)).events.map((row) => row.envelope), [event]);
 
     // Client B retains its old cursor and retryable upload. The relay accepts
     // the exact retry once; revocation must invalidate the same session later.
@@ -202,7 +243,7 @@ test("independent HTTP clients retain relay history while revoked devices fail o
 
     // An authorized client still sees both distinct events exactly once and in
     // the relay order; revocation changes access, not the event history.
-    const reconciled = await (await clientA("/api/sync/events?cursor=&limit=20")).json();
+    const reconciled = await responseBody(await clientA("/api/sync/events?cursor=&limit=20"));
     assert.deepEqual(reconciled.events.map((row) => row.envelope), [event, retry]);
     assert.equal(reconciled.events.length, 2);
   } finally {

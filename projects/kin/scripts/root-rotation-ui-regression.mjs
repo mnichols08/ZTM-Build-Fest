@@ -14,7 +14,7 @@ export async function rootRotationUiChecks(oldRecovery) {
     }
     throw Error("Root rotation UI did not settle");
   };
-  app.navigate("#household/privacy");
+  app.ctx.navigation.navigate("#household/privacy");
   await new Promise((resolve) => setTimeout(resolve, 0));
   if (!app.vault) await app.security.run(() => app.security.unlockRecovery(oldRecovery));
   const before = await EventStore.securityStatus();
@@ -41,7 +41,7 @@ export async function rootRotationUiChecks(oldRecovery) {
   check(!document.body.textContent.includes(recovery), "completed replacement removes displayed recovery key");
   const archive = await exportHouseholdArchive({ store: app.store, engine: app.engine, vault: app.vault });
   check(archive.byteLength > 16, "rotated root exports a real KARC v1 archive");
-  app.lockHousehold();
+  app.ctx.session.lockHousehold();
   await app.security.run(() => app.security.unlockRecovery(oldRecovery));
   check(!app.vault && app.main.hidden, "old recovery cannot unlock after UI rotation");
   await app.security.run(() => app.security.unlockRecovery(recovery));
@@ -68,7 +68,7 @@ export async function rootRotationUiChecks(oldRecovery) {
     const pending = app.security.run(() => app.security.replaceProtection(resumedRecovery));
     await started;
     check(app.main.hidden && !app.store && !app.engine && !app.vault, "rotation disposes ordinary household capabilities");
-    app.lockHousehold();
+    app.ctx.session.lockHousehold();
     check(operationVault.locked, "manual lock disposes operation-owned candidate immediately");
     release();
     await pending;

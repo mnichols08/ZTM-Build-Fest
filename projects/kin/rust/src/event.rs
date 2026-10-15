@@ -59,9 +59,10 @@ pub enum PinTargetKind {
     Area = 4,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[repr(u8)]
 pub enum HouseholdMode {
+    #[default]
     Normal = 0,
     Vacation = 1,
     Guests = 2,

@@ -126,7 +126,7 @@ async function offlineReloadChecks(recovery) {
     steps: [],
     text: "Synthetic Staples lock sentinel",
   }];
-  app.lockHousehold();
+  app.ctx.session.lockHousehold();
   let denied = false;
   try {
     oldEngine.applyEvents([], 1234, null, 20261003);
@@ -238,7 +238,7 @@ async function browserUiChecks() {
     "browser IDB has ciphertext only",
   );
   const oldStore = app.store;
-  app.lockHousehold();
+  app.ctx.session.lockHousehold();
   check(
     app.state === null &&
       app.engine === null &&
@@ -319,62 +319,68 @@ async function browserUiChecks() {
   );
   const parsed = app.engine.decodeArchive(archive);
   check(
-    !new TextDecoder().decode(parsed.ciphertext).includes("Synthetic"),
+    !new TextDecoder().decode(archive).includes("Synthetic"),
     "archive body preserves encryption",
   );
   const {
     deserializeProtectedValue,
     serializeProtectedValue,
-    toBase64Url,
+    fromBase64Url,
     LocalVault,
   } = await import("/security/local-vault.js");
-  const header = deserializeProtectedValue(parsed.metadata);
-  const recoveryVault = await LocalVault.unlock(header.manifest, recovery);
-  const authenticatedMetadata = serializeProtectedValue({
-    archiveVersion: header.archiveVersion,
-    manifest: header.manifest,
-    ...(header.archiveVersion === 2 ? { packageManifest: header.packageManifest } : {}),
-  });
-  const archiveEnvelope = {
-    ...header.protection,
-    ciphertext: toBase64Url(parsed.ciphertext),
+  const { readArchive } = await import("/security/archive-stream.js");
+  // Opens a package-format-3 export with its recovery key, as restore does,
+  // into the historical snapshot shape (events carry sequence and bytes).
+  const openExport = async (bytes) => {
+    const layout = app.engine.archiveLayout(bytes);
+    const exportHeader = deserializeProtectedValue(bytes.slice(16, 16 + layout.metadataLength));
+    const exportVault = await LocalVault.unlock(exportHeader.manifest, recovery);
+    try {
+      const aad = serializeProtectedValue({ archiveVersion: exportHeader.archiveVersion,
+        manifest: exportHeader.manifest, packageManifest: exportHeader.packageManifest });
+      const key = await exportVault.archiveStreamKey(fromBase64Url(exportHeader.protection.salt), aad);
+      const contents = { events: [], local_context: [], attachments: [] };
+      await readArchive({
+        bytes, offset: 16 + layout.metadataLength, length: layout.ciphertextLength, key,
+        noncePrefix: fromBase64Url(exportHeader.protection.noncePrefix), vaultId: exportHeader.protection.vaultId,
+        attachmentCount: exportHeader.packageManifest.attachmentCount, eventCount: exportHeader.packageManifest.eventCount,
+        onContext: (row) => contents.local_context.push(row),
+        onAttachment: (row) => contents.attachments.push(row),
+        onEvents: (sequences, records) => records.forEach((record, index) =>
+          contents.events.push({ local_sequence: sequences[index], encoded_event: record.slice() })),
+        check: async () => {},
+      });
+      return { header: exportHeader, snapshot: contents };
+    } finally { exportVault.lock(); }
   };
-  const snapshot = await recoveryVault.openArchive(
-    archiveEnvelope,
-    authenticatedMetadata,
-  );
+  const { header, snapshot } = await openExport(archive);
   const secondArchive = await exportHouseholdArchive({
     store: app.store,
     engine: app.engine,
     vault: app.vault,
     portableMembership,
   });
-  const secondParsed = app.engine.decodeArchive(secondArchive);
-  const secondHeader = deserializeProtectedValue(secondParsed.metadata);
-  const secondVault = await LocalVault.unlock(secondHeader.manifest, recovery);
-  let secondSnapshot;
-  try {
-    const secondAad = serializeProtectedValue({
-      archiveVersion: secondHeader.archiveVersion,
-      manifest: secondHeader.manifest,
-      packageManifest: secondHeader.packageManifest,
-    });
-    secondSnapshot = await secondVault.openArchive(
-      { ...secondHeader.protection, ciphertext: toBase64Url(secondParsed.ciphertext) },
-      secondAad,
-    );
-  } finally {
-    secondVault.lock();
-  }
+  const { snapshot: secondSnapshot } = await openExport(secondArchive);
   check(
-    (header.archiveVersion === 1 ? snapshot : snapshot.snapshot).events.length === 1 &&
-      header.archiveVersion === 2 &&
-      header.packageManifest.packageFormatVersion === 2 &&
+    snapshot.events.length === 1 &&
+      header.archiveVersion === 3 &&
+      header.packageManifest.packageFormatVersion === 3 &&
       header.packageManifest.eventCount === 1 &&
-      JSON.stringify(snapshot.snapshot.local_context[0].portable_membership) === JSON.stringify(portableMembership) &&
-      JSON.stringify(Array.from(snapshot.snapshot.events[0].encoded_event)) ===
-        JSON.stringify(Array.from(secondSnapshot.snapshot.events[0].encoded_event)),
+      JSON.stringify(snapshot.local_context[0].portable_membership) === JSON.stringify(portableMembership) &&
+      JSON.stringify(Array.from(snapshot.events[0].encoded_event)) ===
+        JSON.stringify(Array.from(secondSnapshot.events[0].encoded_event)),
     "archive recovery round trip and deterministic canonical content",
+  );
+  // A package-format-2 export, as v0.47 wrote it, from the same household.
+  const recoveryVault = await LocalVault.unlock(header.manifest, recovery);
+  const wholeSnapshot = await app.store.snapshotForArchive({ portableMembership });
+  const packageTwoManifest = { ...header.packageManifest, packageFormatVersion: 2 };
+  const packageTwoAad = serializeProtectedValue({ archiveVersion: 2, manifest: header.manifest, packageManifest: packageTwoManifest });
+  const { ciphertext: packageTwoCiphertext, ...packageTwoProtection } = await recoveryVault.sealArchive(
+    { packageFormatVersion: 2, snapshot: wholeSnapshot }, packageTwoAad, { rawCiphertext: true });
+  const packageTwoArchive = app.engine.encodeArchive(
+    serializeProtectedValue({ archiveVersion: 2, manifest: header.manifest, packageManifest: packageTwoManifest, protection: packageTwoProtection }),
+    packageTwoCiphertext,
   );
   denied = false;
   try {
@@ -382,7 +388,7 @@ async function browserUiChecks() {
       portableMembership: [{ memberId: "55555555555555555555555555555555", memberKind: "future-kind", status: "active" }] });
   } catch { denied = true; }
   check(denied, "unknown explicit member kinds fail closed during export");
-  const legacySnapshot = header.archiveVersion === 1 ? snapshot : snapshot.snapshot;
+  const legacySnapshot = wholeSnapshot;
   const legacyAad = serializeProtectedValue({
     archiveVersion: 1,
     manifest: header.manifest,
@@ -401,13 +407,18 @@ async function browserUiChecks() {
     }),
     legacyCiphertext,
   );
-  const changed = authenticatedMetadata.slice();
-  changed[changed.length - 2] ^= 1;
+  // A different (still valid) manifest derives a different key, so the
+  // segments no longer open.
+  const tamperedHeader = { ...header, packageManifest: { ...header.packageManifest, exportedAt: new Date(0).toISOString() } };
+  const { validateHouseholdArchive: validateForTamper } = await import("/security/archive.js");
   denied = false;
   try {
-    await recoveryVault.openArchive(archiveEnvelope, changed);
-  } catch {
-    denied = true;
+    await validateForTamper({
+      bytes: app.engine.encodeArchive(serializeProtectedValue(tamperedHeader), parsed.ciphertext),
+      recoverySecret: recovery, engine: app.engine, vault: app.vault,
+    });
+  } catch (error) {
+    denied = error.message.includes("damaged");
   }
   check(denied, "archive metadata tampering rejected");
   recoveryVault.lock();
@@ -429,7 +440,7 @@ async function browserUiChecks() {
   // Destroy only these test-owned databases in the isolated temporary profile.
   // Restore into a separately created root to exercise actual portable recovery.
   const sourceRecovery = recovery;
-  app.lockHousehold();
+  app.ctx.session.lockHousehold();
   for (const name of ["kin", "kin-crypto-keys"]) {
     await new Promise((resolve, reject) => {
       const request = indexedDB.deleteDatabase(name);
@@ -456,19 +467,31 @@ async function browserUiChecks() {
     validateHouseholdArchive,
     discardValidatedHouseholdArchive,
   } = await import("/security/archive.js");
-  const legacyStage = await validateHouseholdArchive({
-    bytes: legacyArchive,
+  denied = false;
+  try {
+    await validateHouseholdArchive({
+      bytes: legacyArchive,
+      recoverySecret: sourceRecovery,
+      engine: app.engine,
+      vault: app.vault,
+    });
+  } catch { denied = true; }
+  check(
+    denied && (await app.store.loadEvents()).length === 0,
+    "a development-era package-v1 export is refused without modifying the target",
+  );
+  const packageTwo = await validateHouseholdArchive({
+    bytes: packageTwoArchive,
     recoverySecret: sourceRecovery,
     engine: app.engine,
     vault: app.vault,
   });
+  discardValidatedHouseholdArchive(packageTwo.stage);
   check(
-    legacyStage.packageFormatVersion === 1 &&
-      legacyStage.eventCount === 1 &&
+    packageTwo.packageFormatVersion === 2 && packageTwo.eventCount === 1 &&
       (await app.store.loadEvents()).length === 0,
-    "legacy package-v1 validates without modifying the target",
+    "a package-v2 export from v0.47 still validates for restore",
   );
-  discardValidatedHouseholdArchive(legacyStage.stage);
   const corrupted = archive.slice();
   corrupted[corrupted.length - 1] ^= 1;
   denied = false;
@@ -509,7 +532,7 @@ async function browserUiChecks() {
   );
   for (const stage of ["unlock", "decrypt"]) {
     const unlockBefore = LocalVault.unlock;
-    const openBefore = LocalVault.prototype.openArchive;
+    const openBefore = LocalVault.prototype.archiveStreamKey;
     let releaseSource,
       sourceReady,
       sourceVault,
@@ -527,7 +550,7 @@ async function browserUiChecks() {
       }
       return value;
     };
-    LocalVault.prototype.openArchive = async function (...args) {
+    LocalVault.prototype.archiveStreamKey = async function (...args) {
       if (this.vaultId !== header.manifest.vaultId)
         return openBefore.apply(this, args);
       openCalls++;
@@ -553,7 +576,7 @@ async function browserUiChecks() {
         (await app.store.loadEvents()).length === 0,
         `archive ${stage} pending leaves target untouched`,
       );
-      app.lockHousehold();
+      app.ctx.session.lockHousehold();
       releaseSource();
       const outcome = await pendingImport;
       check(
@@ -572,7 +595,7 @@ async function browserUiChecks() {
     } finally {
       releaseSource();
       LocalVault.unlock = unlockBefore;
-      LocalVault.prototype.openArchive = openBefore;
+      LocalVault.prototype.archiveStreamKey = openBefore;
       sourceVault?.lock();
     }
     await app.security.run(() => app.security.unlockRecovery(recovery));
@@ -583,7 +606,7 @@ async function browserUiChecks() {
     );
   }
   location.hash = "#household/privacy";
-  app.showPageFromLocation();
+  app.ctx.navigation.showPageFromLocation();
   app.security.showRestore();
   const restoreFile = app.security.querySelector("#archive-file");
   const transfer = new DataTransfer();
@@ -600,7 +623,7 @@ async function browserUiChecks() {
   confirmation.click();
   await wait(() => app.state?.items?.[0]?.text === "Synthetic protected household secret" && !app.security.busy);
   const imported = { eventCount: (await app.store.loadEvents()).length };
-  await app.initialize();
+  await app.ctx.session.initialize();
   check(
     imported.eventCount === 1 &&
       app.state.items[0].text === "Synthetic protected household secret" &&
@@ -610,7 +633,7 @@ async function browserUiChecks() {
   const restored = await app.store.loadEvents();
   check(
     Array.from(restored[0].encoded_event).join(",") ===
-      Array.from((header.archiveVersion === 1 ? snapshot : snapshot.snapshot).events[0].encoded_event).join(","),
+      Array.from(snapshot.events[0].encoded_event).join(","),
     "archive restoration preserves canonical source bytes",
   );
   const restoredPortableSnapshot = await app.store.snapshotForArchive();
@@ -697,10 +720,13 @@ async function browserUiChecks() {
       await peerReadGate;
       return value;
     };
+    // The session arena serves reads without decrypting; force a full read so
+    // this native transaction really waits on Web Crypto.
+    peerStore.arena.reset(null);
     const peerRead = peerStore.loadEvents().then(() => false, () => true);
     try {
       await peerReadStarted;
-      app.lockHousehold();
+      app.ctx.session.lockHousehold();
       await wait(() => peerApp.state === null && peerApp.vault === null);
       await app.lockBarrier;
       check(await peerRead, "peer lock intent aborts a crypto-held read before the durable epoch write can deadlock");
@@ -753,7 +779,7 @@ async function browserUiChecks() {
       app.state === null && app.engine === null,
       "unlock does not project before crypto completion",
     );
-    app.lockHousehold();
+    app.ctx.session.lockHousehold();
     release();
     await pending;
     check(

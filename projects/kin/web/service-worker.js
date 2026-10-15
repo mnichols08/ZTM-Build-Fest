@@ -10,13 +10,21 @@ const CACHE = `kin-static-v${RELEASE}`;
 const SHELL = [
   "/", "/index.html", "/styles/app.css", "/manifest.webmanifest", "/icon.svg",
   "/browser-time.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin_engine.wasm",
+  "/wasm/wire.js", "/wasm/history-mirror.js", "/wasm/projection-decode.js", "/wasm/projection/reader.js", "/wasm/projection/items.js",
+  "/wasm/projection/conversations.js", "/wasm/projection/routines.js", "/wasm/projection/records.js",
   "/routes.js", "/today-view.js", "/reminder-time.js", "/capture-plan.js", "/keyboard-commands.js", "/bulk-actions.js", "/recurrence.js",
   "/attachments/attachment-crypto.js", "/attachments/attachment-lifecycle.js", "/attachments/attachment-preview.js", "/attachments/attachment-progress.js",
-  "/storage/event-store.js", "/storage/encrypted-idb.js", "/storage/root-rotation.js",
-  "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js",
+  "/storage/event-store.js", "/storage/event-arena.js", "/storage/encrypted-idb.js", "/storage/root-rotation.js",
+  "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js", "/security/archive-stream.js",
   "/appearance/palette.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js",
-  "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js",
-  ...["app", "appearance", "household-defaults", "security", "household", "quick-add", "command-palette", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility"].map((name) => `/components/kin-${name}.js`),
+  "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js", "/sync/envelope-wire.js",
+  ...["app", "appearance", "household-defaults", "security", "household", "quick-add", "command-palette", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility", "bulk-bar", "playbook-editor", "routine-schedule"].map((name) => `/components/kin-${name}.js`),
+  "/components/app/appearance.js", "/components/app/attachments.js", "/components/app/commands/append.js", "/components/app/commands/bulk.js", "/components/app/commands/conversations.js", "/components/app/commands/items.js", "/components/app/commands/records.js", "/components/app/commands/routines.js", "/components/app/constants.js", "/components/app/context.js", "/components/app/detail.js", "/components/app/navigation.js", "/components/app/peer-channel.js", "/components/app/refresh.js", "/components/app/render.js", "/components/app/session.js", "/components/app/shell.js", "/components/app/status.js", "/components/app/sync.js", "/components/app/views.js",
+  ...["dom", "focus", "icons", "operation", "props", "session-guard"].map((name) => `/components/shared/${name}.js`),
+  ...["api", "auth", "lifecycle", "membership", "pairing", "views"].map((name) => `/components/household/${name}.js`),
+  ...["archive", "protection", "unlock", "views"].map((name) => `/components/security/${name}.js`),
+  ...["focus", "sections", "selection"].map((name) => `/components/today/${name}.js`),
+  "/components/item-detail/sections.js", "/components/notes/notes.js", "/components/notes/references.js",
 ];
 const ALLOWED = new Set(SHELL);
 

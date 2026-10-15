@@ -112,7 +112,7 @@ export async function planningDateRegressions() {
     now += 60_000;
     shortcuts().find((button) => button.textContent === "Clear").click();
     await idle();
-    await app.refreshFromEvents();
+    await app.ctx.refresh.refreshFromEvents();
     check(
       app.state.items.find((entry) => entry.itemId === item.itemId).planningDate === null,
       "clearing and replay retain an unset date",
@@ -120,8 +120,8 @@ export async function planningDateRegressions() {
     check(app.calendarExportButton.disabled, "clearing the last date disables calendar export");
   } finally {
     Date.now = originalNow;
-    app.closeItemDetail({ restoreFocus: false });
-    await app.refreshFromEvents();
+    app.ctx.detail.closeItemDetail({ restoreFocus: false });
+    await app.ctx.refresh.refreshFromEvents();
     app.navLinks.get(originalPage)?.click();
   }
   return "PASS planning dates, native editor, local shortcuts, persistence, focus and iCalendar download";

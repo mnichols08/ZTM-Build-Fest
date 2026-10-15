@@ -34,14 +34,14 @@ export async function workspaceUxRegressions(recovery) {
     await idle();
     return app.state.items.find((item) => item.text === text);
   };
-  const today = app.currentCivilDate();
+  const today = app.ctx.navigation.currentCivilDate();
   const shift = (days) => { const d = new Date(); d.setDate(d.getDate() + days); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
   const stamp = crypto.randomUUID().slice(0, 6);
 
   // Daily UX baseline: measure the existing local pipeline without imposing a
   // machine-specific performance budget. Interaction counts begin with focus
   // in the primary Today capture (text entry + Enter, then one completion).
-  app.navigate("#today");
+  app.ctx.navigation.navigate("#today");
   const baselineText = `Daily baseline ${stamp}`;
   app.compose.input.focus();
   app.compose.input.value = baselineText;
@@ -68,7 +68,7 @@ export async function workspaceUxRegressions(recovery) {
   console.log(`METRIC daily-ux ${JSON.stringify({ createMs: Number(createMs.toFixed(2)), completeMs: Number(completeMs.toFixed(2)), createInteractions: 2, completeInteractions: 1 })}`);
 
   // 1. Add a task in To do; it stays findable.
-  app.navigate("#lists/todo");
+  app.ctx.navigation.navigate("#lists/todo");
   const task = await addVia(app.needs.composer, `Fix the gate latch ${stamp}`);
   check(task?.classification === "need" && visible(rowIn(app.needs, task.itemId)) && app.needs.composer.result.textContent === "Saved on this device.",
     "1. a task added from To do is listed there with an inline local-save confirmation");
@@ -77,19 +77,19 @@ export async function workspaceUxRegressions(recovery) {
   check([...app.search.resultsList.querySelectorAll("[data-result-id]")].some((node) => node.dataset.resultId === task.itemId), "1. the task is found by search by its canonical id");
 
   // 2. Add a shopping item; it stays a shopping item.
-  app.navigate("#lists/shopping");
+  app.ctx.navigation.navigate("#lists/shopping");
   const eggs = await addVia(app.shopping.composer, `Eggs ${stamp}`);
   check(eggs?.classification === "shopping" && visible(rowIn(app.shopping, eggs.itemId)) && !rowIn(app.needs, eggs.itemId),
     "2. a shopping item lives only in Shopping");
 
   // 3. Plan it for today from its details; Today shows the same canonical record.
-  app.openItemDetail(eggs.itemId);
+  app.ctx.detail.openItemDetail(eggs.itemId);
   check(app.selection?.itemId === eggs.itemId && app.detail.querySelector(".item-detail-title").textContent === eggs.text, "3. details open for the shopping item");
   [...app.detail.querySelectorAll(".item-planning-date-shortcut")].find((node) => node.textContent === "Today").click();
   await idle();
   check(app.state.items.find((item) => item.itemId === eggs.itemId).planningDate === today, "3. the planned date is set through the existing command");
-  app.closeItemDetail({ restoreFocus: false });
-  app.navigate("#today");
+  app.ctx.detail.closeItemDetail({ restoreFocus: false });
+  app.ctx.navigation.navigate("#today");
   const todayRows = rowsIn(app.today, eggs.itemId);
   check(todayRows.length === 1 && todayRows[0].closest("[data-section]")?.dataset.section === "today" &&
     todayRows[0].querySelector(".item-meta").textContent.startsWith("Shopping item · Planned for today"),
@@ -103,7 +103,7 @@ export async function workspaceUxRegressions(recovery) {
   check(rowIn(app.today, eggs.itemId)?.closest("details")?.classList.contains("completed-disclosure") &&
     rowIn(app.shopping, eggs.itemId)?.closest("details")?.classList.contains("completed-disclosure"),
     "4. both Today and Shopping show it under their Completed disclosure");
-  app.navigate("#lists/shopping");
+  app.ctx.navigation.navigate("#lists/shopping");
   rowIn(app.shopping, eggs.itemId).querySelector(".reopen-button").click();
   await idle();
   check(app.state.items.find((item) => item.itemId === eggs.itemId).status === "active" && rowIn(app.today, eggs.itemId).closest("[data-section]").dataset.section === "today",
@@ -111,31 +111,31 @@ export async function workspaceUxRegressions(recovery) {
 
   // 5. A legacy Today-classified item stays accessible without migration.
   const eventsBefore = (await app.store.loadEvents()).length;
-  await app.appendCommand({ type: "add", text: `Legacy today ${stamp}`, classification: "today" });
+  await app.ctx.append.appendCommand({ type: "add", text: `Legacy today ${stamp}`, classification: "today" });
   await idle();
   const legacy = app.state.items.find((item) => item.text === `Legacy today ${stamp}`);
-  app.renderState();
+  app.ctx.render.renderState();
   check(legacy.classification === "today" && legacy.planningDate === null &&
     rowIn(app.today, legacy.itemId)?.closest("[data-section]")?.dataset.section === "today" && visible(rowIn(app.needs, legacy.itemId) ?? null) === false && rowIn(app.needs, legacy.itemId),
     "5. an undated legacy Today item appears on Today and is listed under To do");
-  await app.appendCommand({ type: "set-item-planning-date", itemId: legacy.itemId, planningDate: shift(1) });
+  await app.ctx.append.appendCommand({ type: "set-item-planning-date", itemId: legacy.itemId, planningDate: shift(1) });
   await idle();
-  app.renderState();
+  app.ctx.render.renderState();
   check(rowsIn(app.today, legacy.itemId).length === 1 && rowIn(app.today, legacy.itemId).closest("[data-section]")?.dataset.section === "upcoming" &&
     rowIn(app.needs, legacy.itemId)?.querySelector(".item-meta")?.textContent.includes("Planned for tomorrow"),
     "5. an explicit date takes precedence over the legacy classification (tomorrow is Coming up, not Today)");
-  await app.appendCommand({ type: "set-item-planning-date", itemId: legacy.itemId, planningDate: null });
+  await app.ctx.append.appendCommand({ type: "set-item-planning-date", itemId: legacy.itemId, planningDate: null });
   await idle();
-  app.renderState();
+  app.ctx.render.renderState();
   check(rowIn(app.today, legacy.itemId) && (await app.store.loadEvents()).length === eventsBefore + 3 &&
     app.state.items.find((item) => item.itemId === legacy.itemId).classification === "today",
     "5. clearing the date restores legacy behaviour; only the explicit commands were appended and the classification is untouched");
 
   // 6. Future plans are not today's work.
   const forms = await addVia(app.needs.composer, `School forms ${stamp}`);
-  await app.appendCommand({ type: "set-item-planning-date", itemId: forms.itemId, planningDate: shift(5) });
+  await app.ctx.append.appendCommand({ type: "set-item-planning-date", itemId: forms.itemId, planningDate: shift(5) });
   await idle();
-  app.renderState();
+  app.ctx.render.renderState();
   check(rowsIn(app.today, forms.itemId).length === 1 && rowIn(app.today, forms.itemId).closest("[data-section]")?.dataset.section === "upcoming" &&
     rowIn(app.needs, forms.itemId).querySelector(".item-meta").textContent.startsWith("Planned for ") &&
     !rowIn(app.needs, forms.itemId).querySelector(".item-meta").textContent.includes("today"),
@@ -143,34 +143,34 @@ export async function workspaceUxRegressions(recovery) {
 
   // 7. Earlier plans and paused routines.
   const bins = await addVia(app.needs.composer, `Bins ${stamp}`);
-  await app.appendCommand({ type: "set-item-planning-date", itemId: bins.itemId, planningDate: shift(-2) });
+  await app.ctx.append.appendCommand({ type: "set-item-planning-date", itemId: bins.itemId, planningDate: shift(-2) });
   await idle();
-  app.renderState();
+  app.ctx.render.renderState();
   const earlierRow = rowIn(app.today, bins.itemId);
   const earlierSection = earlierRow?.closest("[data-section]");
   check(earlierSection?.dataset.section === "earlier" && earlierSection.querySelector("h2").textContent === "Earlier plans" &&
     earlierSection.querySelector(".section-hint").textContent.startsWith("Still open from earlier") && !earlierRow.closest("details") &&
     /still open/.test(earlierRow.querySelector(".item-meta").textContent) && !/overdue|late|behind/i.test(app.today.textContent) && rowIn(app.needs, bins.itemId),
     "7. an unfinished earlier plan is visible under a calm Earlier plans section and stays in To do");
-  await app.appendCommand({ type: "create-routine", text: `Water plants ${stamp}`, cadence: "daily", createdOn: today });
+  await app.ctx.append.appendCommand({ type: "create-routine", text: `Water plants ${stamp}`, cadence: "daily", createdOn: today });
   await idle();
-  app.renderState();
+  app.ctx.render.renderState();
   const routine = app.state.routines.find((record) => record.text === `Water plants ${stamp}`);
   check(app.today.querySelector(`.today-routines [data-routine-id="${routine.routineId}"] .complete-button`) &&
     app.today.querySelector(".today-routines .routine-period").textContent === "Today",
     "7. an open daily routine appears on Today under its period");
-  await app.appendCommand({ type: "set-household-mode", mode: "vacation" });
+  await app.ctx.append.appendCommand({ type: "set-household-mode", mode: "vacation" });
   await idle();
-  app.renderState();
+  app.ctx.render.renderState();
   check(!app.today.querySelector(".today-routines .complete-button") && app.today.querySelector(".today-routines").textContent.includes("paused") &&
     !app.routines.querySelector('[data-action="complete-routine-occurrence"]') && app.routines.hint.textContent.includes("paused"),
     "7. a non-Normal mode pauses routine occurrences everywhere without hiding the routines");
-  await app.appendCommand({ type: "set-household-mode", mode: "normal" });
+  await app.ctx.append.appendCommand({ type: "set-household-mode", mode: "normal" });
   await idle();
-  app.renderState();
+  app.ctx.render.renderState();
 
   // 8. Open and close details without losing list position or drafts.
-  app.navigate("#lists/todo");
+  app.ctx.navigation.navigate("#lists/todo");
   for (let index = 0; index < 10; index++) await addVia(app.needs.composer, `Filler ${index} ${stamp}`);
   app.needs.composer.input.value = "unsent quick-add draft";
   window.scrollTo(0, 320);
@@ -186,7 +186,7 @@ export async function workspaceUxRegressions(recovery) {
   await frame();
   check(app.selection?.itemId === bins.itemId && document.activeElement === app.detail.querySelector(".item-detail-title"), "8. details open from the row and focus the heading");
   app.detail.stepInput.value = "unsent step draft";
-  app.renderState();
+  app.ctx.render.renderState();
   check(app.detail.stepInput.value === "unsent step draft" && app.needs.composer.input.value === "unsent quick-add draft",
     "8. a background refresh keeps the step draft and the quick-add draft");
   app.detail.querySelector(".item-detail-close").click();
@@ -195,46 +195,46 @@ export async function workspaceUxRegressions(recovery) {
   check(app.selection === null && Math.abs(window.scrollY - scrolledTo) <= 2 && document.activeElement === rowIn(app.needs, bins.itemId).querySelector(".item-details-button") &&
     app.needs.composer.input.value === "unsent quick-add draft",
     `8. closing restores the list position (${window.scrollY} vs ${scrolledTo}) and focus, and keeps the quick-add draft`);
-  app.openItemDetail(bins.itemId);
+  app.ctx.detail.openItemDetail(bins.itemId);
   app.detail.stepInput.value = "draft for A";
   const itemA = app.selection.itemId;
-  app.openItemDetail(forms.itemId);
+  app.ctx.detail.openItemDetail(forms.itemId);
   check(app.detail.stepInput.value === "", "8. selecting B never shows A's checklist draft");
   app.detail.stepInput.value = "draft for B";
-  app.openItemDetail(itemA);
+  app.ctx.detail.openItemDetail(itemA);
   check(app.detail.stepInput.value === "draft for A", "8. returning to A restores its own unsaved draft");
   app.detail.stepInput.value = "Async A step";
-  const originalDetailAppend = app.appendCommand.bind(app);
+  const originalDetailAppend = app.ctx.append.appendCommand.bind(app.ctx.append);
   let finishDetailAppend;
-  app.appendCommand = (command) => new Promise((resolve, reject) => {
+  app.ctx.append.appendCommand = (command) => new Promise((resolve, reject) => {
     finishDetailAppend = () => originalDetailAppend(command).then(resolve, reject);
   });
   app.detail.querySelector(".step-compose").requestSubmit();
   await wait(() => app.busy && finishDetailAppend, "A checklist save is pending");
-  app.openItemDetail(forms.itemId);
+  app.ctx.detail.openItemDetail(forms.itemId);
   app.detail.stepInput.value = "draft for B while A saves";
   finishDetailAppend();
   await idle();
-  app.appendCommand = originalDetailAppend;
+  app.ctx.append.appendCommand = originalDetailAppend;
   check(app.selection.itemId === forms.itemId && app.detail.stepInput.value === "draft for B while A saves" &&
     app.state.items.find((item) => item.itemId === itemA).steps.some((step) => step.text === "Async A step"),
     "8. A's delayed successful save clears only A after B is selected and leaves B's editor untouched");
-  app.openItemDetail(itemA);
+  app.ctx.detail.openItemDetail(itemA);
   check(app.detail.stepInput.value === "", "8. a successfully saved A draft stays cleared when returning to A");
   app.detail.stepInput.value = "Async failed A";
   let failDetailAppend;
-  app.appendCommand = (command) => new Promise((resolve) => {
-    failDetailAppend = () => { app.appendCommand = originalDetailAppend; const error = new Error("Synthetic delayed failure"); error.code = 5; resolve(Promise.reject(error)); };
+  app.ctx.append.appendCommand = (command) => new Promise((resolve) => {
+    failDetailAppend = () => { app.ctx.append.appendCommand = originalDetailAppend; const error = new Error("Synthetic delayed failure"); error.code = 5; resolve(Promise.reject(error)); };
   });
   app.detail.querySelector(".step-compose").requestSubmit();
   await wait(() => app.busy && failDetailAppend, "A checklist failure is pending");
-  app.openItemDetail(forms.itemId);
+  app.ctx.detail.openItemDetail(forms.itemId);
   failDetailAppend();
   await idle();
-  app.appendCommand = originalDetailAppend;
+  app.ctx.append.appendCommand = originalDetailAppend;
   check(app.selection.itemId === forms.itemId && !app.detail.querySelector(".item-detail-feedback") && app.alert.hidden && app.detail.detailFeedbacks.has(itemA),
     "8. a delayed A failure stays keyed to A and does not leak into B or the blocked global alert");
-  app.openItemDetail(itemA);
+  app.ctx.detail.openItemDetail(itemA);
   check(app.detail.querySelector("[data-detail-retry]") && app.detail.stepInput.value === "Async failed A",
     "8. returning to A restores its matching error, retry and failed checklist draft");
   app.detail.querySelector("[data-detail-retry]").click();
@@ -243,10 +243,10 @@ export async function workspaceUxRegressions(recovery) {
     !app.detail.detailFeedbacks.has(itemA) && app.detail.stepInput.value === "",
     "8. retrying the selected A error succeeds and clears its feedback and submitted draft");
   app.detail.stepInput.value = "draft through route change";
-  app.closeItemDetail({ restoreFocus: false });
-  app.navigate("#today");
-  app.navigate("#lists/todo");
-  app.openItemDetail(itemA);
+  app.ctx.detail.closeItemDetail({ restoreFocus: false });
+  app.ctx.navigation.navigate("#today");
+  app.ctx.navigation.navigate("#lists/todo");
+  app.ctx.detail.openItemDetail(itemA);
   check(app.detail.stepInput.value === "draft through route change", "8. closing details and changing routes retain the item-keyed draft");
   app.detail.stepInput.value = "Saved step once";
   app.detail.querySelector(".step-compose").requestSubmit();
@@ -256,20 +256,20 @@ export async function workspaceUxRegressions(recovery) {
   await idle();
   check(savedA.steps.filter((step) => step.text === "Saved step once").length === 1 && app.detail.stepInput.value === "",
     "8. successful step save clears its submitted draft and empty Enter cannot append a duplicate");
-  app.closeItemDetail({ restoreFocus: false });
+  app.ctx.detail.closeItemDetail({ restoreFocus: false });
   app.needs.composer.input.value = "";
   window.scrollTo(0, 0);
 
   // 9. Search opens the real targets.
   const trip = await addVia(app.needs.composer, `Pack for the trip ${stamp}`);
-  await app.appendCommand({ type: "add-item-step", itemId: trip.itemId, stepId: crypto.randomUUID().replaceAll("-", ""), text: `Chargers ${stamp}` });
+  await app.ctx.append.appendCommand({ type: "add-item-step", itemId: trip.itemId, stepId: crypto.randomUUID().replaceAll("-", ""), text: `Chargers ${stamp}` });
   await idle();
   const step = app.state.items.find((item) => item.itemId === trip.itemId).steps[0];
   const noteId = crypto.randomUUID().replaceAll("-", "");
-  await app.appendCommand({ type: "create-note", noteId, id: noteId, title: `Wi-Fi ${stamp}`, body: "Password in the drawer", areaId: null });
+  await app.ctx.append.appendCommand({ type: "create-note", noteId, id: noteId, title: `Wi-Fi ${stamp}`, body: "Password in the drawer", areaId: null });
   await idle();
-  app.renderState();
-  app.navigate("#search");
+  app.ctx.render.renderState();
+  app.ctx.navigation.navigate("#search");
   app.search.queryInput.value = stamp;
   app.search.queryInput.dispatchEvent(new Event("input"));
   const result = (kind, id) => [...app.search.resultsList.querySelectorAll("[data-result-id]")].find((node) => node.dataset.resultKind === kind && node.dataset.resultId === id);
@@ -280,7 +280,7 @@ export async function workspaceUxRegressions(recovery) {
   await frame();
   check(app.dataset.route === "lists/todo" && app.selection?.itemId === trip.itemId && app.selection.origin === "search" && app.detail.querySelector(".item-detail-close").textContent === "Back to search",
     "9. an item result opens that record's details in its list");
-  app.openItemDetail(trip.itemId);
+  app.ctx.detail.openItemDetail(trip.itemId);
   check(app.selection.origin === "search" && app.detail.querySelector(".item-detail-close").textContent === "Back to search",
     "9. reopening the same item preserves its Search origin");
   rowIn(app.needs, forms.itemId).querySelector(".item-details-button").click();
@@ -292,7 +292,7 @@ export async function workspaceUxRegressions(recovery) {
   await frame();
   check(app.dataset.route === "lists/todo" && app.selection === null,
     "9. closing the newly selected item returns to its To do list");
-  app.navigate("#search");
+  app.ctx.navigation.navigate("#search");
   result("Item", trip.itemId).click();
   await frame();
   app.detail.querySelector(".item-detail-close").click();
@@ -304,22 +304,22 @@ export async function workspaceUxRegressions(recovery) {
   await frame();
   check(app.selection?.itemId === trip.itemId && document.activeElement?.dataset.stepId === step.stepId && app.detail.querySelector(".step-row-highlight"),
     "9. a checklist step result opens the parent item with that step focused");
-  app.closeItemDetail({ restoreFocus: false });
-  app.navigate("#search");
+  app.ctx.detail.closeItemDetail({ restoreFocus: false });
+  app.ctx.navigation.navigate("#search");
   result("Note", noteId).click();
   await frame();
   await frame();
   check(app.dataset.route === "household/notes" && app.notes.contains(document.activeElement) && document.activeElement.closest(`[data-note-id="${noteId}"]`),
     "9. a note result opens Notes & reference with that note focused");
-  app.navigate("#search");
+  app.ctx.navigation.navigate("#search");
   check(app.search.queryInput.value === stamp && app.search.resultsList.childElementCount > 0, "10. search state survives navigating away and back within the session");
-  await app.appendCommand({ type: "archive-note", noteId, id: noteId });
+  await app.ctx.append.appendCommand({ type: "archive-note", noteId, id: noteId });
   await idle();
-  app.handleOpenSearchResult({ kind: "note", id: noteId });
+  app.ctx.navigation.handleOpenSearchResult({ kind: "note", id: noteId });
   check(app.status.textContent.startsWith("That record is no longer available"), "9. an archived target is explained instead of opened");
 
   // 13. Routine reminders through the in-app date/time control.
-  app.navigate("#routines");
+  app.ctx.navigation.navigate("#routines");
   app.localReminders.notification = class { static permission = "granted"; constructor() {} };
   const reminder = [...app.routines.querySelectorAll("kin-reminder")].find((node) => node.targetRecord?.id === `routine:${routine.routineId}`);
   check(reminder && !reminder.querySelector("form") && reminder.querySelector('[data-reminder-action="open"]').textContent === "Remind me", "13. a routine offers Remind me without a prompt");
@@ -349,7 +349,7 @@ export async function workspaceUxRegressions(recovery) {
   check(!app.routines.querySelector(".routine-list [data-action='archive-routine']") || typeof window.prompt === "function", "13. no prompt() path remains in the reminder flow");
 
   // 14. Offline and failed saves produce truthful, contextual feedback.
-  app.navigate("#lists/todo");
+  app.ctx.navigation.navigate("#lists/todo");
   window.dispatchEvent(new Event("offline"));
   check(app.syncChip.state === "offline" && app.syncChip.textContent === "Offline — saved here", "14. the header chip reports offline without promising sync on a device that has none");
   const offlineItem = await addVia(app.needs.composer, `Offline add ${stamp}`);
@@ -371,7 +371,7 @@ export async function workspaceUxRegressions(recovery) {
   check(app.state.items.filter((item) => item.text === `Failing add ${stamp}`).length === 1 && app.needs.composer.input.value === "" && app.needs.composer.result.textContent === "Saved on this device." && app.alert.hidden,
     "14. the inline retry saves exactly once and clears the draft");
   // Partial success on the Today capture: the item saves, the date does not.
-  app.navigate("#today");
+  app.ctx.navigation.navigate("#today");
   app.store.append = async (command, engine) => { if (command.type === "set-item-planning-date") { const error = new Error("Synthetic date failure"); error.code = 5; throw error; } return realAppend(command, engine); };
   app.compose.classification.value = "shopping";
   app.compose.plan.value = "today";
@@ -417,13 +417,13 @@ export async function workspaceUxRegressions(recovery) {
 
   // 15. Legacy routes, back and forward.
   for (const [requested, expected] of [["#more", "household/hub"], ["#handoff", "updates/handoffs"], ["#handoff/talk", "updates/talk"], ["#lists", "lists/todo"], ["#search", "search"], ["#nowhere", "today"], ["#household/privacy", "household/privacy"]]) {
-    app.navigate(requested);
+    app.ctx.navigation.navigate(requested);
     check(app.dataset.route === expected && !app.pages.get(expected.split("/")[0]).hidden, `15. ${requested} resolves to ${expected}`);
   }
   check(app.nav.querySelectorAll('[aria-current="page"]').length === 1 && app.nav.querySelector('[aria-current="page"]').dataset.page === "household" &&
     app.segmentNavs.get("household").querySelector('[aria-current="true"]').dataset.segment === "privacy" && !app.privacyPage.hidden && app.privacyPage.contains(app.security),
     "15. the current destination and segment are programmatically identifiable and Privacy & recovery holds the security settings");
-  app.navigate("#updates/talk");
+  app.ctx.navigation.navigate("#updates/talk");
   history.back();
   await wait(() => app.dataset.route === "household/privacy", "back navigation");
   history.forward();
@@ -431,17 +431,17 @@ export async function workspaceUxRegressions(recovery) {
   check(location.hash === "#updates/talk" && !document.querySelector("#talk-panel").hidden, "15. Back and Forward restore the previous routes and panels");
 
   // 12. Lock during details, search and the viewer clears protected content.
-  app.navigate("#lists/todo");
-  app.openItemDetail(trip.itemId);
+  app.ctx.navigation.navigate("#lists/todo");
+  app.ctx.detail.openItemDetail(trip.itemId);
   app.detail.stepInput.value = "secret step draft";
-  app.navigate("#search");
+  app.ctx.navigation.navigate("#search");
   app.search.queryInput.value = "secret query";
   app.search.queryInput.dispatchEvent(new Event("input"));
-  app.navigate("#lists/todo");
-  app.openItemDetail(trip.itemId);
+  app.ctx.navigation.navigate("#lists/todo");
+  app.ctx.detail.openItemDetail(trip.itemId);
   const detailBefore = app.detail;
   const searchBefore = app.search;
-  app.lockHousehold();
+  app.ctx.session.lockHousehold();
   await app.lockBarrier;
   check(app.vault === null && app.state === null && app.selection === null && !detailBefore.isConnected && app.detail !== detailBefore && app.search !== searchBefore &&
     !searchBefore.isConnected && app.detailSheet.open === false && app.siteTools.hidden && app.main.hidden && !document.body.textContent.includes("secret step draft"),
@@ -450,7 +450,7 @@ export async function workspaceUxRegressions(recovery) {
   await wait(() => app.store && !app.busy && !app.security.busy, "re-unlock");
   await wait(() => app.state !== null, "state after unlock");
   check(app.selection === null && (app.search.queryInput?.value ?? "") === "" && !app.siteTools.hidden, "12. after unlocking, no previous selection or search query returns");
-  app.navigate("#today");
+  app.ctx.navigation.navigate("#today");
   return `PASS household workspace journeys (${passed.length} checks; daily create ${createMs.toFixed(2)} ms / 2 interactions; complete ${completeMs.toFixed(2)} ms / 1 interaction): To do/Shopping capture, Today composition and legacy items, earlier/future plans, paused routines, details drafts and position, search targets, reminders, offline/failed/partial saves, legacy routes, lock`;
 }
 
@@ -517,12 +517,12 @@ export async function workspaceViewportRegressions(client, { visit }) {
     await page(() => { document.querySelector("kin-app").detail.stepInput.value = "draft across widths"; });
     await shot("360-detail-sheet");
     const stepFailure = await page(async () => {
-      const app = document.querySelector("kin-app"), original = app.appendCommand.bind(app);
+      const app = document.querySelector("kin-app"), original = app.ctx.append.appendCommand.bind(app.ctx.append);
       app.detail.stepInput.value = "retry checklist step";
-      app.appendCommand = async (command) => { if (command.type === "add-item-step") { app.appendCommand = original; const error = new Error("Synthetic checklist failure"); error.code = 5; throw error; } return original(command); };
+      app.ctx.append.appendCommand = async (command) => { if (command.type === "add-item-step") { app.ctx.append.appendCommand = original; const error = new Error("Synthetic checklist failure"); error.code = 5; throw error; } return original(command); };
       app.detail.querySelector(".step-compose").requestSubmit();
       for (let i = 0; app.busy && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
-      app.renderState();
+      app.ctx.render.renderState();
       const dialog = app.detailSheet, error = app.detail.querySelector(".item-detail-feedback [role=alert]"), retry = app.detail.querySelector("[data-detail-retry]");
       return { open: dialog.open, inside: dialog.contains(error) && dialog.contains(retry), retryVisible: retry?.getClientRects().length > 0,
         draft: app.detail.stepInput.value, singleAlert: app.detail.querySelectorAll("[role=alert]").length === 1 && app.alert.hidden, text: error?.textContent };
@@ -540,11 +540,11 @@ export async function workspaceViewportRegressions(client, { visit }) {
     check(stepRetry.open && stepRetry.selection && stepRetry.saved && stepRetry.draft === "" && !stepRetry.error,
       "360px: the in-sheet checklist retry saves once and clears only the submitted draft without closing details");
     const dateFailure = await page(async () => {
-      const app = document.querySelector("kin-app"), original = app.appendCommand.bind(app), input = app.detail.querySelector(".item-planning-date-input");
-      app.appendCommand = async (command) => { if (command.type === "set-item-planning-date") { app.appendCommand = original; const error = new Error("Synthetic date failure"); error.code = 5; throw error; } return original(command); };
+      const app = document.querySelector("kin-app"), original = app.ctx.append.appendCommand.bind(app.ctx.append), input = app.detail.querySelector(".item-planning-date-input");
+      app.ctx.append.appendCommand = async (command) => { if (command.type === "set-item-planning-date") { app.ctx.append.appendCommand = original; const error = new Error("Synthetic date failure"); error.code = 5; throw error; } return original(command); };
       input.value = "2026-10-25"; input.dispatchEvent(new Event("change", { bubbles: true }));
       for (let i = 0; app.busy && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
-      app.renderState();
+      app.ctx.render.renderState();
       const error = app.detail.querySelector(".item-detail-feedback [role=alert]"), retry = app.detail.querySelector("[data-detail-retry]");
       return { open: app.detailSheet.open, inside: app.detailSheet.contains(error) && app.detailSheet.contains(retry), reachable: retry?.getClientRects().length > 0,
         singleAlert: app.detail.querySelectorAll("[role=alert]").length === 1 && app.alert.hidden, text: error?.textContent };
@@ -618,7 +618,7 @@ export async function workspaceViewportRegressions(client, { visit }) {
     return `PASS responsive workspace (${passed.length} checks): five mobile tracks, one editor re-homed sheet → inline → side → sheet with its draft, Escape, no empty column, screenshots in ${outDir}`;
   } finally {
     await client.send("Emulation.clearDeviceMetricsOverride").catch(() => {});
-    await page(() => { const app = document.querySelector("kin-app"); app.closeItemDetail({ restoreFocus: false }); window.scrollTo(0, 0); });
+    await page(() => { const app = document.querySelector("kin-app"); app.ctx.detail.closeItemDetail({ restoreFocus: false }); window.scrollTo(0, 0); });
   }
 }
 
@@ -688,7 +688,7 @@ export async function syncMotionRegressions(first, second) {
   };
   const prepare = async (client) => client.evaluate(`(() => {
     const app = document.querySelector("kin-app");
-    app.navigate("#today");
+    app.ctx.navigation.navigate("#today");
     const previousLoad = app.store.getCatchUpState;
     window.__kinOriginalCatchUpState = previousLoad;
     window.__kinSyncReadCount = 0;
@@ -713,7 +713,7 @@ export async function syncMotionRegressions(first, second) {
     // events-changed message, making the peer lock and repaint the whole UI.
     await mediaRecorderStart(second);
     await frames(second, 3);
-    await first.evaluate(`(() => document.querySelector("kin-app").broadcastEventChange())()`);
+    await first.evaluate(`(() => document.querySelector("kin-app").ctx.peers.broadcastEventChange())()`);
     await wait(second, `document.querySelector("kin-app").refreshing && document.querySelector("kin-app").busy`, "baseline peer refresh");
     await frames(second, 15);
     await wait(second, `!document.querySelector("kin-app").refreshing && !document.querySelector("kin-app").busy`, "baseline peer refresh completion");
@@ -725,23 +725,23 @@ export async function syncMotionRegressions(first, second) {
     // and membership notifications are also no-ops when their values are same.
     const fixedPoll = await first.evaluate(`(() => {
       const app = document.querySelector("kin-app");
-      const originalRender = app.renderState;
-      const originalBroadcast = app.broadcastEventChange;
+      const originalRender = app.ctx.render.renderState;
+      const originalBroadcast = app.ctx.peers.broadcastEventChange;
       const originalState = app.state;
       const originalBoundary = app.snapshotBoundary;
       let renders = 0, broadcasts = 0;
-      app.renderState = function(...args) { renders++; return originalRender.apply(this, args); };
-      app.broadcastEventChange = () => { broadcasts++; };
+      app.ctx.render.renderState = function(...args) { renders++; return originalRender.apply(this, args); };
+      app.ctx.peers.broadcastEventChange = () => { broadcasts++; };
       const status = app.status.textContent;
       const rows = structuredClone(app.attachmentRows);
       const members = [...(app.activeMemberIds ?? [])];
-      app.handleSyncState({ state: "syncing", message: "Device sync is up to date.", added: 0, quarantined: 0 });
-      app.handleSyncState({ state: "syncing", attachmentRows: rows });
-      app.handleSyncState({ state: "ready", memberIds: members, message: "Device sync is up to date." });
+      app.ctx.sync.handleSyncState({ state: "syncing", message: "Device sync is up to date.", added: 0, quarantined: 0 });
+      app.ctx.sync.handleSyncState({ state: "syncing", attachmentRows: rows });
+      app.ctx.sync.handleSyncState({ state: "ready", memberIds: members, message: "Device sync is up to date." });
       const result = { renders, broadcasts, statusUnchanged: app.status.textContent === status,
         readCount: window.__kinSyncReadCount ?? 0, busy: app.busy };
-      app.renderState = originalRender;
-      app.broadcastEventChange = originalBroadcast;
+      app.ctx.render.renderState = originalRender;
+      app.ctx.peers.broadcastEventChange = originalBroadcast;
       app.state = originalState;
       app.snapshotBoundary = originalBoundary;
       return result;
@@ -752,9 +752,9 @@ export async function syncMotionRegressions(first, second) {
     await frames(second, 3);
     await first.evaluate(`(() => {
       const app = document.querySelector("kin-app");
-      app.handleSyncState({ state: "syncing", message: "Device sync is up to date.", added: 0, quarantined: 0 });
-      app.handleSyncState({ state: "syncing", attachmentRows: structuredClone(app.attachmentRows) });
-      app.handleSyncState({ state: "ready", memberIds: [...(app.activeMemberIds ?? [])], message: "Device sync is up to date." });
+      app.ctx.sync.handleSyncState({ state: "syncing", message: "Device sync is up to date.", added: 0, quarantined: 0 });
+      app.ctx.sync.handleSyncState({ state: "syncing", attachmentRows: structuredClone(app.attachmentRows) });
+      app.ctx.sync.handleSyncState({ state: "ready", memberIds: [...(app.activeMemberIds ?? [])], message: "Device sync is up to date." });
     })()`);
     await frames(second, 19);
     const afterVideo = await saveVideo(second, "refresh-after");
@@ -769,30 +769,30 @@ export async function syncMotionRegressions(first, second) {
       const originalText = itemNode.record.text;
       const originalState = app.state;
       const originalBoundary = app.snapshotBoundary;
-      const originalRender = app.renderState;
-      const originalBroadcast = app.broadcastEventChange;
+      const originalRender = app.ctx.render.renderState;
+      const originalBroadcast = app.ctx.peers.broadcastEventChange;
       const geometry = () => [".site-header", ".primary-nav", "#today > header", "#today > kin-compose", "#today .today-list"]
         .map(selector => { const element = app.querySelector(selector); if (!element) return null;
           const rect = element.getBoundingClientRect(); return [Math.round(rect.top), Math.round(rect.height)]; });
       const beforeGeometry = geometry();
       let renders = 0, broadcasts = 0;
-      app.renderState = function(...args) { renders++; return originalRender.apply(this, args); };
-      app.broadcastEventChange = () => { broadcasts++; };
+      app.ctx.render.renderState = function(...args) { renders++; return originalRender.apply(this, args); };
+      app.ctx.peers.broadcastEventChange = () => { broadcasts++; };
       const projection = structuredClone(originalState);
       const changedText = `${originalText[0] === "S" ? "T" : "S"}${originalText.slice(1)}`;
       projection.items.find(item => item.itemId === itemId).text = changedText;
-      app.handleSyncState({ state: "syncing", message: "Household changes received.", added: 1,
+      app.ctx.sync.handleSyncState({ state: "syncing", message: "Household changes received.", added: 1,
         quarantined: 0, projection, snapshotBoundary: { eventId: "sync-test", localSequence: 1 } });
       const quietDuringRender = app.hasAttribute("data-quiet-render");
       const renderedText = [...app.today.querySelectorAll("kin-item")].find(node => node.record?.itemId === itemId)?.record?.text;
       const afterGeometry = geometry();
       const result = { renders, broadcasts, quietDuringRender, renderedTextMatches: renderedText === changedText,
         stableGeometry: JSON.stringify(afterGeometry) === JSON.stringify(beforeGeometry) };
-      app.renderState = originalRender;
-      app.broadcastEventChange = originalBroadcast;
+      app.ctx.render.renderState = originalRender;
+      app.ctx.peers.broadcastEventChange = originalBroadcast;
       app.state = originalState;
       app.snapshotBoundary = originalBoundary;
-      app.renderState();
+      app.ctx.render.renderState();
       return result;
     });
     await new Promise((resolve) => setTimeout(resolve, 100));

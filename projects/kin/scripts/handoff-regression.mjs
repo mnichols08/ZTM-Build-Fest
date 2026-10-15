@@ -98,8 +98,8 @@ export async function handoffRegressions() {
     throw new Error("Synthetic refresh failure");
   };
   try {
-    await app.refreshFromEvents();
-    await app.refreshFromEvents();
+    await app.ctx.refresh.refreshFromEvents();
+    await app.ctx.refresh.refreshFromEvents();
     check(
       app.retryAction === app.retryRefresh,
       "failed refresh offers refresh recovery first",
@@ -151,7 +151,7 @@ export async function handoffRegressions() {
       return request;
     };
     try {
-      await app.handleAddHandoff({
+      await app.ctx.conversations.handleAddHandoff({
         detail: { text: "Atomic handoff " + mode },
       });
     } finally {
@@ -187,6 +187,9 @@ export async function handoffRegressions() {
       tx.onabort = () => reject(tx.error);
     });
   await writeRow({ ...saved, actor_id: new Uint8Array(16) });
+  // The session arena already holds this row; corruption written outside Kin's
+  // write paths is detected at the next full read (THREAT-MODEL.md), forced here.
+  app.store.arena.reset(null);
   let rejected = false;
   try {
     await app.store.loadEvents();
@@ -215,7 +218,7 @@ export async function handoffRegressions() {
     return append(...args);
   };
   edit("Delayed handoff");
-  const pending = app.handleAddHandoff({
+  const pending = app.ctx.conversations.handleAddHandoff({
     detail: { text: capture.input.value },
   });
   check(
@@ -226,7 +229,7 @@ export async function handoffRegressions() {
   );
   check(app.busy, "Handoff pending save retains busy state");
   edit("Newer handoff draft");
-  app.handlePeerMessage({ data: { type: "events-changed" } });
+  app.ctx.peers.handlePeerMessage({ data: { type: "events-changed" } });
   check(app.pendingRefresh, "peer refresh waits for pending Handoff save");
   release();
   await pending;
@@ -255,7 +258,7 @@ export async function handoffRegressions() {
       return request;
     };
     try {
-      await app.handleHandoffAction(type, target);
+      await app.ctx.conversations.handleHandoffAction(type, target);
     } finally {
       IDBObjectStore.prototype.add = originalAdd;
     }
@@ -273,8 +276,8 @@ export async function handoffRegressions() {
       throw new Error("Synthetic action refresh failure");
     };
     try {
-      await app.refreshFromEvents();
-      await app.refreshFromEvents();
+      await app.ctx.refresh.refreshFromEvents();
+      await app.ctx.refresh.refreshFromEvents();
     } finally {
       app.store.getCatchUpState = getCatchUpState;
     }
@@ -315,7 +318,7 @@ export async function handoffRegressions() {
     throw new Error("Synthetic save failure");
   };
   try {
-    await app.handleAddHandoff({ detail: { text: "Superseded retry" } });
+    await app.ctx.conversations.handleAddHandoff({ detail: { text: "Superseded retry" } });
   } finally {
     app.store.append = realAppend;
   }
@@ -323,14 +326,14 @@ export async function handoffRegressions() {
     throw new Error("Synthetic refresh failure");
   };
   try {
-    await app.refreshFromEvents();
+    await app.ctx.refresh.refreshFromEvents();
   } finally {
     app.store.getCatchUpState = getCatchUpState;
   }
-  await app.handleAddHandoff({
+  await app.ctx.conversations.handleAddHandoff({
     detail: { text: "New command after refresh failure" },
   });
-  await app.refreshFromEvents();
+  await app.ctx.refresh.refreshFromEvents();
   check(
     app.retryAction === null &&
       app.suspendedRetry === null &&
@@ -353,7 +356,7 @@ export async function handoffRegressions() {
 
 export async function handoffPeerRegressions(first, second, until) {
   await first.evaluate(
-    `document.querySelector('kin-app').handleAddHandoff({detail:{text:'Peer Handoff'}})`,
+    `document.querySelector('kin-app').ctx.conversations.handleAddHandoff({detail:{text:'Peer Handoff'}})`,
   );
   await until(() =>
     second.evaluate(
@@ -381,7 +384,7 @@ export async function handoffPeerRegressions(first, second, until) {
       if(this.name==='events') throw new DOMException('Synthetic quota','QuotaExceededError');
       return original.apply(this,args);
     };
-    try { await app.handleHandoffAction('acknowledge-handoff',record.handoffId); }
+    try { await app.ctx.conversations.handleHandoffAction('acknowledge-handoff',record.handoffId); }
     finally { IDBObjectStore.prototype.add=original; }
   })()`);
   assert.equal(
@@ -392,7 +395,7 @@ export async function handoffPeerRegressions(first, second, until) {
   );
   await first.evaluate(`(()=>{
     const app=document.querySelector('kin-app');
-    return app.handleHandoffAction('archive-handoff',app.state.handoffs.find(row=>row.text==='Peer Handoff').handoffId);
+    return app.ctx.conversations.handleHandoffAction('archive-handoff',app.state.handoffs.find(row=>row.text==='Peer Handoff').handoffId);
   })()`);
   await until(() =>
     second.evaluate(
@@ -402,7 +405,7 @@ export async function handoffPeerRegressions(first, second, until) {
   for (const action of ["acknowledge-handoff", "archive-handoff"]) {
     const id = await first.evaluate(`(async()=>{
       const app=document.querySelector('kin-app');
-      await app.handleAddHandoff({detail:{text:'Missed Handoff invalidation'}});
+      await app.ctx.conversations.handleAddHandoff({detail:{text:'Missed Handoff invalidation'}});
       return app.state.handoffs.at(-1).handoffId;
     })()`);
     await until(() =>
@@ -418,21 +421,21 @@ export async function handoffPeerRegressions(first, second, until) {
         if(this.name==='events') throw new DOMException('Synthetic quota','QuotaExceededError');
         return original.apply(this,args);
       };
-      try { await app.handleHandoffAction('${action}','${id}'); }
+      try { await app.ctx.conversations.handleHandoffAction('${action}','${id}'); }
       finally { IDBObjectStore.prototype.add=original; }
     })()`);
     await second.evaluate(`(async()=>{
       const app=document.querySelector('kin-app');
       const load=app.store.getCatchUpState.bind(app.store);
       app.store.getCatchUpState=async()=>{throw new Error('Synthetic refresh failure');};
-      try { await app.refreshFromEvents(); await app.refreshFromEvents(); }
+      try { await app.ctx.refresh.refreshFromEvents(); await app.ctx.refresh.refreshFromEvents(); }
       finally { app.store.getCatchUpState=load; }
     })()`);
     const count = await first.evaluate(
       '(async()=>(await document.querySelector("kin-app").store.loadEvents()).length)()',
     );
     await first.evaluate(
-      `document.querySelector('kin-app').handleHandoffAction('archive-handoff','${id}')`,
+      `document.querySelector('kin-app').ctx.conversations.handleHandoffAction('archive-handoff','${id}')`,
     );
     await second.evaluate(
       'document.querySelector("kin-app").retryButton.click()',
@@ -456,7 +459,7 @@ export async function handoffPeerRegressions(first, second, until) {
     'document.querySelector("kin-handoff-list .archive-button").focus()',
   );
   await first.evaluate(
-    "document.querySelector('kin-app').handleAddHandoff({detail:{text:'Focus refresh Handoff'}})",
+    "document.querySelector('kin-app').ctx.conversations.handleAddHandoff({detail:{text:'Focus refresh Handoff'}})",
   );
   await until(() =>
     second.evaluate(

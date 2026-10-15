@@ -5,7 +5,8 @@ import { pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { PairingError, PairingService, requireTrustAuthority } from "./pairing-service.mjs";
-import { EncryptedSyncService } from "./sync-service.mjs";
+import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
+import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
 import {
   DurableConflictError,
   DurableStore,
@@ -13,6 +14,15 @@ import {
   MAX_ATTACHMENT_BYTES,
 } from "./durable-store.mjs";
 import { WebAuthn } from "./webauthn.mjs";
+import { readBody, readJsonBody } from "./http-body.mjs";
+import {
+  decodeEnvelopeBatch,
+  encodeEventPage,
+  ENVELOPE_CONTENT_TYPE,
+  EnvelopeWireError,
+  MAX_CIPHERTEXT_BYTES,
+  RECORD_FIXED,
+} from "../web/sync/envelope-wire.js";
 import { isInsideRoot, resolveDurablePath, webRoot } from "./path-safety.mjs";
 
 const FLOW_TTL_MS = 2 * 60_000;
@@ -280,10 +290,14 @@ async function api(request, response, url, context) {
     syncService.forgetHousehold(householdId);
   const binaryUpload = (request.method === "POST" && /^\/api\/sync\/attachments\/[a-f0-9]{32}$/.test(url.pathname)) ||
     (request.method === "PUT" && url.pathname === "/api/household/settings");
-  const body = binaryUpload
-    ? await readBinary(request)
+  // Event envelopes travel as binary batches (web/sync/envelope-wire.js).
+  const envelopePush = request.method === "POST" && url.pathname === "/api/sync/events";
+  const body = envelopePush
+    ? await readEnvelopeBatch(request, response)
+    : binaryUpload
+    ? await readBinary(request, response)
     : ["POST", "PUT", "DELETE"].includes(request.method)
-    ? await readJson(request)
+    ? await readJsonBody(request, response, MAX_JSON_BODY_BYTES)
     : {};
   const session = cookies(request).kin_session;
   const claimToken = cookies(request).kin_claim;
@@ -731,20 +745,31 @@ async function api(request, response, url, context) {
     });
     return;
   }
-  if (request.method === "POST" && url.pathname === "/api/sync/events") {
-    json(response, 200, syncService.push(session, body.events));
+  if (envelopePush) {
+    json(response, 200, syncService.push(session, body));
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/sync/events") {
-    json(
-      response,
-      200,
-      syncService.pull(
+    const { household } = service.authorize(session);
+    let page;
+    try {
+      page = syncService.pull(
         session,
         url.searchParams.get("cursor") ?? "",
         url.searchParams.get("limit") ?? "20",
-      ),
-    );
+      );
+      binary(response, encodeEventPage(page));
+    } catch (error) {
+      if (!(error instanceof EnvelopeWireError) &&
+          !(error instanceof DurableStoreError && error.code === "sync_store_invalid")) throw error;
+      const eventId = error.eventId ?? page?.events.find((row) => !isEventEnvelopeValid(row.envelope))?.envelope.eventId;
+      console.error(JSON.stringify({
+        event: "sync_store_invalid",
+        householdId: household.id,
+        eventId: isSyncId(eventId) ? eventId : null,
+      }));
+      throw new PairingError("sync_store_invalid", "Kin's stored sync history is invalid. Repair the development store before retrying.", 500);
+    }
     return;
   }
   const attachmentRoute = url.pathname.match(/^\/api\/sync\/attachments(?:\/([a-f0-9]{32}))?$/);
@@ -1175,37 +1200,40 @@ function cookies(request) {
   );
 }
 
-async function readJson(request) {
-  let size = 0;
-  const chunks = [];
-  for await (const chunk of request) {
-    size += chunk.length;
-    if (size > 256_000)
-      throw new PairingError(
-        "request_too_large",
-        "That request is too large.",
-        413,
-      );
-    chunks.push(chunk);
-  }
+// JSON request bodies are small control messages; attachments and settings
+// are binary and bounded by the attachment limit (http-body.mjs).
+const MAX_JSON_BODY_BYTES = 256_000;
+
+// Header 8 + 20 * (fixed record 148 + max ciphertext 6,144) = 125,848 bytes.
+const MAX_ENVELOPE_PUSH_BYTES = 8 + MAX_EVENTS_PER_BATCH * (RECORD_FIXED + MAX_CIPHERTEXT_BYTES);
+
+async function readEnvelopeBatch(request, response) {
+  const mediaType = String(request.headers["content-type"] ?? "").split(";", 1)[0].trim().toLowerCase();
+  if (mediaType !== ENVELOPE_CONTENT_TYPE)
+    throw new PairingError("unsupported_media_type", "Send sync events as a binary batch.", 415);
+  const bytes = await readBody(request, response, MAX_ENVELOPE_PUSH_BYTES, "That sync batch is too large.");
   try {
-    return chunks.length ? JSON.parse(Buffer.concat(chunks)) : {};
-  } catch {
-    throw badRequest();
+    return decodeEnvelopeBatch(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength), { maxCount: MAX_EVENTS_PER_BATCH });
+  } catch (error) {
+    if (error instanceof EnvelopeWireError) throw new PairingError("sync_batch_invalid", "That sync batch is invalid.", 400);
+    throw error;
   }
 }
 
-async function readBinary(request) {
-  let size = 0;
-  const chunks = [];
-  for await (const chunk of request) {
-    size += chunk.length;
-    if (size > MAX_ATTACHMENT_BYTES)
-      throw new PairingError("request_too_large", "That attachment is larger than Kin supports.", 413);
-    chunks.push(chunk);
-  }
-  if (!size) throw badRequest();
-  return Buffer.concat(chunks, size);
+async function readBinary(request, response) {
+  const body = await readBody(request, response, MAX_ATTACHMENT_BYTES, "That attachment is larger than Kin supports.");
+  if (!body.length) throw badRequest();
+  return body;
+}
+
+function binary(response, bytes) {
+  if (response.headersSent) return;
+  response.writeHead(200, {
+    "Content-Type": ENVELOPE_CONTENT_TYPE,
+    "Content-Length": bytes.length,
+    "Cache-Control": "no-store",
+  });
+  response.end(bytes);
 }
 
 function json(response, status, value) {
