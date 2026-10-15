@@ -15,6 +15,9 @@ function text(bytes, start, end, message) {
 
 const optionalId = (bytes) => (bytes.every((byte) => byte === 0) ? null : idToHex(bytes));
 
+// Text limits below mirror Rust's normalization (state.rs). Byte limits bound
+// the UTF-8 length; character limits count Unicode scalars ([...text].length).
+// Area name: 1-96 bytes, at most 48 characters, no control characters.
 export function decodeAreas(reader, { areaCount }) {
   const { bytes, view } = reader;
   const areas = [];
@@ -41,6 +44,7 @@ export function decodeAreas(reader, { areaCount }) {
   return areas;
 }
 
+// Note: title 1-256 bytes and at most 80 characters, body up to 4096 bytes.
 export function decodeNotes(reader, { noteCount }) {
   const { bytes, view } = reader;
   const notes = [];
@@ -197,6 +201,8 @@ export function decodeMaintenance(reader, { maintenanceEventCount }) {
 
 const ATTACHMENT_PARENTS = ["", "note", "reference-record", "maintenance", "item"];
 
+// An attachment binding is "removed" rather than archived: the file is
+// detached from its record, while the binding stays as a tombstone.
 export function decodeAttachments(reader, { attachmentCount }) {
   const { bytes } = reader;
   const attachments = [];

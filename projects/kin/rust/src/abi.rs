@@ -102,15 +102,27 @@ fn whole(result: &[u8]) -> Option<Range<usize>> {
     Some(0..result.len())
 }
 
+/// KCMT header: "KCMT", version u16, reserved u16, then the event, metadata
+/// and projection lengths as u32 at 8, 12 and 16 (command.rs execute_request).
+const KCMT_HEADER_BYTES: usize = 20;
+
 /// A KCMT result ends with the projection, after the event and metadata.
+/// None (the result is then left unstamped, revision 0) if the lengths do not
+/// add up, which a well-formed result never does.
 fn command_projection(result: &[u8]) -> Option<Range<usize>> {
     let length = |at: usize| -> Option<usize> {
         Some(u32::from_le_bytes(result.get(at..at + 4)?.try_into().ok()?) as usize)
     };
-    let start = 20usize.checked_add(length(8)?)?.checked_add(length(12)?)?;
+    let start = KCMT_HEADER_BYTES
+        .checked_add(length(8)?)?
+        .checked_add(length(12)?)?;
     (start.checked_add(length(16)?)? == result.len()).then_some(start..result.len())
 }
 
+// One per WASM instance: each loaded engine is its own instance with its own
+// statics, which is why revisions are "per engine instance". WASM here is
+// single-threaded; the Mutex is what Rust requires for a mutable static and
+// what keeps native test builds, which do run threads, sound.
 static ABI_STATE: Mutex<AbiState> = Mutex::new(AbiState::new());
 
 fn lock_state() -> std::sync::MutexGuard<'static, AbiState> {
@@ -169,6 +181,8 @@ pub extern "C" fn kin_alloc(length: u32) -> u32 {
 
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
 pub extern "C" fn kin_free(pointer: u32, length: u32) -> i32 {
+    // kin_alloc returns 0 for a failed or empty allocation; freeing that
+    // "nothing" succeeds, so a host can free unconditionally.
     if pointer == 0 && length == 0 {
         return 0;
     }
@@ -375,7 +389,7 @@ mod tests {
 
     #[test]
     fn command_results_locate_their_trailing_projection() {
-        let mut result = b"KCMT   ".to_vec();
+        let mut result = b"KCMT\x01\0\0\0".to_vec();
         for length in [3u32, 2, 4] {
             result.extend_from_slice(&length.to_le_bytes());
         }

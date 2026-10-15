@@ -1,5 +1,5 @@
 // The single command append path and its retry, focus and error handling.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 import { routeHash } from "../../../routes.js";
 
 export class AppendCommands {

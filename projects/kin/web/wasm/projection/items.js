@@ -13,10 +13,16 @@ import {
 } from "../wire.js";
 import { invalid } from "./reader.js";
 
+// Item record: item ID @0, created_by @16 (16 bytes each), created_at i64 @32,
+// classification u8 @40, status u8 @41, 2 reserved @42, text length u32 @44,
+// then the text.
 const ITEM_HEADER_BYTES = 48;
 const CLASSIFICATIONS = ["today", "need", "shopping", "staple"];
 const STATUSES = ["active", "completed", "archived"];
 
+// Four passes, in the section's byte order, fill in the Item objects the first
+// pass creates. The counts come from the header (sections.rs ties them to
+// this section's revision).
 export function decodeItems(reader, { itemCount, stepCount }) {
   const items = records(reader, itemCount);
   areas(reader, items);

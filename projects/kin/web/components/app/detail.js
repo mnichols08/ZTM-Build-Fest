@@ -1,5 +1,5 @@
 // The single item-detail view and where it is mounted.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 
 // Shared empty list, so a household without responsibilities keeps one identity.
 const NONE = Object.freeze([]);

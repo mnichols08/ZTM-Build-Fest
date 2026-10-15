@@ -1,5 +1,5 @@
 // Item capture and lifecycle commands, steps, planning dates, responsibility and pins.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 import { CLASSIFICATION_LABELS } from "../../kin-compose.js";
 import { describePartialCapture, remainingCaptureSteps } from "../../../capture-plan.js";
 import { describeRecurringCapture, isCadence, remainingRecurringSteps } from "../../../recurrence.js";

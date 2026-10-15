@@ -62,6 +62,9 @@ impl Section {
     /// Header byte ranges, as (start, end), that describe this section (its counts; for the summary
     /// also the total and through event). They belong to the section's
     /// identity: equal bytes with different counts are a different section.
+    /// Steps live inside the Items section, so Items also owns the step count
+    /// (64..68). The summary's total and through event are header fields, so
+    /// Summary owns 24..52. section_tests.rs checks every count is owned once.
     pub fn header_fields(self) -> &'static [(usize, usize)] {
         match self {
             Section::Items => &[(8, 12), (64, 68)],
@@ -137,6 +140,8 @@ impl SectionRevisions {
         let ranges = section_ranges(current)?;
         let previous = previous.and_then(|bytes| Some((bytes, section_ranges(bytes).ok()?)));
         for (index, section) in SECTIONS.iter().enumerate() {
+            // Counter 0 means this instance never emitted the section, so there
+            // is nothing it could be unchanged from.
             let unchanged = self.counters[index] != 0
                 && previous.as_ref().is_some_and(|(bytes, before)| {
                     same_bytes(

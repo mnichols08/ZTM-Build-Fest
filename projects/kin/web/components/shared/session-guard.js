@@ -19,6 +19,8 @@ export function isCurrentSession(host, session) {
     session.vault === host.vault &&
     Boolean(session.vault) &&
     !session.vault.locked &&
+    // A session captured before the store or engine existed (early in
+    // unlock) has no such key; only keys present are compared.
     (!Object.hasOwn(session, "store") || session.store === host.store) &&
     (!Object.hasOwn(session, "engine") || session.engine === host.engine)
   );

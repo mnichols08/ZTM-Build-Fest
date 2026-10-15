@@ -1,5 +1,5 @@
 // Unlock, open, lock and auto-lock of the household session.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 import { clearAttachmentProgress } from "../../attachments/attachment-progress.js";
 import { AttachmentPreviewCache } from "../../attachments/attachment-preview.js";
 import { loadKinEngine } from "../../wasm/kin-engine.js";

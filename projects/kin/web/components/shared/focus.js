@@ -5,7 +5,9 @@
 /**
  * @param root     element whose descendants may hold focus
  * @param describe (control) => keys that identify a replacement control
- * @param fallback a remembered control to use when focus is outside `root`
+ * @param fallback a remembered control to use when nothing in `root` has
+ *                 focus (for example it was lost to a disabled control); it
+ *                 must itself be inside `root`, or nothing is captured
  */
 export function captureFocus(root, { describe = () => ({}), fallback = null } = {}) {
   const active = globalThis.document?.activeElement;

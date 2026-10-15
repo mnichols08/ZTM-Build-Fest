@@ -9,7 +9,9 @@ import {
 } from "../wire.js";
 import { invalid } from "./reader.js";
 
-// Handoffs and Talks share one record shape: ID, author, time, status, text.
+// Handoffs and Talks share one record shape: ID @0, created_by @16 (16 bytes
+// each), created_at i64 @32, status u8 @40 (0-2), 3 reserved @41, text
+// length u32 @44, then the text.
 function textRecords(reader, count, { noun, idKey, statuses }) {
   const { bytes, view } = reader;
   const records = [];
@@ -75,6 +77,8 @@ export function decodePulses(reader, { pulseCount }) {
       value > 4 ||
       status > 1 ||
       bytes.subarray(offset + 34, offset + 40).some((byte) => byte !== 0) ||
+      // Rust emits one Pulse per member, sorted by actor ID bytes. Lowercase
+      // hex strings sort the same way as the bytes they encode.
       (previousActor !== null && actorId <= previousActor)
     )
       throw invalid("Kin received an invalid pulse record.");
@@ -94,7 +98,8 @@ export function decodePulses(reader, { pulseCount }) {
 const ENTITY_NAMES = ["", "item", "handoff", "talk", "routine"];
 const CLASSIFICATIONS = ["today", "need", "shopping", "staple"];
 
-// Summary kind codes 1-4 are Item kinds, 5-7 Handoff, 8-11 Talk, 12-15 Routine.
+// Summary kind codes 1-4 are Item kinds, 5-7 Handoff, 8-11 Talk, 12-15 Routine
+// (SUMMARY_KINDS in wire.js; Rust checks the same pairs in state_encode.rs).
 function expectedEntity(kindCode) {
   if (kindCode >= 1 && kindCode <= 4) return 1;
   if (kindCode >= 5 && kindCode <= 7) return 2;

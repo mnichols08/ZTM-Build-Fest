@@ -1,5 +1,5 @@
 // Areas, Notes, Reference and Maintenance records, household mode, reminders and calendar export.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 import { createCalendarExport } from "../../../calendar-export.js";
 import { SAVE_ERROR } from "../constants.js";
 

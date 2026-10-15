@@ -48,6 +48,12 @@ const USER_MESSAGES = new Map([
   ],
 ]);
 
+// The exports of the most recently created engine. The module-level
+// eventMetadata()/eventMetadataBatch() below use it, for callers that have no
+// engine object at hand (snapshot helpers in storage). An EventStore passes
+// its own engine instead (event-store.js appendRows). Disposing the engine
+// that is current clears it, and those helpers then throw until another
+// engine is created; avoid making short-lived engines while a store is open.
 let sharedCodec = null;
 
 export async function loadKinEngine(
@@ -100,6 +106,10 @@ export function createEngine(instanceExports) {
   // The last state this engine decoded from a stamped projection. Each new
   // replay or command reuses its unchanged sections (projection-decode.js),
   // so states share those arrays; decoded states are never mutated.
+  // applyEvents and executeCommand advance it. planImport (unstamped, always
+  // decoded in full) and projectionBytes (no decode) do not; skipping an
+  // update is always safe, it only means less reuse next time. A decode that
+  // throws leaves the previous state in place for the same reason.
   let lastState = null;
   const decoded = (state) => (lastState = state);
   return {
@@ -572,6 +582,9 @@ function encodePlaybookPayload(command) {
   return bytes;
 }
 
+// KMET v1, 92 bytes (ABI.md): "KMET", version u16, reserved u16, then
+// event ID @8, household @24, actor @40, device @56 (16 bytes each),
+// timestamp i64 @72, logical time u64 @80, event version u16 @88, kind u16 @90.
 function decodeMetadata(bytes) {
   if (bytes.length !== 92 || readAscii(bytes, 0, 4) !== "KMET")
     throw new KinEngineError(6, "Kin received invalid event metadata.");
@@ -607,7 +620,7 @@ function metadataBatch(exports, records) {
   if (length > MAX_PROTOCOL_BYTES)
     throw new KinEngineError(5, USER_MESSAGES.get(5));
   const request = new Uint8Array(length);
-  request.set([75, 77, 68, 81, 1, 0, 0, 0]);
+  request.set([...textEncoder.encode("KMDQ"), 1, 0, 0, 0]); // magic, version 1, reserved
   const view = new DataView(request.buffer);
   view.setUint32(8, sources.length, true);
   let offset = 12;
@@ -652,12 +665,17 @@ function executeCommand(
   const intent = encodeIntentPacket(
     {
       ...command,
+      // Rust requires a new Routine's creation date to equal the request's
+      // civil date, so the bridge fills it from the same value.
       ...(command.type === "create-routine" ? { createdOn: civilDate } : {}),
     },
     identity,
   );
-  // Encode the history once, behind a reserved intent prefix, instead of
-  // building it separately and copying it into the command request.
+  // Request layout: u32 intent length, the KCMD intent, then the KINE
+  // history. The history is encoded once behind that reserved prefix instead
+  // of being built separately and copied in. The KCMT result is a 20-byte
+  // header ("KCMT", version, reserved, then event, metadata and projection
+  // lengths as u32 @8, @12, @16) followed by those three buffers.
   const request = encodeRequest(
     records,
     asOf,
@@ -686,7 +704,7 @@ function executeCommand(
     metadata: decodeMetadata(
       bytes.subarray(20 + eventLength, 20 + eventLength + metadataLength),
     ),
-    state: safeDecode(() => decodeProjection(bytes.subarray(20 + eventLength + metadataLength), { previous, source: exports })),
+    state: safeDecode(() => decodeProjection(bytes.subarray(20 + eventLength + metadataLength), { previous, stampedBy: exports })),
   };
 }
 
@@ -824,7 +842,7 @@ function applyEvents(
 ) {
   return safeDecode(() => decodeProjection(
     replayBytes(exports, records, asOf, cursorEventId, civilDate, syncIdentity),
-    { previous, source: exports },
+    { previous, stampedBy: exports },
   ));
 }
 
@@ -859,6 +877,9 @@ function encodeRequest(
 ) {
   assertTimestamp(asOf);
   assertCivilDate(civilDate);
+  // Identity bindings map pre-sync placeholder IDs to the authenticated ones
+  // (96 bytes each, at most 256). rust/src/request.rs documents the KINE
+  // layout these offsets follow; docs/IDENTITY.md explains the bindings.
   const identityBindings = syncIdentity?.bindings ?? [];
   if (
     syncIdentity &&
@@ -932,6 +953,8 @@ function encodeRequest(
 // engine API above.
 export { encodeRequest as encodeReplayRequest, decodeProjection };
 
+// Copies a published result or error out of WASM memory. Every result and
+// error format starts with a magic header, so an empty buffer is invalid.
 function copyWasmBytes(memory, pointer, length) {
   const start = Number(pointer);
   const size = Number(length);

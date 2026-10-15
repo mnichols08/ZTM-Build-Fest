@@ -1,5 +1,5 @@
 // Building the destination pages and their components.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 import { routeHash, SEGMENTS } from "../../routes.js";
 
 export class ViewBuilder {

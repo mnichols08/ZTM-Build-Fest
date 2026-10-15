@@ -1,5 +1,5 @@
 // Rendering the projection into the views.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 import { routeHash, SEGMENTS } from "../../routes.js";
 import { formatCivilDate } from "../../today-view.js";
 
@@ -27,6 +27,11 @@ export class RenderController {
       else setTimeout(clearQuietRender, 0);
     }
   }
+  // Views receive the projection's arrays as they are; an unchanged section is
+  // the same array as last time, so the views skip it (COMPONENTS.md,
+  // "Incremental rendering"). The `?? []` fallbacks only matter for fields the
+  // decoder omits when empty (attachments, responsibilities); the decoder
+  // always provides the others.
   renderStateContents() {
     const mode = this.app.state.mode ?? "normal";
     this.app.modeSelect.value = mode;

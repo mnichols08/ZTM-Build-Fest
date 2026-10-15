@@ -1,5 +1,5 @@
 // Bulk complete/reopen with in-memory undo and retry sets.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 import { BULK_ACTIONS, describeBulkOutcome, planBulk, undoCommand, undoStatus } from "../../../bulk-actions.js";
 import { BULK_UNDO_UNVERIFIED, BULK_UNDO_WINDOW_MS } from "../constants.js";
 

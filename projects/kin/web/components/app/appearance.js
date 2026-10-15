@@ -1,5 +1,5 @@
 // Personal and household appearance and household identity.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 import { loadCachedHouseholdSettings } from "../../sync/sync-coordinator.js";
 import { paletteCss, paletteForSeed } from "../../appearance/palette.js";
 import { saveAppearance } from "../../appearance/store.js";

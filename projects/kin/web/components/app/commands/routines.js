@@ -1,5 +1,5 @@
 // Routine, schedule-change and Playbook commands.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 import { describeNextOccurrence, describeRecurringCapture, describeScheduleChanged, planScheduleChange, SCHEDULE_MESSAGES } from "../../../recurrence.js";
 import { SAVE_ERROR } from "../constants.js";
 

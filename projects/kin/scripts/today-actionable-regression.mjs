@@ -139,7 +139,7 @@ export async function todayActionableRegressions(recovery) {
   const mixed = mount({ today: DAY, items: [fixtures.today, shoppingToday, fixtures.completed] });
   const mixedEntries = [...mixed.querySelectorAll(".today-summary-entry")].map((node) => node.textContent);
   check(JSON.stringify(mixedEntries) === JSON.stringify(["2 items planned for today", "0 items coming up", "1 item completed from today's plans"]) &&
-    !/tasks?/.test(mixed.querySelector(".today-summary").textContent),
+    !/\btasks?\b/.test(mixed.querySelector(".today-summary").textContent),
   `A. a task and a shopping item are summarised as items with correct plurals (${JSON.stringify(mixedEntries)})`);
   mixed.remove();
 

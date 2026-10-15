@@ -55,6 +55,11 @@ class KinToday extends HTMLElement {
     // while unlocked; lock replaces the element, which drops them.
     this.selectionMode = false;
     this.selectedIds = new Set();
+    // Rendering and focus bookkeeping (see update() and the focus section).
+    this.suspended = false;
+    this.dirty = false;
+    this.pendingFocus = null;
+    this.deferredFocus = null;
     this.bulkResult = null;
     this.bulkBar = null;
     this.onItemSelection = (event) => {
@@ -87,6 +92,10 @@ class KinToday extends HTMLElement {
   }
 
   // Stores `value` in `field` and renders, unless it is the current value.
+  // The setters below coerce bad input to a fresh default ([] or {}); that
+  // only happens for a missing value, and it simply renders once more.
+  // Props passed to update() must name these setters: an unknown key would
+  // quietly become a plain field.
   assign(field, value) {
     if (this[field] === value) return;
     this[field] = value;
@@ -733,6 +742,15 @@ class KinToday extends HTMLElement {
     return row?.querySelector(".complete-control, .item-open") ?? section.querySelector("h2");
   }
 
+  // Three focus mechanisms work together here:
+  // - render() snapshots focus before rebuilding rows and restores it after
+  //   (captureFocus / restoreFocus below).
+  // - `pendingFocus`: a command remembers focus before it starts
+  //   (rememberFocus(), from app/commands), because busy will disable the
+  //   focused control; the next render, or settleFocus(), applies it.
+  // - `deferredFocus`: when the control to focus is disabled (busy), it is
+  //   kept here and focused as soon as `disabled` turns false (the setter
+  //   above). It also serves as captureFocus's fallback while focus is lost.
   rememberFocus() { this.pendingFocus = this.captureFocus(); }
 
   // Applies a remembered focus when an update rendered nothing.
@@ -765,6 +783,10 @@ class KinToday extends HTMLElement {
       pin: "unpin",
       unpin: "pin",
     }[focus.action];
+    // Fallbacks, most specific first: the same action on the same row; its
+    // counterpart (Complete becomes Reopen once the row flips); the row's
+    // Details button; any control of the row; the row that took its place in
+    // the section; the control at the same position in the list.
     const target = sameItem.find((control) => (control.dataset.itemAction ?? control.dataset.action) === focus.action)
       ?? (replacementAction ? sameItem.find((control) => (control.dataset.itemAction ?? control.dataset.action) === replacementAction) : null)
       ?? sameItem.find((control) => control.dataset.itemAction === "details")

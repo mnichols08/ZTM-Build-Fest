@@ -1,5 +1,5 @@
 // Routes, keyboard shortcuts and search-result navigation.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 import { projectionContext } from "../../browser-time.js";
 import { listSegmentForClassification, resolveRoute, routeHash } from "../../routes.js";
 import { isTypingContext, shortcutForKey } from "../../keyboard-commands.js";

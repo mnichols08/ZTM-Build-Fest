@@ -134,6 +134,9 @@ pub fn encode_state(state: &HouseholdState, summary: &CatchUpSummary) -> Result<
     };
     header(&mut out, state, summary)?;
     out.bytes(&[0; SECTION_TABLE_BYTES])?;
+    // Section order must match `sections::SECTIONS` exactly: the table and the
+    // JS decoder (projection-decode.js) label sections by position. Each
+    // writer is followed by `end_section()`, which records where it ended.
     items(&mut out, state)?;
     out.end_section();
     handoffs(&mut out, state)?;

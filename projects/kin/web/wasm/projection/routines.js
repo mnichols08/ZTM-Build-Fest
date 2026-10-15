@@ -16,10 +16,18 @@ export function decodeRoutines(reader, { routineCount }) {
   return routines;
 }
 
-// The current occurrence key must be a valid period start for the cadence.
+// Cadence wire codes, in ROUTINE_CADENCES order (wire.js).
+const DAILY = 0, WEEKLY = 1, BIWEEKLY = 2, MONTHLY = 3, WEEKDAYS = 4;
+
+// The current occurrence key (a civil date, YYYYMMDD) must be the first day
+// of a period of the cadence, on or after the Routine was created. Rust
+// computes the key; this only rejects combinations that cannot be valid.
+// Throws a bare Error, which records() turns into a decode error.
 function assertOccurrenceKey(key, cadence, createdOn) {
-  if (cadence === 0 && key < createdOn) throw new Error();
-  if (cadence === 1) {
+  // Daily: any day from creation on.
+  if (cadence === DAILY && key < createdOn) throw new Error();
+  // Weekly: a Monday, and creation falls on or before that week's Sunday.
+  if (cadence === WEEKLY) {
     const d = new Date(0);
     d.setUTCFullYear(Math.floor(key / 10000), (Math.floor(key / 100) % 100) - 1, key % 100);
     if (d.getUTCDay() !== 1) throw new Error();
@@ -27,11 +35,15 @@ function assertOccurrenceKey(key, cadence, createdOn) {
     const endKey = d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
     if (endKey < createdOn) throw new Error();
   }
-  if (cadence === 2 && (key < createdOn || (civilOrdinal(key) - civilOrdinal(createdOn)) % 14 !== 0))
+  // Every two weeks: a whole number of 14-day steps after creation.
+  if (cadence === BIWEEKLY && (key < createdOn || (civilOrdinal(key) - civilOrdinal(createdOn)) % 14 !== 0))
     throw new Error();
-  if (cadence === 3 && (key % 100 !== 1 || key < Math.floor(createdOn / 100) * 100 + 1)) throw new Error();
-  // Weekdays: a Monday-Friday key on or after creation (ordinal 0 is a Monday).
-  if (cadence === 4 && (key < createdOn || civilOrdinal(key) % 7 >= 5)) throw new Error();
+  // Monthly: day 1 of a month, from the month of creation on.
+  if (cadence === MONTHLY && (key % 100 !== 1 || key < Math.floor(createdOn / 100) * 100 + 1)) throw new Error();
+  // Weekdays: a Monday-Friday key on or after creation. Ordinal 0 is
+  // 0001-01-01, a Monday in the proleptic Gregorian calendar, so ordinal % 7
+  // is 0 for Monday through 6 for Sunday.
+  if (cadence === WEEKDAYS && (key < createdOn || civilOrdinal(key) % 7 >= 5)) throw new Error();
 }
 
 function records(reader, count) {
@@ -101,8 +113,11 @@ function nextOccurrences(reader, routines) {
     reader.offset += 4;
     try {
       if (nextOn) assertCivilDate(nextOn);
-      if (routine.status === "archived" ? nextOn !== 0 : nextOn !== 0 && routine.occurrenceKey && nextOn <= routine.occurrenceKey)
-        throw new Error();
+      // An archived Routine has no next occurrence; an active one's next
+      // occurrence (0 when none fits before 9999-12-31) comes after the current.
+      const archivedWithNext = routine.status === "archived" && nextOn !== 0;
+      const nextNotAfterCurrent = routine.status !== "archived" && nextOn !== 0 && routine.occurrenceKey && nextOn <= routine.occurrenceKey;
+      if (archivedWithNext || nextNotAfterCurrent) throw new Error();
     } catch {
       throw invalid("Kin received invalid routine schedule data.");
     }

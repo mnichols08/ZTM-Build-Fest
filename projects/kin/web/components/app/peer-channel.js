@@ -1,5 +1,5 @@
 // Same-origin peer-tab invalidation over BroadcastChannel (content-free messages).
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 
 export class PeerChannel {
   constructor(ctx) {
@@ -65,6 +65,9 @@ export class PeerChannel {
     }
     this.app.refreshFromEvents();
   }
+  // Runs the refresh deferred while busy (`pendingRefresh`), once nothing else
+  // is running. Every operation calls it when it finishes, not only peer
+  // messages; the name comes from the peer channel that first needed it.
   flushPeerRefresh() {
     if (!this.app.vault || this.app.vault.locked) return;
     if (!this.app.pendingRefresh || this.app.busy || this.app.refreshing) {

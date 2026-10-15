@@ -33,6 +33,8 @@ pub(super) fn items(out: &mut Output, state: &HouseholdState) -> Result<(), KinE
     }
     for item in &state.items {
         for step in &item.steps {
+            // Replay already normalizes text. Normalizing again is idempotent and
+            // keeps a state built some other way (tests) from encoding bad text.
             let text = crate::state::normalize_step_text(&step.text)?;
             out.bytes(&item.item_id.0)?;
             out.bytes(&step.step_id.0)?;

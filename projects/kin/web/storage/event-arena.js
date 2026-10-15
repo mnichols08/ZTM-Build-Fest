@@ -1,18 +1,21 @@
 // Session plaintext arena: the decrypted canonical event history of one
 // unlocked EventStore, held as contiguous bytes so commands and refreshes stop
-// re-reading and re-decrypting the full IndexedDB log (H1) and so a replay
-// request is one bulk copy (H2).
+// re-reading and re-decrypting the full IndexedDB log, and so a replay
+// request is one bulk copy instead of one copy per event. (The measurements
+// behind both are in docs/audits/REFACTOR-BASELINE.md.)
 //
 // Layout (all growable by manual doubling; growth zero-fills the old buffers):
 //   bytes      one Uint8Array of concatenated `encoded_event` records
 //   spans      Uint32Array [offset, length] per record
-//   sequences  Float64Array IndexedDB `local_sequence` per record (ascending)
+//   sequences  Float64Array IndexedDB `local_sequence` per record (ascending;
+//              IndexedDB keys are JS numbers, so Float64 holds any of them)
 //   logical    BigUint64Array logical time per record
 //   stamps     Float64Array event timestamp per record
 //   ids        Uint8Array 64 bytes per record: event, household, actor, device
 //   kinds      Uint8Array index into a small table of kind names
 //   versions   Uint16Array event schema version
-//   lookup     Int32Array open-addressed event-ID hash table (record index + 1)
+//   lookup     Int32Array open-addressed event-ID hash table (record index + 1;
+//              0 marks an empty slot)
 //
 // Invariants:
 // - The arena is derived and discardable. IndexedDB stays the only source of
@@ -22,10 +25,17 @@
 // - `generation` is the persisted store generation the contents belong to.
 //   Non-append changes (restore, migration, root rotation) bump it in the same
 //   transaction, so a stale arena is detected before it is used.
+// - `generation` and `epoch` are different counters. `generation` comes from
+//   storage and says which corpus the arena holds. `epoch` is local to this
+//   object: it increases on every reset or wipe, and a HistoryView remembers
+//   the epoch it was made in, so it throws instead of reading new contents.
 // - `wipe()` zero-fills every buffer and drops the references. It runs on lock,
 //   close and session change. Garbage collection still gives no guarantee of
 //   physical memory erasure (THREAT-MODEL.md).
 const ID_BYTES = 64;
+// Record capacity must stay a power of two: `lookup` has twice as many slots
+// and is indexed with `& mask`. Doubling keeps that, and keeps the table at
+// most half full, so a probe always reaches an empty slot.
 const INITIAL_RECORDS = 64;
 const INITIAL_BYTES = 16 * 1024;
 
@@ -79,6 +89,8 @@ export class EventArena {
 
   get length() { return this.count; }
   get byteLength() { return this.used; }
+  // The newest record's local sequence. Sequences start at 1 (append rejects
+  // anything else), so 0 safely means "empty".
   get tail() { return this.count ? this.sequences[this.count - 1] : 0; }
 
   /** Starts an empty arena for `generation`. Outstanding views become stale. */
@@ -166,7 +178,8 @@ export class EventArena {
     for (let index = 0; index < this.count; index += 1) this.#index(index);
   }
 
-  // Event IDs are random, so their first four bytes are a usable hash.
+  // Event IDs come from randomId() (kin-engine.js), so their first four bytes
+  // are a usable hash. A non-random ID would only cause longer probes.
   #slot(bytes, offset) {
     return (bytes[offset] | (bytes[offset + 1] << 8) | (bytes[offset + 2] << 16) | (bytes[offset + 3] << 24)) >>> 0;
   }
@@ -325,7 +338,9 @@ export class HistoryView {
 }
 
 /** A replay source of a history view followed by extra canonical records,
- * without materializing a combined array. */
+ * without materializing a combined array. EventStore uses it to replay the
+ * stored history plus events not yet stored (remote additions being
+ * reconciled, or a candidate event being checked). */
 export function historyWith(view, extras) {
   const sources = extras.map((record) => (record instanceof Uint8Array ? record : new Uint8Array(record)));
   return {

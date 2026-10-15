@@ -414,6 +414,8 @@ export class EventStore {
     return store;
   }
 
+  /** The current history as detached row objects (copies). Prefer
+   * loadHistory() unless the rows must outlive the next append. */
   async loadEvents() {
     const transaction = this.database.transaction(EVENT_STORE, "readonly");
     const history = historyRequest(this, transaction);
@@ -844,9 +846,12 @@ export class EventStore {
           validateCursorBoundary(context, loadedEvents);
           const boundary = snapshotBoundary(loadedEvents);
           finish({
-            // A HistoryView: pass it to the engine directly; `.rows()` gives
-            // detached row objects.
+            // A HistoryView, not an array: pass it to the engine directly;
+            // `.rows()` gives detached row objects.
             events: loadedEvents,
+            // `cursor` is where this person last looked ("Caught up"), so the
+            // summary lists what came after it. `through` is the newest event
+            // in this snapshot, which a later "Caught up" may commit.
             syncIdentity: syncIdentityFromContext(context),
             cursor: {
               eventId: context.last_looked_event_id
@@ -2184,6 +2189,12 @@ function storageError(cause) {
  * the row count, then either decrypts only rows after the arena tail (same
  * generation, consistent count) or rebuilds the arena from every row. A raw
  * pre-protection database has no generation and always rebuilds.
+ *
+ * Why callbacks and not a Promise: an IndexedDB transaction commits as soon
+ * as no request is pending at the end of a task. Awaiting a Promise between
+ * requests can let it commit early, so every follow-up request is issued
+ * from inside the previous request's callback, and callers attach their own
+ * `onsuccess` the same way.
  */
 function historyRequest(store, transaction) {
   const request = { result: undefined, error: null, onsuccess: null, onerror: null };
@@ -2211,12 +2222,17 @@ function historyRequest(store, transaction) {
     };
     all.onerror = () => fail(storageError(all.error));
   };
+  // `securityValue` reads plaintext security metadata inside this same
+  // transaction (encrypted-idb.js). Only databases opened without a security
+  // guard lack it (setup and migration); they cannot track a generation.
   if (typeof transaction.securityValue !== "function") {
     rebuild(null);
     return request;
   }
   const generationRequest = transaction.securityValue(EVENT_GENERATION_KEY);
   const countRequest = events.count();
+  // IndexedDB completes requests in the order they were made, so `generation`
+  // is set before countRequest.onsuccess below runs.
   let generation;
   generationRequest.onsuccess = () => { generation = generationRequest.result?.generation ?? 0; };
   generationRequest.onerror = () => fail(storageError(generationRequest.error));
@@ -2225,14 +2241,18 @@ function historyRequest(store, transaction) {
     try {
       const total = countRequest.result;
       if (!Number.isSafeInteger(generation) || generation < 0) throw invalidEventHistory();
+      // A different generation means the corpus was replaced (restore,
+      // migration, root rotation); fewer rows than the arena holds cannot come
+      // from appends. Either way the arena is rebuilt from storage.
       if (arena.generation !== generation || total < arena.length) { rebuild(generation); return; }
       if (total === arena.length) { succeed(arena.view(total)); return; }
       const known = arena.length;
       const delta = events.getAll(IDBKeyRange.lowerBound(arena.tail, true));
       delta.onsuccess = () => {
         try {
-          // Another transaction may have appended meanwhile; append skips rows
-          // already present. Anything else inconsistent rebuilds.
+          // While this read waited, a commit in this tab may already have added
+          // rows to the shared arena (#appendCommitted), so the filter skips
+          // rows at or below the tail. Any other mismatch rebuilds.
           if (arena.generation !== generation || known + delta.result.length !== total) { rebuild(generation); return; }
           appendRows(arena, delta.result.filter((row) => row.local_sequence > arena.tail), store.engine);
           succeed(arena.view(total));
@@ -2247,6 +2267,8 @@ function historyRequest(store, transaction) {
 
 // Decrypted row copies are this read's own; zero them once the arena holds
 // their bytes so the session keeps one plaintext copy.
+// Zero-fills decrypted row bytes once the arena holds its copy. A row that
+// failed validation may not hold bytes at all, so failures are ignored.
 function zeroRows(rows) {
   for (const row of rows) {
     try { asBytes(row.encoded_event).fill(0); } catch { /* Rejected row. */ }

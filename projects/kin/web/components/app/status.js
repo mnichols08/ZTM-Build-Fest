@@ -1,5 +1,5 @@
 // Busy state, status and alert messages, onboarding prompts and app-update notices.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 import { passkeyUnlockSupported } from "../../security/passkey-unlock.js";
 
 export class StatusController {

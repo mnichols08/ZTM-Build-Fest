@@ -1,6 +1,7 @@
 // One guarded asynchronous operation at a time for a component: the host gets
-// aria-busy while it runs, a newer operation or cancel() makes older ones
-// stale, and stale failures are never reported.
+// aria-busy while it runs, run() refuses to start a second one meanwhile, and
+// cancel() (on lock) makes the running one stale so its late result and any
+// failure are ignored.
 export class OperationGuard {
   constructor(host, { onBusy = () => {}, onError = () => {}, canStart = () => true } = {}) {
     this.host = host;

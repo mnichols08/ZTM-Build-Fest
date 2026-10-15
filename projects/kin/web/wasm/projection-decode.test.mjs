@@ -119,10 +119,10 @@ function rebuild(bytes, { revisions, replace = {} }) {
 
 test("revision 0 always decodes, and reused sections are still cross-checked", async () => {
   const full = await load("full.kins");
-  const source = {};
+  const stampedBy = {}; // any object stands in for an engine instance
   const ones = Array(14).fill(1);
-  const first = decodeProjection(rebuild(full, { revisions: ones }), { source });
-  const unversioned = decodeProjection(rebuild(full, { revisions: Array(14).fill(0) }), { previous: first, source });
+  const first = decodeProjection(rebuild(full, { revisions: ones }), { stampedBy });
+  const unversioned = decodeProjection(rebuild(full, { revisions: Array(14).fill(0) }), { previous: first, stampedBy });
   assert.notEqual(unversioned.items, first.items);
   assert.deepEqual(unversioned, first);
 
@@ -131,12 +131,12 @@ test("revision 0 always decodes, and reused sections are still cross-checked", a
   const noAreas = rebuild(full, { revisions: ones.map((value, index) => (index === 5 ? 2 : value)), replace: { 5: new Uint8Array(0) } });
   new DataView(noAreas.buffer).setUint32(56, 0, true);
   failsClosed(noAreas, "parsed without previous state");
-  assert.throws(() => decodeProjection(noAreas, { previous: first, source }), (error) => error instanceof KinEngineError && error.code === 6);
+  assert.throws(() => decodeProjection(noAreas, { previous: first, stampedBy }), (error) => error instanceof KinEngineError && error.code === 6);
 
   // A reused section whose header count no longer matches fails closed.
   const recounted = rebuild(full, { revisions: ones });
   new DataView(recounted.buffer).setUint32(12, first.handoffs.length + 1, true);
-  assert.throws(() => decodeProjection(recounted, { previous: first, source }), /inconsistent state/);
+  assert.throws(() => decodeProjection(recounted, { previous: first, stampedBy }), /inconsistent state/);
 });
 
 test("the section table must cover the body exactly", async () => {

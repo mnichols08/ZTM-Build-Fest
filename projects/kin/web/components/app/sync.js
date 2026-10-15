@@ -1,5 +1,5 @@
 // Encrypted sync coordinator setup, authorization checks and the sync status chip.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 import { SyncCoordinator } from "../../sync/sync-coordinator.js";
 import { SYNC_PAUSE_MESSAGES } from "./constants.js";
 

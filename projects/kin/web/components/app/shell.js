@@ -1,5 +1,5 @@
 // Building the persistent application shell once per element.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 import { PRIMARY_DESTINATIONS, routeHash } from "../../routes.js";
 import { clearLegacyDrafts } from "../kin-security.js";
 import { LOCK_ICON, NAV_ICONS, SEARCH_ICON } from "../shared/icons.js";

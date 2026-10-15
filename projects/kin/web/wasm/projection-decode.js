@@ -55,24 +55,29 @@ const MODES = ["normal", "vacation", "guests", "rest"];
 
 // Per decoded state: the engine instance that stamped it, its section
 // revisions and lengths, and the decoded sections, for the next decode.
+// A WeakMap, so a state nobody holds any more is collected with its entry.
 const sectionCache = new WeakMap();
 
 /**
- * @param bytes    a KINS projection
- * @param previous the state decoded from this engine's previous projection
- * @param source   the engine instance that produced `bytes` (its exports)
+ * @param bytes     a KINS projection
+ * @param previous  the state decoded from this engine's previous projection
+ * @param stampedBy identity of the engine instance that stamped `bytes` (its
+ *                  WASM exports object). Revisions only compare within one
+ *                  instance, so reuse needs the same value both times.
  */
-export function decodeProjection(bytes, { previous = null, source = null } = {}) {
+export function decodeProjection(bytes, { previous = null, stampedBy = null } = {}) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const header = decodeHeader(bytes, view);
   const table = decodeTable(bytes, view);
-  const cached = previous && source ? sectionCache.get(previous) : undefined;
-  const prior = cached?.source === source ? cached : null;
+  const cached = previous && stampedBy ? sectionCache.get(previous) : undefined;
+  const prior = cached?.stampedBy === stampedBy ? cached : null;
   const values = {};
   let start = BODY_OFFSET;
   SECTIONS.forEach(([name, decode], index) => {
     const end = start + table.lengths[index];
     const revision = table.revisions[index];
+    // Equal revision already implies equal bytes; the length check is a cheap
+    // second guard. Revision 0 means unversioned and always decodes.
     if (prior && revision !== 0 && prior.revisions[index] === revision && prior.lengths[index] === table.lengths[index]) {
       values[name] = prior.values[name];
     } else {
@@ -96,12 +101,15 @@ export function decodeProjection(bytes, { previous = null, source = null } = {})
     playbooks: values.playbooks,
     referenceRecords: values.referenceRecords,
     maintenanceEvents: values.maintenanceEvents,
+    // These three are left out when empty or normal, the shape every caller
+    // and test has always seen. Read them with a shared fallback (for example
+    // detail.js `NONE`), not a fresh `[]`, where identity matters.
     ...(values.attachments.length ? { attachments: values.attachments } : {}),
     ...(values.responsibilities.length ? { responsibilities: values.responsibilities } : {}),
     ...(header.modeCode === 0 ? {} : { mode: MODES[header.modeCode] }),
     summary: values.summary,
   };
-  if (source) sectionCache.set(state, { source, ...table, values });
+  if (stampedBy) sectionCache.set(state, { stampedBy, ...table, values });
   return state;
 }
 
@@ -146,6 +154,10 @@ function decodeHeader(bytes, view) {
   )
     throw invalid("Kin received invalid summary metadata.");
   header.summaryThroughEventId = throughPresent === 1 ? idToHex(throughBytes) : null;
+  // Collection limits, matching Rust's (state.rs MAX_* and wire.rs): 32 Areas,
+  // 128 Notes, 10 Pins, 32 Playbooks, 128 Reference Records, 8,192
+  // Maintenance events, 256 attachments. A responsibility targets an Item or
+  // a Routine, so there can be at most one per Item and Routine.
   const h = header;
   if (
     h.areaCount > 32 ||

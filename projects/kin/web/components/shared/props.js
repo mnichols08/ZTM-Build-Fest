@@ -3,6 +3,9 @@
 // coerced value and schedules one render in a microtask, so a batch of
 // assignments costs one render. `flushRender()` renders a pending batch now,
 // for callers that need the DOM immediately (for example to restore focus).
+// Not used by a component yet: refactor Slice 5 moves <kin-today> and others
+// onto it. Until then those components guard their setters by identity
+// themselves (COMPONENTS.md, "Incremental rendering").
 
 const PENDING = Symbol("kinRenderPending");
 

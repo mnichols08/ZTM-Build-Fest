@@ -1,6 +1,29 @@
 // The explicit dependency container shared by <kin-app>'s controllers.
 // `app` is the element: it owns the state and DOM references the controllers
-// read and write. Controllers reach each other through this object only.
+// read and write.
+//
+// How controllers call each other:
+// - Through `this.ctx.<key>` (for example `this.ctx.status.setBusy(true)`).
+// - Except for methods with a stub on the element (kin-app.js, "Called from
+//   outside the element"), such as `renderState`, `refreshFromEvents` or
+//   `lockHousehold`. Those are always called as `this.app.<method>()`, because
+//   regression scripts replace them on the element and must see every call.
+//
+// Where element fields come from:
+// - Plain state and bound handlers: initializeAppState() below.
+// - The persistent shell (nav, main, alert, status, catch-up, ...):
+//   ShellBuilder.initializeElements() in shell.js.
+// - The page views (app.today, app.needs, app.routines, app.notes, ...):
+//   ViewBuilder.buildViews() in views.js, rebuilt on every lock.
+//
+// Several unrelated counters are called "generation" or "epoch":
+// - `app.securityGeneration`: bumped on every unlock and lock; an async step
+//   compares it to drop results from a closed session (shared/session-guard.js).
+// - `app.commandGeneration`: the securityGeneration when the command palette
+//   opened; a command chosen after a lock or unlock in between is ignored.
+// - The vault's security epoch: persisted lock counter shared by all tabs
+//   (EventStore.checkSecurityEpoch); a newer epoch means another tab locked.
+// - The event arena's `generation` and `epoch`: see storage/event-arena.js.
 import { AppearanceController } from "./appearance.js";
 import { AppendCommands } from "./commands/append.js";
 import { AttachmentController } from "./attachments.js";
@@ -51,6 +74,9 @@ export function createAppContext(app) {
 export function initializeAppState(app) {
     app.engine = null;
     app.store = null;
+    // Attachment file records (names, sizes, upload state) from IndexedDB,
+    // which the views show. Not `state.attachments`: those are the projection's
+    // bindings of attachment IDs to records, which Rust derives from events.
     app.attachmentRows = [];
     app.syncCoordinator = null;
     app.state = null;
@@ -140,6 +166,8 @@ export function initializeAppState(app) {
       app.saveTalk({ type: "reopen-talk", talkId: event.detail.talkId });
     app.onArchiveTalk = (event) =>
       app.saveTalk({ type: "archive-talk", talkId: event.detail.talkId });
+    // Several handlers derive the command type from the event name: every
+    // component event is "kin:<command>", so `event.type.slice(4)` drops "kin:".
     app.onRoutineIntent = (event) => {
       if (event.type === "kin:archive-routine" || event.type === "kin:complete-routine-occurrence") app.localReminders.cancel(`routine:${event.detail.routineId}`);
       app.saveRoutine({ ...event.detail, type: event.type.slice(4) });
@@ -238,6 +266,10 @@ export function initializeAppState(app) {
       app.focusTimer = setTimeout(app.onTimeWake, 150);
     };
     app.onClearPulse = () => app.savePulse({ type: "clear-pulse" });
+    // Runs on window focus, visibility changes and the Pulse/midnight timer.
+    // Three duties, in order: lock if the auto-lock time passed while away;
+    // lock if another tab locked (the durable security epoch moved); otherwise
+    // refresh from the event log and re-check household authorization.
     app.onTimeWake = async (event) => {
       if (event?.type === "focus" && event.target !== window) return;
       if (document.visibilityState === "hidden") return;

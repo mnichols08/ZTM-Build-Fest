@@ -1,5 +1,5 @@
 // Attachment capture, viewing, previews and the single app-owned file input.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 import { attachmentFileProblem, captureAttachment, loadLocalAttachmentRows, openAttachment, removeAttachment } from "../../attachments/attachment-lifecycle.js";
 import { clearAttachmentProgress, setAttachmentProgress } from "../../attachments/attachment-progress.js";
 import { isImageAttachment } from "../../attachments/attachment-preview.js";

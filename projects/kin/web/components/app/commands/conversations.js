@@ -1,5 +1,5 @@
 // Handoff, Talk and Pulse commands.
-// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+// State stays on the element (`this.app`); app/context.js explains the controllers.
 import { routeHash } from "../../../routes.js";
 import { SAVE_ERROR } from "../constants.js";
 
