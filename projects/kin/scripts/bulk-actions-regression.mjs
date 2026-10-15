@@ -457,7 +457,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     const narrow = await page(() => {
       const list = document.querySelector("kin-app").needs;
       const bar = list.bulkBar;
-      const controls = [...bar.container.querySelectorAll("button, label.select-target")].filter((node) => node.getClientRects().length);
+      const controls = [...bar.querySelectorAll("button, label.select-target")].filter((node) => node.getClientRects().length);
       const rowBoxes = [...list.querySelectorAll(".select-target")].map((node) => node.getBoundingClientRect());
       return {
         overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,

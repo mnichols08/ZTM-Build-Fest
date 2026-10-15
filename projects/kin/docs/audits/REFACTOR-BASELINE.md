@@ -181,3 +181,25 @@ with this same harness. "After" is the slice's final build.
 - The remaining ~0.5 s of an unchanged refresh at 10k is mostly the busy
   toggle: `setBusy` disables and re-enables every control in the 10,000-row
   lists. It is not addressed here.
+
+## Slice 5 — component splits
+
+Slice 5 moves code between files and adds `<kin-bulk-bar>`. Replay, decode,
+storage and the render work itself are unchanged, so the gate is "no
+regression". The slice was measured back to back against its parent commit
+(4e6fdf1), with one more run of the slice afterwards:
+
+| Stage (ms) | 10k before | 10k after (run 1 / 2) | 10k × 4 KB before | 10k × 4 KB after (run 1 / 2) |
+| --- | ---: | ---: | ---: | ---: |
+| App peer refresh, nothing changed | 550 | 514 / 659 | 704 | 750 / 770 |
+| App peer refresh, one new Handoff | 509 | 458 / 620 | 420 | 368 / 380 |
+| App full render | 2,339 | 2,295 / 2,798 | 2,258 | 2,497 / 2,171 |
+| Store unlock → projection | 1,703 | 1,973 / 1,442 | 10,692 | 10,834 / 10,054 |
+| App unlock (recovery key) | 4,256 | 4,959 / 3,650 | 15,372 | 19,210 / 12,925 |
+
+The machine was noisy during these runs: two runs of the same build differ by
+up to ±20%, in both directions. The stages that moved most (store unlock, app
+unlock) run code Slice 5 does not touch. The view stages fall either side of
+the parent depending on the run. No stage is consistently slower. The Slice 4
+numbers above came from a quieter run, so they are not directly comparable
+with these.

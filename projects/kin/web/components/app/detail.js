@@ -136,7 +136,8 @@ export class DetailController {
   }
   renderSelection() {
     const selected = this.app.selection?.itemId ?? null;
-    for (const list of [this.app.today, this.app.needs, this.app.shopping, this.app.staples]) if (list) list.selected = selected;
+    // update() renders now, so the caller can move focus to the rebuilt row.
+    for (const list of [this.app.today, this.app.needs, this.app.shopping, this.app.staples]) list?.update({ selected });
   }
   // The mobile presentation of item details: a full-height modal sheet that
   // hosts the same <kin-item-detail> element the other layouts use.

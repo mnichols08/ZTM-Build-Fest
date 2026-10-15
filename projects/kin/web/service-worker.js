@@ -18,11 +18,12 @@ const SHELL = [
   "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js",
   "/appearance/palette.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js",
   "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js",
-  ...["app", "appearance", "household-defaults", "security", "household", "quick-add", "command-palette", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility"].map((name) => `/components/kin-${name}.js`),
+  ...["app", "appearance", "household-defaults", "security", "household", "quick-add", "command-palette", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility", "bulk-bar"].map((name) => `/components/kin-${name}.js`),
   "/components/app/appearance.js", "/components/app/attachments.js", "/components/app/commands/append.js", "/components/app/commands/bulk.js", "/components/app/commands/conversations.js", "/components/app/commands/items.js", "/components/app/commands/records.js", "/components/app/commands/routines.js", "/components/app/constants.js", "/components/app/context.js", "/components/app/detail.js", "/components/app/navigation.js", "/components/app/peer-channel.js", "/components/app/refresh.js", "/components/app/render.js", "/components/app/session.js", "/components/app/shell.js", "/components/app/status.js", "/components/app/sync.js", "/components/app/views.js",
   ...["dom", "focus", "icons", "operation", "props", "session-guard"].map((name) => `/components/shared/${name}.js`),
   ...["api", "auth", "lifecycle", "membership", "pairing", "views"].map((name) => `/components/household/${name}.js`),
   ...["archive", "protection", "unlock", "views"].map((name) => `/components/security/${name}.js`),
+  ...["focus", "sections", "selection"].map((name) => `/components/today/${name}.js`),
 ];
 const ALLOWED = new Set(SHELL);
 

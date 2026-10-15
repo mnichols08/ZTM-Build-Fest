@@ -37,10 +37,37 @@ test hook.
 
 Shared component helpers live in `web/components/shared/`: `dom.js`
 (`button`, `text`, `section`, `message`, `field`), `icons.js`, `focus.js`
-(`captureFocus` / `restoreFocus`), `props.js` (`defineProps` with
-microtask-coalesced rendering and `flushRender`), `operation.js`
-(`OperationGuard`, the guarded single-operation runner used by
-`<kin-household>` and `<kin-security>`) and `session-guard.js`.
+(`captureFocus` / `restoreFocus`), `props.js` (`defineProps`: generated
+setters with microtask-coalesced rendering, identity skipping and
+`flushRender`), `operation.js` (`OperationGuard`, the guarded single-operation
+runner used by `<kin-household>` and `<kin-security>`) and `session-guard.js`.
+
+### Large components: element shell plus parts (refactor track, Slice 5)
+
+`<kin-household>`, `<kin-security>` and `<kin-today>` follow the same shape
+as `<kin-app>`. The element file keeps its lifecycle, its state, a few small
+UI helpers, and a one-line stub for every method called from outside it
+(regression scripts, `<kin-app>` controllers, unit tests). Everything else
+lives in part classes in a folder named after the element:
+
+| Element | Parts |
+| --- | --- |
+| `<kin-household>` | `household/`: `api.js` (connection, requests, sync status), `auth.js` (passkey registration and login, WebAuthn helpers), `pairing.js`, `membership.js` (devices, members, invitations), `lifecycle.js` (deletion, leaving), `views.js` |
+| `<kin-security>` | `security/`: `views.js`, `protection.js` (setup, replacement, passkeys), `unlock.js`, `archive.js` |
+| `<kin-today>` | `today/`: `sections.js` (the Today composition), `selection.js` (bulk selection), `focus.js` (keeping focus across re-renders) |
+
+The element builds its parts once, in its constructor, from a `PARTS` table,
+with one shared context `{ host, ...parts }`. A part reaches the element as
+`this.host` and the other parts as `this.ctx.<part>`. A part never holds state
+of its own: fields stay on the element, so the lifecycle callbacks and the
+lock path see all of it in one place.
+
+`<kin-bulk-bar>` (`kin-bulk-bar.js`) is the To do and Shopping bulk bar. It
+owns its controls, text, visibility and focus handoff, and it reports button
+presses to its list as a non-bubbling `bulk-bar-action` event. The list keeps
+the selection and sends the `kin:bulk-*` commands, so `<kin-app>` sees the
+same events as before. Its controls stay reachable as `list.bulkBar.undo`,
+`.toolbar` and so on.
 
 ### Incremental rendering (refactor track, Slice 4)
 
@@ -50,9 +77,10 @@ views as the same array. Views skip work by identity: each data setter of
 `<kin-today>`, `<kin-routines>`, `<kin-notes>`, `<kin-areas>`,
 `<kin-handoff-list>`, `<kin-talk-list>`, `<kin-catch-up>`, `<kin-pulse>` and
 `<kin-search>` compares the incoming value with the one it holds and renders
-only when it differs. `<kin-today>.update(props)` renders once if any input
-changed and otherwise only applies a focus that a command remembered for the
-render. The comparison is with the component's current value, not with what
+only when it differs. `<kin-today>` gets this from `defineProps`: a setter
+schedules one microtask render, and `update(props)` assigns several inputs
+and renders at once if any changed. Otherwise it only applies a focus that a
+command remembered for the render. The comparison is with the component's current value, not with what
 `renderState()` last passed, so a value assigned from elsewhere is still
 replaced by the next render. `responsibilityContext()` returns the same object
 while its inputs are unchanged. Decoded state is never mutated, because reused

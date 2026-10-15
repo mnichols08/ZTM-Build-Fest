@@ -117,10 +117,27 @@ test("defineProps coalesces assignments into one microtask render", async () => 
   await null;
   assert.equal(list.renders, 1);
   list.items = [3];
-  list.flushRender();
+  assert.equal(list.flushRender(), true);
   assert.equal(list.renders, 2);
   await null;
   assert.equal(list.renders, 2, "a flushed batch does not render again");
+});
+
+test("defineProps ignores a value identical to the current one", async () => {
+  class List { constructor() { this.renders = 0; } render() { this.renders += 1; } }
+  defineProps(List, { items: { field: "records", coerce: asArray } });
+  const list = new List();
+  const records = [1];
+  list.items = records;
+  assert.equal(list.flushRender(), true);
+  list.items = records;
+  list.items = undefined;
+  list.items = null; // both coerce to the same shared empty array
+  assert.equal(list.flushRender(), true, "the change to an empty list renders once");
+  list.items = undefined;
+  assert.equal(list.flushRender(), false, "an identical value schedules nothing");
+  await null;
+  assert.equal(list.renders, 2);
 });
 
 test("focus snapshots restore the same control or a found replacement", () => {
