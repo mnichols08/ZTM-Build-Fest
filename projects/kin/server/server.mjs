@@ -68,7 +68,14 @@ export function createKinServer(options = {}) {
   }
   const webauthn =
     options.webauthn ??
-    new WebAuthn({ rpId: new URL(origin).hostname, origin, now: options.now });
+    new WebAuthn({
+      rpId: new URL(origin).hostname,
+      origin,
+      now: options.now,
+      maxChallenges: options.maxChallenges,
+      maxAnonymousChallenges: options.maxAnonymousChallenges,
+    });
+  const maxFlows = options.maxFlows ?? MAX_ACTIVE_FLOWS;
   const context = {
     service,
     syncService,
@@ -76,7 +83,14 @@ export function createKinServer(options = {}) {
     webauthn,
     flows: new Map(),
     now: options.now ?? (() => Date.now()),
-    maxFlows: options.maxFlows ?? MAX_ACTIVE_FLOWS,
+    maxFlows,
+    maxAnonymousFlows: Math.max(
+      0,
+      Math.min(
+        maxFlows,
+        options.maxAnonymousFlows ?? defaultAnonymousCapacity(maxFlows),
+      ),
+    ),
     secureCookies: new URL(origin).protocol === "https:",
     origin,
   };
@@ -112,6 +126,8 @@ export function createKinServer(options = {}) {
       }
       serve(response, url.pathname);
     } catch (error) {
+      if (request.kinPasskeyFlow)
+        context.webauthn.discardFlow?.(request.kinPasskeyFlow);
       if (
         error instanceof PairingError &&
         [
@@ -299,6 +315,12 @@ async function api(request, response, url, context) {
     : ["POST", "PUT", "DELETE"].includes(request.method)
     ? await readJsonBody(request, response, MAX_JSON_BODY_BYTES)
     : {};
+  if (
+    request.method === "POST" &&
+    url.pathname.endsWith("/finish") &&
+    typeof body.flow === "string"
+  )
+    request.kinPasskeyFlow = body.flow;
   const session = cookies(request).kin_session;
   const claimToken = cookies(request).kin_claim;
   const deviceToken = cookies(request).kin_device;
@@ -397,18 +419,16 @@ async function api(request, response, url, context) {
         clearCookie(response, "kin_claim", secureCookies);
       }
     }
-    const flow = createFlow(
+    const issued = issueRegistrationFlow(
       {
         purpose: flowPurpose,
         code: body.code,
         deviceLabel: body.deviceLabel,
       },
       context,
+      { anonymous: body.purpose === "bootstrap" },
     );
-    json(response, 200, {
-      flow,
-      publicKey: webauthn.registrationOptions(flow),
-    });
+    json(response, 200, issued);
     return;
   }
   if (
@@ -454,14 +474,12 @@ async function api(request, response, url, context) {
   }
   if (request.method === "POST" && url.pathname === "/api/login/options") {
     const { member, device } = service.trustedDevice(deviceToken);
-    const flow = createFlow(
+    const issued = issueAuthenticationFlow(
       { purpose: "login", memberId: member.id, deviceId: device.id },
+      [...member.credentials],
       context,
     );
-    json(response, 200, {
-      flow,
-      publicKey: webauthn.authenticationOptions(flow, [...member.credentials]),
-    });
+    json(response, 200, issued);
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/login/finish") {
@@ -533,19 +551,17 @@ async function api(request, response, url, context) {
     const auth = service.authorize(session);
     requireTrustAuthority(auth.member, "approve a pairing");
     const ids = [...auth.member.credentials];
-    const flow = createFlow(
+    const issued = issueAuthenticationFlow(
       {
         purpose: "approve",
         pairingId: approveOptions[1],
         expectedVersion: body.expectedVersion,
         memberId: auth.member.id,
       },
+      ids,
       context,
     );
-    json(response, 200, {
-      flow,
-      publicKey: webauthn.authenticationOptions(flow, ids),
-    });
+    json(response, 200, issued);
     return;
   }
   const approveFinish = url.pathname.match(
@@ -600,17 +616,15 @@ async function api(request, response, url, context) {
     url.pathname === "/api/claim/activate/options"
   ) {
     const credential = service.claimCredential(claimToken);
-    const flow = createFlow(
+    const issued = issueAuthenticationFlow(
       {
         purpose: "activate",
         claimToken,
       },
+      [credential.id],
       context,
     );
-    json(response, 200, {
-      flow,
-      publicKey: webauthn.authenticationOptions(flow, [credential.id]),
-    });
+    json(response, 200, issued);
     return;
   }
   if (
@@ -655,13 +669,17 @@ async function api(request, response, url, context) {
   const revokeOptionsMatch = url.pathname.match(/^\/api\/devices\/([a-f0-9]{32})\/revocation\/options$/);
   if (request.method === "POST" && revokeOptionsMatch) {
     const revocation = service.deviceRevocationContext(session, revokeOptionsMatch[1]);
-    const flow = createFlow({
-      purpose: "revoke-device",
-      targetDeviceId: revokeOptionsMatch[1],
-      memberId: revocation.memberId,
-      deviceId: revocation.deviceId,
-    }, context);
-    json(response, 200, { flow, publicKey: webauthn.authenticationOptions(flow, revocation.credentialIds) });
+    const issued = issueAuthenticationFlow(
+      {
+        purpose: "revoke-device",
+        targetDeviceId: revokeOptionsMatch[1],
+        memberId: revocation.memberId,
+        deviceId: revocation.deviceId,
+      },
+      revocation.credentialIds,
+      context,
+    );
+    json(response, 200, issued);
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/devices/revocation/finish") {
@@ -853,22 +871,17 @@ async function api(request, response, url, context) {
   ) {
     const auth = service.authorize(session);
     service.requireManagementAuthority(auth.member, auth.household, "delete the household");
-    const flow = createFlow(
+    const issued = issueAuthenticationFlow(
       {
         purpose: "delete-household",
         householdId: auth.household.id,
         memberId: auth.member.id,
         deviceId: auth.device.id,
       },
+      [...auth.member.credentials],
       context,
     );
-    json(response, 200, {
-      flow,
-      publicKey: webauthn.authenticationOptions(
-        flow,
-        [...auth.member.credentials],
-      ),
-    });
+    json(response, 200, issued);
     return;
   }
   if (
@@ -923,22 +936,17 @@ async function api(request, response, url, context) {
         "There is no pending household deletion to cancel.",
         409,
       );
-    const flow = createFlow(
+    const issued = issueAuthenticationFlow(
       {
         purpose: "cancel-household-deletion",
         householdId: household.id,
         memberId: member.id,
         deviceId: device.id,
       },
+      [...member.credentials],
       context,
     );
-    json(response, 200, {
-      flow,
-      publicKey: webauthn.authenticationOptions(
-        flow,
-        [...member.credentials],
-      ),
-    });
+    json(response, 200, issued);
     return;
   }
   if (
@@ -993,19 +1001,17 @@ async function api(request, response, url, context) {
     url.pathname === "/api/household/membership/remove/options"
   ) {
     const removal = service.removalContext(session, body.memberId, { allowSelf: true });
-    const flow = createFlow(
+    const issued = issueAuthenticationFlow(
       {
         purpose: "remove-adult",
         targetMemberId: body.memberId,
         memberId: removal.memberId,
         deviceId: removal.deviceId,
       },
+      removal.credentialIds,
       context,
     );
-    json(response, 200, {
-      flow,
-      publicKey: webauthn.authenticationOptions(flow, removal.credentialIds),
-    });
+    json(response, 200, issued);
     return;
   }
   if (
@@ -1049,7 +1055,7 @@ async function api(request, response, url, context) {
   ) {
     if (typeof body?.admin !== "boolean") throw badRequest();
     const change = service.householdAdminContext(session, body.memberId);
-    const flow = createFlow(
+    const issued = issueAuthenticationFlow(
       {
         purpose: "set-household-admin",
         targetMemberId: body.memberId,
@@ -1057,12 +1063,10 @@ async function api(request, response, url, context) {
         memberId: change.memberId,
         deviceId: change.deviceId,
       },
+      change.credentialIds,
       context,
     );
-    json(response, 200, {
-      flow,
-      publicKey: webauthn.authenticationOptions(flow, change.credentialIds),
-    });
+    json(response, 200, issued);
     return;
   }
   if (
@@ -1133,8 +1137,22 @@ function installShutdown({ server, store }) {
   process.once("SIGTERM", () => shutdown("SIGTERM"));
 }
 
-function createFlow(value, context) {
+function defaultAnonymousCapacity(maximum) {
+  return maximum > 1 ? Math.max(1, Math.floor(maximum / 4)) : 0;
+}
+
+function createFlow(value, context, { anonymous = false } = {}) {
   pruneFlows(context);
+  if (
+    anonymous &&
+    [...context.flows.values()].filter((flow) => flow.anonymous).length >=
+      context.maxAnonymousFlows
+  )
+    throw new PairingError(
+      "flow_capacity",
+      "Too many active passkey requests. Wait and try again.",
+      503,
+    );
   if (context.flows.size >= context.maxFlows)
     throw new PairingError(
       "flow_capacity",
@@ -1144,9 +1162,38 @@ function createFlow(value, context) {
   const flow = randomBytes(18).toString("base64url");
   context.flows.set(flow, {
     ...value,
+    anonymous,
     expiresAt: context.now() + FLOW_TTL_MS,
   });
   return flow;
+}
+
+function issueRegistrationFlow(value, context, { anonymous = false } = {}) {
+  const flow = createFlow(value, context, { anonymous });
+  try {
+    return {
+      flow,
+      publicKey: context.webauthn.registrationOptions(flow, { anonymous }),
+    };
+  } catch (error) {
+    context.flows.delete(flow);
+    context.webauthn.discardFlow?.(flow);
+    throw error;
+  }
+}
+
+function issueAuthenticationFlow(value, credentialIds, context) {
+  const flow = createFlow(value, context);
+  try {
+    return {
+      flow,
+      publicKey: context.webauthn.authenticationOptions(flow, credentialIds),
+    };
+  } catch (error) {
+    context.flows.delete(flow);
+    context.webauthn.discardFlow?.(flow);
+    throw error;
+  }
 }
 
 function pruneFlows({ flows, now }) {

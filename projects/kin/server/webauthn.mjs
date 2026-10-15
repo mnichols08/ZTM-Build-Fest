@@ -14,16 +14,21 @@ export class WebAuthn {
     origin,
     now = () => Date.now(),
     maxChallenges = MAX_ACTIVE_CHALLENGES,
+    maxAnonymousChallenges = defaultAnonymousCapacity(maxChallenges),
   }) {
     this.rpId = rpId;
     this.origin = origin;
     this.now = now;
     this.maxChallenges = maxChallenges;
+    this.maxAnonymousChallenges = Math.max(
+      0,
+      Math.min(maxChallenges, maxAnonymousChallenges),
+    );
     this.challenges = new Map();
   }
 
-  registrationOptions(flow) {
-    const challenge = this.challenge("register", flow);
+  registrationOptions(flow, { anonymous = false } = {}) {
+    const challenge = this.challenge("register", flow, { anonymous });
     return {
       challenge,
       rp: { id: this.rpId, name: "Kin" },
@@ -55,8 +60,18 @@ export class WebAuthn {
     };
   }
 
-  challenge(kind, flow) {
+  challenge(kind, flow, { anonymous = false } = {}) {
     this.pruneChallenges();
+    if (
+      anonymous &&
+      [...this.challenges.values()].filter((record) => record.anonymous)
+        .length >= this.maxAnonymousChallenges
+    )
+      throw new PairingError(
+        "challenge_capacity",
+        "Too many active passkey requests. Wait and try again.",
+        503,
+      );
     if (this.challenges.size >= this.maxChallenges)
       throw new PairingError(
         "challenge_capacity",
@@ -67,9 +82,15 @@ export class WebAuthn {
     this.challenges.set(value, {
       kind,
       flow,
+      anonymous,
       expiresAt: this.now() + CHALLENGE_TTL_MS,
     });
     return value;
+  }
+
+  discardFlow(flow) {
+    for (const [value, record] of this.challenges)
+      if (record.flow === flow) this.challenges.delete(value);
   }
 
   pruneChallenges() {
@@ -183,6 +204,10 @@ export class WebAuthn {
       normalizeVerificationError(error);
     }
   }
+}
+
+function defaultAnonymousCapacity(maximum) {
+  return maximum > 1 ? Math.max(1, Math.floor(maximum / 4)) : 0;
 }
 
 function verifyRpAndFlags(authData, rpId, registration) {
