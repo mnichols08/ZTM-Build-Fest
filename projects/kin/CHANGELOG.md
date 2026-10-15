@@ -59,6 +59,29 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
 - The version check reads the service-worker registration from
   `app/status.js`.
 
+### Slice 4 — Incremental rendering
+
+- The protocol-24 projection gains a section table after its header: one
+  `(revision, byte length)` entry per domain section. The body is regrouped so
+  each domain is contiguous. Event encoding and the KINE request are
+  unchanged; only the golden `.kins` fixtures were regenerated, each checked
+  to be the old projection regrouped plus the table.
+- Revisions are per engine instance and advance only when a section's bytes
+  differ from the last projection that instance emitted. The comparison is
+  exact, against the result buffer the ABI already retains, so it needs no
+  hash and no extra memory.
+- The bridge decoder moves to `web/wasm/projection-decode.js` with one module
+  per section family (`kin-engine.js` 1,729 → 971 lines). The engine reuses
+  the decoded sections of the last state it produced whenever their revision
+  is unchanged, and re-checks counts and cross-section references on every
+  decode.
+- Views skip rendering when a setter receives the array they already hold. A
+  peer refresh in which only Handoffs changed keeps every Item row.
+  `refreshFromEvents` restores focus from one `shared/focus.js` snapshot
+  instead of five list-specific captures.
+- Adds Rust section and revision tests, decoder reuse tests and a two-tab
+  incremental-render regression. ABI.md documents the table and revisions.
+
 ## Unreleased — v0.47.0 — Household Identity & Shared Appearance
 
 - Record the household founder as durable owner for new households while leaving legacy ownership unresolved and fail-closed.

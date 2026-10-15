@@ -36,6 +36,10 @@
   unchanged section is reused by identity and equals a full decode, that
   revision 0 and another engine instance's state never reuse, and that reused
   sections are still checked against counts and cross-section references.
+  `scripts/incremental-render-regression.mjs` (in the browser runner) checks
+  in two real tabs that a peer refresh after a new Handoff keeps the Items
+  array and its rendered rows, and that a new Item renders, with the
+  incremental state equal to a full decode of the same projection.
 - **ABI ownership.** `web/wasm/abi-ownership.test.mjs` checks that every
   `kin_alloc` input is freed exactly once when the copy, the export, the result
   copy or the decode throws, for each operation family, and against the real

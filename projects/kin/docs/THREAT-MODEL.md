@@ -28,6 +28,15 @@ that does not go through Kin's replacement paths (and so does not bump the
 generation) is not detected until the next unlock; such a writer already has
 storage access.
 
+Incremental rendering (Slice 4) adds no new plaintext copy. The engine keeps
+its last projection buffer between calls, as its result buffer already did, to
+compare sections and stamp revisions. The bridge keeps the last decoded state,
+which `<kin-app>` already held. Both are dropped on lock (`kin_clear`,
+`engine.dispose()`). Revisions are a rendering aid: they never feed replay,
+storage, sync or authority. They come from exact byte comparison inside one
+engine instance, not from hashes, so crafted content cannot make two different
+sections share a revision.
+
 ## v0.13 recovery authority
 
 Recovery requires a current trusted adult/device and a fresh claimant

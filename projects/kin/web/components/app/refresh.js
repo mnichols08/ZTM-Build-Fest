@@ -1,6 +1,7 @@
 // Rebuilding the projection from the event log: peer refresh, catch-up and timed refresh.
 // Moved verbatim from <kin-app>; state stays on the element (`this.app`).
 import { projectionContext } from "../../browser-time.js";
+import { captureFocus, restoreFocus } from "../shared/focus.js";
 
 export class RefreshController {
   constructor(ctx) {
@@ -16,9 +17,8 @@ export class RefreshController {
     }
     const session = this.ctx.session.captureSession();
     this.app.refreshing = true;
-    const focusedControl = this.app.contains(document.activeElement)
-      ? document.activeElement
-      : null;
+    // Captured before busy disables the focused control.
+    const focus = this.captureRefreshFocus();
     this.ctx.status.setBusy(true);
     // A failed refresh must not replace the command awaiting recovery.
     const previousFailure = this.app.suspendedRetry ?? {
@@ -29,16 +29,6 @@ export class RefreshController {
     const previousRetry = previousFailure.action;
     const previousRetryIntent = previousFailure.intent;
     const previousAlert = previousFailure.message;
-    const restoreComposeFocus = this.app.compose.contains(document.activeElement);
-    // A focused list row is rebuilt by the refresh; the list restores focus
-    // to the equivalent control, or the capture field takes it as a fallback.
-    const focusedList = [this.app.today, this.app.needs, this.app.shopping, this.app.staples].find((list) => list.contains(document.activeElement)) ?? null;
-    focusedList?.rememberFocus();
-    const restoreHandoffFocus = this.app.handoffs.lists.contains(
-      document.activeElement,
-    );
-    const routineFocus = this.app.routines.captureFocus();
-    const restoreTalkFocus = this.app.talks.lists.contains(document.activeElement);
     this.app.clearAlert();
     this.app.setStatus("Updating from another tab…");
     try {
@@ -108,21 +98,37 @@ export class RefreshController {
       if (this.ctx.session.isCurrentSession(session)) {
         this.app.refreshing = false;
         this.ctx.status.setBusy(false);
-        if (focusedControl?.isConnected && !focusedControl.closest("[hidden]"))
-          focusedControl.focus();
-        else if (focusedControl && this.app.pulse.contains(focusedControl))
-          this.app.pulse.focusInput();
-        if (restoreHandoffFocus) this.app.handoffs.focusInput();
-        this.app.routines.restoreFocus(routineFocus);
-        if (restoreTalkFocus) this.app.talks.focusInput();
-        if (restoreComposeFocus) {
-          this.app.compose.focusInput();
-        } else if (focusedList && !this.app.contains(document.activeElement)) {
-          if (focusedList.closest("[hidden]") || focusedList === this.app.today) this.app.compose.focusInput();
-          else focusedList.focusInput?.();
-        }
+        this.restoreRefreshFocus(focus);
         this.ctx.peers.flushPeerRefresh();
       }
+    }
+  }
+  // One snapshot of the focused control (shared/focus.js), taken before the
+  // refresh rebuilds anything. A list or the routines view also describes
+  // it, so it can find the equivalent control when that row was rebuilt;
+  // composers keep focus in their input, since their lists are rebuilt below.
+  captureRefreshFocus() {
+    const focus = captureFocus(this.app);
+    if (!focus) return null;
+    const { today, needs, shopping, staples, routines, compose, handoffs, talks } = this.app;
+    const owner = [today, needs, shopping, staples, routines].find((view) => view.contains(focus.control)) ?? null;
+    const composer = [[compose, compose], [handoffs.lists, handoffs], [talks.lists, talks]]
+      .find(([area]) => area.contains(focus.control))?.[1] ?? null;
+    return { ...focus, owner, ownerFocus: owner?.captureFocus() ?? null, composer, inPulse: this.app.pulse.contains(focus.control) };
+  }
+  restoreRefreshFocus(focus) {
+    if (!focus) return;
+    const { owner, composer } = focus;
+    if (composer) {
+      composer.focusInput();
+    } else if (owner) {
+      owner.restoreFocus(focus.ownerFocus);
+      if (owner !== this.app.routines && !this.app.contains(document.activeElement)) {
+        if (owner.closest("[hidden]") || owner === this.app.today) this.app.compose.focusInput();
+        else owner.focusInput?.();
+      }
+    } else if (!restoreFocus(focus) && focus.inPulse) {
+      this.app.pulse.focusInput();
     }
   }
   applyCatchUpSnapshot(snapshot) {

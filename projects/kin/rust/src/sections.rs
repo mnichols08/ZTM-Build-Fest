@@ -139,11 +139,13 @@ impl SectionRevisions {
         for (index, section) in SECTIONS.iter().enumerate() {
             let unchanged = self.counters[index] != 0
                 && previous.as_ref().is_some_and(|(bytes, before)| {
-                    bytes[before[index].clone()] == current[ranges[index].clone()]
-                        && section
-                            .header_fields()
-                            .iter()
-                            .all(|&(start, end)| bytes[start..end] == current[start..end])
+                    same_bytes(
+                        &bytes[before[index].clone()],
+                        &current[ranges[index].clone()],
+                    ) && section
+                        .header_fields()
+                        .iter()
+                        .all(|&(start, end)| bytes[start..end] == current[start..end])
                 });
             if !unchanged {
                 self.counters[index] = match self.counters[index].wrapping_add(1) {
@@ -156,4 +158,18 @@ impl SectionRevisions {
         }
         Ok(())
     }
+}
+
+/// Byte equality eight bytes at a time. On wasm32 a slice `==` lowers to a
+/// byte-at-a-time memcmp, which dominated stamping a 40 MB Items section.
+fn same_bytes(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let (left_words, right_words) = (left.chunks_exact(8), right.chunks_exact(8));
+    let tails_equal = left_words.remainder() == right_words.remainder();
+    tails_equal
+        && left_words.zip(right_words).all(|(a, b)| {
+            u64::from_ne_bytes(a.try_into().unwrap()) == u64::from_ne_bytes(b.try_into().unwrap())
+        })
 }

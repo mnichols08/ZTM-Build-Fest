@@ -64,29 +64,34 @@ const item = (sequence, text) => encodeAddedRecord({ ...identity(sequence), item
 const handoff = (sequence, text) => encodeHandoffAddedRecord({ ...identity(sequence), handoffId: id(0x60 + sequence), text });
 const SECTION_NAMES = ["items", "handoffs", "talks", "pulses", "routines", "areas", "notes", "pins", "playbooks", "referenceRecords", "maintenanceEvents"];
 
-test("unchanged sections keep their decoded objects; changed ones decode", async () => {
+test("an engine reuses the unchanged sections of the last state it decoded", async () => {
   const engine = await loadKinEngine(wasmUrl);
-  const project = (rows, previous) => engine.applyEvents(rows, 5000, null, 20261014, null, previous);
+  const project = (rows) => engine.applyEvents(rows, 5000, null, 20261014);
   const rows = [item(1, "Milk")];
   const first = project(rows);
-  const same = project(rows, first);
+  const same = project(rows);
   assert.deepEqual(same, first);
   for (const name of SECTION_NAMES) assert.equal(same[name], first[name], `${name} reused`);
   assert.equal(same.summary, first.summary);
   assert.notEqual(same, first, "each decode returns a new state object");
 
-  const withHandoff = project([...rows, handoff(2, "Bins are out")], same);
+  const withHandoff = project([...rows, handoff(2, "Bins are out")]);
   assert.equal(withHandoff.items, same.items, "Items unchanged");
   assert.notEqual(withHandoff.handoffs, same.handoffs);
   assert.notEqual(withHandoff.summary, same.summary, "the summary counts the Handoff");
   assert.equal(withHandoff.handoffs[0].text, "Bins are out");
-  assert.deepEqual(withHandoff, project([...rows, handoff(2, "Bins are out")]), "equal to a full decode");
 
-  // Without `previous`, or with a state from another engine instance, nothing is reused.
-  assert.notEqual(project(rows).items, first.items);
+  // A command's candidate projection takes part too.
+  const command = engine.executeCommand({ type: "add-talk", talkId: id(0x73), text: "Rota" }, identity(3), [...rows, handoff(2, "Bins are out")], 5000, null, 20261014);
+  assert.equal(command.state.items, withHandoff.items);
+  assert.equal(command.state.talks[0].text, "Rota");
+
+  // Another engine instance shares nothing, and agrees with a full decode.
   const other = await loadKinEngine(wasmUrl);
-  const foreign = other.applyEvents(rows, 5000, null, 20261014);
-  assert.notEqual(project(rows, foreign).items, foreign.items);
+  const fresh = other.applyEvents([...rows, handoff(2, "Bins are out")], 5000, null, 20261014);
+  assert.notEqual(fresh.items, withHandoff.items);
+  assert.deepEqual(fresh, withHandoff);
+  assert.notEqual(project(rows).items, fresh.items);
 });
 
 // Rebuilds a projection from its sections with chosen revisions.

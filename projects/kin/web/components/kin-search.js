@@ -100,7 +100,7 @@ class KinSearch extends HTMLElement {
   }
 
   set household(value) {
-    this.records = {
+    const records = {
       items: Array.isArray(value?.items) ? value.items : [],
       handoffs: Array.isArray(value?.handoffs) ? value.handoffs : [],
       talks: Array.isArray(value?.talks) ? value.talks : [],
@@ -109,6 +109,9 @@ class KinSearch extends HTMLElement {
       maintenanceEvents: Array.isArray(value?.maintenanceEvents) ? value.maintenanceEvents : [],
       areas: Array.isArray(value?.areas) ? value.areas : [],
     };
+    // Unchanged projection sections keep their arrays; nothing to redo.
+    if (Object.keys(records).every((key) => records[key] === this.records[key])) return;
+    this.records = records;
     this.updateAreaOptions();
     this.renderResults();
   }

@@ -34,6 +34,7 @@ import {
 } from "./catch-up-regression.mjs";
 import { syncStorageRegressions } from "./sync-storage-regression.mjs";
 import { eventArenaPeerRegressions } from "./event-arena-regression.mjs";
+import { incrementalRenderPeerRegressions } from "./incremental-render-regression.mjs";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -1795,6 +1796,7 @@ try {
   await visit(second, "today");
   await catchUpPeerRegressions(first, second, until);
   await eventArenaPeerRegressions(first, second, until);
+  await incrementalRenderPeerRegressions(first, second, until);
   await visit(first, "household/areas");
   await pulseKeyboardRegressions(first, until);
   await visit(first, "routines");

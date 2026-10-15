@@ -142,3 +142,42 @@ The split moves code without changing it, and no stage moved by more than
 (+9.7%) and render at 10k short (+4.7%), both inside the run-to-run spread
 recorded above. The added indirection (`this.ctx.<controller>`) is one
 property lookup per call.
+
+## Slice 4 — incremental rendering
+
+`scripts/core-performance.mjs` gained two app stages: a peer refresh after one
+new Handoff (Items untouched), and a full render after every projection array
+was replaced, so nothing can be skipped. The existing render and refresh
+stages repeat with nothing changed. "Before" is the Slice 3 commit measured
+with this same harness. "After" is the slice's final build.
+
+| Stage (ms) | 1k before | 1k after | 10k before | 10k after | 10k × 4 KB before | 10k × 4 KB after |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Rust replay + encode (Node) | 1.08 | 1.04 | 10.18 | 9.67 | 64.36 | 66.30 |
+| Copy-out + JS decode (Node, full) | 4.19 | 3.09 | 34.27 | 17.15 | 57.73 | 50.69 |
+| Store refresh | 6 | 3 | 49 | 30 | 194 | 142 |
+| Store command | 6 | 5 | 56 | 43 | 231 | 196 |
+| App `renderState()`, nothing changed | 174 | 0 | 1,856 | 0 | 2,089 | 0 |
+| App peer refresh, nothing changed | 227 | 32 | 2,648 | 524 | 2,868 | 654 |
+| App peer refresh, one new Handoff | 198 | 19 | 2,396 | 509 | 2,407 | 347 |
+| App full render (all arrays replaced) | 181 | 171 | 1,854 | 1,942 | 2,143 | 2,156 |
+| Store unlock → projection | 150 | 142 | 1,522 | 1,521 | 9,812 | 9,487 |
+| App unlock (recovery key) | 648 | 413 | 3,554 | 3,479 | 12,721 | 13,034 |
+
+- A refresh that changes no section, or only small ones, no longer re-renders
+  10,000 Item rows: 2.6 s → 0.5 s at 10k. A render with unchanged inputs costs
+  nothing.
+- Full JS decode is faster without reuse too (34 → 17 ms at 10k). Each
+  section decodes against its own bounds, and IDs convert to hex through a
+  lookup table.
+- Rust replay + encode at 10k × 4 KB is +3% in the table's sample and about
+  +8% across repeated runs (66–67 ms against 61–62 ms), inside the 10% budget. That is the exact comparison of a 40 MB Items section with the
+  previous projection. A first version used the slice `==`, which on wasm32
+  is a byte-at-a-time memcmp (+20%). Comparing eight bytes at a time brought
+  it inside the budget.
+- Full render is within ±5% of before (+4.7% at 10k short, +0.6% at 4 KB),
+  inside the run-to-run spread recorded for Slices 2 and 3. It does the same
+  work.
+- The remaining ~0.5 s of an unchanged refresh at 10k is mostly the busy
+  toggle: `setBusy` disables and re-enables every control in the 10,000-row
+  lists. It is not addressed here.

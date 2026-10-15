@@ -199,11 +199,37 @@ class KinRoutines extends HTMLElement {
     this.applyView();
   }
 
-  set routines(value) { this.records = Array.isArray(value) ? value : []; this.render(); }
-  set today(value) { this.civilDate = Number.isSafeInteger(value) ? value : null; }
-  set responsibilityContext(value) { this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.memberIds = value?.memberIds ?? []; this.render(); }
-  set playbooks(value) { this.playbookRecords = value ?? []; this.renderPlaybooks(); }
-  set householdMode(value) { this.mode = value; this.render(); }
+  // Each input renders only when it differs from the current one; the
+  // projection reuses unchanged sections, so a refresh often changes none.
+  set routines(value) {
+    const records = Array.isArray(value) ? value : [];
+    if (records === this.records) return;
+    this.records = records;
+    this.render();
+  }
+  set today(value) {
+    const civilDate = Number.isSafeInteger(value) ? value : null;
+    if (civilDate === this.civilDate) return;
+    this.civilDate = civilDate;
+    this.render();
+  }
+  set responsibilityContext(value) {
+    if (value === this.ownerContext) return;
+    this.ownerContext = value;
+    this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.memberIds = value?.memberIds ?? [];
+    this.render();
+  }
+  set playbooks(value) {
+    const records = value ?? [];
+    if (records === this.playbookRecords) return;
+    this.playbookRecords = records;
+    this.renderPlaybooks();
+  }
+  set householdMode(value) {
+    if (value === this.mode) return;
+    this.mode = value;
+    this.render();
+  }
   set reminders(value) {
     this.reminderMap = value instanceof Map ? value : new Map();
     for (const [id, control] of this.reminderControls) control.reminder = this.reminderMap.get(id) ?? null;

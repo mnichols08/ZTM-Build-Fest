@@ -197,14 +197,18 @@ async function storageStages({ count: requested, textBytes }) {
 }
 
 // Runs in the shipped app page after it unlocked the fixture household.
+// renderMs and appRefreshMs repeat with nothing changed; changeRefreshMs is a
+// peer refresh after one new Handoff (Items untouched); fullRenderMs renders
+// after every projection array was replaced, so no section can be skipped.
 async function appStages() {
   const app = document.querySelector("kin-app");
   const median = (values) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
   const idle = async () => {
     for (let i = 0; (app.busy || app.refreshing) && i < 2000; i += 1) await new Promise((r) => setTimeout(r, 5));
   };
+  const copyArrays = (state) => Object.fromEntries(Object.entries(state).map(([key, value]) => [key, Array.isArray(value) ? [...value] : value]));
   await idle();
-  const renders = [], refreshes = [];
+  const renders = [], refreshes = [], changeRefreshes = [], fullRenders = [];
   for (let sample = 0; sample < 6; sample += 1) {
     let start = performance.now();
     app.renderState();
@@ -214,10 +218,22 @@ async function appStages() {
     await app.refreshFromEvents();
     const refresh = performance.now() - start;
     await idle();
-    if (sample) { renders.push(render); refreshes.push(refresh); }
+    await app.store.append({ type: "add-handoff", text: `Benchmark handoff ${sample}` }, app.engine);
+    start = performance.now();
+    await app.refreshFromEvents();
+    const changeRefresh = performance.now() - start;
+    await idle();
+    app.state = copyArrays(app.state);
+    start = performance.now();
+    app.renderState();
+    const fullRender = performance.now() - start;
+    await idle();
+    await app.refreshFromEvents(); // re-seeds reusable sections after the copy
+    await idle();
+    if (sample) { renders.push(render); refreshes.push(refresh); changeRefreshes.push(changeRefresh); fullRenders.push(fullRender); }
   }
-  return { renderMs: median(renders), appRefreshMs: median(refreshes), items: app.state.items.length,
-    samples: renders.length };
+  return { renderMs: median(renders), appRefreshMs: median(refreshes), changeRefreshMs: median(changeRefreshes),
+    fullRenderMs: median(fullRenders), items: app.state.items.length, samples: renders.length };
 }
 
 async function browserStages(executable) {

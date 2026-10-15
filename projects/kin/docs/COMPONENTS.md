@@ -42,6 +42,28 @@ microtask-coalesced rendering and `flushRender`), `operation.js`
 (`OperationGuard`, the guarded single-operation runner used by
 `<kin-household>` and `<kin-security>`) and `session-guard.js`.
 
+### Incremental rendering (refactor track, Slice 4)
+
+The engine reuses every decoded projection section whose revision did not
+change ([ABI](ABI.md#section-revisions)), so an unchanged section reaches the
+views as the same array. Views skip work by identity: each data setter of
+`<kin-today>`, `<kin-routines>`, `<kin-notes>`, `<kin-areas>`,
+`<kin-handoff-list>`, `<kin-talk-list>`, `<kin-catch-up>`, `<kin-pulse>` and
+`<kin-search>` compares the incoming value with the one it holds and renders
+only when it differs. `<kin-today>.update(props)` renders once if any input
+changed and otherwise only applies a focus that a command remembered for the
+render. The comparison is with the component's current value, not with what
+`renderState()` last passed, so a value assigned from elsewhere is still
+replaced by the next render. `responsibilityContext()` returns the same object
+while its inputs are unchanged. Decoded state is never mutated, because reused
+arrays are shared between states.
+
+`refreshFromEvents()` takes one focus snapshot (`captureFocus`) before busy
+disables the focused control, recording which list or composer owns it. After
+the refresh it restores focus to the same control if it survived. Otherwise
+the owning list or the routines view restores the equivalent control through
+its own `restoreFocus`, and a composer puts focus back in its input.
+
 ## Household workspace candidate (unversioned)
 
 The desktop-first workspace revision keeps every boundary below and changes

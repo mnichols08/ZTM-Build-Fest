@@ -20,13 +20,20 @@ class KinNotes extends HTMLElement {
     this.instanceId = `notes-${++KinNotes.instances}`;
   }
 
-  set notes(value) { this.records = Array.isArray(value) ? value : []; this.render(); }
-  set references(value) { this.referenceRecords = Array.isArray(value) ? value : []; this.render(); }
-  set areas(value) { this.areaRecords = Array.isArray(value) ? value : []; this.render(); }
-  set maintenance(value) { this.maintenanceEvents = Array.isArray(value) ? value : []; this.render(); }
-  set attachments(value) { this.attachmentRecords = Array.isArray(value) ? value : []; this.render(); }
-  set previews(provider) { this.previewProvider = typeof provider === "function" ? provider : null; this.render(); }
-  set routines(value) { this.routineRecords = Array.isArray(value) ? value : []; this.render(); }
+  // Stores `value` in `field` and renders, unless it is the current value:
+  // the projection reuses unchanged sections, so most refreshes change none.
+  assign(field, value) {
+    if (this[field] === value) return;
+    this[field] = value;
+    this.render();
+  }
+  set notes(value) { this.assign("records", Array.isArray(value) ? value : []); }
+  set references(value) { this.assign("referenceRecords", Array.isArray(value) ? value : []); }
+  set areas(value) { this.assign("areaRecords", Array.isArray(value) ? value : []); }
+  set maintenance(value) { this.assign("maintenanceEvents", Array.isArray(value) ? value : []); }
+  set attachments(value) { this.assign("attachmentRecords", Array.isArray(value) ? value : []); }
+  set previews(provider) { this.assign("previewProvider", typeof provider === "function" ? provider : null); }
+  set routines(value) { this.assign("routineRecords", Array.isArray(value) ? value : []); }
   set disabled(value) { this.disabledState = Boolean(value); this.render(); }
 
   render() {

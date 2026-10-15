@@ -83,3 +83,21 @@ fn revisions_wrap_past_zero() {
         .unwrap();
     assert!((0..SECTION_COUNT).all(|index| revision(&bytes, index) == 1));
 }
+
+#[test]
+fn a_one_byte_change_anywhere_in_a_section_is_a_change() {
+    let base = projection(&[item_record(1, 0x11, b"Milk and bread for the week", 1)]);
+    let mut stamped = base.clone();
+    let mut revisions = SectionRevisions::new();
+    revisions.stamp(&mut stamped, None).unwrap();
+    let items = section_ranges(&base).unwrap()[0].clone();
+    for offset in items {
+        let mut changed = base.clone();
+        changed[offset] ^= 1;
+        let mut tracker = SectionRevisions::new();
+        let mut first = base.clone();
+        tracker.stamp(&mut first, None).unwrap();
+        tracker.stamp(&mut changed, Some(&first)).unwrap();
+        assert_eq!(revision(&changed, 0), 2, "byte {offset}");
+    }
+}

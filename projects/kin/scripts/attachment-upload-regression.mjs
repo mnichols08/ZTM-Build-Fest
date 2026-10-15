@@ -189,7 +189,8 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
     await escape();
     const mobileEscape = await page(async (itemId) => {
       const app = document.querySelector("kin-app");
-      for (let i = 0; i < 200 && app.viewer.open; i++) await new Promise((r) => setTimeout(r, 10));
+      // The dialog's close event, which releases the image, is a later task.
+      for (let i = 0; i < 200 && (app.viewer.open || app.viewerUrl); i++) await new Promise((r) => setTimeout(r, 10));
       return { viewer: app.viewer.open, url: app.viewerUrl, selection: app.selection?.itemId, sheet: app.detailSheet.open,
         draft: app.detail.stepInput?.value, focusInDetail: app.detail.contains(document.activeElement), id: itemId };
     }, itemId);
@@ -212,10 +213,13 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
     await page(async () => { const app = document.querySelector("kin-app"); for (let i = 0; i < 400 && !app.viewer.open; i++) await new Promise((r) => setTimeout(r, 10)); if (!app.viewer.open) throw Error("desktop viewer did not open"); app.renderState(); });
     await escape();
     const desktopViewerClosed = await page(async (itemId) => {
-      const app = document.querySelector("kin-app"); for (let i = 0; i < 200 && app.viewer.open; i++) await new Promise((r) => setTimeout(r, 10));
-      return !app.viewer.open && !app.viewerUrl && app.selection?.itemId === itemId && app.detail.stepInput?.value === "desktop viewer draft" && app.detail.isConnected;
+      const app = document.querySelector("kin-app"); for (let i = 0; i < 200 && (app.viewer.open || app.viewerUrl); i++) await new Promise((r) => setTimeout(r, 10));
+      return { viewer: app.viewer.open, url: app.viewerUrl, selection: app.selection?.itemId ?? null, draft: app.detail.stepInput?.value ?? null,
+        connected: app.detail.isConnected, active: document.activeElement?.className ?? null, id: itemId };
     }, itemId);
-    check(desktopViewerClosed, "desktop: Escape closes the viewer after a rerender while details and their draft remain selected");
+    check(!desktopViewerClosed.viewer && !desktopViewerClosed.url && desktopViewerClosed.selection === itemId &&
+      desktopViewerClosed.draft === "desktop viewer draft" && desktopViewerClosed.connected,
+      `desktop: Escape closes the viewer after a rerender while details and their draft remain selected (${JSON.stringify(desktopViewerClosed)})`);
     await screenshot("viewer-escape-desktop-preserved");
     await escape();
     const desktopDetailsClosed = await page(() => { const app = document.querySelector("kin-app"); return app.selection === null && !app.detail.isConnected; });

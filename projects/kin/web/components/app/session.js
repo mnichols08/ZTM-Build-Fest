@@ -202,6 +202,7 @@ export class SessionController {
     this.app.engine?.dispose?.();
     this.app.engine = null;
     this.app.state = null;
+    this.ctx.detail.clearResponsibilityContext();
     this.app.attachmentRows = [];
     this.app.snapshotBoundary = null;
     this.app.catchUpCursor = null;

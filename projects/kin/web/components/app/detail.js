@@ -1,6 +1,9 @@
 // The single item-detail view and where it is mounted.
 // Moved verbatim from <kin-app>; state stays on the element (`this.app`).
 
+// Shared empty list, so a household without responsibilities keeps one identity.
+const NONE = Object.freeze([]);
+
 export class DetailController {
   constructor(ctx) {
     this.ctx = ctx;
@@ -45,9 +48,21 @@ export class DetailController {
     });
     detail.disabled = this.app.busy || !this.app.store;
   }
+  // The same object while its inputs are unchanged, so components given it
+  // can skip re-rendering by identity.
   responsibilityContext() {
     const memberId = this.app.syncCoordinator?.identity?.memberId ?? this.app.store?.actorId ?? null;
-    return { responsibilities: this.app.state?.responsibilities ?? [], memberId, memberIds: this.app.activeMemberIds ?? (memberId ? [memberId] : []) };
+    const responsibilities = this.app.state?.responsibilities ?? NONE;
+    const active = this.app.activeMemberIds ?? null;
+    const cached = this.cachedResponsibility;
+    if (cached?.responsibilities === responsibilities && cached.memberId === memberId && cached.active === active) return cached.context;
+    const context = { responsibilities, memberId, memberIds: active ?? (memberId ? [memberId] : []) };
+    this.cachedResponsibility = { responsibilities, memberId, active, context };
+    return context;
+  }
+  // Lock drops every reference into the closed session's state.
+  clearResponsibilityContext() {
+    this.cachedResponsibility = null;
   }
   // Places the single detail element according to the current layout.
   mountDetail() {

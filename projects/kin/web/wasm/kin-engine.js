@@ -97,12 +97,18 @@ export function createEngine(instanceExports) {
   }
 
   sharedCodec = exports;
+  // The last state this engine decoded from a stamped projection. Each new
+  // replay or command reuses its unchanged sections (projection-decode.js),
+  // so states share those arrays; decoded states are never mutated.
+  let lastState = null;
+  const decoded = (state) => (lastState = state);
   return {
     dispose() {
       if (exports) {
         exports.kin_clear();
         if (sharedCodec === exports) sharedCodec = null;
         exports = null;
+        lastState = null;
       }
     },
     eventMetadata: (bytes) =>
@@ -116,8 +122,8 @@ export function createEngine(instanceExports) {
       cursorEventId = null,
       civilDate,
       syncIdentity = null,
-    ) =>
-      executeCommand(
+    ) => {
+      const result = executeCommand(
         exports,
         command,
         identity,
@@ -126,7 +132,11 @@ export function createEngine(instanceExports) {
         cursorEventId,
         civilDate,
         syncIdentity,
-      ),
+        lastState,
+      );
+      decoded(result.state);
+      return result;
+    },
     encodeArchive: (metadata, ciphertext) =>
       encodeArchive(exports, metadata, ciphertext),
     decodeArchive: (bytes) => decodeArchive(exports, bytes),
@@ -145,25 +155,22 @@ export function createEngine(instanceExports) {
         civilDate,
         syncIdentity,
       ),
-    // `previous`: the state this engine last returned to the caller; its
-    // unchanged sections are reused, so their arrays keep their identity.
     applyEvents: (
       records,
       asOf,
       cursorEventId = null,
       civilDate,
       syncIdentity = null,
-      previous = null,
     ) =>
-      applyEvents(
+      decoded(applyEvents(
         exports,
         records,
         asOf,
         cursorEventId,
         civilDate,
         syncIdentity,
-        previous,
-      ),
+        lastState,
+      )),
     // The exact protocol-24 projection bytes, for equivalence checks that must
     // compare encodings rather than decoded objects.
     projectionBytes: (
@@ -636,6 +643,7 @@ function executeCommand(
   cursor,
   civilDate,
   syncIdentity,
+  previous,
 ) {
   const intent = encodeIntentPacket(
     {
@@ -674,7 +682,7 @@ function executeCommand(
     metadata: decodeMetadata(
       bytes.subarray(20 + eventLength, 20 + eventLength + metadataLength),
     ),
-    state: decodeProjection(bytes.subarray(20 + eventLength + metadataLength), { source: exports }),
+    state: decodeProjection(bytes.subarray(20 + eventLength + metadataLength), { previous, source: exports }),
   };
 }
 

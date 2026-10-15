@@ -75,24 +75,36 @@ class KinToday extends HTMLElement {
   disconnectedCallback() { this.removeEventListener("kin:item-selection", this.onItemSelection); }
 
   // Assigns several inputs and renders once; setters stay for single changes.
+  // Inputs identical to the current ones (the projection reuses unchanged
+  // sections) render nothing; a focus remembered for the render still lands.
   update(props) {
     this.suspended = true;
+    this.dirty = false;
     try { for (const [key, value] of Object.entries(props)) this[key] = value; }
     finally { this.suspended = false; }
-    this.render();
+    if (this.dirty) this.render();
+    else this.settleFocus();
   }
 
-  set items(value) { this.records = Array.isArray(value) ? value : []; this.render(); }
-  set areas(value) { this.areaRecords = Array.isArray(value) ? value : []; this.render(); }
-  set pins(value) { this.pinRecords = Array.isArray(value) ? value : []; this.render(); }
-  set attachments(value) { this.attachmentRecords = Array.isArray(value) ? value : []; this.render(); }
-  set routines(value) { this.routineRecords = Array.isArray(value) ? value : []; this.render(); }
-  set handoffs(value) { this.handoffRecords = Array.isArray(value) ? value : []; this.render(); }
-  set mode(value) { this.householdMode = value ?? "normal"; this.render(); }
-  set today(value) { this.civilDate = Number.isSafeInteger(value) ? value : null; this.render(); }
-  set selected(value) { this.selectedItemId = value ?? null; this.render(); }
-  set previews(provider) { this.previewProvider = typeof provider === "function" ? provider : null; this.render(); }
-  set responsibilityContext(value) { this.ownerContext = value ?? {}; this.render(); }
+  // Stores `value` in `field` and renders, unless it is the current value.
+  assign(field, value) {
+    if (this[field] === value) return;
+    this[field] = value;
+    if (this.suspended) this.dirty = true;
+    else this.render();
+  }
+
+  set items(value) { this.assign("records", Array.isArray(value) ? value : []); }
+  set areas(value) { this.assign("areaRecords", Array.isArray(value) ? value : []); }
+  set pins(value) { this.assign("pinRecords", Array.isArray(value) ? value : []); }
+  set attachments(value) { this.assign("attachmentRecords", Array.isArray(value) ? value : []); }
+  set routines(value) { this.assign("routineRecords", Array.isArray(value) ? value : []); }
+  set handoffs(value) { this.assign("handoffRecords", Array.isArray(value) ? value : []); }
+  set mode(value) { this.assign("householdMode", value ?? "normal"); }
+  set today(value) { this.assign("civilDate", Number.isSafeInteger(value) ? value : null); }
+  set selected(value) { this.assign("selectedItemId", value ?? null); }
+  set previews(provider) { this.assign("previewProvider", typeof provider === "function" ? provider : null); }
+  set responsibilityContext(value) { this.assign("ownerContext", value ?? {}); }
 
   set disabled(value) {
     this.isDisabled = Boolean(value);
@@ -722,6 +734,13 @@ class KinToday extends HTMLElement {
   }
 
   rememberFocus() { this.pendingFocus = this.captureFocus(); }
+
+  // Applies a remembered focus when an update rendered nothing.
+  settleFocus() {
+    const focus = this.pendingFocus;
+    this.pendingFocus = null;
+    this.restoreFocus(focus);
+  }
 
   restoreFocus(focus) {
     if (!focus) return;

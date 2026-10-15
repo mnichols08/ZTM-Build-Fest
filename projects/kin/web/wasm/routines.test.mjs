@@ -106,7 +106,14 @@ test("current result decoder rejects truncation, fields, duplicates and trailing
     return { instance: { exports: { ...abi,
       kin_apply_events(pointer, length) {
         const status = abi.kin_apply_events(pointer, length);
-        if (!status) { actualLength = abi.kin_result_len(); mutate(new Uint8Array(abi.memory.buffer, abi.kin_result_ptr(), actualLength)); }
+        if (!status) {
+          actualLength = abi.kin_result_len();
+          const result = new Uint8Array(abi.memory.buffer, abi.kin_result_ptr(), actualLength);
+          // A malformed result must be checked in full: clear the section
+          // revisions so the engine cannot reuse the last decoded sections.
+          for (let at = 96; at < 208; at += 8) result.fill(0, at, at + 4);
+          mutate(result);
+        }
         return status;
       },
       kin_result_len: () => reportedLength ?? abi.kin_result_len(),
