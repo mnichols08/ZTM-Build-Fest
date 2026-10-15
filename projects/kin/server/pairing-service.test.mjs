@@ -277,6 +277,7 @@ test("expired temporary members lose session access even when the device remains
 function testWebAuthn() {
   return {
     registrationCalls: 0,
+    discardedFlows: [],
     registrationOptions(flow) {
       this.registrationCalls += 1;
       return { challenge: flow };
@@ -314,6 +315,9 @@ function testWebAuthn() {
         );
       return true;
     },
+    discardFlow(flow) {
+      this.discardedFlows.push(flow);
+    },
   };
 }
 
@@ -322,8 +326,9 @@ async function startTestServer({
   now = () => Date.now(),
   origin = "http://localhost",
   maxFlows,
+  maxAnonymousFlows,
+  webauthn = testWebAuthn(),
 } = {}) {
-  const webauthn = testWebAuthn();
   const store = new DurableStore(":memory:");
   const application = createKinServer({
     service,
@@ -332,6 +337,7 @@ async function startTestServer({
     now,
     origin,
     maxFlows,
+    maxAnonymousFlows,
   });
   await new Promise((resolve, reject) => {
     application.server.once("error", reject);
@@ -646,6 +652,121 @@ test("HTTP claim preflight precedes WebAuthn and short-lived flows stay bounded"
     );
     assert.equal(staleFinish.status, 410);
     assert.equal(server.flows.size, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("anonymous bootstrap capacity preserves room for trusted passkey login", async () => {
+  const service = new PairingService();
+  const adult = service.bootstrap({
+    credential: credential("capacity"),
+    deviceLabel: "Trusted device",
+  });
+  const webauthn = new WebAuthn({
+    rpId: "localhost",
+    origin: "http://localhost",
+    maxChallenges: 3,
+    maxAnonymousChallenges: 1,
+  });
+  const server = await startTestServer({
+    service,
+    webauthn,
+    maxFlows: 3,
+    maxAnonymousFlows: 1,
+  });
+  try {
+    const first = await apiRequest(server, "/api/passkeys/register/options", {
+      method: "POST",
+      body: { purpose: "bootstrap", deviceLabel: "Anonymous device" },
+    });
+    assert.equal(first.status, 200);
+
+    const saturated = await apiRequest(
+      server,
+      "/api/passkeys/register/options",
+      {
+        method: "POST",
+        body: { purpose: "bootstrap", deviceLabel: "Another device" },
+      },
+    );
+    assert.equal(saturated.status, 503);
+
+    const trusted = await apiRequest(server, "/api/login/options", {
+      method: "POST",
+      cookie: `kin_device=${adult.deviceToken}`,
+    });
+    assert.equal(trusted.status, 200);
+    assert.equal(server.flows.size, 2);
+    assert.equal(server.webauthn.challenges.size, 2);
+  } finally {
+    await server.close();
+  }
+});
+
+test("failed passkey option allocation rolls back its server flow", async () => {
+  const webauthn = testWebAuthn();
+  webauthn.registrationOptions = () => {
+    throw new PairingError(
+      "challenge_capacity",
+      "Too many active passkey requests. Wait and try again.",
+      503,
+    );
+  };
+  const server = await startTestServer({ webauthn });
+  try {
+    const response = await apiRequest(
+      server,
+      "/api/passkeys/register/options",
+      {
+        method: "POST",
+        body: { purpose: "bootstrap", deviceLabel: "Device" },
+      },
+    );
+    assert.equal(response.status, 503);
+    assert.equal(server.flows.size, 0);
+    assert.equal(webauthn.discardedFlows.length, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("failed passkey finish discards the flow's outstanding challenge", async () => {
+  const webauthn = new WebAuthn({
+    rpId: "localhost",
+    origin: "http://localhost",
+  });
+  const server = await startTestServer({ webauthn });
+  try {
+    const optionsResponse = await apiRequest(
+      server,
+      "/api/passkeys/register/options",
+      {
+        method: "POST",
+        body: { purpose: "bootstrap", deviceLabel: "Device" },
+      },
+    );
+    const options = await optionsResponse.json();
+    assert.equal(optionsResponse.status, 200);
+    assert.equal(webauthn.challenges.size, 1);
+
+    const finish = await apiRequest(
+      server,
+      "/api/passkeys/register/finish",
+      {
+        method: "POST",
+        body: {
+          flow: options.flow,
+          credential: {
+            id: "malformed",
+            response: { clientDataJSON: base64url("not JSON") },
+          },
+        },
+      },
+    );
+    assert.equal(finish.status, 401);
+    assert.equal(server.flows.size, 0);
+    assert.equal(webauthn.challenges.size, 0);
   } finally {
     await server.close();
   }
@@ -1335,6 +1456,34 @@ test("expired WebAuthn challenges are pruned without evicting active ones", () =
   assert.equal(webauthn.challenges.has(first), false);
   assert.equal(webauthn.challenges.has(second), true);
   assert.equal(webauthn.challenges.has(third), true);
+});
+
+test("anonymous WebAuthn capacity is bounded and discardFlow releases it", () => {
+  const webauthn = new WebAuthn({
+    rpId: "localhost",
+    origin: "http://localhost",
+    maxChallenges: 4,
+    maxAnonymousChallenges: 1,
+  });
+  const anonymous = webauthn.challenge("register", "anonymous-one", {
+    anonymous: true,
+  });
+  assert.throws(
+    () =>
+      webauthn.challenge("register", "anonymous-two", { anonymous: true }),
+    (error) => error.code === "challenge_capacity",
+  );
+
+  const trusted = webauthn.challenge("authenticate", "trusted");
+  assert.equal(webauthn.challenges.has(anonymous), true);
+  assert.equal(webauthn.challenges.has(trusted), true);
+
+  webauthn.discardFlow("anonymous-one");
+  const replacement = webauthn.challenge("register", "anonymous-two", {
+    anonymous: true,
+  });
+  assert.equal(webauthn.challenges.has(anonymous), false);
+  assert.equal(webauthn.challenges.has(replacement), true);
 });
 
 test("malformed registration CBOR and COSE fail with controlled errors", () => {
