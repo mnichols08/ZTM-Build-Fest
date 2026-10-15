@@ -23,22 +23,20 @@ import { LocalReminders } from "../reminders.js";
 import { createCalendarExport } from "../calendar-export.js";
 import { attachmentFileProblem, captureAttachment, loadLocalAttachmentRows, openAttachment, removeAttachment } from "../attachments/attachment-lifecycle.js";
 import { clearAttachmentProgress, setAttachmentProgress } from "../attachments/attachment-progress.js";
-import { AttachmentPreviewCache, isImageAttachment } from "../attachments/attachment-preview.js";
+import { isImageAttachment } from "../attachments/attachment-preview.js";
 import { CLASSIFICATION_LABELS } from "./kin-compose.js";
 import { listSegmentForClassification, resolveRoute, routeHash } from "../routes.js";
 import { describePartialCapture, remainingCaptureSteps } from "../capture-plan.js";
 import { describeNextOccurrence, describeRecurringCapture, describeScheduleChanged, isCadence, planScheduleChange, remainingRecurringSteps, SCHEDULE_MESSAGES } from "../recurrence.js";
-import { loadKinEngine, randomId } from "../wasm/kin-engine.js";
+import { randomId } from "../wasm/kin-engine.js";
 import { EventStore } from "../storage/event-store.js";
-import { loadCachedHouseholdSettings, SyncCoordinator } from "../sync/sync-coordinator.js";
+import { loadCachedHouseholdSettings } from "../sync/sync-coordinator.js";
 import { isTypingContext, shortcutForKey } from "../keyboard-commands.js";
 import { BULK_ACTIONS, describeBulkOutcome, planBulk, undoCommand, undoStatus } from "../bulk-actions.js";
-import { clearLegacyDrafts } from "./kin-security.js";
 import { paletteCss, paletteForSeed } from "../appearance/palette.js";
-import { DEFAULT_APPEARANCE, loadAppearance, saveAppearance } from "../appearance/store.js";
+import { saveAppearance } from "../appearance/store.js";
 import { DEFAULT_HOUSEHOLD_NAME, resolveAppearance } from "../appearance/household.js";
-import { getActiveVault, setActiveVault, VaultError } from "../security/local-vault.js";
-import { ATTACHMENT_OPEN_ERROR, AUTO_LOCK_KEY, BULK_UNDO_UNVERIFIED, BULK_UNDO_WINDOW_MS, INLINE_SAVE_FAILED, SAVE_ERROR, START_ERROR, SYNC_PAUSE_MESSAGES, readAutoLockPreference } from "./app/constants.js";
+import { ATTACHMENT_OPEN_ERROR, BULK_UNDO_UNVERIFIED, BULK_UNDO_WINDOW_MS, INLINE_SAVE_FAILED, SAVE_ERROR, readAutoLockPreference } from "./app/constants.js";
 import { createAppContext } from "./app/context.js";
 
 class KinApp extends HTMLElement {
@@ -87,12 +85,12 @@ class KinApp extends HTMLElement {
     this.pendingScheduleChange = null;
     this.householdStatus = null;
     this.passkeyPromptDismissed = false;
-    this.onHouseholdStatus = (event) => { this.householdStatus = event.detail; this.ctx.status.renderOnboarding(); this.updateSyncChip(); };
+    this.onHouseholdStatus = (event) => { this.householdStatus = event.detail; this.ctx.status.renderOnboarding(); this.ctx.sync.updateSyncChip(); };
     this.onSecurityChanged = () => this.ctx.status.renderOnboarding();
     this.autoLockMinutes = readAutoLockPreference();
     this.autoLockTimer = null;
     this.lastActivityAt = null;
-    this.onActivity = () => { if (this.autoLockTimer) this.scheduleAutoLock(); };
+    this.onActivity = () => { if (this.autoLockTimer) this.ctx.session.scheduleAutoLock(); };
     this.onRetryAttachments = () => { if (this.syncCoordinator) void this.syncCoordinator.syncNow(); else void this.configureSyncCoordinator(); };
     this.onChangeResponsibility = (event) => this.handleChangeResponsibility(event);
     this.onReplenishStaple = (event) => this.handleReplenishStaple(event);
@@ -105,12 +103,12 @@ class KinApp extends HTMLElement {
         ? "You're offline. Your changes are saved on this device and will sync when you're connected."
         : "You're offline. Your changes are saved on this device.";
       this.stateNotice.hidden = false;
-      this.updateSyncChip();
+      this.ctx.sync.updateSyncChip();
     };
     this.onOnline = () => {
       this.offline = false;
       this.stateNotice.hidden = true;
-      this.updateSyncChip();
+      this.ctx.sync.updateSyncChip();
       if (!this.vault || this.vault.locked || !this.store) return;
       this.setStatus(this.syncCoordinator ? "Back online. Syncing…" : "Back online.");
       if (this.syncCoordinator) void this.syncCoordinator.syncNow();
@@ -165,13 +163,13 @@ class KinApp extends HTMLElement {
     this.catchUpCursor = null;
     this.snapshotBoundary = null;
     this.onCaughtUp = () => this.handleCaughtUp();
-    this.onSyncEnabled = (event) => this.startSyncCoordinator(event.detail);
+    this.onSyncEnabled = (event) => this.ctx.sync.startSyncCoordinator(event.detail);
     this.onSyncNow = () => void this.syncCoordinator?.syncNow();
     this.onSyncStop = (event) => {
       this.syncCoordinator?.stop();
       this.syncCoordinator = null;
       this.syncState = null;
-      this.updateSyncChip();
+      this.ctx.sync.updateSyncChip();
       this.setStatus(event.detail?.message ?? "Household sync has stopped.");
     };
     this.onSyncState = (value) => this.handleSyncState(value);
@@ -259,7 +257,7 @@ class KinApp extends HTMLElement {
       if (vault !== this.vault || generation !== this.securityGeneration)
         return;
       this.refreshFromEvents();
-      void this.checkHouseholdAuthorization();
+      void this.ctx.sync.checkHouseholdAuthorization();
     };
     this.onPeerMessage = (event) => this.handlePeerMessage(event);
     // Logout and leaving the household end the session for good; a plain
@@ -396,14 +394,14 @@ class KinApp extends HTMLElement {
     document.addEventListener("visibilitychange", this.onTimeWake);
     window.addEventListener("focus", this.onWindowFocus);
     this.authorizationTimer = setInterval(
-      () => void this.checkHouseholdAuthorization(),
+      () => void this.ctx.sync.checkHouseholdAuthorization(),
       30_000,
     );
     this.openPeerChannel();
     if (this.store) {
       // Reconnecting must not restart the engine or unlock an in-flight save.
       this.pendingRefresh = true;
-      this.flushPeerRefresh();
+      this.ctx.peers.flushPeerRefresh();
       void this.configureSyncCoordinator();
     } else {
       this.initialize();
@@ -418,7 +416,7 @@ class KinApp extends HTMLElement {
     );
     if (!staple) {
       this.pendingRefresh = true;
-      this.flushPeerRefresh();
+      this.ctx.peers.flushPeerRefresh();
       this.setStatus("That staple is no longer available. Updating the list.");
       return;
     }
@@ -538,28 +536,6 @@ class KinApp extends HTMLElement {
     if (this.viewer?.open) this.viewer.close();
     else this.releaseViewer();
   }
-  setAutoLockMinutes(minutes) {
-    this.autoLockMinutes = [0, 5, 15, 60].includes(minutes) ? minutes : 0;
-    try { localStorage.setItem(AUTO_LOCK_KEY, String(this.autoLockMinutes)); } catch { /* Preference only; lock-on-close still applies. */ }
-    this.scheduleAutoLock();
-  }
-  scheduleAutoLock() {
-    clearTimeout(this.autoLockTimer);
-    this.autoLockTimer = null;
-    if (!this.vault || this.vault.locked || !this.autoLockMinutes) {
-      this.lastActivityAt = null;
-      return;
-    }
-    this.lastActivityAt = Date.now();
-    const vault = this.vault;
-    const generation = this.securityGeneration;
-    this.autoLockTimer = setTimeout(() => {
-      this.autoLockTimer = null;
-      if (vault !== this.vault || generation !== this.securityGeneration || vault.locked) return;
-      this.lockHousehold();
-      this.setStatus("Kin locked after inactivity. Unlock to continue.");
-    }, this.autoLockMinutes * 60_000);
-  }
   // Synchronous on purpose: a peek must return the cached entry itself, not a
   // promise, so tiles can paint immediately after a re-render.
   provideAttachmentPreview(record, { peek = false } = {}) {
@@ -572,12 +548,12 @@ class KinApp extends HTMLElement {
     if (!binding || binding.parentKind !== detail.parentKind || binding.parentId !== detail.parentId) throw new Error(ATTACHMENT_OPEN_ERROR);
     const syncState = await session.store.getSyncState();
     const opened = await openAttachment({ attachmentId: detail.attachmentId, binding, identity: this.syncCoordinator?.identity ?? (syncState ? { householdId: syncState.householdId } : null), store: session.store, keyStore: this.syncCoordinator?.keyStore });
-    this.assertCurrentSession(session);
+    this.ctx.session.assertCurrentSession(session);
     return opened;
   }
   async handleViewAttachment(event) {
     if (!this.store || !this.viewer) { this.ctx.status.showAlert(ATTACHMENT_OPEN_ERROR); return; }
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const detail = event.detail;
     try {
       const opened = await this.loadAttachmentForView(detail, session);
@@ -594,7 +570,7 @@ class KinApp extends HTMLElement {
       this.viewer.showModal();
       this.viewer.querySelector(".attachment-viewer-close")?.focus();
     } catch (error) {
-      if (error.code !== "locked" && this.isCurrentSession(session)) this.ctx.status.showAlert(ATTACHMENT_OPEN_ERROR);
+      if (error.code !== "locked" && this.ctx.session.isCurrentSession(session)) this.ctx.status.showAlert(ATTACHMENT_OPEN_ERROR);
     }
   }
   navigate(hash) {
@@ -885,14 +861,6 @@ class KinApp extends HTMLElement {
         unavailable();
     }
   }
-  updateSyncChip() {
-    if (!this.syncChip) return;
-    if (!this.vault || this.vault.locked || !this.store) { this.syncChip.state = null; return; }
-    if (this.offline || navigator.onLine === false) { this.syncChip.state = this.syncCoordinator || this.householdStatus?.identity ? "offline-sync" : "offline"; return; }
-    if (!this.syncCoordinator) { this.syncChip.state = "local"; return; }
-    const state = this.syncState?.state;
-    this.syncChip.state = state === "syncing" ? "syncing" : state === "paused" || state === "deleted" ? "paused" : state === "ready" ? "ready" : "syncing";
-  }
   disconnectedCallback() {
     this.lockHousehold(false, { endSession: true });
     window.removeEventListener("beforeinstallprompt", this.onBeforeInstallPrompt);
@@ -995,263 +963,11 @@ class KinApp extends HTMLElement {
     this.syncCoordinator?.stop();
     this.syncCoordinator = null;
   }
-  captureSession() {
-    return {
-      generation: this.securityGeneration,
-      vault: this.vault,
-      store: this.store,
-      engine: this.engine,
-    };
-  }
-  isCurrentSession(session) {
-    return (
-      session.generation === this.securityGeneration &&
-      session.vault === this.vault &&
-      Boolean(session.vault) &&
-      !session.vault.locked &&
-      (!Object.hasOwn(session, "store") || session.store === this.store) &&
-      (!Object.hasOwn(session, "engine") || session.engine === this.engine)
-    );
-  }
-  assertCurrentSession(session) {
-    if (!this.isCurrentSession(session))
-      throw new VaultError(
-        "Kin was locked or reopened during the operation.",
-        "locked",
-      );
-  }
-  async initialize() {
-    if (this.starting && this.startingGeneration === this.securityGeneration)
-      return this.starting;
-    const starting = this.loadApplication();
-    this.starting = starting;
-    this.startingGeneration = this.securityGeneration;
-    try {
-      await starting;
-    } finally {
-      if (this.starting === starting) this.starting = null;
-    }
-  }
-  async loadApplication() {
-    const session = { generation: this.securityGeneration, vault: this.vault };
-    if (!session.vault || session.vault.locked) {
-      await this.security.initialize();
-      if (session.generation !== this.securityGeneration || this.vault) return;
-      this.ctx.status.setBusy(false);
-      this.setStatus("Household locked.");
-      return;
-    }
-    const retrying = !this.retryButton.hidden;
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    this.setStatus("Starting Kin…");
-    try {
-      this.syncCoordinator?.stop();
-      this.syncCoordinator = null;
-      this.store?.close();
-      this.store = null;
-      this.engine?.dispose?.();
-      this.engine = null;
-      const engine = await loadKinEngine();
-      if (!this.isCurrentSession(session)) {
-        engine.dispose();
-        this.assertCurrentSession(session);
-      }
-      this.engine = engine;
-      session.engine = engine;
-      const store = await EventStore.open({ vault: session.vault, engine });
-      if (!this.isCurrentSession(session)) {
-        store.close();
-        this.assertCurrentSession(session);
-      }
-      this.store = store;
-      session.store = store;
-      this.openPeerChannel();
-      const snapshot = await store.getCatchUpState();
-      this.assertCurrentSession(session);
-      this.applyCatchUpSnapshot(snapshot);
-      await this.restoreCachedHouseholdDefaults(snapshot.syncIdentity, session);
-      this.renderState();
-      void this.refreshAttachmentRows();
-      this.main.hidden = false;
-      this.nav.hidden = false;
-      this.siteTools.hidden = false;
-      this.peoplePage.append(this.household);
-      this.privacyPage.append(this.security);
-      this.showPageFromLocation();
-      this.setStatus("Ready.");
-      // Reminders suspended by a lock of this same vault come back with
-      // titles from the fresh state; another vault's are discarded.
-      if (this.isCurrentSession(session)) {
-        this.localReminders.resumeAll(session.vault.vaultId ?? null, (id) => this.reminderTarget(id, session));
-        this.renderReminders();
-      }
-      this.updateSyncChip();
-      if (navigator.onLine === false) this.onOffline();
-      this.retryButton.hidden = true;
-      void this.configureSyncCoordinator();
-    } catch (error) {
-      if (this.isCurrentSession(session)) {
-        this.lockHousehold();
-        this.security.error(error.userMessage ? error : new Error(START_ERROR));
-      }
-    } finally {
-      if (this.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        if (retrying && this.store) this.compose.focusInput();
-        this.flushPeerRefresh();
-      }
-    }
-  }
-  async configureSyncCoordinator() {
-    if (!this.vault || this.vault.locked || !this.store) return;
-    const session = this.captureSession();
-    try {
-      const identityResponse = await fetch("/api/status");
-      this.assertCurrentSession(session);
-      if (!identityResponse.ok) return;
-      const { identity } = await identityResponse.json();
-      this.assertCurrentSession(session);
-      if (!identity) return;
-      const syncResponse = await fetch("/api/sync/status");
-      this.assertCurrentSession(session);
-      if (!syncResponse.ok) return;
-      const syncStatus = await syncResponse.json();
-      this.assertCurrentSession(session);
-      if (syncStatus.enabled) await this.startSyncCoordinator(identity);
-    } catch {
-      // Local household use remains available while the service is unreachable.
-    }
-  }
-  async checkHouseholdAuthorization() {
-    if (!this.vault || this.vault.locked) return;
-    const session = this.captureSession();
-    const household = this.household;
-    const identity = household?.identity;
-    if (
-      !identity ||
-      this.checkingAuthorization ||
-      document.visibilityState === "hidden"
-    )
-      return;
-    this.checkingAuthorization = true;
-    try {
-      const response = await fetch("/api/status", { cache: "no-store" });
-      this.assertCurrentSession(session);
-      if (!response.ok) return;
-      const status = await response.json();
-      this.assertCurrentSession(session);
-      if (
-        this.household !== household ||
-        household.identity !== identity ||
-        status.identity
-      )
-        return;
-      // The device no longer belongs to a household (removed, left, deleted).
-      this.lockHousehold(true, { endSession: true });
-    } catch {
-      // Keep local household use available while the service is unreachable.
-    } finally {
-      if (this.isCurrentSession(session)) this.checkingAuthorization = false;
-    }
-  }
-  async startSyncCoordinator(identity) {
-    if (!this.vault || this.vault.locked || !this.store || !this.engine) return;
-    const session = this.captureSession();
-    if (this.syncCoordinator?.identity.deviceId === identity.deviceId)
-      return this.syncCoordinator.syncNow();
-    this.syncCoordinator?.stop();
-    let coordinator;
-    coordinator = new SyncCoordinator({
-      store: session.store,
-      engine: session.engine,
-      identity,
-      onState: (value) => {
-        if (
-          this.isCurrentSession(session) &&
-          this.syncCoordinator === coordinator
-        )
-          this.handleSyncState(value);
-      },
-    });
-    this.syncCoordinator = coordinator;
-    this.updateSyncChip();
-    try {
-      await coordinator.start();
-      if (this.isCurrentSession(session) && this.syncCoordinator === coordinator) await this.refreshHouseholdDefaults();
-    } catch (error) {
-      if (
-        this.isCurrentSession(session) &&
-        this.syncCoordinator === coordinator
-      ) {
-        this.handleSyncState({
-          state: "paused",
-          code: error.code,
-          message: error.message || "Device sync is paused.",
-        });
-      }
-    } finally {
-      if (
-        !this.isCurrentSession(session) ||
-        this.syncCoordinator !== coordinator
-      )
-        coordinator.stop();
-    }
-  }
-  handleSyncState(value) {
-    if (!this.vault || this.vault.locked) return;
-    if (value.state) { this.syncState = value; this.updateSyncChip(); }
-    if (value.state === "paused") {
-      const attention = SYNC_PAUSE_MESSAGES[value.code] ?? value.message;
-      if (attention) {
-        this.stateNotice.textContent = attention;
-        this.stateNotice.hidden = false;
-      }
-    } else if (["ready", "disabled"].includes(value.state)) {
-      this.stateNotice.hidden = true;
-      if (value.state === "ready") void this.refreshHouseholdDefaults();
-    }
-    if (value.projection && value.added > 0) {
-      if (this.busy) {
-        this.pendingRefresh = true;
-      } else {
-        this.state = value.projection;
-        this.snapshotBoundary = value.snapshotBoundary;
-        this.renderState();
-        if (value.snapshotBoundary) this.broadcastEventChange();
-      }
-    }
-    if (Array.isArray(value.attachmentRows)) {
-      const rows = this.mergeAttachmentRows(value.attachmentRows);
-      const sameRows = rows.length === this.attachmentRows.length && rows.every((row, index) => {
-        const current = this.attachmentRows[index];
-        return current && ["attachmentId", "parentKind", "parentId", "name", "size", "type", "state"]
-          .every((key) => row[key] === current[key]);
-      });
-      if (!sameRows) {
-        this.attachmentRows = rows;
-        this.renderState();
-      }
-    }
-    if (Array.isArray(value.memberIds)) {
-      const memberIds = [...new Set(value.memberIds)];
-      const previousMembers = new Set(this.activeMemberIds ?? []);
-      const membershipChanged = memberIds.length !== previousMembers.size || memberIds.some((id) => !previousMembers.has(id));
-      this.activeMemberIds = memberIds;
-      if (membershipChanged) this.renderState();
-      void this.reconcileResponsibilityMembers();
-    }
-    // The sync chip already shows routine progress. Toast only meaningful
-    // incoming changes or an unusual state, not every five-second idle poll.
-    if (value.message && value.state !== "paused" &&
-        (value.quarantined > 0 || !["syncing", "ready", "disabled"].includes(value.state)))
-      this.setStatus(value.message);
-  }
   async handleAddItem(event) {
     if (this.busy || !this.store || !this.engine) {
       return;
     }
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     // Every capture carries a client-generated id (hex, like projection ids)
     // so a retry after a partial success resumes against the same record
     // instead of creating another.
@@ -1298,20 +1014,20 @@ class KinApp extends HTMLElement {
       const steps = submittedDraft.cadence ? remainingRecurringSteps(this.state, submittedDraft) : remainingCaptureSteps(this.state, submittedDraft);
       for (step of steps) {
         await this.appendCommand(step);
-        this.assertCurrentSession(session);
+        this.ctx.session.assertCurrentSession(session);
       }
       step = null;
       this.renderState();
       if (!sourceList) composer.clearIfMatches(submittedDraft);
       const where = submittedDraft.planningDate === this.currentCivilDate() ? `${destination} and Today` : destination;
       const recurring = submittedDraft.cadence ? this.state.routines?.find((routine) => routine.routineId === submittedDraft.id) : null;
-      this.setStatus(`${recurring ? describeRecurringCapture(recurring, this.currentCivilDate()) : `Added to ${where}.`}${this.offlineSyncSuffix()}`);
+      this.setStatus(`${recurring ? describeRecurringCapture(recurring, this.currentCivilDate()) : `Added to ${where}.`}${this.ctx.sync.offlineSyncSuffix()}`);
       if (!sourceList) composer.showResult?.(this.syncCoordinator ? "Saved here. Waiting to sync." : "Saved on this device.");
       if (this.pendingCapture?.draft.id === submittedDraft.id) this.pendingCapture = null;
       this.broadcastEventChange();
       restoreComposeFocus = !sourceList;
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.pendingRefresh = true;
       this.renderState();
       const partial = step && step.type !== "add" && step.type !== "create-routine";
@@ -1322,7 +1038,7 @@ class KinApp extends HTMLElement {
       this.setStatus("");
       restoreComposeFocus = !sourceList;
     } finally {
-      if (this.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
         if (sourceList) {
           const focusTarget = sourceList.querySelector(
@@ -1332,14 +1048,9 @@ class KinApp extends HTMLElement {
         } else if (restoreComposeFocus) {
           composer.focusInput();
         }
-        this.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
-  }
-  // Only promise a later sync when this device actually syncs; otherwise a
-  // change is simply saved here.
-  offlineSyncSuffix() {
-    return navigator.onLine === false && this.syncCoordinator ? " It will sync when you're connected." : "";
   }
   async handleAddHandoff(event) {
     return this.saveHandoff({ type: "add-handoff", text: event.detail.text });
@@ -1349,14 +1060,14 @@ class KinApp extends HTMLElement {
   }
   async saveHandoff(command) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const submitted = Object.freeze({ ...command });
     this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     try {
       await this.appendCommand(submitted);
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.renderState();
       if (submitted.type === "add-handoff")
         this.handoffs.clearIfMatches(submitted);
@@ -1369,7 +1080,7 @@ class KinApp extends HTMLElement {
       );
       this.broadcastEventChange();
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4 && submitted.handoffId) this.pendingRefresh = true;
       this.ctx.status.showAlert(
         error.userMessage ?? SAVE_ERROR,
@@ -1378,23 +1089,23 @@ class KinApp extends HTMLElement {
       );
       this.setStatus("");
     } finally {
-      if (this.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
         this.handoffs.focusInput();
-        this.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
   async saveTalk(command) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const submitted = Object.freeze({ ...command });
     this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     try {
       await this.appendCommand(submitted);
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.renderState();
       if (submitted.type === "add-talk") this.talks.clearIfMatches(submitted);
       this.setStatus(
@@ -1408,7 +1119,7 @@ class KinApp extends HTMLElement {
       );
       this.broadcastEventChange();
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4 && submitted.talkId) this.pendingRefresh = true;
       this.ctx.status.showAlert(
         error.userMessage ?? SAVE_ERROR,
@@ -1417,23 +1128,23 @@ class KinApp extends HTMLElement {
       );
       this.setStatus("");
     } finally {
-      if (this.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
         this.talks.focusInput();
-        this.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
   async savePulse(command) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const submitted = Object.freeze({ ...command });
     this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     try {
       await this.appendCommand(submitted);
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.renderState();
       this.pulse.saved();
       this.setStatus(
@@ -1441,47 +1152,47 @@ class KinApp extends HTMLElement {
       );
       this.broadcastEventChange();
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () =>
         this.savePulse(submitted),
       );
       this.setStatus("");
     } finally {
-      if (this.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
         this.pulse.focusInput();
-        this.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
   async saveMode(mode) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const command = Object.freeze({ type: "set-household-mode", mode });
     this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
     try {
       await this.appendCommand(command);
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.renderState();
       this.setStatus("Household mode updated.");
       this.broadcastEventChange();
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       this.modeSelect.value = this.state?.mode ?? "normal";
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.saveMode(mode));
       this.setStatus("");
     } finally {
-      if (this.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
-        this.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
   async saveRoutine(command) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const submitted = Object.freeze({ ...command });
     const todayFocused = this.today.contains(document.activeElement);
     if (todayFocused) this.today.rememberFocus();
@@ -1492,7 +1203,7 @@ class KinApp extends HTMLElement {
     this.setStatus("Saving…");
     try {
       await this.appendCommand(submitted);
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       committed = true;
       this.broadcastEventChange();
       this.renderState();
@@ -1514,7 +1225,7 @@ class KinApp extends HTMLElement {
               : "Reopened for this period.",
       );
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4 && submitted.routineId) this.pendingRefresh = true;
       this.ctx.status.showAlert(
         committed
@@ -1525,7 +1236,7 @@ class KinApp extends HTMLElement {
       );
       this.setStatus("");
     } finally {
-      if (this.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
         if (todayFocused) { /* kin-today restored its own focus on render */ }
         else if (
@@ -1534,7 +1245,7 @@ class KinApp extends HTMLElement {
         )
           this.routines.focusInput();
         else this.routines.restoreFocus(focus);
-        this.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -1550,7 +1261,7 @@ class KinApp extends HTMLElement {
   // partial save resumes instead of creating a second repeating task.
   async changeRoutineSchedule(detail) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const vaultId = this.vault?.vaultId ?? null;
     const pending = this.pendingScheduleChange?.vaultId === vaultId ? this.pendingScheduleChange : null;
     const resume = pending?.routineId === detail.routineId && pending.cadence === detail.cadence;
@@ -1575,7 +1286,7 @@ class KinApp extends HTMLElement {
     try {
       for (step of plan.steps) {
         await this.appendCommand(step);
-        this.assertCurrentSession(session);
+        this.ctx.session.assertCurrentSession(session);
         appended++;
       }
       step = null;
@@ -1586,7 +1297,7 @@ class KinApp extends HTMLElement {
       this.renderState();
       this.setStatus(describeScheduleChanged(change.cadence));
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.pendingRefresh = true;
       if (appended) this.broadcastEventChange();
       this.renderState();
@@ -1596,10 +1307,10 @@ class KinApp extends HTMLElement {
       );
       this.setStatus("");
     } finally {
-      if (this.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
         if (!this.pendingScheduleChange) this.routines.focusRoutine(change.replacementId);
-        this.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -1612,23 +1323,23 @@ class KinApp extends HTMLElement {
       const batch = { itemId: crypto.randomUUID().replaceAll("-", ""), title: playbook.title, steps: playbook.entries.map(text => ({ stepId: crypto.randomUUID().replaceAll("-", ""), text })) };
       return this.instantiatePlaybook(batch);
     }
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const command = action === "save-playbook"
       ? { type: action, id: detail.playbookId ?? crypto.randomUUID().replaceAll("-", ""), title: detail.title, entries: detail.entries }
       : { type: action, playbookId: detail.playbookId };
     if (action === "save-playbook") detail.playbookId = command.id;
     this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
     try {
-      await this.appendCommand(command); this.assertCurrentSession(session); this.routines.clearPlaybookEditor(); this.renderState(); this.broadcastEventChange();
+      await this.appendCommand(command); this.ctx.session.assertCurrentSession(session); this.routines.clearPlaybookEditor(); this.renderState(); this.broadcastEventChange();
       this.setStatus(action === "save-playbook" ? "Reusable checklist saved." : "Reusable checklist archived.");
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.handlePlaybookIntent(event), command); this.setStatus("");
-    } finally { if (this.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.flushPeerRefresh(); } }
+    } finally { if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); } }
   }
   async instantiatePlaybook(batch) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession(); this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Creating checklist…");
+    const session = this.ctx.session.captureSession(); this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Creating checklist…");
     try {
       let item = this.state?.items.find(record => record.itemId === batch.itemId);
       if (!item) { await this.appendCommand({ type: "add", id: batch.itemId, text: batch.title, classification: "need" }); item = this.state?.items.find(record => record.itemId === batch.itemId); }
@@ -1637,15 +1348,15 @@ class KinApp extends HTMLElement {
         await this.appendCommand({ type: "add-item-step", itemId: batch.itemId, stepId: step.stepId, text: step.text });
         item = this.state?.items.find(record => record.itemId === batch.itemId);
       }
-      this.assertCurrentSession(session); this.renderState(); this.broadcastEventChange(); this.setStatus("Checklist created under To do. It is now an ordinary household item.");
+      this.ctx.session.assertCurrentSession(session); this.renderState(); this.broadcastEventChange(); this.setStatus("Checklist created under To do. It is now an ordinary household item.");
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.instantiatePlaybook(batch)); this.setStatus("");
-    } finally { if (this.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.flushPeerRefresh(); } }
+    } finally { if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); } }
   }
   async saveArea(detail) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const action = detail.action;
     const types = {
       "create-area": "create-area",
@@ -1665,7 +1376,7 @@ class KinApp extends HTMLElement {
         areaId: detail.areaId,
         itemId: detail.itemId,
       });
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.renderState();
       this.broadcastEventChange();
       this.setStatus(action === "create-area" ? "Area added."
@@ -1673,11 +1384,11 @@ class KinApp extends HTMLElement {
         : action === "archive-area" ? "Area archived. Existing links are kept."
         : detail.areaId ? "Area updated." : "Area cleared.");
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR);
       this.setStatus("");
     } finally {
-      if (this.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
         if (action === "archive-area") this.areas.focus();
         if (action === "assign-item-area") {
@@ -1685,14 +1396,14 @@ class KinApp extends HTMLElement {
             .find((select) => select.dataset.itemId === detail.itemId && !select.closest("[hidden]"))
             ?.focus();
         }
-        this.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
   async saveItemPlanningDate(detail, sourceList) {
     this.localReminders.cancel(`item:${detail.itemId}`);
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     this.ctx.status.setBusy(true);
     this.clearAlert();
     this.setStatus("Saving…");
@@ -1702,26 +1413,26 @@ class KinApp extends HTMLElement {
         itemId: detail.itemId,
         planningDate: detail.planningDate,
       });
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.renderState();
       this.broadcastEventChange();
       this.detail.clearFeedback(detail.itemId);
       this.feedDetail();
       this.setStatus(detail.planningDate ? "Planned date saved." : "Planned date cleared.");
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.pendingRefresh = true;
       this.renderState();
       this.showDetailActionError(detail.itemId, error.userMessage ?? SAVE_ERROR,
         () => this.saveItemPlanningDate(detail, sourceList));
       this.setStatus("");
     } finally {
-      if (this.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
         (sourceList ?? this.detail)?.querySelector?.(
           `.item-planning-date-input[data-item-id="${detail.itemId}"]`,
         )?.focus();
-        this.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -1734,14 +1445,14 @@ class KinApp extends HTMLElement {
       ? this.state?.items?.find((item) => item.itemId === itemId && item.status === "active")
       : this.state?.routines?.find((routine) => routine.routineId === routineId && routine.status !== "archived");
     const current = record();
-    if (!current || !this.isCurrentSession(session)) return null;
-    return { title: current.text, isCurrent: () => this.isCurrentSession(session) && Boolean(record()) };
+    if (!current || !this.ctx.session.isCurrentSession(session)) return null;
+    return { title: current.text, isCurrent: () => this.ctx.session.isCurrentSession(session) && Boolean(record()) };
   }
   async handleLocalReminder({ id, title, at }) {
     const itemId = id.startsWith("item:") ? id.slice(5) : null;
     // A reminder carries its decrypted title, so it may only notify while its
     // record is live in this unlocked session (lock suspends every timer).
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const target = this.reminderTarget(id, session);
     const token = Symbol(id);
     try {
@@ -1749,14 +1460,14 @@ class KinApp extends HTMLElement {
       // The permission prompt can outlast the session; never keep a timer or
       // report success into a locked or different household. The token makes
       // sure only this attempt's reminder is cancelled, never a newer one.
-      if (!this.isCurrentSession(session)) { this.localReminders.cancel(id, token); return; }
+      if (!this.ctx.session.isCurrentSession(session)) { this.localReminders.cancel(id, token); return; }
       this.renderReminders();
       for (const control of this.querySelectorAll("kin-reminder")) if (control.targetRecord?.id === id) control.saved(result === "granted" ? at : null);
       if (itemId) this.detail?.reminderDrafts?.delete(itemId);
       this.setStatus(result === "granted" ? "Reminder set on this device while Kin is open." : result === "denied" ? "Notifications are blocked in browser settings. Kin still works normally." :
         result === "stale" ? "That task changed before the reminder was set. Nothing was scheduled." : "Reminders are unavailable in this browser. Kin still works normally.");
     } catch (error) {
-      if (this.isCurrentSession(session)) this.ctx.status.showAlert(error.message ?? "Choose a future reminder time.");
+      if (this.ctx.session.isCurrentSession(session)) this.ctx.status.showAlert(error.message ?? "Choose a future reminder time.");
     }
   }
   downloadCalendar() {
@@ -1787,14 +1498,14 @@ class KinApp extends HTMLElement {
   }
   async saveNote(action, detail) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const type = { "create-note": "create-note", "update-note": "update-note", "archive-note": "archive-note" }[action];
     if (!type) return;
     const noteId = detail.noteId ?? crypto.randomUUID().replaceAll("-", "");
     this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
     try {
       await this.appendCommand({ type, ...detail, noteId, id: noteId });
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.notes.clearEditor();
       this.notes.pendingFocus = action === "archive-note" ? this.notes.pendingFocus : "title";
       this.renderState();
@@ -1805,72 +1516,47 @@ class KinApp extends HTMLElement {
           ? "Note saved on this device."
           : "Note saved on this device. Sync is unavailable while offline.");
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR);
       this.setStatus("");
       this.notes.pendingFocus = "title";
     } finally {
-      if (this.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
-        this.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
   async saveReferenceRecord(action, detail) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const recordId = detail.recordId ?? crypto.randomUUID().replaceAll("-", "");
     const type = action === "archive-reference-record" ? action : "save-reference-record";
     this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Saving…");
     try {
       await this.appendCommand({ type, ...detail, recordId, id: recordId });
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       if (action === "save-reference-record") this.notes.clearReferenceEditor();
       this.renderState(); this.broadcastEventChange();
       this.setStatus(action === "archive-reference-record" ? "Reference archived." : "Reference saved on this device.");
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); this.setStatus("");
-    } finally { if (this.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.flushPeerRefresh(); } }
+    } finally { if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); } }
   }
   async saveMaintenanceEvent(action, detail) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const type = action === "archive-maintenance-event" ? action : "save-maintenance-event";
     this.ctx.status.setBusy(true); this.clearAlert(); this.setStatus("Saving maintenance history…");
     try {
       await this.appendCommand({ ...detail, type, id: detail.maintenanceId });
-      this.assertCurrentSession(session); this.renderState(); this.broadcastEventChange();
+      this.ctx.session.assertCurrentSession(session); this.renderState(); this.broadcastEventChange();
       this.setStatus(action === "archive-maintenance-event" ? "Maintenance event archived." : "Maintenance saved on this device.");
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); this.setStatus("");
-    } finally { if (this.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.flushPeerRefresh(); } }
-  }
-  schedulePulseRefresh() {
-    clearTimeout(this.pulseTimer);
-    if (
-      !this.isConnected ||
-      (!this.state.pulses.length &&
-        !this.state.routines?.some((r) => r.status === "active"))
-    )
-      return;
-    // Timers only request canonical replay. Rust alone decides expiry.
-    const now = Date.now();
-    const active = this.state.pulses.filter(
-      (pulse) => pulse.status === "active",
-    );
-    const midnight = new Date(now);
-    midnight.setHours(24, 0, 0, 0);
-    const delay = Math.max(
-      1,
-      Math.min(
-        60_000,
-        midnight.getTime() - now,
-        ...active.map((pulse) => pulse.expiresAt - now),
-      ),
-    );
-    this.pulseTimer = setTimeout(this.onTimeWake, delay);
+    } finally { if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); } }
   }
   // Programmatic entry (tests, future callers) that goes through the same
   // feedback and persistence path as a file chosen in the picker.
@@ -1892,11 +1578,6 @@ class KinApp extends HTMLElement {
       }, 8_000));
     }
   }
-  async untilIdle(limitMs = 10_000) {
-    const deadline = Date.now() + limitMs;
-    while (this.busy && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25));
-    return !this.busy;
-  }
   async saveChosenAttachment(file, target) {
     const kind = isImageAttachment({ type: file?.type, name: file?.name }) ? "photo" : "file";
     const problem = attachmentFileProblem(file);
@@ -1906,20 +1587,20 @@ class KinApp extends HTMLElement {
       this.reportAttachmentProgress(target, "error", lockedMessage); this.ctx.status.showAlert(lockedMessage); return;
     }
     this.reportAttachmentProgress(target, "preparing", `Preparing ${kind}…`);
-    if (!(await this.untilIdle())) {
+    if (!(await this.ctx.refresh.untilIdle())) {
       const message = `Kin is still saving another change. Try adding the ${kind} again in a moment.`;
       this.reportAttachmentProgress(target, "error", message); this.ctx.status.showAlert(message); return;
     }
     if (!this.vault || this.vault.locked || !this.store || !this.engine) {
       this.reportAttachmentProgress(target, "error", lockedMessage); return;
     }
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const { parentKind, parentId } = target;
     this.ctx.status.setBusy(true); this.clearAlert();
     this.reportAttachmentProgress(target, "saving", "Saving securely…");
     try {
       const saved = await captureAttachment({ file, parentKind, parentId, identity: this.syncCoordinator?.identity ?? this.household?.identity, store: session.store, keyStore: this.syncCoordinator?.keyStore, append: (command) => this.appendCommand(command) });
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.attachmentRows = [...this.attachmentRows.filter((row) => row.attachmentId !== saved.attachmentId), { ...saved, parentKind, parentId }];
       this.renderState(); this.broadcastEventChange();
       this.reportAttachmentProgress(target, "saved", this.syncCoordinator
@@ -1927,7 +1608,7 @@ class KinApp extends HTMLElement {
         : `${saved.name} is saved on this device.`);
       void this.syncCoordinator?.syncNow();
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) {
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) {
         clearAttachmentProgress(parentKind, parentId);
         return;
       }
@@ -1940,11 +1621,11 @@ class KinApp extends HTMLElement {
           : error.message || `Kin couldn't save this ${kind} on this device.`);
       this.reportAttachmentProgress(target, "error", message);
       this.ctx.status.showAlert(message);
-    } finally { if (this.isCurrentSession(session)) this.ctx.status.setBusy(false); }
+    } finally { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setBusy(false); }
   }
   async handleOpenAttachment(event) {
     if (!this.store) { this.ctx.status.showAlert(ATTACHMENT_OPEN_ERROR); return; }
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const detail = event.detail;
     const binding = this.state?.attachments?.find((item) => item.attachmentId === detail.attachmentId && !item.removed);
     if (!binding || binding.parentKind !== detail.parentKind || binding.parentId !== detail.parentId) { this.ctx.status.showAlert(ATTACHMENT_OPEN_ERROR); return; }
@@ -1961,16 +1642,16 @@ class KinApp extends HTMLElement {
   }
   async handleRemoveAttachment(event) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession(); this.ctx.status.setBusy(true); this.clearAlert();
+    const session = this.ctx.session.captureSession(); this.ctx.status.setBusy(true); this.clearAlert();
     try {
       await removeAttachment({ attachmentId: event.detail.attachmentId, append: (command) => this.appendCommand(command), store: session.store });
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.attachmentPreviews?.forget(event.detail.attachmentId);
       if (this.viewerDetail?.attachmentId === event.detail.attachmentId) this.closeViewer();
       this.attachmentRows = this.attachmentRows.filter((row) => row.attachmentId !== event.detail.attachmentId);
       this.renderState(); this.broadcastEventChange(); void this.syncCoordinator?.syncNow();
-    } catch (error) { if (error.code !== "locked" && this.isCurrentSession(session)) this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); }
-    finally { if (this.isCurrentSession(session)) this.ctx.status.setBusy(false); }
+    } catch (error) { if (error.code !== "locked" && this.ctx.session.isCurrentSession(session)) this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); }
+    finally { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setBusy(false); }
   }
   // A sync pass describes attachments from the projection it started with. A
   // photo attached while that pass ran is missing from its rows, and one
@@ -1989,43 +1670,22 @@ class KinApp extends HTMLElement {
   }
   async refreshAttachmentRows() {
     if (!this.store || !this.state || !this.vault || this.vault.locked) return;
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     try {
       const rows = await loadLocalAttachmentRows({ store: session.store, state: this.state });
-      if (!this.isCurrentSession(session)) return;
+      if (!this.ctx.session.isCurrentSession(session)) return;
       this.attachmentRows = rows; this.renderState();
     } catch { /* A later sync retries attachment indexing. */ }
   }
   async handleChangeResponsibility(event) {
     if (this.busy || !this.store || !this.engine) return;
-    const session = this.captureSession(); this.ctx.status.setBusy(true); this.clearAlert();
+    const session = this.ctx.session.captureSession(); this.ctx.status.setBusy(true); this.clearAlert();
     try {
       const { targetKind, targetId, memberId } = event.detail;
       await this.appendCommand({ type: "change-responsibility", targetKind, id: targetId, memberId });
-      this.assertCurrentSession(session); this.broadcastEventChange(); void this.syncCoordinator?.syncNow();
-    } catch (error) { if (error.code !== "locked" && this.isCurrentSession(session)) this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); }
-    finally { if (this.isCurrentSession(session)) this.ctx.status.setBusy(false); }
-  }
-  async reconcileResponsibilityMembers() {
-    if (this.reconcilingResponsibility || this.busy || !this.activeMemberIds || !this.state?.responsibilities?.length) return;
-    const active = new Set(this.activeMemberIds);
-    const stale = this.state.responsibilities.filter((entry) => {
-      if (!entry.memberId || active.has(entry.memberId)) return false;
-      return entry.targetKind === "item"
-        ? this.state.items?.some((item) => item.itemId === entry.targetId && item.status !== "archived")
-        : this.state.routines?.some((routine) => routine.routineId === entry.targetId && !routine.archived);
-    });
-    if (!stale.length) return;
-    this.reconcilingResponsibility = true;
-    try {
-      for (const entry of stale) {
-        if (!this.activeMemberIds.includes(this.syncCoordinator?.identity?.memberId)) break;
-        await this.appendCommand({ type: "change-responsibility", targetKind: entry.targetKind, id: entry.targetId, memberId: null });
-      }
-      this.broadcastEventChange();
-      void this.syncCoordinator?.syncNow();
-    } catch { /* Another device may have cleared the same removed member concurrently. */ }
-    finally { this.reconcilingResponsibility = false; }
+      this.ctx.session.assertCurrentSession(session); this.broadcastEventChange(); void this.syncCoordinator?.syncNow();
+    } catch (error) { if (error.code !== "locked" && this.ctx.session.isCurrentSession(session)) this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); }
+    finally { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setBusy(false); }
   }
   async handleCompleteItem(event) {
     this.localReminders.cancel(`item:${event.detail.itemId}`);
@@ -2033,7 +1693,7 @@ class KinApp extends HTMLElement {
   }
   async savePin(detail) {
     if (this.busy || !this.store || !this.engine || detail.targetKind !== "item") return;
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const command = { type: detail.pinned ? "pin" : "unpin", targetKind: "item", targetId: detail.targetId };
     const list = [this.today, this.needs, this.shopping, this.staples].find((candidate) => candidate.contains(document.activeElement));
     list?.rememberFocus();
@@ -2043,20 +1703,20 @@ class KinApp extends HTMLElement {
     this.setStatus("Saving…");
     try {
       await this.appendCommand(command);
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.renderState();
       this.setStatus(detail.pinned ? "Pinned for quick access." : "Unpinned.");
       this.broadcastEventChange();
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.pendingRefresh = true;
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.savePin(detail), command);
       this.setStatus("");
     } finally {
-      if (this.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
         if (detailFocused && !this.detail.contains(document.activeElement)) this.detail.querySelector(".pin-button")?.focus();
-        this.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -2115,7 +1775,7 @@ class KinApp extends HTMLElement {
   }
   async runBulk({ list, action, targets, skipped, carried = [] }) {
     const spec = BULK_ACTIONS[action];
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const succeeded = [];
     const failed = [];
     const started = performance.now();
@@ -2135,14 +1795,14 @@ class KinApp extends HTMLElement {
         } catch (error) {
           // Changes committed before a lock stay committed; nothing from the
           // old session may touch the new interface.
-          if (error.code === "locked" || !this.isCurrentSession(session)) return;
+          if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
           if (error.code === 4) this.pendingRefresh = true;
           failed.push(itemId);
         }
       }
     } finally {
       this.bulkRunning = false;
-      if (this.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.lastBulkMetric = { action, count: targets.length, ms: performance.now() - started };
         list.setBulkProgress("");
         if (succeeded.length) { this.renderState(); this.broadcastEventChange(); }
@@ -2159,7 +1819,7 @@ class KinApp extends HTMLElement {
         });
         this.ctx.status.setBusy(false);
         list.focusBulkResult();
-        this.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -2175,7 +1835,7 @@ class KinApp extends HTMLElement {
     if (!list || !record || record.list !== list || record.generation !== this.securityGeneration) return;
     if (this.busy || this.bulkRunning || !this.store || !this.engine) return;
     this.clearBulkOutcome();
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const undone = [];
     const conflicts = [];
     const failed = [];
@@ -2189,7 +1849,7 @@ class KinApp extends HTMLElement {
       try {
         items = (await this.readAuthoritativeState(session)).items;
       } catch (error) {
-        if (error.code === "locked" || !this.isCurrentSession(session)) return;
+        if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
         // Fail closed: the rendered projection may be stale, so checking
         // against it could overwrite a newer change. Nothing is undone and
         // the whole undo set stays available to try again.
@@ -2204,7 +1864,7 @@ class KinApp extends HTMLElement {
           items = this.state.items;
           undone.push(change);
         } catch (error) {
-          if (error.code === "locked" || !this.isCurrentSession(session)) return;
+          if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
           // Rust rejected the status precondition: the Item changed in between.
           if (error.code === 4) { this.pendingRefresh = true; conflicts.push(change); }
           else failed.push(change);
@@ -2212,7 +1872,7 @@ class KinApp extends HTMLElement {
       }
     } finally {
       this.bulkRunning = false;
-      if (this.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         list.setBulkProgress("");
         if (undone.length) { this.renderState(); this.broadcastEventChange(); }
         // Items failed for a local reason (not a conflict) can be undone again.
@@ -2229,29 +1889,15 @@ class KinApp extends HTMLElement {
         });
         this.ctx.status.setBusy(false);
         list.focusBulkResult();
-        this.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
-  }
-  // A fresh replay of the encrypted local log, without touching the rendered
-  // projection, so undo checks the newest state including synced events.
-  async readAuthoritativeState(session) {
-    const snapshot = await session.store.getCatchUpState();
-    this.assertCurrentSession(session);
-    const { asOf, civilDate } = projectionContext();
-    return session.engine.applyEvents(
-      snapshot.events,
-      asOf,
-      snapshot.cursor.eventId,
-      civilDate,
-      snapshot.syncIdentity,
-    );
   }
   async handleItemAction(type, itemId) {
     if (this.busy || !this.store || !this.engine) {
       return;
     }
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const submittedItemId = itemId;
     const activeList = [this.today, this.needs, this.shopping, this.staples].find((list) =>
       list.contains(document.activeElement),
@@ -2265,7 +1911,7 @@ class KinApp extends HTMLElement {
     let restoreComposeFocus = false;
     try {
       await this.appendCommand({ type, itemId: submittedItemId });
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.renderState();
       this.setStatus(
         type === "complete"
@@ -2277,7 +1923,7 @@ class KinApp extends HTMLElement {
       this.broadcastEventChange();
       restoreComposeFocus = true;
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) {
         this.pendingRefresh = true;
       }
@@ -2289,7 +1935,7 @@ class KinApp extends HTMLElement {
       this.setStatus("");
       restoreComposeFocus = true;
     } finally {
-      if (this.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
         if (detailFocused) {
           const next = this.detail.querySelector('[data-focus-id="primary"]') ?? this.detail.querySelector(".item-detail-close");
@@ -2297,7 +1943,7 @@ class KinApp extends HTMLElement {
         } else if (restoreComposeFocus && !restoreListFocus) {
           this.compose.focusInput();
         }
-        this.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -2306,7 +1952,7 @@ class KinApp extends HTMLElement {
     const list = [this.today, this.needs, this.shopping, this.staples].find((candidate) => candidate.contains(document.activeElement)) ?? null;
     if (list) list.rememberFocus();
     const stepFocus = this.detail?.contains(document.activeElement) ? (document.activeElement.dataset.focusId ?? "add-step") : null;
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const command = Object.freeze({
       type,
       itemId: detail.itemId,
@@ -2320,7 +1966,7 @@ class KinApp extends HTMLElement {
     this.setStatus("Saving…");
     try {
       await this.appendCommand(command);
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.renderState();
       if (submittedStep != null) this.detail.clearStepDraft(command.itemId, submittedStep);
       this.detail.clearFeedback(command.itemId);
@@ -2336,20 +1982,20 @@ class KinApp extends HTMLElement {
       );
       this.broadcastEventChange();
     } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.pendingRefresh = true;
       this.renderState();
       this.showDetailActionError(command.itemId, error.userMessage ?? SAVE_ERROR,
         () => this.handleItemStep(type, command), command);
       this.setStatus("");
     } finally {
-      if (this.isCurrentSession(session)) {
+      if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
         if (stepFocus && !this.detail.contains(document.activeElement)) {
           const target = type === "add-item-step" ? this.detail.stepInput : [...this.detail.querySelectorAll("[data-focus-id]")].find((node) => node.dataset.focusId === stepFocus);
           (target && !target.disabled ? target : this.detail.stepInput)?.focus();
         }
-        this.flushPeerRefresh();
+        this.ctx.peers.flushPeerRefresh();
       }
     }
   }
@@ -2358,311 +2004,14 @@ class KinApp extends HTMLElement {
     this.detail.setFeedback(itemId, { itemId, message, retry, intent });
     if (this.selection) this.feedDetail();
   }
-  openPeerChannel() {
-    if (
-      !this.isConnected ||
-      this.channel ||
-      !("BroadcastChannel" in globalThis)
-    ) {
-      return;
-    }
-    try {
-      this.channel = new BroadcastChannel("kin-household-events-v1");
-      this.channel.addEventListener("message", this.onPeerMessage);
-    } catch {
-      this.channel = null;
-    }
-  }
   async appendCommand(command) {
-    const session = this.captureSession();
-    this.assertCurrentSession(session);
+    const session = this.ctx.session.captureSession();
+    this.ctx.session.assertCurrentSession(session);
     const result = await session.store.append(command, session.engine);
-    this.assertCurrentSession(session);
+    this.ctx.session.assertCurrentSession(session);
     this.state = result.state;
     this.snapshotBoundary = result.snapshotBoundary;
     void this.syncCoordinator?.syncNow();
-  }
-  applyCatchUpSnapshot(snapshot) {
-    if (!this.vault || this.vault.locked || !this.engine)
-      throw new Error("Kin is locked.");
-    const { asOf, civilDate } = projectionContext();
-    const state = this.engine.applyEvents(
-      snapshot.events,
-      asOf,
-      snapshot.cursor.eventId,
-      civilDate,
-      snapshot.syncIdentity,
-    );
-    const throughEventId = state.summary.throughEventId;
-    if (throughEventId !== (snapshot.through?.eventId ?? null)) {
-      throw new Error(
-        "Kin could not match its local catch-up snapshot boundary.",
-      );
-    }
-    this.state = state;
-    this.catchUpCursor = snapshot.cursor;
-    this.snapshotBoundary = snapshot.through
-      ? {
-          eventId: snapshot.through.eventId,
-          localSequence: snapshot.through.localSequence,
-          snapshotThroughEventId: snapshot.through.eventId,
-          snapshotThroughLocalSequence: snapshot.through.localSequence,
-        }
-      : null;
-  }
-  async handleCaughtUp() {
-    if (this.busy || !this.store || !this.snapshotBoundary) return;
-    const session = this.captureSession();
-    const boundary = this.snapshotBoundary;
-    const restoreCatchUpFocus = document.activeElement === this.catchUp.button;
-    this.ctx.status.setBusy(true);
-    this.clearAlert();
-    this.setStatus("Saving catch-up state…");
-    let committed = false;
-    try {
-      await session.store.markCaughtUpThrough(boundary);
-      this.assertCurrentSession(session);
-      committed = true;
-      // Peers must learn about the commit even if this tab cannot reload it.
-      this.broadcastViewStateChange();
-      const snapshot = await session.store.getCatchUpState();
-      this.assertCurrentSession(session);
-      this.applyCatchUpSnapshot(snapshot);
-      this.renderState();
-      this.setStatus(
-        this.state.summary.totalCount === 0
-          ? "Caught up."
-          : "Catch-up summary updated.",
-      );
-    } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
-      this.ctx.status.showAlert(
-        committed
-          ? "Your catch-up position was saved, but Kin could not refresh the summary. Try again to reload it."
-          : (error.userMessage ??
-              "Kin could not update this browser's catch-up position. Your saved household information was not deleted."),
-        committed ? this.retryRefresh : () => this.handleCaughtUp(),
-      );
-      this.setStatus("");
-    } finally {
-      if (this.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        if (restoreCatchUpFocus) {
-          (this.catchUp.button.hidden
-            ? this.catchUp.heading
-            : this.catchUp.button
-          ).focus();
-        }
-        this.flushPeerRefresh();
-      }
-    }
-  }
-  closePeerChannel() {
-    this.channel?.removeEventListener("message", this.onPeerMessage);
-    this.channel?.close();
-    this.channel = null;
-  }
-  broadcastEventChange() {
-    try {
-      this.channel?.postMessage({ type: "events-changed" });
-    } catch {
-      // Cross-tab refresh is best-effort; IndexedDB remains authoritative.
-    }
-  }
-  broadcastViewStateChange() {
-    try {
-      this.channel?.postMessage({ type: "view-state-changed" });
-    } catch {
-      // Cursor convergence is recovered from local IndexedDB on reload or focus.
-    }
-  }
-  handlePeerMessage(event) {
-    if (event.data?.type === "household-locked") {
-      const peerEpoch = event.data.lockEpoch;
-      // A lock notification may be delivered after this tab has already
-      // re-unlocked at that durable epoch. Only a newer epoch revokes it.
-      if (
-        !Number.isSafeInteger(peerEpoch) ||
-        peerEpoch < 0 ||
-        !this.vault ||
-        peerEpoch > (this.vault.securityEpoch ?? -1)
-      )
-        this.lockHousehold(false);
-      return;
-    }
-    if (!this.vault || this.vault.locked) return;
-    if (!["events-changed", "view-state-changed"].includes(event.data?.type)) {
-      return;
-    }
-    if (this.busy || this.refreshing) {
-      this.pendingRefresh = true;
-      return;
-    }
-    this.refreshFromEvents();
-  }
-  async refreshFromEvents() {
-    if (!this.vault || this.vault.locked) return;
-    if (!this.store || !this.engine || this.busy || this.refreshing) {
-      this.pendingRefresh = true;
-      return;
-    }
-    const session = this.captureSession();
-    this.refreshing = true;
-    const focusedControl = this.contains(document.activeElement)
-      ? document.activeElement
-      : null;
-    this.ctx.status.setBusy(true);
-    // A failed refresh must not replace the command awaiting recovery.
-    const previousFailure = this.suspendedRetry ?? {
-      action: this.retryAction !== this.retryRefresh ? this.retryAction : null,
-      intent: this.retryIntent,
-      message: this.alert.textContent,
-    };
-    const previousRetry = previousFailure.action;
-    const previousRetryIntent = previousFailure.intent;
-    const previousAlert = previousFailure.message;
-    const restoreComposeFocus = this.compose.contains(document.activeElement);
-    // A focused list row is rebuilt by the refresh; the list restores focus
-    // to the equivalent control, or the capture field takes it as a fallback.
-    const focusedList = [this.today, this.needs, this.shopping, this.staples].find((list) => list.contains(document.activeElement)) ?? null;
-    focusedList?.rememberFocus();
-    const restoreHandoffFocus = this.handoffs.lists.contains(
-      document.activeElement,
-    );
-    const routineFocus = this.routines.captureFocus();
-    const restoreTalkFocus = this.talks.lists.contains(document.activeElement);
-    this.clearAlert();
-    this.setStatus("Updating from another tab…");
-    try {
-      const snapshot = await session.store.getCatchUpState();
-      this.assertCurrentSession(session);
-      this.applyCatchUpSnapshot(snapshot);
-      this.renderState();
-      this.setStatus("");
-      if (previousRetry) {
-        const handoff = previousRetryIntent?.handoffId
-          ? this.state.handoffs.find(
-              (record) => record.handoffId === previousRetryIntent.handoffId,
-            )
-          : null;
-        const talk = previousRetryIntent?.talkId
-          ? this.state.talks.find(
-              (record) => record.talkId === previousRetryIntent.talkId,
-            )
-          : null;
-        const routine = previousRetryIntent?.routineId
-          ? this.state.routines.find(
-              (record) => record.routineId === previousRetryIntent.routineId,
-            )
-          : null;
-        const item = previousRetryIntent?.routineId
-          ? routine
-          : previousRetryIntent?.talkId
-            ? talk
-            : previousRetryIntent?.handoffId
-              ? handoff
-              : previousRetryIntent
-                ? this.state.items.find(
-                    (stateItem) =>
-                      stateItem.itemId === previousRetryIntent.itemId,
-                  )
-                : null;
-        if (
-          previousRetryIntent &&
-          (!item ||
-            item.status === "archived" ||
-            (previousRetryIntent.occurrenceKey !== undefined &&
-              item.occurrenceKey !== previousRetryIntent.occurrenceKey))
-        ) {
-          this.setStatus(
-            previousRetryIntent.routineId
-              ? "That period changed. Review the current routine."
-              : previousRetryIntent.talkId
-                ? "That topic changed. Review its current state."
-                : previousRetryIntent.handoffId
-                  ? "That handoff changed. Review its current state."
-                  : "That item changed. Review its current state below.",
-          );
-        } else {
-          this.ctx.status.showAlert(previousAlert, previousRetry, previousRetryIntent);
-        }
-      }
-    } catch (error) {
-      if (error.code === "locked" || !this.isCurrentSession(session)) return;
-      this.ctx.status.showAlert(
-        error.userMessage ??
-          "Kin could not refresh from local household storage. Your saved information was not deleted.",
-        this.retryRefresh,
-      );
-      this.suspendedRetry = previousRetry ? previousFailure : null;
-      this.setStatus("");
-    } finally {
-      if (this.isCurrentSession(session)) {
-        this.refreshing = false;
-        this.ctx.status.setBusy(false);
-        if (focusedControl?.isConnected && !focusedControl.closest("[hidden]"))
-          focusedControl.focus();
-        else if (focusedControl && this.pulse.contains(focusedControl))
-          this.pulse.focusInput();
-        if (restoreHandoffFocus) this.handoffs.focusInput();
-        this.routines.restoreFocus(routineFocus);
-        if (restoreTalkFocus) this.talks.focusInput();
-        if (restoreComposeFocus) {
-          this.compose.focusInput();
-        } else if (focusedList && !this.contains(document.activeElement)) {
-          if (focusedList.closest("[hidden]") || focusedList === this.today) this.compose.focusInput();
-          else focusedList.focusInput?.();
-        }
-        this.flushPeerRefresh();
-      }
-    }
-  }
-  flushPeerRefresh() {
-    if (!this.vault || this.vault.locked) return;
-    if (!this.pendingRefresh || this.busy || this.refreshing) {
-      return;
-    }
-    this.pendingRefresh = false;
-    const session = this.captureSession();
-    queueMicrotask(() => {
-      if (this.isCurrentSession(session)) this.refreshFromEvents();
-    });
-  }
-  async openUnlockedHousehold(vault) {
-    // Re-opening without a lock still ends the previous session's timers;
-    // initialize() resumes them only if this is the same vault.
-    this.localReminders.suspendAll(this.vault?.vaultId ?? null);
-    this.clearAppliedAppearance();
-    vault.assertUnlocked();
-    this.vault = vault;
-    this.securityGeneration++;
-    setActiveVault(vault);
-    this.removeLockListener?.();
-    this.removeLockListener = vault.onLock(() => this.lockHousehold(false));
-    const generation = this.securityGeneration;
-    this.attachmentPreviews?.clear();
-    this.attachmentPreviews = new AttachmentPreviewCache((record) => this.loadPreviewBlob(record));
-    await this.initialize();
-    this.assertCurrentSession({ vault, generation });
-    vault.assertUnlocked();
-    if (!this.store)
-      throw new Error("Kin could not verify the household store.");
-    const session = this.captureSession();
-    try {
-      const appearance = await loadAppearance(this.store, vault);
-      this.assertCurrentSession(session);
-      this.personalAppearance = appearance;
-      const editorValue = appearance.version === 2 ? { ...DEFAULT_APPEARANCE, owner: appearance.owner } : appearance;
-      this.appearance.initialize(editorValue);
-      this.applyEffectiveAppearance();
-    } catch (error) {
-      this.assertCurrentSession(session);
-      this.appearance.initialize({ version: 1, owner: null, mode: "system", colorSource: "default", seed: "#984D38", manual: null, image: null });
-      this.setStatus("Kin couldn't load your saved appearance, so the default is in use.");
-    }
-    this.scheduleAutoLock();
-    this.ctx.status.renderOnboarding();
-    this.main.focus();
   }
   resolvedAppearanceMode(mode) {
     return mode === "system" ? (this.systemAppearance?.matches ? "dark" : "light") : mode;
@@ -2696,30 +2045,30 @@ class KinApp extends HTMLElement {
   }
   async handleSaveAppearance(event) {
     const { value, complete } = event.detail;
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     try {
       const saved = await saveAppearance(session.store, session.vault, value);
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.personalAppearance = structuredClone(saved);
       this.applyEffectiveAppearance();
       complete(saved, null);
     } catch (error) {
-      if (this.isCurrentSession(session)) complete(null, new Error("Kin couldn't save your appearance. Your previous saved appearance is unchanged."));
+      if (this.ctx.session.isCurrentSession(session)) complete(null, new Error("Kin couldn't save your appearance. Your previous saved appearance is unchanged."));
     }
   }
   async handleUseHouseholdAppearance(event) {
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     try {
       this.personalAppearance = await saveAppearance(session.store, session.vault, event.detail.value);
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       const effective = resolveAppearance(this.personalAppearance, this.householdSettings);
       this.appearance.initialize(effective);
       this.applyAppearance(effective);
       this.setStatus("Now following the household appearance on this device.");
-    } catch { if (this.isCurrentSession(session)) this.setStatus("Kin couldn't update your appearance. Your previous choice is unchanged."); }
+    } catch { if (this.ctx.session.isCurrentSession(session)) this.setStatus("Kin couldn't update your appearance. Your previous choice is unchanged."); }
   }
   async handleInheritAppearanceProperty(event) {
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     const next = { ...this.personalAppearance, version: 2 };
     if (event.detail.property === "mode") delete next.mode;
     if (event.detail.property === "color") { delete next.colorSource; delete next.seed; delete next.manual; }
@@ -2729,12 +2078,12 @@ class KinApp extends HTMLElement {
     }
     try {
       this.personalAppearance = await saveAppearance(session.store, session.vault, next);
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       const effective = resolveAppearance(this.personalAppearance, this.householdSettings);
       this.appearance.initialize(effective);
       this.applyAppearance(effective);
       this.setStatus(`Now following the household ${event.detail.property} on this device.`);
-    } catch { if (this.isCurrentSession(session)) this.setStatus("Kin couldn't update your appearance. Your previous choice is unchanged."); }
+    } catch { if (this.ctx.session.isCurrentSession(session)) this.setStatus("Kin couldn't update your appearance. Your previous choice is unchanged."); }
   }
   applyEffectiveAppearance() {
     const effective = resolveAppearance(this.personalAppearance, this.householdSettings);
@@ -2750,34 +2099,34 @@ class KinApp extends HTMLElement {
     if (!this.syncCoordinator || !this.vault || this.vault.locked) return;
     // The load spans the network and IndexedDB; a lock or re-open meanwhile
     // must not write the household name or a status into the next session.
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     try {
       const result = await this.syncCoordinator.loadHouseholdSettings();
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       if (result.value && (this.householdSettings?.revision ?? -1) <= result.value.revision) this.householdSettings = result.value;
       this.householdDefaults.initialize({ ...result, value: this.householdSettings });
       this.applyEffectiveAppearance();
-    } catch { if (this.isCurrentSession(session)) this.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded."); }
+    } catch { if (this.ctx.session.isCurrentSession(session)) this.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded."); }
   }
-  async restoreCachedHouseholdDefaults(identity, session = this.captureSession()) {
+  async restoreCachedHouseholdDefaults(identity, session = this.ctx.session.captureSession()) {
     if (!identity) return;
     try {
       const value = await loadCachedHouseholdSettings(identity);
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       if (value && (this.householdSettings?.revision ?? -1) <= value.revision) this.householdSettings = value;
       this.householdDefaults.initialize({ admin: false, adminRecorded: false, value: this.householdSettings });
       this.applyEffectiveAppearance();
     } catch {
-      if (this.isCurrentSession(session)) this.setStatus("Kin couldn't restore the last shared appearance. Local household information is still available.");
+      if (this.ctx.session.isCurrentSession(session)) this.setStatus("Kin couldn't restore the last shared appearance. Local household information is still available.");
     }
   }
   async handleSaveHouseholdDefaults(event) {
     const { value, complete } = event.detail;
     if (!this.syncCoordinator) { complete(null, new Error("Connect household sync before changing shared settings.")); return; }
-    const session = this.captureSession();
+    const session = this.ctx.session.captureSession();
     try {
       const saved = await this.syncCoordinator.saveHouseholdSettings(value);
-      this.assertCurrentSession(session);
+      this.ctx.session.assertCurrentSession(session);
       this.householdSettings = saved;
       this.applyEffectiveAppearance();
       complete(saved, null);
@@ -2785,7 +2134,7 @@ class KinApp extends HTMLElement {
       // A save settling after lock or a household re-open (including the
       // stale-session assert above) reports nothing: a re-open keeps the same
       // editor for the new session. A committed server write is unaffected.
-      if (this.isCurrentSession(session)) complete(null, error);
+      if (this.ctx.session.isCurrentSession(session)) complete(null, error);
     }
   }
   clearAppliedAppearance() {
@@ -2807,129 +2156,32 @@ class KinApp extends HTMLElement {
     this.appearance?.clear();
   }
   async loadPreviewBlob(record) {
-    const session = this.captureSession();
-    this.assertCurrentSession(session);
+    const session = this.ctx.session.captureSession();
+    this.ctx.session.assertCurrentSession(session);
     const opened = await this.loadAttachmentForView(record, session);
     return opened.blob;
   }
-  lockHousehold(broadcast = true, { preserveSecurityOperation = false, endSession = false } = {}) {
-    if (broadcast) {
-      // A protected read holds a native transaction while crypto runs. Notify
-      // peers before the epoch write queues behind that read, so they abort it
-      // promptly. The later committed epoch remains authoritative if delivery
-      // is missed. Numbered intent also cannot revoke a newer unlock epoch.
-      this.notifyPeerLock((this.vault?.securityEpoch ?? this.security?.manifest?.lockEpoch ?? -1) + 1);
-      this.lockBarrier = Promise.resolve(this.lockBarrier)
-        .then(() => EventStore.lockAll())
-        .then((lockEpoch) => {
-          try {
-            this.channel?.postMessage({ type: "household-locked", lockEpoch });
-          } catch {
-            // Durable epoch guards still reject stale capabilities.
-          }
-          return lockEpoch;
-        })
-        .catch((error) => {
-          this.security?.error(error);
-        });
-    }
-    this.securityGeneration++;
-    this.clearAppliedAppearance();
-    this.removeLockListener?.();
-    this.removeLockListener = null;
-    const vault = this.vault ?? getActiveVault();
-    // Reminder timers hold decrypted titles; none may fire once locked. A lock
-    // suspends them as { id, at, vaultId } only; ending the session clears them.
-    if (endSession) this.localReminders.clearAll();
-    else this.localReminders.suspendAll(vault?.vaultId ?? null);
-    this.vault = null;
-    vault?.lock();
-    clearTimeout(this.autoLockTimer);
-    this.autoLockTimer = null;
-    this.closeViewer();
-    this.closeItemDetail({ restoreFocus: false });
-    this.commandPalette?.dismiss();
-    this.commandGeneration = null;
-    this.clearBulkOutcome();
-    this.pendingCapture = null;
-    // pendingScheduleChange holds only random ids and a cadence. It survives
-    // a lock so that unlocking the same vault can finish a half-saved change
-    // instead of starting a second replacement; other vaults never see it.
-    this.attachmentPreviews?.clear();
-    this.attachmentPreviews = null;
-    this.attachmentTarget = null;
-    this.syncState = null;
-    this.pageScroll.clear();
-    if (this.siteTools) this.siteTools.hidden = true;
-    if (this.syncChip) this.syncChip.state = null;
-    for (const timer of this.attachmentProgressTimers.values()) clearTimeout(timer);
-    this.attachmentProgressTimers.clear();
-    clearAttachmentProgress();
-    this.householdStatus = null;
-    this.passkeyPromptDismissed = false;
-    if (this.onboarding) { this.onboarding.hidden = true; this.onboarding.replaceChildren(); }
-    this.syncCoordinator?.stop();
-    this.syncCoordinator = null;
-    this.store?.close();
-    this.store = null;
-    this.engine?.dispose?.();
-    this.engine = null;
-    this.state = null;
-    this.attachmentRows = [];
-    this.snapshotBoundary = null;
-    this.catchUpCursor = null;
-    this.pendingRefresh = false;
-    this.refreshing = false;
-    this.checkingAuthorization = false;
-    this.starting = null;
-    this.startingGeneration = null;
-    clearTimeout(this.pulseTimer);
-    clearTimeout(this.focusTimer);
-    this.clearAlert();
-    clearLegacyDrafts();
-    this.quickAdd?.reset();
-    if (this.main) {
-      this.nav.hidden = true;
-      this.shell.before(this.security);
-      this.main.hidden = true;
-      this.main.replaceChildren();
-      // Replacing every component drops private arrays, drafts and DOM nodes.
-      const components = [
-        ["catchUp", "kin-catch-up"],
-        ["today", "kin-today"],
-        ["needs", "kin-today"],
-        ["shopping", "kin-today"],
-        ["staples", "kin-today"],
-        ["compose", "kin-compose"],
-        ["handoffs", "kin-handoff-list"],
-        ["talks", "kin-talk-list"],
-        ["search", "kin-search"],
-        ["pulse", "kin-pulse"],
-        ["routines", "kin-routines"],
-        ["detail", "kin-item-detail"],
-      ];
-      for (const [field, name] of components)
-        this[field] = document.createElement(name);
-      this.detailMode = null;
-      this.household.syncKeyStore?.close();
-      this.household.remove();
-      this.ctx.views.buildViews(this.main);
-      if (!this.stateNotice.isConnected) this.main.prepend(this.stateNotice);
-      this.ctx.status.setBusy(false);
-      this.setStatus("Household locked.");
-      if (!preserveSecurityOperation) this.security.locked();
-    }
-  }
-  notifyPeerLock(lockEpoch) {
-    if (!Number.isSafeInteger(lockEpoch) || lockEpoch < 1) return;
-    try { this.channel?.postMessage({ type: "household-locked", lockEpoch }); }
-    catch { /* The durable epoch still fences subsequent operations. */ }
-  }
 
   // Regression scripts call or replace these; each delegates to its controller.
+  setAutoLockMinutes(...args) { return this.ctx.session.setAutoLockMinutes(...args); }
+  initialize(...args) { return this.ctx.session.initialize(...args); }
+  configureSyncCoordinator(...args) { return this.ctx.sync.configureSyncCoordinator(...args); }
+  handleSyncState(...args) { return this.ctx.sync.handleSyncState(...args); }
+  schedulePulseRefresh(...args) { return this.ctx.refresh.schedulePulseRefresh(...args); }
+  readAuthoritativeState(...args) { return this.ctx.refresh.readAuthoritativeState(...args); }
+  openPeerChannel(...args) { return this.ctx.peers.openPeerChannel(...args); }
+  handleCaughtUp(...args) { return this.ctx.refresh.handleCaughtUp(...args); }
+  closePeerChannel(...args) { return this.ctx.peers.closePeerChannel(...args); }
+  broadcastEventChange(...args) { return this.ctx.peers.broadcastEventChange(...args); }
+  broadcastViewStateChange(...args) { return this.ctx.peers.broadcastViewStateChange(...args); }
+  handlePeerMessage(...args) { return this.ctx.peers.handlePeerMessage(...args); }
+  refreshFromEvents(...args) { return this.ctx.refresh.refreshFromEvents(...args); }
   renderState(...args) { return this.ctx.render.renderState(...args); }
   setStatus(...args) { return this.ctx.status.setStatus(...args); }
   clearAlert(...args) { return this.ctx.status.clearAlert(...args); }
+  openUnlockedHousehold(...args) { return this.ctx.session.openUnlockedHousehold(...args); }
+  lockHousehold(...args) { return this.ctx.session.lockHousehold(...args); }
+  notifyPeerLock(...args) { return this.ctx.session.notifyPeerLock(...args); }
 }
 
 customElements.define("kin-app", KinApp);

@@ -1,0 +1,277 @@
+// Unlock, open, lock and auto-lock of the household session.
+// Moved verbatim from <kin-app>; state stays on the element (`this.app`).
+import { clearAttachmentProgress } from "../../attachments/attachment-progress.js";
+import { AttachmentPreviewCache } from "../../attachments/attachment-preview.js";
+import { loadKinEngine } from "../../wasm/kin-engine.js";
+import { EventStore } from "../../storage/event-store.js";
+import { clearLegacyDrafts } from "../kin-security.js";
+import { DEFAULT_APPEARANCE, loadAppearance } from "../../appearance/store.js";
+import { getActiveVault, setActiveVault } from "../../security/local-vault.js";
+import { AUTO_LOCK_KEY, START_ERROR } from "./constants.js";
+import { assertCurrentSession, captureSession, isCurrentSession } from "../shared/session-guard.js";
+
+export class SessionController {
+  constructor(ctx) {
+    this.ctx = ctx;
+    this.app = ctx.app;
+  }
+
+  // The shared capture / check / assert pattern (shared/session-guard.js).
+  captureSession() { return captureSession(this.app); }
+  isCurrentSession(session) { return isCurrentSession(this.app, session); }
+  assertCurrentSession(session) { assertCurrentSession(this.app, session); }
+  async initialize() {
+    if (this.app.starting && this.app.startingGeneration === this.app.securityGeneration)
+      return this.app.starting;
+    const starting = this.loadApplication();
+    this.app.starting = starting;
+    this.app.startingGeneration = this.app.securityGeneration;
+    try {
+      await starting;
+    } finally {
+      if (this.app.starting === starting) this.app.starting = null;
+    }
+  }
+  async loadApplication() {
+    const session = { generation: this.app.securityGeneration, vault: this.app.vault };
+    if (!session.vault || session.vault.locked) {
+      await this.app.security.initialize();
+      if (session.generation !== this.app.securityGeneration || this.app.vault) return;
+      this.app.ctx.status.setBusy(false);
+      this.app.setStatus("Household locked.");
+      return;
+    }
+    const retrying = !this.app.retryButton.hidden;
+    this.app.ctx.status.setBusy(true);
+    this.app.clearAlert();
+    this.app.setStatus("Starting Kin…");
+    try {
+      this.app.syncCoordinator?.stop();
+      this.app.syncCoordinator = null;
+      this.app.store?.close();
+      this.app.store = null;
+      this.app.engine?.dispose?.();
+      this.app.engine = null;
+      const engine = await loadKinEngine();
+      if (!this.isCurrentSession(session)) {
+        engine.dispose();
+        this.assertCurrentSession(session);
+      }
+      this.app.engine = engine;
+      session.engine = engine;
+      const store = await EventStore.open({ vault: session.vault, engine });
+      if (!this.isCurrentSession(session)) {
+        store.close();
+        this.assertCurrentSession(session);
+      }
+      this.app.store = store;
+      session.store = store;
+      this.app.openPeerChannel();
+      const snapshot = await store.getCatchUpState();
+      this.assertCurrentSession(session);
+      this.app.ctx.refresh.applyCatchUpSnapshot(snapshot);
+      await this.app.restoreCachedHouseholdDefaults(snapshot.syncIdentity, session);
+      this.app.renderState();
+      void this.app.refreshAttachmentRows();
+      this.app.main.hidden = false;
+      this.app.nav.hidden = false;
+      this.app.siteTools.hidden = false;
+      this.app.peoplePage.append(this.app.household);
+      this.app.privacyPage.append(this.app.security);
+      this.app.showPageFromLocation();
+      this.app.setStatus("Ready.");
+      // Reminders suspended by a lock of this same vault come back with
+      // titles from the fresh state; another vault's are discarded.
+      if (this.isCurrentSession(session)) {
+        this.app.localReminders.resumeAll(session.vault.vaultId ?? null, (id) => this.app.reminderTarget(id, session));
+        this.app.renderReminders();
+      }
+      this.app.ctx.sync.updateSyncChip();
+      if (navigator.onLine === false) this.app.onOffline();
+      this.app.retryButton.hidden = true;
+      void this.app.configureSyncCoordinator();
+    } catch (error) {
+      if (this.isCurrentSession(session)) {
+        this.app.lockHousehold();
+        this.app.security.error(error.userMessage ? error : new Error(START_ERROR));
+      }
+    } finally {
+      if (this.isCurrentSession(session)) {
+        this.app.ctx.status.setBusy(false);
+        if (retrying && this.app.store) this.app.compose.focusInput();
+        this.app.ctx.peers.flushPeerRefresh();
+      }
+    }
+  }
+  async openUnlockedHousehold(vault) {
+    // Re-opening without a lock still ends the previous session's timers;
+    // initialize() resumes them only if this is the same vault.
+    this.app.localReminders.suspendAll(this.app.vault?.vaultId ?? null);
+    this.app.clearAppliedAppearance();
+    vault.assertUnlocked();
+    this.app.vault = vault;
+    this.app.securityGeneration++;
+    setActiveVault(vault);
+    this.app.removeLockListener?.();
+    this.app.removeLockListener = vault.onLock(() => this.app.lockHousehold(false));
+    const generation = this.app.securityGeneration;
+    this.app.attachmentPreviews?.clear();
+    this.app.attachmentPreviews = new AttachmentPreviewCache((record) => this.app.loadPreviewBlob(record));
+    await this.app.initialize();
+    this.assertCurrentSession({ vault, generation });
+    vault.assertUnlocked();
+    if (!this.app.store)
+      throw new Error("Kin could not verify the household store.");
+    const session = this.captureSession();
+    try {
+      const appearance = await loadAppearance(this.app.store, vault);
+      this.assertCurrentSession(session);
+      this.app.personalAppearance = appearance;
+      const editorValue = appearance.version === 2 ? { ...DEFAULT_APPEARANCE, owner: appearance.owner } : appearance;
+      this.app.appearance.initialize(editorValue);
+      this.app.applyEffectiveAppearance();
+    } catch (error) {
+      this.assertCurrentSession(session);
+      this.app.appearance.initialize({ version: 1, owner: null, mode: "system", colorSource: "default", seed: "#984D38", manual: null, image: null });
+      this.app.setStatus("Kin couldn't load your saved appearance, so the default is in use.");
+    }
+    this.scheduleAutoLock();
+    this.app.ctx.status.renderOnboarding();
+    this.app.main.focus();
+  }
+  lockHousehold(broadcast = true, { preserveSecurityOperation = false, endSession = false } = {}) {
+    if (broadcast) {
+      // A protected read holds a native transaction while crypto runs. Notify
+      // peers before the epoch write queues behind that read, so they abort it
+      // promptly. The later committed epoch remains authoritative if delivery
+      // is missed. Numbered intent also cannot revoke a newer unlock epoch.
+      this.app.notifyPeerLock((this.app.vault?.securityEpoch ?? this.app.security?.manifest?.lockEpoch ?? -1) + 1);
+      this.app.lockBarrier = Promise.resolve(this.app.lockBarrier)
+        .then(() => EventStore.lockAll())
+        .then((lockEpoch) => {
+          try {
+            this.app.channel?.postMessage({ type: "household-locked", lockEpoch });
+          } catch {
+            // Durable epoch guards still reject stale capabilities.
+          }
+          return lockEpoch;
+        })
+        .catch((error) => {
+          this.app.security?.error(error);
+        });
+    }
+    this.app.securityGeneration++;
+    this.app.clearAppliedAppearance();
+    this.app.removeLockListener?.();
+    this.app.removeLockListener = null;
+    const vault = this.app.vault ?? getActiveVault();
+    // Reminder timers hold decrypted titles; none may fire once locked. A lock
+    // suspends them as { id, at, vaultId } only; ending the session clears them.
+    if (endSession) this.app.localReminders.clearAll();
+    else this.app.localReminders.suspendAll(vault?.vaultId ?? null);
+    this.app.vault = null;
+    vault?.lock();
+    clearTimeout(this.app.autoLockTimer);
+    this.app.autoLockTimer = null;
+    this.app.closeViewer();
+    this.app.closeItemDetail({ restoreFocus: false });
+    this.app.commandPalette?.dismiss();
+    this.app.commandGeneration = null;
+    this.app.clearBulkOutcome();
+    this.app.pendingCapture = null;
+    // pendingScheduleChange holds only random ids and a cadence. It survives
+    // a lock so that unlocking the same vault can finish a half-saved change
+    // instead of starting a second replacement; other vaults never see it.
+    this.app.attachmentPreviews?.clear();
+    this.app.attachmentPreviews = null;
+    this.app.attachmentTarget = null;
+    this.app.syncState = null;
+    this.app.pageScroll.clear();
+    if (this.app.siteTools) this.app.siteTools.hidden = true;
+    if (this.app.syncChip) this.app.syncChip.state = null;
+    for (const timer of this.app.attachmentProgressTimers.values()) clearTimeout(timer);
+    this.app.attachmentProgressTimers.clear();
+    clearAttachmentProgress();
+    this.app.householdStatus = null;
+    this.app.passkeyPromptDismissed = false;
+    if (this.app.onboarding) { this.app.onboarding.hidden = true; this.app.onboarding.replaceChildren(); }
+    this.app.syncCoordinator?.stop();
+    this.app.syncCoordinator = null;
+    this.app.store?.close();
+    this.app.store = null;
+    this.app.engine?.dispose?.();
+    this.app.engine = null;
+    this.app.state = null;
+    this.app.attachmentRows = [];
+    this.app.snapshotBoundary = null;
+    this.app.catchUpCursor = null;
+    this.app.pendingRefresh = false;
+    this.app.refreshing = false;
+    this.app.checkingAuthorization = false;
+    this.app.starting = null;
+    this.app.startingGeneration = null;
+    clearTimeout(this.app.pulseTimer);
+    clearTimeout(this.app.focusTimer);
+    this.app.clearAlert();
+    clearLegacyDrafts();
+    this.app.quickAdd?.reset();
+    if (this.app.main) {
+      this.app.nav.hidden = true;
+      this.app.shell.before(this.app.security);
+      this.app.main.hidden = true;
+      this.app.main.replaceChildren();
+      // Replacing every component drops private arrays, drafts and DOM nodes.
+      const components = [
+        ["catchUp", "kin-catch-up"],
+        ["today", "kin-today"],
+        ["needs", "kin-today"],
+        ["shopping", "kin-today"],
+        ["staples", "kin-today"],
+        ["compose", "kin-compose"],
+        ["handoffs", "kin-handoff-list"],
+        ["talks", "kin-talk-list"],
+        ["search", "kin-search"],
+        ["pulse", "kin-pulse"],
+        ["routines", "kin-routines"],
+        ["detail", "kin-item-detail"],
+      ];
+      for (const [field, name] of components)
+        this.app[field] = document.createElement(name);
+      this.app.detailMode = null;
+      this.app.household.syncKeyStore?.close();
+      this.app.household.remove();
+      this.app.ctx.views.buildViews(this.app.main);
+      if (!this.app.stateNotice.isConnected) this.app.main.prepend(this.app.stateNotice);
+      this.app.ctx.status.setBusy(false);
+      this.app.setStatus("Household locked.");
+      if (!preserveSecurityOperation) this.app.security.locked();
+    }
+  }
+  notifyPeerLock(lockEpoch) {
+    if (!Number.isSafeInteger(lockEpoch) || lockEpoch < 1) return;
+    try { this.app.channel?.postMessage({ type: "household-locked", lockEpoch }); }
+    catch { /* The durable epoch still fences subsequent operations. */ }
+  }
+  setAutoLockMinutes(minutes) {
+    this.app.autoLockMinutes = [0, 5, 15, 60].includes(minutes) ? minutes : 0;
+    try { localStorage.setItem(AUTO_LOCK_KEY, String(this.app.autoLockMinutes)); } catch { /* Preference only; lock-on-close still applies. */ }
+    this.scheduleAutoLock();
+  }
+  scheduleAutoLock() {
+    clearTimeout(this.app.autoLockTimer);
+    this.app.autoLockTimer = null;
+    if (!this.app.vault || this.app.vault.locked || !this.app.autoLockMinutes) {
+      this.app.lastActivityAt = null;
+      return;
+    }
+    this.app.lastActivityAt = Date.now();
+    const vault = this.app.vault;
+    const generation = this.app.securityGeneration;
+    this.app.autoLockTimer = setTimeout(() => {
+      this.app.autoLockTimer = null;
+      if (vault !== this.app.vault || generation !== this.app.securityGeneration || vault.locked) return;
+      this.app.lockHousehold();
+      this.app.setStatus("Kin locked after inactivity. Unlock to continue.");
+    }, this.app.autoLockMinutes * 60_000);
+  }
+}

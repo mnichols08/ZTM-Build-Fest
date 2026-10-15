@@ -17,7 +17,7 @@ const SHELL = [
   "/appearance/palette.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js",
   "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js",
   ...["app", "appearance", "household-defaults", "security", "household", "quick-add", "command-palette", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility"].map((name) => `/components/kin-${name}.js`),
-  "/components/app/constants.js", "/components/app/context.js", "/components/app/render.js", "/components/app/shell.js", "/components/app/status.js", "/components/app/views.js",
+  "/components/app/constants.js", "/components/app/context.js", "/components/app/peer-channel.js", "/components/app/refresh.js", "/components/app/render.js", "/components/app/session.js", "/components/app/shell.js", "/components/app/status.js", "/components/app/sync.js", "/components/app/views.js",
   ...["dom", "focus", "icons", "operation", "props", "session-guard"].map((name) => `/components/shared/${name}.js`),
 ];
 const ALLOWED = new Set(SHELL);
