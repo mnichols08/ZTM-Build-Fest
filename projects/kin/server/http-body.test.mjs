@@ -6,6 +6,7 @@ import { readBody, readJsonBody } from "./http-body.mjs";
 import { PairingService } from "./pairing-service.mjs";
 import { createKinServer } from "./server.mjs";
 import { DurableStore } from "./durable-store.mjs";
+import { encodeEnvelopeBatch } from "../web/sync/envelope-wire.js";
 
 const LIMIT = 1_000;
 
@@ -110,6 +111,24 @@ test("the Kin server answers an oversized API body with 413", async () => {
     });
     assert.equal(result.status, 413);
     assert.equal(JSON.parse(result.text).error, "request_too_large");
+  } finally {
+    await new Promise((resolve) => app.server.close(resolve));
+    app.store?.close();
+  }
+});
+
+test("sync events must arrive as a well-formed binary batch", async () => {
+  const app = createKinServer({ service: new PairingService(), store: new DurableStore(":memory:") });
+  await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
+  const url = `http://127.0.0.1:${app.server.address().port}/api/sync/events`;
+  try {
+    const asJson = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"events":[]}' });
+    assert.deepEqual([asJson.status, (await asJson.json()).error], [415, "unsupported_media_type"]);
+    const malformed = await fetch(url, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: new Uint8Array([1, 2, 3]) });
+    assert.deepEqual([malformed.status, (await malformed.json()).error], [400, "sync_batch_invalid"]);
+    // A well-formed batch reaches authorization.
+    const empty = await fetch(url, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: encodeEnvelopeBatch([]) });
+    assert.equal(empty.status, 401);
   } finally {
     await new Promise((resolve) => app.server.close(resolve));
     app.store?.close();

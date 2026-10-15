@@ -62,6 +62,23 @@ Rust core is organised as follows:
   browser's: `web/security/archive-stream.js`, used by
   `web/security/archive.js`.
 
+## Server modules today (refactor track)
+
+- `server.mjs`: the HTTP server and routes. `http-body.mjs` reads request
+  bodies with their byte limit enforced as they stream.
+- `durable-store.mjs`: the SQLite store's core (opening, locks,
+  transactions, backup, restore). Its method groups live in `durable-store/`:
+  `schema.mjs`, `validation.mjs`, `identity.mjs`, `lifecycle.mjs`,
+  `authority.mjs`, `envelopes.mjs`, plus `lock.mjs` and `shared.mjs`.
+- `pairing-service.mjs`: the identity service's core (state, audit, rate
+  limits). Its methods live in `pairing-service/` by flow stage:
+  `sessions.mjs`, `create.mjs`, `claim.mjs`, `approve.mjs`, then
+  `devices.mjs`, `membership.mjs`, `lifecycle.mjs` and `shared.mjs`.
+- `mixins.mjs`: `addMethods` attaches those groups to their class.
+- `sync-service.mjs` and `sync-contract.mjs`: the relay and its envelope
+  rules. Event envelopes travel as binary through
+  `web/sync/envelope-wire.js`, which the server imports.
+
 ## Module responsibilities (v0.1.0)
 
 - **`rust/src/event.rs`:** event kinds, typed classification, envelope representation, and normalized payloads.

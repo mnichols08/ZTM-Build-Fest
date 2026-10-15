@@ -227,12 +227,14 @@ async function pageHousehold() {
   return app.household.api("/api/household");
 }
 
-async function pageFetch({ path, method = "GET", body }) {
+// `bytes` (an array of byte values) sends a binary body, as sync event
+// batches are (web/sync/envelope-wire.js).
+async function pageFetch({ path, method = "GET", body, bytes }) {
   const response = await fetch(path, {
     method,
     cache: "no-store",
-    headers: body ? { "Content-Type": "application/json" } : {},
-    body: body ? JSON.stringify(body) : undefined,
+    headers: bytes ? { "Content-Type": "application/octet-stream" } : body ? { "Content-Type": "application/json" } : {},
+    body: bytes ? new Uint8Array(bytes) : body ? JSON.stringify(body) : undefined,
   });
   return { status: response.status, body: await response.json().catch(() => null) };
 }
@@ -741,7 +743,8 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       "removed Limited C's reconnect sync is refused: " + JSON.stringify(result.last));
     const cStatus = await c.call(pageFetch, { path: "/api/sync/status" });
     check([401, 403].includes(cStatus.status), `removed Limited C's stale session cannot read sync status (${cStatus.status})`);
-    const cPush = await c.call(pageFetch, { path: "/api/sync/events", method: "POST", body: { events: [] } });
+    // An empty event batch: "KSEV", version 1, count 0.
+    const cPush = await c.call(pageFetch, { path: "/api/sync/events", method: "POST", bytes: [75, 83, 69, 86, 1, 0, 0, 0] });
     check([401, 403].includes(cPush.status), `removed Limited C's stale session cannot push (${cPush.status})`);
     let cAfter = await c.call(pageLocal).catch(() => null);
     if (!cAfter) {
@@ -839,7 +842,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     result = await b.call(pageSync);
     check(result.last?.state === "paused" && ["authentication_required", "device_not_trusted"].includes(result.last.code),
       "revoked B's reconnect sync is refused: " + JSON.stringify(result.last));
-    const bPush = await b.call(pageFetch, { path: "/api/sync/events", method: "POST", body: { events: [] } });
+    const bPush = await b.call(pageFetch, { path: "/api/sync/events", method: "POST", bytes: [75, 83, 69, 86, 1, 0, 0, 0] });
     check([401, 403].includes(bPush.status), `revoked B cannot push its stale outbox (${bPush.status})`);
     const bLogin = await b.call(pageFetch, { path: "/api/login/options", method: "POST", body: {} });
     check(bLogin.status !== 200, `revoked B's device cookie cannot start a fresh login (${bLogin.status} ${bLogin.body?.error ?? ""})`);

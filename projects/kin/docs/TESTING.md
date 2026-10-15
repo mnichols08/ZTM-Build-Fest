@@ -28,6 +28,15 @@
   checks that the bridge fails closed on every truncation of a golden
   projection, on trailing bytes, on invalid header fields and on a section
   table that does not cover the body.
+- **Server hygiene (Slice 10).** `server/http-body.test.mjs` checks that a
+  declared length over the limit is answered with 413 before any body byte
+  is sent, that a chunked body is refused once it passes the limit, and that
+  `/api/sync/events` refuses JSON (415) and malformed batches (400).
+  `web/sync/envelope-wire.test.mjs` round-trips real encrypted envelopes and
+  pull pages exactly and refuses every truncation and non-canonical input.
+  Server tests write push bodies as `{ events }` and read pull pages as
+  objects through `server/sync-wire-test-utils.mjs`. The server module
+  splits are pure moves: the server suite is unchanged.
 - **Streaming archives (Slice 9).** `web/security/archive-stream.test.mjs`
   round-trips histories of 0, 1, 256, 257 and 517 events exactly and refuses
   a changed byte in any segment, a dropped, repeated or swapped segment,

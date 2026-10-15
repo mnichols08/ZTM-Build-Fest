@@ -1,3 +1,4 @@
+import { decodeEventPage, encodeEnvelopeBatch, ENVELOPE_CONTENT_TYPE } from "./envelope-wire.js";
 import {
   createHouseholdEpochKey,
   createProvisionedHouseholdEpoch,
@@ -352,9 +353,10 @@ export class SyncCoordinator {
     let hasMore = true;
     while (hasMore && passes < MAX_PULL_PASSES) {
       const syncStateBefore = await this.store.getSyncState();
-      const page = await this.request(
+      const page = decodeEventPage(await this.request(
         `/api/sync/events?cursor=${encodeURIComponent(syncStateBefore.syncCursor)}&limit=${MAX_PUSH_BATCH}`,
-      );
+        { binary: true },
+      ));
       const verified = [];
       for (const item of page.events) {
         const envelope = item.envelope;
@@ -854,7 +856,8 @@ export class SyncCoordinator {
       }
       const acknowledgement = await this.request("/api/sync/events", {
         method: "POST",
-        body: JSON.stringify({ events: envelopes }),
+        body: encodeEnvelopeBatch(envelopes),
+        headers: { "Content-Type": ENVELOPE_CONTENT_TYPE },
       });
       for (const envelope of envelopes)
         await this.store.markOutboxAccepted(
@@ -994,7 +997,9 @@ function sameLegacyTuple(binding, identity) {
   );
 }
 
-async function api(path, options = {}) {
+// `binary: true` returns a successful response's body as bytes (the event
+// pages of envelope-wire.js); errors are JSON either way.
+async function api(path, { binary = false, ...options } = {}) {
   let response;
   try {
     response = await fetch(path, {
@@ -1006,6 +1011,7 @@ async function api(path, options = {}) {
     error.code = "connection_unavailable";
     throw error;
   }
+  if (binary && response.ok) return new Uint8Array(await response.arrayBuffer());
   const value = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(

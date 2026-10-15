@@ -332,3 +332,24 @@ ms, history load 29.3 / 30.0 ms, within run-to-run spread). The browser
 stages overlap between builds; 1k app unlock, which read 100–150 ms slower in
 two pairs, read 512 / 488 ms in the third. The mirror's 4 MiB batches only
 change how a whole history enters the engine.
+
+## Slice 10 — server hygiene
+
+No stage of `core-performance.mjs` touches the server, so there is nothing
+to compare there. What changed in size:
+
+| 20-envelope sync batch | JSON | Binary |
+| --- | ---: | ---: |
+| 150-byte events | 11,994 B | 6,288 B |
+| 1 KB events | 34,654 B | 23,288 B |
+| 4.2 KB events | 119,994 B | 87,288 B |
+
+| Server module (lines) | Before | After |
+| --- | ---: | ---: |
+| `durable-store.mjs` | 2,299 | 429 core + 8 modules of 96–464 |
+| `pairing-service.mjs` | 1,901 | 146 core + 8 modules of 131–355 |
+
+- Over 400 lines: `durable-store/schema.mjs` (464, one 428-line migration
+  method kept whole in a pure move) and `durable-store/envelopes.mjs` (447).
+- An oversized body now costs the server at most its limit: a declared
+  length over it is refused before the body is read.

@@ -165,6 +165,22 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
   private memory (was +955 MB); restore 15 s (was 26 s) with +166–219 MB
   (was +525 MB).
 
+### Slice 10 — Server hygiene
+
+- `/api/sync/events` carries envelopes as binary (`application/octet-stream`)
+  instead of base64url text in JSON; JSON is refused. The envelopes, their
+  signatures and the relay's storage and validation are unchanged, and one
+  codec (`web/sync/envelope-wire.js`) serves both sides. A 20-event batch is
+  27–48% smaller. SYNC.md documents the format.
+- Request bodies are refused at their limit while they stream: a declared
+  Content-Length over it gets 413 before the body is read, and a chunked
+  body is cut off as soon as it passes it (`server/http-body.mjs`).
+- `durable-store.mjs` (2,299 lines) and `pairing-service.mjs` (1,901) are split
+  into a core and method modules (`durable-store/`, `pairing-service/` by
+  flow stage); pure moves, attached with `server/mixins.mjs`.
+- Portable membership records are compared field by field instead of by
+  `JSON.stringify`.
+
 ## Unreleased — v0.47.0 — Household Identity & Shared Appearance
 
 - Record the household founder as durable owner for new households while leaving legacy ownership unresolved and fail-closed.

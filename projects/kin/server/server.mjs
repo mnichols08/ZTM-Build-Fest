@@ -14,6 +14,12 @@ import {
 } from "./durable-store.mjs";
 import { WebAuthn } from "./webauthn.mjs";
 import { readBody, readJsonBody } from "./http-body.mjs";
+import {
+  decodeEnvelopeBatch,
+  encodeEventPage,
+  ENVELOPE_CONTENT_TYPE,
+  EnvelopeWireError,
+} from "../web/sync/envelope-wire.js";
 import { isInsideRoot, resolveDurablePath, webRoot } from "./path-safety.mjs";
 
 const FLOW_TTL_MS = 2 * 60_000;
@@ -281,7 +287,11 @@ async function api(request, response, url, context) {
     syncService.forgetHousehold(householdId);
   const binaryUpload = (request.method === "POST" && /^\/api\/sync\/attachments\/[a-f0-9]{32}$/.test(url.pathname)) ||
     (request.method === "PUT" && url.pathname === "/api/household/settings");
-  const body = binaryUpload
+  // Event envelopes travel as binary batches (web/sync/envelope-wire.js).
+  const envelopePush = request.method === "POST" && url.pathname === "/api/sync/events";
+  const body = envelopePush
+    ? await readEnvelopeBatch(request, response)
+    : binaryUpload
     ? await readBinary(request, response)
     : ["POST", "PUT", "DELETE"].includes(request.method)
     ? await readJsonBody(request, response, MAX_JSON_BODY_BYTES)
@@ -732,19 +742,18 @@ async function api(request, response, url, context) {
     });
     return;
   }
-  if (request.method === "POST" && url.pathname === "/api/sync/events") {
-    json(response, 200, syncService.push(session, body.events));
+  if (envelopePush) {
+    json(response, 200, syncService.push(session, body));
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/sync/events") {
-    json(
+    binary(
       response,
-      200,
-      syncService.pull(
+      encodeEventPage(syncService.pull(
         session,
         url.searchParams.get("cursor") ?? "",
         url.searchParams.get("limit") ?? "20",
-      ),
+      )),
     );
     return;
   }
@@ -1180,10 +1189,36 @@ function cookies(request) {
 // are binary and bounded by the attachment limit (http-body.mjs).
 const MAX_JSON_BODY_BYTES = 256_000;
 
+// A push batch: at most 20 envelopes of at most 8 KiB of base64url text,
+// which is well under this as bytes.
+const MAX_ENVELOPE_PUSH_BYTES = 200_000;
+
+async function readEnvelopeBatch(request, response) {
+  if (!String(request.headers["content-type"] ?? "").startsWith(ENVELOPE_CONTENT_TYPE))
+    throw new PairingError("unsupported_media_type", "Send sync events as a binary batch.", 415);
+  const bytes = await readBody(request, response, MAX_ENVELOPE_PUSH_BYTES, "That sync batch is too large.");
+  try {
+    return decodeEnvelopeBatch(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+  } catch (error) {
+    if (error instanceof EnvelopeWireError) throw new PairingError("sync_batch_invalid", "That sync batch is invalid.", 400);
+    throw error;
+  }
+}
+
 async function readBinary(request, response) {
   const body = await readBody(request, response, MAX_ATTACHMENT_BYTES, "That attachment is larger than Kin supports.");
   if (!body.length) throw badRequest();
   return body;
+}
+
+function binary(response, bytes) {
+  if (response.headersSent) return;
+  response.writeHead(200, {
+    "Content-Type": ENVELOPE_CONTENT_TYPE,
+    "Content-Length": bytes.length,
+    "Cache-Control": "no-store",
+  });
+  response.end(bytes);
 }
 
 function json(response, status, value) {
