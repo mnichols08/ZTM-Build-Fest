@@ -36,9 +36,11 @@ class KinSyncStatus extends HTMLElement {
     const text = document.createElement("span");
     text.className = "sync-label";
     text.textContent = label;
-    chip.append(text);
+    const desc = document.createElement("span");
+    desc.className = "visually-hidden";
+    desc.textContent = `. ${description}`;
+    chip.append(text, desc);
     chip.title = description;
-    chip.setAttribute("aria-label", `${label}. ${description}`);
     this.replaceChildren(chip);
     this.hidden = false;
   }

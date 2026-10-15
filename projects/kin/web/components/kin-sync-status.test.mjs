@@ -22,7 +22,7 @@ globalThis.document = { createElement: () => new ElementStub() };
 await import("./kin-sync-status.js");
 const KinSyncStatus = globalThis.KinSyncStatusUnderTest;
 
-test("sync states keep full accessible names and explicit compact labels", () => {
+test("sync states keep full accessible text and explicit compact labels", () => {
   const expected = {
     local: ["On this device", "Local"],
     ready: ["Up to date", "Current"],
@@ -40,7 +40,10 @@ test("sync states keep full accessible names and explicit compact labels", () =>
     assert.equal(chip.dataset.state, state);
     assert.equal(chip.dataset.compactLabel, compactLabel);
     assert.equal(chip.children[0].textContent, fullLabel);
-    assert.match(chip.attributes["aria-label"], new RegExp(`^${fullLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.`));
+    assert.equal(chip.children[1].className, "visually-hidden");
+    assert.match(chip.children[1].textContent, /^\. \S/);
+    assert.equal(chip.attributes["aria-label"], undefined);
+    assert.equal(chip.title, chip.children[1].textContent.slice(2));
   }
 });
 
