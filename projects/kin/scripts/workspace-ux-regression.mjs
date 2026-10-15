@@ -505,6 +505,44 @@ export async function workspaceViewportRegressions(client, { visit }) {
       for (let i = 0; (app.busy || app.refreshing) && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
       return app.state.items.find((item) => item.text === "Viewport fixture item").itemId;
     });
+    for (const width of [320, 360, 390]) {
+      await viewport(width, 780, true);
+      state = await page(() => {
+        const app = document.querySelector("kin-app");
+        const originalName = app.brandTitle.textContent;
+        const originalState = app.syncChip.state;
+        app.ctx.appearance.setHouseholdIdentity("A household name long enough to compete with every header control");
+        const expected = { local: "Local", ready: "Current", syncing: "Syncing", paused: "Paused", offline: "Offline", "offline-sync": "Offline" };
+        const statuses = Object.entries(expected).map(([syncState, label]) => {
+          app.syncChip.state = syncState;
+          const chip = app.syncChip.querySelector(".sync-chip");
+          const generatedContent = getComputedStyle(chip, "::after").content;
+          const visibleLabel = /^['\"](.*?)['\"]/.exec(generatedContent)?.[1] ?? generatedContent;
+          const description = chip.querySelector(".visually-hidden");
+          return { syncState, label, visibleLabel, described: description?.textContent.startsWith(". ") && !chip.hasAttribute("aria-label") };
+        });
+        const header = app.header.getBoundingClientRect();
+        const tools = app.siteTools.getBoundingClientRect();
+        const targets = [...app.siteTools.querySelectorAll("button, a")]
+          .filter((node) => node.getClientRects().length > 0)
+          .every((node) => node.getBoundingClientRect().height >= 44);
+        const result = {
+          width: innerWidth,
+          statuses,
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          headerContained: header.left >= 0 && header.right <= innerWidth && tools.right <= innerWidth,
+          nameClipped: app.brandTitle.scrollWidth > app.brandTitle.clientWidth,
+          nameTitled: app.brandTitle.title === app.brandTitle.textContent,
+          targets,
+        };
+        app.ctx.appearance.setHouseholdIdentity(originalName);
+        app.syncChip.state = originalState;
+        return result;
+      });
+      check(!state.overflow && state.headerContained && state.nameClipped && state.nameTitled && state.targets
+        && state.statuses.every(({ label, visibleLabel, described }) => label === visibleLabel && described),
+      `${width}px: every sync state keeps readable text and its accessible description beside a long household name`);
+    }
     await viewport(360, 780, true);
     state = await layout();
     check(state.tracks === 5 && state.navLinks === 5 && state.navFixed && !state.overflow && state.undersized.length === 0,

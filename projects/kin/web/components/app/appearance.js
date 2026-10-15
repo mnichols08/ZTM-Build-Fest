@@ -90,7 +90,7 @@ export class AppearanceController {
   }
   setHouseholdIdentity(name) {
     this.app.householdName = name;
-    if (this.app.brandTitle) this.app.brandTitle.textContent = name;
+    if (this.app.brandTitle) { this.app.brandTitle.textContent = name; this.app.brandTitle.title = name; }
     if (this.app.vault && !this.app.vault.locked) document.title = `${name} — Kin`;
   }
   async refreshHouseholdDefaults() {
@@ -140,7 +140,7 @@ export class AppearanceController {
     this.app.personalAppearance = null;
     this.app.householdSettings = null;
     this.app.householdName = null;
-    if (this.app.brandTitle) this.app.brandTitle.textContent = "Kin";
+    if (this.app.brandTitle) { this.app.brandTitle.textContent = "Kin"; this.app.brandTitle.title = "Kin"; }
     document.title = "Kin";
     delete document.documentElement.dataset.kinAppearance;
     document.querySelector('meta[name="theme-color"]')?.setAttribute("content", "#684033");
