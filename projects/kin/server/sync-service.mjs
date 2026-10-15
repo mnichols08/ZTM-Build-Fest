@@ -14,7 +14,7 @@ import {
   MAX_ROTATION_PACKAGES,
 } from "./sync-contract.mjs";
 
-const MAX_EVENTS_PER_BATCH = 20;
+export const MAX_EVENTS_PER_BATCH = 20;
 const MAX_REQUEST_BYTES = 200_000;
 const MAX_PROVISIONING_GRANTS = 128;
 const MAX_PROVISIONING_BATCH = 20;

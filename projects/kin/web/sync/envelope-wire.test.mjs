@@ -28,6 +28,24 @@ test("a push batch round-trips real envelopes exactly", async () => {
   assert.ok(bytes.length < JSON.stringify({ events: envelopes }).length * 0.8);
 });
 
+test("push count limits reject the header before decoding records and include the boundary", async () => {
+  const valid = await envelope(8);
+  const bytes = encodeEnvelopeBatch(Array(21).fill(valid));
+  class HeaderOnlyBytes extends Uint8Array {
+    subarray(start, end) {
+      assert.equal(start, 0, "an over-limit batch must not decode a record");
+      assert.equal(end, 4, "only the header magic may be read as bytes");
+      return super.subarray(start, end);
+    }
+  }
+  assert.throws(() => decodeEnvelopeBatch(new HeaderOnlyBytes(bytes), { maxCount: 20 }), { code: "sync_batch_invalid" });
+  assert.throws(() => decodeEnvelopeBatch(bytes.subarray(0, 8), { maxCount: 20 }), { code: "sync_batch_invalid" });
+  assert.deepEqual(decodeEnvelopeBatch(encodeEnvelopeBatch(Array(20).fill(valid)), { maxCount: 20 }), Array(20).fill(valid));
+  assert.deepEqual(decodeEnvelopeBatch(encodeEnvelopeBatch([]), { maxCount: 0 }), []);
+  assert.throws(() => decodeEnvelopeBatch(encodeEnvelopeBatch([valid]), { maxCount: 0 }), { code: "sync_batch_invalid" });
+  assert.deepEqual(decodeEnvelopeBatch(bytes), Array(21).fill(valid), "the default codec limit is unchanged");
+});
+
 test("a pull page round-trips events, cursors and hasMore", async () => {
   const page = {
     events: [{ cursor: "AAAAAAAAAAE", envelope: await envelope(4) }, { cursor: "AAAAAAAAAAI", envelope: await envelope(5) }],

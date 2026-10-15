@@ -24,10 +24,10 @@
 // form the query string takes.
 
 export const ENVELOPE_CONTENT_TYPE = "application/octet-stream";
-const RECORD_FIXED = 148;
+export const RECORD_FIXED = 148;
 // Ciphertext of an envelope whose base64url text fits MAX_ENVELOPE_BYTES
 // (8,192 characters, sync-contract.mjs).
-const MAX_CIPHERTEXT_BYTES = 6_144;
+export const MAX_CIPHERTEXT_BYTES = 6_144;
 const MAX_PAGE_EVENTS = 1_000;
 const MAX_SAFE = 9_007_199_254_740_991n;
 const encoder = new TextEncoder();
@@ -147,10 +147,11 @@ export function encodeEnvelopeBatch(envelopes) {
   return bytes;
 }
 
-/** The envelopes of a push batch; throws EnvelopeWireError when malformed. */
-export function decodeEnvelopeBatch(bytes) {
+/** The envelopes of a push batch; rejects counts over maxCount before decoding records. */
+export function decodeEnvelopeBatch(bytes, { maxCount = 0xffff } = {}) {
   const view = checkHeader("KSEV", bytes, 8);
   const count = view.getUint16(6, true);
+  if (count > maxCount) fail();
   const envelopes = [];
   let offset = 8;
   for (let index = 0; index < count; index += 1) {

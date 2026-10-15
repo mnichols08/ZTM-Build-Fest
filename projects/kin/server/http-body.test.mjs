@@ -6,7 +6,8 @@ import { readBody, readJsonBody } from "./http-body.mjs";
 import { PairingService } from "./pairing-service.mjs";
 import { createKinServer } from "./server.mjs";
 import { DurableStore } from "./durable-store.mjs";
-import { encodeEnvelopeBatch } from "../web/sync/envelope-wire.js";
+import { encodeEnvelopeBatch, MAX_CIPHERTEXT_BYTES, RECORD_FIXED } from "../web/sync/envelope-wire.js";
+import { MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 
 const LIMIT = 1_000;
 
@@ -124,11 +125,52 @@ test("sync events must arrive as a well-formed binary batch", async () => {
   try {
     const asJson = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: '{"events":[]}' });
     assert.deepEqual([asJson.status, (await asJson.json()).error], [415, "unsupported_media_type"]);
+    const wrongPrefix = await fetch(url, { method: "POST", headers: { "Content-Type": "application/octet-stream-not-kin" }, body: encodeEnvelopeBatch([]) });
+    assert.deepEqual([wrongPrefix.status, (await wrongPrefix.json()).error], [415, "unsupported_media_type"]);
     const malformed = await fetch(url, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: new Uint8Array([1, 2, 3]) });
     assert.deepEqual([malformed.status, (await malformed.json()).error], [400, "sync_batch_invalid"]);
     // A well-formed batch reaches authorization.
     const empty = await fetch(url, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: encodeEnvelopeBatch([]) });
     assert.equal(empty.status, 401);
+    const parameterized = await fetch(url, { method: "POST", headers: { "Content-Type": "Application/Octet-Stream; charset=binary" }, body: encodeEnvelopeBatch([]) });
+    assert.equal(parameterized.status, 401);
+  } finally {
+    await new Promise((resolve) => app.server.close(resolve));
+    app.store?.close();
+  }
+});
+
+test("binary sync pushes enforce count and exact wire byte limits before authorization", async () => {
+  const app = createKinServer({ service: new PairingService(), store: new DurableStore(":memory:") });
+  await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
+  const port = app.server.address().port;
+  const url = `http://127.0.0.1:${port}/api/sync/events`;
+  const headers = { "Content-Type": "application/octet-stream" };
+  const envelope = {
+    protocolVersion: 1, envelopeVersion: 1,
+    eventId: "ab".repeat(16), householdId: "cd".repeat(16), deviceId: "ef".repeat(16),
+    deviceSequence: 1, logicalTime: "1", keyEpoch: 1,
+    nonce: Buffer.alloc(12).toString("base64url"),
+    signature: Buffer.alloc(64).toString("base64url"),
+    ciphertext: Buffer.alloc(16).toString("base64url"),
+  };
+  const cap = 8 + MAX_EVENTS_PER_BATCH * (RECORD_FIXED + MAX_CIPHERTEXT_BYTES);
+  try {
+    const tooMany = await fetch(url, { method: "POST", headers, body: encodeEnvelopeBatch(Array(21).fill(envelope)) });
+    assert.deepEqual([tooMany.status, (await tooMany.json()).error], [400, "sync_batch_invalid"]);
+    const maximum = encodeEnvelopeBatch(Array(MAX_EVENTS_PER_BATCH).fill({
+      ...envelope, ciphertext: Buffer.alloc(MAX_CIPHERTEXT_BYTES).toString("base64url"),
+    }));
+    assert.equal(maximum.length, 125_848);
+    assert.equal(maximum.length, cap);
+    const boundary = await fetch(url, { method: "POST", headers, body: maximum });
+    assert.equal(boundary.status, 401, "the largest valid batch reaches authorization");
+    const oversized = await fetch(url, { method: "POST", headers, body: new Uint8Array(cap + 1) });
+    assert.deepEqual([oversized.status, (await oversized.json()).error], [413, "request_too_large"]);
+    const declared = await send(port, {
+      path: "/api/sync/events", headers: { ...headers, "Content-Length": String(cap + 1) }, end: false,
+    });
+    assert.deepEqual([declared.status, JSON.parse(declared.text).error], [413, "request_too_large"]);
   } finally {
     await new Promise((resolve) => app.server.close(resolve));
     app.store?.close();

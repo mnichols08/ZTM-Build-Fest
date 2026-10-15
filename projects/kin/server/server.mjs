@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { PairingError, PairingService, requireTrustAuthority } from "./pairing-service.mjs";
-import { EncryptedSyncService } from "./sync-service.mjs";
+import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import {
   DurableConflictError,
   DurableStore,
@@ -19,6 +19,8 @@ import {
   encodeEventPage,
   ENVELOPE_CONTENT_TYPE,
   EnvelopeWireError,
+  MAX_CIPHERTEXT_BYTES,
+  RECORD_FIXED,
 } from "../web/sync/envelope-wire.js";
 import { isInsideRoot, resolveDurablePath, webRoot } from "./path-safety.mjs";
 
@@ -1189,16 +1191,16 @@ function cookies(request) {
 // are binary and bounded by the attachment limit (http-body.mjs).
 const MAX_JSON_BODY_BYTES = 256_000;
 
-// A push batch: at most 20 envelopes of at most 8 KiB of base64url text,
-// which is well under this as bytes.
-const MAX_ENVELOPE_PUSH_BYTES = 200_000;
+// Header 8 + 20 * (fixed record 148 + max ciphertext 6,144) = 125,848 bytes.
+const MAX_ENVELOPE_PUSH_BYTES = 8 + MAX_EVENTS_PER_BATCH * (RECORD_FIXED + MAX_CIPHERTEXT_BYTES);
 
 async function readEnvelopeBatch(request, response) {
-  if (!String(request.headers["content-type"] ?? "").startsWith(ENVELOPE_CONTENT_TYPE))
+  const mediaType = String(request.headers["content-type"] ?? "").split(";", 1)[0].trim().toLowerCase();
+  if (mediaType !== ENVELOPE_CONTENT_TYPE)
     throw new PairingError("unsupported_media_type", "Send sync events as a binary batch.", 415);
   const bytes = await readBody(request, response, MAX_ENVELOPE_PUSH_BYTES, "That sync batch is too large.");
   try {
-    return decodeEnvelopeBatch(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+    return decodeEnvelopeBatch(new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength), { maxCount: MAX_EVENTS_PER_BATCH });
   } catch (error) {
     if (error instanceof EnvelopeWireError) throw new PairingError("sync_batch_invalid", "That sync batch is invalid.", 400);
     throw error;

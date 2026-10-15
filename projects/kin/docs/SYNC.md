@@ -20,7 +20,10 @@ ciphertext bytes, so nothing about authentication changes. One codec,
   are implied by the format version.
 - A push body is `KSEV`, version u16 = 1, count u16, then the records. A
   JSON body is refused with 415 and a malformed batch with 400
-  (`sync_batch_invalid`). The acknowledgement stays JSON.
+  (`sync_batch_invalid`). The media type must be exactly
+  `application/octet-stream` (case-insensitive, parameters allowed), not a
+  prefix match. A count above 20 is refused before any record is decoded.
+  The acknowledgement stays JSON.
 - A pull page is `KSEP`, version u16 = 1, flags u8 (bit 0: more pages),
   a zero byte, count u32, the next cursor (8 bytes), then per event its
   cursor (8 bytes) and record. Cursors stay opaque; clients keep them as
@@ -35,8 +38,9 @@ Request bodies are read with their limit enforced as they stream
 (`server/http-body.mjs`): a declared `Content-Length` over the limit is
 refused with 413 before any body byte is read, and a body without one is
 refused as soon as it passes the limit, so no more than the limit is ever
-buffered. Limits: 256,000 bytes for JSON control requests, 200,000 bytes for
-an event batch, and the attachment limit for attachment and settings bodies.
+buffered. Limits: 256,000 bytes for JSON control requests, 125,848 bytes for
+an event batch (8-byte header + 20 × (148-byte fixed record + 6,144-byte
+maximum ciphertext)), and the attachment limit for attachment and settings bodies.
 
 ## v0.24.0 Useful Household History
 
