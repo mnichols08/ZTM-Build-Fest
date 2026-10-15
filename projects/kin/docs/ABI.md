@@ -140,6 +140,15 @@ The function may grow memory while parsing or building output. JavaScript must r
 
 The high-level bridge owns loading/instantiation, ABI export checks, buffer allocation/copy/free, memory view refresh, binary protocol encode/decode, and conversion of stable ABI errors to UI-safe messages. It must not implement event replay or state transitions.
 
+Every input allocation is released exactly once on every exit path, including
+a throwing copy, export, result copy or decode (`callCore`). A replay or
+command history may be an array of canonical records or a contiguous source
+exposing `length`, `byteLength` and `copyTo(target, offset)` (the session event
+arena), which is copied into the request in one operation; command requests
+encode the history once behind a reserved intent prefix. `createEngine(exports)`
+wraps instantiated exports for tests, and `engine.projectionBytes(...)` returns
+the exact KINS bytes for equivalence checks. None of this changes a wire format.
+
 ## Protocol version 3 (legacy Handoff)
 
 Requests retain the 12-byte KINE header and 88-byte envelope with explicit version 3. All v2 events plus schema-1 kinds 5 HANDOFF_ADDED, 6 HANDOFF_ACKNOWLEDGED, and 7 HANDOFF_ARCHIVED are supported. Add payload: handoff_id[16], text_length:u32, strict UTF-8 text (1–4096 bytes). Reference payloads: exactly handoff_id[16]. Existing codes/payloads are unchanged.

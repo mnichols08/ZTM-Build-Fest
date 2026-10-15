@@ -5,6 +5,7 @@ import {
   encryptedDatabase, snapshotStores, protectRows, valuesEqual, compareStoreRows,
 } from "./encrypted-idb.js";
 import { projectionContext } from "../browser-time.js";
+import { EventArena, EVENT_GENERATION_KEY, historyWith } from "./event-arena.js";
 import { rotateEventProtection, resumeEventProtection } from "./root-rotation.js";
 import { MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "../attachments/attachment-crypto.js";
 
@@ -53,61 +54,83 @@ export function validateAttachmentAggregate(records, candidate) {
 }
 
 /** Admit only replayable remote events; return rejected ciphertext as a count
- * so callers can advance the relay cursor and explain the quarantine. */
-export function reconcileRemoteEvents({ rows, received, engine, context, asOf, civilDate }) {
-  const byId = new Map(rows.map((row) => [idToHex(row.event_id), row]));
-  const additions = [];
-  const duplicateEventIds = [];
-  const candidateRows = [...rows];
-  let quarantined = 0;
-  const projection = projectionContext();
-  const candidates = [];
-  for (const item of received) {
-    let canonical;
-    let candidate;
-    try {
-      canonical = asBytes(item.encodedEvent).slice();
-      candidate = eventRowFromCanonical(canonical);
-    } catch {
-      quarantined += 1;
-      continue;
-    }
-    candidates.push({ candidate, canonical });
+ * so callers can advance the relay cursor and explain the quarantine.
+ * `history` is the HistoryView the batch validates against (`rows`, a plain
+ * row array, is accepted for tests). Each candidate is replayed as the history
+ * plus the admitted additions, without copying the history per candidate.
+ * Returns the admitted rows (with Rust metadata and their local sequence) and
+ * `candidates`, a replay source for history plus additions. */
+export function reconcileRemoteEvents({ history, rows, received, engine, context, asOf, civilDate }) {
+  let temporary = null;
+  if (!history) {
+    temporary = historyFromRows(rows ?? []);
+    history = temporary.view;
   }
-  candidates.sort((left, right) =>
-    left.candidate.logical_time < right.candidate.logical_time ? -1 :
-      left.candidate.logical_time > right.candidate.logical_time ? 1 :
-        compareByteArrays(left.candidate.device_id, right.candidate.device_id) ||
-        compareByteArrays(left.candidate.event_id, right.candidate.event_id),
-  );
-  for (const { candidate, canonical } of candidates) {
-    const eventId = idToHex(candidate.event_id);
-    const existing = byId.get(eventId);
-    if (existing) {
-      if (!bytesEqual(existing.encoded_event, canonical))
-        throw new EventStoreError("Kin found conflicting synchronized bytes for an existing event ID.");
-      duplicateEventIds.push(eventId);
-      continue;
+  try {
+    const additions = [];
+    const added = new Map();
+    const duplicateEventIds = [];
+    let quarantined = 0;
+    const projection = projectionContext();
+    const candidates = [];
+    for (const item of received) {
+      let canonical;
+      let candidate;
+      try {
+        canonical = asBytes(item.encodedEvent).slice();
+        candidate = eventRowFromCanonical(canonical);
+      } catch {
+        quarantined += 1;
+        continue;
+      }
+      candidates.push({ candidate, canonical });
     }
-    try {
-      engine.applyEvents(
-        [...candidateRows, candidate].map((row) => row.encoded_event),
-        asOf ?? projection.asOf,
-        context.last_looked_event_id === null ? null : idToHex(context.last_looked_event_id),
-        civilDate ?? projection.civilDate,
-        syncIdentityFromContext(context),
-      );
-    } catch (error) {
-      if (error?.code !== 4) throw error;
-      quarantined += 1;
-      continue;
+    candidates.sort((left, right) =>
+      left.candidate.logical_time < right.candidate.logical_time ? -1 :
+        left.candidate.logical_time > right.candidate.logical_time ? 1 :
+          compareByteArrays(left.candidate.device_id, right.candidate.device_id) ||
+          compareByteArrays(left.candidate.event_id, right.candidate.event_id),
+    );
+    for (const { candidate, canonical } of candidates) {
+      const eventId = idToHex(candidate.event_id);
+      const index = history.indexOfEventId(candidate.event_id);
+      const existing = index >= 0 ? history.record(index) : added.get(eventId)?.encoded_event;
+      if (existing) {
+        if (!bytesEqual(existing, canonical))
+          throw new EventStoreError("Kin found conflicting synchronized bytes for an existing event ID.");
+        duplicateEventIds.push(eventId);
+        continue;
+      }
+      try {
+        engine.applyEvents(
+          historyWith(history, [...additions.map((row) => row.encoded_event), candidate.encoded_event]),
+          asOf ?? projection.asOf,
+          context.last_looked_event_id === null ? null : idToHex(context.last_looked_event_id),
+          civilDate ?? projection.civilDate,
+          syncIdentityFromContext(context),
+        );
+      } catch (error) {
+        if (error?.code !== 4) throw error;
+        quarantined += 1;
+        continue;
+      }
+      candidate.local_sequence = history.tail + additions.length + 1;
+      additions.push(candidate);
+      added.set(eventId, candidate);
     }
-    candidate.local_sequence = (rows.at(-1)?.local_sequence ?? 0) + additions.length + 1;
-    additions.push(candidate);
-    candidateRows.push(candidate);
-    byId.set(eventId, candidate);
+    const extras = additions.map((row) => row.encoded_event);
+    return {
+      additions,
+      // A temporary arena is wiped below, so its callers get detached copies.
+      candidates: temporary
+        ? [...history.records().map((record) => record.slice()), ...extras]
+        : historyWith(history, extras),
+      quarantined,
+      duplicateEventIds,
+    };
+  } finally {
+    temporary?.arena.wipe();
   }
-  return { additions, candidateRows, quarantined, duplicateEventIds };
 }
 
 function compareByteArrays(left, right) {
@@ -119,6 +142,8 @@ function compareByteArrays(left, right) {
 export class EventStore {
   constructor(database) {
     this.database = database;
+    // Session plaintext history; derived, discardable, wiped on close.
+    this.arena = new EventArena();
   }
 
   static rotateProtection(options) {
@@ -310,6 +335,8 @@ export class EventStore {
             sync_state: structuredClone(original.sync_state) };
           const events = validateEventRows(rows.events);
           validateLegacyOutbox(rows.sync_outbox, events);
+          const { arena: historyArena, view: history } = historyFromRows(events);
+          try {
           let context = rows.local_context.find((row) => row.key === CONTEXT_KEY);
           if (!context && events.length) throw invalidCatchUpState();
           if (!context) {
@@ -321,9 +348,9 @@ export class EventStore {
             Object.assign(context, { last_looked_event_id: tail ? asBytes(tail.event_id).slice() : null, last_looked_local_sequence: tail?.local_sequence ?? 0, last_looked_at: Date.now() });
           }
           validateContext(context);
-          validateCursorBoundary(context, events);
+          validateCursorBoundary(context, history);
           const { asOf, civilDate } = projectionContext();
-          engine.applyEvents(events.map((row) => row.encoded_event), asOf, context.last_looked_event_id === null ? null : idToHex(context.last_looked_event_id), civilDate, syncIdentityFromContext(context));
+          engine.applyEvents(history, asOf, cursorEventId(context), civilDate, syncIdentityFromContext(context));
           const keys = await prepareKeys(vault, { check: checkMigration });
           if (keys?.rewrapEventRows) await keys.rewrapEventRows(rows);
           else if (keys?.rewrapSyncState) {
@@ -333,11 +360,11 @@ export class EventStore {
           // protectRows decrypts and compares every complete candidate record.
           // Replaying the proven-equal canonical source preserves the complete
           // post-verification replay without another recovered plaintext graph.
-          engine.applyEvents(events.map((row) => row.encoded_event), asOf,
-            context.last_looked_event_id === null ? null : idToHex(context.last_looked_event_id), civilDate, syncIdentityFromContext(context));
+          engine.applyEvents(history, asOf, cursorEventId(context), civilDate, syncIdentityFromContext(context));
           vault.assertUnlocked();
           manifest = { ...manifest, phase: "cleanup-pending" };
           await replaceVerifiedSnapshot(database, original, protectedRows, manifest, vault);
+          } finally { historyArena.wipe(); }
         }
         await finalizeKeys(vault, { check: checkMigration });
         vault.assertUnlocked();
@@ -373,6 +400,9 @@ export class EventStore {
       }));
       store.vault = vault;
       store.engine = engine;
+      // Any lock (local, peer-tab, epoch mismatch) discards session plaintext,
+      // even before the application closes this store.
+      vault.onLock(() => store.arena.wipe());
       const context = await store.ensureContext();
       store.actorId = idToHex(context.sync_member_id ?? context.actor_id);
       return store;
@@ -390,17 +420,18 @@ export class EventStore {
 
   async loadEvents() {
     const transaction = this.database.transaction(EVENT_STORE, "readonly");
-    const request = transaction.objectStore(EVENT_STORE).getAll();
+    const history = historyRequest(this, transaction);
     return transactionResult(transaction, (finish) => {
-      request.onsuccess = () => {
-        try {
-          finish(validateEventRows(request.result));
-        } catch (error) {
-          abortWith(transaction, error);
-        }
-      };
-      request.onerror = () =>
-        abortWith(transaction, storageError(request.error));
+      history.onsuccess = () => finish(history.result.rows());
+    });
+  }
+
+  /** The current history as a HistoryView over the session arena. */
+  async loadHistory() {
+    const transaction = this.database.transaction(EVENT_STORE, "readonly");
+    const history = historyRequest(this, transaction);
+    return transactionResult(transaction, (finish) => {
+      history.onsuccess = () => finish(history.result);
     });
   }
 
@@ -557,6 +588,7 @@ export class EventStore {
               store.clear();
               for (const record of records) store.put(record);
             }
+            bumpEventGeneration(transaction);
             finish({ eventCount: source.events.length, localOnly: true });
           } catch (error) { abortWith(transaction, error); }
         };
@@ -588,12 +620,15 @@ export class EventStore {
     const contextStore = transaction.objectStore(CONTEXT_STORE);
     const syncStates = transaction.objectStore(SYNC_STATE_STORE);
     const outbox = transaction.objectStore(SYNC_OUTBOX_STORE);
-    const eventRequest = events.getAll();
+    const history = historyRequest(this, transaction);
     const contextRequest = contextStore.get(CONTEXT_KEY);
     const syncStateRequest = syncStates.get("active");
 
-    return transactionResult(transaction, (finish) => {
-      let loadedEvents;
+    // Filled once the new row has a key; applied to the arena after commit.
+    let committed = null;
+
+    const result = transactionResult(transaction, (finish) => {
+      let view;
       let context;
       let syncState;
       let eventsReady = false;
@@ -606,10 +641,9 @@ export class EventStore {
           return;
         }
         try {
-          loadedEvents = validateEventRows(loadedEvents);
           validateContext(context);
-          validateCursorBoundary(context, loadedEvents);
-          if (loadedEvents.length >= MAX_EVENT_COUNT) {
+          validateCursorBoundary(context, view);
+          if (view.length >= MAX_EVENT_COUNT) {
             throw new EventStoreError(
               "Kin has reached its local event limit. Your saved information was not deleted.",
             );
@@ -641,9 +675,9 @@ export class EventStore {
           const result = engine.executeCommand(
             command,
             { ...identity, entityId: randomId() },
-            loadedEvents.map((event) => event.encoded_event),
+            view,
             asOf,
-            context.last_looked_event_id === null ? null : idToHex(context.last_looked_event_id),
+            cursorEventId(context),
             civilDate,
             syncIdentity,
           );
@@ -665,25 +699,15 @@ export class EventStore {
                 return;
               }
               const currentState = engine.applyEvents(
-                loadedEvents.map((storedEvent) => storedEvent.encoded_event),
+                view,
                 asOf,
-                context.last_looked_event_id === null
-                  ? null
-                  : idToHex(context.last_looked_event_id),
+                cursorEventId(context),
                 civilDate,
                 syncIdentity,
               );
-              const tail = loadedEvents.at(-1);
               finish({
                 state: currentState,
-                snapshotBoundary: tail
-                  ? {
-                      eventId: idToHex(tail.event_id),
-                      localSequence: tail.local_sequence,
-                      snapshotThroughEventId: idToHex(tail.event_id),
-                      snapshotThroughLocalSequence: tail.local_sequence,
-                    }
-                  : null,
+                snapshotBoundary: snapshotBoundary(view),
               });
               return;
             }
@@ -712,6 +736,7 @@ export class EventStore {
                   snapshotThroughEventId: idToHex(eventId),
                   snapshotThroughLocalSequence: addRequest.result,
                 };
+                committed = { view, localSequence: addRequest.result, encodedEvent, metadata: result.metadata };
               };
               const contextWrite = contextStore.put({
                 ...context,
@@ -765,8 +790,8 @@ export class EventStore {
         }
       };
 
-      eventRequest.onsuccess = () => {
-        loadedEvents = eventRequest.result;
+      history.onsuccess = () => {
+        view = history.result;
         eventsReady = true;
         prepareCandidate();
       };
@@ -780,13 +805,25 @@ export class EventStore {
         syncStateReady = true;
         prepareCandidate();
       };
-      eventRequest.onerror = () =>
-        abortWith(transaction, storageError(eventRequest.error));
       contextRequest.onerror = () =>
         abortWith(transaction, storageError(contextRequest.error));
       syncStateRequest.onerror = () =>
         abortWith(transaction, storageError(syncStateRequest.error));
     });
+    return result.then((value) => {
+      this.#appendCommitted(committed);
+      return value;
+    });
+  }
+
+  // Extends the arena with an event this tab just committed, using the
+  // plaintext it already holds. Only a direct successor of the view the write
+  // validated against is appended; anything else is left for the next read.
+  #appendCommitted(committed) {
+    if (!committed) return;
+    const { view, localSequence, encodedEvent, metadata } = committed;
+    if (view.epoch !== this.arena.epoch || this.arena.length !== view.length) return;
+    this.arena.append(localSequence, encodedEvent, metadata);
   }
 
   getCatchUpState() {
@@ -794,7 +831,7 @@ export class EventStore {
       [EVENT_STORE, CONTEXT_STORE],
       "readonly",
     );
-    const eventsRequest = transaction.objectStore(EVENT_STORE).getAll();
+    const history = historyRequest(this, transaction);
     const contextRequest = transaction
       .objectStore(CONTEXT_STORE)
       .get(CONTEXT_KEY);
@@ -807,11 +844,12 @@ export class EventStore {
       const complete = () => {
         if (!eventsReady || !contextReady) return;
         try {
-          loadedEvents = validateEventRows(loadedEvents);
           validateContext(context);
           validateCursorBoundary(context, loadedEvents);
-          const tail = loadedEvents.at(-1);
+          const boundary = snapshotBoundary(loadedEvents);
           finish({
+            // A HistoryView: pass it to the engine directly; `.rows()` gives
+            // detached row objects.
             events: loadedEvents,
             syncIdentity: syncIdentityFromContext(context),
             cursor: {
@@ -821,19 +859,16 @@ export class EventStore {
               localSequence: context.last_looked_local_sequence,
               lastLookedAt: context.last_looked_at,
             },
-            through: tail
-              ? {
-                  eventId: idToHex(tail.event_id),
-                  localSequence: tail.local_sequence,
-                }
+            through: boundary
+              ? { eventId: boundary.eventId, localSequence: boundary.localSequence }
               : null,
           });
         } catch (error) {
           abortWith(transaction, error);
         }
       };
-      eventsRequest.onsuccess = () => {
-        loadedEvents = eventsRequest.result;
+      history.onsuccess = () => {
+        loadedEvents = history.result;
         eventsReady = true;
         complete();
       };
@@ -842,8 +877,6 @@ export class EventStore {
         contextReady = true;
         complete();
       };
-      eventsRequest.onerror = () =>
-        abortWith(transaction, storageError(eventsRequest.error));
       contextRequest.onerror = () =>
         abortWith(transaction, storageError(contextRequest.error));
     });
@@ -870,7 +903,7 @@ export class EventStore {
     const syncStates = transaction.objectStore(SYNC_STATE_STORE);
     const outbox = transaction.objectStore(SYNC_OUTBOX_STORE);
     const bindings = transaction.objectStore(SYNC_BINDING_STORE);
-    const eventsRequest = eventsStore.getAll();
+    const history = historyRequest(this, transaction);
     const contextRequest = contextStore.get(CONTEXT_KEY);
     const syncStateRequest = syncStates.get("active");
 
@@ -883,9 +916,9 @@ export class EventStore {
         ready += 1;
         if (ready !== 3) return;
         try {
-          loadedEvents = validateEventRows(loadedEvents);
           validateContext(context);
           validateCursorBoundary(context, loadedEvents);
+          loadedEvents = loadedEvents.rows();
           for (const field of ["householdId", "memberId", "deviceId"])
             idFromHex(identity?.[field]);
           if (context.archive_imported && context.sync_household_id &&
@@ -1035,8 +1068,8 @@ export class EventStore {
           abortWith(transaction, error);
         }
       };
-      eventsRequest.onsuccess = () => {
-        loadedEvents = eventsRequest.result;
+      history.onsuccess = () => {
+        loadedEvents = history.result;
         initialize();
       };
       contextRequest.onsuccess = () => {
@@ -1047,8 +1080,6 @@ export class EventStore {
         state = syncStateRequest.result;
         initialize();
       };
-      eventsRequest.onerror = () =>
-        abortWith(transaction, storageError(eventsRequest.error));
       contextRequest.onerror = () =>
         abortWith(transaction, storageError(contextRequest.error));
       syncStateRequest.onerror = () =>
@@ -1068,10 +1099,9 @@ export class EventStore {
 
   async projectCurrent() {
     if (!this.engine) throw new EventStoreError("Kin could not rebuild the household view.");
-    const [events, context] = await Promise.all([this.loadEvents(), this.ensureContext()]);
+    const { events, cursor, syncIdentity } = await this.getCatchUpState();
     const { asOf, civilDate } = projectionContext();
-    return this.engine.applyEvents(events.map((row) => row.encoded_event), asOf,
-      context.last_looked_event_id === null ? null : idToHex(context.last_looked_event_id), civilDate, syncIdentityFromContext(context));
+    return this.engine.applyEvents(events, asOf, cursor.eventId, civilDate, syncIdentity);
   }
 
   updateSyncServerState(status) {
@@ -1416,7 +1446,7 @@ export class EventStore {
       [EVENT_STORE, CONTEXT_STORE],
       "readonly",
     );
-    const eventsRequest = transaction.objectStore(EVENT_STORE).getAll();
+    const history = historyRequest(this, transaction);
     const contextRequest = transaction
       .objectStore(CONTEXT_STORE)
       .get(CONTEXT_KEY);
@@ -1428,8 +1458,9 @@ export class EventStore {
         ready += 1;
         if (ready !== 2) return;
         try {
-          events = validateEventRows(events);
           validateContext(context);
+          const maxLogicalTime = events.maxLogicalTime();
+          events = events.rows();
           finish({
             events,
             legacyIdentity: {
@@ -1437,26 +1468,20 @@ export class EventStore {
               actorId: idToHex(context.actor_id),
               deviceId: idToHex(context.device_id),
             },
-            maxLogicalTime: events.reduce(
-              (maximum, row) =>
-                row.logical_time > maximum ? row.logical_time : maximum,
-              0n,
-            ),
+            maxLogicalTime,
           });
         } catch (error) {
           abortWith(transaction, error);
         }
       };
-      eventsRequest.onsuccess = () => {
-        events = eventsRequest.result;
+      history.onsuccess = () => {
+        events = history.result;
         complete();
       };
       contextRequest.onsuccess = () => {
         context = contextRequest.result;
         complete();
       };
-      eventsRequest.onerror = () =>
-        abortWith(transaction, storageError(eventsRequest.error));
       contextRequest.onerror = () =>
         abortWith(transaction, storageError(contextRequest.error));
     });
@@ -1776,11 +1801,12 @@ export class EventStore {
     const contextStore = transaction.objectStore(CONTEXT_STORE);
     const syncStates = transaction.objectStore(SYNC_STATE_STORE);
     const outbox = transaction.objectStore(SYNC_OUTBOX_STORE);
-    const eventsRequest = eventsStore.getAll();
+    const history = historyRequest(this, transaction);
     const contextRequest = contextStore.get(CONTEXT_KEY);
     const stateRequest = syncStates.get("active");
     const outboxRequest = outbox.getAll();
-    return transactionResult(transaction, (finish) => {
+    let committed = null;
+    const result = transactionResult(transaction, (finish) => {
       let rows;
       let context;
       let syncState;
@@ -1790,7 +1816,6 @@ export class EventStore {
         ready += 1;
         if (ready !== 4) return;
         try {
-          rows = validateEventRows(rows);
           validateContext(context);
           if (!syncState || !context.sync_household_id)
             throw new EventStoreError(
@@ -1801,8 +1826,8 @@ export class EventStore {
           validateCursorBoundary(context, rows);
           // Validate each event independently. One poison event advances the
           // relay cursor without entering durable canonical history.
-          const { additions, candidateRows, quarantined, duplicateEventIds } = reconcileRemoteEvents({
-            rows, received, engine, context, asOf, civilDate,
+          const { additions, candidates, quarantined, duplicateEventIds } = reconcileRemoteEvents({
+            history: rows, received, engine, context, asOf, civilDate,
           });
           const remoteIds = new Set(duplicateEventIds);
           const remoteInfo = new Map();
@@ -1824,11 +1849,10 @@ export class EventStore {
               if (changed) outbox.put(row);
             }
           }
-          validateEventRows(candidateRows);
           const { asOf: projectionAsOf, civilDate: projectionDate } =
             projectionContext();
           const state = engine.applyEvents(
-            candidateRows.map((row) => row.encoded_event),
+            candidates,
             asOf ?? projectionAsOf,
             context.last_looked_event_id === null
               ? null
@@ -1851,10 +1875,10 @@ export class EventStore {
             write.onerror = () =>
               abortWith(transaction, storageError(write.error));
           }
-          const maximumLogicalTime = candidateRows.reduce(
+          const maximumLogicalTime = additions.reduce(
             (maximum, row) =>
               row.logical_time > maximum ? row.logical_time : maximum,
-            0n,
+            rows.maxLogicalTime(),
           );
           context.next_logical_time =
             context.next_logical_time > maximumLogicalTime
@@ -1871,7 +1895,8 @@ export class EventStore {
             abortWith(transaction, storageError(contextWrite.error));
           stateWrite.onerror = () =>
             abortWith(transaction, storageError(stateWrite.error));
-          const tail = candidateRows.at(-1);
+          const tail = additions.at(-1);
+          committed = { view: rows, additions };
           finish({
             state,
             added: additions.length,
@@ -1884,14 +1909,14 @@ export class EventStore {
                   snapshotThroughEventId: idToHex(tail.event_id),
                   snapshotThroughLocalSequence: tail.local_sequence,
                 }
-              : null,
+              : snapshotBoundary(rows),
           });
         } catch (error) {
           abortWith(transaction, error);
         }
       };
-      eventsRequest.onsuccess = () => {
-        rows = eventsRequest.result;
+      history.onsuccess = () => {
+        rows = history.result;
         complete();
       };
       contextRequest.onsuccess = () => {
@@ -1903,13 +1928,19 @@ export class EventStore {
         complete();
       };
       outboxRequest.onsuccess = () => { outboxRows = outboxRequest.result; complete(); };
-      eventsRequest.onerror = () =>
-        abortWith(transaction, storageError(eventsRequest.error));
       contextRequest.onerror = () =>
         abortWith(transaction, storageError(contextRequest.error));
       stateRequest.onerror = () =>
         abortWith(transaction, storageError(stateRequest.error));
       outboxRequest.onerror = () => abortWith(transaction, storageError(outboxRequest.error));
+    });
+    return result.then((value) => {
+      // Remote rows were validated and committed; extend the arena in order.
+      if (committed && committed.view.epoch === this.arena.epoch && this.arena.length === committed.view.length) {
+        for (const row of committed.additions)
+          this.arena.append(row.local_sequence, row.encoded_event, row.metadata);
+      }
+      return value;
     });
   }
 
@@ -1946,7 +1977,7 @@ export class EventStore {
       "readwrite",
     );
     const eventsStore = transaction.objectStore(EVENT_STORE);
-    const eventsRequest = eventsStore.getAll();
+    const history = historyRequest(this, transaction);
     const contextStore = transaction.objectStore(CONTEXT_STORE);
     const contextRequest = contextStore.get(CONTEXT_KEY);
 
@@ -1958,30 +1989,23 @@ export class EventStore {
       const complete = () => {
         if (!eventsReady || !contextReady) return;
         try {
-          loadedEvents = validateEventRows(loadedEvents);
           validateContext(context);
           validateCursorBoundary(context, loadedEvents);
           const boundary = validateSnapshotBoundary(snapshotBoundary);
           const snapshotTail =
             boundary.snapshotThroughLocalSequence === 0
-              ? null
-              : loadedEvents.find(
-                  (row) =>
-                    row.local_sequence ===
-                    boundary.snapshotThroughLocalSequence,
-                );
+              ? -1
+              : loadedEvents.indexOfSequence(boundary.snapshotThroughLocalSequence);
           if (
-            !snapshotTail ||
-            idToHex(snapshotTail.event_id) !==
+            snapshotTail < 0 ||
+            idToHex(loadedEvents.id(snapshotTail, "event_id")) !==
               boundary.snapshotThroughEventId ||
             boundary.localSequence > boundary.snapshotThroughLocalSequence
           ) {
             throw invalidCatchUpState();
           }
-          const requested = loadedEvents.find(
-            (row) => row.local_sequence === boundary.localSequence,
-          );
-          if (!requested || idToHex(requested.event_id) !== boundary.eventId) {
+          const requestedIndex = loadedEvents.indexOfSequence(boundary.localSequence);
+          if (requestedIndex < 0 || idToHex(loadedEvents.id(requestedIndex, "event_id")) !== boundary.eventId) {
             throw invalidCatchUpState();
           }
           if (boundary.localSequence <= context.last_looked_local_sequence) {
@@ -1994,8 +2018,8 @@ export class EventStore {
 
           const updatedContext = {
             ...context,
-            last_looked_event_id: requested.event_id,
-            last_looked_local_sequence: requested.local_sequence,
+            last_looked_event_id: loadedEvents.id(requestedIndex, "event_id").slice(),
+            last_looked_local_sequence: boundary.localSequence,
             last_looked_at: Date.now(),
           };
           const write = contextStore.put(updatedContext);
@@ -2009,8 +2033,8 @@ export class EventStore {
           abortWith(transaction, error);
         }
       };
-      eventsRequest.onsuccess = () => {
-        loadedEvents = eventsRequest.result;
+      history.onsuccess = () => {
+        loadedEvents = history.result;
         eventsReady = true;
         complete();
       };
@@ -2019,8 +2043,6 @@ export class EventStore {
         contextReady = true;
         complete();
       };
-      eventsRequest.onerror = () =>
-        abortWith(transaction, storageError(eventsRequest.error));
       contextRequest.onerror = () =>
         abortWith(transaction, storageError(contextRequest.error));
     });
@@ -2031,7 +2053,7 @@ export class EventStore {
       [EVENT_STORE, CONTEXT_STORE],
       "readwrite",
     );
-    const eventRequest = transaction.objectStore(EVENT_STORE).getAll();
+    const history = historyRequest(this, transaction);
     const contexts = transaction.objectStore(CONTEXT_STORE);
     const request = contexts.get(CONTEXT_KEY);
     let loadedEvents;
@@ -2043,7 +2065,6 @@ export class EventStore {
       const initialize = () => {
         if (!eventsReady || !contextReady) return;
         try {
-          loadedEvents = validateEventRows(loadedEvents);
           if (!context) {
             if (loadedEvents.length) throw invalidCatchUpState();
             context = {
@@ -2066,13 +2087,13 @@ export class EventStore {
           validateContext(context, { allowUninitialized: true });
           validateEventHousehold(context, loadedEvents);
           if (!hasCatchUpMetadata(context)) {
-            const tail = loadedEvents.at(-1);
+            const tail = loadedEvents.length - 1;
             context = {
               ...context,
-              last_looked_event_id: tail
-                ? Uint8Array.from(asBytes(tail.event_id))
+              last_looked_event_id: tail >= 0
+                ? loadedEvents.id(tail, "event_id").slice()
                 : null,
-              last_looked_local_sequence: tail?.local_sequence ?? 0,
+              last_looked_local_sequence: loadedEvents.tail,
               last_looked_at: Date.now(),
             };
             const write = contexts.put(context);
@@ -2093,17 +2114,16 @@ export class EventStore {
       };
       request.onerror = () =>
         abortWith(transaction, storageError(request.error));
-      eventRequest.onsuccess = () => {
-        loadedEvents = eventRequest.result;
+      history.onsuccess = () => {
+        loadedEvents = history.result;
         eventsReady = true;
         initialize();
       };
-      eventRequest.onerror = () =>
-        abortWith(transaction, storageError(eventRequest.error));
     });
   }
 
   close() {
+    this.arena.wipe();
     this.database.close();
   }
 }
@@ -2173,6 +2193,136 @@ function storageError(cause) {
       : "Kin could not safely access local household storage. Your saved information was not intentionally deleted.";
   const error = new EventStoreError(message, cause);
   return error;
+}
+
+/**
+ * Reads the transaction's event history into the store's session arena and
+ * returns a request-like object whose result is a HistoryView of exactly the
+ * rows this transaction observes.
+ *
+ * Inside one native transaction it reads the persisted store generation and
+ * the row count, then either decrypts only rows after the arena tail (same
+ * generation, consistent count) or rebuilds the arena from every row. A raw
+ * pre-protection database has no generation and always rebuilds.
+ */
+function historyRequest(store, transaction) {
+  const request = { result: undefined, error: null, onsuccess: null, onerror: null };
+  const arena = store.arena;
+  const events = transaction.objectStore(EVENT_STORE);
+  const fail = (error) => {
+    request.error = error;
+    if (request.onerror) request.onerror();
+    else abortWith(transaction, error);
+  };
+  const succeed = (view) => {
+    request.result = view;
+    request.onsuccess?.();
+  };
+  const rebuild = (generation) => {
+    const all = events.getAll();
+    all.onsuccess = () => {
+      try {
+        arena.reset(generation);
+        appendRows(arena, all.result);
+        zeroRows(all.result);
+        succeed(arena.view());
+      } catch (error) { arena.reset(null); fail(error); }
+    };
+    all.onerror = () => fail(storageError(all.error));
+  };
+  if (typeof transaction.securityValue !== "function") {
+    rebuild(null);
+    return request;
+  }
+  const generationRequest = transaction.securityValue(EVENT_GENERATION_KEY);
+  const countRequest = events.count();
+  let generation;
+  generationRequest.onsuccess = () => { generation = generationRequest.result?.generation ?? 0; };
+  generationRequest.onerror = () => fail(storageError(generationRequest.error));
+  countRequest.onerror = () => fail(storageError(countRequest.error));
+  countRequest.onsuccess = () => {
+    try {
+      const total = countRequest.result;
+      if (!Number.isSafeInteger(generation) || generation < 0) throw invalidEventHistory();
+      if (arena.generation !== generation || total < arena.length) { rebuild(generation); return; }
+      if (total === arena.length) { succeed(arena.view(total)); return; }
+      const known = arena.length;
+      const delta = events.getAll(IDBKeyRange.lowerBound(arena.tail, true));
+      delta.onsuccess = () => {
+        try {
+          // Another transaction may have appended meanwhile; append skips rows
+          // already present. Anything else inconsistent rebuilds.
+          if (arena.generation !== generation || known + delta.result.length !== total) { rebuild(generation); return; }
+          appendRows(arena, delta.result.filter((row) => row.local_sequence > arena.tail));
+          zeroRows(delta.result);
+          succeed(arena.view(total));
+        } catch (error) { arena.reset(null); fail(error); }
+      };
+      delta.onerror = () => fail(storageError(delta.error));
+    } catch (error) { fail(error); }
+  };
+  return request;
+}
+
+// Decrypted row copies are this read's own; zero them once the arena holds
+// their bytes so the session keeps one plaintext copy.
+function zeroRows(rows) {
+  for (const row of rows) {
+    try { asBytes(row.encoded_event).fill(0); } catch { /* Rejected row. */ }
+  }
+}
+
+/** Validates rows in ascending local order and appends them to `arena`. */
+function appendRows(arena, rows) {
+  if (!Array.isArray(rows) || arena.length + rows.length > MAX_EVENT_COUNT) throw invalidEventHistory();
+  let previousSequence = arena.tail;
+  for (const row of rows) {
+    if (!row || typeof row !== "object" || Array.isArray(row) ||
+        !Number.isSafeInteger(row.local_sequence) || row.local_sequence <= previousSequence)
+      throw new EventStoreError("Kin found an invalid local event order. The stored data was preserved.");
+    previousSequence = row.local_sequence;
+  }
+  if (!rows.length) return;
+  const metadata = eventMetadataBatch(rows.map((row) => asBytes(row.encoded_event)));
+  rows.forEach((row, index) => validateEventRow(row, metadata[index]));
+  rows.forEach((row, index) => arena.append(row.local_sequence, asBytes(row.encoded_event), metadata[index]));
+}
+
+/** A validated history view over plain rows, for snapshot-based operations
+ * (migration, rotation, archives). The caller wipes the returned arena. */
+function historyFromRows(rows) {
+  const arena = new EventArena();
+  arena.reset(null);
+  try { appendRows(arena, rows); }
+  catch (error) { arena.wipe(); throw error; }
+  return { arena, view: arena.view() };
+}
+
+function invalidEventHistory() {
+  return new EventStoreError("Kin found an invalid local event history. The stored data was preserved.");
+}
+
+function bumpEventGeneration(transaction) {
+  const security = transaction.objectStore(SECURITY_STORE);
+  const request = security.get(EVENT_GENERATION_KEY);
+  request.onsuccess = () => {
+    const current = request.result?.generation ?? 0;
+    if (!Number.isSafeInteger(current) || current < 0 || current >= Number.MAX_SAFE_INTEGER) {
+      abortWith(transaction, invalidEventHistory());
+      return;
+    }
+    security.put({ key: EVENT_GENERATION_KEY, generation: current + 1 });
+  };
+}
+
+function snapshotBoundary(view) {
+  if (!view.length) return null;
+  const eventId = idToHex(view.id(view.length - 1, "event_id"));
+  return { eventId, localSequence: view.tail, snapshotThroughEventId: eventId, snapshotThroughLocalSequence: view.tail };
+}
+
+function cursorEventId(context) {
+  return context.last_looked_event_id === null ? null : idToHex(context.last_looked_event_id);
 }
 
 function validateEventRows(rows) {
@@ -2295,32 +2445,22 @@ function hasCatchUpMetadata(context) {
   ].some((field) => Object.prototype.hasOwnProperty.call(context, field));
 }
 
-function validateEventHousehold(context, events) {
+function validateEventHousehold(context, view) {
   if (context.sync_household_id) {
-    const bindings = new Set(
-      context.sync_identity_bindings.map(
-        (binding) =>
-          `${binding.legacyHouseholdId}:${binding.legacyActorId}:${binding.legacyDeviceId}`,
-      ),
-    );
-    if (
-      events.some((event) => {
-        if (bytesEqual(event.household_id, context.sync_household_id))
-          return false;
-        const key = `${idToHex(event.household_id)}:${idToHex(event.actor_id)}:${idToHex(event.device_id)}`;
-        return !bindings.has(key);
-      })
-    )
-      throw invalidCatchUpState();
+    const syncHousehold = asBytes(context.sync_household_id);
+    let bindings;
+    for (let index = 0; index < view.length; index += 1) {
+      if (bytesEqual(view.id(index, "household_id"), syncHousehold)) continue;
+      bindings ??= new Set(context.sync_identity_bindings.map((binding) =>
+        `${binding.legacyHouseholdId}:${binding.legacyActorId}:${binding.legacyDeviceId}`));
+      const key = `${idToHex(view.id(index, "household_id"))}:${idToHex(view.id(index, "actor_id"))}:${idToHex(view.id(index, "device_id"))}`;
+      if (!bindings.has(key)) throw invalidCatchUpState();
+    }
     return;
   }
-  if (
-    events.some(
-      (event) => !bytesEqual(event.household_id, context.household_id),
-    )
-  ) {
-    throw invalidCatchUpState();
-  }
+  const household = asBytes(context.household_id);
+  for (let index = 0; index < view.length; index += 1)
+    if (!bytesEqual(view.id(index, "household_id"), household)) throw invalidCatchUpState();
 }
 
 function syncIdentityFromContext(context) {
@@ -2343,7 +2483,8 @@ function sameLegacyTupleForContext(binding, context) {
 function eventRowFromCanonical(encodedEvent) {
   const bytes = asBytes(encodedEvent).slice();
   const metadata = eventMetadata(bytes);
-  return eventRowFromMetadata(bytes, metadata);
+  // The Rust metadata travels with the row so the arena can append it later.
+  return Object.defineProperty(eventRowFromMetadata(bytes, metadata), "metadata", { value: metadata });
 }
 
 function eventRowFromMetadata(bytes, metadata) {
@@ -2388,13 +2529,11 @@ function cursorValue(value) {
   return result;
 }
 
-function validateCursorBoundary(context, events) {
-  validateEventHousehold(context, events);
+function validateCursorBoundary(context, view) {
+  validateEventHousehold(context, view);
   if (context.last_looked_local_sequence === 0) return;
-  const cursor = events.find(
-    (event) => event.local_sequence === context.last_looked_local_sequence,
-  );
-  if (!cursor || !bytesEqual(cursor.event_id, context.last_looked_event_id)) {
+  const index = view.indexOfSequence(context.last_looked_local_sequence);
+  if (index < 0 || !bytesEqual(view.id(index, "event_id"), context.last_looked_event_id)) {
     throw invalidCatchUpState();
   }
 }
@@ -2460,7 +2599,9 @@ function bytesEqual(left, right) {
     if (leftBytes.length !== rightBytes.length) {
       return false;
     }
-    return leftBytes.every((byte, index) => byte === rightBytes[index]);
+    for (let index = 0; index < leftBytes.length; index += 1)
+      if (leftBytes[index] !== rightBytes[index]) return false;
+    return true;
   } catch {
     return false;
   }
@@ -2497,12 +2638,14 @@ function validateRotationRows(rows, engine) {
   if (rows.local_context.length !== 1) throw invalidCatchUpState();
   const context = rows.local_context[0];
   validateContext(context);
-  validateCursorBoundary(context, events);
-  if (events.some((row) => row.logical_time >= context.next_logical_time))
-    throw new EventStoreError("Kin found an invalid event counter. The saved history was preserved.");
-  const { asOf, civilDate } = projectionContext();
-  engine.applyEvents(events.map((row) => row.encoded_event), asOf,
-    context.last_looked_event_id === null ? null : idToHex(context.last_looked_event_id), civilDate, syncIdentityFromContext(context));
+  const { arena, view } = historyFromRows(events);
+  try {
+    validateCursorBoundary(context, view);
+    if (events.some((row) => row.logical_time >= context.next_logical_time))
+      throw new EventStoreError("Kin found an invalid event counter. The saved history was preserved.");
+    const { asOf, civilDate } = projectionContext();
+    engine.applyEvents(view, asOf, cursorEventId(context), civilDate, syncIdentityFromContext(context));
+  } finally { arena.wipe(); }
 }
 
 function validateArchiveSnapshot(snapshot, engine) {
@@ -2522,7 +2665,10 @@ function validateArchiveSnapshot(snapshot, engine) {
   if (context.archive_imported !== undefined && context.archive_imported !== true)
     throw new EventStoreError("Kin found an invalid archive restore marker.");
   validateContext(context);
-  validateCursorBoundary(context, rows);
+  const { arena, view } = historyFromRows(rows);
+  try {
+    validateCursorBoundary(context, view);
+  } finally { arena.wipe(); }
   if (rows.some((row) => row.logical_time >= context.next_logical_time))
     throw new EventStoreError("The archive logical counter cannot safely continue its history.");
   const bindingFields = ["legacyHouseholdId", "legacyActorId", "legacyDeviceId", "householdId", "actorId", "deviceId"];
@@ -2640,6 +2786,7 @@ async function replaceVerifiedSnapshot(database, original, protectedRows, manife
           for (const row of rows) store.put(row);
         }
         transaction.objectStore(SECURITY_STORE).put(manifest);
+        bumpEventGeneration(transaction);
         finish(manifest);
       } catch (error) { abortWith(transaction, error); }
     }

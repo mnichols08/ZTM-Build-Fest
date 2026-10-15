@@ -2872,7 +2872,7 @@ class KinApp extends HTMLElement {
     this.assertCurrentSession(session);
     const { asOf, civilDate } = projectionContext();
     return session.engine.applyEvents(
-      snapshot.events.map((event) => event.encoded_event),
+      snapshot.events,
       asOf,
       snapshot.cursor.eventId,
       civilDate,
@@ -3025,7 +3025,7 @@ class KinApp extends HTMLElement {
       throw new Error("Kin is locked.");
     const { asOf, civilDate } = projectionContext();
     const state = this.engine.applyEvents(
-      snapshot.events.map((event) => event.encoded_event),
+      snapshot.events,
       asOf,
       snapshot.cursor.eventId,
       civilDate,

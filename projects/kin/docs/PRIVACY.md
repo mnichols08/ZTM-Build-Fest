@@ -16,6 +16,12 @@ Locked startup does not load/replay household plaintext. The content-free
 Minimal routing IDs, format/lock state, ciphertext lengths and root wrappers remain
 visible. Recovery secrets are user-held and never persisted or sent to the relay.
 
+While unlocked, a tab keeps one decrypted copy of the household event history
+in memory so it does not decrypt everything again for each change. It is never
+written anywhere. Locking, closing the tab, or a lock from another tab
+zero-fills and drops it; see [THREAT-MODEL](THREAT-MODEL.md) for what that
+does and does not guarantee.
+
 Local reminders are in-memory timers in one tab only and are never persisted.
 A lock suspends them. While locked, Kin keeps only each reminder's record id,
 due time and local vault id; it keeps no title and no timer, so nothing can

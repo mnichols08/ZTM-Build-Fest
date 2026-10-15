@@ -697,6 +697,9 @@ async function browserUiChecks() {
       await peerReadGate;
       return value;
     };
+    // The session arena serves reads without decrypting; force a full read so
+    // this native transaction really waits on Web Crypto.
+    peerStore.arena.reset(null);
     const peerRead = peerStore.loadEvents().then(() => false, () => true);
     try {
       await peerReadStarted;

@@ -83,7 +83,13 @@ export async function loadKinEngine(
   }
   const bytes = await response.arrayBuffer();
   const { instance } = await WebAssembly.instantiate(bytes, {});
-  let exports = instance.exports;
+  return createEngine(instance.exports);
+}
+
+/** Wraps instantiated engine exports in the host API. Exposed separately so
+ * Node tests can exercise ABI ownership against a substitute export table. */
+export function createEngine(instanceExports) {
+  let exports = instanceExports;
   const requiredExports = [
     "memory",
     "kin_alloc",
@@ -175,6 +181,16 @@ export async function loadKinEngine(
         civilDate,
         syncIdentity,
       ),
+    // The exact protocol-24 projection bytes, for equivalence checks that must
+    // compare encodings rather than decoded objects.
+    projectionBytes: (
+      records,
+      asOf,
+      cursorEventId = null,
+      civilDate,
+      syncIdentity = null,
+    ) =>
+      replayBytes(exports, records, asOf, cursorEventId, civilDate, syncIdentity),
   };
 }
 
@@ -701,11 +717,18 @@ function executeCommand(
     },
     identity,
   );
-  const history = encodeRequest(records, asOf, cursor, civilDate, syncIdentity);
-  const request = new Uint8Array(4 + intent.length + history.length);
+  // Encode the history once, behind a reserved intent prefix, instead of
+  // building it separately and copying it into the command request.
+  const request = encodeRequest(
+    records,
+    asOf,
+    cursor,
+    civilDate,
+    syncIdentity,
+    4 + intent.length,
+  );
   new DataView(request.buffer).setUint32(0, intent.length, true);
   request.set(intent, 4);
-  request.set(history, 4 + intent.length);
   const bytes = callCore(exports, "kin_execute_command", request);
   if (bytes.length < 20 || readAscii(bytes, 0, 4) !== "KCMT")
     throw new KinEngineError(6, "Kin received an invalid command result.");
@@ -806,6 +829,10 @@ function callCore(exports, operation, request) {
     throw new KinEngineError(5, USER_MESSAGES.get(5));
   const pointer = exports.kin_alloc(request.length);
   if (!pointer) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  // Every exit, including a throwing copy, operation or decode, releases the
+  // input allocation exactly once. A free failure only surfaces on success so
+  // it never masks the original error.
+  let completed = false;
   try {
     new Uint8Array(exports.memory.buffer, pointer, request.length).set(request);
     const status = exports[operation](pointer, request.length);
@@ -822,11 +849,29 @@ function callCore(exports, operation, request) {
             exports.kin_error_len(),
           );
     if (status !== 0) throw decodeError(bytes, status);
+    completed = true;
     return bytes;
   } finally {
-    if (exports.kin_free(pointer, request.length) !== 0)
+    const freed = exports.kin_free(pointer, request.length);
+    if (freed !== 0 && completed)
       throw new KinEngineError(1, USER_MESSAGES.get(1));
   }
+}
+
+function replayBytes(exports, records, asOf, cursorEventId, civilDate, syncIdentity) {
+  if (!exports)
+    throw new KinEngineError(
+      6,
+      "Unlock Kin before using its household engine.",
+    );
+  if (records.length > MAX_EVENT_COUNT) {
+    throw new KinEngineError(5, USER_MESSAGES.get(5));
+  }
+  return callCore(
+    exports,
+    "kin_apply_events",
+    encodeRequest(records, asOf, cursorEventId, civilDate, syncIdentity),
+  );
 }
 
 function applyEvents(
@@ -837,70 +882,34 @@ function applyEvents(
   civilDate,
   syncIdentity,
 ) {
-  if (!exports)
+  try {
+    return decodeState(
+      replayBytes(exports, records, asOf, cursorEventId, civilDate, syncIdentity),
+    );
+  } catch (error) {
+    if (error instanceof KinEngineError) throw error;
     throw new KinEngineError(
       6,
-      "Unlock Kin before using its household engine.",
+      "Kin could not complete a household-engine operation.",
     );
-  if (records.length > MAX_EVENT_COUNT) {
-    throw new KinEngineError(5, USER_MESSAGES.get(5));
   }
-  const request = encodeRequest(
-    records,
-    asOf,
-    cursorEventId,
-    civilDate,
-    syncIdentity,
-  );
-  const inputPointer = exports.kin_alloc(request.length);
-  if (inputPointer === 0) {
-    throw new KinEngineError(5, USER_MESSAGES.get(5));
-  }
-
-  let result;
-  let operationError;
-  try {
-    new Uint8Array(exports.memory.buffer, inputPointer, request.length).set(
-      request,
-    );
-    const status = exports.kin_apply_events(inputPointer, request.length);
-    const output =
-      status === 0
-        ? copyWasmBytes(
-            exports.memory,
-            exports.kin_result_ptr(),
-            exports.kin_result_len(),
-          )
-        : copyWasmBytes(
-            exports.memory,
-            exports.kin_error_ptr(),
-            exports.kin_error_len(),
-          );
-    if (status !== 0) {
-      throw decodeError(output, status);
-    }
-    result = decodeState(output);
-  } catch (error) {
-    operationError =
-      error instanceof KinEngineError
-        ? error
-        : new KinEngineError(
-            6,
-            "Kin could not complete a household-engine operation.",
-          );
-  }
-
-  const freeStatus = exports.kin_free(inputPointer, request.length);
-  if (operationError) {
-    throw operationError;
-  }
-  if (freeStatus !== 0) {
-    throw new KinEngineError(1, USER_MESSAGES.get(1));
-  }
-  return result;
 }
 
-function encodeRequest(records, asOf, cursorEventId, civilDate, syncIdentity) {
+/**
+ * Builds a protocol-24 KINE request. `records` is an array of canonical event
+ * byte arrays, or a contiguous source exposing `length`, `byteLength` and
+ * `copyTo(target, offset)` (the session event arena), which is copied in one
+ * operation. `reserve` leaves that many leading bytes free for a caller prefix
+ * so the history is never copied a second time.
+ */
+function encodeRequest(
+  records,
+  asOf,
+  cursorEventId,
+  civilDate,
+  syncIdentity,
+  reserve = 0,
+) {
   assertTimestamp(asOf);
   assertCivilDate(civilDate);
   const identityBindings = syncIdentity?.bindings ?? [];
@@ -910,18 +919,24 @@ function encodeRequest(records, asOf, cursorEventId, civilDate, syncIdentity) {
   ) {
     throw new KinEngineError(2, "Kin received invalid sync identity context.");
   }
+  const contiguous = typeof records?.copyTo === "function";
   const headerBytes = REQUEST_HEADER_BYTES + identityBindings.length * 96;
   let length = headerBytes;
-  for (const record of records) {
-    length += asBytes(record).length;
-    if (!Number.isSafeInteger(length) || length > MAX_PROTOCOL_BYTES) {
-      throw new KinEngineError(5, USER_MESSAGES.get(5));
+  if (contiguous) {
+    length += records.byteLength;
+  } else {
+    for (const record of records) {
+      length += asBytes(record).length;
+      if (!Number.isSafeInteger(length) || length > MAX_PROTOCOL_BYTES) break;
     }
   }
+  if (!Number.isSafeInteger(length) || length > MAX_PROTOCOL_BYTES) {
+    throw new KinEngineError(5, USER_MESSAGES.get(5));
+  }
 
-  const bytes = new Uint8Array(length);
-  bytes.set([0x4b, 0x49, 0x4e, 0x45]);
-  const view = new DataView(bytes.buffer);
+  const bytes = new Uint8Array(reserve + length);
+  const view = new DataView(bytes.buffer, reserve);
+  bytes.set([0x4b, 0x49, 0x4e, 0x45], reserve);
   view.setUint16(4, PROTOCOL_VERSION, true);
   view.setUint16(6, 0, true);
   view.setUint32(8, records.length, true);
@@ -931,14 +946,14 @@ function encodeRequest(records, asOf, cursorEventId, civilDate, syncIdentity) {
       typeof cursorEventId === "string"
         ? idFromHex(cursorEventId)
         : assertId(cursorEventId);
-    bytes[20] = 1;
-    bytes.set(cursor, 24);
+    bytes[reserve + 20] = 1;
+    bytes.set(cursor, reserve + 24);
   }
   view.setUint32(40, civilDate, true);
   if (syncIdentity) {
-    bytes.set(idFromHex(syncIdentity.householdId), 44);
+    bytes.set(idFromHex(syncIdentity.householdId), reserve + 44);
     view.setUint16(60, identityBindings.length, true);
-    let bindingOffset = 64;
+    let bindingOffset = reserve + 64;
     for (const binding of identityBindings) {
       for (const id of [
         binding.legacyHouseholdId,
@@ -953,14 +968,22 @@ function encodeRequest(records, asOf, cursorEventId, civilDate, syncIdentity) {
       }
     }
   }
-  let offset = headerBytes;
-  for (const record of records) {
-    const eventBytes = asBytes(record);
-    bytes.set(eventBytes, offset);
-    offset += eventBytes.length;
+  let offset = reserve + headerBytes;
+  if (contiguous) {
+    records.copyTo(bytes, offset);
+  } else {
+    for (const record of records) {
+      const eventBytes = asBytes(record);
+      bytes.set(eventBytes, offset);
+      offset += eventBytes.length;
+    }
   }
   return bytes;
 }
+
+// Stage-level access for the performance harness; production callers use the
+// engine API above.
+export { encodeRequest as encodeReplayRequest, decodeState as decodeProjection };
 
 function copyWasmBytes(memory, pointer, length) {
   const start = Number(pointer);

@@ -185,6 +185,9 @@ export async function talkRegressions() {
       tx.onabort = () => reject(tx.error);
     });
   await writeRow({ ...saved, actor_id: new Uint8Array(16) });
+  // The session arena already holds this row; corruption written outside Kin's
+  // write paths is detected at the next full read (THREAT-MODEL.md), forced here.
+  app.store.arena.reset(null);
   let rejected = false;
   try {
     await app.store.loadEvents();

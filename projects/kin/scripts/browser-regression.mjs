@@ -33,6 +33,7 @@ import {
   catchUpPeerRegressions,
 } from "./catch-up-regression.mjs";
 import { syncStorageRegressions } from "./sync-storage-regression.mjs";
+import { eventArenaPeerRegressions } from "./event-arena-regression.mjs";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -1850,6 +1851,7 @@ try {
   await visit(first, "today");
   await visit(second, "today");
   await catchUpPeerRegressions(first, second, until);
+  await eventArenaPeerRegressions(first, second, until);
   await visit(first, "household/areas");
   await pulseKeyboardRegressions(first, until);
   await visit(first, "routines");
@@ -2204,6 +2206,8 @@ try {
     const corruptTx=a.store.database.transaction('events','readwrite');
     corruptTx.objectStore('events').put(corrupted);
     await new Promise((r,j)=>{corruptTx.oncomplete=r;corruptTx.onabort=j;});
+    // The arena already holds this row; out-of-band corruption is detected at the next full read (THREAT-MODEL.md).
+    a.store.arena.reset(null);
     await a.refreshFromEvents();
     if(a.alert.hidden || a.busy) throw Error('Metadata mismatch must fail safely');
     const persistedRead=a.store.database.transaction('events','readonly').objectStore('events').get(original.local_sequence);

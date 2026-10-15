@@ -1,5 +1,43 @@
 # Testing Contracts
 
+## Refactor track gates
+
+- **Projection-equivalence oracle.** `projectionOracle` in
+  `scripts/event-arena-regression.mjs` compares the projection bytes a store's
+  cached history produces with a fresh full read (native IndexedDB, decrypt of
+  every row) and full replay, for the same events, `as_of`, civil date, cursor
+  and identity. Any cached or incremental history path must pass it. The
+  storage runner exercises it across unlock, local appends, a second
+  connection's appends (checking that only rows after the tail are decrypted),
+  a non-append rewrite detected through the store generation (with a negative
+  control that shows the oracle fails without the bump), out-of-order
+  synchronized events, restore, root rotation and lock. `browser-regression.mjs`
+  runs `eventArenaPeerRegressions`: two real tabs, where the peer tab decrypts
+  exactly one row for one new event and matches the oracle.
+- **Protocol-24 golden fixtures.** `rust/src/golden_tests.rs` builds five
+  scenarios through the command path (empty, a household using every command
+  kind, bound pre-sync history with two diverging devices, an expired Pulse in
+  a paused mode, and 400 bulk Items) and freezes the complete KINE request and
+  the KINS projection under `rust/fixtures/golden/`. `web/wasm/golden.test.mjs`
+  replays the same requests through the release WASM. Regenerate only
+  deliberately with `KIN_UPDATE_GOLDEN=1 cargo test golden`.
+- **ABI ownership.** `web/wasm/abi-ownership.test.mjs` checks that every
+  `kin_alloc` input is freed exactly once when the copy, the export, the result
+  copy or the decode throws, for each operation family, and against the real
+  engine.
+- **Arena unit tests.** `web/storage/event-arena.test.mjs` covers growth past
+  every initial capacity, subarray views, prefix stability across appends,
+  idempotent appends, lookups, detached rows, stale views after reset or wipe,
+  and zero-filling on wipe and growth.
+- **Stage timings.** `node scripts/core-performance.mjs [--browser <exe>]`
+  builds the release WASM if it is missing and prints per-stage medians; the
+  refactor baseline is in [audits/REFACTOR-BASELINE.md](audits/REFACTOR-BASELINE.md).
+
+Corruption tests that rewrite an already-read row in place (outside Kin's
+write paths) reset the store's arena first, because the arena detects such a
+change at the next full read rather than on the next command
+([THREAT-MODEL](THREAT-MODEL.md)).
+
 ## Daily UX baseline
 
 `web/daily-ux-fixtures.js` defines deterministic empty, overdue, due-today,

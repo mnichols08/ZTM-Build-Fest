@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased — refactor track
+
+Performance and maintainability work on `kin-refactor-track`. These slices
+carry no version of their own and are folded into regular feature minors when
+merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](docs/audits/REFACTOR-BASELINE.md).
+
+### Slice 1 — Measurement baseline and session plaintext arena
+
+- An unlocked tab keeps the decrypted event history in one contiguous
+  in-memory arena (`web/storage/event-arena.js`). Commands and refreshes
+  decrypt only rows added after the arena's tail instead of the whole log;
+  unlock decrypts once instead of twice. A plaintext store-generation counter
+  in `security_state`, bumped by migration, restore and root rotation, forces
+  a rebuild after any non-append change. Lock, close and peer-tab lock
+  zero-fill the arena.
+- Replay requests copy the arena's bytes in one operation, and command
+  requests no longer copy the history twice.
+- Every `kin_alloc` input is freed on every exit path, with tests.
+- Adds a projection-equivalence oracle, protocol-24 golden fixtures (native
+  and WASM), arena unit tests, a two-tab arena regression and a stage-level
+  `scripts/core-performance.mjs` that builds missing WASM.
+- Documents the arena in STORAGE, THREAT-MODEL and PRIVACY, and a
+  `RUSTUP_TOOLCHAIN=stable` fallback in DEVELOPMENT (the 1.93.0 pin is unchanged).
+
 ## Unreleased — v0.47.0 — Household Identity & Shared Appearance
 
 - Record the household founder as durable owner for new households while leaving legacy ownership unresolved and fail-closed.

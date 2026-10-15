@@ -60,6 +60,25 @@ Windows developers should be able to use PowerShell and standard Rust tooling. m
 
 On Windows, `run.ps1` uses Node.js from PATH when it meets the 22.13.0 minimum. If PATH selects an older version, it uses the lowest compatible version already installed through fnm. The script does not install runtimes. On macOS and Linux, put Node.js 22.13.0 or later on PATH before running `run.sh`.
 
+`rust-toolchain.toml` pins Rust 1.93.0 with the `wasm32-unknown-unknown`
+target, and the verification gate and release builds use that pin. If the
+pinned toolchain cannot be installed (for example offline, or with a mirror
+that lacks it), a local build or test run can use your default stable toolchain
+for that one command without editing the pin:
+
+```powershell
+$env:RUSTUP_TOOLCHAIN = "stable"; cargo test --manifest-path Cargo.toml; Remove-Item Env:RUSTUP_TOOLCHAIN
+```
+
+```sh
+RUSTUP_TOOLCHAIN=stable cargo test --manifest-path Cargo.toml
+```
+
+Stable needs the same target (`rustup target add wasm32-unknown-unknown
+--toolchain stable`). Treat such a run as a convenience check. Its WASM may
+differ in bytes from the pinned build, formatting or Clippy findings may
+differ, and it does not count as a pass of the gate.
+
 The current implementation has been exercised on Windows with Node 22.12 using its experimental SQLite flag. Node 22.13.0 or later is the supported runtime floor for using `node:sqlite` without that flag. Other operating-system and runtime/architecture combinations remain unverified.
 
 ## Browser capabilities

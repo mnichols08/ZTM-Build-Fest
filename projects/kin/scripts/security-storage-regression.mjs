@@ -1,4 +1,5 @@
 // Real browser IndexedDB + Web Crypto regressions; no third-party harness.
+import { eventArenaRegression, projectionOracle } from "./event-arena-regression.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -441,6 +442,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       if (!process.argv.includes("--adapter-only")) console.log(await client.evaluate(`(${rotationStorageRegression.toString()})()`));
       if (!process.argv.includes("--adapter-only")) console.log(await client.evaluate(`(${rootRotationRegression.toString()})()`));
       if (!process.argv.includes("--adapter-only")) console.log(await client.evaluate(`(${boundedStorageRegression.toString()})()`));
+      if (!process.argv.includes("--adapter-only")) console.log(await client.evaluate(`(${eventArenaRegression.toString()})(${projectionOracle.toString()})`));
       if (!process.argv.includes("--adapter-only")) console.log(await client.evaluate(`(${rootKeyRotationRegression.toString()})()`));
       if (!process.argv.includes("--adapter-only")) {
         let restartChecks = 0;

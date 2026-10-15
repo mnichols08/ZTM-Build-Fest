@@ -2,6 +2,15 @@
 
 **Status:** Current through v0.7.4 Routine Stale-Action Correctness; earlier version sections are historical contracts. See Pulse and v0.6.0 below.
 
+## Protocol-24 golden fixtures
+
+`rust/fixtures/golden/*.kine` and `*.kins` are exact protocol-24 request and
+projection bytes for five scenarios built through the command path (see
+[TESTING](TESTING.md#refactor-track-gates)). They pin canonical event encoding
+and projection encoding together. Native Rust and the release WASM must both
+reproduce them byte for byte; regenerating them is a deliberate protocol
+change.
+
 ## Common envelope values
 
 All IDs below are 16-byte values shown as 32 lowercase hexadecimal characters. Unless overridden, events use:

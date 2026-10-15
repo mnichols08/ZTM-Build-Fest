@@ -12,7 +12,7 @@ const SHELL = [
   "/browser-time.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin_engine.wasm",
   "/routes.js", "/today-view.js", "/reminder-time.js", "/capture-plan.js", "/keyboard-commands.js", "/bulk-actions.js", "/recurrence.js",
   "/attachments/attachment-crypto.js", "/attachments/attachment-lifecycle.js", "/attachments/attachment-preview.js", "/attachments/attachment-progress.js",
-  "/storage/event-store.js", "/storage/encrypted-idb.js", "/storage/root-rotation.js",
+  "/storage/event-store.js", "/storage/event-arena.js", "/storage/encrypted-idb.js", "/storage/root-rotation.js",
   "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js",
   "/appearance/palette.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js",
   "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js",

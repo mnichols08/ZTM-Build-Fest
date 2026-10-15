@@ -4,6 +4,55 @@
 
 All four household draft surfaces now retain text only in unlocked inputs. Reload/lock discards drafts, and startup removes historical sessionStorage draft keys before components mount. No household plaintext is written to localStorage, sessionStorage, Cache Storage, cookies, OPFS or debug persistence.
 
+## Session event arena (refactor track)
+
+An unlocked `EventStore` keeps the decrypted canonical history in memory
+(`web/storage/event-arena.js`) instead of re-reading and re-decrypting every
+row for each command and refresh. The arena is one growable byte buffer of
+exact `encoded_event` bytes plus typed-array indexes (offset/length,
+`local_sequence`, logical time, timestamp, the four 16-byte identifiers, kind
+and schema version, and an event-ID hash table). `records()` returns subarray
+views; replay requests copy the contiguous bytes in one operation.
+
+It is a derived cache, never a second source of truth:
+
+- **Order.** Records are kept in ascending `local_sequence`, which is exactly
+  the order `getAll()` returns. `local_sequence` is the `events` store's
+  auto-increment key, so it is monotonic in insertion order: local appends use
+  `events.add`, and synchronized events are appended after the tail with their
+  expected key asserted (`commitRemoteBatch`), even when they sort earlier in
+  logical time. The engine's v8+ reducer sorts its own copy by
+  `(logical_time, device_id, event_id)` but uses input order for catch-up
+  boundaries, so the arena must preserve local order. It does; no new
+  insertion-order index is needed.
+- **Reading.** Each event transaction reads the persisted store generation and
+  the row count in the same native transaction. With a matching generation it
+  decrypts only rows after the arena tail
+  (`IDBKeyRange.lowerBound(tail, true)`, still paged at 128 rows); any count or
+  generation mismatch rebuilds from every row. Unlock is the first full read.
+  Rows are validated (Rust metadata against routing fields) when they enter the
+  arena; decrypted row copies are zeroed once copied in.
+- **Local writes.** After a local or synchronized append commits, the arena is
+  extended with the plaintext the transaction already held, only if it is the
+  direct successor of the history the write validated against.
+- **Generation.** `security_state` holds a plaintext
+  `{ key: "event_generation", generation }` record (absent means 0). Every
+  non-append change to the `events` store increments it in the same
+  transaction: migration publication, restore into an empty household and root
+  rotation's corpus replacement. Kin has no event deletion or compaction today
+  ([RETENTION](RETENTION.md)); a future retention path must bump it too. The
+  counter reveals only that the corpus was replaced, not its content.
+- **Lifetime.** `close()` and any vault lock (local, peer-tab or durable-epoch
+  mismatch) zero-fill every arena buffer and drop it. Growth zero-fills the
+  buffers it replaces.
+
+Projection equivalence is enforced by `scripts/event-arena-regression.mjs`:
+the cached path must produce byte-identical protocol-24 projection bytes to a
+fresh full read and full replay with the same `as_of`, civil date, cursor and
+identity, across unlock, local and cross-connection appends, out-of-order
+sync, a generation-detected rewrite (with a negative control), restore,
+rotation and lock.
+
 ## Database
 
 ### v0.10.2 root replacement

@@ -50,3 +50,6 @@ mod responsibility_tests;
 
 #[cfg(test)]
 mod recurring_task_tests;
+
+#[cfg(test)]
+mod golden_tests;

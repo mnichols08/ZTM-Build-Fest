@@ -2,6 +2,32 @@
 
 **Status:** v0.12.3 implementation candidate; awaiting human review. Local authenticated encryption, credential/recovery root wrappers, locked startup, encrypted archives and signed transport-key migration complement encrypted sync. The service has durable identity/relay storage, backup/restore and explicit household lifecycle. Independent security audit, cross-browser certification and general rollback protection are not provided.
 
+## Refactor track: decrypted history in memory while unlocked
+
+An unlocked tab now keeps one decrypted copy of the canonical event history in
+memory (the session event arena, [STORAGE](STORAGE.md)) instead of decrypting
+it again for every command and refresh. Before, each operation produced a
+fresh plaintext copy that waited for garbage collection, so an unlocked tab
+already held household plaintext in memory: the decrypted events and the
+rendered projection. This changes how long one copy lives, not what an unlocked
+tab can read. Nothing new is written to disk. The only new persisted value is
+a plaintext store-generation counter in `security_state`, which reveals only
+that the corpus was replaced.
+
+Lock, close, peer-tab lock and durable-epoch mismatch zero-fill the arena's
+buffers and drop them. Zero-filling covers the arena's own buffers. It cannot
+erase copies already handed to the engine or the DOM, or copies the JavaScript
+engine made internally, and garbage collection still gives no physical-erasure
+guarantee. A compromised unlocked runtime could read the history either way.
+
+Rows are checked against their Rust metadata once, when they enter the arena,
+instead of on every read. Tampering with persisted ciphertext still fails
+authenticated decryption, but it is detected at the next full read (unlock, a
+generation or count mismatch), not on the next command. A non-append rewrite
+that does not go through Kin's replacement paths (and so does not bump the
+generation) is not detected until the next unlock; such a writer already has
+storage access.
+
 ## v0.13 recovery authority
 
 Recovery requires a current trusted adult/device and a fresh claimant

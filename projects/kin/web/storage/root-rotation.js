@@ -1,4 +1,5 @@
 import { LocalVault, VaultError } from "../security/local-vault.js";
+import { EVENT_GENERATION_KEY } from "./event-arena.js";
 import { snapshotStores, protectRecord, unprotectRecord, recordIdentity, valuesEqual, compareStoreRows, PROTECTED_BATCH_SIZE } from "./encrypted-idb.js";
 
 const SECURITY = "security_state";
@@ -324,6 +325,12 @@ function replaceEvents(database, expected, replacement, original, protectedRows,
             for (const row of rows) target.put(row);
           }
           transaction.objectStore(SECURITY).put(replacement);
+          // Any session arena built from the source corpus is now stale.
+          if (original.events) {
+            const security = transaction.objectStore(SECURITY);
+            const request = security.get(EVENT_GENERATION_KEY);
+            request.onsuccess = () => security.put({ key: EVENT_GENERATION_KEY, generation: (request.result?.generation ?? 0) + 1 });
+          }
         } catch (error) { transaction.__kinFailure = error; transaction.abort(); }
     };
     for (const name of Object.keys(original)) {
