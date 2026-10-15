@@ -37,13 +37,15 @@ export class KinAppearance extends HTMLElement {
     mode.body.append(this.followButton("mode", "Follow household mode"));
 
     const colors = this.group("Theme color");
-    this.swatches = document.createElement("div"); this.swatches.className = "appearance-swatches"; this.swatches.setAttribute("role", "radiogroup"); this.swatches.setAttribute("aria-label", "Theme color presets");
+    this.swatches = document.createElement("div"); this.swatches.className = "appearance-swatches";
+    this.presetControls = new Map();
     for (const preset of APPEARANCE_PRESETS) {
-      const button = document.createElement("button"); button.type = "button"; button.className = "appearance-swatch"; button.dataset.preset = preset.id;
-      button.setAttribute("role", "radio"); button.setAttribute("aria-label", preset.name); button.title = preset.name;
+      const label = document.createElement("label"); label.className = "appearance-swatch";
+      const input = document.createElement("input"); input.type = "radio"; input.name = `appearance-preset-${this.instanceId}`; input.value = preset.id;
       const chip = document.createElement("span"); chip.className = `swatch-chip swatch-${preset.id}`; chip.setAttribute("aria-hidden", "true");
       const text = document.createElement("span"); text.textContent = preset.name;
-      button.append(chip, text); button.addEventListener("click", () => this.choosePreset(preset)); this.swatches.append(button);
+      input.addEventListener("change", () => { if (input.checked) this.choosePreset(preset); });
+      label.append(input, chip, text); this.swatches.append(label); this.presetControls.set(preset.id, input);
     }
     const customRow = document.createElement("div"); customRow.className = "appearance-custom-row";
     const pickerLabel = document.createElement("label"); pickerLabel.textContent = "Custom color";
@@ -156,7 +158,7 @@ export class KinAppearance extends HTMLElement {
   update(message, saved = false) {
     if (!this.draft) return;
     for (const [value, input] of this.modeControls) input.checked = value === this.draft.mode;
-    for (const button of this.swatches.children) { const selected = (this.draft.colorSource === "default" && button.dataset.preset === "default") || (this.draft.colorSource === "preset" && APPEARANCE_PRESETS.find((item) => item.id === button.dataset.preset)?.seed === this.draft.seed); button.setAttribute("aria-checked", String(selected)); button.classList.toggle("selected", selected); }
+    for (const [presetId, input] of this.presetControls) input.checked = (this.draft.colorSource === "default" && presetId === "default") || (this.draft.colorSource === "preset" && APPEARANCE_PRESETS.find((item) => item.id === presetId)?.seed === this.draft.seed);
     this.picker.value = this.draft.seed; if (this.draft.colorSource !== "custom") this.syncHex(this.draft.seed); else if (document.activeElement !== this.hex) this.hex.value = this.draft.seed;
     this.useBackground.hidden = !this.draft.image; this.remove.hidden = !this.draft.image; this.choose.textContent = this.draft.image ? "Replace image" : "Choose image";
     this.imageStatus.textContent = this.draft.image ? `Processed locally (${this.draft.image.width} × ${this.draft.image.height}).` : "No personal background selected.";
