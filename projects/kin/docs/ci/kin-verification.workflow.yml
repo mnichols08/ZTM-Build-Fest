@@ -25,14 +25,19 @@ concurrency:
 jobs:
   verify:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22.13.0
       - name: Install pinned Rust and WASM target
         shell: pwsh
-        run: rustup toolchain install 1.93.0 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
+        run: |
+          rustup toolchain install 1.93.0 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
+          rustup default 1.93.0
       - name: Install Kin dependencies
         working-directory: projects/kin
         run: npm ci
@@ -44,3 +49,27 @@ jobs:
         env:
           KIN_BROWSER: C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
         run: npm run verify:browser
+
+  verify-linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.13.0
+      - name: Install pinned Rust and WASM target
+        run: |
+          rustup toolchain install 1.93.0 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
+          rustup default 1.93.0
+      - name: Install Kin dependencies
+        working-directory: projects/kin
+        run: npm ci
+      - name: Exercise Linux WASM launcher
+        working-directory: projects/kin
+        run: ./build-wasm.sh
+      - name: Run browserless verification
+        working-directory: projects/kin
+        run: node scripts/verify.mjs
