@@ -389,6 +389,60 @@ const EVENT_KINDS = [
   "RESPONSIBILITY_CHANGED",
 ];
 
+// The command field that names each event's own entity (packet offset 92).
+// Other ID fields on a command are references to a different entity: a
+// note's or reference record's areaId, a maintenance entry's routineId and
+// recordId, a step's itemId, an attachment's parentId. A reference must never
+// become the entity ID, so the field is chosen by command type, not by which
+// ID happens to be present. Pulse and household-mode commands carry none.
+const ENTITY_FIELDS = Object.freeze({
+  add: "itemId",
+  complete: "itemId",
+  reopen: "itemId",
+  archive: "itemId",
+  "add-handoff": "handoffId",
+  "acknowledge-handoff": "handoffId",
+  "archive-handoff": "handoffId",
+  "add-talk": "talkId",
+  "resolve-talk": "talkId",
+  "reopen-talk": "talkId",
+  "archive-talk": "talkId",
+  "create-routine": "routineId",
+  "complete-routine-occurrence": "routineId",
+  "reopen-routine-occurrence": "routineId",
+  "archive-routine": "routineId",
+  "create-area": "areaId",
+  "rename-area": "areaId",
+  "archive-area": "areaId",
+  "change-item-area": "itemId",
+  "create-note": "noteId",
+  "update-note": "noteId",
+  "archive-note": "noteId",
+  "add-item-step": "stepId",
+  "complete-item-step": "stepId",
+  "reopen-item-step": "stepId",
+  "archive-item-step": "stepId",
+  "set-item-planning-date": "itemId",
+  pin: "targetId",
+  unpin: "targetId",
+  "save-playbook": "playbookId",
+  "archive-playbook": "playbookId",
+  "save-reference-record": "recordId",
+  "archive-reference-record": "recordId",
+  "save-maintenance-event": "maintenanceId",
+  "archive-maintenance-event": "maintenanceId",
+  "bind-attachment": "attachmentId",
+  "remove-attachment": "attachmentId",
+  "change-responsibility": "targetId",
+});
+
+/** The entity ID an intent packet carries: the type's own field, else `id`, else the caller's fallback. */
+export function commandEntityId(command, identity = {}) {
+  const field = Object.hasOwn(ENTITY_FIELDS, command.type) ? ENTITY_FIELDS[command.type] : null;
+  if (!field) throw new KinEngineError(2, "Kin received an invalid household action.");
+  return command[field] ?? command.id ?? identity.entityId;
+}
+
 function encodeIntent(type, value) {
   return callCore(
     sharedCodec,
@@ -470,20 +524,7 @@ function encodeIntentPacket(command, identity) {
     throw new KinEngineError(2, "Kin received an invalid event order.");
   view.setBigUint64(84, logicalTime, true);
   if (![12, 13, 29].includes(kind)) {
-    const entity =
-      command.stepId ??
-      command.itemId ??
-      command.handoffId ??
-      command.talkId ??
-      command.routineId ??
-      command.areaId ??
-      command.noteId ??
-      command.playbookId ??
-      command.maintenanceId ??
-      command.recordId ??
-      command.targetId ??
-      command.id ??
-      identity.entityId;
+    const entity = commandEntityId(command, identity);
     packet.set(
       typeof entity === "string" ? idFromHex(entity) : assertId(entity),
       92,

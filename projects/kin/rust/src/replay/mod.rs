@@ -13,13 +13,15 @@
 //! current occurrence and next start. Everything a reducer decides depends on
 //! the events alone.
 //!
-//! Concurrent archives: several reducers treat an archive event from another
-//! device at the same logical time as concurrent (it wins over the other
-//! change). They look the archives up in sets collected from every event to
-//! be replayed (`note_archives`), so call it with all events before applying
-//! them, and with each later batch before applying that batch. Because only
-//! equal logical times count, a batch whose events all come strictly later
-//! than the last applied event cannot change any earlier decision.
+//! Cross-device terminal conflicts: a mutation of an entity that a different
+//! device archived or completed, at the same or an earlier logical time, is
+//! kept in history and changes no state. `note_archives` records those
+//! terminal events before the batch is applied, and the sets stay on the
+//! replay, so both sort orders and a strictly later batch see them. A second
+//! archive from a different device is a recorded no-op at any logical time.
+//! A device mutating something it archived itself stays invalid. A note created in an
+//! area another device archived at the same or an earlier logical time is
+//! kept with no area.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -43,39 +45,57 @@ pub struct Replay {
     pub(super) item_positions: BTreeMap<ItemId, usize>,
     /// Which event archived an Item: (logical time, device).
     pub(super) item_archives: BTreeMap<ItemId, (u64, DeviceId)>,
-    /// Every archive event per Item in the whole history, for concurrent-archive checks (equal logical time, other device).
+    /// Every archive event per Item in the whole history, for cross-device terminal checks.
     pub(super) item_archive_events: BTreeMap<ItemId, BTreeSet<(u64, DeviceId)>>,
+    /// Completion events, for an equal-logical-time step that sorts before the completion.
+    /// A completion is not permanent: reopen clears `item_completions` while this set stays.
+    pub(super) item_completion_events: BTreeMap<ItemId, BTreeSet<(u64, DeviceId)>>,
+    /// The completion that is in effect, removed when the item is reopened.
+    pub(super) item_completions: BTreeMap<ItemId, (u64, DeviceId)>,
     pub(super) step_archive_events: BTreeMap<StepId, BTreeSet<(u64, DeviceId)>>,
+    /// Device that first archived a Step. A later archive from anyone else is a no-op.
+    pub(super) step_archived_by: BTreeMap<StepId, (u64, DeviceId)>,
     pub(super) seen_step_ids: BTreeSet<StepId>,
     pub(super) handoffs: Vec<HandoffState>,
     pub(super) handoff_positions: BTreeMap<HandoffId, usize>,
     pub(super) handoff_archives: BTreeMap<HandoffId, (u64, DeviceId)>,
+    pub(super) handoff_archive_events: BTreeMap<HandoffId, BTreeSet<(u64, DeviceId)>>,
     pub(super) talks: Vec<TalkState>,
     pub(super) talk_positions: BTreeMap<TalkId, usize>,
     pub(super) talk_archives: BTreeMap<TalkId, (u64, DeviceId)>,
+    pub(super) talk_archive_events: BTreeMap<TalkId, BTreeSet<(u64, DeviceId)>>,
     /// Latest Pulse per member; `status` is set by finalize.
     pub(super) pulses: BTreeMap<ActorId, PulseState>,
     /// Occurrence fields are set by finalize.
     pub(super) routines: Vec<RoutineState>,
     pub(super) routine_positions: BTreeMap<RoutineId, usize>,
     pub(super) routine_archives: BTreeMap<RoutineId, (u64, DeviceId)>,
+    pub(super) routine_archive_events: BTreeMap<RoutineId, BTreeSet<(u64, DeviceId)>>,
     /// Completed occurrences by key, projected onto the civil date in finalize.
     pub(super) completed_periods: BTreeSet<(RoutineId, CivilDate)>,
     pub(super) areas: Vec<AreaState>,
     pub(super) area_positions: BTreeMap<AreaId, usize>,
+    pub(super) area_archive_events: BTreeMap<AreaId, BTreeSet<(u64, DeviceId)>>,
     pub(super) notes: Vec<NoteState>,
     pub(super) note_positions: BTreeMap<NoteId, usize>,
     pub(super) note_archive_events: BTreeMap<NoteId, BTreeSet<(u64, DeviceId)>>,
+    /// Device that first archived a Note. A later archive from anyone else is a no-op.
+    pub(super) note_archived_by: BTreeMap<NoteId, (u64, DeviceId)>,
     pub(super) reference_records: Vec<ReferenceRecordState>,
     pub(super) reference_positions: BTreeMap<ReferenceRecordId, usize>,
     pub(super) reference_field_owners: BTreeMap<ReferenceFieldId, ReferenceRecordId>,
     pub(super) reference_archive_events: BTreeMap<ReferenceRecordId, BTreeSet<(u64, DeviceId)>>,
     pub(super) maintenance_events: Vec<MaintenanceEventState>,
+    /// Device that first archived a maintenance event. A later archive from anyone else is a no-op.
+    pub(super) maintenance_archived_by: BTreeMap<MaintenanceEventId, (u64, DeviceId)>,
+    /// Every maintenance archive, so an edit at the same logical time still sees it.
+    pub(super) maintenance_archive_events: BTreeMap<MaintenanceEventId, BTreeSet<(u64, DeviceId)>>,
     pub(super) attachments: Vec<AttachmentState>,
     pub(super) responsibilities: Vec<ResponsibilityState>,
     /// Pins as replayed; finalize drops those whose target is archived.
     pub(super) pins: Vec<PinState>,
     pub(super) playbooks: Vec<PlaybookState>,
+    pub(super) playbook_archive_events: BTreeMap<PlaybookId, BTreeSet<(u64, DeviceId)>>,
     /// Canonical bytes per applied event: an exact duplicate is skipped, a conflicting one fails. Shared, so cloning a Replay does not copy them.
     pub(super) event_bytes: BTreeMap<EventId, Arc<[u8]>>,
     /// Logical time of the last applied event; replay order never goes back.
@@ -103,34 +123,77 @@ impl Replay {
         self.event_bytes.contains_key(&event_id)
     }
 
-    /// Records the archive events among `events` for the concurrent-archive
-    /// checks (see the module doc). Call before applying them.
+    /// Records terminal events among `events` for cross-device checks (see the
+    /// module doc). Call before applying them. Sets accumulate across calls.
     pub fn note_archives(&mut self, events: &[EventEnvelope]) {
         for event in events {
+            let stamp = (event.logical_time, event.device_id);
             match &event.kind {
                 EventKind::NoteArchived { note_id } => {
                     self.note_archive_events
                         .entry(*note_id)
                         .or_default()
-                        .insert((event.logical_time, event.device_id));
+                        .insert(stamp);
                 }
                 EventKind::ReferenceRecordArchived { record_id } => {
                     self.reference_archive_events
                         .entry(*record_id)
                         .or_default()
-                        .insert((event.logical_time, event.device_id));
+                        .insert(stamp);
                 }
                 EventKind::ItemArchived { item_id } => {
                     self.item_archive_events
                         .entry(*item_id)
                         .or_default()
-                        .insert((event.logical_time, event.device_id));
+                        .insert(stamp);
+                }
+                EventKind::ItemCompleted { item_id } => {
+                    self.item_completion_events
+                        .entry(*item_id)
+                        .or_default()
+                        .insert(stamp);
                 }
                 EventKind::ItemStepArchived { step_id, .. } => {
                     self.step_archive_events
                         .entry(*step_id)
                         .or_default()
-                        .insert((event.logical_time, event.device_id));
+                        .insert(stamp);
+                }
+                EventKind::MaintenanceEventArchived { maintenance_id } => {
+                    self.maintenance_archive_events
+                        .entry(*maintenance_id)
+                        .or_default()
+                        .insert(stamp);
+                }
+                EventKind::AreaArchived { area_id } => {
+                    self.area_archive_events
+                        .entry(*area_id)
+                        .or_default()
+                        .insert(stamp);
+                }
+                EventKind::RoutineArchived { routine_id } => {
+                    self.routine_archive_events
+                        .entry(*routine_id)
+                        .or_default()
+                        .insert(stamp);
+                }
+                EventKind::TalkArchived { talk_id } => {
+                    self.talk_archive_events
+                        .entry(*talk_id)
+                        .or_default()
+                        .insert(stamp);
+                }
+                EventKind::HandoffArchived { handoff_id } => {
+                    self.handoff_archive_events
+                        .entry(*handoff_id)
+                        .or_default()
+                        .insert(stamp);
+                }
+                EventKind::PlaybookArchived { playbook_id } => {
+                    self.playbook_archive_events
+                        .entry(*playbook_id)
+                        .or_default()
+                        .insert(stamp);
                 }
                 _ => {}
             }
@@ -296,12 +359,57 @@ pub(super) fn has_concurrent_archive(
     })
 }
 
-pub(super) fn is_concurrent_terminal_conflict(
+/// Whether a different device made this entity terminal at or before `event`.
+///
+/// `known` is every terminal event [`Replay::note_archives`] has recorded. The
+/// set accumulates across batches, so a strictly later batch still sees an
+/// earlier archive. Equal logical time counts even when that terminal event
+/// sorts later, which keeps both device orders the same. The same device does
+/// not match: its own later mutation stays invalid.
+///
+/// Completions are not passed here. Reopen clears a completion, so callers use
+/// [`other_device_completed`] for the completion that is still in effect.
+pub(super) fn other_device_archived(
+    known: Option<&BTreeSet<(u64, DeviceId)>>,
+    event: &EventEnvelope,
+) -> bool {
+    known.is_some_and(|events| {
+        events.iter().any(|(logical_time, device_id)| {
+            *device_id != event.device_id && *logical_time <= event.logical_time
+        })
+    })
+}
+
+/// Whether a different device completed this item and it has not been reopened.
+///
+/// `applied` is the completion currently in effect. `concurrent` is every
+/// completion event, consulted only at equal logical time, because a completion
+/// that sorts later has not been applied yet. An earlier completion that was
+/// reopened is absent from `applied` and does not match here.
+pub(super) fn other_device_completed(
+    applied: Option<(u64, DeviceId)>,
+    concurrent: Option<&BTreeSet<(u64, DeviceId)>>,
+    event: &EventEnvelope,
+) -> bool {
+    let applied_by_other = applied.is_some_and(|(logical_time, device_id)| {
+        device_id != event.device_id && logical_time <= event.logical_time
+    });
+    let concurrent_other = concurrent.is_some_and(|events| {
+        events.iter().any(|(logical_time, device_id)| {
+            *logical_time == event.logical_time && *device_id != event.device_id
+        })
+    });
+    applied_by_other || concurrent_other
+}
+
+/// The entity is already archived, and the device that archived it is not `event`'s.
+///
+/// A second archive from another device is a recorded no-op at any logical time.
+/// The same device archiving its own archived entity again stays invalid.
+/// Replay has already applied the earlier archive, so logical time is not compared.
+pub(super) fn archived_by_other_device(
     archived_by: Option<(u64, DeviceId)>,
     event: &EventEnvelope,
 ) -> bool {
-    // Cross-device mutations at the archive's logical time cannot undo its terminal tombstone.
-    archived_by.is_some_and(|(logical_time, device_id)| {
-        logical_time == event.logical_time && device_id != event.device_id
-    })
+    archived_by.is_some_and(|(_, device_id)| device_id != event.device_id)
 }

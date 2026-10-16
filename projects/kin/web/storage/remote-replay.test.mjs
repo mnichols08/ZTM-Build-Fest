@@ -55,9 +55,9 @@ test("an engine that cannot read a remote event stops the batch instead of quara
   }
 });
 
-test("two devices changing one repeating task's schedule offline: equal clocks keep both replacements, later archive is quarantined", () => {
-  // Known PR 53 limitation (docs/DAILY-UX-HARDENING.md): a schedule change is
-  // create-replacement + archive-original, with no supersession record.
+test("two devices changing one repeating task's schedule offline keep both replacements", () => {
+  // A schedule change is create-replacement + archive-original. The second
+  // archive of the original, from another device, is a recorded no-op.
   const routine = (device, sequence, logicalTime, routineId, cadence) => encodeRoutineCreatedRecord({
     ...context(device, sequence, logicalTime), routineId: id(routineId), text: "Pack lunches", cadence, createdOn: 20261012 });
   const archive = (device, sequence, logicalTime) => encodeRoutineActionRecord({
@@ -81,7 +81,7 @@ test("two devices changing one repeating task's schedule offline: equal clocks k
   const laterClock = [original, ...deviceA, routine(2, 2, 4, 0x70, "weekdays"), archive(2, 3, 5)];
   for (const order of [laterClock, [...laterClock].reverse()]) {
     const result = replay(order);
-    assert.equal(result.quarantined, 1, "the second archive of the same original is refused as a conflict");
-    assert.deepEqual(active(result), ["weekdays", "weekly"], "both replacements still repeat after the conflict");
+    assert.equal(result.quarantined, 0, "the later archive from the other device is kept as a no-op");
+    assert.deepEqual(active(result), ["weekdays", "weekly"], "both replacements stay active");
   }
 });

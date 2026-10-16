@@ -58,12 +58,15 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 || note_id.0 == [0; 16]
                 || r.note_positions.contains_key(note_id)
                 || r.notes.len() >= MAX_NOTES
-                || area_id.is_some_and(|id| {
-                    r.area_positions
-                        .get(&id)
-                        .is_none_or(|position| r.areas[*position].archived)
-                })
+                || area_id.is_some_and(|id| !r.area_positions.contains_key(&id))
             {
+                return Err(KinError::InvalidEvent);
+            }
+            // Another device archived this area at the same or an earlier
+            // logical time: keep the note, detached, instead of dropping it.
+            let detach = area_id
+                .is_some_and(|id| other_device_archived(r.area_archive_events.get(&id), event));
+            if !detach && area_id.is_some_and(|id| r.areas[r.area_positions[&id]].archived) {
                 return Err(KinError::InvalidEvent);
             }
             r.note_positions.insert(*note_id, r.notes.len());
@@ -71,7 +74,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 note_id: *note_id,
                 title,
                 body,
-                area_id: *area_id,
+                area_id: if detach { None } else { *area_id },
                 created_by: event.actor_id,
                 created_at: event.timestamp,
                 updated_by: event.actor_id,
@@ -91,30 +94,39 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 .get(note_id)
                 .copied()
                 .ok_or(KinError::InvalidEvent)?;
-            if !valid_timestamp(event.timestamp)
-                || area_id.is_some_and(|id| {
-                    r.area_positions.get(&id).is_none_or(|area_position| {
-                        r.areas[*area_position].archived && r.notes[position].area_id != Some(id)
-                    })
+            if !valid_timestamp(event.timestamp) {
+                return Err(KinError::InvalidEvent);
+            }
+            if other_device_archived(r.note_archive_events.get(note_id), event) {
+                // Kept in history. The archived note's text and area stay as they are.
+                return Ok(());
+            }
+            if r.notes[position].status == NoteStatus::Archived
+                || area_id.is_some_and(|id| !r.area_positions.contains_key(&id))
+            {
+                return Err(KinError::InvalidEvent);
+            }
+            // Another device archived the target area at the same or an earlier
+            // logical time: keep the title and body, and leave the note's area
+            // unchanged instead of moving it into the archived area.
+            let detach_area = area_id
+                .is_some_and(|id| other_device_archived(r.area_archive_events.get(&id), event));
+            if !detach_area
+                && area_id.is_some_and(|id| {
+                    r.areas[r.area_positions[&id]].archived && r.notes[position].area_id != Some(id)
                 })
             {
                 return Err(KinError::InvalidEvent);
             }
-            let concurrent_archive = r.note_archive_events.get(note_id).is_some_and(|archives| {
-                archives.iter().any(|(logical_time, device_id)| {
-                    *logical_time == event.logical_time && *device_id != event.device_id
-                })
-            });
-            if r.notes[position].status == NoteStatus::Archived && !concurrent_archive {
-                return Err(KinError::InvalidEvent);
-            }
-            if !concurrent_archive {
-                r.notes[position].title = title;
-                r.notes[position].body = body;
-                r.notes[position].area_id = *area_id;
-                r.notes[position].updated_by = event.actor_id;
-                r.notes[position].updated_at = event.timestamp;
-            }
+            r.notes[position].title = title;
+            r.notes[position].body = body;
+            r.notes[position].area_id = if detach_area {
+                r.notes[position].area_id
+            } else {
+                *area_id
+            };
+            r.notes[position].updated_by = event.actor_id;
+            r.notes[position].updated_at = event.timestamp;
         }
         EventKind::NoteArchived { note_id } => {
             if !valid_timestamp(event.timestamp) {
@@ -125,15 +137,15 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 .get(note_id)
                 .copied()
                 .ok_or(KinError::InvalidEvent)?;
-            let concurrent_archive = r.note_archive_events.get(note_id).is_some_and(|archives| {
-                archives.iter().any(|(logical_time, device_id)| {
-                    *logical_time == event.logical_time && *device_id != event.device_id
-                })
-            });
-            if r.notes[position].status == NoteStatus::Archived && !concurrent_archive {
-                return Err(KinError::InvalidEvent);
+            if r.notes[position].status == NoteStatus::Archived {
+                if !archived_by_other_device(r.note_archived_by.get(note_id).copied(), event) {
+                    return Err(KinError::InvalidEvent);
+                }
+            } else {
+                r.notes[position].status = NoteStatus::Archived;
+                r.note_archived_by
+                    .insert(*note_id, (event.logical_time, event.device_id));
             }
-            r.notes[position].status = NoteStatus::Archived;
             r.pins.retain(|pin| {
                 !(pin.target_kind == PinTargetKind::Note && pin.target_id == note_id.0)
             });
@@ -153,13 +165,16 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
             }
             let owner = *record_id;
             let concurrent_archive =
-                r.reference_archive_events
-                    .get(record_id)
-                    .is_some_and(|archives| {
-                        archives.iter().any(|(time, device)| {
-                            *time == event.logical_time && *device != event.device_id
-                        })
-                    });
+                has_concurrent_archive(r.reference_archive_events.get(record_id), event);
+            if r.reference_positions.contains_key(record_id)
+                && other_device_archived(r.reference_archive_events.get(record_id), event)
+                && !concurrent_archive
+            {
+                // A later save after another device's archive changes nothing,
+                // including field ownership. Equal logical time still records
+                // field owners below and leaves the saved text unchanged.
+                return Ok(());
+            }
             if fields.iter().any(|field| {
                 r.reference_field_owners
                     .get(&field.field_id)
@@ -227,18 +242,19 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 .reference_positions
                 .get(record_id)
                 .ok_or(KinError::InvalidEvent)?;
-            if (r.reference_records[record_pos].archived
-                && !has_concurrent_archive(r.reference_archive_events.get(record_id), event))
-                || performed_on.encoded() == 0
-            {
+            if performed_on.encoded() == 0 {
                 return Err(KinError::InvalidEvent);
             }
-            if let Some(routine_id) = routine_id {
+            let mut linked_routine = *routine_id;
+            if let Some(routine_id) = linked_routine {
                 let position = *r
                     .routine_positions
-                    .get(routine_id)
+                    .get(&routine_id)
                     .ok_or(KinError::InvalidEvent)?;
-                if r.routines[position].archived {
+                if other_device_archived(r.routine_archive_events.get(&routine_id), event) {
+                    // Keep the maintenance fact. The link into the archived routine is dropped.
+                    linked_routine = None;
+                } else if r.routines[position].archived {
                     return Err(KinError::InvalidEvent);
                 }
             }
@@ -246,6 +262,28 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 if next_on < performed_on {
                     return Err(KinError::InvalidEvent);
                 }
+            }
+            if other_device_archived(r.maintenance_archive_events.get(maintenance_id), event) {
+                // Another device archived this entry at the same or an earlier
+                // logical time. The edit is kept in history and changes nothing.
+                return Ok(());
+            }
+            if r.maintenance_events.iter().any(|entry| {
+                entry.maintenance_id == *maintenance_id
+                    && (entry.archived || entry.record_id != *record_id)
+            }) {
+                return Err(KinError::InvalidEvent);
+            }
+            let concurrent_archive =
+                has_concurrent_archive(r.reference_archive_events.get(record_id), event);
+            if other_device_archived(r.reference_archive_events.get(record_id), event)
+                && !concurrent_archive
+            {
+                // Recorded as applied with no other effect (Replay::apply records it).
+                return Ok(());
+            }
+            if r.reference_records[record_pos].archived && !concurrent_archive {
+                return Err(KinError::InvalidEvent);
             }
             if let Some(existing) = r
                 .maintenance_events
@@ -261,7 +299,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                     performed_on: *performed_on,
                     summary,
                     next_on: *next_on,
-                    routine_id: *routine_id,
+                    routine_id: linked_routine,
                     archived: false,
                 };
             } else {
@@ -279,7 +317,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                     performed_on: *performed_on,
                     summary,
                     next_on: *next_on,
-                    routine_id: *routine_id,
+                    routine_id: linked_routine,
                     archived: false,
                 });
             }
@@ -291,9 +329,17 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 .find(|entry| entry.maintenance_id == *maintenance_id)
                 .ok_or(KinError::InvalidEvent)?;
             if entry.archived {
-                return Err(KinError::InvalidEvent);
+                if !archived_by_other_device(
+                    r.maintenance_archived_by.get(maintenance_id).copied(),
+                    event,
+                ) {
+                    return Err(KinError::InvalidEvent);
+                }
+            } else {
+                entry.archived = true;
+                r.maintenance_archived_by
+                    .insert(*maintenance_id, (event.logical_time, event.device_id));
             }
-            entry.archived = true;
         }
         EventKind::AttachmentBound {
             attachment_id,
