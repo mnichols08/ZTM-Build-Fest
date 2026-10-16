@@ -10,6 +10,23 @@ const CLASSIFICATION_LABELS = {
 const matches = (value, query) =>
   typeof value === "string" && value.toLowerCase().includes(query);
 
+function planningDateLabel(value) {
+  if (!Number.isSafeInteger(value)) return null;
+  const date = String(value).padStart(8, "0");
+  return `Planned ${date.slice(4, 6)}/${date.slice(6, 8)}/${date.slice(0, 4)}`;
+}
+
+function matchingExcerpt(value, query, maximum = 160) {
+  if (!matches(value, query)) return "";
+  if (value.length <= maximum) return value;
+  const index = value.toLowerCase().indexOf(query);
+  const room = Math.max(0, maximum - query.length);
+  let start = Math.max(0, index - Math.floor(room / 2));
+  let end = Math.min(value.length, start + maximum);
+  start = Math.max(0, end - maximum);
+  return `${start ? "…" : ""}${value.slice(start, end).trim()}${end < value.length ? "…" : ""}`;
+}
+
 export function searchHouseholdRecords({
   items = [],
   handoffs = [],
@@ -45,10 +62,16 @@ export function searchHouseholdRecords({
 
     const classificationLabel = CLASSIFICATION_LABELS[item.classification] ?? "Item";
     const area = item.areaId ? areaName(item.areaId) : null;
+    const steps = (item.steps ?? []).filter((step) => !step.archived);
+    const stepContext = steps.length
+      ? `${steps.filter((step) => step.completed).length} of ${steps.length} ${steps.length === 1 ? "step" : "steps"}`
+      : null;
     const context = [
       classificationLabel,
       item.status === "completed" ? "Completed" : "Active",
       area ? `${area}${areas.find((entry) => entry.areaId === item.areaId)?.archived ? " (archived Area)" : ""}` : null,
+      planningDateLabel(item.planningDate),
+      stepContext,
     ].filter(Boolean).join(" · ");
 
     if (matches(item.text, normalizedQuery)) {
@@ -96,24 +119,34 @@ export function searchHouseholdRecords({
   }
 
   for (const note of notes) {
+    const titleMatches = matches(note.title, normalizedQuery);
+    const bodyMatches = matches(note.body, normalizedQuery);
     if (
       note.archived ||
-      (!matches(note.title, normalizedQuery) && !matches(note.body, normalizedQuery))
+      (!titleMatches && !bodyMatches)
     ) continue;
     addResult({
       kind: "Note",
       id: note.noteId,
       text: note.title,
-      detail: note.body,
-      context: note.areaId ? areaName(note.areaId) ?? "Archived Area" : "",
+      detail: bodyMatches ? matchingExcerpt(note.body, normalizedQuery) : "",
+      context: [
+        note.areaId ? areaName(note.areaId) ?? "Archived Area" : null,
+        titleMatches && bodyMatches ? "Matched title and note text" : bodyMatches ? "Matched note text" : "Matched title",
+      ].filter(Boolean).join(" · "),
     });
   }
 
   const activeReferences = referenceRecords.filter((record) => !record.archived);
   for (const record of activeReferences) {
-    const detail = record.fields.map((field) => `${field.label}: ${field.value}`).join(" · ");
-    if (!matches(record.title, normalizedQuery) && !record.fields.some((field) => matches(field.label, normalizedQuery) || matches(field.value, normalizedQuery))) continue;
-    addResult({ kind: "Reference Record", id: record.recordId, text: record.title, detail, context: "Household reference" });
+    const titleMatches = matches(record.title, normalizedQuery);
+    const matchingFields = record.fields.filter((field) => matches(field.label, normalizedQuery) || matches(field.value, normalizedQuery));
+    if (!titleMatches && !matchingFields.length) continue;
+    const detail = matchingFields.map((field) => `${field.label}: ${field.value}`).join(" · ");
+    const matchContext = titleMatches && matchingFields.length
+      ? "Matched title and field"
+      : matchingFields.length ? "Matched field" : "Matched title";
+    addResult({ kind: "Reference Record", id: record.recordId, text: record.title, detail, context: `Household reference · ${matchContext}` });
   }
   for (const event of maintenanceEvents) {
     if (event.archived || !matches(event.summary, normalizedQuery)) continue;
