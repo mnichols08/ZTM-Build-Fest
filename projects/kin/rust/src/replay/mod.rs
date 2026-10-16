@@ -17,8 +17,9 @@
 //! device archived or completed, at the same or an earlier logical time, is
 //! kept in history and changes no state. `note_archives` records those
 //! terminal events before the batch is applied, and the sets stay on the
-//! replay, so both sort orders and a strictly later batch see them. A device
-//! mutating something it archived itself stays invalid. A note created in an
+//! replay, so both sort orders and a strictly later batch see them. A second
+//! archive from a different device is a recorded no-op at any logical time.
+//! A device mutating something it archived itself stays invalid. A note created in an
 //! area another device archived at the same or an earlier logical time is
 //! kept with no area.
 use std::collections::{BTreeMap, BTreeSet};
@@ -52,6 +53,8 @@ pub struct Replay {
     /// The completion that is in effect, removed when the item is reopened.
     pub(super) item_completions: BTreeMap<ItemId, (u64, DeviceId)>,
     pub(super) step_archive_events: BTreeMap<StepId, BTreeSet<(u64, DeviceId)>>,
+    /// Device that first archived a Step. A later archive from anyone else is a no-op.
+    pub(super) step_archived_by: BTreeMap<StepId, (u64, DeviceId)>,
     pub(super) seen_step_ids: BTreeSet<StepId>,
     pub(super) handoffs: Vec<HandoffState>,
     pub(super) handoff_positions: BTreeMap<HandoffId, usize>,
@@ -85,6 +88,8 @@ pub struct Replay {
     pub(super) maintenance_events: Vec<MaintenanceEventState>,
     /// Device that first archived a maintenance event. A later archive from anyone else is a no-op.
     pub(super) maintenance_archived_by: BTreeMap<MaintenanceEventId, (u64, DeviceId)>,
+    /// Every maintenance archive, so an edit at the same logical time still sees it.
+    pub(super) maintenance_archive_events: BTreeMap<MaintenanceEventId, BTreeSet<(u64, DeviceId)>>,
     pub(super) attachments: Vec<AttachmentState>,
     pub(super) responsibilities: Vec<ResponsibilityState>,
     /// Pins as replayed; finalize drops those whose target is archived.
@@ -151,6 +156,12 @@ impl Replay {
                 EventKind::ItemStepArchived { step_id, .. } => {
                     self.step_archive_events
                         .entry(*step_id)
+                        .or_default()
+                        .insert(stamp);
+                }
+                EventKind::MaintenanceEventArchived { maintenance_id } => {
+                    self.maintenance_archive_events
+                        .entry(*maintenance_id)
                         .or_default()
                         .insert(stamp);
                 }

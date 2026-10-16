@@ -833,6 +833,141 @@ fn maintenance_linked_to_a_routine_another_device_archived_drops_the_link() {
 }
 
 #[test]
+fn edit_of_a_maintenance_entry_another_device_archived_is_a_noop() {
+    run_pair(
+        "edit-archived-maintenance",
+        true,
+        |terminal_device, mutation_device, terminal_time, mutation_time| {
+            let record_id = ReferenceRecordId(nid(0x80));
+            let maintenance = MaintenanceEventId(nid(0x82));
+            let setup = vec![
+                record(
+                    1,
+                    0x01,
+                    1,
+                    EventKind::ReferenceRecordSaved {
+                        record_id,
+                        title: "Furnace".into(),
+                        area_id: None,
+                        fields: vec![(
+                            ReferenceFieldId(nid(0x81)),
+                            "Filter".into(),
+                            "16x25".into(),
+                        )],
+                    },
+                ),
+                record(
+                    2,
+                    0x01,
+                    2,
+                    EventKind::MaintenanceEventSaved {
+                        maintenance_id: maintenance,
+                        record_id,
+                        performed_on: date(),
+                        summary: "Changed filter".into(),
+                        next_on: None,
+                        routine_id: None,
+                    },
+                ),
+            ];
+            let terminal = record(
+                10,
+                terminal_device,
+                terminal_time,
+                EventKind::MaintenanceEventArchived {
+                    maintenance_id: maintenance,
+                },
+            );
+            let mutation = record(
+                11,
+                mutation_device,
+                mutation_time,
+                EventKind::MaintenanceEventSaved {
+                    maintenance_id: maintenance,
+                    record_id,
+                    performed_on: date(),
+                    summary: "Replaced filter".into(),
+                    next_on: None,
+                    routine_id: None,
+                },
+            );
+            (setup, terminal, mutation)
+        },
+        |which, state| {
+            assert_eq!(state.maintenance_events.len(), 1);
+            assert!(state.maintenance_events[0].archived);
+            assert_eq!(
+                state.maintenance_events[0].summary,
+                if which == "terminal" {
+                    "Changed filter"
+                } else {
+                    "Replaced filter"
+                }
+            );
+        },
+    );
+}
+
+#[test]
+fn two_devices_archiving_the_same_step_converge() {
+    run_pair(
+        "two-devices-archive-step",
+        true,
+        |terminal_device, mutation_device, terminal_time, mutation_time| {
+            let item = ItemId(nid(0x30));
+            let step = StepId(nid(0x31));
+            let setup = vec![
+                record(
+                    1,
+                    0x01,
+                    1,
+                    EventKind::ItemAdded {
+                        item_id: item,
+                        text: "Clean kitchen".into(),
+                        classification: ItemClassification::Need,
+                    },
+                ),
+                record(
+                    2,
+                    0x01,
+                    2,
+                    EventKind::ItemStepAdded {
+                        item_id: item,
+                        step_id: step,
+                        text: "Wipe counters".into(),
+                    },
+                ),
+            ];
+            (
+                setup,
+                record(
+                    10,
+                    terminal_device,
+                    terminal_time,
+                    EventKind::ItemStepArchived {
+                        item_id: item,
+                        step_id: step,
+                    },
+                ),
+                record(
+                    11,
+                    mutation_device,
+                    mutation_time,
+                    EventKind::ItemStepArchived {
+                        item_id: item,
+                        step_id: step,
+                    },
+                ),
+            )
+        },
+        |_which, state| {
+            assert_eq!(state.items[0].status, ItemStatus::Active);
+            assert!(state.items[0].steps[0].archived);
+        },
+    );
+}
+
+#[test]
 fn two_devices_archiving_the_same_entity_converge() {
     run_pair(
         "two-devices-archive-item",
@@ -1071,6 +1206,8 @@ fn same_device_second_archive_stays_invalid() {
     let talk = TalkId(nid(0x60));
     let maintenance = MaintenanceEventId(nid(0x82));
     let record_id = ReferenceRecordId(nid(0x80));
+    let item_for_step = ItemId(nid(0x32));
+    let step = StepId(nid(0x33));
     let histories = [
         vec![
             record(
@@ -1185,6 +1322,46 @@ fn same_device_second_archive_stays_invalid() {
                 },
             ),
         ],
+        vec![
+            record(
+                1,
+                device,
+                1,
+                EventKind::ItemAdded {
+                    item_id: item_for_step,
+                    text: "Clean kitchen".into(),
+                    classification: ItemClassification::Need,
+                },
+            ),
+            record(
+                2,
+                device,
+                2,
+                EventKind::ItemStepAdded {
+                    item_id: item_for_step,
+                    step_id: step,
+                    text: "Wipe counters".into(),
+                },
+            ),
+            record(
+                3,
+                device,
+                3,
+                EventKind::ItemStepArchived {
+                    item_id: item_for_step,
+                    step_id: step,
+                },
+            ),
+            record(
+                4,
+                device,
+                4,
+                EventKind::ItemStepArchived {
+                    item_id: item_for_step,
+                    step_id: step,
+                },
+            ),
+        ],
     ];
     for history in histories {
         assert!(project_records(&history).is_err());
@@ -1280,4 +1457,54 @@ fn same_device_mutations_after_its_own_archive_stay_invalid() {
         ),
     ];
     assert!(project_records(&move_into_own_archived_area).is_err());
+    let record_id = ReferenceRecordId(nid(0x80));
+    let maintenance = MaintenanceEventId(nid(0x82));
+    let edit_own_archived_maintenance = vec![
+        record(
+            1,
+            device,
+            1,
+            EventKind::ReferenceRecordSaved {
+                record_id,
+                title: "Furnace".into(),
+                area_id: None,
+                fields: vec![(ReferenceFieldId(nid(0x81)), "Filter".into(), "16x25".into())],
+            },
+        ),
+        record(
+            2,
+            device,
+            2,
+            EventKind::MaintenanceEventSaved {
+                maintenance_id: maintenance,
+                record_id,
+                performed_on: date(),
+                summary: "Changed filter".into(),
+                next_on: None,
+                routine_id: None,
+            },
+        ),
+        record(
+            3,
+            device,
+            3,
+            EventKind::MaintenanceEventArchived {
+                maintenance_id: maintenance,
+            },
+        ),
+        record(
+            4,
+            device,
+            4,
+            EventKind::MaintenanceEventSaved {
+                maintenance_id: maintenance,
+                record_id,
+                performed_on: date(),
+                summary: "Replaced filter".into(),
+                next_on: None,
+                routine_id: None,
+            },
+        ),
+    ];
+    assert!(project_records(&edit_own_archived_maintenance).is_err());
 }

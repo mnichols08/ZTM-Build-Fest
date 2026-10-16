@@ -126,9 +126,10 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 .ok_or(KinError::InvalidEvent)?;
             if step.archived {
                 if matches!(event.kind, EventKind::ItemStepArchived { .. })
-                    && has_concurrent_archive(r.step_archive_events.get(step_id), event)
+                    && archived_by_other_device(r.step_archived_by.get(step_id).copied(), event)
                 {
-                    // A second archive at the same logical time stays terminal.
+                    // A second archive from another device is a recorded no-op
+                    // at any logical time. The same device stays invalid.
                     return Ok(());
                 }
                 return Err(KinError::InvalidEvent);
@@ -151,6 +152,10 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 _ => unreachable!(),
             };
             if changed {
+                if matches!(event.kind, EventKind::ItemStepArchived { .. }) {
+                    r.step_archived_by
+                        .insert(*step_id, (event.logical_time, event.device_id));
+                }
                 r.items[position].last_changed_at = event.timestamp;
             }
         }

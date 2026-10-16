@@ -126,7 +126,7 @@ parent Item's status. Stable ordering follows event replay order. Capacity is
 measured across the Step history, including archived entries. In distributed
 replay, a same-logical-time archive from another device dominates Step
 completion/reopening; a same-time parent Item archive suppresses Step mutation.
-A later Step change from another device, after that device archived or
+A later Step change from another device, after another device archived or
 completed the Item, is kept in history and has no effect.
 Older event histories remain valid and contain no Steps.
 

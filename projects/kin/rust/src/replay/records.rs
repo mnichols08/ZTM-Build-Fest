@@ -263,6 +263,11 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                     return Err(KinError::InvalidEvent);
                 }
             }
+            if other_device_archived(r.maintenance_archive_events.get(maintenance_id), event) {
+                // Another device archived this entry at the same or an earlier
+                // logical time. The edit is kept in history and changes nothing.
+                return Ok(());
+            }
             if r.maintenance_events.iter().any(|entry| {
                 entry.maintenance_id == *maintenance_id
                     && (entry.archived || entry.record_id != *record_id)
