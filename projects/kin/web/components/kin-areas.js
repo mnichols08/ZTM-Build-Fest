@@ -3,11 +3,22 @@ class KinAreas extends HTMLElement {
     super();
     this.records = [];
     this.isDisabled = false;
+    this.createDraft = "";
+    this.renameDraft = null;
   }
 
   set areas(value) {
     const records = Array.isArray(value) ? value : [];
     if (records === this.records) return; // unchanged projection section
+    const renamedArea = this.renameDraft
+      ? records.find((area) => area.areaId === this.renameDraft.areaId && !area.archived)
+      : null;
+    if (this.renameDraft && !renamedArea) this.renameDraft = null;
+    else if (renamedArea && renamedArea.name === this.renameDraft.value) {
+      this.renameDraft.baseName = renamedArea.name;
+      this.renameDraft.conflictName = null;
+    } else if (renamedArea)
+      this.renameDraft.conflictName = renamedArea.name === this.renameDraft.baseName ? null : renamedArea.name;
     this.records = records;
     this.render();
   }
@@ -15,7 +26,7 @@ class KinAreas extends HTMLElement {
   set disabled(value) {
     this.isDisabled = Boolean(value);
     for (const control of this.querySelectorAll("button, input"))
-      control.disabled = this.isDisabled;
+      control.disabled = this.isDisabled || control.hasAttribute("data-gated");
     if (!this.isDisabled && this.deferredFocus?.isConnected) {
       const target = this.deferredFocus;
       this.deferredFocus = null;
@@ -50,6 +61,8 @@ class KinAreas extends HTMLElement {
     input.maxLength = 96;
     input.autocomplete = "off";
     input.required = true;
+    input.value = this.createDraft;
+    input.addEventListener("input", () => { this.createDraft = input.value; });
     input.setAttribute("aria-describedby", "area-create-name-help area-create-name-error");
     const help = document.createElement("small");
     help.id = "area-create-name-help";
@@ -94,6 +107,11 @@ class KinAreas extends HTMLElement {
     for (const area of records) {
       const row = document.createElement("li");
       row.className = "area-row";
+      if (!archived && this.renameDraft?.areaId === area.areaId) {
+        row.append(this.makeEditForm(area));
+        list.append(row);
+        continue;
+      }
       const name = document.createElement("span");
       name.className = "area-name";
       name.textContent = this.displayName(area);
@@ -130,6 +148,19 @@ class KinAreas extends HTMLElement {
   }
 
   editName(row, area) {
+    this.renameDraft = {
+      areaId: area.areaId,
+      baseName: area.name,
+      value: area.name,
+      conflictName: null,
+    };
+    row.replaceChildren(this.makeEditForm(area));
+    const input = row.querySelector("input");
+    input.focus();
+    input.select();
+  }
+
+  makeEditForm(area) {
     const form = document.createElement("form");
     form.className = "area-edit-form";
     const label = document.createElement("label");
@@ -142,10 +173,11 @@ class KinAreas extends HTMLElement {
     input.id = inputId;
     input.dataset.focusId = `rename-input-${area.areaId}`;
     input.name = "name";
-    input.value = area.name;
+    input.value = this.renameDraft.value;
     input.maxLength = 96;
     input.required = true;
     input.setAttribute("aria-describedby", `${helpId} ${errorId}`);
+    input.addEventListener("input", () => { this.renameDraft.value = input.value; });
     const help = document.createElement("small");
     help.id = helpId;
     help.textContent = "Up to 48 characters.";
@@ -153,18 +185,51 @@ class KinAreas extends HTMLElement {
     const save = document.createElement("button");
     save.type = "submit";
     save.textContent = "Save name";
+    let conflict = null;
+    if (this.renameDraft.conflictName) {
+      conflict = document.createElement("div");
+      conflict.className = "area-rename-conflict";
+      conflict.setAttribute("role", "alert");
+      const message = document.createElement("p");
+      message.textContent = `This Area was renamed to ${this.renameDraft.conflictName} on another device.`;
+      const keep = document.createElement("button");
+      keep.type = "button";
+      keep.textContent = "Keep my draft";
+      keep.addEventListener("click", () => {
+        this.renameDraft.baseName = area.name;
+        this.renameDraft.conflictName = null;
+        this.render(`rename-input-${area.areaId}`);
+      });
+      const useLatest = document.createElement("button");
+      useLatest.type = "button";
+      useLatest.textContent = "Use latest name";
+      useLatest.addEventListener("click", () => {
+        this.renameDraft.baseName = area.name;
+        this.renameDraft.value = area.name;
+        this.renameDraft.conflictName = null;
+        this.render(`rename-input-${area.areaId}`);
+      });
+      conflict.append(message, keep, useLatest);
+      save.setAttribute("data-gated", "");
+      save.disabled = true;
+    }
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.textContent = "Cancel";
-    cancel.addEventListener("click", () => this.render(`rename-${area.areaId}`));
-    form.append(label, input, help, error, save, cancel);
+    cancel.addEventListener("click", () => {
+      this.renameDraft = null;
+      this.render(`rename-${area.areaId}`);
+    });
+    form.append(label, input, help, error);
+    if (conflict) form.append(conflict);
+    form.append(save, cancel);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
+      this.renameDraft.value = input.value;
+      if (this.renameDraft.conflictName) return;
       this.submitName(input, error, "rename-area", { areaId: area.areaId }, help);
     });
-    row.replaceChildren(form);
-    input.focus();
-    input.select();
+    return form;
   }
 
   makeNameError(id) {
@@ -186,9 +251,21 @@ class KinAreas extends HTMLElement {
       return;
     }
     input.value = result.value;
+    if (action === "create-area") this.createDraft = result.value;
+    if (action === "rename-area" && this.renameDraft) this.renameDraft.value = result.value;
     input.removeAttribute("aria-invalid");
     error.hidden = true;
     this.dispatch(action, { ...detail, name: result.value });
+  }
+
+  saved(action, detail) {
+    if (action === "create-area") {
+      this.createDraft = "";
+      const input = this.querySelector("#area-create-name");
+      if (input) input.value = "";
+    }
+    if (action === "rename-area" && this.renameDraft?.areaId === detail.areaId)
+      this.renameDraft = null;
   }
 
   confirmArchive(row, area) {
