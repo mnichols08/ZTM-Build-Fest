@@ -462,6 +462,23 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     check(colorDraftRefresh.draft === "#397052" && colorDraftRefresh.applied === "#397052" && colorDraftRefresh.dirty,
       "a sync refresh preserves an unsaved personal color and its live appearance preview", colorDraftRefresh);
 
+    const partialHexRefresh = await page(async () => {
+      const app = document.querySelector("kin-app"), editor = app.appearance;
+      const realCoordinator = app.syncCoordinator;
+      const baseline = app.householdSettings ?? { version: 1, revision: 0, name: "Our Home", appearance: { mode: "system", colorSource: "manual", seed: "#684033", owner: "household" } };
+      editor.hex.focus();
+      editor.hex.value = "#3A7";
+      editor.hex.dispatchEvent(new Event("input", { bubbles: true }));
+      app.syncCoordinator = { loadHouseholdSettings: async () => ({ admin: true, adminRecorded: true, value: structuredClone(baseline) }), stop() {} };
+      await app.ctx.appearance.refreshHouseholdDefaults();
+      const result = { input: editor.hex.value, invalid: editor.hex.getAttribute("aria-invalid"), dirty: editor.dirty };
+      editor.restoreSaved("Changes canceled.");
+      app.syncCoordinator = realCoordinator;
+      return result;
+    });
+    check(partialHexRefresh.input === "#3A7" && partialHexRefresh.invalid === "true" && partialHexRefresh.dirty,
+      "a sync refresh preserves a partially typed personal hex color", partialHexRefresh);
+
     const colorKeepsSharedBackground = await page(async () => {
       const app = document.querySelector("kin-app"), editor = app.appearance;
       const originalPersonal = structuredClone(app.personalAppearance);

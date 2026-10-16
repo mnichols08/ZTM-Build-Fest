@@ -55,7 +55,13 @@ export class KinAppearance extends HTMLElement {
     pickerLabel.append(this.picker);
     const hexLabel = document.createElement("label"); hexLabel.textContent = "Hex color";
     this.hex = document.createElement("input"); this.hex.type = "text"; this.hex.inputMode = "text"; this.hex.maxLength = 7; this.hex.autocomplete = "off"; this.hex.spellcheck = false;
-    this.hex.addEventListener("input", () => { const value = normalizeHex(this.hex.value); this.setHexValidity(Boolean(value)); if (value) { this.picker.value = value; this.chooseCustom(value); } });
+    this.hex.addEventListener("input", () => {
+      this.dirty = true;
+      const value = normalizeHex(this.hex.value);
+      this.setHexValidity(Boolean(value));
+      if (value) { this.picker.value = value; this.chooseCustom(value); }
+      else this.feedback.textContent = "Finish the hex color before saving.";
+    });
     hexLabel.append(this.hex);
     this.hexError = document.createElement("p"); this.hexError.className = "field-error"; this.hexError.textContent = "Enter a color as #RRGGBB."; this.hexError.hidden = true;
     this.hexError.id = `appearance-hex-error-${this.instanceId}`; this.hex.setAttribute("aria-describedby", this.hexError.id);
@@ -146,6 +152,7 @@ export class KinAppearance extends HTMLElement {
   restoreSaved(message) { this.generation++; this.dirty = false; this.draft = structuredClone(this.saved); this.update(message); }
   async requestSave() {
     if (!this.draft) return;
+    if (this.hex.getAttribute("aria-invalid") === "true") { this.hex.focus(); return; }
     if (this.draft.colorSource === "custom") {
       const custom = normalizeHex(this.hex.value);
       if (!custom) { this.setHexValidity(false); return; }
