@@ -122,7 +122,11 @@ export function decodeSummary(reader, { summaryCount, summaryTotalCount, summary
     const textLength = view.getUint32(offset + 20, true);
     const end = headerEnd + textLength;
     const entity = expectedEntity(kindCode);
-    const validClassification = kindCode === 1 ? classificationCode <= 3 : classificationCode === 255;
+    const validClassification = kindCode === 1
+      ? classificationCode <= 3
+      : entity === 1
+        ? classificationCode <= 3 || classificationCode === 255
+        : classificationCode === 255;
     if (
       end > reader.end ||
       kindCode === 0 ||

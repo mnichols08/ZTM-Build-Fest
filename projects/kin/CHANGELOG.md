@@ -187,6 +187,10 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
 
 ## Unreleased — v0.47.0 — Household Identity & Shared Appearance
 
+- Activate repository-root GitHub verification for Kin changes and
+  `kin-development` pushes. The pinned Windows job runs the complete local and
+  Edge browser gates; the project-local workflow remains a synchronized
+  reference. No product or persistent contract changes.
 - Record the household founder as durable owner for new households while leaving legacy ownership unresolved and fail-closed.
 - Add owner-authorized, revision-checked opaque encrypted shared settings with household-scoped reads and deletion cleanup.
 - Add household name validation, shared appearance/background editing, preview/reset/cancel, member read-only guidance, authenticated titles, and per-property personal override inheritance.

@@ -243,7 +243,13 @@ export class SessionController {
       this.app.detailMode = null;
       this.app.household.syncKeyStore?.close();
       this.app.household.remove();
-      this.ctx.views.buildViews(this.app.main);
+      const controls = document.createElement("fieldset");
+      controls.className = "workspace-controls";
+      controls.setAttribute("role", "none");
+      controls.disabled = true;
+      this.app.controlFieldset = controls;
+      this.ctx.views.buildViews(controls);
+      this.app.main.append(controls);
       if (!this.app.stateNotice.isConnected) this.app.main.prepend(this.app.stateNotice);
       this.ctx.status.setBusy(false);
       this.ctx.status.setStatus("Household locked.");

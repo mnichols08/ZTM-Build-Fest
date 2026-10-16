@@ -1,15 +1,22 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.46.0 (Personal Appearance; a protected member-bound device-local preference store, not a household protocol); the last published product release remains v0.10.3. Household membership is bounded to 12 total participants (four Adults and eight Limited Members); Temporary Members require expiry. Candidate milestones are not production certification. Earlier version sections preserve historical data contracts.
+**Status:** Application implementation candidate v0.47.0 (Household Identity &
+Shared Appearance); the last published product release remains v0.10.3. The
+candidate adds revisioned encrypted household defaults and recorded household
+admins without changing canonical events, replay protocol, KARC, sync-envelope
+or IndexedDB formats. Household membership is bounded to 12 total participants
+(four Adults and eight Limited Members); Temporary Members require expiry.
+Candidate milestones are not production certification. Earlier version sections
+preserve historical data contracts.
 
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.46.0 | Governs |
+| Version axis | Last published v0.10.3 / current candidate v0.47.0 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.46.0` | Existing application capabilities plus member-bound device-local personal appearance; the service-worker cache name advances with the release |
-| Server database schema | `6` (`PRAGMA user_version`) | SQLite identity, authorization, opaque relay, coordination, lifecycle, encrypted attachment records, member kind, Temporary expiry, and authoritative membership status |
+| Application | Last published `0.10.3`; candidate `0.47.0` | Existing capabilities plus member-bound personal appearance and encrypted revisioned household identity/default appearance; the service-worker cache name advances with the release |
+| Server database schema | `8` (`PRAGMA user_version`) | SQLite identity, authorization, recorded founder/admin authority, opaque relay, coordination, lifecycle, encrypted settings/attachment records, member kind, Temporary expiry, and authoritative membership status |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v24; writes v24 for local and synchronized requests | Request context and projection semantics |
 | Manual WASM ABI | Existing exports plus additive command/metadata/archive/import APIs | Host ownership and calls; new command packet v1 |

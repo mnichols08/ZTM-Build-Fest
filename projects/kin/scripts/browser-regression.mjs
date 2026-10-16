@@ -755,7 +755,7 @@ async function regressions() {
       const buttons = [...app.querySelectorAll(`kin-item ${selector}`)];
       check(buttons.length > 0, `fixture must expose ${selector}`);
       check(
-        buttons.every((button) => button.disabled === disabled),
+        buttons.every((button) => button.matches(":disabled") === disabled),
         `${selector} disabled state`,
       );
     }
@@ -765,10 +765,17 @@ async function regressions() {
       compose.button,
       app.retryButton,
     ]) {
-      check(control.disabled === disabled, `${control.tagName} disabled state`);
+      check(control.matches(":disabled") === disabled, `${control.tagName} disabled state`);
     }
   };
   checkControls(true);
+  check(app.controlFieldset.disabled, "busy workspace uses native fieldset disabling");
+  check(
+    [app.status, app.alert, app.stateNotice, app.routeAnnouncement].every(
+      (region) => !app.controlFieldset.contains(region),
+    ),
+    "live status regions remain outside the disabled workspace",
+  );
   // Native disabled buttons must suppress activation, including retry clicks.
   let activations = 0;
   const recordActivation = () => {
@@ -790,12 +797,12 @@ async function regressions() {
   check(appendCalls === 1, "busy clicks must not start additional writes");
   check(
     [...app.querySelectorAll("kin-item button")].every(
-      (button) => !button.disabled,
+      (button) => !button.matches(":disabled"),
     ) &&
-      !compose.input.disabled &&
-      !compose.classification.disabled &&
-      !compose.button.disabled &&
-      !app.retryButton.disabled,
+      !compose.input.matches(":disabled") &&
+      !compose.classification.matches(":disabled") &&
+      !compose.button.matches(":disabled") &&
+      !app.retryButton.matches(":disabled"),
     "all appropriate controls become usable after retry",
   );
   check(
@@ -805,6 +812,16 @@ async function regressions() {
   passed.push(
     "pending retry disables Complete, Reopen, every Details and Add photo, compose input/select/Add and retry; controls and focus recover",
   );
+  const deferredListFocus = app.today.querySelector("button:not(:disabled)");
+  check(Boolean(deferredListFocus), "focus fixture has a list control");
+  app.today.deferredFocus = deferredListFocus;
+  app.ctx.status.setBusy(true);
+  app.searchLink.focus();
+  check(document.activeElement === app.searchLink, "header search can receive focus while the workspace is busy");
+  app.ctx.status.setBusy(false);
+  check(document.activeElement === app.searchLink, "ending busy preserves focus the user moved to header search");
+  passed.push("busy focus recovery does not override a deliberate move to header search");
+  compose.focusInput();
   check(
     app.state.items.find((item) => item.text === actionText).status ===
       "active",

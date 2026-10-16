@@ -8,9 +8,18 @@ export async function handoffRegressions() {
     if (!value) throw new Error(message);
   };
   const idle = async () => {
-    for (let i = 0; app.busy && i < 300; i++)
+    // Controller methods below are invoked directly so failures can be
+    // injected. This observes a quiet point but does not reserve it: a peer
+    // message can still arrive after idle() resolves. Direct saves therefore
+    // use startHandoffSave(), which fails loudly if the busy guard drops one.
+    for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh) && i < 300; i++)
       await new Promise((resolve) => setTimeout(resolve, 10));
-    check(!app.busy, "Handoff operation must settle");
+    check(!app.busy && !app.refreshing && !app.pendingRefresh, "Handoff operation must settle");
+  };
+  const startHandoffSave = (command) => {
+    const pending = app.ctx.conversations.saveHandoff(command);
+    check(app.busy && app.status.textContent === "Saving…", `direct Handoff save started (${command.type})`);
+    return pending;
   };
   const count = async () => (await app.store.loadEvents()).length;
   const edit = (text) => {
@@ -140,6 +149,7 @@ export async function handoffRegressions() {
     "older retry preserves newer text",
   );
   for (const mode of ["quota", "abort"]) {
+    await idle();
     const eventCount = await count();
     const counter = (await app.store.ensureContext()).next_logical_time;
     IDBObjectStore.prototype.add = function (...args) {
@@ -151,9 +161,7 @@ export async function handoffRegressions() {
       return request;
     };
     try {
-      await app.ctx.conversations.handleAddHandoff({
-        detail: { text: "Atomic handoff " + mode },
-      });
+      await startHandoffSave({ type: "add-handoff", text: "Atomic handoff " + mode });
     } finally {
       IDBObjectStore.prototype.add = originalAdd;
     }
@@ -217,14 +225,13 @@ export async function handoffRegressions() {
     await gate;
     return append(...args);
   };
+  await idle();
   edit("Delayed handoff");
-  const pending = app.ctx.conversations.handleAddHandoff({
-    detail: { text: capture.input.value },
-  });
+  const pending = startHandoffSave({ type: "add-handoff", text: capture.input.value });
   check(
     [...app.main.querySelectorAll("input,select,button")]
       .filter((control) => !control.closest("kin-security"))
-      .every((control) => control.disabled),
+      .every((control) => control.matches(":disabled")),
     "all controls disabled during Handoff save",
   );
   check(app.busy, "Handoff pending save retains busy state");
@@ -248,6 +255,7 @@ export async function handoffRegressions() {
     ["acknowledge-handoff", "quota", "acknowledged"],
     ["archive-handoff", "abort", "archived"],
   ]) {
+    await idle();
     const beforeAction = await count();
     IDBObjectStore.prototype.add = function (...args) {
       if (this.name !== "events") return originalAdd.apply(this, args);
@@ -258,7 +266,8 @@ export async function handoffRegressions() {
       return request;
     };
     try {
-      await app.ctx.conversations.handleHandoffAction(type, target);
+      await idle();
+      await startHandoffSave({ type, handoffId: target });
     } finally {
       IDBObjectStore.prototype.add = originalAdd;
     }
@@ -318,7 +327,8 @@ export async function handoffRegressions() {
     throw new Error("Synthetic save failure");
   };
   try {
-    await app.ctx.conversations.handleAddHandoff({ detail: { text: "Superseded retry" } });
+    await idle();
+    await startHandoffSave({ type: "add-handoff", text: "Superseded retry" });
   } finally {
     app.store.append = realAppend;
   }
@@ -330,9 +340,8 @@ export async function handoffRegressions() {
   } finally {
     app.store.getCatchUpState = getCatchUpState;
   }
-  await app.ctx.conversations.handleAddHandoff({
-    detail: { text: "New command after refresh failure" },
-  });
+  await idle();
+  await startHandoffSave({ type: "add-handoff", text: "New command after refresh failure" });
   await app.ctx.refresh.refreshFromEvents();
   check(
     app.retryAction === null &&

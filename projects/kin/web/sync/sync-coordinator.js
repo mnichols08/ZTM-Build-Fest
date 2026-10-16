@@ -103,10 +103,16 @@ function sameMembershipRecord(left, right) {
 
 const MAX_PUSH_BATCH = 20;
 const MAX_PULL_PASSES = 5;
+const CONTINUATION_DELAY_MS = 0;
+const HIDDEN_CONTINUATION_DELAY_MS = 250;
+const REQUEST_BUDGET = 200;
+const REQUEST_WINDOW_MS = 60_000;
+const RATE_LIMIT_RETRY_MS = 5_000;
+const CATCH_UP_CONTEXT_MAX_AGE_MS = 30_000;
 const KEY_GRANT_TTL_MS = 10 * 60_000;
 
 export class SyncCoordinator {
-  constructor({ store, engine, identity, onState = () => {} }) {
+  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now() }) {
     this.store = store;
     this.engine = engine;
     this.identity = identity;
@@ -118,7 +124,11 @@ export class SyncCoordinator {
     this.keyStore = null;
     this.deviceKeys = null;
     this.timer = null;
+    this.continuationTimer = null;
     this.running = null;
+    this.catchUp = null;
+    this.requestTimes = [];
+    this.now = now;
     this.stopped = false;
     this.terminal = false;
     this.abortController = new AbortController();
@@ -155,10 +165,33 @@ export class SyncCoordinator {
     if (this.stopped || this.terminal || !this.identity) return;
     if (this.running) return this.running;
     this.running = this.runOnce()
+      .then((result) => {
+        const hasMore = typeof result === "object" ? result.hasMore : result;
+        const advanced = typeof result === "object" ? result.advanced : hasMore;
+        if (hasMore && advanced) this.scheduleContinuation();
+        else if (hasMore) {
+          this.catchUp = null;
+          this.onState({
+            state: "paused",
+            code: "sync_no_progress",
+            message: "Household sync paused because the relay made no progress. Kin will try again on the next normal sync check.",
+          });
+        }
+      })
       .catch(async (error) => {
         if (this.stopped) return;
         let message = error.message || "Device sync is paused.";
         let code = error.code;
+        if (["sync_rate_limited", "sync_client_rate_budget"].includes(code)) {
+          clearTimeout(this.continuationTimer);
+          this.continuationTimer = null;
+          this.onState({ state: "syncing", code, message: "Catching up…" });
+          this.scheduleContinuation(error.retryAfterMs ?? RATE_LIMIT_RETRY_MS);
+          return;
+        }
+        clearTimeout(this.continuationTimer);
+        this.continuationTimer = null;
+        this.catchUp = null;
         if (code === "connection_unavailable") {
           message = navigator.onLine === false
             ? "Offline — saved changes stay on this device. Kin will try to sync when a connection is available."
@@ -198,6 +231,9 @@ export class SyncCoordinator {
           lifecycle?.state === "deletion_pending"
         ) {
           this.terminal = true;
+          this.catchUp = null;
+          clearTimeout(this.continuationTimer);
+          this.continuationTimer = null;
           clearInterval(this.timer);
           this.timer = null;
           this.onState({
@@ -219,8 +255,26 @@ export class SyncCoordinator {
     return this.running;
   }
 
+  scheduleContinuation(minimumDelay = CONTINUATION_DELAY_MS) {
+    if (this.stopped || this.terminal || this.continuationTimer !== null) return;
+    const budgetDelay = this.requestBudgetDelay(MAX_PULL_PASSES);
+    const hiddenDelay = typeof document !== "undefined" && document.hidden
+      ? HIDDEN_CONTINUATION_DELAY_MS
+      : CONTINUATION_DELAY_MS;
+    const delay = Math.max(minimumDelay, budgetDelay, hiddenDelay);
+    // Yield between bounded pull groups so rendering, input and stop requests
+    // are serviced while a newly paired device catches up on relay history.
+    this.continuationTimer = setTimeout(() => {
+      this.continuationTimer = null;
+      void this.syncNow();
+    }, delay);
+  }
+
   async runOnce() {
     this.keyStore.vault.assertUnlocked();
+    if (this.catchUp && this.now() - this.catchUp.startedAt > CATCH_UP_CONTEXT_MAX_AGE_MS)
+      this.catchUp = null;
+    if (this.catchUp) return this.pullCatchUpPages(this.catchUp);
     if (this.deviceKeys.pendingTransition) {
       const device = await this.keyStore.completePendingTransition(this.identity.deviceId, { signal: this.abortController.signal });
       if (this.stopped) return;
@@ -348,9 +402,18 @@ export class SyncCoordinator {
 
     if (trustAuthority) await this.provisionMemberHistory(status.currentEpoch, devices);
     await this.pushIdentityBindings();
+    this.catchUp = { status, devices, remoteBindings, startedAt: this.now() };
+    return this.pullCatchUpPages(this.catchUp);
+  }
+
+  async pullCatchUpPages(context) {
+    const { status, devices, remoteBindings } = context;
     let passes = 0;
     let quarantinedEvents = 0;
     let hasMore = true;
+    let lastPageAdvanced = false;
+    let added = 0;
+    let latestCommitted = null;
     while (hasMore && passes < MAX_PULL_PASSES) {
       const syncStateBefore = await this.store.getSyncState();
       const page = decodeEventPage(await this.request(
@@ -407,44 +470,53 @@ export class SyncCoordinator {
         nextCursor: page.nextCursor,
         engine: this.engine,
       });
+      const syncStateAfter = await this.store.getSyncState();
+      lastPageAdvanced = syncStateAfter.syncCursor !== syncStateBefore.syncCursor;
+      added += committed.added ?? 0;
       quarantinedEvents += committed.quarantined ?? 0;
-      this.onState({
-        state: "syncing",
-        message: committed.quarantined
-          ? "Some trusted-device changes could not be applied. Ask a household Adult to review this device."
-          : committed.added
-          ? "Household changes received."
-          : "Device sync is up to date.",
-        ...committedBatchUpdate(committed),
-      });
+      if ((committed.added ?? 0) > 0) latestCommitted = committed;
       hasMore = page.hasMore;
       passes += 1;
+      if (hasMore && !lastPageAdvanced) break;
     }
 
+    const update = { added, quarantined: quarantinedEvents };
+    if (latestCommitted) {
+      update.projection = latestCommitted.state;
+      update.snapshotBoundary = latestCommitted.snapshotBoundary;
+    }
+    let attachmentRows;
     if (!hasMore) {
       await this.acknowledgeRemoteDuplicateEvents(status.currentEpoch);
       if (!(await this.store.getSyncState())?.initialized)
         await this.store.compactArchiveOutboxSequences();
       await this.pushPendingEvents();
+      const pendingOutbox = await this.store.getPendingOutbox(1);
+      const pendingBindings = await this.store.getPendingBindings();
+      try {
+        const attachmentResult = await reconcileAttachments({ identity: this.identity, store: this.store, keyStore: this.keyStore, state: await this.store.projectCurrent(), signal: this.abortController.signal, suspectedOrphans: (this.suspectedOrphans ??= new Set()) });
+        attachmentRows = attachmentResult.rows;
+      } catch { /* Attachment transport retries independently; household event sync remains available. */ }
+      if (pendingOutbox.length === 0 && pendingBindings.length === 0)
+        await this.store.markSyncInitialized();
+      this.catchUp = null;
+    } else if (!lastPageAdvanced) {
+      this.catchUp = null;
     }
-
-    const pendingOutbox = await this.store.getPendingOutbox(1);
-    const pendingBindings = await this.store.getPendingBindings();
-    try {
-      const attachmentResult = await reconcileAttachments({ identity: this.identity, store: this.store, keyStore: this.keyStore, state: await this.store.projectCurrent(), signal: this.abortController.signal, suspectedOrphans: (this.suspectedOrphans ??= new Set()) });
-      this.onState({ state: "syncing", attachmentRows: attachmentResult.rows });
-    } catch { /* Attachment transport retries independently; household event sync remains available. */ }
-    if (!hasMore && pendingOutbox.length === 0 && pendingBindings.length === 0)
-      await this.store.markSyncInitialized();
     this.onState({
       state: hasMore ? "syncing" : "ready",
       memberIds: activeResponsibilityMemberIds(devices),
+      ...(attachmentRows === undefined ? {} : { attachmentRows }),
+      ...update,
       message: quarantinedEvents
         ? "Some trusted-device changes could not be applied. Ask a household Adult to review this device."
         : hasMore
-        ? "Sync will continue in the background."
+        ? lastPageAdvanced
+          ? "Catching up…"
+          : "Household sync paused because the relay made no progress. Kin will try again on the next normal sync check."
         : "Device sync is up to date.",
     });
+    return { hasMore, advanced: !hasMore || lastPageAdvanced };
   }
 
   async loadDeviceDirectory() {
@@ -893,8 +965,16 @@ export class SyncCoordinator {
 
   async request(path, options = {}) {
     if (this.stopped) throw new Error("Device sync was stopped.");
+    const budgetDelay = this.requestBudgetDelay();
+    if (budgetDelay > 0) {
+      const error = new Error("Catching up after a short wait.");
+      error.code = "sync_client_rate_budget";
+      error.retryAfterMs = budgetDelay;
+      throw error;
+    }
     this.keyStore?.vault.assertUnlocked();
     await this.keyStore?.vault.checkSecurityEpoch?.();
+    this.recordRequest();
     const result = await api(path, { ...options, signal: this.abortController.signal });
     if (this.stopped) throw new Error("Device sync was stopped.");
     // A peer may advance the durable lock/root epoch while this response is in
@@ -904,6 +984,25 @@ export class SyncCoordinator {
     if (this.stopped) throw new Error("Device sync was stopped.");
     this.keyStore?.vault.assertUnlocked();
     return result;
+  }
+
+  pruneRequestTimes(now = this.now()) {
+    const cutoff = now - REQUEST_WINDOW_MS;
+    while (this.requestTimes.length && this.requestTimes[0] <= cutoff)
+      this.requestTimes.shift();
+    return now;
+  }
+
+  requestBudgetDelay(requests = 1) {
+    const now = this.pruneRequestTimes();
+    const excess = this.requestTimes.length + requests - REQUEST_BUDGET;
+    if (excess <= 0) return 0;
+    return Math.max(1, this.requestTimes[excess - 1] + REQUEST_WINDOW_MS - now + 1);
+  }
+
+  recordRequest() {
+    const now = this.pruneRequestTimes();
+    this.requestTimes.push(now);
   }
 
   async loadHouseholdSettings() {
@@ -950,9 +1049,13 @@ export class SyncCoordinator {
     this.abortController.abort();
     clearInterval(this.timer);
     this.timer = null;
+    clearTimeout(this.continuationTimer);
+    this.continuationTimer = null;
     this.keyStore?.close();
     this.keyStore = null;
     this.deviceKeys = null;
+    this.catchUp = null;
+    this.requestTimes = [];
     this.engine = null;
     this.store = null;
   }
@@ -1018,6 +1121,14 @@ async function api(path, { binary = false, ...options } = {}) {
       value.message || "Kin could not synchronize this device.",
     );
     error.code = value.error;
+    const retryAfter = response.headers?.get?.("Retry-After") ?? null;
+    const retrySeconds = retryAfter === null ? NaN : Number(retryAfter);
+    const retryAt = retryAfter && !Number.isFinite(retrySeconds) ? Date.parse(retryAfter) : NaN;
+    const hintedMs = Number.isFinite(value.retryAfterMs) ? value.retryAfterMs
+      : Number.isFinite(retrySeconds) ? retrySeconds * 1_000
+      : Number.isFinite(retryAt) ? retryAt - Date.now()
+      : null;
+    if (hintedMs !== null) error.retryAfterMs = Math.max(0, hintedMs);
     throw error;
   }
   return value;

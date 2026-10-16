@@ -64,3 +64,20 @@ test("catch up falls back to a neutral destination for an unknown classification
   ]);
   assert.deepEqual(lines, ["mystery added to your lists"]);
 });
+
+test("catch up keeps lifecycle changes anchored to their existing destination", () => {
+  const lines = renderedLines([
+    { kind: "item-completed", text: "Milk", classification: "shopping" },
+    { kind: "item-reopened", text: "Call plumber", classification: "need" },
+    { kind: "item-archived", text: "Old task", classification: "today" },
+    { kind: "handoff-acknowledged", text: "School pickup" },
+    { kind: "talk-resolved", text: "Weekend plans" },
+  ]);
+  assert.deepEqual(lines, [
+    "Milk handled in Shopping",
+    "Call plumber reopened in To do",
+    "Old task archived from Today",
+    "School pickup acknowledged in Handoff",
+    "Weekend plans resolved in Talk",
+  ]);
+});

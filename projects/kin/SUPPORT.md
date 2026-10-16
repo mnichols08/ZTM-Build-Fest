@@ -1,6 +1,9 @@
 # Support
 
-Kin's last published release is v0.10.3, an incubation prototype with passkey-authenticated pairing and optional encrypted cross-device event sync. An unreleased v0.11.7 durable-service implementation candidate is awaiting human review. There is no staffed runtime support channel or guaranteed response time.
+Kin's last published release is v0.10.3. The current unreleased implementation
+candidate is v0.47.0 Household Identity & Shared Appearance; candidate status is
+not production certification. There is no staffed runtime support channel or
+guaranteed response time.
 
 ## Questions and proposals
 

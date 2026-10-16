@@ -114,7 +114,7 @@ The month targets a coherent, demoable pre-1.0 build at `v0.40.x`. The `v0.41.x`
 - Fast-track candidate: `v0.28.0` - Local Reminders; see the `v0.28.0` release record.
 - Fast-track candidates: `v0.31.0`–`v0.31.1` - Maintenance Records and concurrent archive correction; see their release records.
 - Candidate: `v0.40.3` — Reproducible CI and verification infrastructure; no application feature changes.
-- Current candidate: `v0.46.0` — Personal Appearance: member-bound device-local System/Light/Dark modes, preset/custom seed colors, and locally processed protected backgrounds with deterministic dominant-color suggestions. No appearance record enters household history, synchronization, attachments, activity, or portable exports. See the [contract](docs/PERSONAL-APPEARANCE.md).
+- Preceding candidate: `v0.46.0` — Personal Appearance: member-bound device-local System/Light/Dark modes, preset/custom seed colors, and locally processed protected backgrounds with deterministic dominant-color suggestions. No appearance record enters household history, synchronization, attachments, activity, or portable exports. See the [contract](docs/PERSONAL-APPEARANCE.md).
 - Current candidate: `v0.47.0` — Household Identity & Shared Appearance: founder-backed owner authority, an encrypted revisioned shared name/default appearance, shared processed backgrounds, and per-property personal override inheritance. Legacy households without trustworthy ownership remain read-only. See the [contract](docs/HOUSEHOLD-IDENTITY-DEFAULTS.md).
 - Candidate: `v0.41.0` — Mobile Experience & Passkey-First UX: passkey-first unlock with the recovery key as a secondary fallback, a welcome/setup flow, create/join/add-device household choices, context-sensitive capture on Today and each list, image thumbnails with an in-app viewer, document tiles, phone-first item rows with a Details disclosure, an optional inactivity lock, and plain-language sync/attachment messages. No cryptographic, event, storage, or authorization contract changed. See the [release record](docs/releases/V0.41.0.md).
 - Planned after October, undated: `v0.42.x`–`v0.45.x` plus the deferred Backup Safety & Disaster Drills proposal — recovery drills, broader platform validation, performance, and release-candidate readiness
@@ -220,6 +220,7 @@ Kin is nested in the ZTM Build Fest repository. Its community files and template
 - [Debugging and diagnostics](docs/DEBUGGING.md)
 - [Implementation preflight](docs/PREFLIGHT.md)
 - [Requirement traceability](docs/TRACEABILITY.md)
+- [v0.47 release acceptance matrix](docs/audits/V0.47_RELEASE_ACCEPTANCE.md)
 - [Canonical test vectors](docs/TEST-VECTORS.md)
 - [Since You Last Looked release contract](docs/V0.6.0.md)
 - [Accepted architecture decision: event-sourced household state](docs/decisions/0001-event-sourced-household-state.md)

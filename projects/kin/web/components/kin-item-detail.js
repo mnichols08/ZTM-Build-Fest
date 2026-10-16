@@ -84,10 +84,16 @@ class KinItemDetail extends HTMLElement {
     }
     if (this.reminderControl) this.reminderControl.disabled = this.isDisabled;
     // A control that could not take focus while the app was busy takes it now.
-    if (!this.isDisabled && this.deferredFocusId) {
+    if (!this.isDisabled) this.settleDeferredFocus();
+  }
+
+  settleDeferredFocus() {
+    if (this.deferredFocusId) {
       const target = [...this.querySelectorAll("[data-focus-id]")].find((node) => node.dataset.focusId === this.deferredFocusId);
       this.deferredFocusId = null;
-      if (target && !target.disabled && !this.contains(document.activeElement)) target.focus();
+      const active = document.activeElement;
+      const focusWasLost = !active || active === document.body || active.isConnected === false;
+      if (target && !target.matches(":disabled") && focusWasLost) target.focus();
     }
   }
 
@@ -100,6 +106,11 @@ class KinItemDetail extends HTMLElement {
   focusHeading() { this.querySelector(".item-detail-title")?.focus(); }
 
   focusClose() { this.querySelector(".item-detail-close")?.focus(); }
+
+  deferFocusedControl() {
+    if (this.contains(document.activeElement))
+      this.deferredFocusId = document.activeElement.dataset.focusId ?? "close";
+  }
 
   // Search results for a checklist step open the parent with that step exposed.
   revealStep(stepId) {
@@ -135,6 +146,7 @@ class KinItemDetail extends HTMLElement {
   clearFeedback(itemId) { this.detailFeedbacks.delete(itemId); scheduleRender(this); }
 
   render() {
+    const hadFocus = this.contains(document.activeElement);
     const drafts = this.captureDrafts();
     this.stepDraft = drafts.step;
     const section = document.createElement("section");
@@ -169,6 +181,10 @@ class KinItemDetail extends HTMLElement {
       this.replaceChildren(section);
       this.stepInput = null;
       this.reminderControl = null;
+      if (hadFocus) {
+        if (close.matches(":disabled")) this.deferredFocusId = "close";
+        else close.focus();
+      }
       return;
     }
 
@@ -225,7 +241,7 @@ class KinItemDetail extends HTMLElement {
     this.disabled = this.isDisabled;
     if (drafts.focusId) {
       const target = [...this.querySelectorAll("[data-focus-id]")].find((node) => node.dataset.focusId === drafts.focusId);
-      if (target && !target.disabled) target.focus();
+      if (target && !target.matches(":disabled")) target.focus();
       else if (target) this.deferredFocusId = drafts.focusId;
     }
   }

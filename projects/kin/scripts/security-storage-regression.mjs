@@ -458,7 +458,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     socket.onmessage = ({ data }) => { const message = JSON.parse(data); if (message.id) { const task = pending.get(message.id); pending.delete(message.id); message.error ? task.reject(Error(JSON.stringify(message.error))) : task.resolve(message.result); } };
     socket.onclose = () => { for (const task of pending.values()) task.reject(Error("Isolated browser connection closed")); pending.clear(); };
     const send = (method, params) => new Promise((resolve, reject) => { const next = ++id; pending.set(next, { resolve, reject }); socket.send(JSON.stringify({ id: next, method, params })); });
-    const client = { evaluate: async (expression) => { const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails)); return result.result.value; } };
+    const client = {
+      evaluate: async (expression) => { const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails)); return result.result.value; },
+      send,
+    };
     for (let attempt = 0; attempt < 100; attempt += 1) { if (await client.evaluate("location.origin === " + JSON.stringify(origin))) break; await delay(20); }
     return client;
   }
@@ -520,9 +523,16 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       }
     }
     if (process.argv.includes("--performance") || process.argv.includes("--performance-only")) {
+      const throttleIndex = process.argv.indexOf("--cpu-throttle");
+      const cpuThrottle = throttleIndex === -1 ? 1 : Number(process.argv[throttleIndex + 1]);
+      assert.ok(Number.isFinite(cpuThrottle) && cpuThrottle >= 1, "--cpu-throttle must be a number of at least 1");
+      if (cpuThrottle > 1) await client.send("Emulation.setCPUThrottlingRate", { rate: cpuThrottle });
       const monitor = monitorRendererMemory(profile);
       let measurement;
-      try { measurement = await client.evaluate(`(${storagePerformance.toString()})(${JSON.stringify({ maximumPayload: process.argv.includes("--maximum-payload") })})`); }
+      try {
+        measurement = await client.evaluate(`(${storagePerformance.toString()})(${JSON.stringify({ maximumPayload: process.argv.includes("--maximum-payload") })})`);
+        measurement.cpuThrottle = cpuThrottle;
+      }
       finally {
         if (measurement) for (const result of measurement.results)
           result.phases = result.phases.map((entry) => ({ name: entry.name, ms: Math.round(entry.end - entry.start), ...monitor.during(entry) }));
