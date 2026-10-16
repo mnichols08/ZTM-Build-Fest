@@ -984,6 +984,9 @@ kin-app > .security-panel {
 .onboarding-card p { margin: 6px 0 10px; }
 .onboarding-card button { margin: 0 8px 8px 0; }
 .onboarding-card .household-choices { margin-top: 10px; }
+.today-section.onboarding-card.onboarding-compact { padding: 10px 16px; }
+.onboarding-details > summary { min-height: var(--tap); box-sizing: border-box; padding-block: 12px; color: var(--accent); font-weight: 700; cursor: pointer; }
+.onboarding-details[open] > summary { margin-bottom: 4px; }
 
 /* ---------- Attachment viewer ---------- */
 .attachment-viewer {
@@ -1130,6 +1133,18 @@ kin-app > .security-panel {
   #today > kin-compose { grid-area: capture; min-width: 0; }
   #today > kin-catch-up { grid-area: catchup; min-width: 0; }
   #today > .onboarding-card { grid-area: onboarding; }
+  #today.compact-onboarding {
+    grid-template-areas:
+      "intro intro"
+      "capture quick"
+      "catchup routines"
+      "summary summary"
+      "earlier earlier"
+      "today today"
+      "onboarding updates"
+      "upcoming upcoming"
+      "extras extras";
+  }
   #today > kin-today { display: contents; }
   #today [data-section="quick-access"] { grid-area: quick; }
   #today [data-section="routines"] { grid-area: routines; }

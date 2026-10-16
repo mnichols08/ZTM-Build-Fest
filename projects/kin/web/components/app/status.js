@@ -67,10 +67,37 @@ export class StatusController {
   }
   // The onboarding card on Today explains the next step until the device has a
   // household and a passkey; every action it offers is the ordinary flow.
+  hasHouseholdContent() {
+    const state = this.app.state;
+    return Boolean(state && [
+      "items", "handoffs", "talks", "pulses", "routines", "areas", "notes",
+      "playbooks", "referenceRecords", "maintenanceEvents",
+    ].some((field) => state[field]?.length));
+  }
+  updateOnboardingDensity() {
+    const card = this.app.onboarding;
+    const details = card?.querySelector(".onboarding-details");
+    if (!details) return;
+    const compact = this.hasHouseholdContent();
+    const previous = details.dataset.compact;
+    if (previous !== String(compact)) details.open = !compact;
+    details.dataset.compact = String(compact);
+    card.classList.toggle("onboarding-compact", compact);
+    const page = this.app.pages?.get("today");
+    page?.classList.toggle("compact-onboarding", compact);
+    if (page && this.app.today?.parentElement === page) {
+      if (compact && this.app.today.nextElementSibling !== card) this.app.today.after(card);
+      else if (!compact && this.app.today.previousElementSibling !== card) this.app.today.before(card);
+    }
+  }
   renderOnboarding() {
     const card = this.app.onboarding;
     if (!card || !this.app.vault || this.app.vault.locked) return;
     card.replaceChildren();
+    card.classList.remove("onboarding-compact");
+    const todayPage = this.app.pages?.get("today");
+    todayPage?.classList.remove("compact-onboarding");
+    if (todayPage && this.app.today?.parentElement === todayPage) this.app.today.before(card);
     const status = this.app.householdStatus;
     const passkeys = this.app.security?.passkeyWrappers?.length ?? 0;
     const heading = document.createElement("h2");
@@ -79,6 +106,10 @@ export class StatusController {
       this.app.household?.startIntent?.(intent);
     };
     if (status && !status.identity && !status.claimState && status.lifecycle !== "deleted" && status.lifecycle !== "deletion_pending") {
+      const details = document.createElement("details");
+      details.className = "onboarding-details";
+      const summary = document.createElement("summary");
+      summary.textContent = "Connect this device to a household";
       heading.textContent = "Get started";
       const intro = document.createElement("p");
       intro.textContent = "This device is protected. Next, connect it to your household so it can sync with other people and devices.";
@@ -99,8 +130,10 @@ export class StatusController {
       const note = document.createElement("p");
       note.className = "section-hint";
       note.textContent = "You can keep using Kin on this device meanwhile; everything stays encrypted here.";
-      card.append(heading, intro, choices, note);
+      details.append(summary, heading, intro, choices, note);
+      card.append(details);
       card.hidden = false;
+      this.updateOnboardingDensity();
       return;
     }
     if (status?.claimState === "Claimed" || status?.claimState === "Confirmed") {

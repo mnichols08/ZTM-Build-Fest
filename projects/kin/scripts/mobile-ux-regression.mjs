@@ -129,13 +129,32 @@ export async function mobileUxRegressions(recovery) {
 
   // 4. Without a household, Today offers the three ways to get started.
   await wait(() => app.householdStatus !== null, "household status event");
+  const populatedState = app.state;
+  app.state = {};
+  app.ctx.status.renderOnboarding();
+  check(app.onboarding.querySelector(".onboarding-details")?.open === true,
+    "Get started stays expanded before any household activity");
+  app.state = populatedState;
+  app.ctx.status.renderOnboarding();
   check(app.householdStatus.identity === false && app.onboarding.hidden === false &&
     app.onboarding.querySelector("h2")?.textContent === "Get started",
     "a device without a household sees Get started on Today");
+  const onboardingDetails = app.onboarding.querySelector(".onboarding-details");
+  check(onboardingDetails?.open === false && onboardingDetails.querySelector("summary")?.textContent === "Connect this device to a household",
+    "Get started collapses after local household activity so Today stays visible");
   const onboardingLabels = [...app.onboarding.querySelectorAll("button")].map((button) => button.textContent);
   check(JSON.stringify(onboardingLabels) === JSON.stringify(["Create a household", "Join an existing household", "Add this device to my existing membership"]),
     `Get started offers create, join and add-device: ${onboardingLabels.join("|")}`);
   visit("today");
+  check(visible(onboardingDetails.querySelector("summary")), "the compact Get started summary stays visible on Today");
+  window.scrollTo(0, 0);
+  const firstTodayRow = [...app.today.querySelectorAll("kin-item .item-row")].find(visible);
+  check(firstTodayRow?.getBoundingClientRect().top < app.onboarding.getBoundingClientRect().top,
+    "the compact Get started prompt follows the first Today task instead of hiding it");
+  onboardingDetails.querySelector("summary").click();
+  check(onboardingDetails.open, "the compact Get started guidance expands with its native disclosure");
+  app.ctx.status.updateOnboardingDensity();
+  check(onboardingDetails.open, "a refresh does not close Get started after the user expands it");
   onboardingLabels.length && [...app.onboarding.querySelectorAll("button")][1].click();
   await wait(() => location.hash === "#household/people" && app.household.intent === "join", "join intent");
   check(Boolean(app.household.querySelector('input[name="code"]')) &&
