@@ -332,7 +332,7 @@ reloading always locks immediately. First-run
 copy explains that passkey-first describes everyday unlock; initial encryption
 setup still starts with the recovery key.
 
-## Reproducible verification (v0.41.1 candidate)
+## Reproducible verification (v0.47.0 candidate)
 
 From either the repository root or `projects/kin/`, run `npm run verify
 --prefix projects/kin` at the repository root or `npm run verify` inside Kin.
@@ -363,10 +363,11 @@ claimed.
 
 The default mandatory local gate is `verify`; browser regressions are an
 explicit second command. `node --test scripts/verify.test.mjs` runs focused
-tests for the verification runner itself. The proposed workflow is documented
-at `docs/ci/kin-verification.workflow.yml`, but no active GitHub Actions
-integration exists because the Kin repository boundary does not permit a
-parent-level workflow. A root workflow requires separate authorization.
+tests for the verification runner itself. The active root workflow is
+`.github/workflows/kin-verification.yml`; a synchronized project-local reference
+is retained at `docs/ci/kin-verification.workflow.yml`. Pull requests that
+change Kin or its workflow run the complete Windows Edge gate, and pushes to
+`kin-development` run the same gate.
 
 Verification is fail-fast. When a mandatory command fails, later commands in
 that stage and dependent stages are reported `NOT RUN` with the reason; they

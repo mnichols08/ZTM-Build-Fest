@@ -1,12 +1,18 @@
-# PROPOSAL ONLY. GitHub does not discover workflows below projects/kin.
-# Copy to repository-root .github/workflows/ only after scope authorization.
-name: Kin verification (proposal)
+# Reference copy of the active repository-root Kin workflow.
+# Keep this project-local documentation synchronized with
+# /.github/workflows/kin-verification.yml.
+name: Kin verification
 
 on:
   pull_request:
+    paths:
+      - "projects/kin/**"
+      - ".github/workflows/kin-verification.yml"
+  push:
     branches: [kin-development]
     paths:
       - "projects/kin/**"
+      - ".github/workflows/kin-verification.yml"
   workflow_dispatch:
 
 permissions:
