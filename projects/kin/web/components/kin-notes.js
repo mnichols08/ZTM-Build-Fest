@@ -23,6 +23,7 @@ class KinNotes extends HTMLElement {
     this.disabledState = false;
     this.editor = { noteId: null, title: "", body: "", areaId: "" };
     this.referenceEditor = null;
+    this.maintenanceDrafts = new Map();
     this.pendingFocus = null;
     this.instanceId = `notes-${++KinNotes.instances}`;
   }
@@ -101,6 +102,30 @@ class KinNotes extends HTMLElement {
 
   clearReferenceEditor() {
     this.referenceEditor = null;
+  }
+
+  maintenanceDraft(recordId) {
+    return this.maintenanceDrafts.get(recordId) ?? {
+      summary: "",
+      performed: "",
+      nextOn: "",
+      routineId: "",
+    };
+  }
+
+  updateMaintenanceDraft(recordId, value) {
+    this.maintenanceDrafts.set(recordId, { ...value });
+  }
+
+  clearMaintenanceDraft(detail) {
+    const draft = this.maintenanceDrafts.get(detail.recordId);
+    if (!draft) return;
+    const numericDate = (value) => value ? Number(value.replaceAll("-", "")) : null;
+    if (draft.summary.trim() !== detail.summary
+      || numericDate(draft.performed) !== detail.performedOn
+      || numericDate(draft.nextOn) !== detail.nextOn
+      || (draft.routineId || null) !== detail.routineId) return;
+    this.maintenanceDrafts.delete(detail.recordId);
   }
 
   dispatch(action, detail) {

@@ -111,7 +111,9 @@ export class RecordCommands {
     this.ctx.status.setBusy(true); this.ctx.status.clearAlert(); this.ctx.status.setStatus("Saving maintenance history…");
     try {
       await this.ctx.append.appendCommand({ ...detail, type, id: detail.maintenanceId });
-      this.ctx.session.assertCurrentSession(session); this.ctx.render.renderState(); this.ctx.peers.broadcastEventChange();
+      this.ctx.session.assertCurrentSession(session);
+      if (action === "save-maintenance-event") this.app.notes.clearMaintenanceDraft(detail);
+      this.ctx.render.renderState(); this.ctx.peers.broadcastEventChange();
       this.ctx.status.setStatus(action === "archive-maintenance-event" ? "Maintenance event archived." : "Maintenance saved on this device.");
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
