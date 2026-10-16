@@ -192,13 +192,18 @@ export class WebAuthn {
       )
         throw authError();
       const count = authData.readUInt32BE(33);
-      if (credential.signCount && count && count <= credential.signCount)
+      // Once an authenticator has reported a counter, every later assertion
+      // must report a strictly higher one. A drop, including back to 0, can
+      // mean a cloned authenticator. Authenticators that always report 0
+      // keep a stored 0 and are accepted. The stored counter never goes down.
+      const stored = credential.signCount ?? 0;
+      if (stored > 0 && count <= stored)
         throw new PairingError(
           "credential_replayed",
           "The passkey response could not be verified.",
           401,
         );
-      credential.signCount = count;
+      if (count > stored) credential.signCount = count;
       return true;
     } catch (error) {
       normalizeVerificationError(error);
