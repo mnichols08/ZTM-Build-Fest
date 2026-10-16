@@ -44,6 +44,25 @@ test("changing personal color keeps an inherited household background", () => {
   assert.equal(resolveAppearance(removed, shared).image, null);
 });
 
+test("resetting to Kin defaults stores explicit values instead of inheritance", () => {
+  const personal = useHouseholdAppearance("member");
+  const baseline = {
+    version: 1, owner: "member", mode: "system", colorSource: "default",
+    seed: "#984D38", manual: null, image: null,
+  };
+  const saved = personalAppearanceFromDraft(personal, baseline, baseline, { forceExplicit: true });
+  assert.deepEqual(saved, { ...baseline, version: 2 });
+
+  const changedHousehold = {
+    appearance: {
+      version: 1, owner: "household", mode: "dark", colorSource: "preset",
+      seed: "#397052", manual: { source: "preset", name: "Forest", seed: "#397052" },
+      image: { seed: "#684033", type: "image/webp", width: 1, height: 1, bytes: new Uint8Array([1]) },
+    },
+  };
+  assert.deepEqual(resolveAppearance(saved, changedHousehold), baseline);
+});
+
 test("shared settings encryption binds household, epoch, and revision", async () => {
   const householdKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
   const value = { version: 1, revision: 0, name: "Our Home", appearance: { version: 1, owner: "household", mode: "dark", colorSource: "preset", seed: "#397052", manual: { source: "preset", name: "Forest", seed: "#397052" }, image: null } };
