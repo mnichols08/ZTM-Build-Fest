@@ -147,3 +147,18 @@ test("compact rows render one small control per attachment with its name and sta
   const empty = mount("compact");
   assert.equal(empty.children.length, 0, "a row without attachments or progress renders nothing");
 });
+
+test("Limited and Temporary members are not offered Remove; Adults are", () => {
+  const record = { attachmentId: "c".repeat(32), parentKind: "item", parentId: ITEM, name: "receipt.pdf", size: 2048, type: "application/pdf", state: "synced" };
+  for (const [memberKind, offered] of [["adult", true], [null, true], ["limited", false], ["temporary", false]]) {
+    const element = new KinAttachments();
+    element.closest = (selector) => (selector === "kin-app" ? { householdStatus: { memberKind } } : null);
+    element.mode = "tiles";
+    element.parentRecord = parent;
+    element.attachments = [record];
+    element.connectedCallback();
+    const remove = element.find((node) => node.getAttribute("aria-label") === "Remove receipt.pdf");
+    assert.equal(Boolean(remove), offered, String(memberKind));
+    assert.ok(element.find((node) => node.getAttribute("aria-label") === "Open receipt.pdf"), "everyone can still open it");
+  }
+});
