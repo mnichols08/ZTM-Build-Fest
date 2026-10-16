@@ -498,6 +498,8 @@ export async function workspaceViewportRegressions(client, { visit }) {
       sheetOpen: app.detailSheet.open,
       detailInSheet: app.detailSheet.contains(app.detail),
       detailInPanel: app.detailPanel.contains(app.detail),
+      detailDisabled: app.detail.isDisabled,
+      fieldsetDisabled: app.controlFieldset.disabled,
       listVisible: !app.pages.get("lists").hidden && getComputedStyle(app.pages.get("lists")).display !== "none",
       draft: app.detail.stepInput?.value ?? null,
       draftMap: [...app.detail.stepDrafts.entries()], activeDetailId: app.detail.itemId, activeInputId: app.detail.stepInput?.dataset.itemId ?? null,
@@ -610,6 +612,16 @@ export async function workspaceViewportRegressions(client, { visit }) {
     check(dateRetry.open && dateRetry.selection && dateRetry.date === 20261025 && !dateRetry.error,
       "360px: planning-date retry succeeds without closing the detail sheet and clears its feedback");
     await page(() => { document.querySelector("kin-app").detail.stepInput.value = "draft across widths"; });
+    await page(() => document.querySelector("kin-app").ctx.status.setBusy(true));
+    await viewport(1440, 960, false);
+    state = await layout();
+    check(state.detailMode === "side" && state.detailInPanel && !state.detailDisabled && state.fieldsetDisabled,
+      "a busy layout switch to the side panel delegates detail disabling to the workspace fieldset");
+    await viewport(390, 844, true);
+    state = await layout();
+    check(state.detailMode === "sheet" && state.detailInSheet && state.detailDisabled && state.fieldsetDisabled,
+      "a busy layout switch to the phone sheet applies component-level detail disabling");
+    await page(() => document.querySelector("kin-app").ctx.status.setBusy(false));
     await viewport(768, 1024, false);
     state = await layout();
     check(state.detailMode === "inline" && !state.sheetOpen && state.detailInPanel && !state.listVisible && state.editors === 1 && state.draft === "draft across widths" && !state.overflow,

@@ -72,8 +72,20 @@ class KinNotes extends HTMLElement {
     for (const control of this.querySelectorAll("button,input,textarea,select")) control.disabled = this.disabledState;
     const candidate = focused && [...this.querySelectorAll("[data-focus-id]")]
       .find((node) => node.dataset.focusId === focused);
-    if (candidate?.disabled) this.pendingFocus = focused;
+    if (candidate?.matches(":disabled")) this.pendingFocus = focused;
     else candidate?.focus();
+  }
+
+  settleDeferredFocus() {
+    if (!this.pendingFocus) return;
+    const candidate = [...this.querySelectorAll("[data-focus-id]")]
+      .find((node) => node.dataset.focusId === this.pendingFocus);
+    if (candidate && !candidate.matches(":disabled")) {
+      this.pendingFocus = null;
+      const active = document.activeElement;
+      const focusWasLost = !active || active === document.body || active.isConnected === false;
+      if (focusWasLost) candidate.focus();
+    }
   }
 
   showFieldError(control, error, message) {

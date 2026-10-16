@@ -33,6 +33,30 @@ The status, alert and route-announcement regions must remain outside the
 disabled control boundary or remain non-form descendants whose live-region
 semantics are verified.
 
+### Native fieldset result
+
+The prototype replaces per-component list traversal with one native disabled
+fieldset around the workspace. Header Quick add, Lock, the bounded detail view
+and the external retry control remain explicit. Status, alert, state and route
+announcements remain outside the fieldset. Focus intent is captured before
+native disabling and settled through component-level constant-cost hooks after
+the fieldset re-enables, but only when focus was actually lost. Unlocked
+security settings remain inside the workspace fieldset and are disabled during
+an app-wide save, in addition to their own one-security-operation guard. The
+locked/protecting surface is rehomed outside the unavailable workspace so its
+Lock or unlock action remains usable.
+
+| History | Traversal baseline | Native fieldset | Reduction |
+|---|---:|---:|---:|
+| 1,000 short events | 17.4 ms | 1.6 ms | 90.8% |
+| 9,980 short events | 201.6 ms | 30.6 ms | 84.8% |
+| 9,980 events × 4 KB | 200.6 ms | 30.0 ms | 85.0% |
+
+The result is material and keeps canonical, storage and component ownership
+unchanged. The browser regression verifies native click suppression, focus and
+draft restoration, lock/unlock reconstruction, narrow/wide layouts, forced
+colors and reduced motion.
+
 ## Cold relay synchronization
 
 Command:

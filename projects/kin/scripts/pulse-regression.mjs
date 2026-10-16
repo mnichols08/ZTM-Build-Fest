@@ -429,7 +429,7 @@ export async function pulseResilienceRegressions() {
   const pending = app.ctx.conversations.savePulse({ ...old, value: "good" });
   check(
     app.busy &&
-      [...pulse.querySelectorAll("button,select")].every((c) => c.disabled),
+      [...pulse.querySelectorAll("button,select")].every((c) => c.matches(":disabled")),
     "all Pulse controls busy",
   );
   check(app.busy, "pending save remains busy");

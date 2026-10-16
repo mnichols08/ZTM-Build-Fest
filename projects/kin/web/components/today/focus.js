@@ -68,7 +68,7 @@ export class TodayFocus {
     }
     if (focus.summary) {
       const summary = this.host.querySelector(`[data-summary="${focus.summary}"]`);
-      if (summary?.disabled) this.host.deferredFocus = summary;
+      if (summary?.matches(":disabled")) this.host.deferredFocus = summary;
       else (summary ?? this.host.querySelector('[data-section="today"] h2'))?.focus();
       return;
     }
@@ -95,7 +95,7 @@ export class TodayFocus {
     const next = target ?? this.host.querySelector("h2");
     if (!next) return;
     revealWithin(next, this.host);
-    if (next.disabled) this.host.deferredFocus = next;
+    if (next.matches(":disabled")) this.host.deferredFocus = next;
     else next.focus();
   }
 

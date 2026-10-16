@@ -87,11 +87,15 @@ class KinBulkBar extends HTMLElement {
   set disabled(value) {
     this.isDisabled = Boolean(value);
     for (const control of this.controls) control.disabled = this.isDisabled;
-    if (!this.isDisabled && this.deferredFocus?.isConnected) {
-      const target = this.deferredFocus;
-      this.deferredFocus = null;
-      target.focus();
-    }
+    if (!this.isDisabled) this.settleDeferredFocus();
+  }
+
+  settleDeferredFocus() {
+    const target = this.deferredFocus;
+    this.deferredFocus = null;
+    const active = document.activeElement;
+    const focusWasLost = !active || active === document.body || active.isConnected === false;
+    if (target?.isConnected && !target.matches(":disabled") && focusWasLost) target.focus();
   }
 
   /**
@@ -158,7 +162,7 @@ class KinBulkBar extends HTMLElement {
   // Focuses `control` now, or once the bar is enabled if it is disabled.
   focusControl(control) {
     if (!control) return;
-    if (control.disabled) this.deferredFocus = control;
+    if (control.matches(":disabled")) this.deferredFocus = control;
     else control.focus();
   }
 }

@@ -220,7 +220,7 @@ export async function talkRegressions() {
   check(
     [...app.main.querySelectorAll("input,select,button")]
       .filter((control) => !control.closest("kin-security"))
-      .every((control) => control.disabled),
+      .every((control) => control.matches(":disabled")),
     "all controls disabled during Talk save",
   );
   check(app.busy, "Talk pending save retains busy state");
