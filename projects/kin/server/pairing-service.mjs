@@ -10,6 +10,7 @@
 import { createHmac, randomBytes } from "node:crypto";
 import { addMethods } from "./mixins.mjs";
 import { approveMethods } from "./pairing-service/approve.mjs";
+import { bootstrapLimitMethods, parseHouseholdPolicy } from "./pairing-service/bootstrap-limits.mjs";
 import { claimMethods } from "./pairing-service/claim.mjs";
 import { createMethods } from "./pairing-service/create.mjs";
 import { deviceMethods } from "./pairing-service/devices.mjs";
@@ -46,12 +47,19 @@ export {
   TERMINAL_PAIRING_RETENTION_MS,
 } from "./pairing-service/shared.mjs";
 export { MAX_ACTIVE_MEMBERS, MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
+export {
+  BOOTSTRAP_LIMIT,
+  BOOTSTRAP_WINDOW_MS,
+  HOUSEHOLD_CREATION_CLOSED,
+  parseHouseholdPolicy,
+} from "./pairing-service/bootstrap-limits.mjs";
 
 export class PairingService {
   constructor({
     now = () => Date.now(),
     secret = randomBytes(32),
     maxRateBuckets = MAX_RATE_BUCKETS,
+    householdPolicy = parseHouseholdPolicy(),
     store,
   } = {}) {
     this.now = now;
@@ -75,6 +83,8 @@ export class PairingService {
     this.sessions = new Map();
     this.claimTokens = new Map();
     this.rateBuckets = new Map();
+    this.bootstrapBuckets = new Map();
+    this.householdPolicy = householdPolicy;
     this.events = [];
   }
 
@@ -174,4 +184,4 @@ export class PairingService {
 
 }
 
-addMethods(PairingService, sessionMethods, createMethods, claimMethods, approveMethods, deviceMethods, membershipMethods, lifecycleMethods);
+addMethods(PairingService, bootstrapLimitMethods, sessionMethods, createMethods, claimMethods, approveMethods, deviceMethods, membershipMethods, lifecycleMethods);

@@ -33,7 +33,8 @@ export const sessionMethods = {
     });
   },
 
-  bootstrap({ credential, deviceLabel = "This device", syncPublicKeys }) {
+  bootstrap({ credential, deviceLabel = "This device", syncPublicKeys, rateKey }) {
+    this.assertBootstrapAllowed(rateKey);
     const keyRecord = syncPublicKeys
       ? validateSyncPublicKeys(syncPublicKeys)
       : {};
@@ -73,6 +74,7 @@ export const sessionMethods = {
     const deviceToken = this.issueDeviceToken(device);
     this.audit("device_trusted", { householdId, memberId, deviceId });
     this.persistHousehold(householdId);
+    this.recordBootstrap(rateKey);
     return {
       ...this.issueSession(memberId, deviceId),
       deviceToken,
