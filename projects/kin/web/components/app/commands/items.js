@@ -141,6 +141,8 @@ export class ItemCommands {
     try {
       await this.ctx.append.appendCommand({ type, itemId: submittedItemId });
       this.ctx.session.assertCurrentSession(session);
+      if (["complete", "archive"].includes(type))
+        this.app.localReminders.cancel(`item:${submittedItemId}`);
       this.ctx.render.renderState();
       this.ctx.status.setStatus(
         type === "complete"
@@ -229,18 +231,15 @@ export class ItemCommands {
     }
   }
   async handleCompleteItem(event) {
-    this.app.localReminders.cancel(`item:${event.detail.itemId}`);
     return this.ctx.items.handleItemAction("complete", event.detail.itemId);
   }
   async handleReopenItem(event) {
     return this.ctx.items.handleItemAction("reopen", event.detail.itemId);
   }
   async handleArchiveItem(event) {
-    this.app.localReminders.cancel(`item:${event.detail.itemId}`);
     return this.ctx.items.handleItemAction("archive", event.detail.itemId);
   }
   async saveItemPlanningDate(detail, sourceList) {
-    this.app.localReminders.cancel(`item:${detail.itemId}`);
     if (this.app.busy || !this.app.store || !this.app.engine) return;
     const session = this.ctx.session.captureSession();
     this.ctx.status.setBusy(true);
@@ -253,6 +252,7 @@ export class ItemCommands {
         planningDate: detail.planningDate,
       });
       this.ctx.session.assertCurrentSession(session);
+      this.app.localReminders.cancel(`item:${detail.itemId}`);
       this.ctx.render.renderState();
       this.ctx.peers.broadcastEventChange();
       this.app.detail.clearFeedback(detail.itemId);

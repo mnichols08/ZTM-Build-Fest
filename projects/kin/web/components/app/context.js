@@ -170,10 +170,7 @@ export function initializeAppState(app) {
       app.ctx.conversations.saveTalk({ type: "archive-talk", talkId: event.detail.talkId });
     // Several handlers derive the command type from the event name: every
     // component event is "kin:<command>", so `event.type.slice(4)` drops "kin:".
-    app.onRoutineIntent = (event) => {
-      if (event.type === "kin:archive-routine" || event.type === "kin:complete-routine-occurrence") app.localReminders.cancel(`routine:${event.detail.routineId}`);
-      app.ctx.routines.saveRoutine({ ...event.detail, type: event.type.slice(4) });
-    };
+    app.onRoutineIntent = (event) => app.ctx.routines.saveRoutine({ ...event.detail, type: event.type.slice(4) });
     app.onChangeRoutineSchedule = (event) => app.ctx.routines.changeRoutineSchedule(event.detail);
     app.onOpenRoutineSchedule = (event) => app.ctx.routines.openRoutineSchedule(event.detail.routineId);
     app.onAreaIntent = (event) => app.ctx.records.saveArea(event.detail);
