@@ -176,10 +176,10 @@ pub fn summarize(
         .iter()
         .map(|(event_id, _)| *event_id)
         .collect();
-    let items: BTreeMap<ItemId, &str> = state
+    let items: BTreeMap<ItemId, (&str, ItemClassification)> = state
         .items
         .iter()
-        .map(|item| (item.item_id, item.text.as_str()))
+        .map(|item| (item.item_id, (item.text.as_str(), item.classification)))
         .collect();
     let handoffs: BTreeMap<HandoffId, &str> = state
         .handoffs
@@ -216,9 +216,9 @@ pub fn summarize(
                 text,
                 classification,
             } => Some((kind, entity_kind, text, classification)),
-            SummaryInput::Item(kind, id) => items
-                .get(&id)
-                .map(|text| (kind, SummaryEntityKind::Item, *text, None)),
+            SummaryInput::Item(kind, id) => items.get(&id).map(|(text, classification)| {
+                (kind, SummaryEntityKind::Item, *text, Some(*classification))
+            }),
             SummaryInput::Handoff(kind, id) => handoffs
                 .get(&id)
                 .map(|text| (kind, SummaryEntityKind::Handoff, *text, None)),

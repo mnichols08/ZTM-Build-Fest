@@ -317,7 +317,7 @@ fn validate(state: &HouseholdState, summary: &CatchUpSummary) -> Result<(), KinE
             | SummaryKind::RoutineArchived => SummaryEntityKind::Routine,
         };
         if entry.entity_kind != expected_entity
-            || (entry.kind == SummaryKind::ItemAdded) != entry.classification.is_some()
+            || (entry.entity_kind == SummaryEntityKind::Item) != entry.classification.is_some()
             || entry.text.is_empty()
             || entry.text.len() > MAX_ITEM_TEXT_BYTES
         {

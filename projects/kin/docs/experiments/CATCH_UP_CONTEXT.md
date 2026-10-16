@@ -14,7 +14,10 @@ new events or another stored preference.
 ## Scope
 
 The experiment changes only display copy derived from fields already present in
-the Rust summary projection:
+the Rust summary projection. The fixed-size KINS summary entry already reserved
+a classification byte; lifecycle projection now fills that existing byte from
+the item's current projected classification, without changing the encoded
+layout or persistent event bytes:
 
 - Item lifecycle entries name Today, To do, Shopping or Staples from their
   existing classification.
@@ -28,9 +31,11 @@ acknowledgement, ordering and privacy boundary are unchanged.
 ## Validation boundary
 
 Automated tests prove deterministic wording, neutral fallback behavior and the
-existing Catch-up lifecycle. They do not prove that people understand the copy
-more quickly. Before treating the experiment as settled product language, use a
-small first-use comparison and check whether people can answer where a changed
+existing Catch-up lifecycle. Rust coverage proves complete, reopen and archive
+entries retain their destination, and a real-WASM browser-facing test proves
+the decoded values. These tests do not prove that people understand the copy
+more quickly. Before treating the experiment as settled product language, use
+a small first-use comparison and check whether people can answer where a changed
 record lives without opening it.
 
 Remove or shorten the destination phrase if it creates repetitive scanning or
