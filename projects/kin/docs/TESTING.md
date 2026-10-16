@@ -203,6 +203,10 @@ it prints `METRIC daily-ux-hardening` samples with median and p95.
 pin concurrent schedule changes, the Weekdays DST weekend, and that an
 unreadable or unsupported remote event stops a batch instead of being
 quarantined. See [DAILY-UX-HARDENING](DAILY-UX-HARDENING.md).
+`web/storage/quarantine.test.mjs` pins the quarantine bound, retry
+bookkeeping and review message; `remote-replay.test.mjs` and the browser
+`sync-storage-regression.mjs` show a completion delivered before its item is
+kept encrypted and applied once the item arrives (#153).
 
 ## Keyboard shortcuts and command palette coverage
 
