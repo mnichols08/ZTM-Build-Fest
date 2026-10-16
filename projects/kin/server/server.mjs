@@ -39,10 +39,14 @@ export function createKinServer(options = {}) {
     options.trustedProxies instanceof Set
       ? options.trustedProxies
       : parseTrustedProxies(options.trustedProxies ?? process.env.KIN_TRUSTED_PROXIES);
-  const householdPolicy = parseHouseholdPolicy({
+  const householdSettings = {
     allowNewHouseholds: options.allowNewHouseholds ?? process.env.KIN_ALLOW_NEW_HOUSEHOLDS,
     maxHouseholds: options.maxHouseholds ?? process.env.KIN_MAX_HOUSEHOLDS,
-  });
+  };
+  const householdPolicy = parseHouseholdPolicy(householdSettings);
+  // A passed-in service keeps its own policy unless a setting is given here.
+  const householdPolicyConfigured = [householdSettings.allowNewHouseholds, householdSettings.maxHouseholds]
+    .some((value) => value !== undefined && value !== null && value !== "");
   const configuredDataDirectory =
     options.dataDirectory ??
     process.env.KIN_DATA_DIR ??
@@ -62,7 +66,7 @@ export function createKinServer(options = {}) {
   if (options.store) store.validate();
   const service =
     options.service ?? new PairingService({ now: options.now, store, householdPolicy });
-  service.householdPolicy = householdPolicy;
+  if (householdPolicyConfigured) service.householdPolicy = householdPolicy;
   if (options.service && store && !service.store) {
     service.store = store;
     for (const householdId of service.households.keys())

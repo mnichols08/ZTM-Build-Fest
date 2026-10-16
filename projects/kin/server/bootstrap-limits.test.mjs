@@ -136,3 +136,19 @@ test("the household cap applies over HTTP too", async () => {
     await server.close();
   }
 });
+
+test("a passed-in service keeps its own policy unless the server is given a setting", async () => {
+  const saved = { allow: process.env.KIN_ALLOW_NEW_HOUSEHOLDS, max: process.env.KIN_MAX_HOUSEHOLDS };
+  delete process.env.KIN_ALLOW_NEW_HOUSEHOLDS;
+  delete process.env.KIN_MAX_HOUSEHOLDS;
+  const service = new PairingService({ householdPolicy: parseHouseholdPolicy({ allowNewHouseholds: false }) });
+  const server = await startServer({ service });
+  try {
+    assert.equal(service.householdPolicy.allowNew, false);
+    assert.equal((await server.createHousehold()).status, 403);
+  } finally {
+    await server.close();
+    if (saved.allow !== undefined) process.env.KIN_ALLOW_NEW_HOUSEHOLDS = saved.allow;
+    if (saved.max !== undefined) process.env.KIN_MAX_HOUSEHOLDS = saved.max;
+  }
+});
