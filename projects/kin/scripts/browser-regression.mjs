@@ -1345,7 +1345,26 @@ try {
     const operationGuarded = guardedAppends === 0 && !app.state.playbooks.find(value => value.playbookId === record.playbookId).archived;
     const instantiate = app.ctx.routines.instantiatePlaybook.bind(app.ctx.routines); let savedBatch;
     app.ctx.routines.instantiatePlaybook = batch => { savedBatch = batch; return instantiate(batch); };
+    const appendForChecklist = app.ctx.append.appendCommand;
+    const renderForChecklist = app.ctx.render.renderState;
+    const broadcastForChecklist = app.ctx.peers.broadcastEventChange;
+    let checklistSteps = 0, partialRenders = 0, partialBroadcasts = 0;
+    app.ctx.append.appendCommand = async command => {
+      if (command.type === "add-item-step" && ++checklistSteps === 2)
+        throw Object.assign(new Error("Synthetic checklist failure"), { userMessage: "Kin could not save that change locally." });
+      return appendForChecklist.call(app.ctx.append, command);
+    };
+    app.ctx.render.renderState = (...args) => { partialRenders++; return renderForChecklist.apply(app.ctx.render, args); };
+    app.ctx.peers.broadcastEventChange = (...args) => { partialBroadcasts++; return broadcastForChecklist.apply(app.ctx.peers, args); };
     [...ui.playbookList.querySelectorAll("button")].find(button => button.textContent === "Use checklist").click();
+    await wait();
+    app.ctx.append.appendCommand = appendForChecklist;
+    app.ctx.render.renderState = renderForChecklist;
+    app.ctx.peers.broadcastEventChange = broadcastForChecklist;
+    const partialItem = app.state.items.find(value => value.text === "Regression playbook");
+    const partialReported = partialItem?.steps.length === 1 && partialRenders === 1 && partialBroadcasts === 1 &&
+      app.alert.textContent === "Checklist partly created. Retry to add the remaining steps." && !app.retryButton.hidden;
+    app.retryButton.click();
     await wait();
     const item = app.state.items.find(value => value.text === "Regression playbook");
     if (!item || item.steps.map(step => step.text).join("|") !== "First step|Second step") return false;
@@ -1365,7 +1384,7 @@ try {
     const independent = app.state.items.find(value => value.itemId === item.itemId);
     if (independent.text !== "Regression playbook" || independent.steps[0].text !== "First step") return false;
     [...ui.playbookList.querySelectorAll("button")].find(button => button.textContent === "Archive").click(); await wait();
-    return { archived: app.state.playbooks.find(value => value.playbookId === record.playbookId).archived, invalidCreateTitle, invalidCreateEntry, invalidEditTitle, invalidEditEntry, uniqueIdsAfterInvalid, operationGuarded };
+    return { archived: app.state.playbooks.find(value => value.playbookId === record.playbookId).archived, invalidCreateTitle, invalidCreateEntry, invalidEditTitle, invalidEditEntry, uniqueIdsAfterInvalid, operationGuarded, partialReported };
   });
   assert.equal(playbookResult.archived, true, "Playbooks save ordered entries, instantiate independent checklist state, edit, and archive");
   assert.equal(playbookResult.invalidCreateTitle, true, "Playbook create rejects overlong UTF-8 title with associated inline feedback");
@@ -1374,6 +1393,7 @@ try {
   assert.equal(playbookResult.invalidEditEntry, true, "Playbook edit rejects an empty step with associated inline feedback");
   assert.equal(playbookResult.uniqueIdsAfterInvalid, true, "Playbook validation keeps DOM IDs unique");
   assert.equal(playbookResult.operationGuarded, true, "Playbook commands refuse overlapping work at the handler boundary");
+  assert.equal(playbookResult.partialReported, true, "A partial Playbook instantiation renders committed work, notifies peers, and offers Retry");
   console.log("PASS Playbook authoring, independent checklist instantiation, edit, and archive");
   await visit(first, "today");
   await first.evaluate(

@@ -14,7 +14,7 @@ function deferred() {
 }
 
 function harness(appendCommand = async () => {}) {
-  const calls = { appends: [], captures: 0, clears: 0, renders: 0, broadcasts: 0 };
+  const calls = { appends: [], captures: 0, clears: 0, renders: 0, broadcasts: 0, alerts: [] };
   const app = {
     busy: false,
     store: {},
@@ -41,7 +41,7 @@ function harness(appendCommand = async () => {}) {
       setBusy(value) { app.busy = value; },
       clearAlert() {},
       setStatus() {},
-      showAlert() {},
+      showAlert(message, retry) { calls.alerts.push({ message, retry }); },
     },
     render: { renderState() { calls.renders++; } },
     peers: { broadcastEventChange() { calls.broadcasts++; }, flushPeerRefresh() {} },
@@ -101,4 +101,60 @@ test("a pending Playbook save refuses an overlapping archive", async () => {
   assert.equal(calls.clears, 1);
   assert.equal(calls.renders, 1);
   assert.equal(calls.broadcasts, 1);
+});
+
+test("a partial checklist commit renders, broadcasts and retries the same batch", async () => {
+  let attempt = 0;
+  let app;
+  const harnessed = harness(async (command) => {
+    attempt++;
+    if (attempt === 3) throw Object.assign(new Error("storage failed"), { userMessage: "Kin could not save that change locally." });
+    if (command.type === "add") {
+      app.state.items.push({ itemId: command.id, text: command.text, status: "active", steps: [] });
+      return;
+    }
+    const item = app.state.items.find(record => record.itemId === command.itemId);
+    item.steps.push({ stepId: command.stepId, text: command.text, status: "active" });
+  });
+  app = harnessed.app;
+  const { calls, ctx } = harnessed;
+  const batch = {
+    itemId: "item-1",
+    title: "Departure",
+    steps: [
+      { stepId: "step-1", text: "Lock doors" },
+      { stepId: "step-2", text: "Turn off lights" },
+    ],
+  };
+
+  await ctx.routines.instantiatePlaybook(batch);
+
+  assert.deepEqual(app.state.items[0].steps.map(step => step.stepId), ["step-1"]);
+  assert.equal(calls.renders, 1);
+  assert.equal(calls.broadcasts, 1);
+  assert.equal(calls.alerts[0].message, "Checklist partly created. Retry to add the remaining steps.");
+  assert.equal(typeof calls.alerts[0].retry, "function");
+
+  await calls.alerts[0].retry();
+
+  assert.equal(calls.appends.filter(command => command.type === "add").length, 1);
+  assert.deepEqual(app.state.items[0].steps.map(step => step.stepId), ["step-1", "step-2"]);
+  assert.equal(calls.renders, 2);
+  assert.equal(calls.broadcasts, 2);
+});
+
+test("a checklist failure before any commit keeps the original error and does not redraw", async () => {
+  const { calls, ctx } = harness(async () => {
+    throw Object.assign(new Error("storage failed"), { userMessage: "Specific storage failure." });
+  });
+
+  await ctx.routines.instantiatePlaybook({
+    itemId: "item-1",
+    title: "Departure",
+    steps: [{ stepId: "step-1", text: "Lock doors" }],
+  });
+
+  assert.equal(calls.alerts[0].message, "Specific storage failure.");
+  assert.equal(calls.renders, 0);
+  assert.equal(calls.broadcasts, 0);
 });

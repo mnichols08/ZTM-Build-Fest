@@ -162,18 +162,21 @@ export class RoutineCommands {
   async instantiatePlaybook(batch) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
     const session = this.ctx.session.captureSession(); this.ctx.status.setBusy(true); this.ctx.status.clearAlert(); this.ctx.status.setStatus("Creating checklist…");
+    let committed = 0;
     try {
       let item = this.app.state?.items.find(record => record.itemId === batch.itemId);
-      if (!item) { await this.ctx.append.appendCommand({ type: "add", id: batch.itemId, text: batch.title, classification: "need" }); item = this.app.state?.items.find(record => record.itemId === batch.itemId); }
+      if (!item) { await this.ctx.append.appendCommand({ type: "add", id: batch.itemId, text: batch.title, classification: "need" }); committed++; item = this.app.state?.items.find(record => record.itemId === batch.itemId); }
       for (const step of batch.steps) {
         if (item?.steps?.some(record => record.stepId === step.stepId)) continue;
         await this.ctx.append.appendCommand({ type: "add-item-step", itemId: batch.itemId, stepId: step.stepId, text: step.text });
+        committed++;
         item = this.app.state?.items.find(record => record.itemId === batch.itemId);
       }
       this.ctx.session.assertCurrentSession(session); this.ctx.render.renderState(); this.ctx.peers.broadcastEventChange(); this.ctx.status.setStatus("Checklist created under To do. It is now an ordinary household item.");
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
-      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, () => this.ctx.routines.instantiatePlaybook(batch)); this.ctx.status.setStatus("");
+      if (committed) { this.ctx.render.renderState(); this.ctx.peers.broadcastEventChange(); }
+      this.ctx.status.showAlert(committed ? "Checklist partly created. Retry to add the remaining steps." : (error.userMessage ?? SAVE_ERROR), () => this.ctx.routines.instantiatePlaybook(batch)); this.ctx.status.setStatus("");
     } finally { if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); } }
   }
 }
