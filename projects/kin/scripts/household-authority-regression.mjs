@@ -580,7 +580,12 @@ async function launchProfile(executable, label, origin) {
       throw new Error(`[${label}] ${result.exceptionDetails.exception?.description ?? JSON.stringify(result.exceptionDetails)}`);
     return result.result.value;
   };
-  const call = (fn, argument) => evaluate(`(${fn.toString()})(${argument === undefined ? "" : JSON.stringify(argument)})`);
+  // A failure names the page function, so a CI log says which step broke.
+  const call = (fn, argument) => evaluate(`(${fn.toString()})(${argument === undefined ? "" : JSON.stringify(argument)})`)
+    .catch((error) => {
+      if (!error.message.startsWith(`[${label}]`)) error.message = `[${label}] ${fn.name || "inline page function"}: ${error.message}`;
+      throw error;
+    });
   await send("Network.enable");
   for (let attempt = 0; attempt < 200; attempt += 1) {
     if (await evaluate("location.origin === " + JSON.stringify(origin)).catch(() => false)) break;
