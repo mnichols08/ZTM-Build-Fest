@@ -94,14 +94,42 @@ test("an incomplete hex edit remains dirty and cannot be saved", async () => {
   assert.equal(appearance.dirty, true);
   assert.equal(appearance.hex.value, "#3A7");
   assert.equal(appearance.hex.getAttribute("aria-invalid"), "true");
-  assert.equal(appearance.feedback.textContent, "Finish the hex color before saving.");
+  assert.equal(appearance.feedback.textContent, "");
 
   await appearance.requestSave();
   assert.equal(document.activeElement, appearance.hex);
+  assert.equal(appearance.feedback.textContent, "Finish the hex color before saving.");
   assert.equal(appearance.dispatched?.some((event) => event.type === "kin:save-appearance") ?? false, false);
 
   appearance.restoreSaved("Changes canceled.");
   assert.equal(appearance.dirty, false);
   assert.equal(appearance.hex.value, initial.seed);
   assert.equal(appearance.hex.getAttribute("aria-invalid"), "false");
+});
+
+test("cancel clears an invalid edit when the saved color is custom", async () => {
+  const appearance = new KinAppearance();
+  appearance.connectedCallback();
+  appearance.initialize({
+    ...initial,
+    colorSource: "custom",
+    seed: "#256A91",
+    manual: { source: "custom", name: "Custom color", seed: "#256A91" },
+  });
+
+  appearance.hex.focus();
+  appearance.hex.value = "#3A";
+  appearance.hex.listeners.input();
+  appearance.cancel.focus();
+  appearance.cancel.listeners.click();
+  assert.equal(appearance.hex.value, "#256A91");
+  assert.equal(appearance.hex.getAttribute("aria-invalid"), "false");
+  assert.equal(appearance.hexError.hidden, true);
+
+  const dark = appearance.modeControls.get("dark");
+  dark.focus();
+  dark.checked = true;
+  dark.listeners.change();
+  await appearance.requestSave();
+  assert.equal(appearance.dispatched.filter((event) => event.type === "kin:save-appearance").length, 1);
 });
