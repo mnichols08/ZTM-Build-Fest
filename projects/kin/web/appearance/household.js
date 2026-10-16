@@ -38,6 +38,36 @@ export function useHouseholdAppearance(owner = null) {
   return { version: 2, owner, mode: undefined, colorSource: undefined, seed: undefined, manual: undefined, image: undefined };
 }
 
+// Preserve per-property inheritance when the editor submits its concrete
+// preview. Only groups that differ from the preview it started with become
+// personal overrides.
+export function personalAppearanceFromDraft(current, draft, baseline) {
+  const next = current.version === 2
+    ? structuredClone(current)
+    : { ...structuredClone(current), version: 2 };
+  if (draft.mode !== baseline.mode) next.mode = draft.mode;
+  if (!sameColor(draft, baseline)) {
+    next.colorSource = draft.colorSource;
+    next.seed = draft.seed;
+    next.manual = structuredClone(draft.manual);
+  }
+  if (!sameImage(draft.image, baseline.image)) next.image = structuredClone(draft.image);
+  return next;
+}
+
+function sameColor(left, right) {
+  return left.colorSource === right.colorSource && left.seed === right.seed &&
+    left.manual?.source === right.manual?.source && left.manual?.name === right.manual?.name &&
+    left.manual?.seed === right.manual?.seed;
+}
+
+function sameImage(left, right) {
+  if (left === right) return true;
+  if (!left || !right || left.type !== right.type || left.seed !== right.seed ||
+      left.width !== right.width || left.height !== right.height || left.bytes.length !== right.bytes.length) return false;
+  return left.bytes.every((byte, index) => byte === right.bytes[index]);
+}
+
 export async function encryptHouseholdSettings(value, { householdId, keyEpoch, householdKey }) {
   const checked = validateHouseholdSettings(value);
   const serializable = { ...checked, appearance: { ...checked.appearance, owner: undefined,

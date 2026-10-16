@@ -45,7 +45,8 @@ await import("./kin-appearance.js");
 const KinAppearance = components["kin-appearance"];
 
 const initial = Object.freeze({
-  version: 2, owner: null, mode: "system", colorSource: "default", seed: "#984D38", manual: null, image: null,
+  version: 1, owner: null, mode: "system", colorSource: "default", seed: "#984D38", manual: null,
+  image: { seed: "#684033", type: "image/webp", width: 10, height: 10, bytes: new Uint8Array([1, 2]) },
 });
 
 test("theme presets use one native radio group and preview the checked choice", () => {
@@ -68,8 +69,14 @@ test("theme presets use one native radio group and preview the checked choice", 
   assert.deepEqual(controls.filter((input) => input.checked).map((input) => input.value), ["forest"]);
   assert.equal(appearance.draft.colorSource, "preset");
   assert.equal(appearance.draft.seed, "#397052");
+  assert.deepEqual(appearance.draft.image, initial.image);
   assert.equal(appearance.feedback.textContent, "Unsaved changes.");
   assert.equal(appearance.dirty, true);
+
+  void appearance.requestSave();
+  const save = appearance.dispatched.at(-1);
+  assert.deepEqual(save.detail.baseline.image, initial.image);
+  assert.deepEqual(save.detail.value.image, initial.image);
 
   appearance.restoreSaved("Changes canceled.");
   assert.equal(appearance.dirty, false);

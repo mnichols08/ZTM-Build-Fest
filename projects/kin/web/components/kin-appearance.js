@@ -153,7 +153,7 @@ export class KinAppearance extends HTMLElement {
     }
     this.generation++;
     this.disabled = true; this.feedback.textContent = "Saving…";
-    this.dispatchEvent(new CustomEvent("kin:save-appearance", { bubbles: true, detail: { value: structuredClone(this.draft), complete: (result, error) => {
+    this.dispatchEvent(new CustomEvent("kin:save-appearance", { bubbles: true, detail: { value: structuredClone(this.draft), baseline: structuredClone(this.saved), complete: (result, error) => {
       if (!error) { this.saved = structuredClone(result); this.draft = structuredClone(result); this.dirty = false; }
       this.disabled = false; this.update(error ? error.message : "Appearance saved on this device.", !error);
     } } }));
