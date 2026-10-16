@@ -462,6 +462,31 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     check(colorDraftRefresh.draft === "#397052" && colorDraftRefresh.applied === "#397052" && colorDraftRefresh.dirty,
       "a sync refresh preserves an unsaved personal color and its live appearance preview", colorDraftRefresh);
 
+    const orderedSettings = await page(async () => {
+      const app = document.querySelector("kin-app"), editor = app.householdDefaults;
+      const realCoordinator = app.syncCoordinator;
+      const baseline = app.householdSettings ?? { version: 1, revision: 0, name: "Our Home", appearance: { mode: "system", colorSource: "manual", seed: "#684033", owner: "household" } };
+      app.householdSettings = baseline;
+      editor.initialize({ admin: true, adminRecorded: true, value: baseline });
+      const requests = [];
+      app.syncCoordinator = { loadHouseholdSettings: () => new Promise((resolve, reject) => requests.push({ resolve, reject })), stop() {} };
+      const first = app.ctx.appearance.refreshHouseholdDefaults();
+      const second = app.ctx.appearance.refreshHouseholdDefaults();
+      const newer = { ...structuredClone(baseline), revision: baseline.revision + 2, name: "Newest Household" };
+      requests[1].resolve({ admin: false, adminRecorded: true, value: newer });
+      await second;
+      requests[0].resolve({ admin: true, adminRecorded: true, value: { ...structuredClone(baseline), revision: baseline.revision + 1, name: "Stale Household" } });
+      await first;
+      const result = { revision: app.householdSettings.revision, name: app.householdSettings.name, hidden: editor.hidden, admin: editor.admin };
+      app.householdSettings = baseline;
+      editor.initialize({ admin: true, adminRecorded: true, value: baseline });
+      app.ctx.appearance.applyEffectiveAppearance();
+      app.syncCoordinator = realCoordinator;
+      return result;
+    });
+    check(orderedSettings.revision >= 2 && orderedSettings.name === "Newest Household" && orderedSettings.hidden && !orderedSettings.admin,
+      "an older household-settings response cannot replace newer settings or authority state", orderedSettings);
+
     // --- Household settings save settling after lock or re-open -----------
     // The real editor and its Save button; the coordinator's save is a
     // deferred promise. Every completion the editor receives is recorded. Lock

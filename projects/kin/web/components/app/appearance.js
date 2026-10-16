@@ -9,6 +9,7 @@ export class AppearanceController {
   constructor(ctx) {
     this.ctx = ctx;
     this.app = ctx.app;
+    this.householdDefaultsRefreshGeneration = 0;
   }
 
   resolvedAppearanceMode(mode) {
@@ -95,18 +96,20 @@ export class AppearanceController {
   }
   async refreshHouseholdDefaults() {
     if (!this.app.syncCoordinator || !this.app.vault || this.app.vault.locked) return;
+    const refreshGeneration = ++this.householdDefaultsRefreshGeneration;
     // The load spans the network and IndexedDB; a lock or re-open meanwhile
     // must not write the household name or a status into the next session.
     const session = this.ctx.session.captureSession();
     try {
       const result = await this.app.syncCoordinator.loadHouseholdSettings();
       this.ctx.session.assertCurrentSession(session);
+      if (refreshGeneration !== this.householdDefaultsRefreshGeneration) return;
       if (result.value && (this.app.householdSettings?.revision ?? -1) <= result.value.revision) this.app.householdSettings = result.value;
       const draftPreserved = this.app.householdDefaults.initialize({ ...result, value: this.app.householdSettings });
       if (draftPreserved) return;
       if (this.app.appearance?.dirty) this.ctx.appearance.setHouseholdIdentity(this.app.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME);
       else this.ctx.appearance.applyEffectiveAppearance();
-    } catch { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded."); }
+    } catch { if (this.ctx.session.isCurrentSession(session) && refreshGeneration === this.householdDefaultsRefreshGeneration) this.ctx.status.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded."); }
   }
   async restoreCachedHouseholdDefaults(identity, session = this.ctx.session.captureSession()) {
     if (!identity) return;
