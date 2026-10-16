@@ -511,6 +511,43 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
       colorKeepsSharedBackground.savedColor === colorKeepsSharedBackground.expectedColor && colorKeepsSharedBackground.appliedImage,
     "choosing a personal color keeps the inherited household background in preview and saved state", colorKeepsSharedBackground);
 
+    const resetPinsKinDefaults = await page(async () => {
+      const app = document.querySelector("kin-app"), editor = app.appearance;
+      const originalPersonal = structuredClone(app.personalAppearance);
+      const originalHousehold = structuredClone(app.householdSettings);
+      const owner = originalPersonal.owner;
+      const kinDefaults = { version: 1, owner, mode: "system", colorSource: "default", seed: "#984D38", manual: null, image: null };
+      app.householdSettings = { version: 1, revision: 1, name: "Default Home", appearance: { ...kinDefaults, owner: "household" } };
+      app.personalAppearance = { version: 2, owner, mode: undefined, colorSource: undefined, seed: undefined, manual: undefined, image: undefined };
+      editor.initialize(kinDefaults);
+      editor.reset.click();
+      editor.form.requestSubmit();
+      for (let index = 0; editor.save.disabled && index < 300; index++) await new Promise((resolve) => setTimeout(resolve, 10));
+      const stored = structuredClone(app.personalAppearance);
+      app.householdSettings = {
+        version: 1, revision: 2, name: "Changed Home",
+        appearance: {
+          version: 1, owner: "household", mode: "dark", colorSource: "preset", seed: "#397052",
+          manual: { source: "preset", name: "Forest", seed: "#397052" },
+          image: { seed: "#684033", type: "image/webp", width: 24, height: 24, bytes: new Uint8Array([1, 2, 3, 4]) },
+        },
+      };
+      app.ctx.appearance.applyEffectiveAppearance();
+      const result = {
+        storedMode: stored.mode, storedColor: stored.colorSource, storedSeed: stored.seed, storedImage: stored.image,
+        appliedMode: app.currentAppearance.mode, appliedColor: app.currentAppearance.colorSource,
+        appliedSeed: app.currentAppearance.seed, appliedImage: app.currentAppearance.image,
+      };
+      app.householdSettings = originalHousehold;
+      await app.ctx.appearance.handleUseHouseholdAppearance({ detail: { value: originalPersonal } });
+      return result;
+    });
+    check(resetPinsKinDefaults.storedMode === "system" && resetPinsKinDefaults.storedColor === "default" &&
+      resetPinsKinDefaults.storedSeed === "#984D38" && resetPinsKinDefaults.storedImage === null &&
+      resetPinsKinDefaults.appliedMode === "system" && resetPinsKinDefaults.appliedColor === "default" &&
+      resetPinsKinDefaults.appliedSeed === "#984D38" && resetPinsKinDefaults.appliedImage === null,
+    "Reset to Kin default stores explicit personal defaults that ignore later household appearance changes", resetPinsKinDefaults);
+
     const orderedSettings = await page(async () => {
       const app = document.querySelector("kin-app"), editor = app.householdDefaults;
       const realCoordinator = app.syncCoordinator;
