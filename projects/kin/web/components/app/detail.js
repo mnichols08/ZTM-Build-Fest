@@ -46,9 +46,6 @@ export class DetailController {
       reminder: this.app.localReminders.entries.get(`item:${this.app.selection.itemId}`) ?? null,
       item,
     });
-    // Native fieldset disabling owns workspace detail. The phone sheet is
-    // outside that boundary and still needs the component-level state.
-    detail.disabled = !this.app.store || (this.app.busy && Boolean(detail.closest(".detail-sheet")));
   }
   // The same object while its inputs are unchanged, so components given it
   // can skip re-rendering by identity.
@@ -72,7 +69,10 @@ export class DetailController {
     const open = Boolean(this.app.selection && this.app.vault && !this.app.vault.locked);
     const mode = open ? this.ctx.navigation.layoutMode() : null;
     const previousMode = this.app.detailMode;
-    if (mode === previousMode && open && this.app.detail.parentElement) return;
+    if (mode === previousMode && open && this.app.detail.parentElement) {
+      this.updateDetailDisabledState();
+      return;
+    }
     this.app.rehomingDetail = true;
     try {
       if (previousMode === "sheet" && mode !== "sheet" && this.app.detailSheet.open) { this.app.sheetClosingProgrammatically = true; this.app.detailSheet.close(); }
@@ -102,9 +102,16 @@ export class DetailController {
       }
       this.app.detail.update({ closeLabel: this.app.selection.origin === "search" ? "Back to search" : mode === "inline" ? "Back to list" : "Close" });
       this.app.detailMode = mode;
+      this.updateDetailDisabledState();
     } finally {
       this.app.rehomingDetail = false;
     }
+  }
+  // The phone sheet is outside the workspace fieldset; inline and side
+  // details are already disabled natively by that fieldset.
+  updateDetailDisabledState() {
+    const inSheet = Boolean(this.app.detail?.closest(".detail-sheet"));
+    if (this.app.detail) this.app.detail.disabled = inSheet ? this.app.busy || !this.app.store : false;
   }
   closeItemDetail({ restoreFocus = true, fromDialog = false } = {}) {
     const selection = this.app.selection;

@@ -11,6 +11,7 @@ class ElementStub {
     this.textContent = "";
     this.value = "";
     this.hidden = false;
+    this.isConnected = true;
   }
   get options() { return this.children.filter((child) => child.tagName === "option"); }
   append(...children) {
@@ -27,6 +28,7 @@ class ElementStub {
   removeAttribute(name) { delete this.attributes[name]; }
   contains(node) { return node ? descendants(this).includes(node) : false; }
   focus() { globalThis.document.activeElement = this; }
+  matches(selector) { return selector === ":disabled" ? this.disabled : false; }
   querySelectorAll(selector) {
     const tags = selector.split(",");
     return descendants(this).filter((node) => tags.includes(node.tagName)
@@ -39,7 +41,7 @@ globalThis.HTMLElement = class extends ElementStub {};
 globalThis.CustomEvent ??= class { constructor(type, options) { this.type = type; Object.assign(this, options); } };
 const components = {};
 globalThis.customElements = { define: (name, component) => { components[name] = component; } };
-globalThis.document = { activeElement: null, createElement: (tagName) => new ElementStub(tagName) };
+globalThis.document = { activeElement: null, body: new ElementStub("body"), createElement: (tagName) => new ElementStub(tagName) };
 await import("./kin-notes.js");
 const KinNotes = components["kin-notes"];
 
@@ -108,4 +110,19 @@ test("a maintenance draft is discarded when its Reference is archived elsewhere"
 
   notes.render();
   assert.equal(notes.maintenanceDrafts.size, 0);
+});
+
+test("ending busy does not steal focus moved from Notes to header search", () => {
+  const notes = new KinNotes();
+  notes.render();
+  const title = notes.querySelectorAll("[data-focus-id]")
+    .find((node) => node.dataset.focusId === "title");
+  const search = new ElementStub("a");
+
+  notes.pendingFocus = title.dataset.focusId;
+  search.focus();
+  notes.settleDeferredFocus();
+
+  assert.equal(document.activeElement, search);
+  assert.equal(notes.pendingFocus, null);
 });

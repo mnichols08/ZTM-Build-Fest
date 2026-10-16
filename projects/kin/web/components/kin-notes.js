@@ -82,7 +82,9 @@ class KinNotes extends HTMLElement {
       .find((node) => node.dataset.focusId === this.pendingFocus);
     if (candidate && !candidate.matches(":disabled")) {
       this.pendingFocus = null;
-      candidate.focus();
+      const active = document.activeElement;
+      const focusWasLost = !active || active === document.body || active.isConnected === false;
+      if (focusWasLost) candidate.focus();
     }
   }
 
