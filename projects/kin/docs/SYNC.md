@@ -175,9 +175,18 @@ contain only recipient-wrapped keys, not server-held household content keys.
 
 The recovery marker is assigned by the relay when it accepts the rotation;
 fields in a submitted package body cannot set or clear it. Clients relax only
-the expiry check, and only for a grant the relay marks this way; the expiry is
-part of the signed package metadata, so the marker cannot make a package
-verify that would not verify otherwise. Durable validation rejects a marker on
+the expiry check, and only for a grant the relay marks this way whose signed
+epoch is at or below the relay's current committed epoch; a newer epoch must
+arrive unexpired. The expiry is part of the signed package metadata, so the
+marker cannot make a package verify that would not verify otherwise.
+
+Epoch numbers come only from signed packages. The grant's outer `keyEpoch`,
+`senderDeviceId` and `grantId` are relay metadata and are not signed, so the
+client refuses a grant unless each equals the signed package's value and the
+package names this household and this device as recipient. A refused grant is
+not saved or acknowledged, and sync pauses with an explanation. The key store
+also refuses to save a sealed key under any epoch or household other than the
+one it was sealed for. Durable validation rejects a marker on
 an acknowledged, request-bound, or package-less grant. Grants stored before
 the marker existed load as ordinary grants and keep their normal expiry.
 Retained packages are bounded by `MAX_KEY_EPOCHS × MAX_ROTATION_PACKAGES`,
