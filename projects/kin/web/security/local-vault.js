@@ -267,7 +267,7 @@ function validRootFormat(manifest) {
     (manifest?.formatVersion === 2 && Number.isSafeInteger(manifest.rootVersion) && manifest.rootVersion >= 2);
 }
 
-function validateManifest(manifest) {
+export function validateManifest(manifest) {
   if (!validRootFormat(manifest) || !/^[a-f0-9]{32}$/.test(manifest.vaultId) ||
       !Array.isArray(manifest.wrappers) || !manifest.wrappers.length || manifest.wrappers.length > MAX_WRAPPERS)
     throw new VaultError("The household security format is unsupported or corrupt.");

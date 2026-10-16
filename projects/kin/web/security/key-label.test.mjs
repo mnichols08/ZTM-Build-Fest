@@ -73,3 +73,9 @@ test("after a key replacement, an older export's wrong-key error names the old l
     rotated.vault.lock();
   }
 });
+
+test("the restore preview refuses an unbounded header instead of hashing it", async () => {
+  const { validateManifest } = await import("./local-vault.js");
+  const wrappers = Array.from({ length: 17 }, (_, index) => ({ version: 1, id: index.toString(16).padStart(32, "0"), type: "recovery", sealed: {} }));
+  assert.throws(() => validateManifest({ formatVersion: 1, vaultId: ID, rootVersion: 1, wrappers, verifier: {} }));
+});

@@ -9,10 +9,10 @@
 // local context row, the attachment records and the history as a view of an
 // event arena. Validation, staging and restore work on parts, so the
 // history is held once, as canonical bytes in one arena.
-import { LocalVault, serializeProtectedValue, deserializeProtectedValue, VaultError, fromBase64Url, toBase64Url } from "./local-vault.js";
+import { LocalVault, validateManifest, serializeProtectedValue, deserializeProtectedValue, VaultError, fromBase64Url, toBase64Url } from "./local-vault.js";
 import { EventStore } from "../storage/event-store.js";
 import { readArchive, writeArchive } from "./archive-stream.js";
-import { joinLabels, manifestRecoveryLabels } from "./key-label.js";
+import { manifestRecoveryLabels } from "./key-label.js";
 
 const KIN_VERSION = "0.47.0";
 const PACKAGE_FORMAT = 3;
@@ -162,8 +162,13 @@ export async function describeHouseholdArchive(bytes, engine) {
     throw new VaultError("Choose a Kin export no larger than 160 MiB.");
   const { header } = readArchiveHeader(bytes, engine);
   const packageManifest = validatePackageManifest(header.packageManifest, header.archiveVersion);
+  // Bounded first (at most 16 wrappers), so a crafted header can't make
+  // file selection hash without limit.
   let labels;
-  try { labels = await manifestRecoveryLabels(header.manifest); } catch { throw new VaultError("This file is damaged or incomplete."); }
+  try {
+    validateManifest(header.manifest);
+    labels = await manifestRecoveryLabels(header.manifest);
+  } catch { throw new VaultError("This file is damaged or incomplete."); }
   if (!labels.length) throw new VaultError("This file is damaged or incomplete.");
   return Object.freeze({ exportedAt: packageManifest.exportedAt, labels: Object.freeze(labels), packageFormatVersion: header.archiveVersion });
 }
@@ -178,11 +183,12 @@ export async function openArchiveVault(manifest, recoverySecret) {
     return await LocalVault.unlock(manifest, recoverySecret);
   } catch (error) {
     if (error?.code !== "unlock_failed") throw error;
+    // unlock tries the first recovery wrapper, so that is the key to name.
     let labels = [];
     try { labels = await manifestRecoveryLabels(manifest); } catch { /* fall back to the generic message */ }
     if (!labels.length) throw error;
     throw new VaultError(
-      `This export opens with recovery key ${joinLabels(labels)} from the device that made it, and the key you entered isn't that one. Saved data was not changed.`,
+      `This export opens with recovery key ${labels[0]} from the device that made it, and Kin couldn't open it with the key you entered. Check that you're using that key. Saved data was not changed.`,
       "archive_key_mismatch", error,
     );
   }

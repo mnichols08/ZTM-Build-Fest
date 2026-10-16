@@ -93,7 +93,9 @@ chance (1 in 65,536); it is for a person to match, not an identifier.
 
 - The label is shown with a new key when it is created or replaced, in
   Settings → Recovery key, and in the export's success message.
-- Export files are named `kin-<YYYY-MM-DD>-K-XXXX.kin` (the date in UTC).
+- Export files are named `kin-<YYYY-MM-DD>-K-XXXX.kin` (the date in UTC). The
+  name shows when an export was made and which exports share a key, to anyone
+  who can see the file list; rename it if that matters.
 - Before asking for a key, the restore screen reads the export's header and
   says when it was made and which label opens it.
 - A wrong key names the label that opens the export.
