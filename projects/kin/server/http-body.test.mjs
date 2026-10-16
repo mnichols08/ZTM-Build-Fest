@@ -82,7 +82,9 @@ test("a chunked body is refused as soon as it passes the limit", async () => {
     // Up to 64 MB offered; the server refuses after about 1 KB.
     const result = await send(server.port, { headers: { "Transfer-Encoding": "chunked" }, chunk: Buffer.alloc(256), count: 256 * 1024 });
     assert.deepEqual(server.seen, ["request_too_large"]);
-    assert.ok(result.status === 413 || ["ECONNRESET", "EPIPE"].includes(result.reset), JSON.stringify(result));
+    // Windows may surface an intentionally canceled pending write as
+    // ECANCELED instead of the equivalent connection-reset/broken-pipe codes.
+    assert.ok(result.status === 413 || ["ECANCELED", "ECONNRESET", "EPIPE"].includes(result.reset), JSON.stringify(result));
     assert.ok(result.sent < 64 * 1024 * 1024, "the upload was cut short");
   } finally { await server.close(); }
 });
