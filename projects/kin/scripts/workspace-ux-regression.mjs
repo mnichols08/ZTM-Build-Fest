@@ -351,12 +351,16 @@ export async function workspaceUxRegressions(recovery) {
   // 14. Offline and failed saves produce truthful, contextual feedback.
   app.ctx.navigation.navigate("#lists/todo");
   window.dispatchEvent(new Event("offline"));
-  check(app.syncChip.state === "offline" && app.syncChip.textContent === "Offline — saved here", "14. the header chip reports offline without promising sync on a device that has none");
+  check(app.syncChip.state === "offline" && app.syncChip.querySelector(".sync-label")?.textContent === "Offline — saved here" &&
+    app.syncChip.querySelector(".visually-hidden")?.textContent.includes("saved on this device"),
+  "14. the header chip reports offline without promising sync on a device that has none");
   const offlineItem = await addVia(app.needs.composer, `Offline add ${stamp}`);
   check(offlineItem && app.needs.composer.result.textContent === "Saved on this device." && app.status.textContent === "Added to To do.",
     "14. an offline save is confirmed as saved on this device");
   window.dispatchEvent(new Event("online"));
-  check(app.syncChip.state === "local" && app.syncChip.textContent === "On this device", "14. back online, the chip reports local-only truthfully");
+  check(app.syncChip.state === "local" && app.syncChip.querySelector(".sync-label")?.textContent === "On this device" &&
+    app.syncChip.querySelector(".visually-hidden")?.textContent.includes("Device sync is not set up"),
+  "14. back online, the chip reports local-only truthfully");
   const realAppend = app.store.append.bind(app.store);
   app.store.append = async () => { const error = new Error("Synthetic storage failure"); error.code = 5; error.userMessage = "Kin could not save that change locally."; throw error; };
   app.needs.composer.input.value = `Failing add ${stamp}`;
