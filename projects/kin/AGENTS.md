@@ -86,11 +86,20 @@ Do not add parent-level:
 - dependency manifests
 - Kin assets
 
-The sole current exception is the explicitly authorized root workflow at
-`.github/workflows/kin-verification.yml`, synchronized from
-`projects/kin/docs/ci/kin-verification.workflow.yml`. Do not broaden that
-exception to other parent-level files or repository settings without separate
-authorization.
+The explicitly authorized parent-level exceptions are:
+
+- the root workflow `.github/workflows/kin-verification.yml`, synchronized from
+  `projects/kin/docs/ci/kin-verification.workflow.yml`;
+- the root workflow `.github/workflows/kin-claude-review.yml`, synchronized
+  from `projects/kin/docs/ci/kin-claude-review.workflow.yml`;
+- `.cursor/environment.json`, `.cursor/Dockerfile` and
+  `.cursor/rules/kin-v1-epic.mdc` (cloud agent environment and rules);
+- `REVIEW.md` at the repository root (automated review instructions).
+
+The owner maintains these files. Agents must not edit them as part of an
+issue unless that issue says so. Do not broaden these exceptions to other
+parent-level files or repository settings without separate authorization.
+See `projects/kin/docs/ci/AI-REVIEW-LOOP.md`.
 
 Before completing any task, inspect Git status and diff.
 
@@ -1528,3 +1537,38 @@ demote other Adults with a fresh passkey. Membership management, other
 members' device revocation, household deletion, admin recovery, and shared
 settings require an admin. Legacy households without one keep Adult-level
 management and stay fail-closed for settings and admin grants.
+
+---
+
+# Cursor Cloud specific instructions
+
+These apply to cloud agents (Cursor, or any agent working from a GitHub
+issue). They add to everything above; they do not relax it.
+
+- The planning-release rule ("DO NOT WRITE FUNCTIONAL APPLICATION CODE")
+  covers only `v0.0.1`–`v0.0.12`. The project is past those releases, so
+  implementation issues may change code.
+- Work one GitHub issue per branch and per pull request. Branch from
+  `kin-development` and target `kin-development`.
+- The issue body is the task contract. Follow its steps, acceptance criteria
+  and hard rules. If it names a product decision as open, stop and comment
+  on the issue instead of choosing.
+- Zero dependencies: add no crates, no npm packages, no CDN scripts, no
+  vendored code.
+- Never merge, tag, release, deploy, force-push shared branches or edit
+  `CHANGELOG.md` release headings unless the issue says so.
+- Do not edit `.nvmrc`, `create-issues.sh` or anything under
+  `projects/kin/config/` unless the issue says to.
+- The environment provides Node 22.13.0 and Rust 1.93.0 with the
+  `wasm32-unknown-unknown` target. Build the engine with
+  `./build-wasm.sh` from `projects/kin/`.
+- Run `node scripts/verify.mjs` from `projects/kin/` before every push.
+  The browser suites (`npm run verify:browser`) need Microsoft Edge on
+  Windows and run in CI. Do not report them as passed unless CI shows them
+  passing.
+- An automated Claude review comments on each pull request. Fix every
+  🔴 Important finding, or reply with file:line evidence that it is wrong.
+  Fix 🟡 Nits when cheap; otherwise reply with a reason. Do not resolve
+  review threads yourself.
+- Finish every pull request with the Agent Completion Format above, plus
+  `Closes #<issue>` and the exact verification commands and results.

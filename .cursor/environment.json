@@ -1,0 +1,6 @@
+{
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "install": "cd projects/kin && npm ci && ./build-wasm.sh"
+}

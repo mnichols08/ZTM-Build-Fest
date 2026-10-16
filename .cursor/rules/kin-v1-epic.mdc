@@ -1,0 +1,46 @@
+---
+description: Kin v1.0 readiness epic — how to work an issue, verify it, and answer review
+alwaysApply: true
+---
+
+# Kin v1.0 epic rules
+
+Read `projects/kin/AGENTS.md` first, including its "Cursor Cloud specific instructions" section. Everything there applies. This file is the short version for the v1.0 epic.
+
+## Scope
+- Only change files under `projects/kin/`. Never edit `.cursor/`, `.github/`, `REVIEW.md` or the root `README.md`.
+- One issue per branch and per PR. Base and target: `kin-development`. Branch name: `kin-v1/<issue-number>-<short-slug>`.
+- Do only what the issue asks. File anything else you notice as a note in the PR body under "Deferred". Don't fix it.
+- If the issue's "Blocked by" issues aren't merged yet, stop and say so.
+- If the issue leaves a product decision open (for example S1's archived-area note rule), comment on the issue and stop. Don't pick an answer.
+
+## Hard rules
+- Zero dependencies: no crates, npm packages, CDN scripts or vendored code. Use the Rust std library and web platform APIs only.
+- Never merge, tag, release, deploy or force-push a shared branch.
+- Don't change golden fixtures, the KINE/KINS formats, the WASM ABI or the IndexedDB schema unless the issue says to. If you must, say so at the top of the PR body.
+- Keep replay deterministic: order by `(logical_time, device_id, event_id)`, with no clocks, randomness or hash-map iteration order in Rust domain logic.
+- Security fixes come with a regression test that fails before the fix and passes after it.
+- Do not edit `.nvmrc`, `create-issues.sh` or anything under `projects/kin/config/` unless the issue says to.
+
+## Verify before every push
+From `projects/kin/`:
+```sh
+./build-wasm.sh
+cargo test --offline
+node --test server/*.test.mjs
+node scripts/verify.mjs
+```
+The Edge browser suites run only in Windows CI. Report them as "CI only" and never claim a pass you didn't see.
+
+## Answering the Claude review
+- 🔴 Important: fix it, or reply with `file:line` evidence that it's wrong.
+- 🟡 Nit: fix it if cheap; otherwise reply with a one-line reason.
+- 🟣 Pre-existing: don't fix it in this PR. List it under "Deferred".
+- Don't resolve review threads. The owner does that.
+- After pushing fixes, comment `/kin-review` on the PR to request a re-review.
+
+## PR body
+Use the Agent Completion Format from `projects/kin/AGENTS.md` and add:
+- `Closes #<issue>`
+- each acceptance criterion from the issue, ticked, with the test that proves it
+- the exact commands you ran and their results
