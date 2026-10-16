@@ -98,6 +98,10 @@ notification locks peers immediately; a durable lock epoch rejects stale storage
 and network capabilities even if notification is missed. Wrapper revision checks
 prevent stale updates undoing a removal. Old-version tabs must be closed/reloaded
 for migration; no application can recall plaintext previously copied by them.
+Lock also revokes the blob URLs of attachments opened or downloaded in the last
+minute, so they no longer resolve. An attachment already showing in another tab
+stays visible there until that tab is closed; Kin cannot reach another tab's
+content, and a downloaded file is the person's own copy.
 
 Encrypted archive plus its independently held recovery secret can recover a lost
 profile's local history. Restore does not reactivate revoked devices or re-create

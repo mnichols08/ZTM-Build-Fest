@@ -3,6 +3,7 @@
 import { attachmentFileProblem, captureAttachment, loadLocalAttachmentRows, openAttachment, removeAttachment } from "../../attachments/attachment-lifecycle.js";
 import { clearAttachmentProgress, setAttachmentProgress } from "../../attachments/attachment-progress.js";
 import { isImageAttachment } from "../../attachments/attachment-preview.js";
+import { ObjectUrlRegistry } from "../../attachments/object-urls.js";
 import { ATTACHMENT_OPEN_ERROR, SAVE_ERROR } from "./constants.js";
 
 export class AttachmentController {
@@ -117,11 +118,11 @@ export class AttachmentController {
     if (tab) tab.opener = null;
     try {
       const opened = await this.loadAttachmentForView(detail, session);
-      const url = URL.createObjectURL(opened.blob);
+      // Revoked after a minute, or at once if Kin locks first.
+      const url = this.openedUrls.create(opened.blob);
       if (detail.download) { const link = document.createElement("a"); link.href = url; link.download = opened.name; link.hidden = true; document.body.append(link); link.click(); link.remove(); }
       else if (tab) tab.location.href = url;
       else { const link = document.createElement("a"); link.href = url; link.target = "_blank"; link.rel = "noopener"; link.click(); }
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (error) { tab?.close(); if (error.code !== "locked") this.ctx.status.showAlert(ATTACHMENT_OPEN_ERROR); }
   }
   async handleRemoveAttachment(event) {
@@ -240,6 +241,14 @@ export class AttachmentController {
     dialog.viewerTitle = title;
     dialog.viewerImage = image;
     return dialog;
+  }
+  get openedUrls() {
+    this.app.openedAttachmentUrls ??= new ObjectUrlRegistry();
+    return this.app.openedAttachmentUrls;
+  }
+  /** Lock and household exit: no opened attachment stays reachable by URL. */
+  revokeOpenedAttachments() {
+    this.app.openedAttachmentUrls?.revokeAll();
   }
   releaseViewer() {
     if (this.app.viewerUrl) URL.revokeObjectURL(this.app.viewerUrl);
