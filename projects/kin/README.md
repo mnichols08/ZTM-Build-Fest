@@ -220,6 +220,7 @@ Kin is nested in the ZTM Build Fest repository. Its community files and template
 - [Debugging and diagnostics](docs/DEBUGGING.md)
 - [Implementation preflight](docs/PREFLIGHT.md)
 - [Requirement traceability](docs/TRACEABILITY.md)
+- [v0.47 release acceptance matrix](docs/audits/V0.47_RELEASE_ACCEPTANCE.md)
 - [Canonical test vectors](docs/TEST-VECTORS.md)
 - [Since You Last Looked release contract](docs/V0.6.0.md)
 - [Accepted architecture decision: event-sourced household state](docs/decisions/0001-event-sourced-household-state.md)
