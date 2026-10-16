@@ -171,7 +171,8 @@ export class SyncController {
     return navigator.onLine === false && this.app.syncCoordinator ? " It will sync when you're connected." : "";
   }
   async reconcileResponsibilityMembers() {
-    if (this.app.reconcilingResponsibility || this.app.busy || !this.app.activeMemberIds || !this.app.state?.responsibilities?.length) return;
+    if (this.app.reconcilingResponsibility || this.app.busy || !this.app.store || !this.app.engine ||
+        !this.app.activeMemberIds || !this.app.state?.responsibilities?.length) return;
     const active = new Set(this.app.activeMemberIds);
     const stale = this.app.state.responsibilities.filter((entry) => {
       if (!entry.memberId || active.has(entry.memberId)) return false;
@@ -182,25 +183,28 @@ export class SyncController {
     if (!stale.length) return;
     this.app.reconcilingResponsibility = true;
     const session = this.ctx.session.captureSession();
-    this.ctx.status.setBusy(true);
+    let committed = false;
     try {
       for (const entry of stale) {
         if (!this.app.activeMemberIds.includes(this.app.syncCoordinator?.identity?.memberId)) break;
         await this.ctx.append.appendCommand({ type: "change-responsibility", targetKind: entry.targetKind, id: entry.targetId, memberId: null });
         this.ctx.session.assertCurrentSession(session);
+        committed = true;
       }
       this.ctx.session.assertCurrentSession(session);
-      this.ctx.render.renderState();
-      this.ctx.peers.broadcastEventChange();
+      if (committed) {
+        const focus = this.ctx.refresh.captureRefreshFocus();
+        this.ctx.render.renderState();
+        this.ctx.refresh.restoreRefreshFocus(focus);
+        this.ctx.peers.broadcastEventChange();
+      }
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       // Another device may have cleared the same removed member concurrently.
+      this.app.pendingRefresh = true;
     } finally {
       this.app.reconcilingResponsibility = false;
-      if (this.ctx.session.isCurrentSession(session)) {
-        this.ctx.status.setBusy(false);
-        this.ctx.peers.flushPeerRefresh();
-      }
+      if (committed && this.ctx.session.isCurrentSession(session)) this.ctx.peers.flushPeerRefresh();
     }
   }
 }

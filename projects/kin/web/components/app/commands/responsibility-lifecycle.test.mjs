@@ -38,6 +38,10 @@ function harness(appendCommand = async () => {}) {
       showAlert(message) { alerts.push(message); },
     },
     render: { renderState() { order.push("render"); } },
+    refresh: {
+      captureRefreshFocus() { order.push("capture-focus"); return { control: "focused" }; },
+      restoreRefreshFocus(focus) { order.push(`restore-focus:${focus.control}`); },
+    },
     peers: {
       broadcastEventChange() { order.push("broadcast"); },
       flushPeerRefresh() { order.push(`flush:${app.pendingRefresh}`); app.pendingRefresh = false; },
@@ -114,8 +118,40 @@ test("member reconciliation renders a cleared owner and flushes peer refresh", a
   assert.equal(app.busy, false);
   assert.equal(app.pendingRefresh, false);
   assert.deepEqual(order, [
-    "busy:true", "append", "assert", "assert", "render", "broadcast", "busy:false", "flush:true",
+    "append", "assert", "assert", "capture-focus", "render", "restore-focus:focused", "broadcast", "flush:true",
   ]);
+});
+
+test("member reconciliation never claims the app-wide busy state", async () => {
+  const { app, ctx, order } = harness();
+  app.activeMemberIds = ["member-current"];
+  app.syncCoordinator.identity = { memberId: "member-current" };
+  app.state = {
+    items: [{ itemId: "item-1", status: "open" }],
+    responsibilities: [{ targetKind: "item", targetId: "item-1", memberId: "member-removed" }],
+  };
+
+  await ctx.sync.reconcileResponsibilityMembers();
+
+  assert.equal(order.some((entry) => entry.startsWith("busy:")), false);
+});
+
+test("a failed background reconciliation defers refresh without showing an alert", async () => {
+  const failure = Object.assign(new Error("write failed"), { userMessage: "Do not show this." });
+  const { alerts, app, ctx, order } = harness(async () => { throw failure; });
+  app.activeMemberIds = ["member-current"];
+  app.syncCoordinator.identity = { memberId: "member-current" };
+  app.state = {
+    items: [{ itemId: "item-1", status: "open" }],
+    responsibilities: [{ targetKind: "item", targetId: "item-1", memberId: "member-removed" }],
+  };
+
+  await ctx.sync.reconcileResponsibilityMembers();
+
+  assert.equal(app.pendingRefresh, true);
+  assert.equal(app.reconcilingResponsibility, false);
+  assert.deepEqual(alerts, []);
+  assert.deepEqual(order, ["append"]);
 });
 
 test("a lock during responsibility reconciliation leaves the replacement session untouched", async () => {
@@ -136,7 +172,7 @@ test("a lock during responsibility reconciliation leaves the replacement session
   assert.equal(app.busy, false);
   assert.equal(app.reconcilingResponsibility, false);
   assert.deepEqual(alerts, []);
-  assert.deepEqual(order, ["busy:true", "append"]);
+  assert.deepEqual(order, ["append"]);
 });
 
 test("member reconciliation does not start during a user responsibility change", async () => {

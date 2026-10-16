@@ -1426,6 +1426,40 @@ try {
   });
   assert.equal(responsibilityLifecycle, true, "Responsibility changes render committed ownership and flush refreshes deferred while busy");
   await visit(first, "today");
+  const backgroundResponsibilityFocus = await first.evaluate(async () => {
+    const app = document.querySelector("kin-app");
+    const input = app.compose.input;
+    const item = app.state.items.find(value => value.status !== "archived");
+    const currentMember = app.ctx.detail.responsibilityContext().memberId;
+    if (!item || !currentMember) return false;
+    const append = app.ctx.append.appendCommand;
+    const setBusy = app.ctx.status.setBusy;
+    const coordinator = app.syncCoordinator;
+    const responsibilities = app.state.responsibilities;
+    let busyCalls = 0;
+    app.syncCoordinator = {
+      ...(coordinator ?? {}),
+      identity: { ...(coordinator?.identity ?? {}), memberId: currentMember },
+    };
+    app.activeMemberIds = [currentMember];
+    app.state.responsibilities = [{ targetKind: "item", targetId: item.itemId, memberId: "ff".repeat(16) }];
+    app.ctx.append.appendCommand = async command => {
+      await Promise.resolve();
+      if (command.type === "change-responsibility") app.state.responsibilities = [];
+    };
+    app.ctx.status.setBusy = (...args) => { busyCalls++; return setBusy.apply(app.ctx.status, args); };
+    input.focus();
+    try {
+      await app.ctx.sync.reconcileResponsibilityMembers();
+      return busyCalls === 0 && !app.compose.input.disabled && document.activeElement === app.compose.input;
+    } finally {
+      app.ctx.append.appendCommand = append;
+      app.ctx.status.setBusy = setBusy;
+      app.syncCoordinator = coordinator;
+      app.state.responsibilities = responsibilities;
+    }
+  });
+  assert.equal(backgroundResponsibilityFocus, true, "Background responsibility reconciliation leaves Today capture enabled and focused");
   await first.evaluate(
     'sessionStorage.setItem("kin.test.expectedState", JSON.stringify(document.querySelector("kin-app").state))',
   );
