@@ -15,7 +15,7 @@ import {
   verifyDeviceAuthorizationCertificate,
 } from "./crypto.js";
 import { SyncKeyStore } from "./key-store.js";
-import { quarantineMessage } from "../storage/quarantine.js";
+import { QUARANTINE_MESSAGE, quarantineMessage } from "../storage/quarantine.js";
 import { idToHex } from "../wasm/kin-engine.js";
 import { reconcileAttachments } from "../attachments/attachment-lifecycle.js";
 import { decryptHouseholdSettings, encryptHouseholdSettings } from "../appearance/household.js";
@@ -504,13 +504,17 @@ export class SyncCoordinator {
     } else if (!lastPageAdvanced) {
       this.catchUp = null;
     }
+    // Kept events stay listed in the persistent notice until they apply, so
+    // an Adult reviewing this device can see which changes and why.
+    const kept = (await this.store.getSyncState().catch(() => null))?.quarantine ?? [];
     this.onState({
       state: hasMore ? "syncing" : "ready",
+      quarantineNotice: kept.length ? quarantineMessage(kept) : null,
       memberIds: activeResponsibilityMemberIds(devices),
       ...(attachmentRows === undefined ? {} : { attachmentRows }),
       ...update,
       message: quarantinedEvents
-        ? quarantineMessage((await this.store.getSyncState())?.quarantine)
+        ? (kept.length ? quarantineMessage(kept) : QUARANTINE_MESSAGE)
         : hasMore
         ? lastPageAdvanced
           ? "Catching up…"

@@ -8,18 +8,22 @@
 // applies or arrives again as a duplicate.
 //
 // The quarantine is bounded. Beyond MAX_QUARANTINED_EVENTS rows or
-// MAX_QUARANTINED_BYTES, the oldest rows are kept and later ones are only
-// counted (`dropped`), as every quarantined event was before. Bytes that
+// MAX_QUARANTINED_BYTES, the rows already kept stay and later refusals are
+// only counted (`dropped`), as every quarantined event was before. A row
+// refused MAX_QUARANTINE_ATTEMPTS times is moved to the count too, so a true
+// poison event can't fill the bound or cost a replay forever. Bytes that
 // cannot even be decoded are never kept, since no retry can help them; they
 // are counted the same way.
 export const MAX_QUARANTINED_EVENTS = 100;
-// The rows are rewritten with the sync state on every commit, so the byte
-// bound stays small; household events are typically well under 1 KiB.
-export const MAX_QUARANTINED_BYTES = 256 * 1024;
+// The rows are re-encrypted with every sync state write, so the byte bound
+// stays small; household events are typically well under 1 KiB.
+export const MAX_QUARANTINED_BYTES = 64 * 1024;
+export const MAX_QUARANTINE_ATTEMPTS = 20;
 
 const REASONS = Object.freeze({
   "not-applicable": "it doesn't fit this device's household history yet",
   unreadable: "its contents couldn't be read",
+  unsupported: "this version of Kin can't apply it",
 });
 
 /** Plain-language reason for a quarantine reason code. */
@@ -35,7 +39,7 @@ export function quarantineReasonText(reason) {
  * such a row then leaves the quarantine.
  */
 export function quarantineRetryItems(quarantine = [], { isKnown = () => false } = {}) {
-  return quarantine.filter((row) => !isKnown(row.eventId)).map((row) => ({ encodedEvent: row.encoded }));
+  return quarantine.filter((row) => !isKnown(row.eventId)).map((row) => ({ encodedEvent: row.encoded, retry: true }));
 }
 
 /**
@@ -63,16 +67,21 @@ export function nextQuarantine(previous = [], quarantined = [], { now, retried }
       ? { ...earlier, reason: item.reason, attempts: earlier.attempts + 1 }
       : { eventId: item.eventId, encoded: item.encoded, reason: item.reason, firstSeenAt: now, attempts: 1 });
   }
-  const candidates = retried
-    ? [...refused.values()]
-    : [...previous.filter((row) => !refused.has(row.eventId)), ...refused.values()];
-  candidates.sort((left, right) => left.firstSeenAt - right.firstSeenAt || (left.eventId < right.eventId ? -1 : left.eventId > right.eventId ? 1 : 0));
+  // Rows already kept come first, in their stored order, so a new refusal
+  // can never push one out; then this commit's new refusals.
+  const candidates = [];
+  for (const row of previous) {
+    const next = refused.get(row.eventId);
+    if (next) candidates.push(next);
+    else if (!retried) candidates.push(row);
+  }
+  for (const [eventId, row] of refused) if (!byId.has(eventId)) candidates.push(row);
   const kept = [];
   let bytes = 0;
   for (const row of candidates) {
     const size = row.encoded?.byteLength ?? 0;
-    if (kept.length >= MAX_QUARANTINED_EVENTS || bytes + size > MAX_QUARANTINED_BYTES) {
-      if (!byId.has(row.eventId)) dropped += 1;
+    if (row.attempts > MAX_QUARANTINE_ATTEMPTS || kept.length >= MAX_QUARANTINED_EVENTS || bytes + size > MAX_QUARANTINED_BYTES) {
+      dropped += 1;
       continue;
     }
     kept.push(row);

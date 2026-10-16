@@ -56,6 +56,19 @@ test("an engine that cannot read a remote event stops the batch instead of quara
   }
 });
 
+test("a kept event replayed from the quarantine never stops the batch (#153)", () => {
+  // After an engine update a kept event might fail with another code. Only a
+  // page event may stop a batch; a retried one is refused and stays counted.
+  const valid = encodeAddedRecord({ ...context(3, 1, 1), itemId: id(0x33), text: "Buy milk", classification: "need" });
+  const refusing = { applyEvents() { throw Object.assign(new Error("needs a compatible household engine"), { code: 3 }); } };
+  const result = reconcileRemoteEvents({
+    rows: [], received: [{ encodedEvent: valid, retry: true }], engine: refusing,
+    context: { last_looked_event_id: null }, asOf: 1_791_475_200_000, civilDate: 20261009,
+  });
+  assert.equal(result.additions.length, 0);
+  assert.deepEqual(result.quarantinedItems.map((item) => item.reason), ["unsupported"]);
+});
+
 test("two devices changing one repeating task's schedule offline keep both replacements", () => {
   // A schedule change is create-replacement + archive-original. The second
   // archive of the original, from another device, is a recorded no-op.

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  MAX_QUARANTINED_BYTES, MAX_QUARANTINED_EVENTS, QUARANTINE_MESSAGE,
+  MAX_QUARANTINE_ATTEMPTS, MAX_QUARANTINED_BYTES, MAX_QUARANTINED_EVENTS, QUARANTINE_MESSAGE,
   describeQuarantine, nextQuarantine, quarantineMessage, quarantineRetryItems,
 } from "./quarantine.js";
 
@@ -13,7 +13,7 @@ test("a refused event is kept with its bytes, reason, first-seen time and one at
   assert.equal(added, 1);
   assert.equal(dropped, 0);
   assert.deepEqual(quarantine, [{ eventId: hex(1), encoded: refusal(1).encoded, reason: "not-applicable", firstSeenAt: 1000, attempts: 1 }]);
-  assert.deepEqual(quarantineRetryItems(quarantine), [{ encodedEvent: quarantine[0].encoded }]);
+  assert.deepEqual(quarantineRetryItems(quarantine), [{ encodedEvent: quarantine[0].encoded, retry: true }]);
 });
 
 test("a retried event that applies leaves; one refused again counts another attempt and is not new", () => {
@@ -85,4 +85,29 @@ test("a kept event already in history or arriving again in the page is not repla
   // Not refused again, the skipped row leaves once the commit retried.
   const next = nextQuarantine(quarantine, [refusal(1), refusal(3)], { now: 2, retried: true });
   assert.deepEqual(next.quarantine.map((row) => row.eventId), [hex(1), hex(3)]);
+});
+
+test("a kept row is never pushed out by a newer refusal, even with equal or earlier clocks", () => {
+  const full = nextQuarantine([], Array.from({ length: MAX_QUARANTINED_EVENTS }, (_, i) => refusal(i + 10)), { now: 50, retried: false }).quarantine;
+  // A new event with a smaller ID and an earlier clock still loses to kept rows.
+  const next = nextQuarantine(full, [refusal(1)], { now: 1, retried: false });
+  assert.deepEqual(next.quarantine.map((row) => row.eventId), full.map((row) => row.eventId));
+  assert.equal(next.dropped, 1);
+});
+
+test("a row refused too many times moves to the count", () => {
+  let quarantine = nextQuarantine([], [refusal(1), refusal(2)], { now: 1, retried: false }).quarantine;
+  let dropped = 0;
+  for (let attempt = 2; attempt <= MAX_QUARANTINE_ATTEMPTS + 1; attempt += 1) {
+    const next = nextQuarantine(quarantine, [refusal(1)], { now: attempt, retried: false });
+    quarantine = next.quarantine;
+    dropped += next.dropped;
+  }
+  assert.deepEqual(quarantine.map((row) => row.eventId), [hex(2)]);
+  assert.equal(dropped, 1);
+});
+
+test("an event this version of Kin can't apply is described plainly", () => {
+  const { quarantine } = nextQuarantine([], [{ ...refusal(1), reason: "unsupported" }], { now: 1, retried: false });
+  assert.match(describeQuarantine(quarantine)[0], /this version of Kin can't apply it/);
 });

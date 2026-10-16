@@ -58,7 +58,9 @@ export function validateAttachmentAggregate(records, candidate) {
  * can advance the relay cursor and keep it for a later retry (see
  * quarantine.js). `quarantined` counts the refusals; `quarantinedItems` holds
  * `{ eventId, encoded, reason }` for each (`eventId` is null when the bytes
- * could not be decoded at all).
+ * could not be decoded at all). An item marked `retry` (a kept event replayed
+ * from the quarantine) never stops the batch: any engine refusal of it is
+ * reported as a refusal, so one kept event can't stall sync on every poll.
  * `history` is the HistoryView the batch validates against (`rows`, a plain
  * row array, is accepted for tests). Each candidate is replayed as the history
  * plus the admitted additions, without copying the history per candidate.
@@ -87,7 +89,7 @@ export function reconcileRemoteEvents({ history, rows, received, engine, context
         quarantinedItems.push({ eventId: null, encoded: null, reason: "unreadable" });
         continue;
       }
-      candidates.push({ candidate, canonical });
+      candidates.push({ candidate, canonical, retry: item.retry === true });
     }
     candidates.sort((left, right) =>
       left.candidate.logical_time < right.candidate.logical_time ? -1 :
@@ -95,7 +97,7 @@ export function reconcileRemoteEvents({ history, rows, received, engine, context
           compareByteArrays(left.candidate.device_id, right.candidate.device_id) ||
           compareByteArrays(left.candidate.event_id, right.candidate.event_id),
     );
-    for (const { candidate, canonical } of candidates) {
+    for (const { candidate, canonical, retry } of candidates) {
       const eventId = idToHex(candidate.event_id);
       const index = history.indexOfEventId(candidate.event_id);
       const existing = index >= 0 ? history.record(index) : added.get(eventId)?.encoded_event;
@@ -114,8 +116,8 @@ export function reconcileRemoteEvents({ history, rows, received, engine, context
           syncIdentityFromContext(context),
         );
       } catch (error) {
-        if (error?.code !== 4) throw error;
-        quarantinedItems.push({ eventId, encoded: canonical, reason: "not-applicable" });
+        if (error?.code !== 4 && !retry) throw error;
+        quarantinedItems.push({ eventId, encoded: canonical, reason: error?.code === 4 ? "not-applicable" : "unsupported" });
         continue;
       }
       candidate.local_sequence = history.tail + additions.length + 1;
@@ -1933,18 +1935,26 @@ export class EventStore {
           // bytes stay in the encrypted sync state and are retried with every
           // later page that brings events, in case it arrived before an event
           // it depends on (#153).
+          // Retrying replays history, so only a page carrying an event this
+          // device doesn't have yet (something a kept event might need)
+          // triggers it.
           const previousQuarantine = syncState.quarantine ?? [];
-          const retried = received.length > 0 && previousQuarantine.length > 0;
-          let retryItems = [];
-          if (retried) {
-            const pageIds = new Set();
+          const pageIds = new Set();
+          let fresh = false;
+          if (previousQuarantine.length > 0) {
             for (const item of received) {
-              try { pageIds.add(idToHex(eventMetadata(asBytes(item.encodedEvent)).eventId)); } catch { /* reconcile counts unreadable bytes */ }
+              let eventId;
+              try { eventId = engine.eventMetadata(item.encodedEvent).eventId; } catch { continue; /* reconcile counts unreadable bytes */ }
+              pageIds.add(idToHex(eventId));
+              if (rows.indexOfEventId(eventId) < 0) fresh = true;
             }
-            retryItems = quarantineRetryItems(previousQuarantine, {
-              isKnown: (eventId) => pageIds.has(eventId) || rows.indexOfEventId(idFromHex(eventId)) >= 0,
-            });
           }
+          const retried = fresh;
+          const retryItems = retried
+            ? quarantineRetryItems(previousQuarantine, {
+                isKnown: (eventId) => pageIds.has(eventId) || rows.indexOfEventId(idFromHex(eventId)) >= 0,
+              })
+            : [];
           const { additions, candidates, quarantinedItems, duplicateEventIds } = reconcileRemoteEvents({
             history: rows,
             received: [...retryItems, ...received],
