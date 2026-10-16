@@ -24,6 +24,8 @@ export class RoutineCommands {
       await this.ctx.append.appendCommand(submitted);
       this.ctx.session.assertCurrentSession(session);
       committed = true;
+      if (["complete-routine-occurrence", "archive-routine"].includes(submitted.type))
+        this.app.localReminders.cancel(`routine:${submitted.routineId}`);
       this.ctx.peers.broadcastEventChange();
       this.ctx.render.renderState();
       if (submitted.type === "create-routine")

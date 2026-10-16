@@ -343,6 +343,13 @@ export async function workspaceUxRegressions(recovery) {
   await wait(() => app.localReminders.entries.has(`routine:${routine.routineId}`), "reminder scheduled");
   check(!reminder.querySelector("form") && reminder.querySelector(".reminder-status").textContent.startsWith("Reminds ") && app.status.textContent.includes("on this device"),
     "13. setting the reminder uses the existing local model and confirms on this device");
+  const appendBeforeReminderFailure = app.ctx.append.appendCommand;
+  app.ctx.append.appendCommand = async () => { throw Object.assign(new Error("Synthetic storage failure"), { userMessage: "Kin could not save that change locally." }); };
+  await app.ctx.routines.saveRoutine({ type: "complete-routine-occurrence", routineId: routine.routineId, occurrenceKey: routine.occurrenceKey });
+  app.ctx.append.appendCommand = appendBeforeReminderFailure;
+  check(app.localReminders.entries.has(`routine:${routine.routineId}`) && app.state.routines.find((record) => record.routineId === routine.routineId)?.status === "active",
+    "13. a failed Routine change preserves its device-only reminder");
+  app.ctx.status.clearAlert();
   reminder.querySelector('[data-reminder-action="cancel"]').click();
   check(!app.localReminders.entries.has(`routine:${routine.routineId}`) && reminder.querySelector('[data-reminder-action="open"]').textContent === "Remind me",
     "13. cancelling clears the reminder");
