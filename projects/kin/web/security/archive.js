@@ -12,6 +12,7 @@
 import { LocalVault, serializeProtectedValue, deserializeProtectedValue, VaultError, fromBase64Url, toBase64Url } from "./local-vault.js";
 import { EventStore } from "../storage/event-store.js";
 import { readArchive, writeArchive } from "./archive-stream.js";
+import { joinLabels, manifestRecoveryLabels } from "./key-label.js";
 
 const KIN_VERSION = "0.47.0";
 const PACKAGE_FORMAT = 3;
@@ -77,23 +78,14 @@ export async function validateHouseholdArchive({ bytes, recoverySecret, engine, 
   await assertCurrentProtection(vault);
   if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_ARCHIVE_BYTES)
     throw new VaultError("Choose a Kin export no larger than 160 MiB.");
-  const { metadataLength, ciphertextLength } = engine.archiveLayout(bytes);
-  const header = deserializeProtectedValue(bytes.slice(16, 16 + metadataLength));
-  if (!header || typeof header !== "object" || Array.isArray(header))
-    throw new VaultError("This file is damaged or incomplete.");
-  // Package formats 2 and 3 are read; development-era format 1 is refused.
+  const { header, metadataLength, ciphertextLength } = readArchiveHeader(bytes, engine);
   const archiveVersion = header.archiveVersion;
-  if (archiveVersion !== 2 && archiveVersion !== 3)
-    throw new VaultError("This Kin export version is not supported.");
-  if (!hasExactKeys(header, ["archiveVersion", "manifest", "packageManifest", "protection"]) ||
-      !hasExactKeys(header.protection, ["salt", "vaultId", "version", archiveVersion === 3 ? "noncePrefix" : "nonce"]))
-    throw new VaultError("This file is damaged or incomplete.");
   const packageManifest = validatePackageManifest(header.packageManifest, archiveVersion);
   let sourceVault;
   let parts;
   const unsubscribe = vault.onLock(() => sourceVault?.lock());
   try {
-    sourceVault = await LocalVault.unlock(header.manifest, recoverySecret);
+    sourceVault = await openArchiveVault(header.manifest, recoverySecret);
     await assertCurrentProtection(vault);
     const authenticatedMetadata = serializeProtectedValue({ archiveVersion, manifest: header.manifest, packageManifest });
     const source = { header, authenticatedMetadata, packageManifest, sourceVault, engine, vault };
@@ -139,6 +131,60 @@ export async function validateHouseholdArchive({ bytes, recoverySecret, engine, 
   } finally {
     unsubscribe();
     sourceVault?.lock();
+  }
+}
+
+// The framed header, readable without any key. Its manifest and package
+// manifest are authenticated later, when the archive key is derived.
+function readArchiveHeader(bytes, engine) {
+  const { metadataLength, ciphertextLength } = engine.archiveLayout(bytes);
+  const header = deserializeProtectedValue(bytes.slice(16, 16 + metadataLength));
+  if (!header || typeof header !== "object" || Array.isArray(header))
+    throw new VaultError("This file is damaged or incomplete.");
+  // Package formats 2 and 3 are read; development-era format 1 is refused.
+  const archiveVersion = header.archiveVersion;
+  if (archiveVersion !== 2 && archiveVersion !== 3)
+    throw new VaultError("This Kin export version is not supported.");
+  if (!hasExactKeys(header, ["archiveVersion", "manifest", "packageManifest", "protection"]) ||
+      !hasExactKeys(header.protection, ["salt", "vaultId", "version", archiveVersion === 3 ? "noncePrefix" : "nonce"]))
+    throw new VaultError("This file is damaged or incomplete.");
+  return { header, metadataLength, ciphertextLength };
+}
+
+/**
+ * What the restore screen shows before asking for a key: when the export was
+ * made and which recovery key labels open it (key-label.js). Nothing is
+ * unlocked, and the header is not yet authenticated: a wrong label can only
+ * mislead the person into trying a key, which then fails to open it.
+ */
+export async function describeHouseholdArchive(bytes, engine) {
+  if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_ARCHIVE_BYTES)
+    throw new VaultError("Choose a Kin export no larger than 160 MiB.");
+  const { header } = readArchiveHeader(bytes, engine);
+  const packageManifest = validatePackageManifest(header.packageManifest, header.archiveVersion);
+  let labels;
+  try { labels = await manifestRecoveryLabels(header.manifest); } catch { throw new VaultError("This file is damaged or incomplete."); }
+  if (!labels.length) throw new VaultError("This file is damaged or incomplete.");
+  return Object.freeze({ exportedAt: packageManifest.exportedAt, labels: Object.freeze(labels), packageFormatVersion: header.archiveVersion });
+}
+
+/**
+ * Unlocks an export's own vault with its recovery key. A wrong key names the
+ * label of the key that does open it, since after a key replacement older
+ * exports still need the key their device had when they were made.
+ */
+export async function openArchiveVault(manifest, recoverySecret) {
+  try {
+    return await LocalVault.unlock(manifest, recoverySecret);
+  } catch (error) {
+    if (error?.code !== "unlock_failed") throw error;
+    let labels = [];
+    try { labels = await manifestRecoveryLabels(manifest); } catch { /* fall back to the generic message */ }
+    if (!labels.length) throw error;
+    throw new VaultError(
+      `This export opens with recovery key ${joinLabels(labels)} from the device that made it, and the key you entered isn't that one. Saved data was not changed.`,
+      "archive_key_mismatch", error,
+    );
   }
 }
 

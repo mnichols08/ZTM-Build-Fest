@@ -155,3 +155,9 @@ visible countdown/expiry behavior. Revocation and recovery completion require
 explicit confirmation plus WebAuthn approval; activation requires a second
 passkey action on the recovering device.
 
+An export opens only with the recovery key its device had when it was made.
+Each key has a short label (for example `K-7F3A`) shown with the key, in
+Settings, on the export's file name and on the restore screen, and a wrong key
+names the label that opens the export. Store the export and its recovery key
+in different places, and write down which key label goes with which export.
+See [PORTABILITY](PORTABILITY.md#recovery-key-labels).

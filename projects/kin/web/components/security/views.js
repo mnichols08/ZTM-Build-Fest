@@ -5,6 +5,7 @@
 import { getActiveVault } from "../../security/local-vault.js";
 import { passkeyUnlockSupported } from "../../security/passkey-unlock.js";
 import { EventStore } from "../../storage/event-store.js";
+import { EXPORT_STORAGE_RULE, joinLabels, manifestRecoveryLabels } from "../../security/key-label.js";
 
 export const AUTO_LOCK_OPTIONS = [
   [0, "Only when Kin closes"],
@@ -210,6 +211,16 @@ export class SecurityViews {
     recoveryStatus.className = "security-status";
     recoveryStatus.textContent = "Your recovery key is the backup way to unlock this device. Kin never stores it.";
     recoverySection.append(recoveryStatus);
+    // The current key's label, which this device's exports name.
+    const keyLabel = document.createElement("p");
+    keyLabel.className = "recovery-key-label";
+    keyLabel.hidden = true;
+    recoverySection.append(keyLabel);
+    void manifestRecoveryLabels(getActiveVault()?.manifest ?? this.host.manifest).then((labels) => {
+      if (!labels.length) return;
+      keyLabel.textContent = `This device's recovery key is ${joinLabels(labels)}. Exports made now open with it.`;
+      keyLabel.hidden = false;
+    }, () => {});
     const guidance = document.createElement("details");
     guidance.className = "security-guidance";
     const summary = document.createElement("summary");
@@ -220,7 +231,8 @@ export class SecurityViews {
       "Keep the key somewhere safe outside Kin, such as a password manager. Anyone with it can unlock this device's copy.",
       "If you lose the key but a passkey still works, unlock with the passkey and choose Replace recovery key.",
       "If every unlock method is lost, this device's encrypted data cannot be recovered. Another trusted household device can re-approve a fresh device.",
-      "To move Kin to another device, export the household and keep the export's recovery key with it.",
+      `To move Kin to another device, export the household. ${EXPORT_STORAGE_RULE}`,
+      "Replacing the recovery key doesn't change exports you already made: each still opens only with the key label it names.",
     ]) {
       const item = document.createElement("li");
       item.textContent = line;
@@ -240,7 +252,7 @@ export class SecurityViews {
     }), "", backupSection);
     const backupNote = document.createElement("p");
     backupNote.className = "security-note";
-    backupNote.textContent = "Use a Kin export to move or restore your household. Keep its recovery key separately. Exports are manual, not automatic backups, and do not restore device trust.";
+    backupNote.textContent = `Use a Kin export to move or restore your household. ${EXPORT_STORAGE_RULE} Exports are manual, not automatic backups, and do not restore device trust.`;
     backupSection.append(backupNote);
   }
 }

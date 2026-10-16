@@ -29,7 +29,9 @@ base64 expansion of the whole archive. HKDF purpose `kin/archive/v1` separates i
 key from local-record keys; manifest metadata is authenticated as AAD. The encrypted
 body contains exact canonical rows and protected replay/catch-up context. The
 normal export includes recovery wrappers; it never emits plaintext JSON or device
-private keys. Keep the recovery secret separately from the archive.
+private keys. Store the export and its recovery key in different places, and
+write down which key label goes with which export (see Recovery key labels
+below).
 
 Restore requires an unlocked empty target and the archive's recovery key. Kin
 validates the manifest, authenticates and decrypts the complete payload, checks
@@ -76,6 +78,31 @@ historical identities to the approved device, deduplicates canonical event IDs,
 and catches up with current authorized state. Restore alone supplies no server
 trust, cookies, provisioning entitlement or epoch access. A stale archive
 cannot reverse server-side removal, expiry, revocation or key state.
+
+## Recovery key labels
+
+Each device has its own recovery key, and an export opens only with the key
+its device had when the export was made. Replacing the key doesn't change
+exports already made. To tie them together, every recovery key has a short,
+non-secret label such as `K-7F3A`: the first 4 hex characters of SHA-256 over
+the recovery wrapper's random ID and the vault's root version
+(`web/security/key-label.js`). Both values are already public in the security
+manifest and in every export's authenticated header, and neither comes from
+the key, so the label reveals nothing about it. Two keys can share a label by
+chance (1 in 65,536); it is for a person to match, not an identifier.
+
+- The label is shown with a new key when it is created or replaced, in
+  Settings → Recovery key, and in the export's success message.
+- Export files are named `kin-<YYYY-MM-DD>-K-XXXX.kin` (the date in UTC).
+- Before asking for a key, the restore screen reads the export's header and
+  says when it was made and which label opens it.
+- A wrong key names the label that opens the export.
+- The label is computed from the header, so the archive format is unchanged
+  and exports made before labels existed show one too.
+
+The storage rule, used everywhere Kin mentions exports: **Store the export and
+its recovery key in different places, and write down which key label goes
+with which export.**
 
 ## Ownership principle
 
