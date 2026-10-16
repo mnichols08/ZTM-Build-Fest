@@ -2,7 +2,7 @@
 // failed attempts spend a client's budget.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { clientKey, normalizeAddress, parseTrustedProxies } from "./client-key.mjs";
+import { clientKey, limitKey, normalizeAddress, parseTrustedProxies } from "./client-key.mjs";
 import { DurableStore } from "./durable-store.mjs";
 import { PairingService } from "./pairing-service.mjs";
 import { RATE_LIMIT } from "./pairing-service/shared.mjs";
@@ -33,7 +33,7 @@ test("from a trusted proxy, the right-most hop is the client; spoofed left hops 
   assert.equal(clientKey(request(PROXY, "1.2.3.4, 203.0.113.7"), trusted), "203.0.113.7");
   // A chain of trusted proxies is skipped from the right.
   assert.equal(clientKey(request(PROXY, "1.2.3.4, 203.0.113.7, 10.0.0.2"), trusted), "203.0.113.7");
-  assert.equal(clientKey(request(PROXY, "2001:db8::5"), trusted), "2001:db8::5");
+  assert.equal(clientKey(request(PROXY, "2001:db8::5"), trusted), "2001:db8:0:0::/64");
   assert.equal(clientKey(request(`::ffff:${PROXY}`, "::ffff:203.0.113.7"), trusted), "203.0.113.7");
 });
 
@@ -50,8 +50,35 @@ test("the trusted-proxy setting accepts only IP addresses", () => {
   assert.deepEqual([...parseTrustedProxies("")], []);
   assert.deepEqual([...parseTrustedProxies(undefined)], []);
   assert.deepEqual([...parseTrustedProxies(" 127.0.0.1 , ::1 ")], ["127.0.0.1", "::1"]);
-  assert.throws(() => parseTrustedProxies("localhost"), /must list IP addresses/);
+  assert.throws(() => parseTrustedProxies("localhost"), (error) =>
+    error.code === "trusted_proxies_invalid" && /must list IP addresses/.test(error.message));
   assert.equal(normalizeAddress("::FFFF:10.1.2.3"), "10.1.2.3");
+});
+
+test("IPv6 clients share one limit per /64; IPv4 clients are per address", () => {
+  for (const address of ["2001:db8::1", "2001:db8:0:0:ffff::1", "2001:db8:0:0:1:2:3:4"])
+    assert.equal(limitKey(address), "2001:db8:0:0::/64", address);
+  assert.equal(limitKey("2001:db8:0:1::1"), "2001:db8:0:1::/64");
+  assert.equal(limitKey("64:ff9b::1.2.3.4"), "64:ff9b:0:0::/64");
+  assert.equal(limitKey("203.0.113.7"), "203.0.113.7");
+});
+
+test("when the limit table is full, a new client is refused before its code is checked", () => {
+  // Review finding on #175: a new client that could not be charged must not
+  // get a 200 for the right code and a 429 for a wrong one.
+  const service = new PairingService({ maxRateBuckets: 2 });
+  const adult = service.bootstrap({ credential: credential("adult") });
+  for (const key of ["first", "second"])
+    assert.throws(() => service.validatePairingCode("BAD", { rateKey: key }), (error) => error.code === "invalid_code");
+  const invitation = service.createPairing(adult.sessionToken);
+  for (const code of ["BAD", invitation.code])
+    assert.throws(() => service.validatePairingCode(code, { rateKey: "overflow" }), (error) => error.code === "rate_limited", code);
+  assert.throws(
+    () => service.claimPairing({ code: invitation.code, credential: credential("o"), deviceLabel: "O", rateKey: "overflow" }),
+    (error) => error.code === "rate_limited",
+  );
+  // Clients already in the table keep working.
+  assert.equal(service.validatePairingCode(invitation.code, { rateKey: "first" }).valid, true);
 });
 
 test("successful pairing attempts do not spend a client's budget", () => {

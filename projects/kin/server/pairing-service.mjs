@@ -126,7 +126,14 @@ export class PairingService {
 
   assertRateAvailable(key) {
     this.pruneRateBuckets();
-    if ((this.rateBuckets.get(key)?.length ?? 0) >= RATE_LIMIT) {
+    const bucket = this.rateBuckets.get(key);
+    // A client that could not be charged for a failure must not get to try
+    // at all: refuse a new client before its attempt while the table is
+    // full, so no response ever depends on whether its code was right.
+    if (
+      (!bucket && this.rateBuckets.size >= this.maxRateBuckets) ||
+      (bucket?.length ?? 0) >= RATE_LIMIT
+    ) {
       this.audit("pairing_rate_limited");
       throw new PairingError(
         "rate_limited",

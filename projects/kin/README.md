@@ -173,8 +173,12 @@ location / {
 KIN_ORIGIN=https://kin.example.org KIN_TRUSTED_PROXIES=127.0.0.1,::1 node server/server.mjs
 ```
 
-Only failed code attempts count toward a client's limit, so a household's own
-successful pairing never uses it up.
+The proxy must **replace** `X-Forwarded-For` with the address it saw, as above;
+a proxy that passes the client's own header through lets clients choose their
+limit key. IPv4 clients are limited per address and IPv6 clients per /64
+network. Only failed code attempts count toward a client's limit, so a
+household's own successful pairing never uses it up. An invalid
+`KIN_TRUSTED_PROXIES` value stops startup with an explanation.
 
 The service persists household identity, authorization metadata, opaque relay
 events and synchronization state. Sessions and in-flight WebAuthn/pairing

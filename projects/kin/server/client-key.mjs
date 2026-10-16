@@ -15,7 +15,10 @@ export function parseTrustedProxies(value) {
   const entries = String(value).split(",").map((entry) => entry.trim()).filter(Boolean);
   for (const entry of entries)
     if (!isIP(normalizeAddress(entry)))
-      throw new Error(`KIN_TRUSTED_PROXIES must list IP addresses; "${entry}" is not one.`);
+      throw Object.assign(
+        new Error(`KIN_TRUSTED_PROXIES must list IP addresses; "${entry}" is not one.`),
+        { code: "trusted_proxies_invalid" },
+      );
   return new Set(entries.map(normalizeAddress));
 }
 
@@ -43,7 +46,25 @@ export function clientKey(request, trustedProxies) {
   for (let index = hops.length - 1; index >= 0; index -= 1) {
     const hop = hops[index];
     if (!isIP(hop)) return peer;
-    if (!trustedProxies.has(hop)) return hop;
+    if (!trustedProxies.has(hop)) return limitKey(hop);
   }
   return peer;
+}
+
+/**
+ * One limit per IPv4 address, and one per IPv6 /64: a single IPv6 network
+ * holds billions of addresses, so per-address limits would let one network
+ * pose as many clients. Expects a valid, normalized IP.
+ */
+export function limitKey(address) {
+  if (isIP(address) !== 6) return address;
+  const [head, tail = ""] = address.split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  // An embedded IPv4 tail occupies two groups; it never reaches the /64 prefix.
+  const width = (groups) => groups.reduce((sum, group) => sum + (group.includes(".") ? 2 : 1), 0);
+  const groups = address.includes("::")
+    ? [...left, ...Array(8 - width(left) - width(right)).fill("0"), ...right]
+    : left;
+  return `${groups.slice(0, 4).map((group) => Number.parseInt(group, 16).toString(16)).join(":")}::/64`;
 }

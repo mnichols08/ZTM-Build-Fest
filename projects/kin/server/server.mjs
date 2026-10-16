@@ -262,7 +262,7 @@ if (
           error.code === "durable_lock_exists"
             ? "durable_lock_exists"
             : "configuration_or_storage",
-        ...(error.code === "durable_lock_exists" ? { message: error.message } : {}),
+        ...(["durable_lock_exists", "trusted_proxies_invalid"].includes(error.code) ? { message: error.message } : {}),
       }),
     );
     process.exitCode = 1;
