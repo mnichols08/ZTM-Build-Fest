@@ -32,7 +32,10 @@ function passkey(signCount) {
   return { id: "credential-a", algorithm: -7, publicKey: PUBLIC_PEM, signCount };
 }
 
-const replayed = (error) => error.code === "credential_replayed";
+const replayed = (error) =>
+  error.code === "credential_replayed" &&
+  /may|can mean it was copied/.test(error.message) &&
+  /another passkey or your recovery key/.test(error.message);
 
 test("a stored count of 5 rejects an assertion reporting 0 and keeps 5", () => {
   const webauthn = new WebAuthn({ rpId: RP, origin: ORIGIN });
