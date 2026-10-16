@@ -351,12 +351,16 @@ export async function workspaceUxRegressions(recovery) {
   // 14. Offline and failed saves produce truthful, contextual feedback.
   app.ctx.navigation.navigate("#lists/todo");
   window.dispatchEvent(new Event("offline"));
-  check(app.syncChip.state === "offline" && app.syncChip.textContent === "Offline — saved here", "14. the header chip reports offline without promising sync on a device that has none");
+  check(app.syncChip.state === "offline" && app.syncChip.querySelector(".sync-label")?.textContent === "Offline — saved here" &&
+    app.syncChip.querySelector(".visually-hidden")?.textContent.includes("saved on this device"),
+  "14. the header chip reports offline without promising sync on a device that has none");
   const offlineItem = await addVia(app.needs.composer, `Offline add ${stamp}`);
   check(offlineItem && app.needs.composer.result.textContent === "Saved on this device." && app.status.textContent === "Added to To do.",
     "14. an offline save is confirmed as saved on this device");
   window.dispatchEvent(new Event("online"));
-  check(app.syncChip.state === "local" && app.syncChip.textContent === "On this device", "14. back online, the chip reports local-only truthfully");
+  check(app.syncChip.state === "local" && app.syncChip.querySelector(".sync-label")?.textContent === "On this device" &&
+    app.syncChip.querySelector(".visually-hidden")?.textContent.includes("Device sync is not set up"),
+  "14. back online, the chip reports local-only truthfully");
   const realAppend = app.store.append.bind(app.store);
   app.store.append = async () => { const error = new Error("Synthetic storage failure"); error.code = 5; error.userMessage = "Kin could not save that change locally."; throw error; };
   app.needs.composer.input.value = `Failing add ${stamp}`;
@@ -505,6 +509,44 @@ export async function workspaceViewportRegressions(client, { visit }) {
       for (let i = 0; (app.busy || app.refreshing) && i < 400; i++) await new Promise((r) => setTimeout(r, 10));
       return app.state.items.find((item) => item.text === "Viewport fixture item").itemId;
     });
+    for (const width of [320, 360, 390]) {
+      await viewport(width, 780, true);
+      state = await page(() => {
+        const app = document.querySelector("kin-app");
+        const originalName = app.brandTitle.textContent;
+        const originalState = app.syncChip.state;
+        app.ctx.appearance.setHouseholdIdentity("A household name long enough to compete with every header control");
+        const expected = { local: "Local", ready: "Current", syncing: "Syncing", paused: "Paused", offline: "Offline", "offline-sync": "Offline" };
+        const statuses = Object.entries(expected).map(([syncState, label]) => {
+          app.syncChip.state = syncState;
+          const chip = app.syncChip.querySelector(".sync-chip");
+          const generatedContent = getComputedStyle(chip, "::after").content;
+          const visibleLabel = /^['\"](.*?)['\"]/.exec(generatedContent)?.[1] ?? generatedContent;
+          const description = chip.querySelector(".visually-hidden");
+          return { syncState, label, visibleLabel, described: description?.textContent.startsWith(". ") && !chip.hasAttribute("aria-label") };
+        });
+        const header = app.header.getBoundingClientRect();
+        const tools = app.siteTools.getBoundingClientRect();
+        const targets = [...app.siteTools.querySelectorAll("button, a")]
+          .filter((node) => node.getClientRects().length > 0)
+          .every((node) => node.getBoundingClientRect().height >= 44);
+        const result = {
+          width: innerWidth,
+          statuses,
+          overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          headerContained: header.left >= 0 && header.right <= innerWidth && tools.right <= innerWidth,
+          nameClipped: app.brandTitle.scrollWidth > app.brandTitle.clientWidth,
+          nameTitled: app.brandTitle.title === app.brandTitle.textContent,
+          targets,
+        };
+        app.ctx.appearance.setHouseholdIdentity(originalName);
+        app.syncChip.state = originalState;
+        return result;
+      });
+      check(!state.overflow && state.headerContained && state.nameClipped && state.nameTitled && state.targets
+        && state.statuses.every(({ label, visibleLabel, described }) => label === visibleLabel && described),
+      `${width}px: every sync state keeps readable text and its accessible description beside a long household name`);
+    }
     await viewport(360, 780, true);
     state = await layout();
     check(state.tracks === 5 && state.navLinks === 5 && state.navFixed && !state.overflow && state.undersized.length === 0,

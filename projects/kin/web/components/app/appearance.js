@@ -90,7 +90,7 @@ export class AppearanceController {
   }
   setHouseholdIdentity(name) {
     this.app.householdName = name;
-    if (this.app.brandTitle) this.app.brandTitle.textContent = name;
+    if (this.app.brandTitle) { this.app.brandTitle.textContent = name; this.app.brandTitle.title = name; }
     if (this.app.vault && !this.app.vault.locked) document.title = `${name} — Kin`;
   }
   async refreshHouseholdDefaults() {
@@ -102,8 +102,8 @@ export class AppearanceController {
       const result = await this.app.syncCoordinator.loadHouseholdSettings();
       this.ctx.session.assertCurrentSession(session);
       if (result.value && (this.app.householdSettings?.revision ?? -1) <= result.value.revision) this.app.householdSettings = result.value;
-      this.app.householdDefaults.initialize({ ...result, value: this.app.householdSettings });
-      this.ctx.appearance.applyEffectiveAppearance();
+      const draftPreserved = this.app.householdDefaults.initialize({ ...result, value: this.app.householdSettings });
+      if (!draftPreserved) this.ctx.appearance.applyEffectiveAppearance();
     } catch { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded."); }
   }
   async restoreCachedHouseholdDefaults(identity, session = this.ctx.session.captureSession()) {
@@ -125,7 +125,7 @@ export class AppearanceController {
     try {
       const saved = await this.app.syncCoordinator.saveHouseholdSettings(value);
       this.ctx.session.assertCurrentSession(session);
-      this.app.householdSettings = saved;
+      if ((this.app.householdSettings?.revision ?? -1) <= saved.revision) this.app.householdSettings = saved;
       this.ctx.appearance.applyEffectiveAppearance();
       complete(saved, null);
     } catch (error) {
@@ -140,7 +140,7 @@ export class AppearanceController {
     this.app.personalAppearance = null;
     this.app.householdSettings = null;
     this.app.householdName = null;
-    if (this.app.brandTitle) this.app.brandTitle.textContent = "Kin";
+    if (this.app.brandTitle) { this.app.brandTitle.textContent = "Kin"; this.app.brandTitle.title = "Kin"; }
     document.title = "Kin";
     delete document.documentElement.dataset.kinAppearance;
     document.querySelector('meta[name="theme-color"]')?.setAttribute("content", "#684033");

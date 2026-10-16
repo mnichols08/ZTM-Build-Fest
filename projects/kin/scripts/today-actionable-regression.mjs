@@ -409,11 +409,12 @@ export async function todayLifecycleRegressions(client, { visit, ready }) {
       const app = document.querySelector("kin-app");
       return {
         status: app.status.textContent,
-        chip: app.syncChip.textContent,
+        chip: app.syncChip.querySelector(".sync-label")?.textContent,
+        chipDescription: app.syncChip.querySelector(".visually-hidden")?.textContent,
         focus: document.activeElement?.dataset.itemId === id && document.activeElement.dataset.itemAction === "reopen",
       };
     }, offlineId);
-    check(state.status === "Marked complete." && state.chip === "Offline — saved here" && state.focus,
+    check(state.status === "Marked complete." && state.chip === "Offline — saved here" && state.chipDescription.includes("saved on this device") && state.focus,
       "offline: Enter completes the focused task locally, focus moves to Reopen, and status distinguishes local saving from sync", state);
 
     // Reload, then unlock locally while offline and render Today from the

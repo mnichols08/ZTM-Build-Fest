@@ -16,6 +16,7 @@ class ElementStub {
   insertBefore(child) { this.append(child); }
   remove() { this.parent?.children.splice(this.parent.children.indexOf(this), 1); this.parent = null; }
   addEventListener(name, listener) { this.listeners[name] = listener; }
+  dispatchEvent(event) { this.events ??= []; this.events.push(event); return true; }
   setAttribute(name, value) { this.attributes[name] = value; }
   contains() { return true; }
   querySelectorAll(selector) {
@@ -84,4 +85,60 @@ test("withdrawn admin authority removes shared actions and locks the household n
     panel.initialize({ admin: true, adminRecorded: true, value: null });
     assert.equal(panel.nameInput.disabled, false, "re-granted authority restores editing");
   }
+});
+
+test("a settings refresh preserves an unsaved household name", () => {
+  const panel = new KinHouseholdDefaults();
+  panel.connectedCallback();
+  panel.initialize({ admin: true, adminRecorded: true, value: null });
+  panel.nameInput.value = "The Draft House";
+  panel.nameInput.listeners.input();
+
+  const draftPreserved = panel.initialize({ admin: true, adminRecorded: true, value: null });
+
+  assert.equal(draftPreserved, true);
+  assert.equal(panel.nameInput.value, "The Draft House");
+  assert.equal(panel.saved.name, "Our Home");
+});
+
+test("a newer shared revision preserves the draft until cancel loads the latest value", () => {
+  const panel = new KinHouseholdDefaults();
+  panel.connectedCallback();
+  panel.initialize({ admin: true, adminRecorded: true, value: null });
+  panel.nameInput.value = "The Draft House";
+  panel.nameInput.listeners.input();
+  const newer = { ...structuredClone(panel.saved), revision: 1, name: "The Remote House" };
+
+  assert.equal(panel.initialize({ admin: true, adminRecorded: true, value: newer }), true);
+  assert.equal(panel.nameInput.value, "The Draft House");
+  assert.match(panel.note.textContent, /Newer household settings arrived/);
+  panel.save();
+  assert.equal(panel.events.filter((event) => event.type === "kin:save-household-defaults").length, 0);
+  assert.match(panel.feedback.textContent, /Cancel your draft/);
+
+  panel.restore();
+  assert.equal(panel.nameInput.value, "The Remote House");
+  assert.equal(panel.saved.revision, 1);
+  assert.equal(panel.dirty, false);
+  assert.equal(panel.pending, null);
+});
+
+test("a delayed save completion cannot replace a newer revision received while saving", () => {
+  const panel = new KinHouseholdDefaults();
+  panel.connectedCallback();
+  panel.initialize({ admin: true, adminRecorded: true, value: null });
+  panel.nameInput.value = "The Saved House";
+  panel.nameInput.listeners.input();
+  panel.save();
+  const completion = panel.events.find((event) => event.type === "kin:save-household-defaults").detail.complete;
+  const newer = { ...structuredClone(panel.saved), revision: 2, name: "The Newer House" };
+  panel.initialize({ admin: true, adminRecorded: true, value: newer });
+
+  completion({ ...structuredClone(panel.saved), revision: 1, name: "The Saved House" }, null);
+
+  assert.equal(panel.nameInput.value, "The Newer House");
+  assert.equal(panel.saved.revision, 2);
+  assert.equal(panel.pending, null);
+  assert.equal(panel.dirty, false);
+  assert.match(panel.feedback.textContent, /newer household settings arrived/i);
 });

@@ -24,6 +24,7 @@ export class ShellBuilder {
     mark.alt = "";
     const title = document.createElement("span");
     title.textContent = "Kin";
+    title.title = "Kin";
     title.className = "brand-name";
     this.app.brandTitle = title;
     brand.append(mark, title);

@@ -4,12 +4,12 @@
 // delivery or reading. Always text, never only a dot.
 
 const LABELS = {
-  local: ["On this device", "Changes are saved on this device. Device sync is not set up."],
-  ready: ["Up to date", "This device has sent its changes and received the household's latest."],
-  syncing: ["Syncing…", "Exchanging changes with the household relay."],
-  paused: ["Sync paused", "Changes are saved on this device until sync can continue."],
-  offline: ["Offline — saved here", "You're offline. Changes are saved on this device."],
-  "offline-sync": ["Offline — saved here", "You're offline. Changes are saved on this device and will sync when you're connected."],
+  local: ["On this device", "Local", "Changes are saved on this device. Device sync is not set up."],
+  ready: ["Up to date", "Current", "This device has sent its changes and received the household's latest."],
+  syncing: ["Syncing…", "Syncing", "Exchanging changes with the household relay."],
+  paused: ["Sync paused", "Paused", "Changes are saved on this device until sync can continue."],
+  offline: ["Offline — saved here", "Offline", "You're offline. Changes are saved on this device."],
+  "offline-sync": ["Offline — saved here", "Offline", "You're offline. Changes are saved on this device and will sync when you're connected."],
 };
 
 class KinSyncStatus extends HTMLElement {
@@ -28,13 +28,19 @@ class KinSyncStatus extends HTMLElement {
 
   render() {
     if (!this.current) { this.replaceChildren(); this.hidden = true; return; }
-    const [label, description] = LABELS[this.current];
+    const [label, compactLabel, description] = LABELS[this.current];
     const chip = document.createElement("span");
     chip.className = "sync-chip";
     chip.dataset.state = this.current;
-    chip.textContent = label;
+    chip.dataset.compactLabel = compactLabel;
+    const text = document.createElement("span");
+    text.className = "sync-label";
+    text.textContent = label;
+    const desc = document.createElement("span");
+    desc.className = "visually-hidden";
+    desc.textContent = `. ${description}`;
+    chip.append(text, desc);
     chip.title = description;
-    chip.setAttribute("aria-label", `${label}. ${description}`);
     this.replaceChildren(chip);
     this.hidden = false;
   }

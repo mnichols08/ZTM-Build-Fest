@@ -427,6 +427,24 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
       await unlock();
     }
 
+    // --- Household settings refresh while editing ------------------------
+    const draftRefresh = await page(async () => {
+      const app = document.querySelector("kin-app"), editor = app.householdDefaults;
+      const realCoordinator = app.syncCoordinator;
+      const baseline = app.householdSettings ?? { version: 1, revision: 0, name: "Our Home", appearance: { mode: "system", colorSource: "manual", seed: "#684033", owner: "household" } };
+      editor.initialize({ admin: true, adminRecorded: true, value: baseline });
+      editor.nameInput.value = "The Draft House";
+      editor.nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+      app.syncCoordinator = { loadHouseholdSettings: async () => ({ admin: true, adminRecorded: true, value: structuredClone(baseline) }), stop() {} };
+      await app.ctx.appearance.refreshHouseholdDefaults();
+      const result = { input: editor.nameInput.value, brand: app.brandTitle.textContent, dirty: editor.dirty };
+      editor.restore();
+      app.syncCoordinator = realCoordinator;
+      return result;
+    });
+    check(draftRefresh.input === "The Draft House" && draftRefresh.brand === "The Draft House" && draftRefresh.dirty,
+      "a sync refresh preserves the household name being edited and its live header preview", draftRefresh);
+
     // --- Household settings save settling after lock or re-open -----------
     // The real editor and its Save button; the coordinator's save is a
     // deferred promise. Every completion the editor receives is recorded. Lock
@@ -501,6 +519,29 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     check(succeeded.calls.length === 1 && succeeded.calls[0].saved === SECRET && succeeded.name === SECRET && succeeded.brand === SECRET &&
       succeeded.feedback.startsWith("Household settings saved."),
       "the retried save succeeds in the current session: completion runs once and the saved name is applied", succeeded);
+    await page(() => {
+      const editor = document.querySelector("kin-app").householdDefaults;
+      editor.nameInput.value = "Pending Local Household";
+      editor.nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    check(await startSave(), "settings save before a newer refresh is pending");
+    const NEWER = "Newer Remote Household";
+    await page((name) => {
+      const app = document.querySelector("kin-app"), editor = app.householdDefaults;
+      const newer = { ...structuredClone(window.__save.value), name, revision: window.__save.value.revision + 2 };
+      app.householdSettings = newer;
+      editor.initialize({ admin: true, adminRecorded: true, value: newer });
+      app.ctx.appearance.applyEffectiveAppearance();
+    }, NEWER);
+    await settleSave("resolve");
+    const reordered = await page(() => {
+      const app = document.querySelector("kin-app"), editor = app.householdDefaults;
+      return { input: editor.nameInput.value, savedRevision: editor.saved.revision, appName: app.householdSettings.name,
+        appRevision: app.householdSettings.revision, brand: app.brandTitle.textContent, feedback: editor.feedback.textContent };
+    });
+    check(reordered.input === NEWER && reordered.appName === NEWER && reordered.brand === NEWER && reordered.savedRevision === reordered.appRevision &&
+      reordered.feedback.includes("newer household settings arrived"),
+    "a delayed successful save response cannot replace newer household settings received while it was in flight", reordered);
     await page(() => {
       const app = document.querySelector("kin-app");
       app.syncCoordinator = window.__settingsCoordinator;
