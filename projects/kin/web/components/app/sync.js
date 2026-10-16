@@ -181,14 +181,26 @@ export class SyncController {
     });
     if (!stale.length) return;
     this.app.reconcilingResponsibility = true;
+    const session = this.ctx.session.captureSession();
+    this.ctx.status.setBusy(true);
     try {
       for (const entry of stale) {
         if (!this.app.activeMemberIds.includes(this.app.syncCoordinator?.identity?.memberId)) break;
         await this.ctx.append.appendCommand({ type: "change-responsibility", targetKind: entry.targetKind, id: entry.targetId, memberId: null });
+        this.ctx.session.assertCurrentSession(session);
       }
+      this.ctx.session.assertCurrentSession(session);
+      this.ctx.render.renderState();
       this.ctx.peers.broadcastEventChange();
-      void this.app.syncCoordinator?.syncNow();
-    } catch { /* Another device may have cleared the same removed member concurrently. */ }
-    finally { this.app.reconcilingResponsibility = false; }
+    } catch (error) {
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
+      // Another device may have cleared the same removed member concurrently.
+    } finally {
+      this.app.reconcilingResponsibility = false;
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
+        this.ctx.peers.flushPeerRefresh();
+      }
+    }
   }
 }

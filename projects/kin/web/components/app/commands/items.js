@@ -276,12 +276,12 @@ export class ItemCommands {
     }
   }
   async handleChangeResponsibility(event) {
-    if (this.app.busy || !this.app.store || !this.app.engine) return;
+    if (this.app.busy || this.app.reconcilingResponsibility || !this.app.store || !this.app.engine) return;
     const session = this.ctx.session.captureSession(); this.ctx.status.setBusy(true); this.ctx.status.clearAlert();
     try {
       const { targetKind, targetId, memberId } = event.detail;
       await this.ctx.append.appendCommand({ type: "change-responsibility", targetKind, id: targetId, memberId });
-      this.ctx.session.assertCurrentSession(session); this.ctx.render.renderState(); this.ctx.peers.broadcastEventChange(); void this.app.syncCoordinator?.syncNow();
+      this.ctx.session.assertCurrentSession(session); this.ctx.render.renderState(); this.ctx.peers.broadcastEventChange();
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
       if (error.code === 4) this.app.pendingRefresh = true;
