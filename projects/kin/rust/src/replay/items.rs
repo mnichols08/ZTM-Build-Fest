@@ -221,10 +221,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                         .insert(*item_id, (event.logical_time, event.device_id));
                 }
                 ItemStatus::Archived => {
-                    if !is_concurrent_terminal_conflict(
-                        r.item_archives.get(item_id).copied(),
-                        event,
-                    ) {
+                    if !archived_by_other_device(r.item_archives.get(item_id).copied(), event) {
                         return Err(KinError::InvalidEvent);
                     }
                 }

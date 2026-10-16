@@ -76,11 +76,15 @@ pub struct Replay {
     pub(super) notes: Vec<NoteState>,
     pub(super) note_positions: BTreeMap<NoteId, usize>,
     pub(super) note_archive_events: BTreeMap<NoteId, BTreeSet<(u64, DeviceId)>>,
+    /// Device that first archived a Note. A later archive from anyone else is a no-op.
+    pub(super) note_archived_by: BTreeMap<NoteId, (u64, DeviceId)>,
     pub(super) reference_records: Vec<ReferenceRecordState>,
     pub(super) reference_positions: BTreeMap<ReferenceRecordId, usize>,
     pub(super) reference_field_owners: BTreeMap<ReferenceFieldId, ReferenceRecordId>,
     pub(super) reference_archive_events: BTreeMap<ReferenceRecordId, BTreeSet<(u64, DeviceId)>>,
     pub(super) maintenance_events: Vec<MaintenanceEventState>,
+    /// Device that first archived a maintenance event. A later archive from anyone else is a no-op.
+    pub(super) maintenance_archived_by: BTreeMap<MaintenanceEventId, (u64, DeviceId)>,
     pub(super) attachments: Vec<AttachmentState>,
     pub(super) responsibilities: Vec<ResponsibilityState>,
     /// Pins as replayed; finalize drops those whose target is archived.
@@ -387,12 +391,14 @@ pub(super) fn other_device_completed(
     applied_by_other || concurrent_other
 }
 
-pub(super) fn is_concurrent_terminal_conflict(
+/// The entity is already archived, and the device that archived it is not `event`'s.
+///
+/// A second archive from another device is a recorded no-op at any logical time.
+/// The same device archiving its own archived entity again stays invalid.
+/// Replay has already applied the earlier archive, so logical time is not compared.
+pub(super) fn archived_by_other_device(
     archived_by: Option<(u64, DeviceId)>,
     event: &EventEnvelope,
 ) -> bool {
-    // Cross-device mutations at the archive's logical time cannot undo its terminal tombstone.
-    archived_by.is_some_and(|(logical_time, device_id)| {
-        logical_time == event.logical_time && device_id != event.device_id
-    })
+    archived_by.is_some_and(|(_, device_id)| device_id != event.device_id)
 }

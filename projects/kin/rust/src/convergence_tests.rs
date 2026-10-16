@@ -699,6 +699,499 @@ fn archive_handoff_and_acknowledge_converge() {
 }
 
 #[test]
+fn update_note_into_an_area_another_device_archived_keeps_the_edit() {
+    run_pair(
+        "update-note-into-archived-area",
+        true,
+        |terminal_device, mutation_device, terminal_time, mutation_time| {
+            let area = AreaId(nid(0x41));
+            let note = NoteId(nid(0x40));
+            let setup = vec![
+                record(
+                    1,
+                    0x01,
+                    1,
+                    EventKind::AreaCreated {
+                        area_id: area,
+                        name: "Kitchen".into(),
+                    },
+                ),
+                record(
+                    2,
+                    0x01,
+                    2,
+                    EventKind::NoteCreated {
+                        note_id: note,
+                        title: "Original".into(),
+                        body: "Original body".into(),
+                        area_id: None,
+                    },
+                ),
+            ];
+            let terminal = record(
+                10,
+                terminal_device,
+                terminal_time,
+                EventKind::AreaArchived { area_id: area },
+            );
+            let mutation = record(
+                11,
+                mutation_device,
+                mutation_time,
+                EventKind::NoteUpdated {
+                    note_id: note,
+                    title: "Edited".into(),
+                    body: "Edited body".into(),
+                    area_id: Some(area),
+                },
+            );
+            (setup, terminal, mutation)
+        },
+        |which, state| {
+            assert!(state.areas[0].archived);
+            assert_eq!(state.notes[0].status, NoteStatus::Active);
+            assert_eq!(state.notes[0].title, "Edited");
+            assert_eq!(state.notes[0].body, "Edited body");
+            if which == "terminal" {
+                assert_eq!(state.notes[0].area_id, None);
+            } else {
+                assert_eq!(state.notes[0].area_id, Some(AreaId(nid(0x41))));
+            }
+        },
+    );
+}
+
+#[test]
+fn maintenance_linked_to_a_routine_another_device_archived_drops_the_link() {
+    run_pair(
+        "maintenance-on-archived-routine",
+        true,
+        |terminal_device, mutation_device, terminal_time, mutation_time| {
+            let routine = RoutineId(nid(0x50));
+            let record_id = ReferenceRecordId(nid(0x80));
+            let setup = vec![
+                record(
+                    1,
+                    0x01,
+                    1,
+                    EventKind::RoutineCreated {
+                        routine_id: routine,
+                        text: "Change filter".into(),
+                        cadence: Cadence::Daily,
+                        created_on: date(),
+                    },
+                ),
+                record(
+                    2,
+                    0x01,
+                    2,
+                    EventKind::ReferenceRecordSaved {
+                        record_id,
+                        title: "Furnace".into(),
+                        area_id: None,
+                        fields: vec![(
+                            ReferenceFieldId(nid(0x81)),
+                            "Filter".into(),
+                            "16x25".into(),
+                        )],
+                    },
+                ),
+            ];
+            let terminal = record(
+                10,
+                terminal_device,
+                terminal_time,
+                EventKind::RoutineArchived {
+                    routine_id: routine,
+                },
+            );
+            let mutation = record(
+                11,
+                mutation_device,
+                mutation_time,
+                EventKind::MaintenanceEventSaved {
+                    maintenance_id: MaintenanceEventId(nid(0x82)),
+                    record_id,
+                    performed_on: date(),
+                    summary: "Changed filter".into(),
+                    next_on: None,
+                    routine_id: Some(routine),
+                },
+            );
+            (setup, terminal, mutation)
+        },
+        |which, state| {
+            assert!(state.routines[0].archived);
+            assert_eq!(state.maintenance_events.len(), 1);
+            assert_eq!(state.maintenance_events[0].summary, "Changed filter");
+            assert_eq!(
+                state.maintenance_events[0].routine_id.is_none(),
+                which == "terminal"
+            );
+        },
+    );
+}
+
+#[test]
+fn two_devices_archiving_the_same_entity_converge() {
+    run_pair(
+        "two-devices-archive-item",
+        true,
+        |terminal_device, mutation_device, terminal_time, mutation_time| {
+            let item = ItemId(nid(0x30));
+            (
+                vec![record(
+                    1,
+                    0x01,
+                    1,
+                    EventKind::ItemAdded {
+                        item_id: item,
+                        text: "Clean kitchen".into(),
+                        classification: ItemClassification::Need,
+                    },
+                )],
+                record(
+                    10,
+                    terminal_device,
+                    terminal_time,
+                    EventKind::ItemArchived { item_id: item },
+                ),
+                record(
+                    11,
+                    mutation_device,
+                    mutation_time,
+                    EventKind::ItemArchived { item_id: item },
+                ),
+            )
+        },
+        |_which, state| assert_eq!(state.items[0].status, ItemStatus::Archived),
+    );
+    run_pair(
+        "two-devices-archive-note",
+        true,
+        |terminal_device, mutation_device, terminal_time, mutation_time| {
+            let note = NoteId(nid(0x40));
+            (
+                vec![record(
+                    1,
+                    0x01,
+                    1,
+                    EventKind::NoteCreated {
+                        note_id: note,
+                        title: "Original".into(),
+                        body: "Original body".into(),
+                        area_id: None,
+                    },
+                )],
+                record(
+                    10,
+                    terminal_device,
+                    terminal_time,
+                    EventKind::NoteArchived { note_id: note },
+                ),
+                record(
+                    11,
+                    mutation_device,
+                    mutation_time,
+                    EventKind::NoteArchived { note_id: note },
+                ),
+            )
+        },
+        |_which, state| assert_eq!(state.notes[0].status, NoteStatus::Archived),
+    );
+    run_pair(
+        "two-devices-archive-routine",
+        true,
+        |terminal_device, mutation_device, terminal_time, mutation_time| {
+            let routine = RoutineId(nid(0x50));
+            (
+                vec![record(
+                    1,
+                    0x01,
+                    1,
+                    EventKind::RoutineCreated {
+                        routine_id: routine,
+                        text: "Water plants".into(),
+                        cadence: Cadence::Daily,
+                        created_on: date(),
+                    },
+                )],
+                record(
+                    10,
+                    terminal_device,
+                    terminal_time,
+                    EventKind::RoutineArchived {
+                        routine_id: routine,
+                    },
+                ),
+                record(
+                    11,
+                    mutation_device,
+                    mutation_time,
+                    EventKind::RoutineArchived {
+                        routine_id: routine,
+                    },
+                ),
+            )
+        },
+        |_which, state| assert!(state.routines[0].archived),
+    );
+    run_pair(
+        "two-devices-archive-talk",
+        true,
+        |terminal_device, mutation_device, terminal_time, mutation_time| {
+            let talk = TalkId(nid(0x60));
+            (
+                vec![record(
+                    1,
+                    0x01,
+                    1,
+                    EventKind::TalkAdded {
+                        talk_id: talk,
+                        text: "School pickup".into(),
+                    },
+                )],
+                record(
+                    10,
+                    terminal_device,
+                    terminal_time,
+                    EventKind::TalkArchived { talk_id: talk },
+                ),
+                record(
+                    11,
+                    mutation_device,
+                    mutation_time,
+                    EventKind::TalkArchived { talk_id: talk },
+                ),
+            )
+        },
+        |_which, state| assert_eq!(state.talks[0].status, TalkStatus::Archived),
+    );
+    run_pair(
+        "two-devices-archive-handoff",
+        true,
+        |terminal_device, mutation_device, terminal_time, mutation_time| {
+            let handoff = HandoffId(nid(0x90));
+            (
+                vec![record(
+                    1,
+                    0x01,
+                    1,
+                    EventKind::HandoffAdded {
+                        handoff_id: handoff,
+                        text: "Bins".into(),
+                    },
+                )],
+                record(
+                    10,
+                    terminal_device,
+                    terminal_time,
+                    EventKind::HandoffArchived {
+                        handoff_id: handoff,
+                    },
+                ),
+                record(
+                    11,
+                    mutation_device,
+                    mutation_time,
+                    EventKind::HandoffArchived {
+                        handoff_id: handoff,
+                    },
+                ),
+            )
+        },
+        |_which, state| assert_eq!(state.handoffs[0].status, HandoffStatus::Archived),
+    );
+    run_pair(
+        "two-devices-archive-maintenance",
+        true,
+        |terminal_device, mutation_device, terminal_time, mutation_time| {
+            let record_id = ReferenceRecordId(nid(0x80));
+            let maintenance = MaintenanceEventId(nid(0x82));
+            let setup = vec![
+                record(
+                    1,
+                    0x01,
+                    1,
+                    EventKind::ReferenceRecordSaved {
+                        record_id,
+                        title: "Furnace".into(),
+                        area_id: None,
+                        fields: vec![(
+                            ReferenceFieldId(nid(0x81)),
+                            "Filter".into(),
+                            "16x25".into(),
+                        )],
+                    },
+                ),
+                record(
+                    2,
+                    0x01,
+                    2,
+                    EventKind::MaintenanceEventSaved {
+                        maintenance_id: maintenance,
+                        record_id,
+                        performed_on: date(),
+                        summary: "Changed filter".into(),
+                        next_on: None,
+                        routine_id: None,
+                    },
+                ),
+            ];
+            (
+                setup,
+                record(
+                    10,
+                    terminal_device,
+                    terminal_time,
+                    EventKind::MaintenanceEventArchived {
+                        maintenance_id: maintenance,
+                    },
+                ),
+                record(
+                    11,
+                    mutation_device,
+                    mutation_time,
+                    EventKind::MaintenanceEventArchived {
+                        maintenance_id: maintenance,
+                    },
+                ),
+            )
+        },
+        |_which, state| assert!(state.maintenance_events[0].archived),
+    );
+}
+
+#[test]
+fn same_device_second_archive_stays_invalid() {
+    let device = 0x11;
+    let item = ItemId(nid(0x30));
+    let note = NoteId(nid(0x40));
+    let routine = RoutineId(nid(0x50));
+    let talk = TalkId(nid(0x60));
+    let maintenance = MaintenanceEventId(nid(0x82));
+    let record_id = ReferenceRecordId(nid(0x80));
+    let histories = [
+        vec![
+            record(
+                1,
+                device,
+                1,
+                EventKind::ItemAdded {
+                    item_id: item,
+                    text: "Clean kitchen".into(),
+                    classification: ItemClassification::Need,
+                },
+            ),
+            record(2, device, 2, EventKind::ItemArchived { item_id: item }),
+            record(3, device, 3, EventKind::ItemArchived { item_id: item }),
+        ],
+        vec![
+            record(
+                1,
+                device,
+                1,
+                EventKind::NoteCreated {
+                    note_id: note,
+                    title: "Original".into(),
+                    body: String::new(),
+                    area_id: None,
+                },
+            ),
+            record(2, device, 2, EventKind::NoteArchived { note_id: note }),
+            record(3, device, 3, EventKind::NoteArchived { note_id: note }),
+        ],
+        vec![
+            record(
+                1,
+                device,
+                1,
+                EventKind::RoutineCreated {
+                    routine_id: routine,
+                    text: "Water plants".into(),
+                    cadence: Cadence::Daily,
+                    created_on: date(),
+                },
+            ),
+            record(
+                2,
+                device,
+                2,
+                EventKind::RoutineArchived {
+                    routine_id: routine,
+                },
+            ),
+            record(
+                3,
+                device,
+                3,
+                EventKind::RoutineArchived {
+                    routine_id: routine,
+                },
+            ),
+        ],
+        vec![
+            record(
+                1,
+                device,
+                1,
+                EventKind::TalkAdded {
+                    talk_id: talk,
+                    text: "School pickup".into(),
+                },
+            ),
+            record(2, device, 2, EventKind::TalkArchived { talk_id: talk }),
+            record(3, device, 3, EventKind::TalkArchived { talk_id: talk }),
+        ],
+        vec![
+            record(
+                1,
+                device,
+                1,
+                EventKind::ReferenceRecordSaved {
+                    record_id,
+                    title: "Furnace".into(),
+                    area_id: None,
+                    fields: vec![(ReferenceFieldId(nid(0x81)), "Filter".into(), "16x25".into())],
+                },
+            ),
+            record(
+                2,
+                device,
+                2,
+                EventKind::MaintenanceEventSaved {
+                    maintenance_id: maintenance,
+                    record_id,
+                    performed_on: date(),
+                    summary: "Changed filter".into(),
+                    next_on: None,
+                    routine_id: None,
+                },
+            ),
+            record(
+                3,
+                device,
+                3,
+                EventKind::MaintenanceEventArchived {
+                    maintenance_id: maintenance,
+                },
+            ),
+            record(
+                4,
+                device,
+                4,
+                EventKind::MaintenanceEventArchived {
+                    maintenance_id: maintenance,
+                },
+            ),
+        ],
+    ];
+    for history in histories {
+        assert!(project_records(&history).is_err());
+    }
+}
+
+#[test]
 fn same_device_mutations_after_its_own_archive_stay_invalid() {
     let item = ItemId(nid(0x30));
     let area = AreaId(nid(0x41));
@@ -752,4 +1245,39 @@ fn same_device_mutations_after_its_own_archive_stay_invalid() {
         ),
     ];
     assert!(project_records(&note_in_own_archived_area).is_err());
+    let move_into_own_archived_area = vec![
+        record(
+            1,
+            device,
+            1,
+            EventKind::AreaCreated {
+                area_id: area,
+                name: "Kitchen".into(),
+            },
+        ),
+        record(
+            2,
+            device,
+            2,
+            EventKind::NoteCreated {
+                note_id: note,
+                title: "Original".into(),
+                body: "Original body".into(),
+                area_id: None,
+            },
+        ),
+        record(3, device, 3, EventKind::AreaArchived { area_id: area }),
+        record(
+            4,
+            device,
+            4,
+            EventKind::NoteUpdated {
+                note_id: note,
+                title: "Edited".into(),
+                body: "Edited body".into(),
+                area_id: Some(area),
+            },
+        ),
+    ];
+    assert!(project_records(&move_into_own_archived_area).is_err());
 }

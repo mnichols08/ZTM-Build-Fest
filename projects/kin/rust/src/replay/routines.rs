@@ -68,10 +68,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 .ok_or(KinError::InvalidEvent)?;
             let routine = &mut r.routines[position];
             if routine.archived {
-                if !is_concurrent_terminal_conflict(
-                    r.routine_archives.get(routine_id).copied(),
-                    event,
-                ) {
+                if !archived_by_other_device(r.routine_archives.get(routine_id).copied(), event) {
                     return Err(KinError::InvalidEvent);
                 }
             } else {

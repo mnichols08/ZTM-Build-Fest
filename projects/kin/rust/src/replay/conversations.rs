@@ -33,10 +33,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 return Ok(());
             }
             if handoff.status == HandoffStatus::Archived {
-                if !is_concurrent_terminal_conflict(
-                    r.handoff_archives.get(handoff_id).copied(),
-                    event,
-                ) {
+                if !archived_by_other_device(r.handoff_archives.get(handoff_id).copied(), event) {
                     return Err(KinError::InvalidEvent);
                 }
             } else if matches!(event.kind, EventKind::HandoffArchived { .. }) {
@@ -76,7 +73,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 return Ok(());
             }
             if talk.status == TalkStatus::Archived {
-                if !is_concurrent_terminal_conflict(r.talk_archives.get(talk_id).copied(), event) {
+                if !archived_by_other_device(r.talk_archives.get(talk_id).copied(), event) {
                     return Err(KinError::InvalidEvent);
                 }
             } else if matches!(event.kind, EventKind::TalkArchived { .. }) {

@@ -234,32 +234,16 @@ A schedule change is create-replacement plus archive-original. There is no
 supersession record. When two devices change one Routine before syncing:
 
 - **Equal logical times** (both devices were at the same clock): both archives
-  are accepted as a concurrent terminal conflict. The original is archived and
-  **both replacements stay active**. The result is the same on every device
-  and in every delivery order. No history is lost.
-- **Different logical times:** the later archive of an already-archived
-  Routine is `InvalidEvent`.
-  - A full replay of the merged set refuses as a whole, so nothing is
-    partially applied.
-  - During sync, each device keeps its own archive and quarantines the
-    other's. It then shows "Some trusted-device changes could not be applied.
-    Ask a household Adult…", which overstates the problem.
-  - Both replacements still repeat.
-  - On a third device, which archive is stored and which is quarantined
-    depends on how pull pages split the events. Sorting happens only within
-    one batch. The projection is the same either way; the stored history is
-    not.
+  are accepted. The original is archived and **both replacements stay active**.
+  The result is the same on every device and in every delivery order. No
+  history is lost.
+- **Different logical times:** the later archive, from a different device, of
+  an already-archived Routine is a recorded no-op. A full replay returns Ok,
+  nothing is quarantined, and both replacements stay active. A device
+  archiving a Routine it already archived itself stays invalid.
 
-Fixing this needs new domain semantics: either a supersession event, or
-treating a second archive of an archived Routine as an idempotent no-op across
-devices. Either one changes replay rules for existing histories, so it is out
-of scope here. The Rust and storage tests above pin today's behaviour, so a
-future change has to update them on purpose.
-
-To reproduce: replay `RoutineCreated(R)@1`; device A `RoutineCreated(RA)@2`
-and `RoutineArchived(R)@3`; device B `RoutineCreated(RB)@4` and
-`RoutineArchived(R)@5`. Use `rebuild_distributed_on`, which returns
-`Err(InvalidEvent)`, or `reconcileRemoteEvents`, which quarantines one event.
+There is still no supersession record. Two offline schedule changes leave both
+replacement Routines active.
 
 ### F2: protocol 24 and already-shipped clients
 

@@ -110,8 +110,13 @@ export class NotesSection {
       section.append(empty);
     }
     const groups = [];
+    const unassigned = [];
     for (const note of activeNotes) {
       const key = note.areaId || "";
+      if (!key) {
+        unassigned.push(note);
+        continue;
+      }
       let group = groups.find((candidate) => candidate.key === key);
       if (!group) {
         group = { key, notes: [] };
@@ -119,22 +124,24 @@ export class NotesSection {
       }
       group.notes.push(note);
     }
-    for (const group of groups) {
+    const appendGroup = (label, notes) => {
       const heading = document.createElement("h3");
       heading.className = "note-group";
-      if (!group.key) heading.textContent = "No area";
-      else {
-        const linkedArea = this.host.areaRecords.find((candidate) => candidate.areaId === group.key);
-        heading.textContent = linkedArea
-          ? `${linkedArea.name}${linkedArea.archived ? " (archived Area)" : ""}`
-          : "Archived Area";
-      }
+      heading.textContent = label;
       const list = document.createElement("ul");
-      for (const note of group.notes) {
-        list.append(this.noteRow(note, id, activeNotes));
-      }
+      for (const note of notes) list.append(this.noteRow(note, id, activeNotes));
       section.append(heading, list);
+    };
+    for (const group of groups) {
+      const linkedArea = this.host.areaRecords.find((candidate) => candidate.areaId === group.key);
+      appendGroup(
+        linkedArea
+          ? `${linkedArea.name}${linkedArea.archived ? " (archived Area)" : ""}`
+          : "Archived Area",
+        group.notes,
+      );
     }
+    if (unassigned.length) appendGroup("No area", unassigned);
   }
 
   noteRow(note, id, activeNotes) {
@@ -142,7 +149,7 @@ export class NotesSection {
     row.className = "note-row";
     row.dataset.noteId = note.noteId;
     row.tabIndex = -1;
-    const name = document.createElement("h3");
+    const name = document.createElement("h4");
     name.textContent = note.title;
     const text = document.createElement("p");
     text.className = "note-body";

@@ -935,6 +935,7 @@ kin-household-defaults kin-appearance .appearance-follow { display: none; }
 .notes-section ul { padding-inline-start: 0; list-style: none; }
 .notes-section > section > ul > li { padding: 12px 0; border-top: 1px solid var(--line); }
 .note-group { margin: 16px 0 0; font-size: 15px; }
+.note-row h4 { margin: 0; font-size: 15px; font-weight: 640; }
 .notes-section .note-row { padding: 12px 0; border-top: 1px solid var(--line); }
 .note-row { min-width: 0; overflow-wrap: anywhere; border-radius: 8px; }
 .note-row button { margin-inline-end: 8px; }

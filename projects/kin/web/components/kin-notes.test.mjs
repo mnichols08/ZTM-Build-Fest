@@ -131,8 +131,8 @@ test("a note with no area is shown in a No area group", () => {
   const notes = new KinNotes();
   notes.areas = [{ areaId: "area-1", name: "Kitchen", archived: false }];
   notes.notes = [
-    { noteId: "n1", title: "Wifi", body: "hall", areaId: "area-1", archived: false },
     { noteId: "n2", title: "Loose", body: "kept", areaId: null, archived: false },
+    { noteId: "n1", title: "Wifi", body: "hall", areaId: "area-1", archived: false },
     { noteId: "n3", title: "Hidden", body: "gone", areaId: null, archived: true },
   ];
   const text = (node) => node.textContent;
@@ -140,5 +140,5 @@ test("a note with no area is shown in a No area group", () => {
   assert.deepEqual(groups, ["Kitchen", "No area"]);
   const rows = descendants(notes).filter((node) => node.className === "note-row");
   assert.deepEqual(rows.map((row) => row.dataset.noteId), ["n1", "n2"]);
-  assert.deepEqual(rows.map((row) => row.children.find((child) => child.tagName === "h3").textContent), ["Wifi", "Loose"]);
+  assert.deepEqual(rows.map((row) => row.children.find((child) => child.tagName === "h4").textContent), ["Wifi", "Loose"]);
 });
