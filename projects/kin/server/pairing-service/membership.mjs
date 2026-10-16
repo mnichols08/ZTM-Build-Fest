@@ -184,7 +184,10 @@ export const membershipMethods = {
     if (admin) target.householdAdmin = true;
     else {
       delete target.householdAdmin;
-      this.revokeInviterPairings(household, memberId, "admin_revoked", (pairing) => !pairing.purpose);
+      // A demoted admin loses the invitations and member recoveries they
+      // started; their own device pairings stay theirs.
+      this.revokeInviterPairings(household, memberId, "admin_revoked",
+        (pairing) => !pairing.purpose || pairing.purpose === "member-recovery");
     }
     household.version += 1;
     this.audit(admin ? "household_admin_granted" : "household_admin_revoked", {
