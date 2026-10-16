@@ -281,9 +281,14 @@ export class ItemCommands {
     try {
       const { targetKind, targetId, memberId } = event.detail;
       await this.ctx.append.appendCommand({ type: "change-responsibility", targetKind, id: targetId, memberId });
-      this.ctx.session.assertCurrentSession(session); this.ctx.peers.broadcastEventChange(); void this.app.syncCoordinator?.syncNow();
-    } catch (error) { if (error.code !== "locked" && this.ctx.session.isCurrentSession(session)) this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR); }
-    finally { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setBusy(false); }
+      this.ctx.session.assertCurrentSession(session); this.ctx.render.renderState(); this.ctx.peers.broadcastEventChange(); void this.app.syncCoordinator?.syncNow();
+    } catch (error) {
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
+      if (error.code === 4) this.app.pendingRefresh = true;
+      this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR);
+    } finally {
+      if (this.ctx.session.isCurrentSession(session)) { this.ctx.status.setBusy(false); this.ctx.peers.flushPeerRefresh(); }
+    }
   }
   async savePin(detail) {
     if (this.app.busy || !this.app.store || !this.app.engine || detail.targetKind !== "item") return;
