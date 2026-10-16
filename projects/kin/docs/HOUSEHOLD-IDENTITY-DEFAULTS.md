@@ -18,6 +18,7 @@ An admin can make another active Adult an admin or remove admin status, using th
 | Recover a non-admin member, manage own devices, key provisioning and rotation | Any Adult | Any Adult |
 | Change shared household settings | Admin | Nobody (fails closed) |
 | Grant or remove admin status | Admin | Nobody (fails closed) |
+| Remove an attachment in the app | Any Adult | Any Adult |
 | Delete an attachment's encrypted copy from the relay | Its uploader or any Adult | Its uploader or any Adult |
 
 Settings reads require an active household member on a trusted device. Writes require that same authorization plus admin status. Removal, expiry, device revocation, deletion state, and session expiry therefore fail before the admin check.
