@@ -103,7 +103,9 @@ export class AppearanceController {
       this.ctx.session.assertCurrentSession(session);
       if (result.value && (this.app.householdSettings?.revision ?? -1) <= result.value.revision) this.app.householdSettings = result.value;
       const draftPreserved = this.app.householdDefaults.initialize({ ...result, value: this.app.householdSettings });
-      if (!draftPreserved) this.ctx.appearance.applyEffectiveAppearance();
+      if (draftPreserved) return;
+      if (this.app.appearance?.dirty) this.ctx.appearance.setHouseholdIdentity(this.app.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME);
+      else this.ctx.appearance.applyEffectiveAppearance();
     } catch { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded."); }
   }
   async restoreCachedHouseholdDefaults(identity, session = this.ctx.session.captureSession()) {

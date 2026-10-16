@@ -445,6 +445,23 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     check(draftRefresh.input === "The Draft House" && draftRefresh.brand === "The Draft House" && draftRefresh.dirty,
       "a sync refresh preserves the household name being edited and its live header preview", draftRefresh);
 
+    const colorDraftRefresh = await page(async () => {
+      const app = document.querySelector("kin-app"), editor = app.appearance;
+      const realCoordinator = app.syncCoordinator;
+      const baseline = app.householdSettings ?? { version: 1, revision: 0, name: "Our Home", appearance: { mode: "system", colorSource: "manual", seed: "#684033", owner: "household" } };
+      const forest = editor.presetControls.get("forest");
+      forest.checked = true;
+      forest.dispatchEvent(new Event("change", { bubbles: true }));
+      app.syncCoordinator = { loadHouseholdSettings: async () => ({ admin: true, adminRecorded: true, value: structuredClone(baseline) }), stop() {} };
+      await app.ctx.appearance.refreshHouseholdDefaults();
+      const result = { draft: editor.draft.seed, applied: app.currentAppearance.seed, dirty: editor.dirty };
+      editor.restoreSaved("Changes canceled.");
+      app.syncCoordinator = realCoordinator;
+      return result;
+    });
+    check(colorDraftRefresh.draft === "#397052" && colorDraftRefresh.applied === "#397052" && colorDraftRefresh.dirty,
+      "a sync refresh preserves an unsaved personal color and its live appearance preview", colorDraftRefresh);
+
     // --- Household settings save settling after lock or re-open -----------
     // The real editor and its Save button; the coordinator's save is a
     // deferred promise. Every completion the editor receives is recorded. Lock
