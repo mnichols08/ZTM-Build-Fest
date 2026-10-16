@@ -116,3 +116,30 @@ test("durable: schema 9 adds a nullable uploader column", () => {
     assert.equal(column.notnull, 0);
   } finally { store.close(); }
 });
+
+test("durable: the deletion audit survives a restart", async () => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const directory = mkdtempSync(join(tmpdir(), "kin-attachment-audit-"));
+  const path = join(directory, "kin.sqlite");
+  try {
+    const store = new DurableStore(path);
+    const pairing = new PairingService({ store });
+    const founder = pairing.bootstrap({ credential: credential("founder"), deviceLabel: "Founder" });
+    const sync = new EncryptedSyncService(pairing, { store });
+    sync.enable(founder.sessionToken);
+    const attachmentId = "ab".repeat(16);
+    const ciphertext = Buffer.alloc(64, 9);
+    sync.pushAttachment(founder.sessionToken, { attachmentId, keyEpoch: 1, ciphertext, digest: createHash("sha256").update(ciphertext).digest("hex") });
+    sync.removeAttachment(founder.sessionToken, attachmentId);
+    store.close();
+    const reopened = new DurableStore(path);
+    try {
+      const rows = reopened.db.prepare("SELECT * FROM security_audit").all()
+        .filter((row) => JSON.stringify(row).includes("attachment_deleted"));
+      assert.equal(rows.length, 1);
+      assert.match(JSON.stringify(rows[0]), new RegExp(attachmentId));
+    } finally { reopened.close(); }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});

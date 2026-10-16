@@ -16,7 +16,7 @@ Kin version numbers describe product releases; they do not version every persist
 | Version axis | Last published v0.10.3 / current candidate v0.47.0 | Governs |
 | --- | --- | --- |
 | Application | Last published `0.10.3`; candidate `0.47.0` | Existing capabilities plus member-bound personal appearance and encrypted revisioned household identity/default appearance; the service-worker cache name advances with the release |
-| Server database schema | `8` (`PRAGMA user_version`) | SQLite identity, authorization, recorded founder/admin authority, opaque relay, coordination, lifecycle, encrypted settings/attachment records, member kind, Temporary expiry, and authoritative membership status |
+| Server database schema | `9` (`PRAGMA user_version`) | SQLite identity, authorization, recorded founder/admin authority, opaque relay, coordination, lifecycle, encrypted settings/attachment records and their uploaders, member kind, Temporary expiry, and authoritative membership status |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v24; writes v24 for local and synchronized requests | Request context and projection semantics |
 | Manual WASM ABI | Existing exports plus additive command/metadata/archive/import APIs | Host ownership and calls; new command packet v1 |

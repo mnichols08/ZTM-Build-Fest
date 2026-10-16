@@ -15,7 +15,7 @@
 | Event IndexedDB `kin` | schema 5 | Structures are created on first open |
 | Key IndexedDB `kin-crypto-keys` | schema 5 | Structures are created on first open |
 | Local envelope / root manifest | Format 1 roots, format 2 after rotation | Both current |
-| Server SQLite | `user_version` 8 | Upgrade chain 0→8 retained (see below) |
+| Server SQLite | `user_version` 9 | Upgrade chain 0→9 retained (see below) |
 
 Application, event, protocol, IndexedDB, archive and server versions remain
 independent; change only the axis whose contract changes.
@@ -42,7 +42,7 @@ current product, not compatibility with old data:
 Root rotation ([ROOT-ROTATION](ROOT-ROTATION.md)) is re-encryption, not a
 format migration, and is unchanged.
 
-The server's SQLite upgrade chain (0→8) is also retained for now. Schema 8's
+The server's SQLite upgrade chain (0→9) is also retained for now. Schema 8's
 admin promotion is an authority-bearing step, and the server split belongs to
 Slice 10; removing the chain there would need its own review.
 

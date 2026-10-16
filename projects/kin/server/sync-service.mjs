@@ -366,6 +366,7 @@ export class EncryptedSyncService {
     if (this.store) this.store.removeAttachment(auth.household.id, attachmentId);
     else this.attachments.delete(key);
     this.pairingService.audit("attachment_deleted", { householdId: auth.household.id, attachmentId, memberId: auth.member.id, deviceId: auth.device.id });
+    this.pairingService.persistHousehold(auth.household.id);
     return { removed: true };
   }
 
