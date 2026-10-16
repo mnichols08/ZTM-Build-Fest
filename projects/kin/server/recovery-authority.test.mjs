@@ -79,7 +79,10 @@ test("demoting an admin revokes the member recovery they started", () => {
     service.events.some((event) =>
       event.type === "pairing_revoked" && event.pairingId === request.pairingId && event.reason === "admin_revoked"),
   );
-  assert.throws(() => service.approvePairing(founder.sessionToken, request.pairingId, claim.version));
+  assert.throws(
+    () => service.approvePairing(founder.sessionToken, request.pairingId, claim.version),
+    (error) => error.code === "pairing_revoked",
+  );
   assertUntouched(service, adultC);
 });
 
