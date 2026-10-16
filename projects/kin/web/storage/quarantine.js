@@ -91,9 +91,9 @@ export function nextQuarantine(previous = [], quarantined = [], { now, retried }
 }
 
 /** One line per kept event for the "review this device" state. Plain text. */
-export function describeQuarantine(quarantine = [], { limit = 5 } = {}) {
+export function describeQuarantine(quarantine = [], { limit = 5, attempts = true } = {}) {
   const lines = quarantine.slice(0, limit).map((row) =>
-    `${row.eventId.slice(0, 12)}… was not applied because ${quarantineReasonText(row.reason)} (tried ${row.attempts} ${row.attempts === 1 ? "time" : "times"}).`);
+    `${row.eventId.slice(0, 12)}… was not applied because ${quarantineReasonText(row.reason)}${attempts ? ` (tried ${row.attempts} ${row.attempts === 1 ? "time" : "times"})` : ""}.`);
   if (quarantine.length > limit) lines.push(`…and ${quarantine.length - limit} more.`);
   return lines;
 }
@@ -103,7 +103,9 @@ export const QUARANTINE_MESSAGE =
 
 /** The "review this device" message, naming the kept events when there are any. */
 export function quarantineMessage(quarantine = []) {
-  const lines = describeQuarantine(quarantine, { limit: 3 });
+  // No attempt counts here: the notice is a live region, and text that
+  // changes on every retry would be re-announced each time.
+  const lines = describeQuarantine(quarantine, { limit: 3, attempts: false });
   if (!lines.length) return QUARANTINE_MESSAGE;
   return `Some trusted-device changes could not be applied yet. Kin will try them again as more changes arrive; if this keeps happening, ask a household Adult to review this device. ${lines.join(" ")}`;
 }

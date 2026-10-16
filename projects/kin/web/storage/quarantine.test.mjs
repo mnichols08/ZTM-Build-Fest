@@ -71,6 +71,7 @@ test("the review message names kept events and reasons in plain text", () => {
   assert.equal(lines.length, 2);
   assert.match(lines[0], /^000000ab0000… was not applied because it doesn't fit this device's household history yet \(tried 1 time\)\.$/);
   const message = quarantineMessage(quarantine);
+  assert.ok(!message.includes("tried"), "the live notice doesn't change with each retry");
   assert.ok(message.includes(hex(0xab).slice(0, 12)) && message.includes(hex(0xcd).slice(0, 12)));
   assert.ok(!/[\u0000-\u0008]/.test(message), "no raw bytes in the message");
   assert.equal(quarantineMessage([]), QUARANTINE_MESSAGE, "the existing message stays when there is nothing to show");
