@@ -133,3 +133,19 @@ test("cancel clears an invalid edit when the saved color is custom", async () =>
   await appearance.requestSave();
   assert.equal(appearance.dispatched.filter((event) => event.type === "kin:save-appearance").length, 1);
 });
+
+test("reset requests explicit Kin defaults and cancel clears that intent", async () => {
+  const appearance = new KinAppearance();
+  appearance.connectedCallback();
+  appearance.initialize(initial);
+
+  appearance.reset.listeners.click();
+  await appearance.requestSave();
+  assert.equal(appearance.dispatched.at(-1).detail.forceExplicit, true);
+
+  appearance.restoreSaved("Changes canceled.");
+  appearance.modeControls.get("dark").checked = true;
+  appearance.modeControls.get("dark").listeners.change();
+  await appearance.requestSave();
+  assert.equal(appearance.dispatched.at(-1).detail.forceExplicit, false);
+});

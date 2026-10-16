@@ -40,18 +40,18 @@ export function useHouseholdAppearance(owner = null) {
 
 // Preserve per-property inheritance when the editor submits its concrete
 // preview. Only groups that differ from the preview it started with become
-// personal overrides.
-export function personalAppearanceFromDraft(current, draft, baseline) {
+// personal overrides, unless an explicit reset pins every Kin default.
+export function personalAppearanceFromDraft(current, draft, baseline, { forceExplicit = false } = {}) {
   const next = current.version === 2
     ? structuredClone(current)
     : { ...structuredClone(current), version: 2 };
-  if (draft.mode !== baseline.mode) next.mode = draft.mode;
-  if (!sameColor(draft, baseline)) {
+  if (forceExplicit || draft.mode !== baseline.mode) next.mode = draft.mode;
+  if (forceExplicit || !sameColor(draft, baseline)) {
     next.colorSource = draft.colorSource;
     next.seed = draft.seed;
     next.manual = structuredClone(draft.manual);
   }
-  if (!sameImage(draft.image, baseline.image)) next.image = structuredClone(draft.image);
+  if (forceExplicit || !sameImage(draft.image, baseline.image)) next.image = structuredClone(draft.image);
   return next;
 }
 
