@@ -153,7 +153,7 @@ fn concurrent_note_update_and_archive_converge_with_archive_winning_in_both_devi
 }
 
 #[test]
-fn concurrent_note_archives_converge_but_sequential_rearchives_are_rejected() {
+fn concurrent_note_archives_converge_and_same_device_rearchives_are_rejected() {
     fn replay(first_device: u8, second_device: u8, reverse_input: bool) -> state::HouseholdState {
         let note_id = NoteId(id(8));
         let mut created = event(
@@ -210,12 +210,13 @@ fn concurrent_note_archives_converge_but_sequential_rearchives_are_rejected() {
     let mut later_archive = event(3, EventKind::NoteArchived { note_id });
     later_archive.logical_time = 3;
     later_archive.device_id = DeviceId(id(20));
-    assert!(state::rebuild(
+    let later = state::rebuild(
         &[created.clone(), archived.clone(), later_archive],
         0,
         crate::recurrence::CivilDate::from_encoded(20261005).unwrap(),
     )
-    .is_err());
+    .unwrap();
+    assert_eq!(later.notes[0].status, NoteStatus::Archived);
 
     archived.device_id = DeviceId(id(10));
     let mut same_device_archive = event(3, EventKind::NoteArchived { note_id });

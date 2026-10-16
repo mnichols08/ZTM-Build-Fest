@@ -44,14 +44,14 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 .ok_or(KinError::InvalidEvent)?;
             let routine = &r.routines[position];
             routine.cadence.validate_key(routine.created_on, *key)?;
+            if other_device_archived(r.routine_archive_events.get(routine_id), event) {
+                // Recorded as applied with no other effect (Replay::apply records it).
+                return Ok(());
+            }
             if routine.archived {
-                if !is_concurrent_terminal_conflict(
-                    r.routine_archives.get(routine_id).copied(),
-                    event,
-                ) {
-                    return Err(KinError::InvalidEvent);
-                }
-            } else if matches!(event.kind, EventKind::RoutineOccurrenceCompleted { .. }) {
+                return Err(KinError::InvalidEvent);
+            }
+            if matches!(event.kind, EventKind::RoutineOccurrenceCompleted { .. }) {
                 r.completed_periods.insert((*routine_id, *key));
             } else {
                 r.completed_periods.remove(&(*routine_id, *key));
@@ -68,10 +68,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 .ok_or(KinError::InvalidEvent)?;
             let routine = &mut r.routines[position];
             if routine.archived {
-                if !is_concurrent_terminal_conflict(
-                    r.routine_archives.get(routine_id).copied(),
-                    event,
-                ) {
+                if !archived_by_other_device(r.routine_archives.get(routine_id).copied(), event) {
                     return Err(KinError::InvalidEvent);
                 }
             } else {
@@ -99,6 +96,10 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 .iter_mut()
                 .find(|record| record.playbook_id == *playbook_id)
             {
+                if other_device_archived(r.playbook_archive_events.get(playbook_id), event) {
+                    // Recorded as applied with no other effect (Replay::apply records it).
+                    return Ok(());
+                }
                 if existing.archived {
                     return Err(KinError::InvalidEvent);
                 }

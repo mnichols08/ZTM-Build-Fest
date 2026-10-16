@@ -934,6 +934,9 @@ kin-household-defaults kin-appearance .appearance-follow { display: none; }
 .notes-section textarea { min-height: 120px; resize: vertical; }
 .notes-section ul { padding-inline-start: 0; list-style: none; }
 .notes-section > section > ul > li { padding: 12px 0; border-top: 1px solid var(--line); }
+.note-group { margin: 18px 0 4px; color: var(--ink); font-size: 17px; font-weight: 720; letter-spacing: -.015em; }
+.note-row h4 { margin: 0; color: var(--ink); font-size: 15px; font-weight: 640; }
+.notes-section .note-row { padding: 12px 0; border-top: 1px solid var(--line); }
 .note-row { min-width: 0; overflow-wrap: anywhere; border-radius: 8px; }
 .note-row button { margin-inline-end: 8px; }
 .note-body { white-space: pre-wrap; overflow-wrap: anywhere; }

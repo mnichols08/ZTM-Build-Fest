@@ -26,11 +26,14 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 .copied()
                 .ok_or(KinError::InvalidEvent)?;
             let handoff = &mut r.handoffs[position];
+            if matches!(event.kind, EventKind::HandoffAcknowledged { .. })
+                && other_device_archived(r.handoff_archive_events.get(handoff_id), event)
+            {
+                // Recorded as applied with no other effect (Replay::apply records it).
+                return Ok(());
+            }
             if handoff.status == HandoffStatus::Archived {
-                if !is_concurrent_terminal_conflict(
-                    r.handoff_archives.get(handoff_id).copied(),
-                    event,
-                ) {
+                if !archived_by_other_device(r.handoff_archives.get(handoff_id).copied(), event) {
                     return Err(KinError::InvalidEvent);
                 }
             } else if matches!(event.kind, EventKind::HandoffArchived { .. }) {
@@ -63,8 +66,14 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 .copied()
                 .ok_or(KinError::InvalidEvent)?;
             let talk = &mut r.talks[position];
+            if !matches!(event.kind, EventKind::TalkArchived { .. })
+                && other_device_archived(r.talk_archive_events.get(talk_id), event)
+            {
+                // Recorded as applied with no other effect (Replay::apply records it).
+                return Ok(());
+            }
             if talk.status == TalkStatus::Archived {
-                if !is_concurrent_terminal_conflict(r.talk_archives.get(talk_id).copied(), event) {
+                if !archived_by_other_device(r.talk_archives.get(talk_id).copied(), event) {
                     return Err(KinError::InvalidEvent);
                 }
             } else if matches!(event.kind, EventKind::TalkArchived { .. }) {

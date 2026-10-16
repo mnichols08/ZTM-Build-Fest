@@ -100,6 +100,8 @@ This does not override a person's right to request data deletion. Physical log c
 
 A deterministic v8 total ordering makes synchronized projections reproducible; it does not decide which conflicting human intent wins. The local v0.1-v0.8 stream remains append-ordered. v8 sorts a copy for state replay while preserving original local-arrival order for catch-up boundaries. Equal-time concurrent archive/mutation behavior is documented in the v0.9 release contract; no generic CRDT or wall-clock LWW is used.
 
+A change after another device's archive or completion is kept in history and has no effect. The archived or completed entity stays terminal: the later edit does not reopen it and does not fail replay. Creating a note in an area that another device archived at the same or an earlier logical time keeps the note with no area. A device's own later mutation of something it archived stays invalid.
+
 ## v0.4.0 Talk
 
 HouseholdState adds talks: Vec<TalkState> beside items and handoffs. Each is ordered by its original creation event. TalkState has talk_id, text, created_by, created_at and status; no duplicated resolution metadata. Archived tombstones stay in projection/history but are hidden in normal lists. See [V0.4.0](V0.4.0.md).
@@ -124,6 +126,8 @@ parent Item's status. Stable ordering follows event replay order. Capacity is
 measured across the Step history, including archived entries. In distributed
 replay, a same-logical-time archive from another device dominates Step
 completion/reopening; a same-time parent Item archive suppresses Step mutation.
+A later Step change from another device, after another device archived or
+completed the Item, is kept in history and has no effect.
 Older event histories remain valid and contain no Steps.
 
 ## v0.18.0 Richer Routine Scheduling

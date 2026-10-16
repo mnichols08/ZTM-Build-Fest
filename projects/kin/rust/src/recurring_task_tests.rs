@@ -324,23 +324,23 @@ fn concurrent_schedule_changes_at_one_logical_time_keep_both_replacements_in_any
 }
 
 #[test]
-fn concurrent_schedule_changes_at_different_logical_times_reject_the_merge_in_any_order() {
+fn concurrent_schedule_changes_at_different_logical_times_keep_both_replacements() {
     let base = create(Cadence::Daily, 20261012);
     let a = change_schedule(&base, RoutineId([6; 16]), Cadence::Weekly, 1, 2);
     // Device B did more offline work first, so its archive is later.
     let b = change_schedule(&base, RoutineId([7; 16]), Cadence::Weekdays, 2, 4);
-    for events in [
+    let orders = [
         [base.clone(), a.clone(), b.clone()].concat(),
         [base.clone(), b.clone(), a.clone()].concat(),
-    ] {
-        // The second archive of one Routine is invalid outside the equal
-        // logical-time window, so a full replay refuses the set as a whole:
-        // nothing is partially applied. Sync quarantines that remote event.
-        assert_eq!(
-            rebuild(&events, AS_OF, day(20261014)).unwrap_err(),
-            KinError::InvalidEvent
-        );
+    ];
+    let first = project(&orders[0], 20261014);
+    for events in &orders {
+        assert_eq!(project(events, 20261014), first);
     }
+    let routine = |id: RoutineId| first.routines.iter().find(|r| r.routine_id == id).unwrap();
+    assert!(routine(ROUTINE).archived);
+    assert!(!routine(RoutineId([6; 16])).archived);
+    assert!(!routine(RoutineId([7; 16])).archived);
     // Each device's own history still replays on its own.
     for own in [&a, &b] {
         let state = project(&[base.clone(), own.to_vec()].concat(), 20261014);

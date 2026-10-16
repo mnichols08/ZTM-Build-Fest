@@ -77,3 +77,6 @@ mod section_tests;
 
 #[cfg(test)]
 mod history_tests;
+
+#[cfg(test)]
+mod convergence_tests;
