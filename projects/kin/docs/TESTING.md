@@ -336,7 +336,7 @@ setup still starts with the recovery key.
 
 From either the repository root or `projects/kin/`, run `npm run verify
 --prefix projects/kin` at the repository root or `npm run verify` inside Kin.
-The gate requires Node `>=22.13.0`, the active pinned Rust toolchain from
+The gate requires Node `>=24.16.0`, the active pinned Rust toolchain from
 `rust-toolchain.toml`, Cargo, Git, Python `>=3.11` for the existing version
 check, and the `wasm32-unknown-unknown` target. It runs formatting,
 warnings-denied Clippy, version checks, Kin-only `git diff --check`, every
