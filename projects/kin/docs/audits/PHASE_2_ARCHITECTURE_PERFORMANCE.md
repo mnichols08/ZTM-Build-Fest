@@ -91,9 +91,13 @@ loop turn whenever the relay reports `hasMore` and the committed cursor moved
 forward. Continuation passes perform only pull, verify, commit and cursor
 advance. Status, device-directory, binding and bootstrap work is not repeated;
 pending pushes and attachment reconciliation run after the final page. Each
-pass publishes at most one projection update. Stop, lock, errors and terminal
-states end the chain, while relay throttling remains a quiet “Catching up…”
-state and resumes after its hint or a bounded fallback delay.
+pass publishes at most one projection update. A catch-up lasting more than 30
+seconds discards that cached authorization context for one full pass, refreshing
+status, the trusted-device directory and identity bindings before continuing
+with a fresh context. The request budget remains in force during that refresh.
+Stop, lock, errors and terminal states end the chain, while relay throttling
+remains a quiet “Catching up…” state and resumes after its hint or a bounded
+fallback delay.
 
 The 200-request client window stays below the relay's 256-request limit. It
 does not delay the 1,000-event fixture and makes the honest 10,000-event

@@ -108,6 +108,7 @@ const HIDDEN_CONTINUATION_DELAY_MS = 250;
 const REQUEST_BUDGET = 200;
 const REQUEST_WINDOW_MS = 60_000;
 const RATE_LIMIT_RETRY_MS = 5_000;
+const CATCH_UP_CONTEXT_MAX_AGE_MS = 30_000;
 const KEY_GRANT_TTL_MS = 10 * 60_000;
 
 export class SyncCoordinator {
@@ -271,6 +272,8 @@ export class SyncCoordinator {
 
   async runOnce() {
     this.keyStore.vault.assertUnlocked();
+    if (this.catchUp && this.now() - this.catchUp.startedAt > CATCH_UP_CONTEXT_MAX_AGE_MS)
+      this.catchUp = null;
     if (this.catchUp) return this.pullCatchUpPages(this.catchUp);
     if (this.deviceKeys.pendingTransition) {
       const device = await this.keyStore.completePendingTransition(this.identity.deviceId, { signal: this.abortController.signal });
@@ -399,7 +402,7 @@ export class SyncCoordinator {
 
     if (trustAuthority) await this.provisionMemberHistory(status.currentEpoch, devices);
     await this.pushIdentityBindings();
-    this.catchUp = { status, devices, remoteBindings };
+    this.catchUp = { status, devices, remoteBindings, startedAt: this.now() };
     return this.pullCatchUpPages(this.catchUp);
   }
 

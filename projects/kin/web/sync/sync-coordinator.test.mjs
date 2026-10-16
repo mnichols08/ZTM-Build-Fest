@@ -18,6 +18,7 @@ function waitFor(check, timeout = 500) {
 }
 
 function catchUpHarness(pages) {
+  let now = 0;
   let cursor = CURSORS[0];
   let pageIndex = 0;
   let bootstrapCalls = 0;
@@ -41,14 +42,67 @@ function catchUpHarness(pages) {
     engine: {},
     identity: { householdId: "11".repeat(16), deviceId: "device" },
     onState: (state) => states.push(state),
+    now: () => now,
   });
   coordinator.keyStore = { vault: { assertUnlocked() {} }, getEpoch: async () => null, close() {} };
-  coordinator.catchUp = { status: { currentEpoch: 1 }, devices: [], remoteBindings: [] };
+  coordinator.catchUp = { status: { currentEpoch: 1 }, devices: [], remoteBindings: [], startedAt: now };
   coordinator.request = async () => encodeEventPage(pages[Math.min(pageIndex++, pages.length - 1)]);
   coordinator.acknowledgeRemoteDuplicateEvents = async () => {};
   coordinator.pushPendingEvents = async () => {};
   return { coordinator, states, calls: () => ({ bootstrapCalls, projectionCalls, pageIndex }) };
 }
+
+test("long catch-ups refresh authorization context after thirty seconds", async () => {
+  let now = 0;
+  let statusCalls = 0;
+  let directoryCalls = 0;
+  let bindingCalls = 0;
+  const pulled = [];
+  const store = {
+    async requeueAfterRelayReset() {},
+    async updateSyncServerState() {},
+    async getSyncBootstrap() { return { events: [], maxLogicalTime: 0n }; },
+    async getSyncState() { return { initialized: true }; },
+  };
+  const coordinator = new SyncCoordinator({
+    store,
+    engine: {},
+    identity: { householdId: "11".repeat(16), memberId: "22".repeat(16), deviceId: "device" },
+    now: () => now,
+  });
+  coordinator.keyStore = {
+    vault: { assertUnlocked() {} },
+    async getEpoch() { return { householdKey: {} }; },
+    close() {},
+  };
+  coordinator.deviceKeys = { pendingTransition: false, fingerprint: "fingerprint" };
+  coordinator.request = async (path) => {
+    assert.equal(path, "/api/sync/status");
+    statusCalls += 1;
+    return { enabled: true, currentEpoch: 1, eventCount: 1, memberKind: "limited", latestCursor: CURSORS[0] };
+  };
+  coordinator.loadDeviceDirectory = async () => {
+    directoryCalls += 1;
+    return [{ deviceId: "device", historyFromEpoch: 1, fingerprint: "fingerprint" }];
+  };
+  coordinator.receiveProvisioning = async () => {};
+  coordinator.fetchBindings = async () => { bindingCalls += 1; return []; };
+  coordinator.pushIdentityBindings = async () => {};
+  coordinator.pullCatchUpPages = async (context) => { pulled.push(context); return { hasMore: true, advanced: true }; };
+  const original = { status: { currentEpoch: 1 }, devices: [], remoteBindings: [], startedAt: 0 };
+  coordinator.catchUp = original;
+
+  now = 30_000;
+  await coordinator.runOnce();
+  assert.equal(pulled.at(-1), original, "the cached context is reused through thirty seconds");
+  assert.deepEqual([statusCalls, directoryCalls, bindingCalls], [0, 0, 0]);
+
+  now = 30_001;
+  await coordinator.runOnce();
+  assert.notEqual(pulled.at(-1), original, "an older context is rebuilt before another pull");
+  assert.equal(pulled.at(-1).startedAt, now);
+  assert.deepEqual([statusCalls, directoryCalls, bindingCalls], [2, 1, 1]);
+});
 
 test("empty sync polls do not publish a projection or snapshot boundary", () => {
   const state = { items: [] };
