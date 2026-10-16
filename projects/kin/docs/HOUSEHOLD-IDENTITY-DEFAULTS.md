@@ -18,8 +18,11 @@ An admin can make another active Adult an admin or remove admin status, using th
 | Recover a non-admin member, manage own devices, key provisioning and rotation | Any Adult | Any Adult |
 | Change shared household settings | Admin | Nobody (fails closed) |
 | Grant or remove admin status | Admin | Nobody (fails closed) |
+| Delete an attachment's encrypted copy from the relay | Its uploader or any Adult | Its uploader or any Adult |
 
 Settings reads require an active household member on a trusted device. Writes require that same authorization plus admin status. Removal, expiry, device revocation, deletion state, and session expiry therefore fail before the admin check.
+
+Schema migration 9 records which member uploaded each attachment. Attachments stored before it have no recorded uploader, so only an Adult can delete them. The relay audits each deletion as `attachment_deleted` (attachment, member and device IDs; no content).
 
 Schema migration 8 makes each recorded founder-owner an admin. It deliberately leaves ownerless legacy households without one. Kin does not infer an admin from member ordering, activity, device possession, or adult status. Those households keep the earlier Adult-level management so they remain usable, but shared-setting writes and admin grants fail closed. Claiming admin status in a legacy household is deferred for explicit security review.
 

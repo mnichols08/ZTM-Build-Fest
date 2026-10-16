@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { DurableConflictError, MAX_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "./durable-store.mjs";
-import { canParticipate, isHouseholdAdmin, PairingError, requireTrustAuthority } from "./pairing-service.mjs";
+import { canManageTrust, canParticipate, isHouseholdAdmin, PairingError, requireTrustAuthority } from "./pairing-service.mjs";
 import {
   canonicalEventEnvelope,
   canonicalJson,
@@ -322,9 +322,9 @@ export class EncryptedSyncService {
       const total = householdRows.reduce((sum, [, row]) => sum + row.ciphertext.length, 0);
       if (householdRows.length >= MAX_HOUSEHOLD_ATTACHMENTS || total + ciphertext.length > MAX_HOUSEHOLD_ATTACHMENT_BYTES)
         throw new PairingError("attachment_limit", "This household reached its encrypted attachment limit.", 409);
-      this.attachments.set(`${auth.household.id}:${attachmentId}`, { attachmentId, keyEpoch, ciphertext: Buffer.from(ciphertext), size: ciphertext.length, digest });
+      this.attachments.set(`${auth.household.id}:${attachmentId}`, { attachmentId, keyEpoch, ciphertext: Buffer.from(ciphertext), size: ciphertext.length, digest, uploaderMemberId: auth.member.id });
     } else {
-      this.store.putAttachment(auth.household.id, attachmentId, keyEpoch, ciphertext, digest, this.now());
+      this.store.putAttachment(auth.household.id, attachmentId, keyEpoch, ciphertext, digest, this.now(), auth.member.id);
     }
     return { accepted: true, size: ciphertext.length, digest };
   }
@@ -353,8 +353,19 @@ export class EncryptedSyncService {
     const auth = this.authorize(sessionToken);
     this.attachmentState(auth);
     if (!isSyncId(attachmentId)) throw new PairingError("attachment_invalid", "That attachment could not be found.", 400);
+    const key = `${auth.household.id}:${attachmentId}`;
+    const existing = this.store
+      ? this.store.attachmentUploader(auth.household.id, attachmentId)
+      : this.attachments.has(key) ? { uploaderMemberId: this.attachments.get(key).uploaderMemberId ?? null } : null;
+    if (!existing) return { removed: true };
+    // The uploader or an Adult may delete encrypted attachment bytes.
+    // Attachments stored before uploaders were recorded are Adult-only.
+    const uploader = existing.uploaderMemberId !== null && existing.uploaderMemberId === auth.member.id;
+    if (!uploader && !canManageTrust(auth.member, this.now()))
+      throw new PairingError("attachment_delete_forbidden", "Only the person who added this attachment or an Adult can delete it.", 403);
     if (this.store) this.store.removeAttachment(auth.household.id, attachmentId);
-    else this.attachments.delete(`${auth.household.id}:${attachmentId}`);
+    else this.attachments.delete(key);
+    this.pairingService.audit("attachment_deleted", { householdId: auth.household.id, attachmentId, memberId: auth.member.id, deviceId: auth.device.id });
     return { removed: true };
   }
 
