@@ -32,7 +32,7 @@ jobs:
           node-version: 22.13.0
       - name: Install pinned Rust and WASM target
         shell: pwsh
-        run: rustup toolchain install 1.93.0 --profile minimal --target wasm32-unknown-unknown
+        run: rustup toolchain install 1.93.0 --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
       - name: Install Kin dependencies
         working-directory: projects/kin
         run: npm ci
