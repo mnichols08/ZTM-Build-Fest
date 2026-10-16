@@ -27,6 +27,11 @@ None confirmed.
 Area: Documentation claims / Roadmap reconciliation
 Severity: POLISH
 
+**Resolved 2026-10-16:** The roadmap and current-version documents now identify
+v0.47.0 as the implementation candidate, preserve v0.42.x–v0.45.x as
+unactivated planning contracts, and distinguish historical targets from current
+stabilization. The reproduction below is retained as the original audit record.
+
 **Reproduction:** Open `docs/ROADMAP.md`. Its first line still says the v0.35.0 candidate is on `kin-v0.35-more-adults`, and the diagram jumps from v0.27–v0.40 to later proposals without listing v0.28–v0.30 or v0.36–v0.40 individually. Compare with `README.md`, `CHANGELOG.md`, and `docs/releases/V0.40.1.md`, which identify v0.40.1 as the current candidate and v0.40 as the final planned feature line.
 
 **Expected:** A reader can identify the current implementation candidate and understand which later release documents remain proposals.

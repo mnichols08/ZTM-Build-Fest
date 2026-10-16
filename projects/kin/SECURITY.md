@@ -1,10 +1,23 @@
 # Security Policy
 
-**Current security status:** The last published release is v0.10.3, an incubation prototype with encrypted local household storage, recovery/optional-PRF unlock, journalled root replacement, encrypted archives, passkey-authenticated pairing and client-encrypted sync. The unreleased v0.11.7 implementation candidate adds durable identity/relay storage, an exclusive single-process lock, and verified offline backup/restore. It remains unaudited and is not production-certified. Persistent service databases and backups contain identity/routing metadata and encrypted envelopes; they do not contain household plaintext or content keys. Restore can roll back authorization/revocation state. Encryption cannot protect a compromised unlocked runtime, origin, privileged extension or OS, and rotation cannot erase data, keys or archives already copied. See [THREAT-MODEL](docs/THREAT-MODEL.md), [CRYPTOGRAPHY](docs/CRYPTOGRAPHY.md), [V0.10.0](docs/V0.10.0.md) and [V0.11.0](docs/V0.11.0.md).
+**Current security status:** The last published release is v0.10.3. The current
+unreleased v0.47.0 candidate includes encrypted local household storage,
+recovery/optional-PRF unlock, journalled root replacement, encrypted archives,
+passkey-authenticated pairing, client-encrypted sync, durable identity/relay
+storage, recorded household-admin authority, and encrypted shared household
+settings. It is not independently audited or production-certified. Persistent
+service databases and backups contain identity/routing metadata, authorization
+state, encrypted settings and encrypted envelopes; they do not contain
+household plaintext or content keys. Restore can roll back
+authorization/revocation state. Encryption cannot protect a compromised
+unlocked runtime, origin, privileged extension or OS, and rotation cannot erase
+data, keys or archives already copied. See [THREAT-MODEL](docs/THREAT-MODEL.md),
+[CRYPTOGRAPHY](docs/CRYPTOGRAPHY.md), [VERSIONING](docs/VERSIONING.md), and the
+[v0.47 contract](docs/HOUSEHOLD-IDENTITY-DEFAULTS.md).
 
 ## Supported versions
 
-The v0.35.1 corrective candidate requires fresh passkey authentication for
+The earlier v0.35.1 corrective candidate requires fresh passkey authentication for
 self-removal as well as removing another adult. Self-removal now requires fresh
 passkey authentication before membership/device revocation and access-change
 rotation. Session cookies alone cannot authorize leave. See the
@@ -23,6 +36,14 @@ Reports should include a concise impact description, affected version/commit, sa
 
 ## Scope and response
 
-Implemented security-sensitive areas include safe rendering, WASM protocol/archive parsing and memory ownership, encrypted IndexedDB migration, recovery/PRF root wrapping, WebAuthn, device authorization, encrypted archive import, lock cancellation, static shell caching, and sync authorization/relay. The v0.11 candidate durably stores server identity/relay metadata and ciphertext, but sessions and in-progress ceremonies remain ephemeral. A separate server backup is needed to restore service authority; a local encrypted archive restores local history only. Report issues against behavior that actually exists.
+Implemented security-sensitive areas include safe rendering, WASM
+protocol/archive parsing and memory ownership, encrypted IndexedDB migration,
+recovery/PRF root wrapping, WebAuthn, device and household-admin authorization,
+encrypted archive import, lock cancellation, static shell caching, shared
+settings encryption, and sync authorization/relay. Server identity/relay
+metadata and ciphertext are durable, but sessions and in-progress ceremonies
+remain ephemeral. A separate server backup is needed to restore service
+authority; a local encrypted archive restores local history only. Report issues
+against behavior that actually exists.
 
 Maintainers will acknowledge and assess reports when available, coordinate a fix and disclosure where applicable, and avoid publishing sensitive details before affected users can reasonably respond. No response-time or remediation guarantee is made.

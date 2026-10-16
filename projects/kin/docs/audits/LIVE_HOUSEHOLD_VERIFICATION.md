@@ -9,6 +9,11 @@ below were re-executed against head `db086ba` (hardening commit on `6d04c10`).
 B-002/P-001 key-rotation recovery. No version bump, archive format, encryption
 format, package-signature format, or authorization-policy change.
 
+> **2026-10-16 follow-up:** This document preserves the CI state observed on
+> PR #37. Kin now has an active repository-root verification workflow. Statements
+> below that CI was not configured remain historical evidence for that earlier
+> head, not the current repository state.
+
 ## Summary
 
 The post-v0.40 audit left household admission, revocation, expiry, restore, and
