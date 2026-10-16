@@ -102,8 +102,8 @@ export class AppearanceController {
       const result = await this.app.syncCoordinator.loadHouseholdSettings();
       this.ctx.session.assertCurrentSession(session);
       if (result.value && (this.app.householdSettings?.revision ?? -1) <= result.value.revision) this.app.householdSettings = result.value;
-      this.app.householdDefaults.initialize({ ...result, value: this.app.householdSettings });
-      this.ctx.appearance.applyEffectiveAppearance();
+      const draftPreserved = this.app.householdDefaults.initialize({ ...result, value: this.app.householdSettings });
+      if (!draftPreserved) this.ctx.appearance.applyEffectiveAppearance();
     } catch { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded."); }
   }
   async restoreCachedHouseholdDefaults(identity, session = this.ctx.session.captureSession()) {
