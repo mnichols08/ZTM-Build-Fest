@@ -103,6 +103,7 @@ function sameMembershipRecord(left, right) {
 
 const MAX_PUSH_BATCH = 20;
 const MAX_PULL_PASSES = 5;
+const CONTINUATION_DELAY_MS = 0;
 const KEY_GRANT_TTL_MS = 10 * 60_000;
 
 export class SyncCoordinator {
@@ -118,6 +119,7 @@ export class SyncCoordinator {
     this.keyStore = null;
     this.deviceKeys = null;
     this.timer = null;
+    this.continuationTimer = null;
     this.running = null;
     this.stopped = false;
     this.terminal = false;
@@ -155,6 +157,9 @@ export class SyncCoordinator {
     if (this.stopped || this.terminal || !this.identity) return;
     if (this.running) return this.running;
     this.running = this.runOnce()
+      .then((hasMore) => {
+        if (hasMore) this.scheduleContinuation();
+      })
       .catch(async (error) => {
         if (this.stopped) return;
         let message = error.message || "Device sync is paused.";
@@ -217,6 +222,16 @@ export class SyncCoordinator {
         this.running = null;
       });
     return this.running;
+  }
+
+  scheduleContinuation() {
+    if (this.stopped || this.terminal || this.continuationTimer !== null) return;
+    // Yield between bounded pull groups so rendering, input and stop requests
+    // are serviced while a newly paired device catches up on relay history.
+    this.continuationTimer = setTimeout(() => {
+      this.continuationTimer = null;
+      void this.syncNow();
+    }, CONTINUATION_DELAY_MS);
   }
 
   async runOnce() {
@@ -445,6 +460,7 @@ export class SyncCoordinator {
         ? "Sync will continue in the background."
         : "Device sync is up to date.",
     });
+    return hasMore;
   }
 
   async loadDeviceDirectory() {
@@ -950,6 +966,8 @@ export class SyncCoordinator {
     this.abortController.abort();
     clearInterval(this.timer);
     this.timer = null;
+    clearTimeout(this.continuationTimer);
+    this.continuationTimer = null;
     this.keyStore?.close();
     this.keyStore = null;
     this.deviceKeys = null;

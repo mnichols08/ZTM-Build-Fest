@@ -99,6 +99,59 @@ test("unreachable household sync reports a plain paused state without changing s
   }
 });
 
+test("cold sync continues bounded relay history on later event-loop turns", async () => {
+  const coordinator = new SyncCoordinator({
+    store: {},
+    engine: {},
+    identity: { deviceId: "device" },
+  });
+  let runs = 0;
+  let finish;
+  const finished = new Promise((resolve) => {
+    finish = resolve;
+  });
+  coordinator.runOnce = async () => {
+    runs += 1;
+    if (runs === 3) finish();
+    return runs < 3;
+  };
+  try {
+    await coordinator.syncNow();
+    assert.equal(runs, 1, "the first bounded group completes before continuation");
+    let timeout;
+    try {
+      await Promise.race([
+        finished,
+        new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("sync continuation timed out")), 500);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeout);
+    }
+    assert.equal(runs, 3);
+  } finally {
+    coordinator.stop();
+  }
+});
+
+test("stopping sync cancels a queued cold-history continuation", async () => {
+  const coordinator = new SyncCoordinator({
+    store: {},
+    engine: {},
+    identity: { deviceId: "device" },
+  });
+  let runs = 0;
+  coordinator.runOnce = async () => {
+    runs += 1;
+    return true;
+  };
+  await coordinator.syncNow();
+  coordinator.stop();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(runs, 1);
+});
+
 test("only Adult sessions attempt epoch rotation and key provisioning during sync", () => {
   assert.equal(memberHasTrustAuthority({ memberKind: "adult" }), true);
   assert.equal(memberHasTrustAuthority({ memberKind: "limited" }), false);

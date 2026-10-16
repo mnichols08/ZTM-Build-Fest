@@ -86,6 +86,21 @@ Browser integration must still measure IndexedDB commit and confirm that
 foreground interaction, pause/stop and authorization failures remain
 responsive.
 
+### Bounded continuation result
+
+The coordinator now schedules another capped five-page pass on the next event
+loop turn whenever the relay reports `hasMore`. The ordinary five-second poll,
+page size, protocol, verification, storage commits and 100-event per-pass bound
+are unchanged. Stop and terminal states cancel or suppress queued continuation.
+
+For the measured fixtures, this removes 45 seconds of policy delay at 1,000
+events and 495 seconds at 10,000 events. The resulting lower bound is the
+measured 0.17 seconds and 1.49 seconds of active work plus event-loop,
+IndexedDB and real-network time. The existing per-pass bound remains in place;
+unit coverage proves continuation is deferred and canceled by `stop()`.
+Cross-network browser and physical-device measurements remain required before
+treating those lower bounds as end-to-end results.
+
 ## Archive restoration on constrained hardware
 
 Command:
@@ -117,8 +132,8 @@ promotion, canonical validation or archive compatibility.
 
 1. Prototype native fieldset disabling because the measured main-thread cost is
    material.
-2. Prototype immediate bounded relay continuation because the measured cadence,
-   not the protocol or crypto, dominates cold synchronization.
+2. Use immediate bounded relay continuation because the measured cadence, not
+   the protocol or crypto, dominates cold synchronization.
 3. Do not redesign archive restoration yet. Carry its constrained maximum as a
    known release risk into physical-device acceptance.
 4. Do not change persistent formats, Rust/WASM ownership, relay storage,
