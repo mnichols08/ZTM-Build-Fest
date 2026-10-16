@@ -2,7 +2,7 @@
 
 **Measured:** 2026-10-16  
 **Candidate:** v0.47.0 plus the reliability landing stack  
-**Environment:** Windows x64, Node 22.13.0, Edge 155.0.4283.45
+**Environment:** Windows x64, Node 22.21.1, Edge 155.0.4283.45
 
 These measurements decide whether narrowly scoped architecture work is
 justified. They are not production certification or a substitute for the
@@ -66,25 +66,46 @@ node scripts/relay-performance.mjs --json target/phase2-relay.json
 ```
 
 The harness uses the real process-local relay, its 20-event binary pages, Web
-Crypto signature verification/decryption and one release-WASM replay. It
-excludes network latency and IndexedDB commit, so its active result is a lower
-bound. Fixture construction is reported but excluded. The cadence lower bound
-adds the production coordinator policy: at most five pages per run followed by
-the five-second interval.
+Crypto signature verification/decryption, the coordinator's conservative
+200-request sliding-window budget and one release-WASM replay. Pulls no longer
+clear the relay's rate buckets. Fixture construction still clears buckets only
+between source-device push batches, because the fixture represents history
+accumulated across earlier rate windows; its time is reported but excluded.
 
-| History | Pages | Wire bytes | Relay + wire + crypto | WASM replay | Active total | Current cadence floor |
-|---|---:|---:|---:|---:|---:|---:|
-| 1,000 events | 50 | 306,893 | 160.6 ms | 12.3 ms | 172.9 ms | 45.17 s |
-| 10,000 events | 500 | 3,078,894 | 1,432.9 ms | 56.6 ms | 1,489.5 ms | 496.49 s |
+| History | Pages | Wire bytes | Pull wall clock | WASM replay | Catch-up wall clock | Budget wait | Peak requests/min |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 1,000 events | 50 | 306,893 | 166.5 ms | 13.1 ms | 179.6 ms | 0 ms | 50 |
+| 10,000 events | 500 | 3,078,894 | 120.54 s | 82.7 ms | 120.62 s | 118.32 s | 200 |
 
-The material cost is scheduling: the current policy adds 45 seconds at a
-realistic history and 8 minutes 15 seconds at the local maximum even on a
-zero-latency relay. Crypto and replay do not justify a rewrite. A bounded,
-event-loop-yielding continuation while `hasMore` is true is justified; page
-size, envelope format, relay storage and cryptography should remain unchanged.
-Browser integration must still measure IndexedDB commit and confirm that
-foreground interaction, pause/stop and authorization failures remain
-responsive.
+The earlier 45.17-second and 496.49-second cadence claims were not valid
+production measurements: the harness cleared `rateBuckets` before every pull
+and then added a modeled five-second delay. The corrected wall-clock figures
+above exercise the rate policy instead. Crypto and replay still do not justify
+a protocol rewrite; at the local maximum, the deliberate request budget is the
+dominant cost.
+
+### Bounded continuation result
+
+The coordinator now schedules another capped five-page pass on the next event
+loop turn whenever the relay reports `hasMore` and the committed cursor moved
+forward. Continuation passes perform only pull, verify, commit and cursor
+advance. Status, device-directory, binding and bootstrap work is not repeated;
+pending pushes and attachment reconciliation run after the final page. Each
+pass publishes at most one projection update. A catch-up lasting more than 30
+seconds discards that cached authorization context for one full pass, refreshing
+status, the trusted-device directory and identity bindings before continuing
+with a fresh context. The request budget remains in force during that refresh.
+Stop, lock, errors and terminal states end the chain, while relay throttling
+remains a quiet “Catching up…” state and resumes after its hint or a bounded
+fallback delay.
+
+The 200-request client window stays below the relay's 256-request limit. It
+does not delay the 1,000-event fixture and makes the honest 10,000-event
+process-local lower bound about 120.62 seconds rather than the previously
+claimed 1.49 seconds. These measurements include the budget wait and exclude
+only fixture construction, real network transport and IndexedDB commit.
+Cross-network browser and physical-device measurements remain required before
+treating them as end-to-end results.
 
 ## Archive restoration on constrained hardware
 
@@ -117,8 +138,8 @@ promotion, canonical validation or archive compatibility.
 
 1. Prototype native fieldset disabling because the measured main-thread cost is
    material.
-2. Prototype immediate bounded relay continuation because the measured cadence,
-   not the protocol or crypto, dominates cold synchronization.
+2. Use immediate bounded relay continuation because the measured cadence, not
+   the protocol or crypto, dominates cold synchronization.
 3. Do not redesign archive restoration yet. Carry its constrained maximum as a
    known release risk into physical-device acceptance.
 4. Do not change persistent formats, Rust/WASM ownership, relay storage,
