@@ -265,6 +265,11 @@ export async function handoffRegressions() {
       return request;
     };
     try {
+      // Start the direct controller call in the same turn that observes the
+      // app idle. Counting and installing the failure hook above both yield,
+      // so a timer refresh may otherwise claim the busy guard between the
+      // earlier idle check and this injected operation.
+      await idle();
       await app.ctx.conversations.handleHandoffAction(type, target);
     } finally {
       IDBObjectStore.prototype.add = originalAdd;
