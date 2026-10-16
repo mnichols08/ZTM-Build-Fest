@@ -98,3 +98,20 @@ test("rejects calendar files above the 16 MiB output limit", () => {
     status: "active",
   }], exportedAt), /16 MiB file limit/);
 });
+
+test("drops control characters and turns Unicode line breaks into escaped newlines (#162)", () => {
+  const controls = ["\u0000", "\u0001", "\u0005", "\u0008", "\u000B", "\u000C", "\u000E", "\u001B", "\u001F", "\u007F", "\u0080", "\u009F"];
+  const contents = createCalendarExport([
+    {
+      itemId: "controls",
+      text: `Bell${controls.join("")}tab\there\u0085next\u2028line\u2029para`,
+      planningDate: 20261005,
+      status: "active",
+    },
+  ], exportedAt);
+  const summary = contents.split("\r\n").find((line) => line.startsWith("SUMMARY:"));
+  assert.equal(summary, "SUMMARY:Belltab\there\\nnext\\nline\\npara");
+  // Outside the CRLF line endings, no C0/C1 control other than tab remains.
+  const body = contents.replaceAll("\r\n", "");
+  assert.equal(/[\u0000-\u0008\u000A-\u001F\u007F-\u009F\u2028\u2029]/.test(body), false);
+});

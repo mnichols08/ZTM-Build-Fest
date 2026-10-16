@@ -78,10 +78,14 @@ function formatCivilDate(value) {
   return date;
 }
 
+// RFC 5545 TEXT allows no control characters except horizontal tab. Line
+// breaks (including NEL and the Unicode line/paragraph separators) become an
+// escaped newline; every other C0/C1 control and DEL is dropped.
 function escapeText(value) {
   return value
     .replaceAll("\\", "\\\\")
-    .replace(/\r\n|\r|\n/g, "\\n")
+    .replace(/\r\n|[\r\n\u0085\u2028\u2029]/g, "\\n")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "")
     .replaceAll(",", "\\,")
     .replaceAll(";", "\\;");
 }
