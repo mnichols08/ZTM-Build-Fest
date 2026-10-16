@@ -94,6 +94,35 @@ test("long note matches show a bounded excerpt around the match", () => {
   assert.equal(results[0].context, "Matched note text");
 });
 
+test("excerpts stay aligned when lowercase expansion changes string length", () => {
+  const { results } = searchHouseholdRecords({
+    notes: [{ noteId: "unicode-note", title: "Unicode", body: `İ${"A".repeat(200)} needle`, archived: false }],
+    query: "needle",
+  });
+
+  assert.equal(results.length, 1);
+  assert.match(results[0].detail, /^İA+…$/);
+  assert.ok(results[0].detail.length <= 161);
+});
+
+test("matching Reference Record field details are bounded", () => {
+  const prefix = "A".repeat(240);
+  const suffix = "Z".repeat(240);
+  const { results } = searchHouseholdRecords({
+    referenceRecords: [{
+      recordId: "long-reference",
+      title: "Appliance",
+      archived: false,
+      fields: [{ label: "Manual", value: `${prefix} needle ${suffix}` }],
+    }],
+    query: "needle",
+  });
+
+  assert.equal(results.length, 1);
+  assert.match(results[0].detail, /^….*needle.*…$/);
+  assert.ok(results[0].detail.length <= 162);
+});
+
 test("search includes matching active checklist Steps and excludes archived records", () => {
   const { results, totalCount } = searchHouseholdRecords({
     ...household,

@@ -19,7 +19,8 @@ function planningDateLabel(value) {
 function matchingExcerpt(value, query, maximum = 160) {
   if (!matches(value, query)) return "";
   if (value.length <= maximum) return value;
-  const index = value.toLowerCase().indexOf(query);
+  const folded = value.toLowerCase();
+  const index = folded.length === value.length ? folded.indexOf(query) : 0;
   const room = Math.max(0, maximum - query.length);
   let start = Math.max(0, index - Math.floor(room / 2));
   let end = Math.min(value.length, start + maximum);
@@ -142,7 +143,10 @@ export function searchHouseholdRecords({
     const titleMatches = matches(record.title, normalizedQuery);
     const matchingFields = record.fields.filter((field) => matches(field.label, normalizedQuery) || matches(field.value, normalizedQuery));
     if (!titleMatches && !matchingFields.length) continue;
-    const detail = matchingFields.map((field) => `${field.label}: ${field.value}`).join(" · ");
+    const detail = matchingExcerpt(
+      matchingFields.map((field) => `${field.label}: ${field.value}`).join(" · "),
+      normalizedQuery,
+    );
     const matchContext = titleMatches && matchingFields.length
       ? "Matched title and field"
       : matchingFields.length ? "Matched field" : "Matched title";
