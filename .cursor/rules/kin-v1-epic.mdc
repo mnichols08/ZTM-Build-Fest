@@ -20,7 +20,7 @@ Read `projects/kin/AGENTS.md` first, including its "Cursor Cloud specific instru
 - Don't change golden fixtures, the KINE/KINS formats, the WASM ABI or the IndexedDB schema unless the issue says to. If you must, say so at the top of the PR body.
 - Keep replay deterministic: order by `(logical_time, device_id, event_id)`, with no clocks, randomness or hash-map iteration order in Rust domain logic.
 - Security fixes come with a regression test that fails before the fix and passes after it.
-- Leave untracked `.nvmrc`, `create-issues.sh` and `projects/kin/config/` alone.
+- Do not edit `.nvmrc`, `create-issues.sh` or anything under `projects/kin/config/` unless the issue says to.
 
 ## Verify before every push
 From `projects/kin/`:

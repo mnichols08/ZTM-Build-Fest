@@ -1557,8 +1557,8 @@ issue). They add to everything above; they do not relax it.
   vendored code.
 - Never merge, tag, release, deploy, force-push shared branches or edit
   `CHANGELOG.md` release headings unless the issue says so.
-- Leave untracked `.nvmrc`, `create-issues.sh` and `projects/kin/config/`
-  untouched.
+- Do not edit `.nvmrc`, `create-issues.sh` or anything under
+  `projects/kin/config/` unless the issue says to.
 - The environment provides Node 22.13.0 and Rust 1.93.0 with the
   `wasm32-unknown-unknown` target. Build the engine with
   `./build-wasm.sh` from `projects/kin/`.
