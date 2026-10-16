@@ -9,12 +9,17 @@ export async function handoffRegressions() {
   };
   const idle = async () => {
     // Controller methods below are invoked directly so failures can be
-    // injected. Wait out unrelated timer/peer refreshes first; unlike native
-    // controls, a direct call can otherwise hit the busy guard and look like
-    // a failed editor operation.
+    // injected. This observes a quiet point but does not reserve it: a peer
+    // message can still arrive after idle() resolves. Direct saves therefore
+    // use startHandoffSave(), which fails loudly if the busy guard drops one.
     for (let i = 0; (app.busy || app.refreshing || app.pendingRefresh) && i < 300; i++)
       await new Promise((resolve) => setTimeout(resolve, 10));
     check(!app.busy && !app.refreshing && !app.pendingRefresh, "Handoff operation must settle");
+  };
+  const startHandoffSave = (command) => {
+    const pending = app.ctx.conversations.saveHandoff(command);
+    check(app.busy && app.status.textContent === "Saving…", `direct Handoff save started (${command.type})`);
+    return pending;
   };
   const count = async () => (await app.store.loadEvents()).length;
   const edit = (text) => {
@@ -156,9 +161,7 @@ export async function handoffRegressions() {
       return request;
     };
     try {
-      await app.ctx.conversations.handleAddHandoff({
-        detail: { text: "Atomic handoff " + mode },
-      });
+      await startHandoffSave({ type: "add-handoff", text: "Atomic handoff " + mode });
     } finally {
       IDBObjectStore.prototype.add = originalAdd;
     }
@@ -224,9 +227,7 @@ export async function handoffRegressions() {
   };
   await idle();
   edit("Delayed handoff");
-  const pending = app.ctx.conversations.handleAddHandoff({
-    detail: { text: capture.input.value },
-  });
+  const pending = startHandoffSave({ type: "add-handoff", text: capture.input.value });
   check(
     [...app.main.querySelectorAll("input,select,button")]
       .filter((control) => !control.closest("kin-security"))
@@ -265,7 +266,8 @@ export async function handoffRegressions() {
       return request;
     };
     try {
-      await app.ctx.conversations.handleHandoffAction(type, target);
+      await idle();
+      await startHandoffSave({ type, handoffId: target });
     } finally {
       IDBObjectStore.prototype.add = originalAdd;
     }
@@ -326,7 +328,7 @@ export async function handoffRegressions() {
   };
   try {
     await idle();
-    await app.ctx.conversations.handleAddHandoff({ detail: { text: "Superseded retry" } });
+    await startHandoffSave({ type: "add-handoff", text: "Superseded retry" });
   } finally {
     app.store.append = realAppend;
   }
@@ -339,9 +341,7 @@ export async function handoffRegressions() {
     app.store.getCatchUpState = getCatchUpState;
   }
   await idle();
-  await app.ctx.conversations.handleAddHandoff({
-    detail: { text: "New command after refresh failure" },
-  });
+  await startHandoffSave({ type: "add-handoff", text: "New command after refresh failure" });
   await app.ctx.refresh.refreshFromEvents();
   check(
     app.retryAction === null &&
