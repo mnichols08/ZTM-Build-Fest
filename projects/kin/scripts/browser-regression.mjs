@@ -1973,11 +1973,12 @@ try {
     {checked:['slate'],focus:'slate',source:'preset',feedback:'Unsaved changes.'},
     "native ArrowLeft wraps to Slate and previews that preset");
   await first.send("Emulation.setDeviceMetricsOverride", {width:320,height:720,deviceScaleFactor:1,mobile:false});
-  assert.deepEqual(await first.evaluate(`(()=>{const appearance=document.querySelector('kin-app').appearance;const labels=[...appearance.querySelectorAll('.appearance-swatch')];return {overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth,targets:labels.every(label=>label.getBoundingClientRect().height>=44),checked:labels.filter(label=>label.querySelector('input').checked).length}})()`),
-    {overflow:false,targets:true,checked:1}, "theme preset radios reflow at 320px with one visible selection and 44px targets");
+  assert.deepEqual(await first.evaluate(`(()=>{const appearance=document.querySelector('kin-app').appearance;const labels=[...appearance.querySelectorAll('.appearance-swatch')],checked=labels.find(label=>label.querySelector('input').checked),radio=checked.querySelector('input');return {overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth,targets:labels.every(label=>label.getBoundingClientRect().height>=44),checked:labels.filter(label=>label.querySelector('input').checked).length,radioClipped:radio.getBoundingClientRect().width===1,marker:getComputedStyle(checked,'::after').content.includes('✓')}})()`),
+    {overflow:false,targets:true,checked:1,radioClipped:true,marker:true}, "theme presets keep native radios visually clipped behind fluid 44px swatch targets at 320px");
   await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"active"}]});
   await first.evaluate("document.querySelector('kin-app').appearance.presetControls.get('slate').focus()");
-  assert.equal(await first.evaluate("getComputedStyle(document.activeElement.closest('.appearance-swatch')).outlineWidth"), "3px", "theme preset focus remains visible in forced colors");
+  assert.deepEqual(await first.evaluate(`(()=>{const input=document.activeElement;return {outline:getComputedStyle(input.closest('.appearance-swatch')).outlineWidth,radioWidth:input.getBoundingClientRect().width,marker:getComputedStyle(input.closest('.appearance-swatch'),'::after').content}})()`),
+    {outline:"3px",radioWidth:20,marker:"none"}, "theme presets reveal native radios and keep focus visible in forced colors");
   await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"none"}]});
   await first.evaluate(`(()=>{const appearance=document.querySelector('kin-app').appearance;appearance.initialize(window.__appearanceRadioSaved);delete window.__appearanceRadioSaved})()`);
   console.log("PASS native appearance preset radios, keyboard wrap, narrow reflow and forced colors");

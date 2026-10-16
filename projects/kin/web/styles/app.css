@@ -861,11 +861,12 @@ kin-household-defaults kin-appearance .appearance-follow { display: none; }
 .appearance-option { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; margin-right: 16px; }
 .appearance-option input { width: 20px; height: 20px; accent-color: var(--accent); }
 .appearance-swatches { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 8px; }
-.appearance-swatch { display: grid; grid-template-columns: 20px 22px minmax(0, 1fr); align-items: center; gap: 8px; min-height: var(--tap); padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r-control); background: var(--surface); cursor: pointer; }
+.appearance-swatch { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: var(--tap); padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--r-control); background: var(--surface); cursor: pointer; }
 .appearance-swatch:hover { background: var(--surface-secondary); }
 .appearance-swatch:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+.appearance-swatch:has(input:checked)::after { content: "✓"; font-weight: 800; }
 .appearance-swatch:has(input:focus-visible) { outline: 3px solid var(--accent); outline-offset: 3px; }
-.appearance-swatch input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
+.appearance-swatch input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
 .appearance-swatch input:focus-visible { outline: 0; }
 .swatch-chip { width: 22px; height: 22px; border: 2px solid var(--line-strong); border-radius: 50%; }
 .swatch-default { background: #984d38; } .swatch-forest { background: #397052; } .swatch-ocean { background: #256a91; }
@@ -1175,6 +1176,9 @@ kin-app > .security-panel {
   .select-control:focus-visible { outline: 3px solid Highlight; }
   .command-dialog, .command-dialog kbd { border: 1px solid CanvasText; }
   .command-option[aria-selected="true"] { outline: 3px solid Highlight; outline-offset: -3px; }
+  .appearance-swatch { grid-template-columns: 20px 22px minmax(0, 1fr); }
+  .appearance-swatch input { position: static; width: 20px; height: 20px; margin: 0; overflow: visible; clip: auto; clip-path: none; white-space: normal; accent-color: Highlight; }
+  .appearance-swatch:has(input:checked)::after { content: none; }
   .appearance-swatch:has(input:focus-visible) { outline-color: Highlight; }
   button:focus-visible, input:focus-visible, select:focus-visible,
   a:focus-visible, main:focus-visible { outline: 3px solid Highlight; }
