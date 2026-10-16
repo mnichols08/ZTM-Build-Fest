@@ -586,6 +586,20 @@ async function launchProfile(executable, label, origin) {
       if (!error.message.startsWith(`[${label}]`)) error.message = `[${label}] ${fn.name || "inline page function"}: ${error.message}`;
       throw error;
     });
+  // For page functions that only wait or read: a navigation can tear down
+  // the page's context mid-call (#164), so retry those a few times. Never
+  // used for a step that changes anything, which must not run twice.
+  const contextLost = (error) => /Execution context was destroyed|Cannot find context with specified id|Inspected target navigated/.test(error?.message ?? "");
+  const callStable = async (fn, argument) => {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await call(fn, argument);
+      } catch (error) {
+        if (!contextLost(error) || attempt >= 5) throw error;
+        await delay(200);
+      }
+    }
+  };
   await send("Network.enable");
   for (let attempt = 0; attempt < 200; attempt += 1) {
     if (await evaluate("location.origin === " + JSON.stringify(origin)).catch(() => false)) break;
@@ -610,9 +624,10 @@ async function launchProfile(executable, label, origin) {
     send,
     evaluate,
     call,
+    callStable,
     authenticatorId,
     recovery: null,
-    async ready() { await call(pageWaitReady); },
+    async ready() { await callStable(pageWaitReady); },
     async setOffline(offline) {
       await send("Network.emulateNetworkConditions", { offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     },
@@ -625,7 +640,7 @@ async function launchProfile(executable, label, origin) {
       }
       assert.ok(locked, `[${label}] page did not return to the locked shell after activation`);
       await call(pageUnlock, client.recovery);
-      return call(pageWaitHousehold);
+      return callStable(pageWaitHousehold);
     },
     async close() {
       try {
@@ -673,7 +688,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     open.push(client);
     await client.ready();
     client.recovery = await client.call(pageSetupProtection);
-    await client.call(pageWaitHousehold);
+    await client.callStable(pageWaitHousehold);
     return client;
   };
   const retire = async (client) => {
@@ -740,7 +755,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     // ---- Profile B: second Adult -----------------------------------------
     const b = await launch("adult-b");
     const bIdentity = await join({ inviter: a, invitee: b, kind: "adult", deviceLabel: "Client B" });
-    let household = await b.call(pageHousehold);
+    let household = await b.callStable(pageHousehold);
     const bMember = household.members.find((member) => member.current);
     check(bMember?.kind === "adult" && bMember.active, "Adult B is an active Adult in the server household view");
     check(household.adminRecorded && !bMember.admin && !household.canManageMembers &&
@@ -762,7 +777,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     // ---- Profile C: Limited member ---------------------------------------
     let c = await launch("limited-c");
     await join({ inviter: a, invitee: c, kind: "limited", deviceLabel: "Client C" });
-    household = await c.call(pageHousehold);
+    household = await c.callStable(pageHousehold);
     const cMember = household.members.find((member) => member.current);
     check(cMember?.kind === "limited" && cMember.active, "Limited C is an active Limited member");
     for (const probe of [
@@ -798,7 +813,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     const cDevice = [...service.devices.values()].find((device) => device.memberId === cMember.id);
     await c.setOffline(true);
     await c.call(pageAddItem, "C2 written offline before removal");
-    const cBefore = await c.call(pageLocal);
+    const cBefore = await c.callStable(pageLocal);
     check(cBefore.pendingOutbox >= 1, "Limited C holds an unsent outbox entry while offline");
     await a.call(pageRemoveMemberButton, "Remove Limited member 1 from household");
     check(service.members.get(cMember.id).active === false && service.members.get(cMember.id).memberStatus === "removed",
@@ -813,10 +828,10 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     // An empty event batch: "KSEV", version 1, count 0.
     const cPush = await c.call(pageFetch, { path: "/api/sync/events", method: "POST", bytes: [75, 83, 69, 86, 1, 0, 0, 0] });
     check([401, 403].includes(cPush.status), `removed Limited C's stale session cannot push (${cPush.status})`);
-    let cAfter = await c.call(pageLocal).catch(() => null);
+    let cAfter = await c.callStable(pageLocal).catch(() => null);
     if (!cAfter) {
       await c.call(pageUnlock, c.recovery);
-      cAfter = await c.call(pageLocal);
+      cAfter = await c.callStable(pageLocal);
     }
     check(cAfter.events === cBefore.events && cAfter.pendingOutbox === cBefore.pendingOutbox,
       "removal leaves Limited C's local history and unsent outbox intact");
@@ -833,7 +848,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     // Short real expiry: the server clock is advanced for instant enforcement.
     const temporaryExpiry = clock.now() + 20_000;
     const c2Identity = await join({ inviter: a, invitee: c2, kind: "temporary", expiresAt: temporaryExpiry, deviceLabel: "Client C2" });
-    household = await c2.call(pageHousehold);
+    household = await c2.callStable(pageHousehold);
     const c2Member = household.members.find((member) => member.current);
     check(c2Member?.kind === "temporary" && c2Member.active && c2Member.expiresAt === temporaryExpiry,
       "Temporary C2 carries the inviter-chosen absolute expiry");
@@ -850,7 +865,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     result = await c2.call(pageSync);
     result = await a.call(pageSync);
     check(result.items.includes("T1 temporary member item"), "Adult A receives Temporary C2's event");
-    const c2Local = await c2.call(pageLocal);
+    const c2Local = await c2.callStable(pageLocal);
     result = await b.call(pageSync);
     check(result.last?.state !== "paused", "Adult B holds the current epoch before the expiry race: " + JSON.stringify(result.last));
     const epochBeforeExpiry = syncService.status(
@@ -859,7 +874,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     await a.call(pagePauseAutomaticSync);
     await a.setOffline(true);
     clock.offset += 4 * MINUTE; // Server time passes the expiry; browsers keep real time.
-    household = await b.call(pageHousehold);
+    household = await b.callStable(pageHousehold);
     const expiredView = household.members.find((member) => member.id === c2Identity.memberId);
     check(expiredView && expiredView.active === false, "Adult B's household view shows Temporary C2 ended after expiry");
     check(service.members.get(c2Identity.memberId).memberStatus === "expired", "server records natural expiry, not removal");
@@ -867,10 +882,10 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check([401, 403].includes(c2Status.status), `expired Temporary C2 cannot read sync status (${c2Status.status})`);
     result = await c2.call(pageSync).catch(() => ({ last: { state: "paused", code: "locked" } }));
     check(result.last?.state === "paused", "expired Temporary C2's sync pauses: " + JSON.stringify(result.last));
-    let c2After = await c2.call(pageLocal).catch(() => null);
+    let c2After = await c2.callStable(pageLocal).catch(() => null);
     if (!c2After) {
       await c2.call(pageUnlock, c2.recovery);
-      c2After = await c2.call(pageLocal);
+      c2After = await c2.callStable(pageLocal);
     }
     check(c2After.events === c2Local.events, "expiry leaves Temporary C2's local history intact");
     result = await b.call(pageSync);
@@ -888,7 +903,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     // ---- Revoke the rotation sender before A receives its package ----------
     await b.setOffline(true);
     await b.call(pageAddItem, "B1 written offline before revocation");
-    const bBefore = await b.call(pageLocal);
+    const bBefore = await b.callStable(pageLocal);
     check(bBefore.pendingOutbox >= 1, "Adult B holds an unsent outbox entry while offline");
     await a.setOffline(false);
     await a.call(pageRevokeDeviceButton, "Client B");
@@ -913,10 +928,10 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check([401, 403].includes(bPush.status), `revoked B cannot push its stale outbox (${bPush.status})`);
     const bLogin = await b.call(pageFetch, { path: "/api/login/options", method: "POST", body: {} });
     check(bLogin.status !== 200, `revoked B's device cookie cannot start a fresh login (${bLogin.status} ${bLogin.body?.error ?? ""})`);
-    let bAfter = await b.call(pageLocal).catch(() => null);
+    let bAfter = await b.callStable(pageLocal).catch(() => null);
     if (!bAfter) {
       await b.call(pageUnlock, b.recovery);
-      bAfter = await b.call(pageLocal);
+      bAfter = await b.callStable(pageLocal);
     }
     check(bAfter.events === bBefore.events && bAfter.pendingOutbox === bBefore.pendingOutbox,
       "revocation leaves B's local history and unsent outbox intact");
@@ -935,7 +950,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(statuses[aBoot.identity.memberId] === "adult:active" && statuses[bIdentity.memberId] === "adult:active" &&
       statuses[cMember.id] === "limited:removed" && statuses[c2Identity.memberId] === "temporary:expired",
       "archive membership snapshot records active, removed, and expired statuses: " + JSON.stringify(statuses));
-    const aLocalAtExport = await a.call(pageLocal);
+    const aLocalAtExport = await a.callStable(pageLocal);
     check(exported.events === aLocalAtExport.events, "archive event count equals Adult A's local history");
     await a.call(pageAddItem, "A3 after export");
     result = await a.call(pageSync);
@@ -969,7 +984,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
         throw new Error("Device pairing failed: " + (alert?.textContent ?? "the code was not displayed"));
       return { code: shownCode };
     });
-    await d.call(pageWaitHousehold);
+    await d.callStable(pageWaitHousehold);
     const { approved: dApproved, approverKey: dApproverKey } =
       await verifyAndApprove({ inviter: a, invitee: d, invitation, deviceLabel: "Client D" });
     check(dApproved.memberId === aBoot.identity.memberId, "device pairing binds D to Adult A's membership");
@@ -983,8 +998,8 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     result = await d.call(pageSync);
     if (result.last?.state === "paused") result = await d.call(pageSync);
     check(result.last?.state !== "paused", "restored D syncs after approval: " + JSON.stringify(result.last));
-    const dLocal = await d.call(pageLocal);
-    const aLocal = await a.call(pageLocal);
+    const dLocal = await d.callStable(pageLocal);
+    const aLocal = await a.callStable(pageLocal);
     check(dLocal.items.includes("A3 after export"), "D catches up with history created after the export");
     check(dLocal.events === aLocal.events && JSON.stringify(dLocal.eventIds) === JSON.stringify(aLocal.eventIds),
       `D and A hold identical event sets without duplication (${dLocal.events} events)`);
@@ -1002,8 +1017,8 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       result = await client.call(pageSync);
       check(result.last?.state !== "paused", `${client.label} reconnect sync completes: ` + JSON.stringify(result.last));
     }
-    const aFinal = await a.call(pageLocal);
-    const dFinal = await d.call(pageLocal);
+    const aFinal = await a.callStable(pageLocal);
+    const dFinal = await d.callStable(pageLocal);
     check(aFinal.items.includes("A4 offline concurrent") && aFinal.items.includes("D1 offline concurrent") &&
       dFinal.items.includes("A4 offline concurrent") && dFinal.items.includes("D1 offline concurrent"),
       "both clients converge on both offline items");
