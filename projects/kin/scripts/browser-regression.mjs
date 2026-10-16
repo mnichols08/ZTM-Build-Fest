@@ -812,6 +812,16 @@ async function regressions() {
   passed.push(
     "pending retry disables Complete, Reopen, every Details and Add photo, compose input/select/Add and retry; controls and focus recover",
   );
+  const deferredListFocus = app.today.querySelector("button:not(:disabled)");
+  check(Boolean(deferredListFocus), "focus fixture has a list control");
+  app.today.deferredFocus = deferredListFocus;
+  app.ctx.status.setBusy(true);
+  app.searchLink.focus();
+  check(document.activeElement === app.searchLink, "header search can receive focus while the workspace is busy");
+  app.ctx.status.setBusy(false);
+  check(document.activeElement === app.searchLink, "ending busy preserves focus the user moved to header search");
+  passed.push("busy focus recovery does not override a deliberate move to header search");
+  compose.focusInput();
   check(
     app.state.items.find((item) => item.text === actionText).status ===
       "active",

@@ -46,7 +46,9 @@ export class DetailController {
       reminder: this.app.localReminders.entries.get(`item:${this.app.selection.itemId}`) ?? null,
       item,
     });
-    detail.disabled = this.app.busy || !this.app.store;
+    // Native fieldset disabling owns workspace detail. The phone sheet is
+    // outside that boundary and still needs the component-level state.
+    detail.disabled = !this.app.store || (this.app.busy && Boolean(detail.closest(".detail-sheet")));
   }
   // The same object while its inputs are unchanged, so components given it
   // can skip re-rendering by identity.

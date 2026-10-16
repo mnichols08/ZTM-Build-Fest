@@ -89,7 +89,7 @@ export class ShellBuilder {
     this.app.main = main;
     const controls = document.createElement("fieldset");
     controls.className = "workspace-controls";
-    controls.setAttribute("aria-label", "Household workspace");
+    controls.setAttribute("role", "none");
     controls.disabled = true;
     this.app.controlFieldset = controls;
     this.app.catchUp = document.createElement("kin-catch-up");
@@ -105,8 +105,7 @@ export class ShellBuilder {
     this.app.routines = document.createElement("kin-routines");
     this.app.areas = document.createElement("kin-areas");
     this.app.detail = document.createElement("kin-item-detail");
-    this.ctx.views.buildViews(main);
-    controls.append(...this.app.pages.values(), this.app.detailPanel);
+    this.ctx.views.buildViews(controls);
     main.append(controls);
     shell.append(nav, main);
 

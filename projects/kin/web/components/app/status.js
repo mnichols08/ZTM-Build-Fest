@@ -18,7 +18,7 @@ export class StatusController {
     this.app.controlFieldset.disabled = controlsDisabled;
     // Header controls and a phone detail sheet live outside the fieldset.
     this.app.quickAdd.disabled = isBusy || !this.app.store;
-    if (this.app.detail) this.app.detail.disabled = controlsDisabled;
+    if (this.app.detail?.closest(".detail-sheet")) this.app.detail.disabled = controlsDisabled;
     if (this.app.lockButton) this.app.lockButton.disabled = isBusy;
     this.app.retryButton.disabled = isBusy;
     if (!controlsDisabled) {

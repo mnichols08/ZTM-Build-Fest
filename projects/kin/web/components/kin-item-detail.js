@@ -91,7 +91,9 @@ class KinItemDetail extends HTMLElement {
     if (this.deferredFocusId) {
       const target = [...this.querySelectorAll("[data-focus-id]")].find((node) => node.dataset.focusId === this.deferredFocusId);
       this.deferredFocusId = null;
-      if (target && !target.matches(":disabled") && !this.contains(document.activeElement)) target.focus();
+      const active = document.activeElement;
+      const focusWasLost = !active || active === document.body || active.isConnected === false;
+      if (target && !target.matches(":disabled") && focusWasLost) target.focus();
     }
   }
 

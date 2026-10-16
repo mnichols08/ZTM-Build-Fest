@@ -40,7 +40,11 @@ fieldset around the workspace. Header Quick add, Lock, the bounded detail view
 and the external retry control remain explicit. Status, alert, state and route
 announcements remain outside the fieldset. Focus intent is captured before
 native disabling and settled through component-level constant-cost hooks after
-the fieldset re-enables.
+the fieldset re-enables, but only when focus was actually lost. Unlocked
+security settings remain inside the workspace fieldset and are disabled during
+an app-wide save, in addition to their own one-security-operation guard. The
+locked/protecting surface is rehomed outside the unavailable workspace so its
+Lock or unlock action remains usable.
 
 | History | Traversal baseline | Native fieldset | Reduction |
 |---|---:|---:|---:|

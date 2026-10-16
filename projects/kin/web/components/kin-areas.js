@@ -31,11 +31,11 @@ class KinAreas extends HTMLElement {
   }
 
   settleDeferredFocus() {
-    if (this.deferredFocus?.isConnected) {
-      const target = this.deferredFocus;
-      this.deferredFocus = null;
-      if (!target.matches(":disabled")) target.focus();
-    }
+    const target = this.deferredFocus;
+    this.deferredFocus = null;
+    const active = document.activeElement;
+    const focusWasLost = !active || active === document.body || active.isConnected === false;
+    if (target?.isConnected && !target.matches(":disabled") && focusWasLost) target.focus();
   }
 
   render(focusId = null) {
