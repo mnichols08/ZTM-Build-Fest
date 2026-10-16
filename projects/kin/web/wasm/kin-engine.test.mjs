@@ -10,6 +10,9 @@ import {
   encodeTalkReopenedRecord,
   encodeTalkArchivedRecord,
   encodeAddedRecord,
+  encodeCompletedRecord,
+  encodeReopenedRecord,
+  encodeArchivedRecord,
   encodeHandoffAddedRecord,
   encodeHandoffAcknowledgedRecord,
   encodeHandoffArchivedRecord,
@@ -316,6 +319,40 @@ test("real WASM replays Staples classification and summary", async () => {
   assert.deepEqual(
     state.summary.entries.map((entry) => entry.classification),
     ["staple"],
+  );
+});
+
+test("real WASM exposes item lifecycle destinations in the catch-up summary", async () => {
+  const engine = await loadCurrentEngine(
+    `data:application/wasm;base64,${initialWasm.toString("base64")}`,
+  );
+  const bytes = (value) => new Uint8Array(16).fill(value);
+  const itemId = bytes(0x44);
+  const identity = (sequence) => ({
+    eventId: bytes(sequence),
+    householdId: bytes(0xaa),
+    actorId: bytes(0xbb),
+    deviceId: bytes(0xcc),
+    timestamp: 1_760_000_000_000 + sequence,
+    logicalTime: BigInt(sequence),
+    itemId,
+  });
+  const records = [
+    encodeAddedRecord({ ...identity(1), text: "Milk", classification: "shopping" }),
+    encodeCompletedRecord(identity(2)),
+    encodeReopenedRecord(identity(3)),
+    encodeArchivedRecord(identity(4)),
+  ];
+
+  const state = engine.applyEvents(records, 1_760_000_000_010, bytes(1), 20261003);
+
+  assert.deepEqual(
+    state.summary.entries.map(({ kind, classification }) => [kind, classification]),
+    [
+      ["item-completed", "shopping"],
+      ["item-reopened", "shopping"],
+      ["item-archived", "shopping"],
+    ],
   );
 });
 
