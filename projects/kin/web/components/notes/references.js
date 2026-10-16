@@ -14,6 +14,11 @@ export class ReferenceSection {
   // The household reference records: their form, the list, and each
   // record's maintenance log. Returns the section.
   renderReferences(id) {
+    const activeRecordIds = new Set(this.host.referenceRecords
+      .filter((record) => !record.archived)
+      .map((record) => record.recordId));
+    for (const recordId of this.host.maintenanceDrafts.keys())
+      if (!activeRecordIds.has(recordId)) this.host.maintenanceDrafts.delete(recordId);
     const references = document.createElement("section");
     references.className = "reference-records";
     const referenceHeading = document.createElement("h2");
@@ -200,14 +205,30 @@ export class ReferenceSection {
       }
       maintenance.append(history);
       const form = document.createElement("form"); form.noValidate = true;
+      const draft = this.host.maintenanceDraft(record.recordId);
       const summary = document.createElement("input"); summary.required = true; summary.maxLength = 240; summary.setAttribute("aria-label", `Maintenance summary for ${record.title}`); summary.placeholder = "What was done?";
       const performed = document.createElement("input"); performed.type = "date"; performed.required = true; performed.setAttribute("aria-label", "Date performed");
       const nextOn = document.createElement("input"); nextOn.type = "date"; nextOn.setAttribute("aria-label", "Next date (optional)");
       const routine = document.createElement("select"); routine.setAttribute("aria-label", "Link a Routine (optional)");
       const none = document.createElement("option"); none.value = ""; none.textContent = "No linked Routine"; routine.append(none);
       for (const candidate of this.host.routineRecords.filter((item) => item.status === "active")) { const option = document.createElement("option"); option.value = candidate.routineId; option.textContent = candidate.text; routine.append(option); }
+      summary.value = draft.summary;
+      performed.value = draft.performed;
+      nextOn.value = draft.nextOn;
+      routine.value = draft.routineId;
+      summary.dataset.focusId = `maintenance-summary-${record.recordId}`;
+      const rememberDraft = () => this.host.updateMaintenanceDraft(record.recordId, {
+        summary: summary.value,
+        performed: performed.value,
+        nextOn: nextOn.value,
+        routineId: routine.value,
+      });
+      summary.addEventListener("input", rememberDraft);
+      performed.addEventListener("input", rememberDraft);
+      nextOn.addEventListener("input", rememberDraft);
+      routine.addEventListener("change", rememberDraft);
       const addEvent = document.createElement("button"); addEvent.type = "submit"; addEvent.textContent = "Add maintenance";
-      form.addEventListener("submit", (event) => { event.preventDefault(); if (!summary.value.trim() || !performed.value) return; const numericDate = (value) => value ? Number(value.replaceAll("-", "")) : null; this.host.dispatch("save-maintenance-event", { maintenanceId: crypto.randomUUID().replaceAll("-", ""), recordId: record.recordId, performedOn: numericDate(performed.value), summary: summary.value.trim(), nextOn: numericDate(nextOn.value), routineId: routine.value || null }); });
+      form.addEventListener("submit", (event) => { event.preventDefault(); if (this.host.disabledState || !summary.value.trim() || !performed.value) return; rememberDraft(); const numericDate = (value) => value ? Number(value.replaceAll("-", "")) : null; this.host.dispatch("save-maintenance-event", { maintenanceId: crypto.randomUUID().replaceAll("-", ""), recordId: record.recordId, performedOn: numericDate(performed.value), summary: summary.value.trim(), nextOn: numericDate(nextOn.value), routineId: routine.value || null }); });
       form.append(summary, performed, nextOn, routine, addEvent); maintenance.append(form); row.append(maintenance);
       if (record.areaId) {
         const linked = this.host.areaRecords.find((candidate) => candidate.areaId === record.areaId);

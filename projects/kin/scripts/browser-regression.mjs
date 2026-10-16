@@ -2353,8 +2353,40 @@ try {
     form.querySelector("input").value = "Updated Wi-Fi";
     form.requestSubmit(); await idle();
     const edited = app.state.referenceRecords.find(record => record.recordId === stableId)?.title === "Updated Wi-Fi";
+    const maintenanceForm = () => ui.querySelector(`[data-record-id="${stableId}"] section form`);
+    const maintenanceValues = () => [...maintenanceForm().querySelectorAll("input,select")].map(control => control.value);
+    let maintenance = maintenanceForm();
+    let [summary, performed, nextOn, routine] = maintenance.querySelectorAll("input,select");
+    setValue(summary, "Changed filter");
+    performed.value = "2026-10-15"; performed.dispatchEvent(new Event("input", { bubbles: true }));
+    nextOn.value = "2027-04-15"; nextOn.dispatchEvent(new Event("input", { bubbles: true }));
+    const expectedDraft = ["Changed filter", "2026-10-15", "2027-04-15", routine.value];
+    ui.disabled = true; ui.disabled = false;
+    const busyPreserved = JSON.stringify(maintenanceValues()) === JSON.stringify(expectedDraft);
+    ui.maintenance = [...ui.maintenanceEvents];
+    const refreshPreserved = JSON.stringify(maintenanceValues()) === JSON.stringify(expectedDraft);
+    const appendCommand = app.ctx.append.appendCommand;
+    app.ctx.append.appendCommand = async command => {
+      if (command.type === "save-maintenance-event") {
+        const failure = new Error("Synthetic maintenance failure");
+        failure.userMessage = "Synthetic maintenance failure";
+        throw failure;
+      }
+      return appendCommand.call(app.ctx.append, command);
+    };
+    maintenanceForm().requestSubmit(); await idle();
+    app.ctx.append.appendCommand = appendCommand;
+    const failedSavePreserved = JSON.stringify(maintenanceValues()) === JSON.stringify(expectedDraft)
+      && app.alert.textContent === "Synthetic maintenance failure"
+      && !app.state.maintenanceEvents.some(event => event.recordId === stableId && event.summary === "Changed filter");
+    maintenanceForm().requestSubmit(); await idle();
+    const maintenanceSaved = app.state.maintenanceEvents.some(event => event.recordId === stableId
+      && event.summary === "Changed filter" && event.performedOn === 20261015 && event.nextOn === 20270415);
+    const successCleared = maintenanceValues().every(value => value === "") && !ui.maintenanceDrafts.has(stableId);
     [...ui.querySelectorAll(".reference-records li button")].find(button => button.textContent === "Archive").click(); await idle();
-    return { invalidTitle, invalidLabel, invalidValue, invalidCount, uniqueIds, created: true, edited, archived: app.state.referenceRecords.find(record => record.recordId === stableId)?.archived };
+    return { invalidTitle, invalidLabel, invalidValue, invalidCount, uniqueIds, created: true, edited,
+      busyPreserved, refreshPreserved, failedSavePreserved, maintenanceSaved, successCleared,
+      archived: app.state.referenceRecords.find(record => record.recordId === stableId)?.archived };
   });
   assert.equal(referenceResult.invalidTitle, true, `Reference title errors are linked and announced: ${JSON.stringify(referenceResult)}`);
   assert.equal(referenceResult.invalidLabel, true, "Reference label errors are linked to their specific control");
@@ -2363,8 +2395,13 @@ try {
   assert.equal(referenceResult.uniqueIds, true, "Reference form and errors have unique DOM IDs");
   assert.equal(referenceResult.created, true, "Valid Reference Record saves from the browser");
   assert.equal(referenceResult.edited, true, "Reference Record edit preserves its stable identity");
+  assert.equal(referenceResult.busyPreserved, true, "Maintenance drafts survive the app busy cycle");
+  assert.equal(referenceResult.refreshPreserved, true, "Maintenance drafts survive a refreshed projection");
+  assert.equal(referenceResult.failedSavePreserved, true, "A failed Maintenance save keeps the draft available for retry");
+  assert.equal(referenceResult.maintenanceSaved, true, "A retried Maintenance entry saves with its dates intact");
+  assert.equal(referenceResult.successCleared, true, "A successful Maintenance save clears only its submitted draft");
   assert.equal(referenceResult.archived, true, "Reference Record archive remains terminal");
-  console.log("PASS Reference Record byte/count validation, accessible messages, create/edit/archive");
+  console.log("PASS Reference Record validation and lifecycle; Maintenance draft refresh, failure, retry and save");
   await visit(first, "household/notes");
   await first.send("Network.emulateNetworkConditions",{offline:true,latency:0,downloadThroughput:0,uploadThroughput:0});
   const noteSemantics = await first.evaluate(`(()=>{
@@ -2580,19 +2617,23 @@ try {
   assert.equal(await first.evaluate("matchMedia('(prefers-color-scheme: dark)').matches"),true,"Area manager follows dark mode");
   await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"active"},{name:"prefers-reduced-motion",value:"reduce"}]});
   const areaLockReplacement = await first.evaluate(`(async()=>{
-    const app=document.querySelector('kin-app'),prior=app.areas;
+    const app=document.querySelector('kin-app'),prior=app.areas,priorNotes=app.notes;
     const create=prior.querySelector('#area-create-name');create.value='Private Area draft';create.dispatchEvent(new Event('input',{bubbles:true}));
     const rename=[...prior.querySelectorAll('[aria-label^="Rename "]')][0];rename.click();
     const renameInput=prior.querySelector('.area-edit-form input');renameInput.value='Private rename draft';renameInput.dispatchEvent(new Event('input',{bubbles:true}));
+    priorNotes.editor.title='Private Note draft';
+    priorNotes.referenceEditor={recordId:null,title:'Private Reference draft',areaId:'',fields:[]};
+    priorNotes.updateMaintenanceDraft('private-record',{summary:'Private Maintenance draft',performed:'2026-10-15',nextOn:'',routineId:''});
     app.ctx.session.lockHousehold(false);
     const replaced=app.areas!==prior&&app.areas.createDraft===''&&app.areas.renameDraft===null&&app.areas.records.length===0;
+    const notesReplaced=app.notes!==priorNotes&&app.notes.editor.title===''&&app.notes.referenceEditor?.title===''&&app.notes.maintenanceDrafts.size===0;
     await app.security.unlockRecovery(${JSON.stringify(recoverySecret)});
-    return replaced;
+    return replaced&&notesReplaced;
   })()`);
   await ready(first);await visit(first,"household/areas");
   const areaDraftsClearedAfterUnlock=await first.evaluate(`(()=>{const areas=document.querySelector('kin-app').areas;
     return areas.createDraft===''&&areas.renameDraft===null&&areas.querySelector('#area-create-name').value===''&&!areas.querySelector('.area-edit-form');})()`);
-  assert.equal(areaLockReplacement&&areaDraftsClearedAfterUnlock,true,"locking replaces Areas state and discards create and rename drafts before unlock");
+  assert.equal(areaLockReplacement&&areaDraftsClearedAfterUnlock,true,"locking replaces Areas and Notes state and discards private drafts before unlock");
   console.log("PASS Area validation, sync-safe create/rename drafts, conflicts, controls, and lifecycle flows");
 
   const eventLimitResult = await first.evaluate(`(async()=>{
