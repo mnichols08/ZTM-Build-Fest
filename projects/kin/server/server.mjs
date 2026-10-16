@@ -1339,12 +1339,21 @@ export function fingerprintedShell(html, fingerprint) {
 }
 
 function serve(response, pathname) {
-  const requested =
-    pathname === "/" || pathname === "/pair"
-      ? "index.html"
-      : decodeURIComponent(pathname.slice(1));
+  let requested;
+  try {
+    requested =
+      pathname === "/" || pathname === "/pair"
+        ? "index.html"
+        : decodeURIComponent(pathname.slice(1));
+  } catch (error) {
+    if (!(error instanceof URIError)) throw error;
+    // A malformed percent-escape names no file: a client error, not a
+    // server failure, so it is not logged as one.
+    requested = null;
+  }
   let path;
   try {
+    if (requested === null) throw new URIError("malformed path");
     const candidate = resolve(webRoot, requested);
     if (isInsideRoot(candidate, webRoot)) {
       const canonical = realpathSync(candidate);

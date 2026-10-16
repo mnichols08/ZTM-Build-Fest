@@ -314,7 +314,12 @@ revision is meaningful only within one instance.
   Pulse expiry i64, payload length u32 and the action payload (128-byte fixed
   part). JS supplies identity, time and randomness; Rust chooses the event
   schema, builds the canonical payload and validates the command. Step
-  commands carry the parent Item ID first in their payload.
+  commands carry the parent Item ID first in their payload. The entity ID is
+  always the command's own entity, chosen by action (`ENTITY_FIELDS` in
+  `web/wasm/kin-engine.js`). References to other entities (a note's or
+  reference record's Area, a maintenance entry's record and Routine, a Step's
+  Item, an attachment's parent) travel in the payload and never become the
+  entity ID.
 - **KCMT v1** (command result): `"KCMT"`, version 1, reserved, then event,
   metadata and projection lengths (u32 each) and the three buffers. Execution
   validates the history, requires a fresh event ID and a logical time above

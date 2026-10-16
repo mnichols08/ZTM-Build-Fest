@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $serverPath = Join-Path $projectRoot 'server/server.mjs'
-$minimumNodeVersion = [version]'22.13.0'
+$minimumNodeVersion = [version]'24.16.0'
 $nodeVersionText = $null
 $nodeVersion = $null
 
