@@ -32,6 +32,7 @@ export class RecordCommands {
         itemId: detail.itemId,
       });
       this.ctx.session.assertCurrentSession(session);
+      this.app.areas.saved?.(action, detail);
       this.ctx.render.renderState();
       this.ctx.peers.broadcastEventChange();
       this.ctx.status.setStatus(action === "create-area" ? "Area added."

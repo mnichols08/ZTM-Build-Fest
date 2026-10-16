@@ -2453,6 +2453,42 @@ try {
     return {ascii48,ascii49Rejected,multibyte48,bytesRejected,trimmed,emptyRejected,controlRejected,uniqueIds,allDescriptionsResolve,labeledRename,ownRenameError,ownCreateError,renameRejected,renameTrimmed};
   })()`);
   assert.deepEqual(areaNameValidation,{ascii48:true,ascii49Rejected:true,multibyte48:true,bytesRejected:true,trimmed:true,emptyRejected:true,controlRejected:true,uniqueIds:true,allDescriptionsResolve:true,labeledRename:true,ownRenameError:true,ownCreateError:true,renameRejected:true,renameTrimmed:true});
+  const areaDraftSync = await first.evaluate(`(()=>{
+    const areaId='b'.repeat(32),host=document.createElement('kin-areas');
+    host.areas=[{areaId,name:'Kitchen',archived:false}];document.body.append(host);
+    const intents=[];host.addEventListener('kin:area-intent',event=>intents.push(event.detail));
+    const update=(input,value)=>{input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));};
+    update(host.querySelector('#area-create-name'),'Garden draft');
+    host.querySelector('[aria-label="Rename Kitchen"]').click();
+    update(host.querySelector('.area-edit-form input'),'Pantry draft');
+    host.areas=[{areaId,name:'Kitchen',archived:false},{areaId:'c'.repeat(32),name:'Garage',archived:false}];
+    const unrelatedSync={create:host.querySelector('#area-create-name').value,rename:host.querySelector('.area-edit-form input').value,editing:!!host.querySelector('.area-edit-form')};
+    host.areas=[{areaId,name:'Kitchen shared',archived:false},{areaId:'c'.repeat(32),name:'Garage',archived:false}];
+    const conflicted={create:host.querySelector('#area-create-name').value,rename:host.querySelector('.area-edit-form input').value,
+      message:host.querySelector('.area-rename-conflict')?.textContent.includes('Kitchen shared'),saveDisabled:host.querySelector('.area-edit-form button[type="submit"]').disabled};
+    host.querySelector('.area-edit-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));
+    const forcedSubmitRefused=intents.length===0;
+    [...host.querySelectorAll('.area-rename-conflict button')].find(button=>button.textContent==='Keep my draft').click();
+    const reviewCleared=!host.querySelector('.area-rename-conflict')&&host.querySelector('.area-edit-form input').value==='Pantry draft';
+    host.querySelector('.area-edit-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));
+    const renameIntent=intents.at(-1);
+    const renameRetained=host.querySelector('.area-edit-form input').value==='Pantry draft';
+    host.saved('rename-area',{areaId});
+    host.areas=[{areaId,name:'Pantry draft',archived:false},{areaId:'c'.repeat(32),name:'Garage',archived:false}];
+    const renameCleared=!host.querySelector('.area-edit-form');
+    host.querySelector('.area-create-form').dispatchEvent(new Event('submit',{bubbles:true,cancelable:true}));
+    const createIntent=intents.at(-1),createRetained=host.querySelector('#area-create-name').value==='Garden draft';
+    host.saved('create-area',{});const createCleared=host.querySelector('#area-create-name').value==='';
+    host.remove();
+    return {unrelatedSync,conflicted,forcedSubmitRefused,reviewCleared,renameIntent,renameRetained,renameCleared,createIntent,createRetained,createCleared};
+  })()`);
+  assert.deepEqual(areaDraftSync,{
+    unrelatedSync:{create:'Garden draft',rename:'Pantry draft',editing:true},
+    conflicted:{create:'Garden draft',rename:'Pantry draft',message:true,saveDisabled:true},
+    forcedSubmitRefused:true,reviewCleared:true,
+    renameIntent:{action:'rename-area',areaId:'b'.repeat(32),name:'Pantry draft'},renameRetained:true,renameCleared:true,
+    createIntent:{action:'create-area',name:'Garden draft'},createRetained:true,createCleared:true,
+  });
   await visit(first, "household/areas");
   const areaEnter = async () => {
     await first.send("Input.dispatchKeyEvent", {
@@ -2539,7 +2575,7 @@ try {
   await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"none"},{name:"prefers-reduced-motion",value:"no-preference"},{name:"prefers-color-scheme",value:"dark"}]});
   assert.equal(await first.evaluate("matchMedia('(prefers-color-scheme: dark)').matches"),true,"Area manager follows dark mode");
   await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"active"},{name:"prefers-reduced-motion",value:"reduce"}]});
-  console.log("PASS Area validation for create/rename, Unicode, byte limits, trimming, controls, and lifecycle flows");
+  console.log("PASS Area validation, sync-safe create/rename drafts, conflicts, controls, and lifecycle flows");
 
   const eventLimitResult = await first.evaluate(`(async()=>{
     const app=document.querySelector('kin-app');
