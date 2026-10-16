@@ -43,10 +43,10 @@ export class AppearanceController {
     }
   }
   async handleSaveAppearance(event) {
-    const { value, baseline, complete } = event.detail;
+    const { value, baseline, forceExplicit, complete } = event.detail;
     const session = this.ctx.session.captureSession();
     try {
-      const next = personalAppearanceFromDraft(this.app.personalAppearance, value, baseline);
+      const next = personalAppearanceFromDraft(this.app.personalAppearance, value, baseline, { forceExplicit });
       const saved = await saveAppearance(session.store, session.vault, next);
       this.ctx.session.assertCurrentSession(session);
       this.app.personalAppearance = structuredClone(saved);

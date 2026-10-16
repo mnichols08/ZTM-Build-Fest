@@ -11,6 +11,7 @@ export class KinAppearance extends HTMLElement {
     this.saved = null;
     this.draft = null;
     this.dirty = false;
+    this.forceExplicit = false;
     this.generation = 0;
     this.instanceId = ++appearanceInstance;
   }
@@ -78,7 +79,7 @@ export class KinAppearance extends HTMLElement {
     const actions = document.createElement("div"); actions.className = "appearance-actions";
     this.save = document.createElement("button"); this.save.type = "submit"; this.save.className = "primary-action"; this.save.textContent = "Save changes";
     this.cancel = document.createElement("button"); this.cancel.type = "button"; this.cancel.textContent = "Cancel"; this.cancel.addEventListener("click", () => this.restoreSaved("Changes canceled."));
-    this.reset = document.createElement("button"); this.reset.type = "button"; this.reset.textContent = "Reset to Kin default"; this.reset.addEventListener("click", () => { this.generation++; this.dirty = true; this.draft = { ...DEFAULT_APPEARANCE, owner: this.saved?.owner ?? null }; this.update("Kin defaults are previewed. Save changes to keep them."); });
+    this.reset = document.createElement("button"); this.reset.type = "button"; this.reset.textContent = "Reset to Kin default"; this.reset.addEventListener("click", () => { this.generation++; this.dirty = true; this.forceExplicit = true; this.draft = { ...DEFAULT_APPEARANCE, owner: this.saved?.owner ?? null }; this.update("Kin defaults are previewed. Save changes to keep them."); });
     this.inherit = document.createElement("button"); this.inherit.type = "button"; this.inherit.textContent = "Use household appearance"; this.inherit.addEventListener("click", () => this.dispatchEvent(new CustomEvent("kin:use-household-appearance", { bubbles: true, detail: { value: useHouseholdAppearance(this.saved?.owner ?? null) } })));
     this.feedback = document.createElement("p"); this.feedback.className = "appearance-feedback"; this.feedback.setAttribute("role", "status"); this.feedback.setAttribute("aria-live", "polite");
     actions.append(this.save, this.cancel, this.reset, this.inherit);
@@ -90,8 +91,8 @@ export class KinAppearance extends HTMLElement {
 
   followButton(property, label) { const button = document.createElement("button"); button.type = "button"; button.className = "appearance-follow"; button.textContent = label; button.addEventListener("click", () => this.dispatchEvent(new CustomEvent("kin:inherit-appearance-property", { bubbles: true, detail: { property } }))); return button; }
 
-  initialize(value) { this.generation++; this.saved = structuredClone(value); this.draft = structuredClone(value); this.dirty = false; this.disabled = false; this.update(""); }
-  clear() { this.generation++; this.saved = null; this.draft = null; this.dirty = false; this.feedback.textContent = ""; this.replaceChildren(); this.build(); }
+  initialize(value) { this.generation++; this.saved = structuredClone(value); this.draft = structuredClone(value); this.dirty = false; this.forceExplicit = false; this.disabled = false; this.update(""); }
+  clear() { this.generation++; this.saved = null; this.draft = null; this.dirty = false; this.forceExplicit = false; this.feedback.textContent = ""; this.replaceChildren(); this.build(); }
   set disabled(value) { for (const control of this.querySelectorAll("button,input")) control.disabled = Boolean(value); }
 
   choosePreset(preset) {
@@ -148,7 +149,7 @@ export class KinAppearance extends HTMLElement {
     this.update("Background removed from the preview. Save changes to keep it removed.");
   }
 
-  restoreSaved(message) { this.generation++; this.dirty = false; this.draft = structuredClone(this.saved); this.update(message); }
+  restoreSaved(message) { this.generation++; this.dirty = false; this.forceExplicit = false; this.draft = structuredClone(this.saved); this.update(message); }
   async requestSave() {
     if (!this.draft) return;
     if (this.hex.getAttribute("aria-invalid") === "true") { this.feedback.textContent = "Finish the hex color before saving."; this.hex.focus(); return; }
@@ -159,8 +160,8 @@ export class KinAppearance extends HTMLElement {
     }
     this.generation++;
     this.disabled = true; this.feedback.textContent = "Saving…";
-    this.dispatchEvent(new CustomEvent("kin:save-appearance", { bubbles: true, detail: { value: structuredClone(this.draft), baseline: structuredClone(this.saved), complete: (result, error) => {
-      if (!error) { this.saved = structuredClone(result); this.draft = structuredClone(result); this.dirty = false; }
+    this.dispatchEvent(new CustomEvent("kin:save-appearance", { bubbles: true, detail: { value: structuredClone(this.draft), baseline: structuredClone(this.saved), forceExplicit: this.forceExplicit, complete: (result, error) => {
+      if (!error) { this.saved = structuredClone(result); this.draft = structuredClone(result); this.dirty = false; this.forceExplicit = false; }
       this.disabled = false; this.update(error ? error.message : "Appearance saved on this device.", !error);
     } } }));
   }
