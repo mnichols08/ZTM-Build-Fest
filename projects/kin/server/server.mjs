@@ -24,6 +24,7 @@ import {
   RECORD_FIXED,
 } from "../web/sync/envelope-wire.js";
 import { isInsideRoot, resolveDurablePath, webRoot } from "./path-safety.mjs";
+import { clientKey, parseTrustedProxies } from "./client-key.mjs";
 
 const FLOW_TTL_MS = 2 * 60_000;
 const MAX_ACTIVE_FLOWS = 512;
@@ -34,6 +35,10 @@ export function createKinServer(options = {}) {
   const origin =
     options.origin ?? process.env.KIN_ORIGIN ?? `http://localhost:${port}`;
   assertSecureOrigin(host, origin);
+  const trustedProxies =
+    options.trustedProxies instanceof Set
+      ? options.trustedProxies
+      : parseTrustedProxies(options.trustedProxies ?? process.env.KIN_TRUSTED_PROXIES);
   const configuredDataDirectory =
     options.dataDirectory ??
     process.env.KIN_DATA_DIR ??
@@ -93,6 +98,7 @@ export function createKinServer(options = {}) {
     ),
     secureCookies: new URL(origin).protocol === "https:",
     origin,
+    clientKey: (request) => clientKey(request, trustedProxies),
   };
   const server = createServer(async (request, response) => {
     const requestId = randomBytes(12).toString("hex");
@@ -256,7 +262,7 @@ if (
           error.code === "durable_lock_exists"
             ? "durable_lock_exists"
             : "configuration_or_storage",
-        ...(error.code === "durable_lock_exists" ? { message: error.message } : {}),
+        ...(["durable_lock_exists", "trusted_proxies_invalid"].includes(error.code) ? { message: error.message } : {}),
       }),
     );
     process.exitCode = 1;
@@ -410,7 +416,7 @@ async function api(request, response, url, context) {
     let flowPurpose = body.purpose;
     if (body.purpose === "claim") {
       const pairing = service.validatePairingCode(body.code, {
-        rateKey: request.socket.remoteAddress ?? "unknown",
+        rateKey: context.clientKey(request),
       });
       if (pairing.purpose !== "adult")
         flowPurpose = `${pairing.purpose}-claim`;
@@ -459,7 +465,7 @@ async function api(request, response, url, context) {
       credential,
       deviceLabel: flow.deviceLabel,
       syncPublicKeys: body.syncPublicKeys,
-      rateKey: request.socket.remoteAddress ?? "unknown",
+      rateKey: context.clientKey(request),
     });
     cookie(response, "kin_claim", result.claimToken, secureCookies);
     cookie(

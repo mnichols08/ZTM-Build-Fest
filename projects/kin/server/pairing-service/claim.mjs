@@ -15,7 +15,10 @@ import {
 
 export const claimMethods = {
   validatePairingCode(code, { rateKey = "unknown" } = {}) {
-    this.rateLimit(rateKey);
+    return this.rateLimitedAttempt(rateKey, () => this.checkPairingCode(code));
+  },
+
+  checkPairingCode(code) {
     const pairing = this.pairings.get(this.codeIndex.get(this.verifier(code)));
     if (!pairing) {
       this.audit("pairing_failed_attempt");
@@ -33,7 +36,11 @@ export const claimMethods = {
     syncPublicKeys,
     rateKey = "unknown",
   }) {
-    this.rateLimit(rateKey);
+    return this.rateLimitedAttempt(rateKey, () =>
+      this.claimPairingCode({ code, credential, deviceLabel, syncPublicKeys }));
+  },
+
+  claimPairingCode({ code, credential, deviceLabel, syncPublicKeys }) {
     const verifier = this.verifier(code);
     const pairing = this.pairings.get(this.codeIndex.get(verifier));
     if (!pairing) {
