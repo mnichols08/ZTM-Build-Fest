@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { decryptHouseholdSettings, encryptHouseholdSettings, normalizeHouseholdName, resolveAppearance, useHouseholdAppearance } from "./household.js";
+import { decryptHouseholdSettings, encryptHouseholdSettings, normalizeHouseholdName, personalAppearanceFromDraft, resolveAppearance, useHouseholdAppearance } from "./household.js";
 
 const shared = { appearance: { mode: "dark", colorSource: "preset", seed: "#397052", manual: { source: "preset", name: "Forest", seed: "#397052" }, image: { bytes: new Uint8Array([1]), type: "image/webp" } } };
 
@@ -22,6 +22,26 @@ test("use household appearance clears every personal override", () => {
   const personal = useHouseholdAppearance("member");
   assert.equal(resolveAppearance(personal, shared).mode, "dark");
   assert.equal(resolveAppearance(personal, shared).image.type, "image/webp");
+});
+
+test("changing personal color keeps an inherited household background", () => {
+  const personal = useHouseholdAppearance("member");
+  const baseline = resolveAppearance(personal, shared);
+  const draft = {
+    ...baseline,
+    colorSource: "preset",
+    seed: "#345C8C",
+    manual: { source: "preset", name: "Ocean", seed: "#345C8C" },
+  };
+  const saved = personalAppearanceFromDraft(personal, draft, baseline);
+  assert.equal(saved.colorSource, "preset");
+  assert.equal(saved.seed, "#345C8C");
+  assert.equal(saved.image, undefined);
+  assert.equal(resolveAppearance(saved, shared).image.type, "image/webp");
+
+  const removed = personalAppearanceFromDraft(saved, { ...draft, image: null }, draft);
+  assert.equal(removed.image, null);
+  assert.equal(resolveAppearance(removed, shared).image, null);
 });
 
 test("shared settings encryption binds household, epoch, and revision", async () => {

@@ -445,6 +445,97 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     check(draftRefresh.input === "The Draft House" && draftRefresh.brand === "The Draft House" && draftRefresh.dirty,
       "a sync refresh preserves the household name being edited and its live header preview", draftRefresh);
 
+    const colorDraftRefresh = await page(async () => {
+      const app = document.querySelector("kin-app"), editor = app.appearance;
+      const realCoordinator = app.syncCoordinator;
+      const baseline = app.householdSettings ?? { version: 1, revision: 0, name: "Our Home", appearance: { mode: "system", colorSource: "manual", seed: "#684033", owner: "household" } };
+      const forest = editor.presetControls.get("forest");
+      forest.checked = true;
+      forest.dispatchEvent(new Event("change", { bubbles: true }));
+      app.syncCoordinator = { loadHouseholdSettings: async () => ({ admin: true, adminRecorded: true, value: structuredClone(baseline) }), stop() {} };
+      await app.ctx.appearance.refreshHouseholdDefaults();
+      const result = { draft: editor.draft.seed, applied: app.currentAppearance.seed, dirty: editor.dirty };
+      editor.restoreSaved("Changes canceled.");
+      app.syncCoordinator = realCoordinator;
+      return result;
+    });
+    check(colorDraftRefresh.draft === "#397052" && colorDraftRefresh.applied === "#397052" && colorDraftRefresh.dirty,
+      "a sync refresh preserves an unsaved personal color and its live appearance preview", colorDraftRefresh);
+
+    const partialHexRefresh = await page(async () => {
+      const app = document.querySelector("kin-app"), editor = app.appearance;
+      const realCoordinator = app.syncCoordinator;
+      const baseline = app.householdSettings ?? { version: 1, revision: 0, name: "Our Home", appearance: { mode: "system", colorSource: "manual", seed: "#684033", owner: "household" } };
+      editor.hex.focus();
+      editor.hex.value = "#3A7";
+      editor.hex.dispatchEvent(new Event("input", { bubbles: true }));
+      app.syncCoordinator = { loadHouseholdSettings: async () => ({ admin: true, adminRecorded: true, value: structuredClone(baseline) }), stop() {} };
+      await app.ctx.appearance.refreshHouseholdDefaults();
+      const result = { input: editor.hex.value, invalid: editor.hex.getAttribute("aria-invalid"), dirty: editor.dirty };
+      editor.restoreSaved("Changes canceled.");
+      app.syncCoordinator = realCoordinator;
+      return result;
+    });
+    check(partialHexRefresh.input === "#3A7" && partialHexRefresh.invalid === "true" && partialHexRefresh.dirty,
+      "a sync refresh preserves a partially typed personal hex color", partialHexRefresh);
+
+    const colorKeepsSharedBackground = await page(async () => {
+      const app = document.querySelector("kin-app"), editor = app.appearance;
+      const originalPersonal = structuredClone(app.personalAppearance);
+      const originalHousehold = structuredClone(app.householdSettings);
+      const owner = originalPersonal.owner;
+      const image = { seed: "#684033", type: "image/webp", width: 24, height: 24, bytes: new Uint8Array([1, 2, 3, 4]) };
+      const sharedAppearance = { version: 1, owner: "household", mode: "system", colorSource: "background", seed: image.seed, manual: null, image };
+      app.householdSettings = { version: 1, revision: 1, name: "Background Home", appearance: sharedAppearance };
+      app.personalAppearance = { version: 2, owner, mode: undefined, colorSource: undefined, seed: undefined, manual: undefined, image: undefined };
+      editor.initialize({ ...structuredClone(sharedAppearance), owner });
+      const ocean = editor.presetControls.get("ocean");
+      ocean.checked = true;
+      ocean.dispatchEvent(new Event("change", { bubbles: true }));
+      const expectedColor = editor.draft.seed;
+      const previewKeptImage = app.currentAppearance.image?.bytes?.length === image.bytes.length;
+      editor.form.requestSubmit();
+      for (let index = 0; editor.save.disabled && index < 300; index++) await new Promise((resolve) => setTimeout(resolve, 10));
+      const result = {
+        previewKeptImage,
+        storedImageInherited: app.personalAppearance.image === undefined,
+        savedColor: app.personalAppearance.seed,
+        expectedColor,
+        appliedImage: app.currentAppearance.image?.bytes?.length === image.bytes.length,
+      };
+      app.householdSettings = originalHousehold;
+      await app.ctx.appearance.handleUseHouseholdAppearance({ detail: { value: originalPersonal } });
+      return result;
+    });
+    check(colorKeepsSharedBackground.previewKeptImage && colorKeepsSharedBackground.storedImageInherited &&
+      colorKeepsSharedBackground.savedColor === colorKeepsSharedBackground.expectedColor && colorKeepsSharedBackground.appliedImage,
+    "choosing a personal color keeps the inherited household background in preview and saved state", colorKeepsSharedBackground);
+
+    const orderedSettings = await page(async () => {
+      const app = document.querySelector("kin-app"), editor = app.householdDefaults;
+      const realCoordinator = app.syncCoordinator;
+      const baseline = app.householdSettings ?? { version: 1, revision: 0, name: "Our Home", appearance: { mode: "system", colorSource: "manual", seed: "#684033", owner: "household" } };
+      app.householdSettings = baseline;
+      editor.initialize({ admin: true, adminRecorded: true, value: baseline });
+      const requests = [];
+      app.syncCoordinator = { loadHouseholdSettings: () => new Promise((resolve, reject) => requests.push({ resolve, reject })), stop() {} };
+      const first = app.ctx.appearance.refreshHouseholdDefaults();
+      const second = app.ctx.appearance.refreshHouseholdDefaults();
+      const newer = { ...structuredClone(baseline), revision: baseline.revision + 2, name: "Newest Household" };
+      requests[1].resolve({ admin: false, adminRecorded: true, value: newer });
+      await second;
+      requests[0].resolve({ admin: true, adminRecorded: true, value: { ...structuredClone(baseline), revision: baseline.revision + 1, name: "Stale Household" } });
+      await first;
+      const result = { revision: app.householdSettings.revision, name: app.householdSettings.name, hidden: editor.hidden, admin: editor.admin };
+      app.householdSettings = baseline;
+      editor.initialize({ admin: true, adminRecorded: true, value: baseline });
+      app.ctx.appearance.applyEffectiveAppearance();
+      app.syncCoordinator = realCoordinator;
+      return result;
+    });
+    check(orderedSettings.revision >= 2 && orderedSettings.name === "Newest Household" && orderedSettings.hidden && !orderedSettings.admin,
+      "an older household-settings response cannot replace newer settings or authority state", orderedSettings);
+
     // --- Household settings save settling after lock or re-open -----------
     // The real editor and its Save button; the coordinator's save is a
     // deferred promise. Every completion the editor receives is recorded. Lock

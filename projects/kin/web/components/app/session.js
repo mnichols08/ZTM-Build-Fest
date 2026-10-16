@@ -5,7 +5,8 @@ import { AttachmentPreviewCache } from "../../attachments/attachment-preview.js"
 import { loadKinEngine } from "../../wasm/kin-engine.js";
 import { EventStore } from "../../storage/event-store.js";
 import { clearLegacyDrafts } from "../kin-security.js";
-import { DEFAULT_APPEARANCE, loadAppearance } from "../../appearance/store.js";
+import { loadAppearance } from "../../appearance/store.js";
+import { resolveAppearance } from "../../appearance/household.js";
 import { getActiveVault, setActiveVault } from "../../security/local-vault.js";
 import { AUTO_LOCK_KEY, START_ERROR } from "./constants.js";
 import { assertCurrentSession, captureSession, isCurrentSession } from "../shared/session-guard.js";
@@ -127,7 +128,7 @@ export class SessionController {
       const appearance = await loadAppearance(this.app.store, vault);
       this.assertCurrentSession(session);
       this.app.personalAppearance = appearance;
-      const editorValue = appearance.version === 2 ? { ...DEFAULT_APPEARANCE, owner: appearance.owner } : appearance;
+      const editorValue = resolveAppearance(appearance, this.app.householdSettings);
       this.app.appearance.initialize(editorValue);
       this.ctx.appearance.applyEffectiveAppearance();
     } catch (error) {

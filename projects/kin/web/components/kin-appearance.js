@@ -10,6 +10,7 @@ export class KinAppearance extends HTMLElement {
     super();
     this.saved = null;
     this.draft = null;
+    this.dirty = false;
     this.generation = 0;
     this.instanceId = ++appearanceInstance;
   }
@@ -54,7 +55,12 @@ export class KinAppearance extends HTMLElement {
     pickerLabel.append(this.picker);
     const hexLabel = document.createElement("label"); hexLabel.textContent = "Hex color";
     this.hex = document.createElement("input"); this.hex.type = "text"; this.hex.inputMode = "text"; this.hex.maxLength = 7; this.hex.autocomplete = "off"; this.hex.spellcheck = false;
-    this.hex.addEventListener("input", () => { const value = normalizeHex(this.hex.value); this.setHexValidity(Boolean(value)); if (value) { this.picker.value = value; this.chooseCustom(value); } });
+    this.hex.addEventListener("input", () => {
+      this.dirty = true;
+      const value = normalizeHex(this.hex.value);
+      this.setHexValidity(Boolean(value));
+      if (value) { this.picker.value = value; this.chooseCustom(value); }
+    });
     hexLabel.append(this.hex);
     this.hexError = document.createElement("p"); this.hexError.className = "field-error"; this.hexError.textContent = "Enter a color as #RRGGBB."; this.hexError.hidden = true;
     this.hexError.id = `appearance-hex-error-${this.instanceId}`; this.hex.setAttribute("aria-describedby", this.hexError.id);
@@ -72,7 +78,7 @@ export class KinAppearance extends HTMLElement {
     const actions = document.createElement("div"); actions.className = "appearance-actions";
     this.save = document.createElement("button"); this.save.type = "submit"; this.save.className = "primary-action"; this.save.textContent = "Save changes";
     this.cancel = document.createElement("button"); this.cancel.type = "button"; this.cancel.textContent = "Cancel"; this.cancel.addEventListener("click", () => this.restoreSaved("Changes canceled."));
-    this.reset = document.createElement("button"); this.reset.type = "button"; this.reset.textContent = "Reset to Kin default"; this.reset.addEventListener("click", () => { this.generation++; this.draft = { ...DEFAULT_APPEARANCE, owner: this.saved?.owner ?? null }; this.update("Kin defaults are previewed. Save changes to keep them."); });
+    this.reset = document.createElement("button"); this.reset.type = "button"; this.reset.textContent = "Reset to Kin default"; this.reset.addEventListener("click", () => { this.generation++; this.dirty = true; this.draft = { ...DEFAULT_APPEARANCE, owner: this.saved?.owner ?? null }; this.update("Kin defaults are previewed. Save changes to keep them."); });
     this.inherit = document.createElement("button"); this.inherit.type = "button"; this.inherit.textContent = "Use household appearance"; this.inherit.addEventListener("click", () => this.dispatchEvent(new CustomEvent("kin:use-household-appearance", { bubbles: true, detail: { value: useHouseholdAppearance(this.saved?.owner ?? null) } })));
     this.feedback = document.createElement("p"); this.feedback.className = "appearance-feedback"; this.feedback.setAttribute("role", "status"); this.feedback.setAttribute("aria-live", "polite");
     actions.append(this.save, this.cancel, this.reset, this.inherit);
@@ -84,8 +90,8 @@ export class KinAppearance extends HTMLElement {
 
   followButton(property, label) { const button = document.createElement("button"); button.type = "button"; button.className = "appearance-follow"; button.textContent = label; button.addEventListener("click", () => this.dispatchEvent(new CustomEvent("kin:inherit-appearance-property", { bubbles: true, detail: { property } }))); return button; }
 
-  initialize(value) { this.generation++; this.saved = structuredClone(value); this.draft = structuredClone(value); this.disabled = false; this.update(""); }
-  clear() { this.generation++; this.saved = null; this.draft = null; this.feedback.textContent = ""; this.replaceChildren(); this.build(); }
+  initialize(value) { this.generation++; this.saved = structuredClone(value); this.draft = structuredClone(value); this.dirty = false; this.disabled = false; this.update(""); }
+  clear() { this.generation++; this.saved = null; this.draft = null; this.dirty = false; this.feedback.textContent = ""; this.replaceChildren(); this.build(); }
   set disabled(value) { for (const control of this.querySelectorAll("button,input")) control.disabled = Boolean(value); }
 
   choosePreset(preset) {
@@ -101,6 +107,7 @@ export class KinAppearance extends HTMLElement {
     // A manual choice invalidates late automatic extraction without freezing
     // the rest of the editor while native decoding continues.
     if (["preset", "custom"].includes(patch.colorSource)) this.generation++;
+    this.dirty = true;
     this.draft = { ...this.draft, ...patch };
     this.update("Unsaved changes.");
   }
@@ -124,6 +131,7 @@ export class KinAppearance extends HTMLElement {
       const image = await processBackground(file);
       if (generation !== this.generation || !this.draft) return;
       const automatic = ["default", "background"].includes(this.draft.colorSource);
+      this.dirty = true;
       this.draft = { ...this.draft, image, ...(automatic ? { colorSource: "background", seed: image.seed } : {}) };
       if (automatic) this.syncHex(image.seed);
       this.update("Image ready. Save changes to keep it.");
@@ -133,15 +141,17 @@ export class KinAppearance extends HTMLElement {
 
   removeImage() {
     this.generation++;
+    this.dirty = true;
     const sourceWasImage = this.draft.colorSource === "background";
     const manual = this.draft.manual;
     this.draft = { ...this.draft, image: null, ...(sourceWasImage ? { colorSource: manual?.source ?? "default", seed: manual?.seed ?? KIN_DEFAULT_SEED } : {}) };
     this.update("Background removed from the preview. Save changes to keep it removed.");
   }
 
-  restoreSaved(message) { this.generation++; this.draft = structuredClone(this.saved); this.update(message); }
+  restoreSaved(message) { this.generation++; this.dirty = false; this.draft = structuredClone(this.saved); this.update(message); }
   async requestSave() {
     if (!this.draft) return;
+    if (this.hex.getAttribute("aria-invalid") === "true") { this.feedback.textContent = "Finish the hex color before saving."; this.hex.focus(); return; }
     if (this.draft.colorSource === "custom") {
       const custom = normalizeHex(this.hex.value);
       if (!custom) { this.setHexValidity(false); return; }
@@ -149,8 +159,8 @@ export class KinAppearance extends HTMLElement {
     }
     this.generation++;
     this.disabled = true; this.feedback.textContent = "Saving…";
-    this.dispatchEvent(new CustomEvent("kin:save-appearance", { bubbles: true, detail: { value: structuredClone(this.draft), complete: (result, error) => {
-      if (!error) { this.saved = structuredClone(result); this.draft = structuredClone(result); }
+    this.dispatchEvent(new CustomEvent("kin:save-appearance", { bubbles: true, detail: { value: structuredClone(this.draft), baseline: structuredClone(this.saved), complete: (result, error) => {
+      if (!error) { this.saved = structuredClone(result); this.draft = structuredClone(result); this.dirty = false; }
       this.disabled = false; this.update(error ? error.message : "Appearance saved on this device.", !error);
     } } }));
   }
@@ -159,7 +169,7 @@ export class KinAppearance extends HTMLElement {
     if (!this.draft) return;
     for (const [value, input] of this.modeControls) input.checked = value === this.draft.mode;
     for (const [presetId, input] of this.presetControls) input.checked = (this.draft.colorSource === "default" && presetId === "default") || (this.draft.colorSource === "preset" && APPEARANCE_PRESETS.find((item) => item.id === presetId)?.seed === this.draft.seed);
-    this.picker.value = this.draft.seed; if (this.draft.colorSource !== "custom") this.syncHex(this.draft.seed); else if (document.activeElement !== this.hex) this.hex.value = this.draft.seed;
+    this.picker.value = this.draft.seed; if (this.draft.colorSource !== "custom") this.syncHex(this.draft.seed); else if (document.activeElement !== this.hex) { this.hex.value = this.draft.seed; this.setHexValidity(true); }
     this.useBackground.hidden = !this.draft.image; this.remove.hidden = !this.draft.image; this.choose.textContent = this.draft.image ? "Replace image" : "Choose image";
     this.imageStatus.textContent = this.draft.image ? `Processed locally (${this.draft.image.width} × ${this.draft.image.height}).` : "No personal background selected.";
     const preset = APPEARANCE_PRESETS.find((item) => item.seed === this.draft.seed);
