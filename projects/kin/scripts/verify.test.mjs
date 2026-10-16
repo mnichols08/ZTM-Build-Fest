@@ -122,7 +122,7 @@ test("missing required browser is a failure and optional browser stage is NOT RU
     browser: true,
     env: { ...process.env, KIN_BROWSER: "" },
     execute: availablePrerequisites,
-    nodeVersion: "22.13.0",
+    nodeVersion: "24.16.0",
     output: (message) => messages.push(message),
   });
   const browserStage = result.stages.find(({ name }) => name.startsWith("E —"));
@@ -133,7 +133,7 @@ test("missing required browser is a failure and optional browser stage is NOT RU
     browser: true,
     browserExecutable: join(tmpdir(), "kin-missing-browser-executable"),
     execute: availablePrerequisites,
-    nodeVersion: "22.13.0",
+    nodeVersion: "24.16.0",
     output: (message) => messages.push(message),
   });
   assert.equal(missingExecutable.stages.find(({ name }) => name.startsWith("E —")).status, "FAIL");
@@ -142,7 +142,7 @@ test("missing required browser is a failure and optional browser stage is NOT RU
   const optional = await runVerification({
     browser: false,
     execute: availablePrerequisites,
-    nodeVersion: "22.13.0",
+    nodeVersion: "24.16.0",
     output: (message) => messages.push(message),
   });
   assert.equal(optional.stages.find(({ name }) => name.startsWith("E —")).status, "NOT RUN");
@@ -218,7 +218,7 @@ test("a failing required child command makes the overall gate fail", async () =>
     if (command === "cargo" && args[0] === "clippy") return { code: 23, stdout: "", stderr: "lint failed" };
     return { code: 0, stdout: "", stderr: "" };
   };
-  const result = await runVerification({ execute, nodeVersion: "22.13.0", output: () => {} });
+  const result = await runVerification({ execute, nodeVersion: "24.16.0", output: () => {} });
   assert.equal(result.code, 1);
   const staticStage = result.stages.find(({ name }) => name.startsWith("B —"));
   assert.equal(staticStage.status, "FAIL");
@@ -240,7 +240,7 @@ test("an ignored WASM output is explicitly reported without a committed comparis
     if (command === "git" && args[0] === "ls-files") return { code: 1, stdout: "", stderr: "path is ignored" };
     return { code: 0, stdout: "", stderr: "" };
   };
-  const result = await runVerification({ execute, nodeVersion: "22.13.0", output: () => {} });
+  const result = await runVerification({ execute, nodeVersion: "24.16.0", output: () => {} });
   const wasm = result.stages.find(({ name }) => name.startsWith("D —")).results[0];
   assert.equal(wasm.status, "PASS");
   assert.match(wasm.artifactComparison, /NOT RUN.*ignored\/untracked/);
@@ -256,7 +256,7 @@ test("an interrupted required command stops later stages and yields a failing su
     if (command === "cargo" && args[0] === "fmt") return { code: 130, signal: "SIGINT", interrupted: true, stdout: "", stderr: "" };
     return { code: 0, stdout: "", stderr: "" };
   };
-  const result = await runVerification({ execute, nodeVersion: "22.13.0", output: () => {} });
+  const result = await runVerification({ execute, nodeVersion: "24.16.0", output: () => {} });
   assert.equal(result.code, 1);
   assert.equal(result.stages.find(({ name }) => name.startsWith("B —")).status, "FAIL");
   assert.equal(result.stages.find(({ name }) => name.startsWith("C —")).status, "NOT RUN");
@@ -273,7 +273,7 @@ test("a failed Node suite prevents Rust tests and WASM build", async () => {
     if (command === process.execPath && args[0] === "--test") return { code: 1, stdout: "", stderr: "controlled node failure" };
     return { code: 0, stdout: "", stderr: "" };
   };
-  const result = await runVerification({ execute, nodeVersion: "22.13.0", output: () => {} });
+  const result = await runVerification({ execute, nodeVersion: "24.16.0", output: () => {} });
   const tests = result.stages.find(({ name }) => name.startsWith("C —"));
   assert.equal(tests.results[0].status, "FAIL");
   assert.equal(tests.results[1].status, "NOT RUN");
@@ -295,7 +295,7 @@ test("a failed required browser suite marks later browser suites NOT RUN", async
     }
     return { code: 0, stdout: "", stderr: "" };
   };
-  const result = await runVerification({ browser: true, browserExecutable: process.execPath, execute, nodeVersion: "22.13.0", output: () => {} });
+  const result = await runVerification({ browser: true, browserExecutable: process.execPath, execute, nodeVersion: "24.16.0", output: () => {} });
   const browser = result.stages.find(({ name }) => name.startsWith("E —"));
   assert.equal(executedSuites.length, 1);
   assert.equal(browser.results[0].status, "FAIL");
