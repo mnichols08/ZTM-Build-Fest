@@ -43,9 +43,24 @@ jobs:
         run: ./build-wasm.ps1
       - name: Run verification and browser gates
         working-directory: projects/kin
+        shell: pwsh
         env:
           KIN_BROWSER: C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
-        run: npm run verify:browser
+        # On failure, the failing lines and the end of the output are also
+        # reported as one annotation, which the checks API returns even where
+        # the full job log can't be downloaded (#164).
+        run: |
+          npm run verify:browser 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/kin-verify.txt"
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            $all = Get-Content "$env:RUNNER_TEMP/kin-verify.txt"
+            $failing = $all | Select-String -Pattern 'FAIL|Error|not ok|AssertionError|timed out' | Select-Object -Last 40 | ForEach-Object { $_.Line }
+            $message = (@($failing) + '--- last lines ---' + ($all | Select-Object -Last 40)) -join "`n"
+            if ($message.Length -gt 60000) { $message = $message.Substring($message.Length - 60000) }
+            $message = $message.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Kin verification failed::$message"
+          }
+          exit $code
 
   verify-linux:
     runs-on: ubuntu-latest
