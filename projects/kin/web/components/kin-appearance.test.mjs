@@ -52,6 +52,7 @@ test("theme presets use one native radio group and preview the checked choice", 
   const appearance = new KinAppearance();
   appearance.connectedCallback();
   appearance.initialize(initial);
+  assert.equal(appearance.dirty, false);
 
   const controls = [...appearance.presetControls.values()];
   assert.equal(controls.length, 8);
@@ -68,4 +69,9 @@ test("theme presets use one native radio group and preview the checked choice", 
   assert.equal(appearance.draft.colorSource, "preset");
   assert.equal(appearance.draft.seed, "#397052");
   assert.equal(appearance.feedback.textContent, "Unsaved changes.");
+  assert.equal(appearance.dirty, true);
+
+  appearance.restoreSaved("Changes canceled.");
+  assert.equal(appearance.dirty, false);
+  assert.equal(appearance.draft.seed, initial.seed);
 });
