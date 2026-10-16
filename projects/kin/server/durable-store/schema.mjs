@@ -435,6 +435,21 @@ export const schemaMethods = {
         throw new DurableStoreError("Kin could not complete the household admin migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 8) {
+      try {
+        this.transaction(() => {
+          // The member who uploaded each attachment. Rows stored before this
+          // migration keep NULL: only an Adult may delete those.
+          this.db.exec("ALTER TABLE sync_attachments ADD COLUMN uploader_member_id TEXT");
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(9, Date.now());
+          sqlitePragma(this.db, "user_version = 9");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the attachment uploader migration.", { cause: error });
+      }
+    }
   },
 
   verify() {

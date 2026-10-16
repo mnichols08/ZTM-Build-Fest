@@ -422,7 +422,7 @@ export const envelopeMethods = {
     }
   },
 
-  putAttachment(householdId, attachmentId, keyEpoch, ciphertext, digest, createdAt) {
+  putAttachment(householdId, attachmentId, keyEpoch, ciphertext, digest, createdAt, uploaderMemberId = null) {
     this.assertAvailable();
     if (!isId(householdId) || !isId(attachmentId) || !Number.isSafeInteger(keyEpoch) || keyEpoch < 1 || keyEpoch > MAX_KEY_EPOCHS ||
         !Buffer.isBuffer(ciphertext) || ciphertext.length < 1 || ciphertext.length > MAX_ATTACHMENT_BYTES ||
@@ -437,7 +437,7 @@ export const envelopeMethods = {
       const quota = this.db.prepare("SELECT COUNT(*) AS count, COALESCE(SUM(size_bytes), 0) AS bytes FROM sync_attachments WHERE household_id = ?").get(householdId);
       if (quota.count >= MAX_HOUSEHOLD_ATTACHMENTS || quota.bytes + ciphertext.length > MAX_HOUSEHOLD_ATTACHMENT_BYTES)
         throw new DurableConflictError("attachment_limit", "This household reached its encrypted attachment limit.");
-      this.db.prepare("INSERT INTO sync_attachments(household_id, attachment_id, key_epoch, ciphertext, size_bytes, digest, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(householdId, attachmentId, keyEpoch, ciphertext, ciphertext.length, digest, createdAt);
+      this.db.prepare("INSERT INTO sync_attachments(household_id, attachment_id, key_epoch, ciphertext, size_bytes, digest, created_at, uploader_member_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(householdId, attachmentId, keyEpoch, ciphertext, ciphertext.length, digest, createdAt, isId(uploaderMemberId) ? uploaderMemberId : null);
       return { accepted: true };
     });
   },
@@ -454,6 +454,13 @@ export const envelopeMethods = {
   listAttachments(householdId) {
     this.assertAvailable();
     return this.db.prepare("SELECT attachment_id AS attachmentId, key_epoch AS keyEpoch, size_bytes AS size, digest FROM sync_attachments WHERE household_id = ? ORDER BY attachment_id LIMIT ?").all(householdId, MAX_HOUSEHOLD_ATTACHMENTS);
+  },
+
+  /** Whether the attachment exists and who uploaded it (null for rows stored before uploaders were recorded). */
+  attachmentUploader(householdId, attachmentId) {
+    this.assertAvailable();
+    const row = this.db.prepare("SELECT uploader_member_id AS uploaderMemberId FROM sync_attachments WHERE household_id = ? AND attachment_id = ?").get(householdId, attachmentId);
+    return row ? { uploaderMemberId: row.uploaderMemberId ?? null } : null;
   },
 
   removeAttachment(householdId, attachmentId) {
