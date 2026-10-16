@@ -1,6 +1,54 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { activeResponsibilityMemberIds, committedBatchUpdate, loadCachedHouseholdSettings, memberHasTrustAuthority, portableMembershipFromDirectory, SyncCoordinator } from "./sync-coordinator.js";
+import { encodeEventPage } from "./envelope-wire.js";
+
+const CURSORS = ["AAAAAAAAAAA", "AAAAAAAAAAE", "AAAAAAAAAAI", "AAAAAAAAAAM", "AAAAAAAAAAQ", "AAAAAAAAAAU", "AAAAAAAAAAY"];
+
+function waitFor(check, timeout = 500) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const poll = () => {
+      if (check()) resolve();
+      else if (Date.now() - started >= timeout) reject(new Error("timed out waiting for sync state"));
+      else setTimeout(poll, 1);
+    };
+    poll();
+  });
+}
+
+function catchUpHarness(pages) {
+  let cursor = CURSORS[0];
+  let pageIndex = 0;
+  let bootstrapCalls = 0;
+  let projectionCalls = 0;
+  const states = [];
+  const store = {
+    async getSyncState() { return { syncCursor: cursor, initialized: true }; },
+    async commitRemoteBatch({ nextCursor }) {
+      cursor = nextCursor;
+      return { added: 0, quarantined: 0, state: { items: [] }, snapshotBoundary: null };
+    },
+    async getSyncBootstrap() { bootstrapCalls += 1; return {}; },
+    async getPendingOutbox() { return []; },
+    async getPendingBindings() { return []; },
+    async projectCurrent() { projectionCalls += 1; return { items: [] }; },
+    async markSyncInitialized() {},
+    async compactArchiveOutboxSequences() {},
+  };
+  const coordinator = new SyncCoordinator({
+    store,
+    engine: {},
+    identity: { householdId: "11".repeat(16), deviceId: "device" },
+    onState: (state) => states.push(state),
+  });
+  coordinator.keyStore = { vault: { assertUnlocked() {} }, getEpoch: async () => null, close() {} };
+  coordinator.catchUp = { status: { currentEpoch: 1 }, devices: [], remoteBindings: [] };
+  coordinator.request = async () => encodeEventPage(pages[Math.min(pageIndex++, pages.length - 1)]);
+  coordinator.acknowledgeRemoteDuplicateEvents = async () => {};
+  coordinator.pushPendingEvents = async () => {};
+  return { coordinator, states, calls: () => ({ bootstrapCalls, projectionCalls, pageIndex }) };
+}
 
 test("empty sync polls do not publish a projection or snapshot boundary", () => {
   const state = { items: [] };
@@ -150,6 +198,149 @@ test("stopping sync cancels a queued cold-history continuation", async () => {
   coordinator.stop();
   await new Promise((resolve) => setTimeout(resolve, 10));
   assert.equal(runs, 1);
+});
+
+test("a hasMore page without committed cursor progress does not continue", async () => {
+  const { coordinator, states, calls } = catchUpHarness([
+    { events: [], nextCursor: CURSORS[0], hasMore: true },
+  ]);
+  try {
+    await coordinator.syncNow();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(calls().pageIndex, 1);
+    assert.equal(coordinator.continuationTimer, null);
+    assert.equal(states.at(-1).code, "sync_no_progress");
+  } finally {
+    coordinator.stop();
+  }
+});
+
+test("an error mid-chain stops later continuation passes", async () => {
+  const states = [];
+  const coordinator = new SyncCoordinator({ store: {}, engine: {}, identity: { deviceId: "device" }, onState: (state) => states.push(state) });
+  let runs = 0;
+  coordinator.runOnce = async () => {
+    runs += 1;
+    if (runs === 2) throw new Error("relay failed");
+    return { hasMore: true, advanced: true };
+  };
+  try {
+    await coordinator.syncNow();
+    await waitFor(() => runs === 2);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(runs, 2);
+    assert.equal(states.at(-1).state, "paused");
+  } finally {
+    coordinator.stop();
+  }
+});
+
+test("a deleted household terminates a continuation chain", async () => {
+  const states = [];
+  const coordinator = new SyncCoordinator({ store: {}, engine: {}, identity: { deviceId: "device" }, onState: (state) => states.push(state) });
+  let runs = 0;
+  coordinator.runOnce = async () => {
+    runs += 1;
+    if (runs === 2) throw Object.assign(new Error("deleted"), { code: "household_deleted" });
+    return { hasMore: true, advanced: true };
+  };
+  try {
+    await coordinator.syncNow();
+    await waitFor(() => coordinator.terminal);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(runs, 2);
+    assert.equal(states.at(-1).state, "deleted");
+  } finally {
+    coordinator.stop();
+  }
+});
+
+test("a lock between passes stops the continuation chain", async () => {
+  let locked = false;
+  let runs = 0;
+  const coordinator = new SyncCoordinator({ store: {}, engine: {}, identity: { deviceId: "device" } });
+  coordinator.keyStore = { vault: { assertUnlocked() { if (locked) throw Object.assign(new Error("locked"), { code: "locked" }); } }, close() {} };
+  coordinator.runOnce = async () => {
+    runs += 1;
+    coordinator.keyStore.vault.assertUnlocked();
+    return { hasMore: true, advanced: true };
+  };
+  try {
+    await coordinator.syncNow();
+    locked = true;
+    await waitFor(() => runs === 2);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(runs, 2);
+    assert.equal(coordinator.continuationTimer, null);
+  } finally {
+    coordinator.stop();
+  }
+});
+
+test("the sliding request budget stays at or below 200 during a 10,000-event catch-up", () => {
+  let now = 0;
+  const coordinator = new SyncCoordinator({ store: {}, engine: {}, identity: { deviceId: "device" }, now: () => now });
+  const requests = [];
+  for (let pass = 0; pass < 100; pass += 1) {
+    const delay = coordinator.requestBudgetDelay(5);
+    now += delay;
+    for (let page = 0; page < 5; page += 1) {
+      coordinator.recordRequest();
+      requests.push(now);
+    }
+  }
+  for (const timestamp of requests) {
+    const inWindow = requests.filter((candidate) => candidate > timestamp - 60_000 && candidate <= timestamp).length;
+    assert.ok(inWindow <= 200, `${inWindow} requests landed in one simulated minute`);
+  }
+  assert.equal(requests.length, 500);
+  assert.ok(now >= 120_000);
+});
+
+test("sync_rate_limited stays in catching-up state and resumes", async () => {
+  const states = [];
+  const coordinator = new SyncCoordinator({ store: {}, engine: {}, identity: { deviceId: "device" }, onState: (state) => states.push(state) });
+  let runs = 0;
+  coordinator.runOnce = async () => {
+    runs += 1;
+    if (runs === 1) throw Object.assign(new Error("limited"), { code: "sync_rate_limited", retryAfterMs: 1 });
+    return { hasMore: false, advanced: true };
+  };
+  try {
+    await coordinator.syncNow();
+    assert.equal(states.at(-1).state, "syncing");
+    assert.equal(states.at(-1).message, "Catching up…");
+    assert.notEqual(states.at(-1).state, "paused");
+    await waitFor(() => runs === 2);
+  } finally {
+    coordinator.stop();
+  }
+});
+
+test("catch-up passes skip bootstrap and attachment reconciliation until the final page", async () => {
+  const continuing = catchUpHarness([
+    { events: [], nextCursor: CURSORS[1], hasMore: true },
+  ]);
+  await continuing.coordinator.syncNow();
+  continuing.coordinator.stop();
+  assert.deepEqual(continuing.calls(), { bootstrapCalls: 0, projectionCalls: 0, pageIndex: 2 });
+
+  const finishing = catchUpHarness([
+    { events: [], nextCursor: CURSORS[1], hasMore: false },
+  ]);
+  await finishing.coordinator.syncNow();
+  finishing.coordinator.stop();
+  assert.equal(finishing.calls().bootstrapCalls, 0);
+  assert.equal(finishing.calls().projectionCalls, 1);
+});
+
+test("five catch-up pages coalesce state publication into one update", async () => {
+  const pages = [1, 2, 3, 4, 5].map((index) => ({ events: [], nextCursor: CURSORS[index], hasMore: true }));
+  const { coordinator, states, calls } = catchUpHarness(pages);
+  await coordinator.syncNow();
+  coordinator.stop();
+  assert.equal(calls().pageIndex, 5);
+  assert.equal(states.length, 1);
 });
 
 test("only Adult sessions attempt epoch rotation and key provisioning during sync", () => {

@@ -61,12 +61,23 @@ async function measure(eventCount) {
   let cursor = "";
   let pages = 0;
   let wireBytes = 0;
+  let rateLimitWaitMs = 0;
+  let peakRequestsPerMinute = 0;
+  let pullRequestTimes = [];
   const syncStarted = performance.now();
   while (true) {
-    // Active-work measurement runs without the production timer delays. The
-    // cadence floor below restores those delays and remains under the relay's
-    // normal per-minute request limit.
-    relay.rateBuckets.clear();
+    const budgetNow = performance.now();
+    pullRequestTimes = pullRequestTimes.filter((timestamp) => timestamp > budgetNow - 60_000);
+    if (pullRequestTimes.length >= 200) {
+      const waitStarted = performance.now();
+      const delay = Math.max(1, pullRequestTimes[0] + 60_000 - waitStarted + 1);
+      await new Promise((resolveWait) => setTimeout(resolveWait, delay));
+      rateLimitWaitMs += performance.now() - waitStarted;
+      const resumedAt = performance.now();
+      pullRequestTimes = pullRequestTimes.filter((timestamp) => timestamp > resumedAt - 60_000);
+    }
+    pullRequestTimes.push(performance.now());
+    peakRequestsPerMinute = Math.max(peakRequestsPerMinute, pullRequestTimes.length);
     const serverPage = relay.pull(target.sessionToken, cursor, String(MAX_EVENTS_PER_BATCH));
     const bytes = encodeEventPage(serverPage);
     wireBytes += bytes.byteLength;
@@ -79,18 +90,17 @@ async function measure(eventCount) {
     cursor = page.nextCursor;
     if (!page.hasMore) break;
   }
-  const relayWireCryptoMs = performance.now() - syncStarted;
+  const pullWallClockMs = performance.now() - syncStarted;
   const replayStarted = performance.now();
   const projection = fixtureCodec.applyEvents(records, 1_760_100_000_000, null, 20261016);
   const replayMs = performance.now() - replayStarted;
+  const wallClockMs = performance.now() - syncStarted;
   assert.equal(records.length, eventCount);
   assert.equal(projection.items.length, eventCount);
   const coordinatorCycles = Math.ceil(pages / 5); // production MAX_PULL_PASSES
   return {
-    events: eventCount, pages, wireBytes, fixtureBuildMs, relayWireCryptoMs, replayMs,
-    activeTotalMs: relayWireCryptoMs + replayMs,
-    coordinatorCycles,
-    defaultCadenceFloorMs: relayWireCryptoMs + replayMs + Math.max(0, coordinatorCycles - 1) * 5_000,
+    events: eventCount, pages, wireBytes, fixtureBuildMs, pullWallClockMs, replayMs,
+    wallClockMs, rateLimitWaitMs, peakRequestsPerMinute, coordinatorCycles,
   };
 }
 
@@ -102,7 +112,7 @@ for (const count of counts) {
 }
 fixtureCodec.dispose();
 const report = {
-  scope: "Real process-local relay, 20-event binary pages, Web Crypto decrypt/signature verification and one release-WASM replay. Excludes network latency and IndexedDB commit. The cadence floor includes the production five-page-per-run and five-second timer policy.",
+  scope: "Real process-local relay, 20-event binary pages, Web Crypto decrypt/signature verification, the 200-request client sliding-window budget and one release-WASM replay. Pull requests do not clear relay rate buckets. Excludes real network latency and IndexedDB commit; fixture construction is separate and may clear rate buckets between source pushes.",
   node: process.version,
   results,
 };
