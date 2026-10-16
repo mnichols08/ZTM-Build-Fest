@@ -55,10 +55,10 @@ Windows developers should be able to use PowerShell and standard Rust tooling. m
 
 - Rust toolchain (`rustup`, `cargo`) and the `wasm32-unknown-unknown` target
 - A modern secure-context browser with WebAssembly, Web Crypto, IndexedDB, Web Locks, BroadcastChannel, service workers and the platform APIs in [IMPLEMENTATION](IMPLEMENTATION.md)
-- Node.js 22.13.0 or later and npm for the same-origin application/API server and built-in tests; SQLite uses the built-in `node:sqlite` API, with no npm runtime dependencies
+- Node.js 24.16.0 or later and npm for the same-origin application/API server and built-in tests; SQLite uses the built-in `node:sqlite` API, with no npm runtime dependencies
 - Python 3.11 or later for version checks and launcher smoke tests; it is not needed to serve the app
 
-On Windows, `run.ps1` uses Node.js from PATH when it meets the 22.13.0 minimum. If PATH selects an older version, it uses the lowest compatible version already installed through fnm. The script does not install runtimes. On macOS and Linux, put Node.js 22.13.0 or later on PATH before running `run.sh`.
+On Windows, `run.ps1` uses Node.js from PATH when it meets the 24.16.0 minimum. If PATH selects an older version, it uses the lowest compatible version already installed through fnm. The script does not install runtimes. On macOS and Linux, put Node.js 24.16.0 or later on PATH before running `run.sh`.
 
 `rust-toolchain.toml` pins Rust 1.93.0 with the `wasm32-unknown-unknown`
 target, and the verification gate and release builds use that pin. If the
@@ -79,7 +79,7 @@ Stable needs the same target (`rustup target add wasm32-unknown-unknown
 differ in bytes from the pinned build, formatting or Clippy findings may
 differ, and it does not count as a pass of the gate.
 
-The current implementation has been exercised on Windows with Node 22.12 using its experimental SQLite flag. Node 22.13.0 or later is the supported runtime floor for using `node:sqlite` without that flag. Other operating-system and runtime/architecture combinations remain unverified.
+Node.js 24.16.0 is the supported runtime floor: earlier Node 24 releases (and Node 22) can corrupt `node:sqlite` TEXT values that contain NUL characters. CI runs Node 24.22.0 on Windows and Linux. Other operating-system and runtime/architecture combinations remain unverified.
 
 ## Browser capabilities
 
