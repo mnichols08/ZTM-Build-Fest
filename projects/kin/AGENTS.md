@@ -86,6 +86,12 @@ Do not add parent-level:
 - dependency manifests
 - Kin assets
 
+The sole current exception is the explicitly authorized root workflow at
+`.github/workflows/kin-verification.yml`, synchronized from
+`projects/kin/docs/ci/kin-verification.workflow.yml`. Do not broaden that
+exception to other parent-level files or repository settings without separate
+authorization.
+
 Before completing any task, inspect Git status and diff.
 
 Every changed path must begin with:
@@ -100,7 +106,14 @@ If an unrelated parent-repository file was modified accidentally, revert that ch
 
 # Current Development Stage
 
-The preceding implementation candidate is v0.13.x Recovery & Household Continuity.
+The current implementation candidate is v0.47.0 Household Identity & Shared
+Appearance. It remains pre-release and in stabilization/readiness review; no
+tag or production certification is implied. The historical progression below
+records the earlier authorized candidate sequence and remains relevant to its
+compatibility constraints.
+
+The v0.13.x Recovery & Household Continuity candidate established the earlier
+recovery baseline.
 v0.13.5 preserves a newer deletion cancellation over an older pending-deletion backup; v0.13.4 corrects capacity and predating-backup review findings after the v0.13.3 recovery UX/documentation gate, v0.13.2 stale-backup hardening, v0.13.1 member-assisted recovery, and the v0.13.0 capability matrix
 and bounded same-member replacement-device enrollment. Recovery must restore continuity
 without reviving revoked authority; no server content-key escrow is permitted.

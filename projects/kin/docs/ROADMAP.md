@@ -1,6 +1,9 @@
 # Roadmap
 
-Last published release: `v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. The v0.35.0 implementation candidate is on `kin-v0.35-more-adults`; security and release gates remain pending.
+Last published release: `v0.10.3 — Bounded Storage/Archive Hardening &
+Architecture Closure`. Current implementation candidate: `v0.47.0 — Household
+Identity & Shared Appearance`. It is in stabilization and release-readiness
+review; no v0.47 tag or production certification is claimed.
 
 ```text
 v0.9.3 — Encrypted Event Sync Stabilization
@@ -31,32 +34,37 @@ v0.21.0 — Household Modes (implemented candidate)
 	↓
 v0.22.0 — Lightweight Planning Dates (implemented candidate)
 	↓
-v0.23.x–v0.25.x — Calendar Export, History, Search (implementation candidates)
+v0.23.x–v0.40.x — Calendar, history, search, household knowledge, membership and portability candidates
 	↓
-v0.31.x — Maintenance Records
+v0.41.x — Mobile Experience & Passkey-First UX candidate
 	↓
-v0.32.x — Encrypted Attachments Foundation
+v0.42.x–v0.45.x — Unactivated follow-up planning contracts
 	↓
-v0.33.x — Attachment UX & Lifecycle
+v0.46.0 — Personal Appearance candidate
 	↓
-v0.34.x — Responsibility Ownership
+v0.47.0 — Household Identity & Shared Appearance (current candidate)
 	↓
-v0.35.x — More Adult Members (separate trust-model review)
-	↓
-v0.27.x–v0.40.x — Remaining October daily features (October 18–31 targets)
-	↓
-v0.41.x–v0.45.x — Undated follow-up proposals
+stabilization — measured performance, cross-platform acceptance and bounded product experiments
 	↓
 v1.0.0 — Stable Kin Platform (readiness-driven, no fixed date)
 ```
 
 Kin supports encrypted local storage, recovery/optional PRF unlock, verified migration, Rust commands/codecs, encrypted archives and a static offline shell alongside opt-in encrypted sync. The v0.11 candidate adds durable server identity/relay state and service database backup/restore. Archives recover local history, not server identity. Independent security review and broader browser/authenticator coverage remain outstanding.
 
-The v0.11 candidate settled service durability before v0.12 lifecycle/deletion. The [v0.11](V0.11.0.md) and [v0.12](V0.12.0.md) records describe candidate evidence; v0.13 Recovery & Household Continuity and v0.14 UX/UI Consolidation are implemented through their `.5` patches. v0.15 Household Areas is complete through v0.15.5; v0.16 Notes is complete through v0.16.2 with a v0.16.3 hardening candidate; v0.17 Checklist Steps is preserved as the existing tagged candidate. v0.18 Richer Routine Scheduling, v0.19 Shared Shopping Lists, and v0.20 Staples & Replenishment were implemented on the prior fast-track. v0.21 Household Modes through v0.25 Search & Filters are implementation candidates; v0.26 Pins & Quick Access and v0.27 Household Playbooks are committed milestones on the active authorized batch.
+The v0.11 candidate settled service durability before v0.12 lifecycle/deletion.
+The detailed release records preserve the candidate progression through v0.41.1.
+The separately authorized v0.46.0 candidate adds protected member-bound personal
+appearance, and the current v0.47.0 candidate adds encrypted revisioned household
+identity/default appearance plus recorded admin authority. The intervening
+v0.42.x–v0.45.x documents remain planning contracts, not implied releases.
 
 ## October direction
 
-The goal for Build Fest is to add one small, useful household feature each day in October, supported by the existing product and platform foundations. v0.12.3 passed scripted Windows checks, including both launchers; v0.13–v0.20 are implemented through the noted candidates, v0.17.0 is preserved as the existing tagged candidate, and v0.21.0–v0.26.0 have implementation candidates. Later daily plans remain targets, not completion claims. The [daily plan](#october-daily-feature-plan) covers the proposed minor lines through `v0.40.x` on October 31.
+The October daily plan below is now historical planning context. It drove small
+candidate increments through v0.40.x, but dates and proposal numbers are not
+release evidence. Current work stabilizes the v0.47.0 candidate, completes the
+remaining platform/device acceptance matrix, and permits only measured,
+bounded experiments after those gates.
 
 > Kin should help a household remember, coordinate, hand off, and recover context without requiring everyone to become a project manager.
 
@@ -114,7 +122,7 @@ Establish a Kin-scoped changelog from actual tagged release history and document
 
 ## First coded release
 
-Each minor release represents a new product capability. Its initial stabilization patches address correctness (`.1`), resilience/accessibility (`.2`), and hardening (`.3`) when needed; additional fixes remain patches `.4` and onward. Earlier lines used a human feedback checkpoint before the next feature. For an authorized October implementation sequence, follow the [daily cadence](BUILD-FEST-CADENCE.md) and [release-line protocol](RELEASE-LINE-PROTOCOL.md), carrying the same validation into each small increment. The current v0.11 candidate review gate remains in effect.
+Each minor release represents a new product capability. Its initial stabilization patches address correctness (`.1`), resilience/accessibility (`.2`), and hardening (`.3`) when needed; additional fixes remain patches `.4` and onward. Earlier lines used a human feedback checkpoint before the next feature. Historical work follows the [daily cadence](BUILD-FEST-CADENCE.md) and [release-line protocol](RELEASE-LINE-PROTOCOL.md); the current v0.47.0 candidate remains subject to the same validation, compatibility and human-review gates.
 
 ### `v0.1.0` — Household Heartbeat
 
@@ -383,9 +391,13 @@ The [Build Fest cadence](BUILD-FEST-CADENCE.md) covers the daily loop; the [rele
 
 `0.38–0.40`: expanded-member privacy polish, portable export and restore/device migration. Demonstrate the actually completed product and record remaining limitations at the end of the month.
 
-## Undated follow-up plans
+## Current stabilization and deferred plans
 
-Keep these contracts as post-October proposals, outside the daily commitment. Prioritize and confirm their scope and numbering after feedback on the end-of-month build; they do not require another five minor releases in October.
+The active readiness sequence is measured architecture/performance work,
+cross-browser and physical-device acceptance, and then bounded Catch-up/search
+context experiments using existing projection data. This sequence does not
+activate a new version or persistent concept. Keep the remaining contracts as
+proposals and reassess their numbering from evidence.
 
 | Proposed release / contract | Follow-up purpose |
 |---|---|
@@ -417,12 +429,16 @@ Through the October plan, preserve the [product principles](PRINCIPLES.md) and [
 
 ## Scope discipline
 
-Each roadmap item is future work unless explicitly marked as implemented. The v0.35.0 implementation candidate requires security and human review before release. v1.0 remains readiness-driven. Releases through `v0.0.12` were documentation-only; v0.1.0 was the first coded release.
+Each roadmap item is future work unless explicitly marked as implemented. The
+current v0.47.0 implementation candidate requires security, cross-platform and
+human review before release. v1.0 remains readiness-driven. Releases through
+`v0.0.12` were documentation-only; v0.1.0 was the first coded release.
 
 Preserve every existing tag. The current batch candidate follows the release gates described in [agent guidance](../AGENTS.md) and the [release process](RELEASES.md); a date alone cannot bypass a release gate.
 
 ## Feedback gate
 
-After the end-of-month Build Fest build (target `v0.40.x`), stop feature development and gather human feedback. Use patches on the actual completed minor line for concrete defects. Do not automatically advance to the undated v0.41–v0.45 proposals or `v1.0.0`.
-
-The v0.31.0–v0.34.0 fast-track milestones are implementation candidates in PR #30. v0.35.0 adds a bounded four-adult household and is under separate trust-model review on its feature branch.
+Stabilize the v0.47.0 candidate, gather human feedback, and address only
+confirmed defects. Do not infer publication, activate deferred planning
+contracts, add persistence, or advance to `v1.0.0` from candidate numbering
+alone.

@@ -1,6 +1,10 @@
 # Contributing to Kin
 
-Thanks for considering a contribution. Kin is an open-source project for lightweight household coordination. The current implementation is the local-first Today, Needs, and Handoff prototype; contributions should follow the frozen v0.3.0 contract and approved stabilization scope and preserve the project's privacy, accessibility, and repository-boundary requirements.
+Thanks for considering a contribution. Kin is an open-source project for
+lightweight household coordination. The current implementation candidate is
+v0.47.0 Household Identity & Shared Appearance. Contributions should preserve
+the established local-first, encrypted, accessible architecture and stay within
+the approved stabilization scope.
 
 ## Project purpose
 
@@ -8,7 +12,13 @@ Kin aims to make the household context people need to remember, hand off, or dis
 
 ## Repository boundary
 
-Kin lives inside the ZTM Build Fest monorepo at `projects/kin/`. Treat that directory as the Kin project root. Keep every Kin-specific change inside it; do not modify the parent README, repository configuration, or another participant's project. GitHub only discovers community files and issue/PR templates at the host repository root, so the nested Kin templates are reference files until Kin is extracted. Do not move them into the parent root.
+Kin lives inside the ZTM Build Fest monorepo at `projects/kin/`. Treat that
+directory as the Kin project root. Keep product, documentation and tooling
+changes inside it; do not modify the parent README or another participant's
+project. The root `.github/workflows/kin-verification.yml` file is a narrowly
+authorized host-repository integration. Nested community files and issue/PR
+templates remain reference files unless a separate host-level change is
+authorized.
 
 ## How to contribute
 
@@ -22,7 +32,10 @@ Read the [Code of Conduct](CODE_OF_CONDUCT.md), [Security Policy](SECURITY.md), 
 
 ## Architecture and dependencies
 
-Rust owns authoritative household events, validation, and derived state. JavaScript and browser APIs own the DOM, Web Components, storage, accessibility interactions, and networking when a future release introduces it. Rust must not manipulate the DOM; JavaScript must not duplicate the Rust reducer.
+Rust owns authoritative household events, validation, and derived state.
+JavaScript and browser APIs own the DOM, Web Components, storage, accessibility
+interactions, encryption and networking. Rust must not manipulate the DOM;
+JavaScript must not duplicate the Rust reducer.
 
 Prefer browser standards and the Rust standard library. A dependency needs a specific requirement, a meaningful benefit, an update/security plan, and an explanation of why a platform-native option is insufficient. Do not add a framework or runtime dependency for convenience alone.
 
@@ -38,4 +51,9 @@ Accessibility is a baseline, not a polish task. Preserve semantic HTML, keyboard
 
 ## Implementation stage
 
-Planning through v0.0.12 was documentation/community-readiness work. The first functional implementation is v0.1.0 and follows its frozen contract. Read [AGENTS.md](AGENTS.md), [the changelog](CHANGELOG.md), and the current release documents before changing scope; later-version capabilities do not belong in the v0.1.x Household Heartbeat line.
+Planning through v0.0.12 was documentation/community-readiness work, and v0.1.0
+was the first functional implementation. The current v0.47.0 candidate remains
+pre-release and is not production certification. Read [AGENTS.md](AGENTS.md),
+[the changelog](CHANGELOG.md), and the current release documents before changing
+scope; historical contracts describe their own release lines rather than the
+current product boundary.
