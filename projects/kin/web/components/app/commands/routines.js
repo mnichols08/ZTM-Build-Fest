@@ -136,6 +136,7 @@ export class RoutineCommands {
     }
   }
   async handlePlaybookIntent(event) {
+    if (this.app.busy || !this.app.store || !this.app.engine) return;
     const action = event.type.slice(4);
     const detail = event.detail;
     if (action === "instantiate-playbook") {

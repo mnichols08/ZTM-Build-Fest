@@ -1335,6 +1335,14 @@ try {
     await wait();
     const record = app.state.playbooks.find(item => item.title === "Regression playbook");
     if (!record || record.entries.join("|") !== "First step|Second step") return false;
+    const append = app.ctx.append.appendCommand;
+    let guardedAppends = 0;
+    app.ctx.append.appendCommand = async command => { guardedAppends++; return append.call(app.ctx.append, command); };
+    app.busy = true;
+    await app.ctx.routines.handlePlaybookIntent(new CustomEvent("kin:archive-playbook", { detail: { playbookId: record.playbookId } }));
+    app.busy = false;
+    app.ctx.append.appendCommand = append;
+    const operationGuarded = guardedAppends === 0 && !app.state.playbooks.find(value => value.playbookId === record.playbookId).archived;
     const instantiate = app.ctx.routines.instantiatePlaybook.bind(app.ctx.routines); let savedBatch;
     app.ctx.routines.instantiatePlaybook = batch => { savedBatch = batch; return instantiate(batch); };
     [...ui.playbookList.querySelectorAll("button")].find(button => button.textContent === "Use checklist").click();
@@ -1357,7 +1365,7 @@ try {
     const independent = app.state.items.find(value => value.itemId === item.itemId);
     if (independent.text !== "Regression playbook" || independent.steps[0].text !== "First step") return false;
     [...ui.playbookList.querySelectorAll("button")].find(button => button.textContent === "Archive").click(); await wait();
-    return { archived: app.state.playbooks.find(value => value.playbookId === record.playbookId).archived, invalidCreateTitle, invalidCreateEntry, invalidEditTitle, invalidEditEntry, uniqueIdsAfterInvalid };
+    return { archived: app.state.playbooks.find(value => value.playbookId === record.playbookId).archived, invalidCreateTitle, invalidCreateEntry, invalidEditTitle, invalidEditEntry, uniqueIdsAfterInvalid, operationGuarded };
   });
   assert.equal(playbookResult.archived, true, "Playbooks save ordered entries, instantiate independent checklist state, edit, and archive");
   assert.equal(playbookResult.invalidCreateTitle, true, "Playbook create rejects overlong UTF-8 title with associated inline feedback");
@@ -1365,6 +1373,7 @@ try {
   assert.equal(playbookResult.invalidEditTitle, true, "Playbook edit uses the same title validation");
   assert.equal(playbookResult.invalidEditEntry, true, "Playbook edit rejects an empty step with associated inline feedback");
   assert.equal(playbookResult.uniqueIdsAfterInvalid, true, "Playbook validation keeps DOM IDs unique");
+  assert.equal(playbookResult.operationGuarded, true, "Playbook commands refuse overlapping work at the handler boundary");
   console.log("PASS Playbook authoring, independent checklist instantiation, edit, and archive");
   await visit(first, "today");
   await first.evaluate(
