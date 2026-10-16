@@ -101,6 +101,7 @@ export class RenderController {
     this.app.notes.attachments = this.app.attachmentRows;
     this.app.notes.routines = this.app.state.routines ?? [];
     this.app.notes.areas = this.app.state.areas ?? [];
+    this.ctx.status.updateOnboardingDensity();
     this.updateCalendarExportButton();
     this.ctx.refresh.schedulePulseRefresh();
   }
