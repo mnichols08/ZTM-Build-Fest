@@ -45,7 +45,9 @@ export function clientKey(request, trustedProxies) {
   const hops = header.split(",").map(normalizeAddress);
   for (let index = hops.length - 1; index >= 0; index -= 1) {
     const hop = hops[index];
-    if (!isIP(hop)) return peer;
+    // A zone ID ("fe80::1%eth0") is never a client address over the
+    // network, and isIP accepts any text after "%": treat it as malformed.
+    if (hop.includes("%") || !isIP(hop)) return peer;
     if (!trustedProxies.has(hop)) return limitKey(hop);
   }
   return peer;

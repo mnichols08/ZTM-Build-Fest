@@ -44,6 +44,9 @@ test("a malformed or missing forwarded hop falls back to the proxy, never to a s
   assert.equal(clientKey(request(PROXY, "203.0.113.7, garbage"), trusted), PROXY);
   assert.equal(clientKey(request(PROXY, "203.0.113.7".repeat(400)), trusted), PROXY);
   assert.equal(clientKey(request(PROXY, PROXY), trusted), PROXY);
+  // Zone IDs: isIP accepts any text after "%", which must not reach the key.
+  assert.equal(clientKey(request(PROXY, "fe80::1%1:2:3:4:5:6:7:8"), trusted), PROXY);
+  assert.equal(clientKey(request(PROXY, "1::%a:b:c:d:e:f"), trusted), PROXY);
 });
 
 test("the trusted-proxy setting accepts only IP addresses", () => {
