@@ -14,7 +14,10 @@ class KinAreas extends HTMLElement {
       ? records.find((area) => area.areaId === this.renameDraft.areaId && !area.archived)
       : null;
     if (this.renameDraft && !renamedArea) this.renameDraft = null;
-    else if (renamedArea)
+    else if (renamedArea && renamedArea.name === this.renameDraft.value) {
+      this.renameDraft.baseName = renamedArea.name;
+      this.renameDraft.conflictName = null;
+    } else if (renamedArea)
       this.renameDraft.conflictName = renamedArea.name === this.renameDraft.baseName ? null : renamedArea.name;
     this.records = records;
     this.render();

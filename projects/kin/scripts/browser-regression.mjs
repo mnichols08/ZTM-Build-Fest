@@ -2463,6 +2463,8 @@ try {
     update(host.querySelector('.area-edit-form input'),'Pantry draft');
     host.areas=[{areaId,name:'Kitchen',archived:false},{areaId:'c'.repeat(32),name:'Garage',archived:false}];
     const unrelatedSync={create:host.querySelector('#area-create-name').value,rename:host.querySelector('.area-edit-form input').value,editing:!!host.querySelector('.area-edit-form')};
+    host.areas=[{areaId,name:'Pantry draft',archived:false},{areaId:'c'.repeat(32),name:'Garage',archived:false}];
+    const matchingRenameConverged=!host.querySelector('.area-rename-conflict')&&host.renameDraft.baseName==='Pantry draft';
     host.areas=[{areaId,name:'Kitchen shared',archived:false},{areaId:'c'.repeat(32),name:'Garage',archived:false}];
     const conflicted={create:host.querySelector('#area-create-name').value,rename:host.querySelector('.area-edit-form input').value,
       message:host.querySelector('.area-rename-conflict')?.textContent.includes('Kitchen shared'),saveDisabled:host.querySelector('.area-edit-form button[type="submit"]').disabled};
@@ -2480,10 +2482,11 @@ try {
     const createIntent=intents.at(-1),createRetained=host.querySelector('#area-create-name').value==='Garden draft';
     host.saved('create-area',{});const createCleared=host.querySelector('#area-create-name').value==='';
     host.remove();
-    return {unrelatedSync,conflicted,forcedSubmitRefused,reviewCleared,renameIntent,renameRetained,renameCleared,createIntent,createRetained,createCleared};
+    return {unrelatedSync,matchingRenameConverged,conflicted,forcedSubmitRefused,reviewCleared,renameIntent,renameRetained,renameCleared,createIntent,createRetained,createCleared};
   })()`);
   assert.deepEqual(areaDraftSync,{
     unrelatedSync:{create:'Garden draft',rename:'Pantry draft',editing:true},
+    matchingRenameConverged:true,
     conflicted:{create:'Garden draft',rename:'Pantry draft',message:true,saveDisabled:true},
     forcedSubmitRefused:true,reviewCleared:true,
     renameIntent:{action:'rename-area',areaId:'b'.repeat(32),name:'Pantry draft'},renameRetained:true,renameCleared:true,
@@ -2575,6 +2578,20 @@ try {
   await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"none"},{name:"prefers-reduced-motion",value:"no-preference"},{name:"prefers-color-scheme",value:"dark"}]});
   assert.equal(await first.evaluate("matchMedia('(prefers-color-scheme: dark)').matches"),true,"Area manager follows dark mode");
   await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"active"},{name:"prefers-reduced-motion",value:"reduce"}]});
+  const areaLockReplacement = await first.evaluate(`(async()=>{
+    const app=document.querySelector('kin-app'),prior=app.areas;
+    const create=prior.querySelector('#area-create-name');create.value='Private Area draft';create.dispatchEvent(new Event('input',{bubbles:true}));
+    const rename=[...prior.querySelectorAll('[aria-label^="Rename "]')][0];rename.click();
+    const renameInput=prior.querySelector('.area-edit-form input');renameInput.value='Private rename draft';renameInput.dispatchEvent(new Event('input',{bubbles:true}));
+    app.ctx.session.lockHousehold(false);
+    const replaced=app.areas!==prior&&app.areas.createDraft===''&&app.areas.renameDraft===null&&app.areas.records.length===0;
+    await app.security.unlockRecovery(${JSON.stringify(recoverySecret)});
+    return replaced;
+  })()`);
+  await ready(first);await visit(first,"household/areas");
+  const areaDraftsClearedAfterUnlock=await first.evaluate(`(()=>{const areas=document.querySelector('kin-app').areas;
+    return areas.createDraft===''&&areas.renameDraft===null&&areas.querySelector('#area-create-name').value===''&&!areas.querySelector('.area-edit-form');})()`);
+  assert.equal(areaLockReplacement&&areaDraftsClearedAfterUnlock,true,"locking replaces Areas state and discards create and rename drafts before unlock");
   console.log("PASS Area validation, sync-safe create/rename drafts, conflicts, controls, and lifecycle flows");
 
   const eventLimitResult = await first.evaluate(`(async()=>{

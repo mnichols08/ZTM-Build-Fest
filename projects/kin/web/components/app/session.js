@@ -234,6 +234,7 @@ export class SessionController {
         ["search", "kin-search"],
         ["pulse", "kin-pulse"],
         ["routines", "kin-routines"],
+        ["areas", "kin-areas"],
         ["detail", "kin-item-detail"],
       ];
       for (const [field, name] of components)
