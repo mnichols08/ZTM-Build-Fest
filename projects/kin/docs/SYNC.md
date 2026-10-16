@@ -252,6 +252,15 @@ The service must not receive plaintext household event payloads or household con
 - Authorization is checked on every sync operation. Revoked-device queued events are rejected unless an explicit, reviewed recovery procedure says otherwise.
 - A client unable to decrypt or interpret an event must preserve it and surface a recoverable compatibility error; it must not silently drop it.
 
+### Events that can't be applied yet (quarantine)
+
+A remote event that decodes but doesn't fit this device's history (engine code 4, for example a completion delivered one page before the item it completes) doesn't stop sync. The relay cursor still advances, and the event's canonical bytes are kept in the encrypted `sync_state` record as `{ eventId, encoded, reason, firstSeenAt, attempts }` (`web/storage/quarantine.js`). Every later page that brings events replays the kept events with it, in canonical order. An event that applies, or arrives again as a duplicate, leaves the quarantine; one refused again counts another attempt and does not alert again. A kept event that is already in history, or that arrives again in the new page, is not replayed from the kept copy; history or the page copy decides, so a kept copy can never collide with them and stop sync.
+
+- **Bound:** 100 rows and 256 KiB of canonical bytes. Beyond the bound the oldest rows are kept and later refusals are only counted, as every refusal was before v1.0. Bytes that can't be decoded at all are never kept, since retrying can't help them; they're counted too. `quarantinedEventCount` is kept rows plus counted refusals.
+- **Review:** the "review this device" message names up to three kept events by short event ID with a plain-language reason. It never shows bytes. With nothing kept it shows the earlier message.
+- **Lifecycle:** the rows live in the same encrypted record as the sync cursor, so they're unreadable while Kin is locked and are removed with the sync state when the device leaves or the household is deleted. They aren't cleared on lock, because that would drop the only copy before the retry that would apply them; the relay re-sending an event is not relied on.
+- An unreadable (code 2) or unsupported (code 3) event still stops the batch without advancing the cursor.
+
 ## Ordering and reconciliation
 
 Use the deterministic ordering requirements in [EVENTS](EVENTS.md): logical time, then bytewise device ID, then event ID. The tuple defines reproducible replay order only. It is not a semantic “last write wins” policy and must not be presented as deciding who is right.

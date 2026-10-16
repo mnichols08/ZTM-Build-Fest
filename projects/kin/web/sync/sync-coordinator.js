@@ -15,6 +15,7 @@ import {
   verifyDeviceAuthorizationCertificate,
 } from "./crypto.js";
 import { SyncKeyStore } from "./key-store.js";
+import { quarantineMessage } from "../storage/quarantine.js";
 import { idToHex } from "../wasm/kin-engine.js";
 import { reconcileAttachments } from "../attachments/attachment-lifecycle.js";
 import { decryptHouseholdSettings, encryptHouseholdSettings } from "../appearance/household.js";
@@ -509,7 +510,7 @@ export class SyncCoordinator {
       ...(attachmentRows === undefined ? {} : { attachmentRows }),
       ...update,
       message: quarantinedEvents
-        ? "Some trusted-device changes could not be applied. Ask a household Adult to review this device."
+        ? quarantineMessage((await this.store.getSyncState())?.quarantine)
         : hasMore
         ? lastPageAdvanced
           ? "Catching up…"

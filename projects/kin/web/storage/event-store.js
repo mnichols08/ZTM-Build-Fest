@@ -7,6 +7,7 @@ import {
 import { projectionContext } from "../browser-time.js";
 import { bumpEventGeneration as bumpGeneration, EventArena, EVENT_GENERATION_KEY, historyWith } from "./event-arena.js";
 import { rotateEventProtection, resumeEventProtection } from "./root-rotation.js";
+import { nextQuarantine, quarantineRetryItems } from "./quarantine.js";
 import { MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "../attachments/attachment-crypto.js";
 
 const DATABASE_NAME = "kin";
@@ -53,8 +54,11 @@ export function validateAttachmentAggregate(records, candidate) {
     throw new EventStoreError("Kin reached its 50 MiB encrypted attachment limit.");
 }
 
-/** Admit only replayable remote events; return rejected ciphertext as a count
- * so callers can advance the relay cursor and explain the quarantine.
+/** Admit only replayable remote events; report rejected ciphertext so callers
+ * can advance the relay cursor and keep it for a later retry (see
+ * quarantine.js). `quarantined` counts the refusals; `quarantinedItems` holds
+ * `{ eventId, encoded, reason }` for each (`eventId` is null when the bytes
+ * could not be decoded at all).
  * `history` is the HistoryView the batch validates against (`rows`, a plain
  * row array, is accepted for tests). Each candidate is replayed as the history
  * plus the admitted additions, without copying the history per candidate.
@@ -70,7 +74,7 @@ export function reconcileRemoteEvents({ history, rows, received, engine, context
     const additions = [];
     const added = new Map();
     const duplicateEventIds = [];
-    let quarantined = 0;
+    const quarantinedItems = [];
     const projection = projectionContext();
     const candidates = [];
     for (const item of received) {
@@ -80,7 +84,7 @@ export function reconcileRemoteEvents({ history, rows, received, engine, context
         canonical = asBytes(item.encodedEvent).slice();
         candidate = eventRowFromCanonical(canonical);
       } catch {
-        quarantined += 1;
+        quarantinedItems.push({ eventId: null, encoded: null, reason: "unreadable" });
         continue;
       }
       candidates.push({ candidate, canonical });
@@ -111,7 +115,7 @@ export function reconcileRemoteEvents({ history, rows, received, engine, context
         );
       } catch (error) {
         if (error?.code !== 4) throw error;
-        quarantined += 1;
+        quarantinedItems.push({ eventId, encoded: canonical, reason: "not-applicable" });
         continue;
       }
       candidate.local_sequence = history.tail + additions.length + 1;
@@ -125,7 +129,8 @@ export function reconcileRemoteEvents({ history, rows, received, engine, context
       candidates: temporary
         ? [...history.records().map((record) => record.slice()), ...extras]
         : historyWith(history, extras),
-      quarantined,
+      quarantined: quarantinedItems.length,
+      quarantinedItems,
       duplicateEventIds,
     };
   } finally {
@@ -1924,9 +1929,29 @@ export class EventStore {
             throw new EventStoreError("Kin rejected a sync cursor rollback.");
           validateCursorBoundary(context, rows);
           // Validate each event independently. One poison event advances the
-          // relay cursor without entering durable canonical history.
-          const { additions, candidates, quarantined, duplicateEventIds } = reconcileRemoteEvents({
-            history: rows, received, engine, context, asOf, civilDate,
+          // relay cursor without entering durable canonical history; its
+          // bytes stay in the encrypted sync state and are retried with every
+          // later page that brings events, in case it arrived before an event
+          // it depends on (#153).
+          const previousQuarantine = syncState.quarantine ?? [];
+          const retried = received.length > 0 && previousQuarantine.length > 0;
+          let retryItems = [];
+          if (retried) {
+            const pageIds = new Set();
+            for (const item of received) {
+              try { pageIds.add(idToHex(eventMetadata(asBytes(item.encodedEvent)).eventId)); } catch { /* reconcile counts unreadable bytes */ }
+            }
+            retryItems = quarantineRetryItems(previousQuarantine, {
+              isKnown: (eventId) => pageIds.has(eventId) || rows.indexOfEventId(idFromHex(eventId)) >= 0,
+            });
+          }
+          const { additions, candidates, quarantinedItems, duplicateEventIds } = reconcileRemoteEvents({
+            history: rows,
+            received: [...retryItems, ...received],
+            engine, context, asOf, civilDate,
+          });
+          const quarantine = nextQuarantine(previousQuarantine, quarantinedItems, {
+            now: asOf ?? Date.now(), retried,
           });
           const remoteIds = new Set(duplicateEventIds);
           const remoteInfo = new Map();
@@ -1984,8 +2009,14 @@ export class EventStore {
               ? context.next_logical_time
               : maximumLogicalTime + 1n;
           syncState.maxLogicalTime = maximumLogicalTime;
+          // Events older clients only counted, and refusals beyond the bound,
+          // stay counted; kept rows are counted while they remain.
+          if (syncState.quarantineDropped === undefined)
+            syncState.quarantineDropped = syncState.quarantinedEventCount ?? 0;
+          syncState.quarantineDropped += quarantine.dropped;
+          syncState.quarantine = quarantine.quarantine;
           syncState.quarantinedEventCount =
-            (syncState.quarantinedEventCount ?? 0) + quarantined;
+            syncState.quarantine.length + syncState.quarantineDropped;
           syncState.syncCursor = nextCursor;
           syncState.cursorHighWater = nextCursor;
           const contextWrite = contextStore.put(context);
@@ -1999,7 +2030,9 @@ export class EventStore {
           finish({
             state,
             added: additions.length,
-            quarantined,
+            // Only refusals new to this device, so a kept event that is
+            // retried and refused again doesn't alert on every poll.
+            quarantined: quarantine.added,
             duplicateEventIds: [...remoteIds],
             snapshotBoundary: tail
               ? {
