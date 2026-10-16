@@ -1395,6 +1395,36 @@ try {
   assert.equal(playbookResult.operationGuarded, true, "Playbook commands refuse overlapping work at the handler boundary");
   assert.equal(playbookResult.partialReported, true, "A partial Playbook instantiation renders committed work, notifies peers, and offers Retry");
   console.log("PASS Playbook authoring, independent checklist instantiation, edit, and archive");
+  const responsibilityLifecycle = await first.evaluate(async () => {
+    const app = document.querySelector("kin-app");
+    const item = app.state.items.find(value => value.text === "Regression playbook");
+    const memberId = app.ctx.detail.responsibilityContext().memberId;
+    if (!item || !memberId) return false;
+    const append = app.ctx.append.appendCommand;
+    const render = app.ctx.render.renderState;
+    const flush = app.ctx.peers.flushPeerRefresh;
+    let renders = 0, flushes = 0;
+    app.ctx.append.appendCommand = async command => {
+      const result = await append.call(app.ctx.append, command);
+      if (command.type === "change-responsibility") app.pendingRefresh = true;
+      return result;
+    };
+    app.ctx.render.renderState = (...args) => { renders++; return render.apply(app.ctx.render, args); };
+    app.ctx.peers.flushPeerRefresh = (...args) => { flushes++; return flush.apply(app.ctx.peers, args); };
+    try {
+      await app.ctx.items.handleChangeResponsibility({ detail: { targetKind: "item", targetId: item.itemId, memberId } });
+    } finally {
+      app.ctx.append.appendCommand = append;
+      app.ctx.render.renderState = render;
+      app.ctx.peers.flushPeerRefresh = flush;
+    }
+    await new Promise(resolve => setTimeout(resolve, 0));
+    for (let index = 0; index < 300 && (app.busy || app.refreshing || app.pendingRefresh); index++) await new Promise(resolve => setTimeout(resolve, 10));
+    const owner = app.state.responsibilities.find(value => value.targetKind === "item" && value.targetId === item.itemId)?.memberId;
+    const renderedOwner = app.needs.ownerContext?.responsibilities?.find(value => value.targetKind === "item" && value.targetId === item.itemId)?.memberId;
+    return owner === memberId && renderedOwner === memberId && renders >= 1 && flushes === 1 && !app.busy && !app.refreshing && !app.pendingRefresh;
+  });
+  assert.equal(responsibilityLifecycle, true, "Responsibility changes render committed ownership and flush refreshes deferred while busy");
   await visit(first, "today");
   await first.evaluate(
     'sessionStorage.setItem("kin.test.expectedState", JSON.stringify(document.querySelector("kin-app").state))',
