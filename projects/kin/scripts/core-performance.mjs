@@ -220,8 +220,16 @@ async function appStages() {
   const copyArrays = (state) => Object.fromEntries(Object.entries(state).map(([key, value]) => [key, Array.isArray(value) ? [...value] : value]));
   await idle();
   const renders = [], refreshes = [], changeRefreshes = [], fullRenders = [];
+  const busyOn = [], busyOff = [];
   for (let sample = 0; sample < 6; sample += 1) {
     let start = performance.now();
+    app.ctx.status.setBusy(true);
+    const enableBusy = performance.now() - start;
+    start = performance.now();
+    app.ctx.status.setBusy(false);
+    const disableBusy = performance.now() - start;
+    await idle();
+    start = performance.now();
     app.ctx.render.renderState();
     const render = performance.now() - start;
     await idle();
@@ -241,10 +249,15 @@ async function appStages() {
     await idle();
     await app.ctx.refresh.refreshFromEvents(); // re-seeds reusable sections after the copy
     await idle();
-    if (sample) { renders.push(render); refreshes.push(refresh); changeRefreshes.push(changeRefresh); fullRenders.push(fullRender); }
+    if (sample) {
+      busyOn.push(enableBusy); busyOff.push(disableBusy);
+      renders.push(render); refreshes.push(refresh); changeRefreshes.push(changeRefresh); fullRenders.push(fullRender);
+    }
   }
   return { renderMs: median(renders), appRefreshMs: median(refreshes), changeRefreshMs: median(changeRefreshes),
-    fullRenderMs: median(fullRenders), items: app.state.items.length, samples: renders.length };
+    fullRenderMs: median(fullRenders), busyOnMs: median(busyOn), busyOffMs: median(busyOff),
+    busyRoundTripMs: median(busyOn) + median(busyOff), controls: app.main.querySelectorAll("button,input,select,textarea").length,
+    items: app.state.items.length, samples: renders.length };
 }
 
 async function browserStages(executable) {
