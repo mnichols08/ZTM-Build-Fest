@@ -244,6 +244,13 @@ export class SessionController {
       this.app.household.syncKeyStore?.close();
       this.app.household.remove();
       this.ctx.views.buildViews(this.app.main);
+      const controls = document.createElement("fieldset");
+      controls.className = "workspace-controls";
+      controls.setAttribute("aria-label", "Household workspace");
+      controls.disabled = true;
+      controls.append(...this.app.pages.values(), this.app.detailPanel);
+      this.app.controlFieldset = controls;
+      this.app.main.append(controls);
       if (!this.app.stateNotice.isConnected) this.app.main.prepend(this.app.stateNotice);
       this.ctx.status.setBusy(false);
       this.ctx.status.setStatus("Household locked.");

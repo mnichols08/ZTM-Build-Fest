@@ -13,31 +13,18 @@ export class StatusController {
     if (!this.app.isConnected) return;
     this.ctx.render.updateCalendarExportButton();
     this.app.main.setAttribute("aria-busy", String(isBusy));
-    this.app.compose.disabled = isBusy || !this.app.store;
+    const controlsDisabled = isBusy || !this.app.store;
+    if (isBusy) this.app.detail?.deferFocusedControl?.();
+    this.app.controlFieldset.disabled = controlsDisabled;
+    // Header controls and a phone detail sheet live outside the fieldset.
     this.app.quickAdd.disabled = isBusy || !this.app.store;
-    for (const button of this.app.onboarding?.querySelectorAll("button") ?? []) button.disabled = isBusy;
-    this.app.today.disabled = isBusy || !this.app.store;
-    this.app.needs.disabled = isBusy || !this.app.store;
-    this.app.shopping.disabled = isBusy || !this.app.store;
-    this.app.staples.disabled = isBusy || !this.app.store;
-    this.app.search.disabled = isBusy || !this.app.store;
-    this.app.handoffs.disabled = isBusy || !this.app.store;
-    this.app.talks.disabled = isBusy || !this.app.store;
-    this.app.pulse.disabled = isBusy || !this.app.store;
-    this.app.catchUp.disabled = isBusy || !this.app.store;
-    if (this.app.detail) this.app.detail.disabled = isBusy || !this.app.store;
+    if (this.app.detail) this.app.detail.disabled = controlsDisabled;
     if (this.app.lockButton) this.app.lockButton.disabled = isBusy;
-    this.app.routines.disabled = isBusy || !this.app.store;
-    this.app.areas.disabled = isBusy || !this.app.store;
-    this.app.notes.disabled = isBusy || !this.app.store;
-    if (this.app.modeSelect) this.app.modeSelect.disabled = isBusy || !this.app.store;
-    this.app.household.disabled = isBusy || !this.app.store;
-    if (this.app.appearance) this.app.appearance.disabled = isBusy || !this.app.store;
-    if (this.app.householdDefaults) this.app.householdDefaults.disabled = isBusy || !this.app.store;
-    if (this.app.installButton) this.app.installButton.disabled = isBusy;
-    for (const button of this.app.main.querySelectorAll("kin-responsibility button"))
-      button.disabled = isBusy;
     this.app.retryButton.disabled = isBusy;
+    if (!controlsDisabled) {
+      for (const component of [this.app.today, this.app.needs, this.app.shopping, this.app.staples, this.app.areas, this.app.notes, this.app.detail])
+        component?.settleDeferredFocus?.();
+    }
   }
   setStatus(message) {
     this.app.status.textContent = message;

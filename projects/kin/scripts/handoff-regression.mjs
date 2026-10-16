@@ -224,7 +224,7 @@ export async function handoffRegressions() {
   check(
     [...app.main.querySelectorAll("input,select,button")]
       .filter((control) => !control.closest("kin-security"))
-      .every((control) => control.disabled),
+      .every((control) => control.matches(":disabled")),
     "all controls disabled during Handoff save",
   );
   check(app.busy, "Handoff pending save retains busy state");

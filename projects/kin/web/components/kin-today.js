@@ -105,11 +105,16 @@ class KinToday extends HTMLElement {
       if (control.closest("kin-compose, kin-item, kin-bulk-bar")) continue;
       control.disabled = this.isDisabled || control.dataset.domainDisabled === "true";
     }
-    if (!this.isDisabled && this.deferredFocus?.isConnected) {
+    if (!this.isDisabled) this.settleDeferredFocus();
+  }
+
+  settleDeferredFocus() {
+    if (this.deferredFocus?.isConnected) {
       const target = this.deferredFocus;
       this.deferredFocus = null;
-      target.focus();
+      if (!target.matches(":disabled")) target.focus();
     }
+    this.bulkBar?.settleDeferredFocus?.();
   }
 
   get quickAdd() { return Object.hasOwn(LISTS, this.display); }

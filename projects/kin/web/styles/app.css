@@ -305,6 +305,13 @@ main {
   min-width: 0;
   padding: 18px 16px 112px;
 }
+.workspace-controls {
+  width: 100%;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
 .app-view { min-width: 0; max-width: var(--content-width); }
 .app-view:not([hidden]) { animation: view-arrive .28s cubic-bezier(.2,.75,.25,1) both; }
 .page-intro { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin: 4px 0 16px; }
@@ -1088,7 +1095,7 @@ kin-app > .security-panel {
 
 /* ---------- Detail column beside the list (≥ 1180px) ---------- */
 @media (min-width: 1180px) {
-  main.has-detail-side {
+  main.has-detail-side .workspace-controls {
     display: grid;
     grid-template-columns: minmax(0, 1fr) var(--detail-width);
     gap: 32px;

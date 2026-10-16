@@ -27,10 +27,14 @@ class KinAreas extends HTMLElement {
     this.isDisabled = Boolean(value);
     for (const control of this.querySelectorAll("button, input"))
       control.disabled = this.isDisabled || control.hasAttribute("data-gated");
-    if (!this.isDisabled && this.deferredFocus?.isConnected) {
+    if (!this.isDisabled) this.settleDeferredFocus();
+  }
+
+  settleDeferredFocus() {
+    if (this.deferredFocus?.isConnected) {
       const target = this.deferredFocus;
       this.deferredFocus = null;
-      target.focus();
+      if (!target.matches(":disabled")) target.focus();
     }
   }
 
@@ -96,7 +100,7 @@ class KinAreas extends HTMLElement {
     this.disabled = this.isDisabled;
     if (priorFocus) {
       const target = [...this.querySelectorAll("[data-focus-id]")].find((node) => node.dataset.focusId === priorFocus);
-      if (target?.disabled) this.deferredFocus = target;
+      if (target?.matches(":disabled")) this.deferredFocus = target;
       else target?.focus();
     }
   }
