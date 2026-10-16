@@ -85,8 +85,10 @@ created offline. Local append and retry preserve the generated Step ID; after
 sync, deterministic Rust replay uses the parent Item ID and stable Step ID.
 Equal-logical-time archive versus completion/reopen from distinct devices
 converges to archived. A same-time parent Item archive suppresses Step
-mutations. Revocation and epoch rotation continue to govern access to the
-complete event stream; Steps add no server interpretation or authority.
+mutations. A later change from another device, after that device archived or
+completed the entity, is kept in history and has no effect. Revocation and
+epoch rotation continue to govern access to the complete event stream; Steps
+add no server interpretation or authority.
 
 ## v0.15.0 Areas
 
@@ -259,7 +261,7 @@ Implemented conflict behavior and remaining UX limitations:
 | Concurrent operations                            | Required consideration                                                                                                                                                                                        |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Both devices complete the same item              | Distinct completion facts are retained; replay is an idempotent state no-op after the first completion.                                                                                                       |
-| One archives while another mutates               | A concurrent equal-Lamport action from a different device is retained as a no-op when archive sorts first; archive is terminal. A causally later action after observing archive fails replay and pauses sync. |
+| One archives while another mutates               | A change from a different device at the same or an earlier logical time than that device's archive or completion is kept in history and has no effect. Archive and completion stay terminal. A device mutating something it archived itself still fails replay. A note created in an area another device archived at the same or an earlier logical time is kept with no area. |
 | One completes while another reopens              | Both facts remain; deterministic v8 tuple ordering selects the projection. The order is not semantic authority; the UI does not yet offer explicit conflict adjudication.                                     |
 | Concurrent same-entity additions                 | Stable IDs are deduplicated; duplicate entity IDs from different event IDs fail closed rather than merge.                                                                                                     |
 | Member/device removed while offline events exist | Authorization is checked at upload; revoked device sessions fail and old-epoch uploads cannot create new authorization. Local unsent canonical history remains local.                                         |

@@ -109,48 +109,67 @@ export class NotesSection {
       empty.textContent = "No notes yet. Keep a household detail handy here.";
       section.append(empty);
     }
-    const list = document.createElement("ul");
+    const groups = [];
     for (const note of activeNotes) {
-      const row = document.createElement("li");
-      row.className = "note-row";
-      row.dataset.noteId = note.noteId;
-      row.tabIndex = -1;
-      const name = document.createElement("h3");
-      name.textContent = note.title;
-      const text = document.createElement("p");
-      text.className = "note-body";
-      text.textContent = note.body;
-      row.append(name, text);
-      row.append(this.host.makeAttachmentControl("note", note.noteId, note.title));
-      const linkedArea = this.host.areaRecords.find((candidate) => candidate.areaId === note.areaId);
-      if (note.areaId) {
-        const context = document.createElement("small");
-        context.textContent = linkedArea ? `${linkedArea.name}${linkedArea.archived ? " (archived Area)" : ""}` : "Archived Area";
-        row.append(context);
+      const key = note.areaId || "";
+      let group = groups.find((candidate) => candidate.key === key);
+      if (!group) {
+        group = { key, notes: [] };
+        groups.push(group);
       }
-      const edit = document.createElement("button");
-      edit.type = "button";
-      edit.textContent = "Edit";
-      edit.dataset.focusId = `edit-${note.noteId}`;
-      edit.addEventListener("click", () => {
-        this.host.editor = { noteId: note.noteId, title: note.title, body: note.body, areaId: note.areaId ?? "" };
-        this.host.pendingFocus = "title";
-        this.host.render();
-        this.host.querySelector(`#${id("title")}`)?.focus();
-      });
-      const archive = document.createElement("button");
-      archive.type = "button";
-      archive.textContent = "Archive";
-      archive.dataset.focusId = `archive-${note.noteId}`;
-      archive.addEventListener("click", () => {
-        this.host.pendingFocus = activeNotes.length > 1
-          ? `edit-${activeNotes.find((item) => item.noteId !== note.noteId).noteId}`
-          : "heading";
-        this.host.dispatch("archive-note", { noteId: note.noteId });
-      });
-      row.append(edit, archive);
-      list.append(row);
+      group.notes.push(note);
     }
-    section.append(list);
+    for (const group of groups) {
+      const heading = document.createElement("h3");
+      heading.className = "note-group";
+      if (!group.key) heading.textContent = "No area";
+      else {
+        const linkedArea = this.host.areaRecords.find((candidate) => candidate.areaId === group.key);
+        heading.textContent = linkedArea
+          ? `${linkedArea.name}${linkedArea.archived ? " (archived Area)" : ""}`
+          : "Archived Area";
+      }
+      const list = document.createElement("ul");
+      for (const note of group.notes) {
+        list.append(this.noteRow(note, id, activeNotes));
+      }
+      section.append(heading, list);
+    }
+  }
+
+  noteRow(note, id, activeNotes) {
+    const row = document.createElement("li");
+    row.className = "note-row";
+    row.dataset.noteId = note.noteId;
+    row.tabIndex = -1;
+    const name = document.createElement("h3");
+    name.textContent = note.title;
+    const text = document.createElement("p");
+    text.className = "note-body";
+    text.textContent = note.body;
+    row.append(name, text);
+    row.append(this.host.makeAttachmentControl("note", note.noteId, note.title));
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.textContent = "Edit";
+    edit.dataset.focusId = `edit-${note.noteId}`;
+    edit.addEventListener("click", () => {
+      this.host.editor = { noteId: note.noteId, title: note.title, body: note.body, areaId: note.areaId ?? "" };
+      this.host.pendingFocus = "title";
+      this.host.render();
+      this.host.querySelector(`#${id("title")}`)?.focus();
+    });
+    const archive = document.createElement("button");
+    archive.type = "button";
+    archive.textContent = "Archive";
+    archive.dataset.focusId = `archive-${note.noteId}`;
+    archive.addEventListener("click", () => {
+      this.host.pendingFocus = activeNotes.length > 1
+        ? `edit-${activeNotes.find((item) => item.noteId !== note.noteId).noteId}`
+        : "heading";
+      this.host.dispatch("archive-note", { noteId: note.noteId });
+    });
+    row.append(edit, archive);
+    return row;
   }
 }

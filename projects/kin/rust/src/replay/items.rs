@@ -78,8 +78,8 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 .get(item_id)
                 .copied()
                 .ok_or(KinError::InvalidEvent)?;
-            if has_concurrent_archive(r.item_archive_events.get(item_id), event) {
-                // A same-time parent archive is terminal regardless of replay order.
+            if closed_by_other_device(r, item_id, event) {
+                // Another device already archived or completed the parent.
             } else if r.items[position].status != ItemStatus::Active
                 || r.items[position].steps.len() >= MAX_STEPS_PER_ITEM
             {
@@ -105,15 +105,14 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 .get(item_id)
                 .copied()
                 .ok_or(KinError::InvalidEvent)?;
-            if has_concurrent_archive(r.item_archive_events.get(item_id), event) {
-                // A same-time parent archive is terminal regardless of replay order.
+            if closed_by_other_device(r, item_id, event) {
+                // Another device already archived or completed the parent.
                 // Recorded as applied with no other effect (Replay::apply records it).
                 return Ok(());
             }
-            let concurrent_step_archive =
-                has_concurrent_archive(r.step_archive_events.get(step_id), event);
-            if concurrent_step_archive && !matches!(event.kind, EventKind::ItemStepArchived { .. })
-            {
+            let step_archived_by_other =
+                other_device_archived(r.step_archive_events.get(step_id), event);
+            if step_archived_by_other && !matches!(event.kind, EventKind::ItemStepArchived { .. }) {
                 // Recorded as applied with no other effect (Replay::apply records it).
                 return Ok(());
             }
@@ -126,8 +125,10 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 .find(|step| step.step_id == *step_id)
                 .ok_or(KinError::InvalidEvent)?;
             if step.archived {
-                if concurrent_step_archive {
-                    // Recorded as applied with no other effect (Replay::apply records it).
+                if matches!(event.kind, EventKind::ItemStepArchived { .. })
+                    && has_concurrent_archive(r.step_archive_events.get(step_id), event)
+                {
+                    // A second archive at the same logical time stays terminal.
                     return Ok(());
                 }
                 return Err(KinError::InvalidEvent);
@@ -163,6 +164,8 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 ItemStatus::Active => {
                     r.items[position].status = ItemStatus::Completed;
                     r.items[position].last_changed_at = event.timestamp;
+                    r.item_completions
+                        .insert(*item_id, (event.logical_time, event.device_id));
                 }
                 ItemStatus::Completed => {}
                 ItemStatus::Archived => {
@@ -189,6 +192,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 ItemStatus::Completed => {
                     r.items[position].status = ItemStatus::Active;
                     r.items[position].last_changed_at = event.timestamp;
+                    r.item_completions.remove(item_id);
                 }
                 ItemStatus::Archived => {
                     if r.item_archives
@@ -230,4 +234,14 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
         _ => return Err(KinError::Internal),
     }
     Ok(())
+}
+
+/// Another device archived this item, or completed it and has not reopened it.
+fn closed_by_other_device(r: &Replay, item_id: &ItemId, event: &EventEnvelope) -> bool {
+    other_device_archived(r.item_archive_events.get(item_id), event)
+        || other_device_completed(
+            r.item_completions.get(item_id).copied(),
+            r.item_completion_events.get(item_id),
+            event,
+        )
 }
