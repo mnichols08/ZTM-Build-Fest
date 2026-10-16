@@ -4,6 +4,7 @@ import { attachmentFileProblem, captureAttachment, loadLocalAttachmentRows, open
 import { clearAttachmentProgress, setAttachmentProgress } from "../../attachments/attachment-progress.js";
 import { isImageAttachment } from "../../attachments/attachment-preview.js";
 import { ObjectUrlRegistry } from "../../attachments/object-urls.js";
+import { ATTACHMENT_REMOVE_FORBIDDEN, canRemoveAttachments } from "../../attachments/attachment-permissions.js";
 import { ATTACHMENT_OPEN_ERROR, SAVE_ERROR } from "./constants.js";
 
 export class AttachmentController {
@@ -127,6 +128,10 @@ export class AttachmentController {
   }
   async handleRemoveAttachment(event) {
     if (this.app.busy || !this.app.store || !this.app.engine) return;
+    if (!canRemoveAttachments(this.app.householdStatus?.memberKind)) {
+      this.ctx.status.showAlert(ATTACHMENT_REMOVE_FORBIDDEN);
+      return;
+    }
     const session = this.ctx.session.captureSession(); this.ctx.status.setBusy(true); this.ctx.status.clearAlert();
     try {
       await removeAttachment({ attachmentId: event.detail.attachmentId, append: (command) => this.ctx.append.appendCommand(command), store: session.store });
