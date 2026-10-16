@@ -144,6 +144,38 @@ implementation candidate has only been exercised on Windows with Node 22.12
 and its experimental SQLite flag, so the supported-version floor and other
 platform/runtime combinations are not yet certified.
 
+### Running behind a TLS proxy
+
+Kin listens on loopback only (`KIN_HOST`, default `127.0.0.1`), so a hosted
+deployment puts a TLS proxy in front of it and sets `KIN_ORIGIN` to the public
+`https://` origin. Every request then arrives from the proxy's address. Kin
+limits pairing-code guesses per client, so without more configuration all
+clients share one limit, and a stranger's bad guesses can briefly block a
+family's valid pairing code.
+
+Set `KIN_TRUSTED_PROXIES` to the proxy's address as Kin sees it (a
+comma-separated list of IP addresses, for example `127.0.0.1,::1`) and have
+the proxy set `X-Forwarded-For` to the client address it received. Kin then
+uses the right-most `X-Forwarded-For` address that is not itself a trusted
+proxy. It ignores the header entirely when the setting is empty (the default)
+or when the request comes from any other address, so clients cannot spoof it.
+For nginx:
+
+```nginx
+location / {
+  proxy_pass http://127.0.0.1:8000;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-For $remote_addr;
+}
+```
+
+```sh
+KIN_ORIGIN=https://kin.example.org KIN_TRUSTED_PROXIES=127.0.0.1,::1 node server/server.mjs
+```
+
+Only failed code attempts count toward a client's limit, so a household's own
+successful pairing never uses it up.
+
 The service persists household identity, authorization metadata, opaque relay
 events and synchronization state. Sessions and in-flight WebAuthn/pairing
 ceremonies expire on restart, so members sign in again with a trusted device

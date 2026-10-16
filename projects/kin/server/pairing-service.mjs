@@ -110,14 +110,33 @@ export class PairingService {
     return pairing.state;
   }
 
-  rateLimit(key) {
-    const now = this.now();
-    const cutoff = now - RATE_WINDOW_MS;
+  // Pairing-code guessing limit, per client key (see server/client-key.mjs).
+  // Only failed attempts are counted, so a household's own successful
+  // claim never spends its budget. Once a client is over the limit every
+  // attempt is refused, valid code or not; otherwise the 429 itself would
+  // tell a guesser which code is right.
+  pruneRateBuckets() {
+    const cutoff = this.now() - RATE_WINDOW_MS;
     for (const [rateKey, values] of this.rateBuckets) {
       const active = values.filter((at) => at > cutoff);
       if (active.length) this.rateBuckets.set(rateKey, active);
       else this.rateBuckets.delete(rateKey);
     }
+  }
+
+  assertRateAvailable(key) {
+    this.pruneRateBuckets();
+    if ((this.rateBuckets.get(key)?.length ?? 0) >= RATE_LIMIT) {
+      this.audit("pairing_rate_limited");
+      throw new PairingError(
+        "rate_limited",
+        "Too many attempts. Wait a minute and try again.",
+        429,
+      );
+    }
+  }
+
+  recordFailedAttempt(key) {
     let bucket = this.rateBuckets.get(key);
     if (!bucket) {
       if (this.rateBuckets.size >= this.maxRateBuckets) {
@@ -129,18 +148,23 @@ export class PairingService {
         );
       }
       bucket = [];
+      this.rateBuckets.set(key, bucket);
     }
-    bucket.push(now);
-    this.rateBuckets.set(key, bucket);
-    if (bucket.length > RATE_LIMIT) {
-      this.audit("pairing_rate_limited");
-      throw new PairingError(
-        "rate_limited",
-        "Too many attempts. Wait a minute and try again.",
-        429,
-      );
+    bucket.push(this.now());
+  }
+
+  /** Runs one code attempt for `key`, charging the limit only if it fails. */
+  rateLimitedAttempt(key, attempt) {
+    this.assertRateAvailable(key);
+    try {
+      return attempt();
+    } catch (error) {
+      if (error instanceof PairingError && error.code !== "rate_limited")
+        this.recordFailedAttempt(key);
+      throw error;
     }
   }
+
 }
 
 addMethods(PairingService, sessionMethods, createMethods, claimMethods, approveMethods, deviceMethods, membershipMethods, lifecycleMethods);
