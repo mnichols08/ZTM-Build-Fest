@@ -55,7 +55,12 @@ export class KinAppearance extends HTMLElement {
     pickerLabel.append(this.picker);
     const hexLabel = document.createElement("label"); hexLabel.textContent = "Hex color";
     this.hex = document.createElement("input"); this.hex.type = "text"; this.hex.inputMode = "text"; this.hex.maxLength = 7; this.hex.autocomplete = "off"; this.hex.spellcheck = false;
-    this.hex.addEventListener("input", () => { const value = normalizeHex(this.hex.value); this.setHexValidity(Boolean(value)); if (value) { this.picker.value = value; this.chooseCustom(value); } });
+    this.hex.addEventListener("input", () => {
+      this.dirty = true;
+      const value = normalizeHex(this.hex.value);
+      this.setHexValidity(Boolean(value));
+      if (value) { this.picker.value = value; this.chooseCustom(value); }
+    });
     hexLabel.append(this.hex);
     this.hexError = document.createElement("p"); this.hexError.className = "field-error"; this.hexError.textContent = "Enter a color as #RRGGBB."; this.hexError.hidden = true;
     this.hexError.id = `appearance-hex-error-${this.instanceId}`; this.hex.setAttribute("aria-describedby", this.hexError.id);
@@ -146,6 +151,7 @@ export class KinAppearance extends HTMLElement {
   restoreSaved(message) { this.generation++; this.dirty = false; this.draft = structuredClone(this.saved); this.update(message); }
   async requestSave() {
     if (!this.draft) return;
+    if (this.hex.getAttribute("aria-invalid") === "true") { this.feedback.textContent = "Finish the hex color before saving."; this.hex.focus(); return; }
     if (this.draft.colorSource === "custom") {
       const custom = normalizeHex(this.hex.value);
       if (!custom) { this.setHexValidity(false); return; }
@@ -163,7 +169,7 @@ export class KinAppearance extends HTMLElement {
     if (!this.draft) return;
     for (const [value, input] of this.modeControls) input.checked = value === this.draft.mode;
     for (const [presetId, input] of this.presetControls) input.checked = (this.draft.colorSource === "default" && presetId === "default") || (this.draft.colorSource === "preset" && APPEARANCE_PRESETS.find((item) => item.id === presetId)?.seed === this.draft.seed);
-    this.picker.value = this.draft.seed; if (this.draft.colorSource !== "custom") this.syncHex(this.draft.seed); else if (document.activeElement !== this.hex) this.hex.value = this.draft.seed;
+    this.picker.value = this.draft.seed; if (this.draft.colorSource !== "custom") this.syncHex(this.draft.seed); else if (document.activeElement !== this.hex) { this.hex.value = this.draft.seed; this.setHexValidity(true); }
     this.useBackground.hidden = !this.draft.image; this.remove.hidden = !this.draft.image; this.choose.textContent = this.draft.image ? "Replace image" : "Choose image";
     this.imageStatus.textContent = this.draft.image ? `Processed locally (${this.draft.image.width} × ${this.draft.image.height}).` : "No personal background selected.";
     const preset = APPEARANCE_PRESETS.find((item) => item.seed === this.draft.seed);
