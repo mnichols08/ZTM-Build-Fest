@@ -520,6 +520,29 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
       succeeded.feedback.startsWith("Household settings saved."),
       "the retried save succeeds in the current session: completion runs once and the saved name is applied", succeeded);
     await page(() => {
+      const editor = document.querySelector("kin-app").householdDefaults;
+      editor.nameInput.value = "Pending Local Household";
+      editor.nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    check(await startSave(), "settings save before a newer refresh is pending");
+    const NEWER = "Newer Remote Household";
+    await page((name) => {
+      const app = document.querySelector("kin-app"), editor = app.householdDefaults;
+      const newer = { ...structuredClone(window.__save.value), name, revision: window.__save.value.revision + 2 };
+      app.householdSettings = newer;
+      editor.initialize({ admin: true, adminRecorded: true, value: newer });
+      app.ctx.appearance.applyEffectiveAppearance();
+    }, NEWER);
+    await settleSave("resolve");
+    const reordered = await page(() => {
+      const app = document.querySelector("kin-app"), editor = app.householdDefaults;
+      return { input: editor.nameInput.value, savedRevision: editor.saved.revision, appName: app.householdSettings.name,
+        appRevision: app.householdSettings.revision, brand: app.brandTitle.textContent, feedback: editor.feedback.textContent };
+    });
+    check(reordered.input === NEWER && reordered.appName === NEWER && reordered.brand === NEWER && reordered.savedRevision === reordered.appRevision &&
+      reordered.feedback.includes("newer household settings arrived"),
+    "a delayed successful save response cannot replace newer household settings received while it was in flight", reordered);
+    await page(() => {
       const app = document.querySelector("kin-app");
       app.syncCoordinator = window.__settingsCoordinator;
       delete window.__settingsCoordinator;

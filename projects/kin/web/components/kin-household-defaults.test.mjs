@@ -122,3 +122,23 @@ test("a newer shared revision preserves the draft until cancel loads the latest 
   assert.equal(panel.dirty, false);
   assert.equal(panel.pending, null);
 });
+
+test("a delayed save completion cannot replace a newer revision received while saving", () => {
+  const panel = new KinHouseholdDefaults();
+  panel.connectedCallback();
+  panel.initialize({ admin: true, adminRecorded: true, value: null });
+  panel.nameInput.value = "The Saved House";
+  panel.nameInput.listeners.input();
+  panel.save();
+  const completion = panel.events.find((event) => event.type === "kin:save-household-defaults").detail.complete;
+  const newer = { ...structuredClone(panel.saved), revision: 2, name: "The Newer House" };
+  panel.initialize({ admin: true, adminRecorded: true, value: newer });
+
+  completion({ ...structuredClone(panel.saved), revision: 1, name: "The Saved House" }, null);
+
+  assert.equal(panel.nameInput.value, "The Newer House");
+  assert.equal(panel.saved.revision, 2);
+  assert.equal(panel.pending, null);
+  assert.equal(panel.dirty, false);
+  assert.match(panel.feedback.textContent, /newer household settings arrived/i);
+});

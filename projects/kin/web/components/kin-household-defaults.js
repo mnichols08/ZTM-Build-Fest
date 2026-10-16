@@ -84,7 +84,17 @@ export class KinHouseholdDefaults extends HTMLElement {
   save() {
     if (this.pending) { this.feedback.textContent = "Newer household settings arrived. Cancel your draft to load them before making another change."; return; }
     let name; try { name = normalizeHouseholdName(this.nameInput.value); this.nameError.textContent = ""; } catch (error) { this.nameError.textContent = error.message; this.nameInput.focus(); return; }
-    this.dispatchEvent(new CustomEvent("kin:save-household-defaults", { bubbles: true, detail: { value: { version: 1, revision: this.saved.revision, name, appearance: { ...structuredClone(this.draftAppearance), owner: "household" } }, complete: (saved, error) => { this.feedback.textContent = error?.message ?? "Household settings saved. Other online members receive them when they sync."; if (saved) { this.saved = structuredClone(saved); this.nameInput.value = saved.name; this.dirty = false; this.pending = null; } } } }));
+    this.dispatchEvent(new CustomEvent("kin:save-household-defaults", { bubbles: true, detail: { value: { version: 1, revision: this.saved.revision, name, appearance: { ...structuredClone(this.draftAppearance), owner: "household" } }, complete: (saved, error) => {
+      this.feedback.textContent = error?.message ?? "Household settings saved. Other online members receive them when they sync.";
+      if (saved) {
+        const newerPending = this.pending?.revision > saved.revision;
+        this.saved = structuredClone(newerPending ? this.pending : saved); this.pending = null; this.dirty = false;
+        this.nameInput.value = this.saved.name; this.draftAppearance = structuredClone(this.saved.appearance);
+        this.initializing = true; this.editor.initialize(this.draftAppearance); this.initializing = false;
+        this.note.textContent = "Set the name and default appearance shared by your household.";
+        if (newerPending) this.feedback.textContent = "Your change was saved, then newer household settings arrived. The latest settings are shown.";
+      }
+    } } }));
   }
   set disabled(value) { this.busy = Boolean(value); for (const control of this.querySelectorAll("button,input")) control.disabled = this.busy || (!this.admin && this.contains(control)); }
 }

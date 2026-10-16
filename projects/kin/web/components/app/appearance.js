@@ -125,7 +125,7 @@ export class AppearanceController {
     try {
       const saved = await this.app.syncCoordinator.saveHouseholdSettings(value);
       this.ctx.session.assertCurrentSession(session);
-      this.app.householdSettings = saved;
+      if ((this.app.householdSettings?.revision ?? -1) <= saved.revision) this.app.householdSettings = saved;
       this.ctx.appearance.applyEffectiveAppearance();
       complete(saved, null);
     } catch (error) {
