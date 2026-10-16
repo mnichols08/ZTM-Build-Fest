@@ -41,27 +41,32 @@ test("two notes in one area save as two notes, and an update edits only its own 
   assert.equal(state.notes.some((note) => note.noteId === area), false);
 });
 
-test("two reference records in one area stay distinct", () => {
+test("two reference records in one area stay distinct, and an update edits only its own record", () => {
   const run = household();
   const area = hex(20), furnace = hex(21), boiler = hex(22);
+  const save = (recordId, title, fieldId, value) => run({ type: "save-reference-record", recordId, id: recordId, title, areaId: area, fields: [{ fieldId, label: "Model", value }] });
   run({ type: "create-area", areaId: area, name: "Basement" });
-  run({ type: "save-reference-record", recordId: furnace, id: furnace, title: "Furnace", areaId: area, fields: [{ fieldId: hex(23), label: "Model", value: "A1" }] });
-  const state = run({ type: "save-reference-record", recordId: boiler, id: boiler, title: "Boiler", areaId: area, fields: [{ fieldId: hex(24), label: "Model", value: "B2" }] });
-  assert.deepEqual(state.referenceRecords.map(({ recordId, title, areaId }) => [recordId, title, areaId]).sort(), [
-    [furnace, "Furnace", area],
-    [boiler, "Boiler", area],
+  save(furnace, "Furnace", hex(23), "A1");
+  save(boiler, "Boiler", hex(24), "B2");
+  const state = save(boiler, "Boiler (new)", hex(24), "B3");
+  const rows = (records) => records.map(({ recordId, title, areaId, fields }) => [recordId, title, areaId, fields[0].value]).sort();
+  assert.deepEqual(rows(state.referenceRecords), [
+    [furnace, "Furnace", area, "A1"],
+    [boiler, "Boiler (new)", area, "B3"],
   ].sort());
 });
 
-test("two maintenance entries linked to one routine stay distinct", () => {
+test("two maintenance entries linked to one routine stay distinct, and an update edits only its own entry", () => {
   const run = household();
   const routine = hex(30), record = hex(31), first = hex(32), second = hex(33);
+  const save = (maintenanceId, performedOn, summary) => run({ type: "save-maintenance-event", maintenanceId, id: maintenanceId, recordId: record, performedOn, summary, nextOn: null, routineId: routine });
   run({ type: "create-routine", routineId: routine, text: "Change filter", cadence: "daily" });
   run({ type: "save-reference-record", recordId: record, id: record, title: "Furnace", fields: [{ fieldId: hex(34), label: "Filter", value: "16x25" }] });
-  run({ type: "save-maintenance-event", maintenanceId: first, id: first, recordId: record, performedOn: 20260901, summary: "Filter changed", nextOn: null, routineId: routine });
-  const state = run({ type: "save-maintenance-event", maintenanceId: second, id: second, recordId: record, performedOn: 20261001, summary: "Filter changed again", nextOn: null, routineId: routine });
+  save(first, 20260901, "Filter changed");
+  save(second, 20261001, "Filter changed again");
+  const state = save(second, 20261001, "Filter and belt changed");
   assert.deepEqual(state.maintenanceEvents.map(({ maintenanceId, summary, routineId }) => [maintenanceId, summary, routineId]), [
     [first, "Filter changed", routine],
-    [second, "Filter changed again", routine],
+    [second, "Filter and belt changed", routine],
   ]);
 });

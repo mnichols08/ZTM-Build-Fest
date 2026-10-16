@@ -83,5 +83,6 @@ test("without its own field, a command falls back to id, then the caller's entit
 });
 
 test("an unknown command type is refused", () => {
-  assert.throws(() => commandEntityId({ type: "nope", id: OWN }), (error) => error.code === 2);
+  for (const type of ["nope", "constructor", "toString", "__proto__", "hasOwnProperty"])
+    assert.throws(() => commandEntityId({ type, id: OWN }), (error) => error.code === 2, type);
 });

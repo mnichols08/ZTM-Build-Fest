@@ -438,7 +438,7 @@ const ENTITY_FIELDS = Object.freeze({
 
 /** The entity ID an intent packet carries: the type's own field, else `id`, else the caller's fallback. */
 export function commandEntityId(command, identity = {}) {
-  const field = ENTITY_FIELDS[command.type];
+  const field = Object.hasOwn(ENTITY_FIELDS, command.type) ? ENTITY_FIELDS[command.type] : null;
   if (!field) throw new KinEngineError(2, "Kin received an invalid household action.");
   return command[field] ?? command.id ?? identity.entityId;
 }
