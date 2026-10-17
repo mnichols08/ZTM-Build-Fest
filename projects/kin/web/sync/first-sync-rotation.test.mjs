@@ -7,6 +7,7 @@
 // device could stay stuck. The relay and stores are fakes.
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHouseholdEpochKey, decryptIdentityBinding, encryptIdentityBinding, generateDeviceKeys } from "./crypto.js";
 import { SyncCoordinator } from "./sync-coordinator.js";
 
 const HOUSEHOLD = "a".repeat(32);
@@ -80,4 +81,75 @@ test("an initialized device still rotates and does not re-create its state", asy
   const { coordinator, calls } = freshDevice({ existingState: { key: "active", currentEpoch: 1 } });
   await coordinator.runOnce();
   assert.deepEqual(calls, ["commitRotation", "provisionMemberHistory", "pushIdentityBindings", "pull"]);
+});
+
+// Bindings wait for a pending rotation and are re-sealed under the relay's
+// current epoch when they were sealed under an older one (real WebCrypto).
+
+const deviceKeys = await generateDeviceKeys();
+const epochKeys = new Map();
+for (const keyEpoch of [1, 2])
+  epochKeys.set(keyEpoch, (await createHouseholdEpochKey({ householdId: HOUSEHOLD, keyEpoch, deviceKeys })).householdKey);
+const BINDING = {
+  legacyHouseholdId: "d".repeat(32), legacyActorId: "e".repeat(32), legacyDeviceId: "f".repeat(32),
+  householdId: ME.householdId, actorId: ME.memberId, deviceId: ME.deviceId,
+};
+
+async function bindingPusher(sealedEpoch, { uploadedMeanwhile = false } = {}) {
+  const envelope = await encryptIdentityBinding({
+    binding: BINDING, householdId: HOUSEHOLD, deviceId: ME.deviceId, deviceSequence: 1, logicalTime: "7",
+    keyEpoch: sealedEpoch, householdKey: epochKeys.get(sealedEpoch), signingKey: deviceKeys.signingPrivateKey,
+  });
+  const record = { legacy_key: "legacy", ...BINDING, controlEnvelope: envelope, uploaded: false };
+  const posted = [];
+  const coordinator = Object.create(SyncCoordinator.prototype);
+  coordinator.identity = ME;
+  coordinator.deviceKeys = { keys: deviceKeys };
+  coordinator.keyStore = { async getEpoch(householdId, keyEpoch) { return epochKeys.has(keyEpoch) ? { householdKey: epochKeys.get(keyEpoch) } : null; } };
+  coordinator.store = {
+    async getPendingBindings() { return record.uploaded ? [] : [structuredClone(record)]; },
+    async replacePendingBindingEnvelope(key, next) {
+      if (uploadedMeanwhile || record.uploaded) return false;
+      record.controlEnvelope = structuredClone(next);
+      return true;
+    },
+    async markBindingUploaded() { record.uploaded = true; },
+  };
+  coordinator.request = async (path, options) => {
+    assert.equal(path, "/api/sync/bindings");
+    posted.push(JSON.parse(options.body).bindings[0]);
+    return {};
+  };
+  return { coordinator, posted, record };
+}
+
+test("identity bindings wait while a key rotation is pending", async () => {
+  const { coordinator, posted } = await bindingPusher(1);
+  await coordinator.pushIdentityBindings({ currentEpoch: 1, rotationPending: true });
+  assert.equal(posted.length, 0);
+});
+
+test("a binding sealed under a retired epoch is re-sealed under the current one before upload", async () => {
+  const { coordinator, posted, record } = await bindingPusher(1);
+  await coordinator.pushIdentityBindings({ currentEpoch: 2, rotationPending: false });
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].keyEpoch, 2);
+  assert.equal(posted[0].deviceSequence, 1);
+  assert.equal(posted[0].logicalTime, "7");
+  assert.deepEqual(record.controlEnvelope, posted[0], "the stored envelope is the uploaded one");
+  const opened = await decryptIdentityBinding({ envelope: posted[0], householdKey: epochKeys.get(2), signingKey: deviceKeys.signingPublicKey, expectedHouseholdId: HOUSEHOLD });
+  assert.deepEqual(opened, BINDING);
+});
+
+test("a binding already at the current epoch is uploaded as it is", async () => {
+  const { coordinator, posted, record } = await bindingPusher(2);
+  const before = structuredClone(record.controlEnvelope);
+  await coordinator.pushIdentityBindings({ currentEpoch: 2, rotationPending: false });
+  assert.deepEqual(posted, [before]);
+});
+
+test("a binding another tab uploaded meanwhile is not re-sealed or sent again", async () => {
+  const { coordinator, posted } = await bindingPusher(1, { uploadedMeanwhile: true });
+  await coordinator.pushIdentityBindings({ currentEpoch: 2, rotationPending: false });
+  assert.equal(posted.length, 0);
 });

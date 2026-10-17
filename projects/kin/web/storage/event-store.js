@@ -1158,7 +1158,13 @@ export class EventStore {
               householdId: identity.householdId,
               deviceId: identity.deviceId,
               deviceSequence: index + 1,
-              keyEpoch: serverStatus.currentEpoch,
+              // Like a new local change (append), history queued while a key
+              // rotation is pending waits for the new epoch: sealing it under
+              // the epoch being retired would let a removed device read it
+              // and hide it from a member who joins at the new epoch.
+              keyEpoch: serverStatus.rotationPending === true
+                ? null
+                : serverStatus.currentEpoch,
               canonical_event: asBytes(row.encoded_event).slice(),
               envelope: null,
               accepted: false,
@@ -1606,6 +1612,32 @@ export class EventStore {
             (record) => !record.uploaded && record.controlEnvelope,
           ),
         );
+      request.onerror = () =>
+        abortWith(transaction, storageError(request.error));
+    });
+  }
+
+  // Replaces the sealed envelope of this device's not-yet-uploaded identity
+  // binding (re-sealed under a newer key epoch). False if it was uploaded.
+  replacePendingBindingEnvelope(legacyKey, envelope) {
+    const transaction = this.database.transaction(
+      SYNC_BINDING_STORE,
+      "readwrite",
+    );
+    const store = transaction.objectStore(SYNC_BINDING_STORE);
+    const request = store.get(legacyKey);
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => {
+        const record = request.result;
+        if (!record || record.uploaded) {
+          finish(false);
+          return;
+        }
+        record.controlEnvelope = structuredClone(envelope);
+        const write = store.put(record);
+        write.onerror = () => abortWith(transaction, storageError(write.error));
+        finish(true);
+      };
       request.onerror = () =>
         abortWith(transaction, storageError(request.error));
     });
