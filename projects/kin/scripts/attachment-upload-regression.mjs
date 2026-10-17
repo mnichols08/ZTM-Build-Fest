@@ -1,3 +1,4 @@
+import { setViewport } from "./cdp-viewport.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -25,7 +26,7 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
   };
   await client.send("DOM.enable");
   await client.send("Page.setInterceptFileChooserDialog", { enabled: true });
-  await client.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+  await setViewport(client, { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
   await client.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
   try {
     // Fixtures: a genuine JPEG encoded by the browser itself, and a text file.
@@ -208,7 +209,7 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
     check(!mobileClosed.selection && !mobileClosed.sheet && !mobileClosed.viewer && mobileClosed.url === null,
       "phone: the next native Escape closes details through the sheet path after the viewer is already gone");
 
-    await client.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false });
+    await setViewport(client, { width: 1440, height: 960, deviceScaleFactor: 1, mobile: false });
     await page((itemId) => { const app = document.querySelector("kin-app"); app.ctx.detail.openItemDetail(itemId); app.detail.stepInput.value = "desktop viewer draft"; app.detail.querySelector(".attachment-thumb").click(); }, itemId);
     await page(async () => { const app = document.querySelector("kin-app"); for (let i = 0; i < 400 && !app.viewer.open; i++) await new Promise((r) => setTimeout(r, 10)); if (!app.viewer.open) throw Error("desktop viewer did not open"); app.ctx.render.renderState(); });
     await escape();
@@ -224,7 +225,7 @@ export async function attachmentUploadRegressions(client, { recovery, visit, scr
     await escape();
     const desktopDetailsClosed = await page(() => { const app = document.querySelector("kin-app"); return app.selection === null && !app.detail.isConnected; });
     check(desktopDetailsClosed, "desktop: a second Escape closes the underlying detail and restores the list context");
-    await client.send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
+    await setViewport(client, { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
 
     // 3. Details toggling, navigation, a stale sync refresh, and lock/unlock keep the attachment.
     await visit("today");

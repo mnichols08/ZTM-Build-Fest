@@ -1,3 +1,4 @@
+import { setViewport } from "./cdp-viewport.mjs";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -480,7 +481,7 @@ export async function workspaceViewportRegressions(client, { visit }) {
     await writeFile(join(outDir, `regression-${name}.png`), Buffer.from(data, "base64"));
   };
   const viewport = async (width, height, mobile) => {
-    await client.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
+    await setViewport(client, { width, height, deviceScaleFactor: 1, mobile });
     // Media-query change events arrive after the next layout.
     await page(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   };
@@ -547,6 +548,10 @@ export async function workspaceViewportRegressions(client, { visit }) {
           nameClipped: app.brandTitle.scrollWidth > app.brandTitle.clientWidth,
           nameTitled: app.brandTitle.title === app.brandTitle.textContent,
           targets,
+          // What the header holds, so an overflow failure says what overflowed.
+          headerWidth: Math.round(header.width),
+          tools: [...app.siteTools.children].filter((node) => node.getClientRects().length > 0)
+            .map((node) => `${node.tagName.toLowerCase()}.${node.className || ""}:${Math.round(node.getBoundingClientRect().width)}`),
         };
         app.ctx.appearance.setHouseholdIdentity(originalName);
         app.syncChip.state = originalState;
@@ -689,8 +694,8 @@ export async function syncMotionRegressions(first, second) {
   const outDir = join(dirname(fileURLToPath(import.meta.url)), "../target/ux-screenshots");
   await mkdir(outDir, { recursive: true });
   const viewport = { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false };
-  await first.send("Emulation.setDeviceMetricsOverride", viewport);
-  await second.send("Emulation.setDeviceMetricsOverride", viewport);
+  await setViewport(first, viewport);
+  await setViewport(second, viewport);
   const wait = async (client, expression, label) => {
     for (let attempt = 0; attempt < 200; attempt++) {
       if (await client.evaluate(expression)) return;

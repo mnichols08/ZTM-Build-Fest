@@ -16,10 +16,18 @@ export async function handoffRegressions() {
       await new Promise((resolve) => setTimeout(resolve, 10));
     check(!app.busy && !app.refreshing && !app.pendingRefresh, "Handoff operation must settle");
   };
-  const startHandoffSave = (command) => {
-    const pending = app.ctx.conversations.saveHandoff(command);
-    check(app.busy && app.status.textContent === "Saving…", `direct Handoff save started (${command.type})`);
-    return pending;
+  // A peer message or refresh can take the busy guard between idle() and the
+  // save, which then returns without saving (#164). Retry only that case:
+  // nothing started, so nothing can be saved twice. Resolves once the save
+  // has started, with `done` settling when it finishes.
+  const startHandoffSave = async (command) => {
+    for (let attempt = 1; ; attempt++) {
+      const done = app.ctx.conversations.saveHandoff(command);
+      if (app.busy && app.status.textContent === "Saving…") return { done };
+      await done;
+      check(attempt < 5, `direct Handoff save started (${command.type})`);
+      await idle();
+    }
   };
   const count = async () => (await app.store.loadEvents()).length;
   const edit = (text) => {
@@ -161,7 +169,7 @@ export async function handoffRegressions() {
       return request;
     };
     try {
-      await startHandoffSave({ type: "add-handoff", text: "Atomic handoff " + mode });
+      await (await startHandoffSave({ type: "add-handoff", text: "Atomic handoff " + mode })).done;
     } finally {
       IDBObjectStore.prototype.add = originalAdd;
     }
@@ -227,7 +235,7 @@ export async function handoffRegressions() {
   };
   await idle();
   edit("Delayed handoff");
-  const pending = startHandoffSave({ type: "add-handoff", text: capture.input.value });
+  const { done: pending } = await startHandoffSave({ type: "add-handoff", text: capture.input.value });
   check(
     [...app.main.querySelectorAll("input,select,button")]
       .filter((control) => !control.closest("kin-security"))
@@ -267,7 +275,7 @@ export async function handoffRegressions() {
     };
     try {
       await idle();
-      await startHandoffSave({ type, handoffId: target });
+      await (await startHandoffSave({ type, handoffId: target })).done;
     } finally {
       IDBObjectStore.prototype.add = originalAdd;
     }
@@ -328,7 +336,7 @@ export async function handoffRegressions() {
   };
   try {
     await idle();
-    await startHandoffSave({ type: "add-handoff", text: "Superseded retry" });
+    await (await startHandoffSave({ type: "add-handoff", text: "Superseded retry" })).done;
   } finally {
     app.store.append = realAppend;
   }
@@ -341,7 +349,7 @@ export async function handoffRegressions() {
     app.store.getCatchUpState = getCatchUpState;
   }
   await idle();
-  await startHandoffSave({ type: "add-handoff", text: "New command after refresh failure" });
+  await (await startHandoffSave({ type: "add-handoff", text: "New command after refresh failure" })).done;
   await app.ctx.refresh.refreshFromEvents();
   check(
     app.retryAction === null &&

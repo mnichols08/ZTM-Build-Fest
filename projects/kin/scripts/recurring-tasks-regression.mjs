@@ -1,3 +1,4 @@
+import { setViewport } from "./cdp-viewport.mjs";
 import assert from "node:assert/strict";
 
 // Repeating tasks (canonically Routines) through Quick add, Today, the
@@ -42,7 +43,7 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
     }
   };
   const viewport = async (width, height, mobile) => {
-    await client.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
+    await setViewport(client, { width, height, deviceScaleFactor: 1, mobile });
     await settle();
   };
   // Local noon, so a civil date never depends on the machine's time zone.

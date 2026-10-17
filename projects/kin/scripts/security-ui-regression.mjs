@@ -1,4 +1,5 @@
 // Real browser IndexedDB + Web Crypto regressions; no third-party harness.
+import { waitForOrigin } from "./cdp-page.mjs";
 import assert from "node:assert/strict";
 import { householdLifecycleChecks } from "./security-household-regression.mjs";
 import { householdLeaveChecks } from "./household-leave-regression.mjs";
@@ -14,17 +15,26 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 
 export async function securityUiRegressions(client) {
-  // The synthetic recovery secret stays in this process only; never print it.
-  const result = await client.evaluate(`(${browserUiChecks.toString()})()`);
+  // Names the step (and any navigation) when one fails, without printing its
+  // arguments: the synthetic recovery secret stays in this process only.
+  const step = async (name, expression) => {
+    try {
+      return await client.evaluate(expression);
+    } catch (error) {
+      error.message = `${name}: ${error.message}${client.navigations?.length ? `; top-level navigations: ${client.navigations.join(", ")}` : ""}`;
+      throw error;
+    }
+  };
+  const result = await step("core security UI checks", `(${browserUiChecks.toString()})()`);
   assert.ok(result.checks >= 25);
   console.log(`PASS ${result.checks} core security UI assertions`);
-  const operations = await client.evaluate(`(${securityOperationChecks.toString()})(${JSON.stringify(result.recovery)})`);
+  const operations = await step("security operation checks", `(${securityOperationChecks.toString()})(${JSON.stringify(result.recovery)})`);
   console.log(`PASS ${operations.checks} overlapping security operation assertions`);
-  const lifecycle = await client.evaluate(`(${householdLifecycleChecks.toString()})(${JSON.stringify(result.recovery)})`);
+  const lifecycle = await step("household lifecycle checks", `(${householdLifecycleChecks.toString()})(${JSON.stringify(result.recovery)})`);
   console.log(`PASS ${lifecycle.checks} household lifecycle cancellation assertions`);
-  const leave = await client.evaluate(`(${householdLeaveChecks.toString()})()`);
+  const leave = await step("household leave checks", `(${householdLeaveChecks.toString()})()`);
   console.log(`PASS ${leave.checks} household leave component assertions`);
-  const rotation = await client.evaluate(`(${rootRotationUiChecks.toString()})(${JSON.stringify(result.recovery)})`);
+  const rotation = await step("root rotation UI checks", `(${rootRotationUiChecks.toString()})(${JSON.stringify(result.recovery)})`);
   result.recovery = rotation.recovery;
   console.log(`PASS ${rotation.checks} root rotation UI assertions`);
   await client.send("Page.enable");
@@ -894,6 +904,9 @@ if (
       "--no-first-run",
       "--no-default-browser-check",
       "--edge-skip-compat-layer-relaunch",
+      // The peer-tab check opens a window after long async work; the click
+      // activation that would allow it can expire on a slow runner (#164).
+      "--disable-popup-blocking",
       "--remote-debugging-port=0",
       `--user-data-dir=${profile}`,
       "about:blank",
@@ -924,8 +937,13 @@ if (
     });
     let id = 0;
     const pending = new Map();
+    // Top-level navigations, reported if a step fails (#164): an unexpected
+    // one is what destroys the execution context mid-check.
+    const navigations = [];
     socket.onmessage = ({ data }) => {
       const message = JSON.parse(data);
+      if (message.method === "Page.frameNavigated" && !message.params.frame.parentId)
+        navigations.push(`${new Date().toISOString()} ${message.params.frame.url}`);
       if (message.id) {
         const task = pending.get(message.id);
         pending.delete(message.id);
@@ -942,6 +960,7 @@ if (
       });
     const client = {
       send,
+      navigations,
       evaluate: async (expression) => {
         const result = await send("Runtime.evaluate", {
           expression,
@@ -957,13 +976,8 @@ if (
         return result.result.value;
       },
     };
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      if (
-        await client.evaluate("location.origin === " + JSON.stringify(origin))
-      )
-        break;
-      await delay(20);
-    }
+    await waitForOrigin(client.evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
+    await send("Page.enable");
     await securityUiRegressions(client);
   } finally {
     if (socket) {

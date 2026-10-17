@@ -1,3 +1,4 @@
+import { setViewport } from "./cdp-viewport.mjs";
 import assert from "node:assert/strict";
 
 // Keyboard shortcuts and the command palette, driven by real CDP key events in
@@ -39,7 +40,7 @@ export async function keyboardCommandRegressions(client, { visit, ready }) {
   const cmdK = () => press(KEYS.k, { modifiers: 4 });
   const type = async (text) => { await client.send("Input.insertText", { text }); await settle(); };
   const viewport = async (width, height, mobile) => {
-    await client.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
+    await setViewport(client, { width, height, deviceScaleFactor: 1, mobile });
     await settle();
   };
   // Focus a stable, non-editable starting point: the current page heading.
