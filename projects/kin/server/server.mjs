@@ -1328,8 +1328,11 @@ function setHeaders(response) {
 //
 // A file or folder can disappear between listing and reading it (an editor's
 // temporary file, a test's scratch folder). That entry is skipped rather than
-// failing the page with a 500: it isn't part of the shell either way.
-const vanished = (error) => error?.code === "ENOENT" || error?.code === "ENOTDIR";
+// failing the page with a 500: it isn't part of the shell either way. Windows
+// reports an entry that is being deleted as EPERM rather than ENOENT.
+const vanished = (error) =>
+  error?.code === "ENOENT" || error?.code === "ENOTDIR" ||
+  (process.platform === "win32" && error?.code === "EPERM");
 export function shellFingerprint(root = webRoot) {
   const hash = createHash("sha256");
   const visit = (directory) => {
