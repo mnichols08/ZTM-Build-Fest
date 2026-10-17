@@ -54,6 +54,7 @@ const CASES = [
   ["bind-attachment", { attachmentId: OWN, parentId: PARENT }],
   ["remove-attachment", { attachmentId: OWN }],
   ["change-responsibility", { targetId: OWN, itemId: ITEM, routineId: ROUTINE }],
+  ["nickname-device", { targetDeviceId: OWN }],
 ];
 
 test("each command type carries its own entity ID, never a reference it holds", () => {

@@ -27,6 +27,7 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_history_append: status,
       kin_history_truncate: () => 0,
       kin_project: status,
+      kin_device_names: status,
       kin_event_metadata: status,
       kin_event_metadata_batch: status,
       kin_encode_command: status,
@@ -67,6 +68,7 @@ test("a missing result buffer frees for every operation family", () => {
   const calls = [
     () => replay(engine),
     () => engine.projectionBytes([], 1_760_000_000_000, null, 20261003),
+    () => engine.deviceNames([], 1_760_000_000_000, 20261003),
     () => engine.eventMetadata(new Uint8Array(92)),
     () => engine.eventMetadataBatch([new Uint8Array(92)]),
     () => engine.planImport([], 1_760_000_000_000, null, 20261003),
@@ -87,6 +89,43 @@ test("a missing result buffer frees for every operation family", () => {
     assert.throws(call, KinEngineError);
     assert.equal(fake.frees.length, before + 1, "each failed call frees exactly once");
     assert.deepEqual(fake.frees.at(-1), [POINTER, fake.allocations.at(-1)]);
+  }
+});
+
+// KDEV v1 (docs/ABI.md): the device-name table kin_device_names publishes.
+function kdev(devices) {
+  const text = new TextEncoder();
+  const parts = devices.map(({ deviceId, memberId, autoName, nickname }) => {
+    const auto = text.encode(autoName), nick = text.encode(nickname ?? "");
+    const bytes = new Uint8Array(36 + auto.length + nick.length);
+    bytes.fill(deviceId, 0, 16); bytes.fill(memberId, 16, 32);
+    new DataView(bytes.buffer).setUint16(32, auto.length, true);
+    new DataView(bytes.buffer).setUint16(34, nick.length, true);
+    bytes.set(auto, 36); bytes.set(nick, 36 + auto.length);
+    return bytes;
+  });
+  const out = new Uint8Array(12 + parts.reduce((sum, part) => sum + part.length, 0));
+  out.set(text.encode("KDEV")); out[4] = 1;
+  new DataView(out.buffer).setUint32(8, devices.length, true);
+  let offset = 12;
+  for (const part of parts) { out.set(part, offset); offset += part.length; }
+  return out;
+}
+
+test("device names decode from the KDEV table", () => {
+  const table = kdev([
+    { deviceId: 0x11, memberId: 0x01, autoName: "Chrome on iPhone", nickname: "Mikey’s phone 📱" },
+    { deviceId: 0x21, memberId: 0x02, autoName: "Safari on Mac" },
+  ]);
+  const engine = createEngine(substituteExports({ operation: () => 0, result: table }).exports);
+  assert.deepEqual(engine.deviceNames([], 1_760_000_000_000, 20261003), [
+    { deviceId: "11".repeat(16), memberId: "01".repeat(16), autoName: "Chrome on iPhone", nickname: "Mikey’s phone 📱" },
+    { deviceId: "21".repeat(16), memberId: "02".repeat(16), autoName: "Safari on Mac", nickname: null },
+  ]);
+  for (const broken of [table.slice(0, -1), Uint8Array.of(...table, 0), (() => { const t = table.slice(); t[4] = 2; return t; })()]) {
+    const fake = substituteExports({ operation: () => 0, result: broken });
+    assert.throws(() => createEngine(fake.exports).deviceNames([], 1_760_000_000_000, 20261003),
+      (error) => error instanceof KinEngineError && error.code === 6);
   }
 });
 

@@ -180,6 +180,37 @@ test("Responsibility events encode, clear and replay", async () => {
   assert.deepEqual(engine.applyEvents(records, 1_791_475_200_010, null, 20261009).responsibilities, cleared.state.responsibilities);
 });
 
+test("device names describe, nickname, clear and replay outside the projection (#71)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const member = new Uint8Array(16).fill(0xbb), phone = new Uint8Array(16).fill(0xcc), laptop = new Uint8Array(16).fill(0xcd);
+  const context = (sequence, deviceId = phone, actorId = member) => ({ eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId, deviceId, timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) });
+  const asOf = 1_791_475_200_100, day = 20261009;
+  const records = [];
+  const run = (command, ctx) => {
+    const result = engine.executeCommand(command, ctx, records, asOf, null, day);
+    records.push(result.encodedEvent);
+    return result;
+  };
+  const described = run({ type: "describe-device", autoName: " Chrome on iPhone " }, context(1));
+  assert.equal(new DataView(described.encodedEvent.buffer).getUint16(2, true), 42);
+  run({ type: "describe-device", autoName: "Firefox on Windows" }, context(2, laptop));
+  const named = run({ type: "nickname-device", targetDeviceId: hex(phone), nickname: "Kitchen phone" }, context(3, laptop));
+  assert.equal(new DataView(named.encodedEvent.buffer).getUint16(2, true), 43);
+  assert.deepEqual(engine.deviceNames(records, asOf, day), [
+    { deviceId: hex(phone), memberId: hex(member), autoName: "Chrome on iPhone", nickname: "Kitchen phone" },
+    { deviceId: hex(laptop), memberId: hex(member), autoName: "Firefox on Windows", nickname: null },
+  ]);
+  // The same name again records nothing; another member cannot name it.
+  assert.throws(() => engine.executeCommand({ type: "describe-device", autoName: "Chrome on iPhone" }, context(4), records, asOf, null, day), (error) => error.code === 4);
+  assert.throws(() => engine.executeCommand({ type: "nickname-device", targetDeviceId: hex(phone), nickname: "Mine" }, context(4, new Uint8Array(16).fill(0xee), new Uint8Array(16).fill(0xef)), records, asOf, null, day), (error) => error.code === 4);
+  assert.throws(() => engine.executeCommand({ type: "nickname-device", nickname: "No target" }, context(4), records, asOf, null, day), (error) => error.code === 2);
+  run({ type: "nickname-device", targetDeviceId: hex(phone), nickname: null }, context(4));
+  assert.equal(engine.deviceNames(records, asOf, day)[0].nickname, null);
+  assert.deepEqual(engine.eventMetadata(records[3]).kind, "DEVICE_NICKNAMED");
+  assert.equal(engine.applyEvents(records, asOf, null, day).items.length, 0);
+});
+
 test("Attachment bind and remove intent payloads roundtrip through real WASM", async () => {
   const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
   const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");

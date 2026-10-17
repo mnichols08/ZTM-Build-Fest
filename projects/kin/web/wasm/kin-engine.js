@@ -24,6 +24,8 @@ const REQUEST_HEADER_BYTES = 64;
 export const MAX_ARCHIVE_BYTES = 160 * 1024 * 1024;
 export const MAX_LOGICAL_TIME = 9_007_199_254_740_991n;
 const textEncoder = new TextEncoder();
+/** Longest device name in UTF-8 bytes (48 characters, rust/src/state.rs). */
+const MAX_DEVICE_NAME_BYTES = 192;
 
 const USER_MESSAGES = new Map([
   [1, "Kin could not safely access its household engine. Try again."],
@@ -33,7 +35,7 @@ const USER_MESSAGES = new Map([
   ],
   [
     3,
-    "Kin needs a compatible household engine. Your saved information was not deleted.",
+    "This household has changes from a newer version of Kin. Update Kin on this device to continue. Your saved information was not deleted.",
   ],
   [
     4,
@@ -84,6 +86,7 @@ export function createEngine(instanceExports) {
     "kin_history_append",
     "kin_history_truncate",
     "kin_project",
+    "kin_device_names",
     "kin_event_metadata",
     "kin_event_metadata_batch",
     "kin_encode_command",
@@ -236,7 +239,45 @@ export function createEngine(instanceExports) {
       syncIdentity = null,
     ) =>
       replayBytes(exports, mirror, records, asOf, cursorEventId, civilDate, syncIdentity),
+    // The household's named devices (#71), replayed from the same history:
+    // [{ deviceId, memberId, autoName, nickname }] in device-ID order, IDs
+    // as hex, nickname null when none is set.
+    deviceNames: (records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeDeviceNames(
+        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_device_names"),
+      )),
   };
+}
+
+// KDEV v1 (ABI.md): "KDEV", version u16, reserved u16, count u32, then per
+// device its ID and member ID (16 bytes each), automatic-name and nickname
+// lengths (u16 each) and the two UTF-8 names.
+function decodeDeviceNames(bytes) {
+  const invalid = () => new KinEngineError(6, "Kin received invalid device names.");
+  if (bytes.length < 12 || readAscii(bytes, 0, 4) !== "KDEV") throw invalid();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint16(4, true) !== 1 || view.getUint16(6, true) !== 0) throw invalid();
+  const count = view.getUint32(8, true);
+  const devices = [];
+  let offset = 12;
+  for (let index = 0; index < count; index += 1) {
+    if (offset + 36 > bytes.length) throw invalid();
+    const autoLength = view.getUint16(offset + 32, true);
+    const nicknameLength = view.getUint16(offset + 34, true);
+    const end = offset + 36 + autoLength + nicknameLength;
+    if (autoLength < 1 || end > bytes.length) throw invalid();
+    devices.push({
+      deviceId: idToHex(bytes.subarray(offset, offset + 16)),
+      memberId: idToHex(bytes.subarray(offset + 16, offset + 32)),
+      autoName: strictTextDecoder.decode(bytes.subarray(offset + 36, offset + 36 + autoLength)),
+      nickname: nicknameLength
+        ? strictTextDecoder.decode(bytes.subarray(offset + 36 + autoLength, end))
+        : null,
+    });
+    offset = end;
+  }
+  if (offset !== bytes.length) throw invalid();
+  return devices;
 }
 
 export function randomId() {
@@ -343,6 +384,8 @@ const COMMAND_TYPES = [
   "bind-attachment",
   "remove-attachment",
   "change-responsibility",
+  "describe-device",
+  "nickname-device",
 ];
 const EVENT_KINDS = [
   null,
@@ -387,6 +430,8 @@ const EVENT_KINDS = [
   "ATTACHMENT_BOUND",
   "ATTACHMENT_REMOVED",
   "RESPONSIBILITY_CHANGED",
+  "DEVICE_DESCRIBED",
+  "DEVICE_NICKNAMED",
 ];
 
 // The command field that names each event's own entity (packet offset 92).
@@ -434,6 +479,7 @@ const ENTITY_FIELDS = Object.freeze({
   "bind-attachment": "attachmentId",
   "remove-attachment": "attachmentId",
   "change-responsibility": "targetId",
+  "nickname-device": "targetDeviceId",
 });
 
 /** The entity ID an intent packet carries: the type's own field, else `id`, else the caller's fallback. */
@@ -474,6 +520,19 @@ function encodeIntentPacket(command, identity) {
   const noteBody = kind === 22 || kind === 23 ? textEncoder.encode(command.body ?? "") : null;
   if ((kind === 22 || kind === 23) && (typeof command.title !== "string" || typeof command.body !== "string" || strictTextDecoder.decode(noteTitle) !== command.title || strictTextDecoder.decode(noteBody) !== command.body || noteTitle.length > 256 || noteBody.length > 4096))
     throw new KinEngineError(2, "Note text must be valid Unicode and within its supported size.");
+  const deviceName = kind === 42 ? command.autoName : kind === 43 ? (command.nickname ?? "") : null;
+  const deviceNameBytes = deviceName === null ? null : textEncoder.encode(deviceName);
+  // Rust trims and checks device names; this only keeps the packet well formed.
+  if (
+    deviceName !== null &&
+    (typeof deviceName !== "string" ||
+      strictTextDecoder.decode(deviceNameBytes) !== deviceName ||
+      deviceNameBytes.length > MAX_DEVICE_NAME_BYTES ||
+      (kind === 42 && deviceNameBytes.length < 1) ||
+      (kind === 43 && !/^[a-f0-9]{32}$/.test(command.targetDeviceId ?? "")))
+  ) {
+    throw new KinEngineError(2, "A device name must be short plain text.");
+  }
   const textBytes = textEncoder.encode(text);
   const playbookBytes = kind === 33 ? encodePlaybookPayload(command) : null;
   const referenceBytes = kind === 35 ? encodeReferencePayload(command) : null;
@@ -499,7 +558,7 @@ function encodeIntentPacket(command, identity) {
           ? 16 + stepText.length
           : kind === 22 || kind === 23
             ? 24 + noteTitle.length + noteBody.length
-            : kind === 33 ? playbookBytes.length : kind === 35 ? referenceBytes.length : kind === 37 ? maintenanceBytes.length : kind === 39 || kind === 41 ? 16 : textBytes.length),
+            : kind === 33 ? playbookBytes.length : kind === 35 ? referenceBytes.length : kind === 37 ? maintenanceBytes.length : kind === 39 || kind === 41 ? 16 : deviceNameBytes ? deviceNameBytes.length : textBytes.length),
   );
   packet.set([75, 67, 77, 68, 1, 0, 0, 0]);
   const view = new DataView(packet.buffer);
@@ -523,7 +582,7 @@ function encodeIntentPacket(command, identity) {
   if (logicalTime <= 0n || logicalTime > MAX_LOGICAL_TIME)
     throw new KinEngineError(2, "Kin received an invalid event order.");
   view.setBigUint64(84, logicalTime, true);
-  if (![12, 13, 29].includes(kind)) {
+  if (![12, 13, 29, 42].includes(kind)) {
     const entity = commandEntityId(command, identity);
     packet.set(
       typeof entity === "string" ? idFromHex(entity) : assertId(entity),
@@ -604,6 +663,9 @@ function encodeIntentPacket(command, identity) {
     view.setUint32(124, 16, true);
   } else if (kind === 33 || kind === 35 || kind === 37 || kind === 39 || kind === 41) {
     // The Playbook packet payload was encoded above.
+  } else if (deviceNameBytes) {
+    view.setUint32(124, deviceNameBytes.length, true);
+    packet.set(deviceNameBytes, 128);
   } else {
     view.setUint32(124, textBytes.length, true);
     packet.set(textBytes, 128);
