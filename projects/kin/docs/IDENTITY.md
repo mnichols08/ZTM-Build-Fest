@@ -85,6 +85,28 @@ An open browser checks authorization on focus/return and every 30 seconds while 
 
 Historical key entitlement is explicit: a new device for an existing member can receive retained history; a newly joined/replacement adult starts at its membership-time/current epoch and later epochs. v0.9.x does not grant pre-join epoch keys. Kin has no encrypted snapshots, so earlier shared history remains unavailable rather than being reconstructed from plaintext server state.
 
+## Device names
+
+Since v1.1 (#71) nobody types a device name. Each device is known by two names:
+
+- **Automatic name** — what the device reports about itself, such as
+  "Chrome on iPhone", "iPhone" for the installed Home Screen app, or "Device"
+  when it can't tell (`householdDeviceName` in `web/platform.js`). It is the
+  only device name the server keeps (`server/pairing-service/device-label.mjs`):
+  a label built from anything else is stored as "Device", and labels typed
+  before v1.1 are reset to "Device" when the service starts. Approvers see it
+  while pairing, before the new device has any household key.
+- **Nickname** — an optional name a member gives one of their own devices in
+  Trusted devices ("Kitchen tablet"). It exists only as an encrypted
+  `DEVICE_NICKNAMED` event, so only household members can read it.
+
+After its first successful sync, a device records its automatic name as an
+encrypted `DEVICE_DESCRIBED` event, and again whenever that name changes.
+Trusted devices groups devices by member, marks this device, and shows the
+nickname, else the synced automatic name, else the server's automatic name,
+else "New device" with the start of its sync code. Only a device's own member
+can rename it ([EVENTS](EVENTS.md#v110-device-names) has the rules).
+
 ## v0.8.6 existing-member reauthentication
 
 Bootstrap and claim activation set a separate opaque `kin_device` cookie whose hash is bound to the server-side device record. Logout invalidates and clears only the session cookie. Login options are limited to that trusted device's member credentials; after a valid assertion, the service issues a new session and rotates the device token. A missing or revoked device token, removed member, or unrelated credential is rejected. A passkey alone does not silently trust a new browser.

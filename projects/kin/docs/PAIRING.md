@@ -33,6 +33,12 @@ Member B accepts and creates a passkey
 Authorize Member B's device and enroll its key
 ```
 
+The joining device sends its automatic name ("Chrome on iPhone") with its
+claim, so the approver can tell which device is asking; nobody types a name
+while pairing. The server stores only automatic names (#71). A member can give
+the device a nickname later in Trusted devices, where it stays encrypted
+([Identity](IDENTITY.md#device-names)).
+
 The pairing invitation must not itself be a durable login credential or contain the household encryption key in plaintext. It carries only the minimum short-lived session material required to authenticate a secure enrollment exchange.
 
 ## Pairing session requirements

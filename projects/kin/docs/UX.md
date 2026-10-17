@@ -902,10 +902,10 @@ Testers on real phones found three setup snags:
   (Instagram, the Google app…) can't add to the Home Screen, so it's told to
   open the page in Safari. More has the same steps under Install Kin. Inside
   the installed app, nothing is shown.
-- **Automatic device name.** Create and join fill in the device name from the
+- **Automatic device name.** Create and join name the device from the
   browser and platform ("Chrome on iPhone"; just "iPhone" in the installed
-  app), shown as one line with an optional Change. Encrypted names and
-  nicknames remain issue #71.
+  app) and say so in one line. Nobody types a name; a nickname comes later
+  (§8.2).
 
 ---
 
@@ -924,6 +924,24 @@ Where trust matters, explain the consequence.
 Example:
 
 > Removing this device stops it from syncing new household changes.
+
+Trusted devices (v1.1, #71):
+
+- Devices are grouped by member: "Your devices" first, then one group per
+  other member. Each group is a labelled list.
+- Each row leads with the device's name: its nickname, else its automatic
+  name, else "New device · " and the first four characters of its sync code
+  when it hasn't synced a name yet. After the name come the automatic name (when
+  a nickname hides it), "This device" for the device in your hand, and
+  Trusted or Revoked.
+- Your own devices have **Rename**, which opens an inline Nickname field
+  (at most 32 characters) with Save nickname, Cancel and, when one is set,
+  Remove nickname. Escape cancels and returns focus to Rename. Rename's
+  accessible name includes the device ("Rename Kitchen tablet").
+- Other members' devices can't be renamed. Revoke and the other controls
+  name the device by the same displayed name.
+- The page says why names are safe to set: only household members can see a
+  nickname.
 
 ---
 

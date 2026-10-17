@@ -5,6 +5,30 @@ development candidates that never received a release tag; their changes
 ship in v1.0.0. The project's planning releases v0.0.1–v0.0.12 are
 documentation only.
 
+## Unreleased — v1.1.0
+
+### Device names and nicknames (#71)
+
+- **Nobody types a device name.** Creating or joining a household names the
+  device after its browser and system ("Chrome on iPhone"; "iPhone" in the
+  installed app) and says so in one line.
+- **Nicknames.** Trusted devices now groups devices by member, marks the
+  device you're holding, and lets you rename your own devices inline (up to
+  32 characters, or remove the nickname). A device that hasn't synced a name
+  yet shows as "New device" with the start of its sync code.
+- **Private by design.** Device names are encrypted household events: new
+  event kinds 42 `DEVICE_DESCRIBED` and 43 `DEVICE_NICKNAMED`, read through
+  the new `kin_device_names` export (KDEV v1). Names that could hide
+  characters are rejected. The replay protocol stays 24 and no frozen format
+  changes ([compatibility](docs/V1.0-COMPATIBILITY.md#additions-since-v10)).
+- **The server keeps only automatic names.** Any other label is stored as
+  "Device", and labels typed before v1.1 are reset to "Device" when the
+  service starts.
+- **Update prompt.** A device that receives changes from a newer Kin now says
+  to update Kin on that device; its saved information stays.
+- **Mixed versions.** A v1.0 device in a household with a v1.1 device pauses
+  sync until it updates.
+
 ## v1.0.0 — Stable Kin Platform
 
 Released 2026-10-17 as `kin-v1.0.0`, with the release candidate

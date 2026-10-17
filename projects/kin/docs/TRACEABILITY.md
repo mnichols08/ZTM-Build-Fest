@@ -118,3 +118,14 @@ No capability was added. Browser validation covers quota/abort rollback and retr
 ## v0.6.3 Summary Hardening & Polish
 
 No capability was added. Real-WASM tests validate all truncated v6 summary/result boundaries, malformed counts/kinds/entity/classification/reserved/UTF-8/length fields, trailing bytes, combined entity-plus-summary output, a 10,000-event v6 replay, actual memory growth, and copied-result lifetime. The privacy and polish audit remains limited to the frozen product contract.
+
+## v1.1.0 Device names and nicknames (#71)
+
+| Requirement | Specification authority | v1.1.0 validation |
+| --- | --- | --- |
+| Device names are encrypted household events; the server keeps only automatic names | [IDENTITY](IDENTITY.md#device-names), [PRIVACY](PRIVACY.md), [EVENTS](EVENTS.md#v110-device-names) | `server/device-label.test.mjs`: typed labels stored as "Device", v1.0 labels reset in storage at start, server and client name lists equal. |
+| Only a device's member names it; latest description and nickname win | [EVENTS](EVENTS.md#v110-device-names), [ABI](ABI.md) | `rust/src/device_name_tests.rs` (vectors 024–025) and the real-WASM test in `web/wasm/kin-engine.test.mjs`. |
+| Names are canonical and cannot hide characters | [ABI](ABI.md), [TEST-VECTORS](TEST-VECTORS.md#device-names-v11) | Vector 026; KCMD bounds in `device_name_tests.rs`. |
+| Device names stay out of KINS; replay protocol stays 24 | [ABI](ABI.md), [V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md) | Vector 027; unchanged golden fixtures; `scripts/v1-compatibility.test.mjs`. |
+| KDEV export decodes exactly | [ABI](ABI.md) | Vector 028; KDEV decode and broken-table tests in `web/wasm/abi-ownership.test.mjs`. |
+| Nobody types a device name; Trusted devices groups, marks and renames | [UX](UX.md) §8.1–8.2, [ACCESSIBILITY](ACCESSIBILITY.md) | `web/components/kin-household.test.mjs`; `scripts/mobile-ux-regression.mjs`; `scripts/household-authority-regression.mjs` (relay counts include each device's name). |
