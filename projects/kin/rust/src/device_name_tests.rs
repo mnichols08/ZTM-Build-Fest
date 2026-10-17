@@ -126,6 +126,16 @@ fn a_later_member_replays_nicknames_for_devices_described_before_they_joined() {
             device(0x21, MEMBER_2, "Safari on Mac", None),
         ]
     );
+    // Clearing that nickname leaves no name, so the entry goes; a clear for
+    // a device this history has never named changes nothing. Every KDEV
+    // entry has a name.
+    let mut cleared = late.to_vec();
+    cleared.push(nicknamed(7, MEMBER_1, 0x12, 0x11, ""));
+    cleared.push(nicknamed(8, MEMBER_1, 0x12, 0x13, ""));
+    assert_eq!(
+        project(&cleared).unwrap().devices,
+        vec![device(0x21, MEMBER_2, "Safari on Mac", None)]
+    );
     // The device describes itself again later: same member keeps the nickname.
     let mut same = late.to_vec();
     same.push(described(7, MEMBER_1, 0x11, "Chrome on iPad"));

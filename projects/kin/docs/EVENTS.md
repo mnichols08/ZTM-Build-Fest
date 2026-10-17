@@ -215,7 +215,9 @@ the server never learns a name anyone typed ([PRIVACY](PRIVACY.md),
   description, so the nickname replays after it. But a member who joined
   later never receives descriptions made before they joined, so their history
   can hold a nickname for a device it has never seen described. Replay keeps
-  that as a nickname-only entry owned by its author. A later description by
+  that as a nickname-only entry owned by its author (clearing that nickname
+  removes the entry, and clearing an unknown device's nickname changes
+  nothing). A later description by
   the same member completes it; one by another member wins and drops the
   nickname.
 - Names are canonical in the event: trimmed, at most 48 characters for an

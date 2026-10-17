@@ -16,7 +16,8 @@
 //! may give one. A member who joined later never receives descriptions made
 //! before they joined (history starts at their first key epoch), so a
 //! nickname can arrive for a device this history has never seen described.
-//! It is kept as a nickname-only entry owned by its author. A later
+//! It is kept as a nickname-only entry owned by its author (and dropped
+//! again if that nickname is cleared). A later
 //! description by the same member completes it; one by another member wins,
 //! as the description names its own device, and drops the nickname.
 //!
@@ -59,10 +60,20 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
             device_id,
             nickname,
         } => match r.devices.get_mut(device_id) {
+            // Clearing the only name this history has for a device leaves
+            // nothing to show, so the entry goes: every entry has a name.
+            Some(device)
+                if device.member_id == event.actor_id
+                    && device.auto_name.is_none()
+                    && nickname.is_none() =>
+            {
+                r.devices.remove(device_id);
+            }
             Some(device) if device.member_id == event.actor_id => {
                 device.nickname.clone_from(nickname)
             }
             Some(_) => {}
+            None if nickname.is_none() => {}
             None => {
                 r.devices.insert(
                     *device_id,
