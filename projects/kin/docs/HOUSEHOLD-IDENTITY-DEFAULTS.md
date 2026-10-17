@@ -81,7 +81,7 @@ read them.
   returns 404, so iOS keeps its own behaviour (Kin has no PNG icon). The
   service worker caches neither. A browser still running the previous
   service worker can serve its cached Kin manifest until the v1.1 worker takes
-  over, which happens on the next launch after the update.
+  over, once every Kin tab has closed or the update is accepted.
 - **Withdrawing** ("Stop showing") deletes the published copy; the manifest
   goes back to Kin. Household deletion removes it with the household's data.
   A renamed household keeps the old published name until an admin saves the

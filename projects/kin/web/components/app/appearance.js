@@ -162,7 +162,8 @@ export class AppearanceController {
       await this.refreshInstallIdentity();
       complete(result, null);
     } catch (error) {
-      if (!this.ctx.session.isCurrentSession(session)) return;
+      // A lock or re-open mid-write still releases the panel's writing state.
+      if (!this.ctx.session.isCurrentSession(session)) { complete(null, new Error("Kin locked before the home screen details finished saving.")); return; }
       if (error.code === "install_identity_stale") await this.refreshInstallIdentity();
       complete(null, error);
     }

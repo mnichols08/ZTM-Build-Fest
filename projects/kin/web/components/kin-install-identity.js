@@ -272,7 +272,8 @@ export class KinInstallIdentity extends HTMLElement {
     }
     let icons = this.icons;
     this.setWriting(true);
-    if (!icons && this.uploadChoice.input.checked && this.state.published?.iconSource === "upload") {
+    if (!icons && this.uploadChoice.input.checked && this.state.published?.iconSource === "upload" &&
+        Object.keys(this.state.published.icons ?? {}).length === 4) {
       // Keep the published uploaded icons: this device may read them back.
       try {
         icons = Object.fromEntries(await Promise.all(Object.entries(this.state.published.icons).map(async ([key, url]) => {
