@@ -97,9 +97,10 @@ testers get it.
 
 **Promote** the current `kin-development` to testers by opening a pull request
 from `kin-development` into `kin-testing` and merging it (or, from a clone,
-`git push origin origin/kin-development:kin-testing`). Railway redeploys, Kin
-backs up the database first (below), and testers see the update prompt the next
-time they open Kin.
+`git push origin origin/kin-development:kin-testing`). Railway redeploys; before
+the new code touches the database, the startup script saves a copy of it as the
+previous version left it (below). Testers see the update prompt the next time
+they open Kin.
 
 Promote when CI is green and you aren't in the middle of a test session.
 Households, passkeys and data carry over: the server database stays on the
@@ -108,19 +109,28 @@ volume, and v1.0's formats are frozen
 
 ## Backups
 
-Every time the container starts (each deploy and restart), before Kin opens
-the database, it writes an integrity-checked copy to
-`/data/backups/kin-<UTC time>.sqlite` and keeps the newest 10. The deploy log
-shows `backup_created`. Change how many are kept with `KIN_BACKUPS_KEEP`.
+Once per deployment, before Kin opens the database, the startup script writes
+an integrity-checked copy to `/data/backups/kin-<UTC time>.sqlite` and keeps the
+newest 10 (`KIN_BACKUPS_KEEP` changes that). The copy is made without running
+any Kin code, so it holds the database exactly as the previous deployment left
+it, before the new version upgrades anything. The deploy log shows
+`backup_created`. Restarts within the same deployment, including a crash loop,
+log `backup_skipped` and don't add copies, so they can't push good backups
+out.
+
+Each copy is the size of the database (small for a test server). If the volume
+gets close to full, lower `KIN_BACKUPS_KEEP` or delete old
+`kin.sqlite.pre-restore-…` files left by restores.
 
 The first start on a new volume logs `database_new` instead. If you see that on
 a server that already had households, the volume isn't the one you expected.
 
 To take one on demand, from the service's shell (Railway CLI `railway ssh`, or
-the dashboard):
+the dashboard). The shell is root, so run it as Kin's user:
 
 ```sh
-node /app/server/admin.mjs backup /data/backups/manual-$(date +%F).sqlite
+setpriv --reuid=node --regid=node --init-groups -- \
+  node /app/server/admin.mjs backup /data/backups/manual-$(date +%F).sqlite
 ```
 
 ## Roll back or move data
@@ -130,22 +140,37 @@ at startup:
 
 1. Find the backup to use: `ls -lt /data/backups` from the service's shell, or
    the `backup_created` lines in earlier deploy logs.
-2. Set the variable `KIN_RESTORE_FROM=/data/backups/kin-<time>.sqlite`. Railway
-   redeploys.
+2. Set the variable `KIN_RESTORE_FROM=/data/backups/kin-<time>.sqlite` and
+   deploy the change (Railway stages variable changes until you deploy them).
 3. The deploy log shows `restore_finished`. The database it replaced is kept
    next to it as `kin.sqlite.pre-restore-…`.
-4. Delete the `KIN_RESTORE_FROM` variable. (If you forget, it isn't applied a
-   second time: the log says `restore_skipped`.)
+4. Delete the `KIN_RESTORE_FROM` variable and deploy again. If you forget, it
+   isn't applied a second time: the log says `restore_skipped`. To restore the
+   same file again later, delete `/data/backups/.restored-<file name>` first.
+
+If the problem came with new code, also move `kin-testing` back to the earlier
+commit; a backup taken by older code may not open with newer code.
 
 To **move** a test server's data to a new Railway service or another server,
 copy a backup file into the new server's `/data/backups` and restore it the
 same way (for the Docker setup, see
-[Restore a backup](../README.md#restore-a-backup)). Keep the same address:
-passkeys only work on the domain they were made on.
+[Restore a backup](../README.md#restore-a-backup)). Railway volumes have no
+download or upload button, so getting a file in or out takes a shell on the
+service (`railway ssh`). Keep the same address: passkeys only work on the
+domain they were made on.
 
-A restore brings back accounts, devices and encrypted sync history as they were
-when the backup was taken. Anything that reached the server after that is gone
-from it, so restore the newest backup that predates the problem.
+What a restore does and doesn't bring back:
+
+- Encrypted sync history goes back to when the backup was taken. Anything that
+  reached the server after that is gone from it, so pick the newest backup
+  that predates the problem.
+- For each household that exists right now, the current members, passkeys,
+  devices and key state are kept from the database being replaced, so a
+  rollback can't bring back a removed device. Household deletions made since
+  the backup are kept too.
+- Kin refuses a backup from before a household that exists now was created
+  (`Cannot restore a backup that predates a currently active household`).
+  Restoring into a new, empty server always works.
 
 ## Day to day
 

@@ -5,8 +5,11 @@
 # Before Kin starts it also protects the data:
 #   1. Refuses to start unless $KIN_DATA_DIR is a mounted volume, so a missing
 #      volume can't silently wipe every household on the next deploy.
-#   2. Takes an integrity-checked backup of the existing database into
-#      $KIN_DATA_DIR/backups and keeps the newest $KIN_BACKUPS_KEEP (default 10).
+#   2. Once per Railway deployment, snapshots the database exactly as the
+#      previous deployment left it (snapshot.mjs runs no Kin code, so no
+#      migration) into $KIN_DATA_DIR/backups, keeping the newest
+#      $KIN_BACKUPS_KEEP (default 10). Restarts and crash loops within one
+#      deployment don't add copies, so they can't push good backups out.
 #   3. If KIN_RESTORE_FROM names a backup, restores it once (README: "Roll back
 #      or move data").
 set -euo pipefail
@@ -15,14 +18,20 @@ export PORT="${PORT:-8080}"
 data="${KIN_DATA_DIR:?KIN_DATA_DIR must be set}"
 backups="$data/backups"
 database="$data/kin.sqlite"
-keep="${KIN_BACKUPS_KEEP:-10}"
 log() { printf '{"event":"%s","message":"%s"}\n' "$1" "$2"; }
 
-is_mounted() {
-  if command -v mountpoint >/dev/null; then mountpoint -q "$1"
-  else grep -qs " $1 " /proc/self/mountinfo; fi
-}
-if ! is_mounted "$data"; then
+# As PID 1 this shell ignores SIGTERM unless it handles it. Bash runs the trap
+# after the current step, so a stop never interrupts a backup or restore
+# halfway (which would leave Kin's lock files behind).
+trap 'log shutdown_started "Stopping before Kin started."; exit 143' TERM INT
+
+keep="${KIN_BACKUPS_KEEP:-10}"
+if ! [[ "$keep" =~ ^[1-9][0-9]{0,2}$ ]]; then
+  log backups_keep_invalid "KIN_BACKUPS_KEEP must be a whole number from 1 to 999; keeping 10."
+  keep=10
+fi
+
+if ! mountpoint -q "$data"; then
   if [ "${KIN_ALLOW_EPHEMERAL_DATA:-}" = "true" ]; then
     log data_ephemeral "$data is not a volume. Every redeploy erases all households (KIN_ALLOW_EPHEMERAL_DATA=true)."
   else
@@ -35,33 +44,41 @@ fi
 mkdir -p "$data" "$backups"
 chown node:node "$data" "$backups"
 as_node() { setpriv --reuid=node --regid=node --init-groups -- "$@"; }
-admin() { as_node node /app/server/admin.mjs "$@"; }
 
-if [ -f "$database" ]; then
-  stamp="$(date -u +%Y%m%dT%H%M%S%3NZ)"
-  if admin backup "$backups/kin-$stamp.sqlite" >/dev/null; then
-    log backup_created "$backups/kin-$stamp.sqlite"
+deployment="${RAILWAY_DEPLOYMENT_ID:-}"
+deployed_marker="$backups/.deployment-${deployment:-none}"
+if [ ! -f "$database" ]; then
+  log database_new "No database in $data yet; Kin starts with no households."
+elif [ -n "$deployment" ] && [ -e "$deployed_marker" ]; then
+  log backup_skipped "Already backed up for this deployment."
+else
+  backup="$backups/kin-$(date -u +%Y%m%dT%H%M%S%3NZ).sqlite"
+  if as_node node /app/snapshot.mjs "$database" "$backup"; then
+    log backup_created "$backup"
+    rm -f -- "$backups"/.deployment-*
+    [ -z "$deployment" ] || as_node touch "$deployed_marker"
   else
     log backup_failed "Couldn't back up $database before starting; starting anyway."
   fi
-else
-  log database_new "No database in $data yet; Kin starts with no households."
 fi
 
 if [ -n "${KIN_RESTORE_FROM:-}" ]; then
   marker="$backups/.restored-$(basename "$KIN_RESTORE_FROM")"
   if [ -e "$marker" ]; then
-    log restore_skipped "$KIN_RESTORE_FROM was already restored. Remove KIN_RESTORE_FROM."
+    log restore_skipped "$KIN_RESTORE_FROM was already restored. Remove KIN_RESTORE_FROM, or delete $marker to restore it again."
   else
-    admin restore "$KIN_RESTORE_FROM" --acknowledge-deletion-history
+    # A backup made from a root shell is root-owned; Kin restores as node.
+    [ ! -f "$KIN_RESTORE_FROM" ] || chown node:node "$KIN_RESTORE_FROM"
+    as_node node /app/server/admin.mjs restore "$KIN_RESTORE_FROM" --acknowledge-deletion-history
     as_node touch "$marker"
     log restore_finished "Restored $KIN_RESTORE_FROM. Remove KIN_RESTORE_FROM so it isn't applied again."
   fi
 fi
 
 # Keep the newest $keep startup backups, never the one named by KIN_RESTORE_FROM.
+protect="$(realpath -m -- "${KIN_RESTORE_FROM:-/nonexistent}")"
 for old in $(ls -1t "$backups"/kin-*.sqlite 2>/dev/null | tail -n "+$((keep + 1))" || true); do
-  [ "$old" = "${KIN_RESTORE_FROM:-}" ] || rm -f -- "$old"
+  [ "$(realpath -m -- "$old")" = "$protect" ] || rm -f -- "$old"
 done
 
 as_node node /app/server/server.mjs &

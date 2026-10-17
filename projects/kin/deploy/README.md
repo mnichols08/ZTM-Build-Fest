@@ -115,6 +115,7 @@ Kin must be stopped while its database is replaced:
 
 ```sh
 docker compose cp ./kin-backup.sqlite kin:/data/kin-backup.sqlite
+docker compose run --rm --no-deps -u root kin chown node:node /data/kin-backup.sqlite   # Kin backups are private to their owner
 docker compose stop kin
 docker compose run --rm --no-deps kin node server/admin.mjs restore /data/kin-backup.sqlite --acknowledge-deletion-history
 docker compose up -d && docker compose restart caddy
