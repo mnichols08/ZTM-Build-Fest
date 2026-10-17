@@ -5,6 +5,11 @@ Hardening & Architecture Closure. The current implementation candidate is
 v0.47.0 Household Identity & Shared Appearance; it has no release tag and is
 not production certification.
 
+Before any v1.x release, check it against the
+[v1.0 compatibility commitment](V1.0-COMPATIBILITY.md): a release may add
+formats but must keep reading every v1.0 format, and CI fails if a frozen
+version changes without that document.
+
 ## Release sequence
 
 The completed progression is `kin-v0.9.3` → `kin-v0.10.0` (Portable Core + Local

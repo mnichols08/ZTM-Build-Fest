@@ -9,6 +9,12 @@ or IndexedDB formats. Household membership is bounded to 12 total participants
 Candidate milestones are not production certification. Earlier version sections
 preserve historical data contracts.
 
+**v1.0:** the formats frozen for v1.0, what every v1.x release promises about
+them, and the "start fresh" rule for v0.x data are in
+[V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md). That document is the current
+reference; a CI test keeps it in step with the code. The table below is
+historical.
+
 ## Independent version axes
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
