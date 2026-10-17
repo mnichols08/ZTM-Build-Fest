@@ -42,7 +42,7 @@ current product, not compatibility with old data:
 Root rotation ([ROOT-ROTATION](ROOT-ROTATION.md)) is re-encryption, not a
 format migration, and is unchanged.
 
-The server's SQLite upgrade chain (0→9) is also retained for now. Schema 8's
+The server's SQLite upgrade chain (0→10) is also retained for now. Schema 8's
 admin promotion is an authority-bearing step, and the server split belongs to
 Slice 10; removing the chain there would need its own review.
 
