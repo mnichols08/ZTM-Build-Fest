@@ -1,9 +1,11 @@
 # Release Process
 
-**Status:** Current release: v1.0.0 — Stable Kin Platform, with release
-candidate `kin-v1.0.0-rc.1`. The release before it was v0.10.3 Bounded
-Storage/Archive Hardening & Architecture Closure. Neither is production
-certification or an independent audit.
+**Status:** v1.0.0 — Stable Kin Platform is in its final release checks
+([#168](https://github.com/mnichols08/ZTM-Build-Fest/issues/168)): its release candidate will be tagged `kin-v1.0.0-rc.1`, and
+`kin-v1.0.0` follows on the same commit once the checks pass. The last
+release before it was v0.10.3 Bounded Storage/Archive Hardening &
+Architecture Closure. Neither is production certification or an independent
+audit.
 
 Before any v1.x release, check it against the
 [v1.0 compatibility commitment](V1.0-COMPATIBILITY.md): a release may add
@@ -23,7 +25,8 @@ candidate implements lifecycle capability, correctness, stale-device hardening
 and UX/docs; the tag does not indicate publication.
 The [roadmap](ROADMAP.md) records the candidate progression from v0.11 through
 v0.47.0. The v0.21.0–v0.47.0 candidates were never tagged; together with the
-tagged v0.11.x–v0.20.x review lines they ship in v1.0.0.
+tagged v0.11.x–v0.20.x review lines they are planned to ship in v1.0.0,
+subject to the [review-gate decisions](audits/V1.0_REVIEW_GATES.md).
 v1.0 requires the readiness properties of every preceding line, not
 only architecture/security and UX/UI. Use the release-specific planning contracts
 and [V0.10.0](V0.10.0.md); do not manufacture patch releases or knowingly defer a
@@ -68,9 +71,9 @@ kin-main/kin-development merges remain separate actions.
 
 Maintain the project-scoped [changelog](../CHANGELOG.md) for each completed release. Add an entry from the validated changes before committing and tagging; summarize what actually changed, not planned or deferred behavior. Keep prior release entries intact. Planning releases should be identified as documentation/planning work rather than implemented product features.
 
-Use `vX.Y.Z` in release headings, followed by ` — Release Title` when a title
-exists. Published entries use level-two headings; unreleased candidate patches
-use level-three headings under their shared level-two candidate range.
+Every version has one level-two heading, `## vX.Y.Z — Release Title`, newest
+first. A version that never received a tag says so in an italic line under
+its heading (`_Not tagged: …_`).
 
 ## Semantic version intent
 
@@ -117,7 +120,7 @@ Follow [V0.7.0](V0.7.0.md) for capability, correctness, resilience/accessibility
 
 The v0.7.x line completed at `kin-v0.7.4`, validated commit `a8ded079be6fdbedba8738a64a5f0fb753e7fdd6`, pushed to the fork. The v0.8 record is [V0.8.0](V0.8.0.md); `kin-v0.8.8` corrected active-member slots. The v0.9 record is [V0.9.0](V0.9.0.md). The merged v0.9.3 base and completed v0.10 implementation line are recorded in [V0.10.0](V0.10.0.md). v1.0 remains gated by local security, durable service, lifecycle/deletion, recovery/continuity and UX/UI readiness. Later implementation candidates do not change the last-published v0.10.3 status.
 
-The current release is v1.0.0; see the [changelog](../CHANGELOG.md), the
+For v1.0.0, see the [changelog](../CHANGELOG.md), the
 [versioning matrix](VERSIONING.md) and the
 [v1.0 compatibility commitment](V1.0-COMPATIBILITY.md). The root verification
 workflow is release evidence, not a publication or tag.
@@ -134,10 +137,11 @@ commit and `rc.N+1`.
 
 ## Publishing on GitHub
 
-A tag alone is not a published release. A release is published when it has a
-GitHub Release on its `kin-vX.Y.Z` tag, with notes taken from its
-[changelog](../CHANGELOG.md) entry, including known limitations and, for
-v1.x, the compatibility commitment. Release candidates are published as
-pre-releases. Earlier `kin-v0.*` tags stay as tags: they are review
-milestones whose history is the changelog, not separate publications (owner
-decision in [V1.0_REVIEW_GATES](audits/V1.0_REVIEW_GATES.md)).
+From v1.0.0 on, a release is published when it has a GitHub Release on its
+`kin-vX.Y.Z` tag, with notes taken from its [changelog](../CHANGELOG.md)
+entry, including known limitations and the compatibility commitment. Release
+candidates are published as pre-releases. Before v1.0, "published" meant a
+pushed release tag (v0.10.3 was the last); none of those tags has a GitHub
+Release. Whether to add Releases for them is item G8 in
+[V1.0_REVIEW_GATES](audits/V1.0_REVIEW_GATES.md); the recommendation is not
+to.

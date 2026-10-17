@@ -2,13 +2,13 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Current implementation line: `v1.0.0` — Stable Kin Platform.** This is Kin's first stable release. Its release candidate is `kin-v1.0.0-rc.1`, and `kin-v1.0.0` follows on the same commit once the final release checks pass ([#168](https://github.com/mnichols08/ZTM-Build-Fest/issues/168)). The last published release before it was `v0.10.3`. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
+**Current implementation line: `v1.0.0` — Stable Kin Platform.** Kin's first stable release is in its final release checks ([#168](https://github.com/mnichols08/ZTM-Build-Fest/issues/168)): its release candidate will be tagged `kin-v1.0.0-rc.1`, and `kin-v1.0.0` follows on the same commit once the checks pass. The last release before it was `v0.10.3`. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Exports are encrypted history recovery and do not restore server membership, device trust, credentials, or sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
 Kin's workspace has five destinations: Today, Lists (To do · Shopping · Staples), Routines, Updates (Handoffs · Talk) and Household, with a persistent desktop navigation, a shared item detail view, Quick add, keyboard shortcuts and a command palette, and bulk actions with undo. See [docs/WORKSPACE-UX.md](docs/WORKSPACE-UX.md).
 
-v1.0 freezes Kin's storage, sync, export and server formats: every v1.x release keeps reading them ([v1.0 compatibility commitment](docs/V1.0-COMPATIBILITY.md)). Data from 0.x builds is not carried over. What v1.0 does not protect against is listed under [known limitations](docs/THREAT-MODEL.md#known-limitations-at-v10).
+v1.0 freezes Kin's storage, sync, export and server formats: every v1.x release keeps reading them ([v1.0 compatibility commitment](docs/V1.0-COMPATIBILITY.md)). v1.0 makes no compatibility promise for data created before it: start fresh. What v1.0 does not protect against is listed under [known limitations](docs/THREAT-MODEL.md#known-limitations-at-v10).
 
 ## The problem
 
@@ -33,20 +33,20 @@ October 2026 took Kin from the v0.11 durable service through more than thirty ca
 
 After v1.0, planned work is tracked as GitHub issues, not dated versions:
 
-- Automatic device names with optional nicknames, as encrypted household data (#71)
+- Device names and nicknames as encrypted household data (#71); v1.0 already names new devices automatically
 - The household's own app name and icon on home screens (#78)
 - Push notifications with per-device settings (#85)
 - QR pairing and signing in on a computer with your phone (#93)
-- Household chat (#104), starting with the Node 24 groundwork in #106
+- Household chat (#104), starting with the rest of the Node 24 groundwork in #106
 
 AI runtime features, gamification, surveillance, and enterprise workflows stay out of scope.
 
 ## Release history
 
-- `v1.0.0` — Stable Kin Platform: everything below since v0.10.3, plus the v1.0 readiness work. Release candidate `kin-v1.0.0-rc.1`; `kin-v1.0.0` follows.
+- `v1.0.0` — Stable Kin Platform: everything below since v0.10.3, plus the v1.0 readiness work. In final release checks.
 - `v0.21.0`–`v0.47.0` — Household modes, planning dates, calendar export, history, search, pins, playbooks, reminders, offline install, reference and maintenance records, encrypted attachments, responsibility, more adults, Limited and Temporary members, portable export and restore, mobile experience, personal and household appearance, household admins. These were development candidates and were never tagged; they ship in v1.0.0.
 - `v0.11.0`–`v0.20.1` — Durable service, household deletion, recovery and continuity, UX/UI consolidation, Areas, Notes, checklist steps, routine scheduling, shopping lists and staples. Tagged review lines (`kin-v0.11.0`–`kin-v0.20.1`, some versions untagged); not published on their own.
-- `v0.1.0`–`v0.10.3` — From the first implementation (Household Heartbeat) through encrypted sync and local data security. `v0.10.3` (`kin-v0.10.3`) was the last published release before v1.0.
+- `v0.1.0`–`v0.10.3` — From the first implementation (Household Heartbeat) through encrypted sync and local data security. `v0.10.3` (`kin-v0.10.3`) was the last release before v1.0.
 - `v0.0.1`–`v0.0.12` — Planning and documentation releases.
 
 The [changelog](CHANGELOG.md) has every version, newest first, and marks the ones that were never tagged.
@@ -218,7 +218,8 @@ Kin is nested in the ZTM Build Fest repository. Its community files and template
 - [Debugging and diagnostics](docs/DEBUGGING.md)
 - [Implementation preflight](docs/PREFLIGHT.md)
 - [Requirement traceability](docs/TRACEABILITY.md)
-- [v0.47 release acceptance matrix](docs/audits/V0.47_RELEASE_ACCEPTANCE.md)
+- [v1.0 release acceptance matrix](docs/audits/V1.0_RELEASE_ACCEPTANCE.md), [reality check](docs/audits/V1.0_REALITY_CHECK.md), [tester guide](docs/audits/V1.0_TESTER_GUIDE.md) and [review-gate decisions](docs/audits/V1.0_REVIEW_GATES.md)
+- [v0.47 release acceptance matrix](docs/audits/V0.47_RELEASE_ACCEPTANCE.md) (superseded by the v1.0 matrix)
 - [Canonical test vectors](docs/TEST-VECTORS.md)
 - [Since You Last Looked release contract](docs/V0.6.0.md)
 - [Accepted architecture decision: event-sourced household state](docs/decisions/0001-event-sourced-household-state.md)

@@ -111,7 +111,7 @@ release candidate is `kin-v1.0.0-rc.1`; `kin-v1.0.0` is tagged on the same
 commit once the final release gate passes (issue #168). Create, move or push
 tags only with the owner's explicit approval.
 
-v1.0.0 includes everything since the last published release, v0.10.3: the
+v1.0.0 includes everything since the last release, v0.10.3: the
 tagged v0.11.x–v0.20.x review lines, the untagged v0.21.0–v0.47.0 development
 candidates, the desktop workspace UX, the performance refactor, and the v1.0
 readiness fixes. [CHANGELOG](CHANGELOG.md) lists every version and marks the

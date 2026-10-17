@@ -7,12 +7,14 @@ documentation only.
 
 ## v1.0.0 — Stable Kin Platform
 
-Kin's first stable release. Its release candidate is `kin-v1.0.0-rc.1`, and
-`kin-v1.0.0` follows on the same commit once the final release checks pass
-([#168](https://github.com/mnichols08/ZTM-Build-Fest/issues/168)).
+Kin's first stable release, in its final release checks
+([#168](https://github.com/mnichols08/ZTM-Build-Fest/issues/168)): its release
+candidate will be tagged `kin-v1.0.0-rc.1`, and `kin-v1.0.0` follows on the
+same commit once the checks pass.
 
-**What's in it.** The last published release was v0.10.3. Everything since then
-ships in v1.0.0:
+**What's in it.** The last release was v0.10.3. Everything since then
+ships in v1.0.0, subject to the owner's
+[review-gate decisions](docs/audits/V1.0_REVIEW_GATES.md):
 
 - the tagged review lines v0.11.x through v0.20.x;
 - the v0.21.0–v0.47.0 development candidates, which were never tagged or
@@ -23,8 +25,8 @@ ships in v1.0.0:
 
 **Compatibility.** v1.0 freezes its storage, sync, export and server formats
 and promises that every v1.x release keeps reading them; see the
-[v1.0 compatibility commitment](docs/V1.0-COMPATIBILITY.md). Data from 0.x
-builds is not carried over: v1.0 starts fresh. What v1.0 does not protect
+[v1.0 compatibility commitment](docs/V1.0-COMPATIBILITY.md). It makes no
+promise for data created before v1.0: start fresh. What v1.0 does not protect
 against is listed under
 [known limitations](docs/THREAT-MODEL.md#known-limitations-at-v10).
 
@@ -87,6 +89,8 @@ against is listed under
 - Trusted-passkey capacity holds under anonymous bootstrap load; fingerprint
   confirmation gates are kept; control boundaries meet contrast requirements;
   appearance presets use native radios.
+- Security-panel and passkey regressions fixed, and the daily workspace
+  journeys gained regression coverage.
 
 ### Platform and operations
 
@@ -102,8 +106,8 @@ against is listed under
 - [v1.0 compatibility commitment](docs/V1.0-COMPATIBILITY.md) (#165) and
   [known limitations](docs/THREAT-MODEL.md#known-limitations-at-v10) (#166).
 - Checklists for the v1.0 reality check, the acceptance matrix and testers
-  (`docs/audits/V1.0_*`), and the owner's
-  [review-gate decisions](docs/audits/V1.0_REVIEW_GATES.md).
+  (`docs/audits/V1.0_*`), and the
+  [review-gate decision sheet](docs/audits/V1.0_REVIEW_GATES.md).
 
 ### Included: performance and maintainability refactor (slices 1–10)
 
@@ -657,6 +661,12 @@ _Not tagged: a development candidate whose changes ship in v1.0.0._
 - Pass 151 Rust tests, 230 server tests, focused real-WASM tests, formatting,
   warnings-denied Clippy, release WASM build, version consistency, and the full
   Edge browser regression.
+
+## v0.20.1 — Fast-track integration and accessibility corrections
+
+- Each checklist step's archive control has its own accessible name.
+- Release records document the v0.17.0 tag history and describe Staples retry
+  and focus behavior accurately.
 
 ## v0.20.0 — Staples & Replenishment
 
