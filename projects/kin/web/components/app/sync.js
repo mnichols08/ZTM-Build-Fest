@@ -113,6 +113,14 @@ export class SyncController {
         this.app.stateNotice.textContent = attention;
         this.app.stateNotice.hidden = false;
       }
+    } else if (value.state === "ready" && value.quarantineNotice) {
+      // Changes this device couldn't apply yet stay listed until they apply.
+      // Unchanged text isn't rewritten, so the live region doesn't
+      // re-announce on every poll.
+      if (this.app.stateNotice.textContent !== value.quarantineNotice)
+        this.app.stateNotice.textContent = value.quarantineNotice;
+      this.app.stateNotice.hidden = false;
+      void this.ctx.appearance.refreshHouseholdDefaults();
     } else if (["ready", "disabled"].includes(value.state)) {
       this.app.stateNotice.hidden = true;
       if (value.state === "ready") void this.ctx.appearance.refreshHouseholdDefaults();

@@ -175,6 +175,7 @@ export class SessionController {
     clearTimeout(this.app.autoLockTimer);
     this.app.autoLockTimer = null;
     this.ctx.attachments.closeViewer();
+    this.ctx.attachments.revokeOpenedAttachments();
     this.ctx.detail.closeItemDetail({ restoreFocus: false });
     this.app.commandPalette?.dismiss();
     this.app.commandGeneration = null;

@@ -1,3 +1,4 @@
+import { setViewport } from "./cdp-viewport.mjs";
 import assert from "node:assert/strict";
 
 // Bulk selection, complete/reopen, and undo through the real encrypted store
@@ -31,7 +32,7 @@ export async function bulkActionRegressions(client, { visit, ready }) {
     await settle();
   };
   const viewport = async (width, height, mobile) => {
-    await client.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
+    await setViewport(client, { width, height, deviceScaleFactor: 1, mobile });
     await settle();
   };
   const stamp = (await page(() => crypto.randomUUID())).slice(0, 6);
