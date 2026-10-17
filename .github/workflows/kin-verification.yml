@@ -103,6 +103,9 @@ jobs:
           status=0
           node scripts/verify.mjs 2>&1 | tee "$RUNNER_TEMP/kin-verify.txt" || status=$?
           if [ "$status" -ne 0 ]; then
+            # Reporting must never stop early: a grep with no match or a short
+            # file would otherwise end the step before any annotation (#164).
+            set +e +o pipefail
             report() {
               title="$1"; chunk=""; part=1
               while IFS= read -r line; do
