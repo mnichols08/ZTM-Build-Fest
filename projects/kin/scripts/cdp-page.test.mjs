@@ -20,3 +20,12 @@ test("waitForOrigin fails clearly instead of carrying on with the wrong page", a
     waitForOrigin(async (expression) => expression.startsWith("`") ? "about:blank (complete)" : false, "http://127.0.0.1:1", { timeoutMs: 120 }),
     /did not finish loading http:\/\/127\.0\.0\.1:1 within 120 ms; last seen: about:blank \(complete\)/);
 });
+
+test("waitForOrigin re-navigates a tab stuck on about:blank", async () => {
+  let navigated = 0;
+  await waitForOrigin(async (expression) => {
+    if (expression.startsWith("`")) return navigated ? "http://127.0.0.1:1/ (interactive)" : "about:blank (complete)";
+    return navigated > 0;
+  }, "http://127.0.0.1:1", { renavigateAfterMs: 60, navigate: async () => { navigated += 1; } });
+  assert.equal(navigated, 1);
+});

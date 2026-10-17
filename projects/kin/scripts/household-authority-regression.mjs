@@ -602,7 +602,7 @@ async function launchProfile(executable, label, origin) {
     }
   };
   await send("Network.enable");
-  await waitForOrigin(evaluate, origin);
+  await waitForOrigin(evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
   await send("WebAuthn.enable", { enableUI: false });
   const { authenticatorId } = await send("WebAuthn.addVirtualAuthenticator", {
     options: {

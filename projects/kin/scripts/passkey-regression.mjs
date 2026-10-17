@@ -644,7 +644,7 @@ if (
         return result.result.value;
       },
     };
-    await waitForOrigin(client.evaluate, origin);
+    await waitForOrigin(client.evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
     await passkeyRegressions(client, service, syncService);
   } finally {
     if (socket) {

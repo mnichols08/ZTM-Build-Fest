@@ -7,14 +7,22 @@
 // committed mid-check ("Execution context was destroyed").
 //
 // `evaluate(expression)` returns the value and may reject while the page
-// changes; those rejections are retried until the deadline.
+// changes; those rejections are retried until the deadline. `navigate()`,
+// when given, is called if the tab is still not on the origin after a few
+// seconds: on the Windows runner a /json/new tab sometimes stayed on
+// about:blank. "Loaded" means past "loading": a page with a long-lived
+// request may never report "complete".
 import { setTimeout as delay } from "node:timers/promises";
 
 export const PAGE_TIMEOUT_MS = 30_000;
 
-export async function waitForOrigin(evaluate, origin, { timeoutMs = PAGE_TIMEOUT_MS } = {}) {
-  const expression = `location.origin === ${JSON.stringify(origin)} && document.readyState === "complete"`;
-  const deadline = Date.now() + timeoutMs;
+export const RENAVIGATE_AFTER_MS = 5_000;
+
+export async function waitForOrigin(evaluate, origin, { timeoutMs = PAGE_TIMEOUT_MS, navigate, renavigateAfterMs = RENAVIGATE_AFTER_MS } = {}) {
+  const expression = `location.origin === ${JSON.stringify(origin)} && document.readyState !== "loading"`;
+  const started = Date.now();
+  const deadline = started + timeoutMs;
+  let nextNavigation = started + renavigateAfterMs;
   let last = "no answer";
   for (;;) {
     try {
@@ -22,6 +30,11 @@ export async function waitForOrigin(evaluate, origin, { timeoutMs = PAGE_TIMEOUT
       last = await evaluate("`${location.href} (${document.readyState})`").catch(() => last);
     } catch (error) {
       last = error?.message ?? String(error);
+    }
+    // Still not on the origin (a page that is loading it doesn't need help).
+    if (navigate && Date.now() >= nextNavigation && !last.startsWith(origin)) {
+      nextNavigation = Date.now() + renavigateAfterMs * 2;
+      await navigate().catch(() => {});
     }
     if (Date.now() >= deadline)
       throw new Error(`The browser tab did not finish loading ${origin} within ${timeoutMs} ms; last seen: ${last}`);
