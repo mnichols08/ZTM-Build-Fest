@@ -1,8 +1,8 @@
 # Contributing to Kin
 
 Thanks for considering a contribution. Kin is an open-source project for
-lightweight household coordination. Kin v1.0.0 — Stable Kin Platform is in
-its final release checks. Contributions should preserve the established local-first,
+lightweight household coordination. The current release is v1.0.0 — Stable
+Kin Platform. Contributions should preserve the established local-first,
 encrypted, accessible architecture and the
 [v1.0 compatibility commitment](docs/V1.0-COMPATIBILITY.md).
 
@@ -52,7 +52,7 @@ Accessibility is a baseline, not a polish task. Preserve semantic HTML, keyboard
 ## Implementation stage
 
 Planning through v0.0.12 was documentation/community-readiness work, and v0.1.0
-was the first functional implementation. v1.0.0 will be the first stable
+was the first functional implementation. v1.0.0 is the first stable
 release; it is not independently audited or production-certified. Read [AGENTS.md](AGENTS.md),
 [the changelog](CHANGELOG.md), and the current release documents before changing
 scope; historical contracts describe their own release lines rather than the

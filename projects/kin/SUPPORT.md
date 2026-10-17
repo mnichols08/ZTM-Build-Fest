@@ -1,7 +1,7 @@
 # Support
 
-Kin v1.0.0 — Stable Kin Platform is in its final release checks (release
-candidate `kin-v1.0.0-rc.1` to follow). It is a Build Fest project, not a
+Kin's current release is v1.0.0 — Stable Kin Platform (`kin-v1.0.0`,
+2026-10-17). It is a Build Fest project, not a
 supported service: there is no staffed runtime support channel or guaranteed
 response time.
 

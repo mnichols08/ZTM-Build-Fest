@@ -1,7 +1,7 @@
 # Security Policy
 
-**Current security status:** Kin v1.0.0, now in its final release checks
-(the last release before it was v0.10.3), includes encrypted local household storage,
+**Current security status:** Kin v1.0.0 (`kin-v1.0.0`, released 2026-10-17)
+includes encrypted local household storage,
 recovery/optional-PRF unlock, journalled root replacement, encrypted archives,
 passkey-authenticated pairing, client-encrypted sync, durable identity/relay
 storage, recorded household-admin authority, and encrypted shared household
