@@ -201,9 +201,13 @@ already wrapped for is still a recipient (same device ID and key fingerprint).
 If any of them has been revoked or re-keyed since, the pending proposal is
 discarded and a fresh key and proposal ID are generated, so a relay that kept
 the earlier package cannot hand the departed device the new epoch's key (#176).
-This happens only after reconciliation confirms the relay is still at the
-proposal's expected epoch, so no device can already depend on the discarded
-key. A recipient set that is unchanged or grows keeps the pending key.
+Before discarding, the device re-reads the relay status: if the proposal
+committed meanwhile (for example a lost response), it is accepted with its
+original key instead, and the discard happens only while the relay is still at
+the proposal's expected epoch. Rotation runs under a cross-tab Web Lock
+(`kin-key-rotation`), so another tab can't commit the proposal between that
+check and the discard. A recipient set that is unchanged or grows keeps the
+pending key.
 
 Replacing pending packages compares the complete expected pending record in one
 encrypted IndexedDB transaction. Completion and removal match the proposal ID,

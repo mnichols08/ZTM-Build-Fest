@@ -38,7 +38,7 @@ export function memberHasTrustAuthority(status) {
  * among `recipients` (matched by device ID and key fingerprint). Reusing that
  * key is only safe when the recipient set is unchanged or grows (#176).
  */
-export function rotationRecipientsShrank(packages = [], recipients = []) {
+export function rotationRecipientDeparted(packages = [], recipients = []) {
   return packages.some((keyPackage) => !recipients.some((recipient) =>
     recipient.deviceId === keyPackage.recipientDeviceId &&
     recipient.fingerprint === keyPackage.recipientFingerprint));
@@ -680,7 +680,17 @@ export class SyncCoordinator {
     }
   }
 
+  // Every tab runs its own coordinator. Rotation acts on a relay status
+  // snapshot, so it runs in one tab at a time (#176): otherwise one tab could
+  // discard a proposal another tab's submission has just committed.
   async commitRotation() {
+    const locks = globalThis.navigator?.locks;
+    if (typeof locks?.request === "function")
+      return locks.request("kin-key-rotation", () => this.commitRotationExclusive());
+    return this.commitRotationExclusive();
+  }
+
+  async commitRotationExclusive() {
     // A previous submission may have committed even when its response was lost.
     // Reconcile before changing its packages, keeping the proposal's exact key.
     const status = await this.request("/api/sync/status");
@@ -695,10 +705,13 @@ export class SyncCoordinator {
     // #176: the pending key has been wrapped for every earlier recipient. If
     // one of them is no longer a recipient (revoked, or re-keyed), a relay that
     // kept that package could hand it the new epoch's key, so the key is
-    // discarded for a fresh one. Reconciliation above has just confirmed the
-    // pending proposal did not commit (the relay is still at expectedEpoch),
-    // so no device can already depend on the discarded key.
-    if (pending && rotationRecipientsShrank(pending.packages, recipients)) {
+    // discarded for a fresh one, but only once fresh relay status confirms
+    // the pending proposal did not commit (the relay is still at its expected
+    // epoch), so no device can already depend on the discarded key.
+    if (pending && rotationRecipientDeparted(pending.packages, recipients)) {
+      const latest = await this.request("/api/sync/status");
+      if (await this.reconcilePendingRotation(pending, latest)) return;
+      if (!latest.rotationPending || latest.currentEpoch !== expectedEpoch) return;
       await this.store.clearPendingRotation(pending.proposalId);
       pending = null;
     }
