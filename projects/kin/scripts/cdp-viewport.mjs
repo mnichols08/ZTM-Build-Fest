@@ -19,9 +19,9 @@ export async function setViewport(client, metrics, { timeoutMs = VIEWPORT_TIMEOU
   let last = null;
   for (;;) {
     try {
-      // Two animation frames: the resize has been laid out, not only queued.
-      last = await client.evaluate(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() =>
-        resolve({ width: innerWidth, height: innerHeight }))))`);
+      // Read directly, never via requestAnimationFrame: a background tab
+      // gets no animation frames, so a frame wait there never resolves.
+      last = await client.evaluate("({ width: innerWidth, height: innerHeight })");
     } catch (error) {
       // A navigation can drop the context while the page settles; keep waiting.
       if (!/Execution context was destroyed|Cannot find context with specified id/.test(error?.message ?? "")) throw error;

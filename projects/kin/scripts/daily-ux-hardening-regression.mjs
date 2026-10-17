@@ -767,6 +767,14 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
       afterPalette = await page(() => { const q = document.querySelector("kin-app").quickAdd; return { open: q.dialog.open, focus: document.activeElement === q.input }; });
       if (afterPalette.open) break;
     }
+    // Quick add moves focus to its title after it opens; on a slow runner the
+    // read above can come first (#164). Wait for it, bounded, before checking.
+    if (afterPalette.open && !afterPalette.focus) {
+      for (let wait = 0; wait < 80 && !afterPalette.focus; wait++) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        afterPalette = await page(() => { const q = document.querySelector("kin-app").quickAdd; return { open: q.dialog.open, focus: document.activeElement === q.input }; });
+      }
+    }
     check(afterPalette.open && afterPalette.focus, "keyboard commands keep working after the palette fallback", afterPalette);
     await press(KEYS.escape);
 
