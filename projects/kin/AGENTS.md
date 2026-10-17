@@ -106,9 +106,8 @@ If an unrelated parent-repository file was modified accidentally, revert that ch
 
 # Current Development Stage
 
-Kin is at **v1.0.0 — Stable Kin Platform**, Kin's first stable release. Its
-release candidate is `kin-v1.0.0-rc.1`; `kin-v1.0.0` is tagged on the same
-commit once the final release gate passes (issue #168). Create, move or push
+Kin is at **v1.0.0 — Stable Kin Platform**, Kin's first stable release,
+tagged `kin-v1.0.0` (with `kin-v1.0.0-rc.1` on the same commit) on 2026-10-17. Create, move or push
 tags only with the owner's explicit approval.
 
 v1.0.0 includes everything since the last release, v0.10.3: the

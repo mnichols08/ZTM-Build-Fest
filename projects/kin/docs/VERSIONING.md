@@ -1,8 +1,7 @@
 # Persistent Contract Versioning
 
-**Status:** Application version 1.0.0 — Stable Kin Platform, in its final
-release checks (release candidate `kin-v1.0.0-rc.1` to follow; the last
-release before it was v0.10.3). Household
+**Status:** Application version 1.0.0 — Stable Kin Platform, released
+2026-10-17 as `kin-v1.0.0` (the release before it was v0.10.3). Household
 membership is bounded to 12 total participants (four Adults and eight Limited
 Members); Temporary Members require expiry. Earlier version sections preserve
 historical data contracts.

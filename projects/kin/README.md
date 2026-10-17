@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Current implementation line: `v1.0.0` — Stable Kin Platform.** Kin's first stable release is in its final release checks ([#168](https://github.com/mnichols08/ZTM-Build-Fest/issues/168)): its release candidate will be tagged `kin-v1.0.0-rc.1`, and `kin-v1.0.0` follows on the same commit once the checks pass. The last release before it was `v0.10.3`. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
+**Current implementation line: `v1.0.0` — Stable Kin Platform.** Kin's first stable release, `kin-v1.0.0`, was released on 2026-10-17. The last release before it was `v0.10.3`. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Exports are encrypted history recovery and do not restore server membership, device trust, credentials, or sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
@@ -43,7 +43,7 @@ AI runtime features, gamification, surveillance, and enterprise workflows stay o
 
 ## Release history
 
-- `v1.0.0` — Stable Kin Platform: everything below since v0.10.3, plus the v1.0 readiness work. In final release checks.
+- `v1.0.0` — Stable Kin Platform: everything below since v0.10.3, plus the v1.0 readiness work. Released 2026-10-17 (`kin-v1.0.0`).
 - `v0.21.0`–`v0.47.0` — Household modes, planning dates, calendar export, history, search, pins, playbooks, reminders, offline install, reference and maintenance records, encrypted attachments, responsibility, more adults, Limited and Temporary members, portable export and restore, mobile experience, personal and household appearance, household admins. These were development candidates and were never tagged; they ship in v1.0.0.
 - `v0.11.0`–`v0.20.1` — Durable service, household deletion, recovery and continuity, UX/UI consolidation, Areas, Notes, checklist steps, routine scheduling, shopping lists and staples. Tagged review lines (`kin-v0.11.0`–`kin-v0.20.1`, some versions untagged); not published on their own.
 - `v0.1.0`–`v0.10.3` — From the first implementation (Household Heartbeat) through encrypted sync and local data security. `v0.10.3` (`kin-v0.10.3`) was the last release before v1.0.
