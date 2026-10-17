@@ -126,7 +126,10 @@ export class SyncController {
       this.app.stateNotice.hidden = true;
       if (value.state === "ready") void this.ctx.appearance.refreshHouseholdDefaults();
     }
-    if (value.state === "ready") void this.describeThisDevice();
+    // Kept as a promise so a caller (the browser regressions) can wait for
+    // the description and sync it right away.
+    if (value.state === "ready" && !this.app.describingDevice)
+      this.app.deviceDescription = this.describeThisDevice();
     if (value.projection && value.added > 0) {
       if (this.app.busy) {
         this.app.pendingRefresh = true;
@@ -222,14 +225,16 @@ export class SyncController {
   // recorded after its first successful sync, when its events carry its sync
   // identity, and again only when the name changes (a browser update, an
   // installed app). Rust rejects a description that changes nothing, so a
-  // second tab describing at the same moment fails harmlessly.
+  // second tab describing at the same moment fails harmlessly. Resolves true
+  // when it recorded a description.
   async describeThisDevice() {
     const identity = this.app.syncCoordinator?.identity;
     const autoName = householdDeviceName(currentPlatform());
     if (!identity || this.app.describingDevice || this.app.busy || !this.app.store || !this.app.engine ||
-        this.app.describedDevice === `${identity.deviceId}:${autoName}`) return;
+        this.app.describedDevice === `${identity.deviceId}:${autoName}`) return false;
     this.app.describingDevice = true;
     const session = this.ctx.session.captureSession();
+    let described = false;
     try {
       const names = await session.store.deviceNames();
       this.ctx.session.assertCurrentSession(session);
@@ -238,6 +243,7 @@ export class SyncController {
         await this.ctx.append.appendCommand({ type: "describe-device", autoName });
         this.ctx.session.assertCurrentSession(session);
         this.ctx.peers.broadcastEventChange();
+        described = true;
       }
       this.app.describedDevice = `${identity.deviceId}:${autoName}`;
     } catch {
@@ -245,6 +251,7 @@ export class SyncController {
     } finally {
       if (this.ctx.session.isCurrentSession(session)) this.app.describingDevice = false;
     }
+    return described;
   }
   // The household's device names for People & devices, or [] while this
   // device does not sync (it has no shared names to show).
