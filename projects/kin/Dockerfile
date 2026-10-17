@@ -33,7 +33,7 @@ COPY server ./server
 COPY web ./web
 COPY --from=wasm /kin/target/wasm32-unknown-unknown/release/kin.wasm ./web/wasm/kin_engine.wasm
 COPY deploy/railway/Caddyfile /app/Caddyfile
-COPY deploy/railway/start.sh /app/start.sh
+COPY deploy/railway/start.sh deploy/railway/snapshot.mjs /app/
 RUN chmod 0755 /app/start.sh && mkdir -p /data
 # Starts as root only to give the node user the mounted volume, then runs
 # Kin and Caddy as node (start.sh).

@@ -197,7 +197,7 @@ async function setupPasskey() {
   app.security.showSetup();
   const recovery = app.security.querySelector(".recovery-key").textContent;
   const input = app.security.querySelector("#confirm-recovery");
-  input.value = recovery;
+  input.checked = true;
   input.form.requestSubmit();
   await wait(() => app.store && !app.security.busy && !app.busy);
   app.compose.input.value = "Virtual passkey protected content";

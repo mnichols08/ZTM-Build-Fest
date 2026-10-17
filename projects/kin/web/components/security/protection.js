@@ -9,6 +9,25 @@ import { commitRootRotationKeys, prepareRootRotationKeys } from "../../sync/key-
 import { loadKinEngine } from "../../wasm/kin-engine.js";
 import { manifestRecoveryLabels, recoveryKeyLabel } from "../../security/key-label.js";
 
+// The password-manager entry name for a recovery key, shared with the unlock
+// form. It carries the key's label because each device has its own key: under
+// one shared name, saving a second device's key (or a replacement) would
+// overwrite the first in a synced password manager.
+export const recoveryKeyAccount = (label) => (label ? `Kin recovery key ${label}` : "Kin recovery key");
+
+// A field only a password manager reads: off screen, out of the tab order,
+// hidden from assistive technology.
+export function passwordManagerField(type, autocomplete, value) {
+  const input = document.createElement("input");
+  input.type = type;
+  input.autocomplete = autocomplete;
+  input.value = value;
+  input.tabIndex = -1;
+  input.className = "visually-hidden";
+  input.setAttribute("aria-hidden", "true");
+  return input;
+}
+
 export class SecurityProtection {
   constructor(ctx) {
     this.ctx = ctx;
@@ -17,11 +36,12 @@ export class SecurityProtection {
 
   // The new key's label ("Recovery key K-7F3A"), shown with the key so it can
   // be written down next to it. The wrapper ID is chosen here for that.
-  keyLabelLine(wrapperId, rootVersion) {
+  keyLabelLine(wrapperId, rootVersion, onLabel = () => {}) {
     const line = this.host.text("");
     line.className = "recovery-key-label";
     void recoveryKeyLabel(wrapperId, rootVersion).then((label) => {
       line.textContent = `This is recovery key ${label}. Write the label down with the key: exports made on this device name the key they need by its label.`;
+      onLabel(label);
     }, () => line.remove());
     return line;
   }
@@ -30,16 +50,17 @@ export class SecurityProtection {
     if (this.host.busy) return;
     const secret = randomRecoverySecret();
     const wrapperId = LocalVault.newWrapperId();
-    this.host.render();
+    this.host.render({ frameOnly: true });
     this.host.heading.textContent = "Save your recovery key";
-    this.host.text("This key is your backup way into Kin on this device if the passkey is ever lost. Save it somewhere safe outside Kin, such as a password manager.");
+    this.host.text("This key is your backup way into Kin on this device if the passkey is ever lost. Save it somewhere safe outside Kin, such as a password manager. You won't need to type it now.");
     const warning = this.host.text("Anyone with the key can unlock this device's copy of the household. If every unlock method is lost, Kin cannot recover the data.");
     warning.className = "security-note";
     const output = document.createElement("code");
     output.textContent = secret;
     output.className = "recovery-key";
     this.host.append(output);
-    this.keyLabelLine(wrapperId, 1);
+    const account = passwordManagerField("text", "username", recoveryKeyAccount());
+    this.keyLabelLine(wrapperId, 1, (label) => { account.value = recoveryKeyAccount(label); });
     if (navigator.clipboard?.writeText) {
       this.host.button("Copy key", async () => {
         try {
@@ -50,30 +71,36 @@ export class SecurityProtection {
         }
       });
     }
+    const tip = this.host.text("Tap Copy key and paste it into your password manager or a private note now. If your browser also offers to save it as a password when you continue, you can accept, but don't count on it: this is the only time Kin shows the key.");
+    tip.className = "security-note";
+    // No retyping (#163): the person confirms they saved the key. The hidden
+    // username and new-password fields let the browser offer to save the key
+    // in its password manager on submit, as "Kin recovery key K-XXXX"; the
+    // unlock form asks for the same entry, so it can autofill there later.
     const form = document.createElement("form");
-    const label = document.createElement("label");
+    form.append(account, passwordManagerField("password", "new-password", secret));
+    const saved = document.createElement("label");
+    saved.className = "recovery-saved";
     const confirmation = document.createElement("input");
-    confirmation.type = "password";
+    confirmation.type = "checkbox";
     confirmation.id = "confirm-recovery";
-    confirmation.autocomplete = "off";
-    confirmation.spellcheck = false;
     confirmation.required = true;
-    label.htmlFor = confirmation.id;
-    label.textContent = "Paste or type the saved key to confirm";
+    saved.append(confirmation, "I've saved this key somewhere safe, like a password manager.");
     const button = document.createElement("button");
     button.type = "submit";
     button.className = "primary-action";
     button.textContent = "Encrypt and continue";
-    form.append(label, confirmation, button);
+    form.append(saved, button);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      if (confirmation.value.trim() !== secret) return this.host.error(new Error("The recovery keys do not match. Save and re-enter the complete key."));
-      confirmation.value = "";
+      if (!confirmation.checked) return this.host.error(new Error("Save the recovery key first, then tick the box."));
       output.textContent = "";
       void this.host.run(() => this.host.establishProtection(secret, { recoveryWrapperId: wrapperId }));
     });
     this.host.append(form);
-    confirmation.focus();
+    this.host.button("Back", () => this.host.render(), "secondary");
+    // Start at the heading, so a screen reader reads the key and warning first.
+    this.host.heading.focus();
   }
 
   showReplacement() {
@@ -94,7 +121,9 @@ export class SecurityProtection {
     const confirmation = document.createElement("input");
     confirmation.id = label.htmlFor;
     confirmation.type = "password";
-    confirmation.autocomplete = "off";
+    // The new key is offered to the password manager under its own label, so
+    // the entry for the old key isn't overwritten until this one is in use.
+    confirmation.autocomplete = "new-password";
     confirmation.spellcheck = false;
     confirmation.required = true;
     const button = document.createElement("button");
@@ -109,8 +138,10 @@ export class SecurityProtection {
       output.textContent = "";
       void this.host.run(() => this.host.replaceProtection(secret, { recoveryWrapperId: wrapperId }));
     });
+    const account = passwordManagerField("text", "username", recoveryKeyAccount());
+    form.prepend(account);
     this.host.append(output);
-    this.keyLabelLine(wrapperId, rootVersion);
+    this.keyLabelLine(wrapperId, rootVersion, (keyLabel) => { account.value = recoveryKeyAccount(keyLabel); });
     this.host.append(form);
     this.host.button("Cancel", () => this.host.render());
     confirmation.focus();
