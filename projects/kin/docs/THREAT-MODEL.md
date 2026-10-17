@@ -198,6 +198,131 @@ The relay sees household/member/device/session identifiers; event IDs; per-devic
 - Provide honest recovery and deletion behavior; do not promise recovery if all authorized keys are lost.
 - Security claims require implementation, threat review, and validation, not documentation alone.
 
+## Known limitations at v1.0
+
+Plain language first, technical detail second. Each entry says who could
+exploit it, what they would get, and what is planned. None of these lets a
+stranger read household content without first controlling the relay server or
+an unlocked household device.
+
+### S4: the relay can hold back an event without the client noticing
+
+**What it is.** A household's devices trust the relay to deliver every event.
+A dishonest relay could quietly skip one, and the receiving device would not
+know it was missing.
+
+**Who and what.** Only someone running or controlling the relay. They could
+make one device miss a change (an item added, a task completed). They cannot
+read or forge the event.
+
+**Detail.** Clients don't track a per-remote-device sequence high-water mark,
+so a gap in another device's `deviceSequence` isn't detected. An honest relay
+enforces contiguous device sequences on push.
+
+**Planned.** Per-device sequence tracking on the client, with a visible
+"missing changes" state.
+
+### S5: revocation and rotation status come from the relay
+
+**What it is.** When an Adult removes a device or rotates the household key,
+other devices learn about it from the relay. A dishonest relay could hide a
+revocation, or report rotation state that isn't true.
+
+**Who and what.** Someone controlling the relay, working with a revoked
+device. The revoked device could keep receiving keys for new epochs it should
+no longer read, for example an expired committed-rotation package for an epoch
+the relay reports, or a losing concurrent proposal's key. The relay still
+cannot relabel a key as a different epoch: epoch numbers come only from signed
+packages (#152).
+
+**Detail.** The current committed epoch, the committed-rotation marker and
+device revocation are relay-asserted (existing limitation R-3, Remaining
+Limitations below). Kin no longer reuses a pending rotation key that was
+wrapped for a device that has since left or re-keyed (#176), so an honest
+relay is never handed such a key to keep.
+
+**Planned.** Adult-signed revocation and rotation-commit records that every
+device verifies.
+
+### A6: a device that joins without sync keys is approved without a certificate
+
+**What it is.** If a joining device submits its claim without sync keys, the
+approval can complete without a device certificate.
+
+**Who and what.** A buggy or modified client. The result is lost
+availability, not exposure: other devices fail closed and won't send that
+device keys, so it simply can't sync.
+
+**Planned.** Require sync keys for every new claim.
+
+### C4: most of the Content-Security-Policy is set in the page, not a header
+
+**What it is.** Kin's main browser protection against injected scripts is
+declared in the HTML page. Only `frame-ancestors 'none'` is sent as an HTTP
+header.
+
+**Who and what.** Matters only if something can alter the page before the
+browser reads its meta tag, for example a misconfigured proxy that injects
+content. Kin renders household text with text APIs, never as HTML.
+
+**Planned.** Send the full policy as a header and add Trusted Types.
+
+### C5: the recovery key can linger in memory and on the clipboard
+
+**What it is.** JavaScript can't wipe a string, so the recovery key text
+stays in browser memory until it is garbage-collected. After "Copy key" it
+also stays on the clipboard until something else is copied.
+
+**Who and what.** Someone with access to the unlocked device, its clipboard
+history, or a clipboard-reading app. They would get the recovery key, which
+unlocks that device's copy of the household.
+
+**Planned.** Clear the clipboard after about 60 seconds if it still holds the
+key.
+
+### C6: an export's header is readable without the key
+
+**What it is.** The start of a Kin export can be read without its recovery
+key. It shows when the export was made, how many changes and attachments it
+holds, the Kin version, the vault ID, and the recovery wrapper IDs (from which
+the recovery key label is computed).
+
+**Who and what.** Anyone who gets the file. They learn those facts, not any
+household content; the header is authenticated, so changing it makes the
+export fail to open.
+
+**Detail.** Package metadata is AAD for the archive key, not encrypted.
+
+### C2 (residual): an opened attachment stays visible in its own tab after lock
+
+**What it is.** Locking Kin revokes the attachment links it opened, but an
+attachment already showing in another browser tab stays on screen until that
+tab is closed.
+
+**Who and what.** Someone who can see or use the unlocked computer after Kin
+locks.
+
+**Detail.** Object URLs are revoked on lock (#161); a browser cannot be made
+to close or blank a tab the page did not create in a way it can control.
+
+### Attachment removal by Limited and Temporary members is enforced by the app, not by sync
+
+**What it is.** The app doesn't let Limited or Temporary members remove
+attachments, and the relay refuses to delete a stored attachment unless the
+uploader or an Adult asks. But the household event that marks an attachment
+removed is not checked against the member's role when devices replay it.
+
+**Who and what.** A Limited or Temporary member running a modified client.
+They could hide an attachment from the household's view. The encrypted file
+stays on the relay unless the uploader or an Adult deletes it.
+
+**Detail.** Replay (`AttachmentRemoved`) doesn't know member roles; role
+checks happen in the client (#156) and in the relay's blob deletion (#156,
+server schema 9).
+
+**Planned.** Carry member roles into replay, or move removal behind an
+Adult-signed record.
+
 ## Remaining Limitations
 
 The incubation service stores identity and relay records in memory. Full restart loses household identity, sessions, pairing state, relay envelopes and cursors; surviving local encrypted history cannot alone resume that household's sync. A relay-only reset is detected against local high-water and exact cached envelopes are requeued when identity survives. Encrypted archive restore recovers local data only. There is no transparency witness, pre-join history grant for new adults, server-identity recovery or remote erasure. Missing epoch keys pause sync. Key-grant epochs come only from signed packages, so a relay cannot relabel an old key as a newer epoch. The current committed epoch, the committed-rotation marker and device revocation are still relay-asserted, so the expiry relaxation for committed-rotation packages only keeps an honest relay consistent; it gives no protection against a malicious one. Such a relay can serve any expired package signed by a device in its directory for an epoch at or below the epoch it reports, including a losing concurrent rotation proposal's key or one signed by a device it has hidden the revocation of. It still cannot relabel a key as a different epoch. Adult-signed rotation and revocation records are the long-term fix. Wrapper removal alone cannot invalidate a copied wrapper plus its secret; explicit root replacement in v0.10.2 protects newly re-encrypted local data, while prior copies remain exposed. New runtime private keys are imported nonextractable, but that is not hardware-backed storage. A compromised unlocked runtime defeats confidentiality. Independent security review and production operational hardening remain required.
