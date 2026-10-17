@@ -206,7 +206,7 @@ committed meanwhile (for example a lost response), it is accepted with its
 original key instead, and the discard happens only while the relay is still at
 the proposal's expected epoch. Rotation runs under a cross-tab Web Lock
 (`kin-key-rotation`), so another tab can't commit the proposal between that
-check and the discard. A recipient set that is unchanged or grows keeps the
+check and the discard; a tab that finds the lock held skips that pass. A recipient set that is unchanged or grows keeps the
 pending key.
 
 Replacing pending packages compares the complete expected pending record in one

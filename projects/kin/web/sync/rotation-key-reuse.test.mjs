@@ -162,7 +162,7 @@ test("rotation runs under a cross-tab Web Lock when the browser has one", async 
   const requested = [];
   const original = Object.getOwnPropertyDescriptor(globalThis, "navigator");
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: {
-    locks: { request(name, callback) { requested.push(name); return callback(); } },
+    locks: { request(name, options, callback) { requested.push([name, options.ifAvailable]); return callback({ name }); } },
   } });
   try {
     await assert.rejects(coordinator.commitRotation(), /lost/);
@@ -170,5 +170,21 @@ test("rotation runs under a cross-tab Web Lock when the browser has one", async 
     if (original) Object.defineProperty(globalThis, "navigator", original);
     else delete globalThis.navigator;
   }
-  assert.deepEqual(requested, ["kin-key-rotation"]);
+  assert.deepEqual(requested, [["kin-key-rotation", true]]);
+});
+
+test("a tab that finds the rotation lock held skips the pass", async () => {
+  const { coordinator, posts, setDevices } = rotator();
+  setDevices([x]);
+  const original = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: {
+    locks: { request(name, options, callback) { return callback(null); } },
+  } });
+  try {
+    assert.equal(await coordinator.commitRotation(), undefined);
+  } finally {
+    if (original) Object.defineProperty(globalThis, "navigator", original);
+    else delete globalThis.navigator;
+  }
+  assert.equal(posts.length, 0);
 });

@@ -685,8 +685,11 @@ export class SyncCoordinator {
   // discard a proposal another tab's submission has just committed.
   async commitRotation() {
     const locks = globalThis.navigator?.locks;
+    // A tab that finds the lock held skips this pass: the holder finishes the
+    // rotation, and this tab keeps syncing instead of waiting on it.
     if (typeof locks?.request === "function")
-      return locks.request("kin-key-rotation", () => this.commitRotationExclusive());
+      return locks.request("kin-key-rotation", { ifAvailable: true },
+        (lock) => lock ? this.commitRotationExclusive() : undefined);
     return this.commitRotationExclusive();
   }
 
