@@ -2,4 +2,4 @@
 /web/wasm/kin_engine.wasm
 __pycache__/
 /node_modules/
-/.kin-data/
+/.kin-data//deploy/.env
