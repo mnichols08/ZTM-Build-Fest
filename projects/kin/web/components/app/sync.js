@@ -1,6 +1,7 @@
 // Encrypted sync coordinator setup, authorization checks and the sync status chip.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { SyncCoordinator } from "../../sync/sync-coordinator.js";
+import { currentPlatform, householdDeviceName } from "../../platform.js";
 import { SYNC_PAUSE_MESSAGES } from "./constants.js";
 
 export class SyncController {
@@ -125,6 +126,7 @@ export class SyncController {
       this.app.stateNotice.hidden = true;
       if (value.state === "ready") void this.ctx.appearance.refreshHouseholdDefaults();
     }
+    if (value.state === "ready") void this.describeThisDevice();
     if (value.projection && value.added > 0) {
       if (this.app.busy) {
         this.app.pendingRefresh = true;
@@ -214,5 +216,48 @@ export class SyncController {
       this.app.reconcilingResponsibility = false;
       if (committed && this.ctx.session.isCurrentSession(session)) this.ctx.peers.flushPeerRefresh();
     }
+  }
+  // Device names (#71) are encrypted household events, so they are shared
+  // only once this device syncs. Its automatic name ("Chrome on iPhone") is
+  // recorded after its first successful sync, when its events carry its sync
+  // identity, and again only when the name changes (a browser update, an
+  // installed app). Rust rejects a description that changes nothing, so a
+  // second tab describing at the same moment fails harmlessly.
+  async describeThisDevice() {
+    const identity = this.app.syncCoordinator?.identity;
+    const autoName = householdDeviceName(currentPlatform());
+    if (!identity || this.app.describingDevice || this.app.busy || !this.app.store || !this.app.engine ||
+        this.app.describedDevice === `${identity.deviceId}:${autoName}`) return;
+    this.app.describingDevice = true;
+    const session = this.ctx.session.captureSession();
+    try {
+      const names = await session.store.deviceNames();
+      this.ctx.session.assertCurrentSession(session);
+      const current = names.find((device) => device.deviceId === identity.deviceId);
+      if (current?.autoName !== autoName) {
+        await this.ctx.append.appendCommand({ type: "describe-device", autoName });
+        this.ctx.session.assertCurrentSession(session);
+        this.ctx.peers.broadcastEventChange();
+      }
+      this.app.describedDevice = `${identity.deviceId}:${autoName}`;
+    } catch {
+      // Retried on the next successful sync; the name is a convenience.
+    } finally {
+      if (this.ctx.session.isCurrentSession(session)) this.app.describingDevice = false;
+    }
+  }
+  // The household's device names for People & devices, or [] while this
+  // device does not sync (it has no shared names to show).
+  async deviceNames() {
+    const session = this.ctx.session.captureSession();
+    if (!session.store || !this.app.syncCoordinator) return [];
+    const names = await session.store.deviceNames();
+    this.ctx.session.assertCurrentSession(session);
+    return names;
+  }
+  // Sets or clears (empty) the nickname of one of this member's devices.
+  async renameDevice(deviceId, nickname) {
+    await this.ctx.append.appendCommand({ type: "nickname-device", targetDeviceId: deviceId, nickname: nickname || null });
+    this.ctx.peers.broadcastEventChange();
   }
 }

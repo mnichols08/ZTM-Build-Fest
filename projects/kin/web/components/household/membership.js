@@ -27,20 +27,67 @@ export class HouseholdMembership {
         await this.ctx.api.openSyncKeyStore();
         directoryDevices = (await this.host.api("/api/sync/devices")).devices;
       }
+      // Names come from encrypted household events (#71); the server only
+      // knows each device's automatic name. A device that has not synced its
+      // name yet shows as "New device" with the start of its sync code.
+      let names = [];
+      try {
+        names = (await this.host.deviceNames?.load()) ?? [];
+      } catch {
+        names = [];
+      }
+      const named = new Map(names.map((entry) => [entry.deviceId, entry]));
       this.host.replaceChildren();
       const heading = document.createElement("h2");
       heading.textContent = "Trusted devices";
       this.host.append(heading);
-      const list = document.createElement("ul");
-      list.className = "device-list";
+      this.host.text(
+        "Each device is named after its browser and system. Give your own devices a nickname; only household members can see it.",
+      );
+      // Yours first, then each other member's, in the order the server lists them.
+      const members = [...new Set([this.host.identity.memberId, ...devices.map((device) => device.memberId)])];
+      const lists = new Map();
+      for (const [index, memberId] of members.entries()) {
+        if (!devices.some((device) => device.memberId === memberId)) continue;
+        const section = document.createElement("section");
+        section.className = "device-group";
+        const title = document.createElement("h3");
+        title.id = `device-group-${memberId}`;
+        title.textContent = memberId === this.host.identity.memberId ? "Your devices" : `Household member ${index}`;
+        const list = document.createElement("ul");
+        list.className = "device-list";
+        list.setAttribute("aria-labelledby", title.id);
+        section.append(title, list);
+        this.host.append(section);
+        lists.set(memberId, list);
+      }
       for (const device of devices) {
+        const list = lists.get(device.memberId);
         const item = document.createElement("li");
-        const text = document.createElement("span");
-        text.textContent = `${device.label} — ${device.revokedAt ? "Revoked" : "Trusted"}`;
-        item.append(text);
+        item.dataset.deviceId = device.id;
         const syncDevice = directoryDevices.find(
           (entry) => entry.deviceId === device.id,
         );
+        const name = named.get(device.id);
+        const automatic = name?.autoName ?? (device.label !== "Device" ? device.label : null);
+        const fingerprint = syncDevice?.fingerprint ?? device.syncKeyFingerprint ?? "";
+        const displayName = name?.nickname ?? automatic ??
+          (fingerprint ? `New device · ${fingerprint.slice(0, 4).toUpperCase()}` : "New device");
+        const isThisDevice = device.id === this.host.identity.deviceId;
+        const text = document.createElement("span");
+        text.className = "device-name-line";
+        const strong = document.createElement("strong");
+        strong.textContent = displayName;
+        text.append(strong);
+        const details = [
+          ...(name?.nickname && automatic ? [automatic] : []),
+          ...(isThisDevice ? ["This device"] : []),
+          device.revokedAt ? "Revoked" : "Trusted",
+        ];
+        text.append(` — ${details.join(" · ")}`);
+        item.append(text);
+        if (!device.revokedAt && device.memberId === this.host.identity.memberId && name)
+          item.append(this.renameControl(device.id, displayName, name.nickname));
         if (syncDevice?.fingerprint) {
           if (
             device.id === this.host.identity.deviceId &&
@@ -135,15 +182,15 @@ export class HouseholdMembership {
           // server explicitly grants management authority. It enforces this too.
           if (device.memberId === this.host.identity.memberId || canManageMembers === true) item.append(
             this.host.makeButton(
-              `Revoke ${device.label}`,
+              `Revoke ${displayName}`,
               async () => {
-                if (!confirm(`Revoke ${device.label}? That device will lose future household access. Copies already saved there cannot be erased.`)) return;
+                if (!confirm(`Revoke ${displayName}? That device will lose future household access. Copies already saved there cannot be erased.`)) return;
                 let revoked = false;
                 await this.host.run(async () => {
                   const started = await this.host.api(`/api/devices/${device.id}/revocation/options`, {
                     method: "POST", body: "{}",
                   });
-                  this.host.message(`Confirm revoking ${device.label} with your passkey.`);
+                  this.host.message(`Confirm revoking ${displayName} with your passkey.`);
                   const credential = await navigator.credentials.get({
                     publicKey: authenticationOptions(started.publicKey),
                     signal: this.host.connectionAbort.signal,
@@ -165,10 +212,68 @@ export class HouseholdMembership {
         list.append(item);
       }
       this.host.append(
-        list,
         this.host.makeButton("Back", () => this.host.render(), "secondary"),
       );
     });
+  }
+
+  // "Rename" opens an inline nickname field for one of your devices; saving
+  // records an encrypted DEVICE_NICKNAMED event. An empty field, or "Remove
+  // nickname", goes back to the automatic name.
+  renameControl(deviceId, displayName, nickname) {
+    const wrapper = document.createElement("span");
+    wrapper.className = "device-rename";
+    const open = this.host.makeButton("Rename", () => {
+      open.hidden = true;
+      form.hidden = false;
+      input.focus();
+      input.select();
+    }, "secondary");
+    open.setAttribute("aria-label", `Rename ${displayName}`);
+    const form = document.createElement("form");
+    form.className = "device-rename-form";
+    form.hidden = true;
+    const label = document.createElement("label");
+    label.textContent = "Nickname";
+    const input = document.createElement("input");
+    input.name = "nickname";
+    input.maxLength = 32;
+    input.autocomplete = "off";
+    input.value = nickname ?? "";
+    input.placeholder = "Kitchen tablet";
+    label.append(input);
+    const save = document.createElement("button");
+    save.type = "submit";
+    save.textContent = "Save nickname";
+    const close = () => {
+      form.hidden = true;
+      open.hidden = false;
+      input.value = nickname ?? "";
+      open.focus();
+    };
+    const cancel = this.host.makeButton("Cancel", close, "secondary");
+    const rename = async (value) => {
+      let saved = false;
+      await this.host.run(async () => {
+        const next = value.trim();
+        if ([...next].length > 32) throw new Error("Use a nickname of 32 characters or fewer.");
+        if ((next || null) === (nickname ?? null)) { saved = true; return; }
+        await this.host.deviceNames.rename(deviceId, next);
+        saved = true;
+      });
+      if (saved) await this.host.showDevices();
+    };
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void rename(input.value);
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.preventDefault(); close(); }
+    });
+    form.append(label, save, cancel);
+    if (nickname) form.append(this.host.makeButton("Remove nickname", () => rename(""), "secondary"));
+    wrapper.append(open, form);
+    return wrapper;
   }
 
   async showHousehold() {

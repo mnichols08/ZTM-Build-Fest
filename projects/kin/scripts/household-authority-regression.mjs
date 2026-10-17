@@ -237,9 +237,10 @@ async function pageTrustDevice(deviceLabel) {
   const device = listed.devices.find((entry) => entry.label === deviceLabel);
   if (!device) throw new Error(`Trusted-device list is missing ${deviceLabel}`);
   await h.showDevices();
-  const item = [...h.querySelectorAll("li")].find((entry) =>
-    entry.textContent.includes(`${deviceLabel} — Trusted`),
-  );
+  // The row shows the device's synced name (#71), which can differ from the
+  // server label, so it is found by device ID.
+  const item = h.querySelector(`li[data-device-id="${device.id}"]`);
+  if (!item?.textContent.includes("Trusted")) throw new Error(`Trusted-device row is missing for ${deviceLabel}`);
   const verify = [...(item?.querySelectorAll("button") ?? [])].find(
     (button) => button.textContent === "Verify device",
   );
@@ -771,7 +772,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
   try {
     // ---- Profile A: first Adult, household creator -----------------------
     const a = await launch("adult-a");
-    const aBoot = await a.call(pageBootstrap, "Client A");
+    const aBoot = await a.call(pageBootstrap, "Chrome on Windows");
     check(aBoot.identity && aBoot.prf, "Adult A registers with a real virtual passkey and PRF wrapper");
     await a.call(pageAddItem, "A1 before anyone joins");
     const aSync = await a.call(pageEnableSync);
@@ -784,7 +785,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
 
     // ---- Profile B: second Adult -----------------------------------------
     const b = await launch("adult-b");
-    const bIdentity = await join({ inviter: a, invitee: b, kind: "adult", deviceLabel: "Client B" });
+    const bIdentity = await join({ inviter: a, invitee: b, kind: "adult", deviceLabel: "Edge on Windows" });
     let household = await b.callStable(pageHousehold);
     const bMember = household.members.find((member) => member.current);
     check(bMember?.kind === "adult" && bMember.active, "Adult B is an active Adult in the server household view");
@@ -806,7 +807,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
 
     // ---- Profile C: Limited member ---------------------------------------
     let c = await launch("limited-c");
-    await join({ inviter: a, invitee: c, kind: "limited", deviceLabel: "Client C" });
+    await join({ inviter: a, invitee: c, kind: "limited", deviceLabel: "Firefox on Linux" });
     household = await c.callStable(pageHousehold);
     const cMember = household.members.find((member) => member.current);
     check(cMember?.kind === "limited" && cMember.active, "Limited C is an active Limited member");
@@ -826,7 +827,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     result = await a.call(pageSync);
     result = await c.call(pageSync);
     check(result.started && result.last?.state !== "paused", "Limited C syncs after Adult A provisions it: " + JSON.stringify(result.last));
-    const bTrustsC = await b.call(pageTrustDevice, "Client C");
+    const bTrustsC = await b.call(pageTrustDevice, "Firefox on Linux");
     check(bTrustsC.visuallyGated && bTrustsC.gateSurvivedBusyCycle,
       "Adult B's Trust this device control stays disabled through a busy cycle until code confirmation");
     check(bTrustsC.refusedBeforeConfirmation && bTrustsC.unpinnedBeforeConfirmation,
@@ -877,7 +878,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     const c2 = await launch("temporary-c2");
     // Short real expiry: the server clock is advanced for instant enforcement.
     const temporaryExpiry = clock.now() + 20_000;
-    const c2Identity = await join({ inviter: a, invitee: c2, kind: "temporary", expiresAt: temporaryExpiry, deviceLabel: "Client C2" });
+    const c2Identity = await join({ inviter: a, invitee: c2, kind: "temporary", expiresAt: temporaryExpiry, deviceLabel: "Opera on Linux" });
     household = await c2.callStable(pageHousehold);
     const c2Member = household.members.find((member) => member.current);
     check(c2Member?.kind === "temporary" && c2Member.active && c2Member.expiresAt === temporaryExpiry,
@@ -936,7 +937,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     const bBefore = await b.callStable(pageLocal);
     check(bBefore.pendingOutbox >= 1, "Adult B holds an unsent outbox entry while offline");
     await a.setOffline(false);
-    await a.call(pageRevokeDeviceButton, "Client B");
+    await a.call(pageRevokeDeviceButton, "Edge on Windows");
     check(Boolean(service.devices.get(bIdentity.deviceId).revokedAt), "Adult A revokes B's device with a fresh passkey through the UI");
     check(service.members.get(bIdentity.memberId).active === true, "device revocation keeps B's membership (device ≠ member)");
     check(syncService.state(aBoot.identity.householdId).grants.has(waitingForA.grantId),
@@ -1016,7 +1017,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     });
     await d.callStable(pageWaitHousehold);
     const { approved: dApproved, approverKey: dApproverKey } =
-      await verifyAndApprove({ inviter: a, invitee: d, invitation, deviceLabel: "Client D" });
+      await verifyAndApprove({ inviter: a, invitee: d, invitation, deviceLabel: "Safari on Mac" });
     check(dApproved.memberId === aBoot.identity.memberId, "device pairing binds D to Adult A's membership");
     const dActivation = await d.call(pageActivate, { approvingKey: dApproverKey });
     check(dActivation.visuallyGated && dActivation.gateSurvivedBusyCycle,

@@ -131,17 +131,8 @@ export function canonicalJson(value) {
   return JSON.stringify(value);
 }
 
-export function cleanLabel(value) {
-  const label = String(value ?? "")
-    .trim()
-    .replace(/\s+/g, " ");
-  if (!label || label.length > 48)
-    throw new PairingError(
-      "invalid_device_label",
-      "Enter a device name of 1 to 48 characters.",
-    );
-  return label;
-}
+// A device label is only ever an automatic name (device-label.mjs).
+export { deviceLabel as cleanLabel } from "./device-label.mjs";
 
 export function genericCodeError() {
   return new PairingError(

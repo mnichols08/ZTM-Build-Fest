@@ -1,7 +1,7 @@
 // What device and browser Kin is running in, for two onboarding needs:
 //   - an automatic device name ("Chrome on iPhone"), so nobody has to type one
-//     when creating or joining a household (#163; full encrypted names and
-//     nicknames are issue #71);
+//     when creating or joining a household. It is the only device name the
+//     server learns; nicknames are encrypted household events (#71);
 //   - how to install Kin to the Home Screen on iPhone and iPad, where no
 //     browser offers an install prompt.
 // Pure functions over plain values, so they're unit-tested without a browser;
@@ -21,6 +21,11 @@ const BROWSERS = [
   [/Chrom(?:e|ium)\//, "Chrome"],
   [/Safari\//, "Safari"],
 ];
+
+/** Every name describePlatform can report. The server accepts only device
+ * labels built from these (server/pairing-service/device-label.mjs). */
+export const DEVICE_OS_NAMES = Object.freeze(["iPhone", "iPad", "Android", "Windows", "ChromeOS", "Mac", "Linux"]);
+export const DEVICE_BROWSER_NAMES = Object.freeze([...new Set([...IOS_BROWSERS, ...BROWSERS].map(([, name]) => name))]);
 
 export function describePlatform({ userAgent = "", maxTouchPoints = 0, standalone = false } = {}) {
   let os = null;
@@ -48,6 +53,13 @@ export function automaticDeviceName({ os, browser, ios, standalone }) {
   if (ios && standalone) return os;
   if (os && browser) return `${browser} on ${os}`;
   return os ?? browser ?? "This device";
+}
+
+// The automatic name other people see: "This device" only makes sense on the
+// device itself, so an unrecognized device is just "Device".
+export function householdDeviceName(platform) {
+  const name = automaticDeviceName(platform);
+  return name === "This device" ? "Device" : name;
 }
 
 // Home Screen install steps for iPhone and iPad browsers, or null when Kin is

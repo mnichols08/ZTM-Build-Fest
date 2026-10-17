@@ -24,6 +24,34 @@ import {
 } from "./shared.mjs";
 
 export const identityMethods = {
+  /** Replaces every stored device label that `normalize` changes, in one
+   * transaction, and returns how many changed. Since v1.1 the only label the
+   * server keeps is a device's automatic name (#71): a name someone typed
+   * before then is reset here when the service starts, so it leaves storage
+   * and every later backup. Rows that do not parse are left for loadIdentity
+   * to report. */
+  resetDeviceLabels(normalize) {
+    this.assertAvailable();
+    return this.transaction(() => {
+      const update = this.db.prepare("UPDATE devices SET device_json = ? WHERE id = ?");
+      let changed = 0;
+      for (const row of this.db.prepare("SELECT id, device_json FROM devices").all()) {
+        let device;
+        try {
+          device = parseStoredJson(row.device_json);
+        } catch {
+          continue;
+        }
+        if (typeof device?.label !== "string") continue;
+        const label = normalize(device.label);
+        if (label === device.label) continue;
+        update.run(stringifyStored({ ...device, label }), row.id);
+        changed += 1;
+      }
+      return changed;
+    });
+  },
+
   loadIdentity() {
     this.assertAvailable();
     try {

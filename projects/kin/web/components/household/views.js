@@ -1,7 +1,7 @@
 // The household panel's main views: setup, create, join and member.
 // Part of <kin-household>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
-import { automaticDeviceName, currentPlatform } from "../../platform.js";
+import { currentPlatform, householdDeviceName } from "../../platform.js";
 
 export class HouseholdViews {
   constructor(ctx) {
@@ -9,32 +9,16 @@ export class HouseholdViews {
     this.host = ctx.host;
   }
 
-  // The device name, filled in automatically ("Chrome on iPhone") and shown as
-  // one line; "Change" opens the field. Nobody has to type to continue.
+  // The device's automatic name ("Chrome on iPhone"), shown so people know
+  // how it will appear. Nobody types a name here: it is the only name the
+  // server learns, and a nickname is set later in Trusted devices, where it
+  // stays encrypted (#71).
   deviceNameField() {
-    const automatic = automaticDeviceName(currentPlatform());
-    const details = document.createElement("details");
-    details.className = "device-name";
-    const summary = document.createElement("summary");
-    const shown = document.createElement("span");
-    const change = document.createElement("span");
-    change.className = "device-name-change";
-    change.textContent = "Change";
-    summary.append(shown, " ", change);
-    const label = document.createElement("label");
-    label.textContent = "Device name";
-    const input = document.createElement("input");
-    input.name = "deviceLabel";
-    input.maxLength = 48;
-    input.value = automatic;
-    input.autocomplete = "off";
-    const update = () => { shown.textContent = `This device will show as “${input.value.trim() || automatic}”.`; };
-    input.addEventListener("input", update);
-    update();
-    label.append(input);
-    details.append(summary, label);
-    details.addEventListener("toggle", () => { if (details.open) input.focus(); });
-    return { element: details, value: () => input.value.trim() || automatic };
+    const automatic = householdDeviceName(currentPlatform());
+    const note = document.createElement("p");
+    note.className = "device-name";
+    note.textContent = `This device will show as “${automatic}”. You can give it a nickname later.`;
+    return { element: note, value: () => automatic };
   }
 
   render() {

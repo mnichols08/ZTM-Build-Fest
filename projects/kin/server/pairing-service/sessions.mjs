@@ -33,7 +33,7 @@ export const sessionMethods = {
     });
   },
 
-  bootstrap({ credential, deviceLabel = "This device", syncPublicKeys, rateKey }) {
+  bootstrap({ credential, deviceLabel = "Device", syncPublicKeys, rateKey }) {
     this.assertBootstrapAllowed(rateKey);
     const keyRecord = syncPublicKeys
       ? validateSyncPublicKeys(syncPublicKeys)
