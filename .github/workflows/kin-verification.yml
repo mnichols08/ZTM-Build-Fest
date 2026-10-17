@@ -43,9 +43,36 @@ jobs:
         run: ./build-wasm.ps1
       - name: Run verification and browser gates
         working-directory: projects/kin
+        shell: pwsh
         env:
           KIN_BROWSER: C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
-        run: npm run verify:browser
+        # On failure, the failing lines and the end of the output are also
+        # reported as annotations, which the checks API returns even where
+        # the full job log can't be downloaded (#164).
+        run: |
+          npm run verify:browser 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/kin-verify.txt"
+          $code = $LASTEXITCODE
+          if ($code -ne 0) {
+            # Annotations are cut at about 4 KB and a step may emit 10, so
+            # lines are shortened and sent in chunks, failing lines first.
+            $all = Get-Content "$env:RUNNER_TEMP/kin-verify.txt" | ForEach-Object { if ($_.Length -gt 1500) { $_.Substring(0, 1500) + '…' } else { $_ } }
+            $failing = $all | Select-String -CaseSensitive -Pattern 'FAIL|Error|not ok|timed out' | ForEach-Object { $_.Line } | Select-Object -Last 30
+            $sections = @(@{ title = 'Kin verification failed - failing lines'; lines = @($failing) }, @{ title = 'Kin verification failed - last lines'; lines = @($all | Select-Object -Last 40) })
+            foreach ($section in $sections) {
+              $chunk = ''
+              $part = 1
+              foreach ($line in $section.lines) {
+                if (($chunk.Length + $line.Length) -gt 3800) {
+                  Write-Output "::error title=$($section.title) ($part)::$($chunk.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A'))"
+                  $chunk = ''
+                  $part += 1
+                }
+                $chunk += "$line`n"
+              }
+              if ($chunk) { Write-Output "::error title=$($section.title) ($part)::$($chunk.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A'))" }
+            }
+          }
+          exit $code
 
   verify-linux:
     runs-on: ubuntu-latest
