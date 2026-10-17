@@ -1,3 +1,4 @@
+import { setViewport } from "./cdp-viewport.mjs";
 import assert from "node:assert/strict";
 
 // Daily UX hardening (PR 07): session-lifecycle, offline, accessibility and
@@ -31,7 +32,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     await settle();
   };
   const viewport = async (width, height, mobile) => {
-    await client.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
+    await setViewport(client, { width, height, deviceScaleFactor: 1, mobile });
     await settle();
   };
   const network = async (offline) => {

@@ -1,5 +1,6 @@
 // Node 22+ and a Chromium-family executable; no npm packages required.
 // Uses a fresh temporary profile and loopback server, never an existing Kin DB.
+import { setViewport } from "./cdp-viewport.mjs";
 import {
   pulseRegressions,
   pulsePeerRegressions,
@@ -109,8 +110,8 @@ const problems = [];
 const requests = [];
 let browserClient;
 
-async function until(check) {
-  for (let i = 0; i < 200; i++) {
+async function until(check, { attempts = 200 } = {}) {
+  for (let i = 0; i < attempts; i++) {
     if (launchError) throw launchError;
     const result = await check();
     if (result) return result;
@@ -1178,11 +1179,35 @@ try {
   }
   async function householdState(client, predicate) {
     try {
-      await until(() => client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&(${predicate})})()`));
+      // Up to 30 s: a household round trip between two tabs can take longer
+      // than until()'s default 10 s on the Windows runner (#164).
+      await until(() => client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&(${predicate})})()`), { attempts: 600 });
     } catch (error) {
       const state = await client.evaluate(`(()=>{const app=document.querySelector('kin-app');return {busy:app?.busy,refreshing:app?.refreshing,pendingRefresh:app?.pendingRefresh,status:app?.status?.textContent,alert:app?.alert?.textContent,focus:document.activeElement?.outerHTML?.slice(0,160),handoffs:app?.state?.handoffs?.map(row=>({text:row.text,status:row.status}))}})()`);
-      throw new Error(`${error.message}; household state: ${JSON.stringify(state)}`);
+      throw new Error(`${error.message} for ${predicate.slice(0, 200)}; household state: ${JSON.stringify(state)}`);
     }
+  }
+  // Presses Enter on the focused control until `done` holds. On the Windows
+  // runner a keystroke can land while a background refresh briefly disables
+  // the control and be dropped (#164). Enter is pressed again only while
+  // `pending` shows nothing happened: same focused, enabled control, no
+  // result, so it can never submit twice.
+  async function pressEnterUntil(client, done, pending) {
+    for (let press = 1; press <= 3; press++) {
+      for (const type of ["keyDown", "keyUp"])
+        await client.send("Input.dispatchKeyEvent", {
+          type, key: "Enter", code: "Enter", windowsVirtualKeyCode: 13,
+          ...(type === "keyDown" ? { text: "\r" } : {}),
+        });
+      try {
+        await until(() => client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&!app.busy&&!app.refreshing&&!app.pendingRefresh&&(${done})})()`), { attempts: 100 });
+        return;
+      } catch (error) {
+        const dropped = press < 3 && await client.evaluate(`(()=>{const app=document.querySelector('kin-app');return !!app&&(${pending})})()`);
+        if (!dropped) break;
+      }
+    }
+    await householdState(client, done);
   }
   const first = await tab();
   async function visit(client, id) {
@@ -1203,7 +1228,7 @@ try {
     for (const [mode, width, height, mobile] of [
       ["desktop", 1440, 960, false], ["mobile", 320, 720, true],
     ]) {
-      await first.send("Emulation.setDeviceMetricsOverride", {
+      await setViewport(first, {
         width, height, deviceScaleFactor: 1, mobile,
       });
       for (const id of ["today", "lists", "routines", "updates", "household"]) {
@@ -1238,7 +1263,7 @@ try {
         ),
       );
     }
-    await first.send("Emulation.setDeviceMetricsOverride", {
+    await setViewport(first, {
       width: 1280, height: 720, deviceScaleFactor: 1, mobile: false,
     });
     await visit(first, "today");
@@ -1562,15 +1587,10 @@ try {
   // A background refresh (routine timers) may briefly disable the field; hold
   // focus on it before the keystroke so Enter cannot land on the body.
   await until(() => first.evaluate(`(()=>{const app=document.querySelector('kin-app');const input=document.querySelector('#handoff-text');if(app.busy||input.disabled)return false;if(document.activeElement!==input)input.focus();return document.activeElement===input;})()`));
-  for (const type of ["keyDown", "keyUp"])
-    await first.send("Input.dispatchKeyEvent", {
-      type,
-      key: "Enter",
-      code: "Enter",
-      windowsVirtualKeyCode: 13,
-      ...(type === "keyDown" ? { text: "\r" } : {}),
-    });
-  await householdState(first, `app.state.handoffs.some(row=>row.text==='Newer handoff draft')&&document.querySelector('#handoff-text').value===''`);
+  await pressEnterUntil(first,
+    `app.state.handoffs.some(row=>row.text==='Newer handoff draft')&&document.querySelector('#handoff-text').value===''`,
+    // Not submitted yet: the draft is still in the focused, enabled field.
+    `!app.busy&&!app.state.handoffs.some(row=>row.text==='Newer handoff draft')&&document.activeElement===document.querySelector('#handoff-text')&&document.querySelector('#handoff-text').value==='Newer handoff draft'&&!document.querySelector('#handoff-text').disabled`);
   assert.equal(
     await first.evaluate('document.querySelector("#handoff-text").value'),
     "",
@@ -1585,15 +1605,9 @@ try {
     target.focus();return {focused:document.activeElement===target,target:target.outerHTML,active:document.activeElement?.outerHTML};
   })()`);
   assert.equal(handoffFocus.focused,true,JSON.stringify(handoffFocus));
-  for (const type of ["keyDown", "keyUp"])
-    await first.send("Input.dispatchKeyEvent", {
-      type,
-      key: "Enter",
-      code: "Enter",
-      windowsVirtualKeyCode: 13,
-      ...(type === "keyDown" ? { text: "\r" } : {}),
-    });
-  await householdState(first, `app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status==='acknowledged'`);
+  await pressEnterUntil(first,
+    `app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status==='acknowledged'`,
+    `!app.busy&&app.state.handoffs.find(row=>row.text==='Newer handoff draft')?.status!=='acknowledged'&&document.activeElement?.getAttribute('aria-label')==='Acknowledge Newer handoff draft'&&!document.activeElement.disabled`);
   assert.equal(
     await first.evaluate(
       'document.activeElement === document.querySelector("#handoff-text")',
@@ -2082,7 +2096,7 @@ try {
   assert.deepEqual(await first.evaluate(`(()=>{const appearance=document.querySelector('kin-app').appearance;const checked=[...appearance.querySelectorAll('.appearance-swatch input:checked')];return {checked:checked.map(input=>input.value),focus:document.activeElement?.value,source:appearance.draft.colorSource,feedback:appearance.feedback.textContent}})()`),
     {checked:['slate'],focus:'slate',source:'preset',feedback:'Unsaved changes.'},
     "native ArrowLeft wraps to Slate and previews that preset");
-  await first.send("Emulation.setDeviceMetricsOverride", {width:320,height:720,deviceScaleFactor:1,mobile:false});
+  await setViewport(first, {width:320,height:720,deviceScaleFactor:1,mobile:false});
   assert.deepEqual(await first.evaluate(`(()=>{const appearance=document.querySelector('kin-app').appearance;const labels=[...appearance.querySelectorAll('.appearance-swatch')],checked=labels.find(label=>label.querySelector('input').checked),radio=checked.querySelector('input');return {overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth,targets:labels.every(label=>label.getBoundingClientRect().height>=44),checked:labels.filter(label=>label.querySelector('input').checked).length,radioClipped:radio.getBoundingClientRect().width===1,marker:getComputedStyle(checked,'::after').content.includes('✓')}})()`),
     {overflow:false,targets:true,checked:1,radioClipped:true,marker:true}, "theme presets keep native radios visually clipped behind fluid 44px swatch targets at 320px");
   await first.send("Emulation.setEmulatedMedia", {features:[{name:"forced-colors",value:"active"}]});
@@ -2137,7 +2151,7 @@ try {
   "background identity compares content, reuses equal content, and revokes replacements and clears");
   console.log("PASS appearance background object URL lifecycle");
   await visit(first, "today");
-  await first.send("Emulation.setDeviceMetricsOverride", {
+  await setViewport(first, {
     width: 320,
     height: 720,
     deviceScaleFactor: 1,
@@ -2285,7 +2299,7 @@ try {
     false,
     "increased text spacing keeps 320px layout usable",
   );
-  await first.send("Emulation.setDeviceMetricsOverride", {
+  await setViewport(first, {
     width: 640,
     height: 960,
     deviceScaleFactor: 1,
@@ -2696,7 +2710,7 @@ try {
     app.ctx.detail.closeItemDetail({ restoreFocus: false });return result;})()`);
   assert.deepEqual(archivedAreaContext,{label:"Area for Wipe counter",selected:"Food prep (archived)"});
   await visit(first, "household/areas");
-  await first.send("Emulation.setDeviceMetricsOverride", {width:320,height:900,deviceScaleFactor:1,mobile:true});
+  await setViewport(first, {width:320,height:900,deviceScaleFactor:1,mobile:true});
   const narrowAreaLayout=await first.evaluate(`(()=>({overflow:document.documentElement.scrollWidth>document.documentElement.clientWidth,
     width:innerWidth,targets:[...document.querySelectorAll('kin-areas button,kin-areas input,.item-area-select')]
       .filter(node=>node.getClientRects().length).every(node=>node.getBoundingClientRect().height>=48)}))()`);

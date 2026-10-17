@@ -55,7 +55,7 @@ jobs:
           if ($code -ne 0) {
             # Annotations are cut at about 4 KB and a step may emit 10, so
             # lines are shortened and sent in chunks, failing lines first.
-            $all = Get-Content "$env:RUNNER_TEMP/kin-verify.txt" | ForEach-Object { if ($_.Length -gt 300) { $_.Substring(0, 300) + '…' } else { $_ } }
+            $all = Get-Content "$env:RUNNER_TEMP/kin-verify.txt" | ForEach-Object { if ($_.Length -gt 1500) { $_.Substring(0, 1500) + '…' } else { $_ } }
             $failing = $all | Select-String -CaseSensitive -Pattern 'FAIL|Error|not ok|timed out' | ForEach-Object { $_.Line } | Select-Object -Last 30
             $sections = @(@{ title = 'Kin verification failed - failing lines'; lines = @($failing) }, @{ title = 'Kin verification failed - last lines'; lines = @($all | Select-Object -Last 40) })
             foreach ($section in $sections) {

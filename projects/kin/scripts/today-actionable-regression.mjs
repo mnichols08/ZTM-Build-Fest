@@ -1,3 +1,4 @@
+import { setViewport } from "./cdp-viewport.mjs";
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -369,7 +370,7 @@ export async function todayLifecycleRegressions(client, { visit, ready }) {
     await writeFile(join(outDir, `regression-today-${name}.png`), Buffer.from(data, "base64"));
   };
   const viewport = async (width, height, mobile) => {
-    await client.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
+    await setViewport(client, { width, height, deviceScaleFactor: 1, mobile });
     await page(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   };
   const press = async (key, code, keyCode, text) => {
