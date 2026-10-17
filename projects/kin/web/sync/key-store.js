@@ -227,6 +227,12 @@ export class SyncKeyStore {
       throw new SyncKeyStoreError(
         "Kin reached its supported household-key history limit.",
       );
+    // The sealed record binds its own household and epoch. Saving it under a
+    // different label would let a relabelled key encrypt a newer epoch.
+    if (sealed?.keyEpoch !== keyEpoch || sealed?.householdId !== householdId)
+      throw new SyncKeyStoreError(
+        "Kin refused to store a household key under a different epoch or household.",
+      );
     const transaction = this.database.transaction(EPOCH_STORE, "readwrite");
     const store = transaction.objectStore(EPOCH_STORE);
     const key = `${householdId}:${keyEpoch}`;

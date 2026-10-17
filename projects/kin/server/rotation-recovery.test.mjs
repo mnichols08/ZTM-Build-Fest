@@ -641,16 +641,16 @@ test("an offline Adult recovers consecutive epochs from a later-revoked Adult an
     }
     return result;
   };
-  await assert.rejects(f.coordinator.receiveProvisioning(verifiedDirectory(f)), /lost acknowledgement/);
+  await assert.rejects(f.coordinator.receiveProvisioning(verifiedDirectory(f), f.sync.status(f.adult.sessionToken)), /lost acknowledgement/);
   f.coordinator.request = relay;
-  await f.coordinator.receiveProvisioning(verifiedDirectory(f));
+  await f.coordinator.receiveProvisioning(verifiedDirectory(f), f.sync.status(f.adult.sessionToken));
   assert.equal(f.epochs.get(3).fingerprint, epoch3.fingerprint);
   assert.equal(f.epochs.get(4).fingerprint, epoch4.fingerprint);
   assert.equal(new Set(acks).size, 2);
   assert.deepEqual(f.pairing.devices.get(f.adult.deviceId).syncProvisionedEpochs, [2, 3, 4]);
   assert.deepEqual(f.sync.pendingProvisioning(f.adult.sessionToken), []);
   const delivered = acks.length;
-  await f.coordinator.receiveProvisioning(verifiedDirectory(f));
+  await f.coordinator.receiveProvisioning(verifiedDirectory(f), f.sync.status(f.adult.sessionToken));
   assert.equal(acks.length, delivered, "a completed recovery is not delivered again");
 
   // A completes the next required rotation without skipping an epoch.
@@ -708,7 +708,8 @@ test("committed packages signed before sender key succession verify only against
 
   // A history missing the signing key fails without installing or acknowledging.
   await assert.rejects(f.coordinator.receiveProvisioning(verifiedDirectory(f,
-    new Map([[f.partner.deviceId, [{ publicKeys: successorPublic, fingerprint: transition.fingerprint }]]]))),
+    new Map([[f.partner.deviceId, [{ publicKeys: successorPublic, fingerprint: transition.fingerprint }]]])),
+  f.sync.status(f.adult.sessionToken)),
   /no valid historical signer/);
   assert.equal(f.epochs.has(3), false);
   assert.equal(acks.length, 0);
@@ -719,7 +720,7 @@ test("committed packages signed before sender key succession verify only against
   const history = f.sync.deviceDirectory(f.adult.sessionToken)
     .find((device) => device.deviceId === f.partner.deviceId).keyHistory;
   assert.deepEqual(history.map((entry) => entry.fingerprint), [original.fingerprint, transition.fingerprint]);
-  await f.coordinator.receiveProvisioning(verifiedDirectory(f));
+  await f.coordinator.receiveProvisioning(verifiedDirectory(f), f.sync.status(f.adult.sessionToken));
   assert.equal(f.epochs.get(3).fingerprint, committed.fingerprint);
   assert.equal(acks.length, 1);
   await f.retry();

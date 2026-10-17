@@ -9,7 +9,9 @@ import {
 import { validateDeviceAuthorizationCertificate } from "./devices.mjs";
 import {
   CLAIM_TTL_MS,
+  isHouseholdAdmin,
   PairingError,
+  requireHouseholdAdmin,
   requireTrustAuthority,
   TERMINAL_PAIRING_RETENTION_MS,
   terminalPairingError,
@@ -50,6 +52,14 @@ export const approveMethods = {
         "The pairing request changed. Review its latest status.",
         409,
       );
+    // Authority is checked again now, not only when the pairing was created:
+    // the target may have been promoted, or the approver demoted, since then.
+    // Recovering an admin issues an admin device, so it needs an admin.
+    if (
+      pairing.purpose === "member-recovery" &&
+      isHouseholdAdmin(this.members.get(pairing.memberId), this.now())
+    )
+      requireHouseholdAdmin(member, "recover a household admin", this.now());
     if (pairing.claimant.syncPublicKeys)
       validateDeviceAuthorizationCertificate(deviceAuthorizationCertificate, {
         householdId: household.id,

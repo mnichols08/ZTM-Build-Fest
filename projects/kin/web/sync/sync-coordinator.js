@@ -15,6 +15,7 @@ import {
   verifyDeviceAuthorizationCertificate,
 } from "./crypto.js";
 import { SyncKeyStore } from "./key-store.js";
+import { QUARANTINE_MESSAGE, quarantineMessage } from "../storage/quarantine.js";
 import { idToHex } from "../wasm/kin-engine.js";
 import { reconcileAttachments } from "../attachments/attachment-lifecycle.js";
 import { decryptHouseholdSettings, encryptHouseholdSettings } from "../appearance/household.js";
@@ -290,7 +291,7 @@ export class SyncCoordinator {
     await this.store.updateSyncServerState(status);
     this.onState({ state: "syncing", message: "Syncing this device…" });
     let devices = await this.loadDeviceDirectory();
-    await this.receiveProvisioning(devices);
+    await this.receiveProvisioning(devices, status);
     status = await this.request("/api/sync/status");
     await this.store.updateSyncServerState(status);
 
@@ -503,13 +504,17 @@ export class SyncCoordinator {
     } else if (!lastPageAdvanced) {
       this.catchUp = null;
     }
+    // Kept events stay listed in the persistent notice until they apply, so
+    // an Adult reviewing this device can see which changes and why.
+    const kept = (await this.store.getSyncState().catch(() => null))?.quarantine ?? [];
     this.onState({
       state: hasMore ? "syncing" : "ready",
+      quarantineNotice: kept.length ? quarantineMessage(kept) : null,
       memberIds: activeResponsibilityMemberIds(devices),
       ...(attachmentRows === undefined ? {} : { attachmentRows }),
       ...update,
       message: quarantinedEvents
-        ? "Some trusted-device changes could not be applied. Ask a household Adult to review this device."
+        ? (kept.length ? quarantineMessage(kept) : QUARANTINE_MESSAGE)
         : hasMore
         ? lastPageAdvanced
           ? "Catching up…"
@@ -605,11 +610,24 @@ export class SyncCoordinator {
     return portableMembershipFromDirectory(members);
   }
 
-  async receiveProvisioning(devices) {
+  async receiveProvisioning(devices, status) {
     while (true) {
       const { grants } = await this.request("/api/sync/provisioning");
       if (grants.length === 0) return;
       for (const grant of grants) {
+        // The relay's outer fields (keyEpoch, senderDeviceId, grantId,
+        // committedRotation) are not signed. Only the package is, so every
+        // outer field must agree with it, and the epoch Kin saves under is
+        // always the signed one. A mismatch is refused, never acknowledged.
+        const keyPackage = grant.package;
+        if (
+          keyPackage?.keyEpoch !== grant.keyEpoch ||
+          keyPackage?.householdId !== this.identity.householdId ||
+          keyPackage?.senderDeviceId !== grant.senderDeviceId ||
+          keyPackage?.recipientDeviceId !== this.identity.deviceId ||
+          keyPackage?.grantId !== grant.grantId
+        )
+          throw provisioningRefused();
         const sender = devices.find(
           (device) => device.deviceId === grant.senderDeviceId,
         );
@@ -617,13 +635,22 @@ export class SyncCoordinator {
           throw new Error(
             "A key transfer came from an unknown trusted device.",
           );
+        // An expired package is accepted only for an epoch the household has
+        // already committed: at or below the current epoch. A newer epoch
+        // must arrive unexpired. Adult-signed rotation records (S5) are the
+        // long-term evidence; see docs/THREAT-MODEL.md.
+        const allowExpired =
+          grant.committedRotation === true &&
+          Number.isSafeInteger(status?.currentEpoch) &&
+          Number.isSafeInteger(keyPackage.keyEpoch) &&
+          keyPackage.keyEpoch <= status.currentEpoch;
         let received;
         for (const entry of [...sender.verifiedKeyHistory].reverse()) {
           const signer = await importDevicePublicKeys(entry.publicKeys);
           try {
-            received = await unwrapEpochKey({ package: grant.package, deviceKeys: this.deviceKeys.keys,
+            received = await unwrapEpochKey({ package: keyPackage, deviceKeys: this.deviceKeys.keys,
               householdId: this.identity.householdId, deviceId: this.identity.deviceId,
-              allowExpiredCommittedRotation: grant.committedRotation === true,
+              allowExpiredCommittedRotation: allowExpired,
               deviceFingerprint: this.deviceKeys.fingerprint, senderSigningKey: signer.signing });
             break;
           } catch (error) { if (error.code !== "provisioning_signature_invalid") throw error; }
@@ -631,7 +658,7 @@ export class SyncCoordinator {
         if (!received) throw new Error("A household key transfer has no valid historical signer.");
         await this.keyStore.saveEpoch({
           householdId: this.identity.householdId,
-          keyEpoch: grant.keyEpoch,
+          keyEpoch: keyPackage.keyEpoch,
           ...received,
         });
         await this.request(`/api/sync/provisioning/${grant.grantId}/ack`, {
@@ -1132,6 +1159,14 @@ async function api(path, { binary = false, ...options } = {}) {
     throw error;
   }
   return value;
+}
+
+function provisioningRefused() {
+  const error = new Error(
+    "Kin refused a household key transfer because it did not match its signed contents. Sync is paused on this device. Ask a household Adult to check this device's key transfer.",
+  );
+  error.code = "provisioning_grant_refused";
+  return error;
 }
 
 function randomIdHex() {

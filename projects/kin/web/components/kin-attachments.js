@@ -1,3 +1,4 @@
+import { canRemoveAttachments } from "../attachments/attachment-permissions.js";
 import { attachmentKindLabel, formatAttachmentSize, isImageAttachment } from "../attachments/attachment-preview.js";
 import { attachmentProgressKey, getAttachmentProgress, subscribeAttachmentProgress } from "../attachments/attachment-progress.js";
 
@@ -198,10 +199,17 @@ class KinAttachments extends HTMLElement {
     if (record.state === "download-needed" || record.state === "failed") {
       const retry = document.createElement("button"); retry.type = "button"; retry.textContent = "Retry"; retry.setAttribute("aria-label", `Retry ${record.name}`); retry.addEventListener("click", () => this.dispatch("retry-attachments", {})); actions.append(this.tag(retry, record, "retry"));
     }
-    if (!readonly) { const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "Remove"; remove.setAttribute("aria-label", `Remove ${record.name}`); remove.addEventListener("click", () => this.dispatch("remove-attachment", { attachmentId: record.attachmentId })); actions.append(this.tag(remove, record, "remove")); }
+    if (!readonly && this.canRemove()) { const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "Remove"; remove.setAttribute("aria-label", `Remove ${record.name}`); remove.addEventListener("click", () => this.dispatch("remove-attachment", { attachmentId: record.attachmentId })); actions.append(this.tag(remove, record, "remove")); }
     body.append(actions);
     row.append(figure, body);
     return row;
+  }
+
+  // Limited and Temporary members can't remove attachments (the app and the
+  // relay both refuse), so they aren't offered the control.
+  canRemove() {
+    const app = typeof this.closest === "function" ? this.closest("kin-app") : null;
+    return canRemoveAttachments(app?.householdStatus?.memberKind);
   }
 
   requestPreview(record, img, placeholder, view) {
