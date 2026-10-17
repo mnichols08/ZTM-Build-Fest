@@ -4,7 +4,7 @@ import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
-import { PairingError, PairingService, requireTrustAuthority } from "./pairing-service.mjs";
+import { PairingError, PairingService, parseHouseholdPolicy, requireTrustAuthority } from "./pairing-service.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
 import {
@@ -39,6 +39,14 @@ export function createKinServer(options = {}) {
     options.trustedProxies instanceof Set
       ? options.trustedProxies
       : parseTrustedProxies(options.trustedProxies ?? process.env.KIN_TRUSTED_PROXIES);
+  const householdSettings = {
+    allowNewHouseholds: options.allowNewHouseholds ?? process.env.KIN_ALLOW_NEW_HOUSEHOLDS,
+    maxHouseholds: options.maxHouseholds ?? process.env.KIN_MAX_HOUSEHOLDS,
+  };
+  const householdPolicy = parseHouseholdPolicy(householdSettings);
+  // A passed-in service keeps its own policy unless a setting is given here.
+  const householdPolicyConfigured = [householdSettings.allowNewHouseholds, householdSettings.maxHouseholds]
+    .some((value) => value !== undefined && value !== null && value !== "");
   const configuredDataDirectory =
     options.dataDirectory ??
     process.env.KIN_DATA_DIR ??
@@ -57,7 +65,8 @@ export function createKinServer(options = {}) {
         }));
   if (options.store) store.validate();
   const service =
-    options.service ?? new PairingService({ now: options.now, store });
+    options.service ?? new PairingService({ now: options.now, store, householdPolicy });
+  if (householdPolicyConfigured) service.householdPolicy = householdPolicy;
   if (options.service && store && !service.store) {
     service.store = store;
     for (const householdId of service.households.keys())
@@ -262,7 +271,7 @@ if (
           error.code === "durable_lock_exists"
             ? "durable_lock_exists"
             : "configuration_or_storage",
-        ...(["durable_lock_exists", "trusted_proxies_invalid"].includes(error.code) ? { message: error.message } : {}),
+        ...(["durable_lock_exists", "trusted_proxies_invalid", "household_policy_invalid"].includes(error.code) ? { message: error.message } : {}),
       }),
     );
     process.exitCode = 1;
@@ -413,6 +422,9 @@ async function api(request, response, url, context) {
     url.pathname === "/api/passkeys/register/options"
   ) {
     if (!["bootstrap", "claim"].includes(body.purpose)) throw badRequest();
+    // Refuse before the passkey prompt, not after it (#157).
+    if (body.purpose === "bootstrap")
+      service.assertBootstrapAllowed(context.clientKey(request));
     let flowPurpose = body.purpose;
     if (body.purpose === "claim") {
       const pairing = service.validatePairingCode(body.code, {
@@ -448,6 +460,7 @@ async function api(request, response, url, context) {
         credential,
         deviceLabel: flow.deviceLabel,
         syncPublicKeys: body.syncPublicKeys,
+        rateKey: context.clientKey(request),
       });
       cookie(response, "kin_session", result.sessionToken, secureCookies);
       cookie(

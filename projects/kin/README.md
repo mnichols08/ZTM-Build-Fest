@@ -180,6 +180,30 @@ network. Only failed code attempts count toward a client's limit, so a
 household's own successful pairing never uses it up. An invalid
 `KIN_TRUSTED_PROXIES` value stops startup with an explanation.
 
+### Limiting new households
+
+Creating a household needs no account, so Kin limits it the same way: each
+client (per the proxy setting above) can create at most 3 households an hour.
+That limit is fixed; behind a proxy without `KIN_TRUSTED_PROXIES`, every client
+shares it. It is kept in memory, so a restart resets it.
+Two settings let an operator go further. Both default to the earlier
+behaviour, and neither affects households that already exist:
+
+- `KIN_ALLOW_NEW_HOUSEHOLDS=false` refuses every new household, for example
+  once your family's household is set up.
+- `KIN_MAX_HOUSEHOLDS=<n>` refuses a new household once `n` exist. Deleted
+  households don't count; a household waiting out its deletion grace period
+  still does.
+
+A refused attempt shows "This Kin server isn't accepting new households.",
+usually before any passkey prompt (the check runs again when the household is
+created, so a cap reached in between refuses after it). An invalid value for either setting stops startup
+with an explanation.
+
+```sh
+KIN_ORIGIN=https://kin.example.org KIN_TRUSTED_PROXIES=127.0.0.1,::1 KIN_ALLOW_NEW_HOUSEHOLDS=false node server/server.mjs
+```
+
 The service persists household identity, authorization metadata, opaque relay
 events and synchronization state. Sessions and in-flight WebAuthn/pairing
 ceremonies expire on restart, so members sign in again with a trusted device
