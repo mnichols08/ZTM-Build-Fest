@@ -48,7 +48,6 @@ sets up again.
 
    | Variable | Value |
    | --- | --- |
-   | `RAILWAY_DOCKERFILE_PATH` | `deploy/railway/Dockerfile` |
    | `KIN_ORIGIN` | `https://kin.yourdomain.com` (the address from step 1, with `https://`, no trailing slash) |
    | `KIN_MAX_HOUSEHOLDS` | optional; defaults to `10` |
    | `KIN_ALLOW_NEW_HOUSEHOLDS` | optional; set to `false` once testers' households exist |
@@ -82,9 +81,10 @@ deploy logs, wait for:
 ```
 
 Then open your address. If the logs say `Set the KIN_ORIGIN variable…`, the
-variable is missing. If the build can't find the Dockerfile, check that Root
-Directory is `projects/kin` and `RAILWAY_DOCKERFILE_PATH` is
-`deploy/railway/Dockerfile` (relative to the root directory).
+variable is missing. If the build can't find a Dockerfile, check that Root
+Directory is exactly `projects/kin`: Railway uses `projects/kin/Dockerfile`
+from there automatically. Remove any `RAILWAY_DOCKERFILE_PATH` variable left
+from an earlier setup.
 
 ## Day to day
 
