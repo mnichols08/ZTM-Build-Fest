@@ -33,6 +33,17 @@ export function memberHasTrustAuthority(status) {
   return status?.memberKind === "adult";
 }
 
+/**
+ * Whether a pending rotation's key was wrapped for a device that is no longer
+ * among `recipients` (matched by device ID and key fingerprint). Reusing that
+ * key is only safe when the recipient set is unchanged or grows (#176).
+ */
+export function rotationRecipientDeparted(packages = [], recipients = []) {
+  return packages.some((keyPackage) => !recipients.some((recipient) =>
+    recipient.deviceId === keyPackage.recipientDeviceId &&
+    recipient.fingerprint === keyPackage.recipientFingerprint));
+}
+
 // A normal empty poll still returns a projection and cursor boundary from the
 // store. Publishing those as a change makes every open tab replay and repaint
 // the same workspace. Only an accepted new event needs a projection broadcast.
@@ -669,7 +680,20 @@ export class SyncCoordinator {
     }
   }
 
+  // Every tab runs its own coordinator. Rotation acts on a relay status
+  // snapshot, so it runs in one tab at a time (#176): otherwise one tab could
+  // discard a proposal another tab's submission has just committed.
   async commitRotation() {
+    const locks = globalThis.navigator?.locks;
+    // A tab that finds the lock held skips this pass: the holder finishes the
+    // rotation, and this tab keeps syncing instead of waiting on it.
+    if (typeof locks?.request === "function")
+      return locks.request("kin-key-rotation", { ifAvailable: true },
+        (lock) => lock ? this.commitRotationExclusive() : undefined);
+    return this.commitRotationExclusive();
+  }
+
+  async commitRotationExclusive() {
     // A previous submission may have committed even when its response was lost.
     // Reconcile before changing its packages, keeping the proposal's exact key.
     const status = await this.request("/api/sync/status");
@@ -681,6 +705,19 @@ export class SyncCoordinator {
     const devices = await this.loadDeviceDirectory();
     const recipients = devices.filter((device) =>
       device.deviceId !== this.identity.deviceId && !device.revokedAt && device.publicKeys);
+    // #176: the pending key has been wrapped for every earlier recipient. If
+    // one of them is no longer a recipient (revoked, or re-keyed), a relay that
+    // kept that package could hand it the new epoch's key, so the key is
+    // discarded for a fresh one, but only once fresh relay status confirms
+    // the pending proposal did not commit (the relay is still at its expected
+    // epoch), so no device can already depend on the discarded key.
+    if (pending && rotationRecipientDeparted(pending.packages, recipients)) {
+      const latest = await this.request("/api/sync/status");
+      if (await this.reconcilePendingRotation(pending, latest)) return;
+      if (!latest.rotationPending || latest.currentEpoch !== expectedEpoch) return;
+      await this.store.clearPendingRotation(pending.proposalId);
+      pending = null;
+    }
     if (!pending) {
       const currentKey = await this.keyStore.getEpoch(
         this.identity.householdId,
