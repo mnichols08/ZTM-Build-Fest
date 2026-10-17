@@ -15,6 +15,20 @@ data, keys or archives already copied. See [THREAT-MODEL](docs/THREAT-MODEL.md),
 [CRYPTOGRAPHY](docs/CRYPTOGRAPHY.md), [VERSIONING](docs/VERSIONING.md), and the
 [v0.47 contract](docs/HOUSEHOLD-IDENTITY-DEFAULTS.md).
 
+## Known limitations at v1.0
+
+Kin v1.0 ships with these known limitations, each explained in plain language
+in [THREAT-MODEL](docs/THREAT-MODEL.md#known-limitations-at-v10):
+
+- **S4:** a relay can hold back an event without the receiving device noticing.
+- **S5:** device revocation and key-rotation status come from the relay.
+- **A6:** a device that joins without sync keys is approved without a certificate (it then can't sync; nothing is exposed).
+- **C4:** most of the Content-Security-Policy is set in the page rather than an HTTP header.
+- **C5:** the recovery key can linger in memory and on the clipboard after "Copy key".
+- **C6:** an export's header (date, counts, version, vault and wrapper IDs) is readable without its key.
+- **C2 (residual):** an attachment already open in another tab stays visible after Kin locks.
+- **Attachment removal** by Limited and Temporary members is blocked by the app and relay, but not checked when devices replay the event.
+
 ## Supported versions
 
 The earlier v0.35.1 corrective candidate requires fresh passkey authentication for
