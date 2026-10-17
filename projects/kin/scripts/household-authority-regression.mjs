@@ -37,7 +37,12 @@ async function pageWaitReady() {
     if (app?.security?.heading && !app.starting) return true;
     await new Promise((r) => setTimeout(r, 25));
   }
-  throw new Error("Kin shell did not become ready: " + document.body.innerText.slice(0, 400));
+  const app = document.querySelector("kin-app");
+  throw new Error("Kin shell did not become ready: " + JSON.stringify({
+    readyState: document.readyState, defined: Boolean(customElements.get("kin-app")), app: Boolean(app),
+    starting: Boolean(app?.starting), heading: Boolean(app?.security?.heading), children: app?.childElementCount ?? null,
+    controller: Boolean(navigator.serviceWorker?.controller), text: document.body.innerText.slice(0, 200),
+  }));
 }
 
 async function pageSetupProtection() {
@@ -550,8 +555,24 @@ async function launchProfile(executable, label, origin) {
   });
   let id = 0;
   const pending = new Map();
+  // Page errors, failed requests and requests still open, reported when the
+  // shell fails to start (#164): it once stopped with only the skip link
+  // rendered, which means the app's modules never finished loading.
+  const diagnostics = { errors: [], failed: [], open: new Map() };
   socket.onmessage = ({ data }) => {
     const message = JSON.parse(data);
+    if (message.method === "Runtime.exceptionThrown")
+      diagnostics.errors.push(message.params.exceptionDetails?.exception?.description ?? message.params.exceptionDetails?.text);
+    else if (message.method === "Log.entryAdded" && message.params.entry.level === "error")
+      diagnostics.errors.push(`${message.params.entry.text} ${message.params.entry.url ?? ""}`.trim());
+    else if (message.method === "Network.requestWillBeSent")
+      diagnostics.open.set(message.params.requestId, message.params.request.url);
+    else if (message.method === "Network.loadingFinished")
+      diagnostics.open.delete(message.params.requestId);
+    else if (message.method === "Network.loadingFailed") {
+      diagnostics.failed.push(`${diagnostics.open.get(message.params.requestId) ?? message.params.requestId}: ${message.params.errorText}`);
+      diagnostics.open.delete(message.params.requestId);
+    }
     if (message.id) {
       const task = pending.get(message.id);
       pending.delete(message.id);
@@ -603,6 +624,8 @@ async function launchProfile(executable, label, origin) {
     }
   };
   await send("Network.enable");
+  await send("Runtime.enable");
+  await send("Log.enable");
   await waitForOrigin(evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
   await send("WebAuthn.enable", { enableUI: false });
   const { authenticatorId } = await send("WebAuthn.addVirtualAuthenticator", {
@@ -626,7 +649,15 @@ async function launchProfile(executable, label, origin) {
     callStable,
     authenticatorId,
     recovery: null,
-    async ready() { await callStable(pageWaitReady); },
+    async ready() {
+      try {
+        await callStable(pageWaitReady);
+      } catch (error) {
+        const report = { errors: diagnostics.errors.slice(-10), failed: diagnostics.failed.slice(-10), open: [...diagnostics.open.values()].slice(-20) };
+        error.message += ` | page diagnostics: ${JSON.stringify(report)}`;
+        throw error;
+      }
+    },
     async setOffline(offline) {
       await send("Network.emulateNetworkConditions", { offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     },
