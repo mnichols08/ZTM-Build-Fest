@@ -109,8 +109,8 @@ test("durable: an attachment stored before uploaders were recorded is Adult-only
 test("durable: schema 9 adds a nullable uploader column", () => {
   const store = new DurableStore(":memory:");
   try {
-    assert.equal(SERVER_SCHEMA_VERSION, 9);
-    assert.equal(sqlitePragma(store.db, "user_version", { simple: true }), 9);
+    assert.ok(SERVER_SCHEMA_VERSION >= 9);
+    assert.equal(sqlitePragma(store.db, "user_version", { simple: true }), SERVER_SCHEMA_VERSION);
     const column = store.db.prepare("PRAGMA table_info(sync_attachments)").all().find((row) => row.name === "uploader_member_id");
     assert.ok(column, "uploader_member_id exists");
     assert.equal(column.notnull, 0);

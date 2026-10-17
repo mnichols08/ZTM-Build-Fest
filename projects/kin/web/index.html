@@ -11,7 +11,8 @@
       content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self'; img-src 'self' blob:; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
     />
     <title>Kin</title>
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
+    <link rel="apple-touch-icon" href="/install-icon/apple-180.png" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="./styles/app.css" />
     <script type="module" src="./components/kin-app.js"></script>

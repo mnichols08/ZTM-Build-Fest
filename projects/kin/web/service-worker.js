@@ -8,7 +8,9 @@ const RELEASE = new URL(self.location.href).searchParams.get("v");
 if (!/^\d+\.\d+\.\d+(\+[a-z0-9]{1,32})?$/.test(RELEASE ?? "")) throw new Error("Kin service worker release is missing.");
 const CACHE = `kin-static-v${RELEASE}`;
 const SHELL = [
-  "/", "/index.html", "/styles/app.css", "/manifest.webmanifest", "/icon.svg",
+  // Not the manifest or /install-icon/*: they depend on the household that
+  // published an install identity (#78), so they always come from the network.
+  "/", "/index.html", "/styles/app.css", "/icon.svg",
   "/browser-time.js", "/platform.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin_engine.wasm",
   "/wasm/wire.js", "/wasm/history-mirror.js", "/wasm/projection-decode.js", "/wasm/projection/reader.js", "/wasm/projection/items.js",
   "/wasm/projection/conversations.js", "/wasm/projection/routines.js", "/wasm/projection/records.js",

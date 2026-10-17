@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { PairingError, PairingService, parseHouseholdPolicy, requireTrustAuthority } from "./pairing-service.mjs";
 import { deviceLabel } from "./pairing-service/device-label.mjs";
+import { builtInManifest, etagMatches, INSTALL_ICONS, publishedManifest } from "./install-identity.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
 import {
@@ -139,6 +140,17 @@ export function createKinServer(options = {}) {
         store?.assertAvailable();
         await api(request, response, url, context);
         return;
+      }
+      if (request.method === "GET" || request.method === "HEAD") {
+        if (url.pathname === "/manifest.webmanifest") {
+          serveManifest(request, response, context);
+          return;
+        }
+        const icon = /^\/install-icon\/([a-z0-9-]+\.png)$/.exec(url.pathname);
+        if (icon) {
+          serveInstallIcon(request, response, url, icon[1], context);
+          return;
+        }
       }
       serve(response, url.pathname);
     } catch (error) {
@@ -328,6 +340,8 @@ async function api(request, response, url, context) {
     ? await readEnvelopeBatch(request, response)
     : binaryUpload
     ? await readBinary(request, response)
+    : request.method === "PUT" && url.pathname === "/api/household/install-identity"
+    ? await readJsonBody(request, response, MAX_INSTALL_IDENTITY_BODY_BYTES)
     : ["POST", "PUT", "DELETE"].includes(request.method)
     ? await readJsonBody(request, response, MAX_JSON_BODY_BYTES)
     : {};
@@ -772,6 +786,20 @@ async function api(request, response, url, context) {
     if (!/^\d+$/.test(expectedRevision ?? "") || !/^[1-9]\d{0,2}$/.test(keyEpoch ?? "") || typeof digest !== "string") throw badRequest();
     json(response, 200, syncService.updateHouseholdSettings(session, { expectedRevision: Number(expectedRevision), keyEpoch: Number(keyEpoch), digest, ciphertext: body }));
     return;
+  }
+  if (url.pathname === "/api/household/install-identity") {
+    if (request.method === "GET") {
+      json(response, 200, syncService.installIdentity(session));
+      return;
+    }
+    if (request.method === "PUT") {
+      json(response, 200, withTransaction(context, () => syncService.publishInstallIdentity(session, body)));
+      return;
+    }
+    if (request.method === "DELETE") {
+      json(response, 200, withTransaction(context, () => syncService.withdrawInstallIdentity(session, body.expectedRev)));
+      return;
+    }
   }
   if (request.method === "POST" && url.pathname === "/api/sync/enable") {
     json(response, 200, syncService.enable(session));
@@ -1271,6 +1299,8 @@ function cookies(request) {
 // JSON request bodies are small control messages; attachments and settings
 // are binary and bounded by the attachment limit (http-body.mjs).
 const MAX_JSON_BODY_BYTES = 256_000;
+// Four base64url PNGs of at most 512 KB each, plus the names.
+const MAX_INSTALL_IDENTITY_BODY_BYTES = 2_850_000;
 
 // Header 8 + 20 * (fixed record 148 + max ciphertext 6,144) = 125,848 bytes.
 const MAX_ENVELOPE_PUSH_BYTES = 8 + MAX_EVENTS_PER_BATCH * (RECORD_FIXED + MAX_CIPHERTEXT_BYTES);
@@ -1368,6 +1398,50 @@ export function fingerprintedShell(html, fingerprint) {
     /(<meta name="kin-version" content="\d+\.\d+\.\d+)(")/,
     (_, prefix, quote) => `${prefix}+${fingerprint}${quote}`,
   );
+}
+
+// The install identity (#78) a trusted device's kin_device cookie resolves
+// to, or the built-in Kin manifest and icon. Always private to the browser
+// and never cached by the service worker (web/service-worker.js).
+function serveManifest(request, response, context) {
+  const resolved = context.syncService.installIdentityForDevice(cookies(request).kin_device);
+  const { body, etag } = resolved ? publishedManifest(resolved.householdId, resolved.identity) : builtInManifest();
+  const headers = {
+    "Content-Type": "application/manifest+json",
+    "Cache-Control": "private, no-cache",
+    Vary: "Cookie",
+    ETag: etag,
+  };
+  if (etagMatches(request.headers["if-none-match"], etag)) {
+    response.writeHead(304, headers);
+    response.end();
+    return;
+  }
+  response.writeHead(200, { ...headers, "Content-Length": body.length });
+  response.end(request.method === "HEAD" ? undefined : body);
+}
+
+function serveInstallIcon(request, response, url, file, context) {
+  const icon = INSTALL_ICONS.find((entry) => entry.file === file);
+  const resolved = icon && context.syncService.installIdentityForDevice(cookies(request).kin_device);
+  if (!resolved) {
+    // The built-in Kin icon stands in for every size.
+    const body = readFileSync(join(webRoot, "icon.svg"));
+    response.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "private, no-cache", Vary: "Cookie", "Content-Length": body.length });
+    response.end(request.method === "HEAD" ? undefined : body);
+    return;
+  }
+  const body = resolved.identity.icons[icon.key];
+  // A URL naming the current revision never changes content; any other
+  // (the unversioned apple-touch-icon link, an old revision) is revalidated.
+  const current = url.searchParams.get("v") === String(resolved.identity.rev);
+  response.writeHead(200, {
+    "Content-Type": "image/png",
+    "Cache-Control": current ? "private, max-age=31536000, immutable" : "private, no-cache",
+    Vary: "Cookie",
+    "Content-Length": body.length,
+  });
+  response.end(request.method === "HEAD" ? undefined : body);
 }
 
 function serve(response, pathname) {
