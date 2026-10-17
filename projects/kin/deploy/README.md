@@ -1,7 +1,13 @@
 # Kin test server
 
 A small public server so testers can use Kin from their own devices and
-networks (issues #163 and #167), without Tailscale. It runs two containers:
+networks (issues #163 and #167), without Tailscale. Two ways to run it:
+
+- **[Railway](railway/README.md):** Railway builds and hosts it; no server to
+  look after.
+- **Your own Linux server with Docker** (this page).
+
+On your own server it runs two containers:
 
 - **kin**: the Node service and web app, with the WebAssembly engine built
   into the image. It listens on loopback only, as Kin requires.

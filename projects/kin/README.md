@@ -149,6 +149,7 @@ platform/runtime combinations are not yet certified.
 To let testers use Kin from their own devices and networks, [deploy/](deploy/README.md)
 runs Kin behind Caddy (automatic HTTPS) with Docker Compose on any Linux server:
 set your subdomain in `deploy/.env`, then `docker compose up -d --build`.
+[deploy/railway/](deploy/railway/README.md) runs the same on Railway.
 
 ### Running behind a TLS proxy
 
