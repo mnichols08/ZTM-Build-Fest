@@ -10,6 +10,7 @@
 // ceremony, and separate profiles on one machine are not separate devices.
 //
 // Usage: node scripts/household-authority-regression.mjs <browser executable>
+import { waitForOrigin } from "./cdp-page.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -601,10 +602,7 @@ async function launchProfile(executable, label, origin) {
     }
   };
   await send("Network.enable");
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    if (await evaluate("location.origin === " + JSON.stringify(origin)).catch(() => false)) break;
-    await delay(25);
-  }
+  await waitForOrigin(evaluate, origin);
   await send("WebAuthn.enable", { enableUI: false });
   const { authenticatorId } = await send("WebAuthn.addVirtualAuthenticator", {
     options: {
