@@ -344,72 +344,32 @@ export class SyncCoordinator {
         "An existing trusted device needs to finish setting up household sync first.",
       );
     }
-    // Only Adults may rotate epochs or provision keys (server 403 otherwise).
-    // A Limited or Temporary device must still pull and push with the keys it
-    // was granted instead of pausing on an authority it never had.
-    const trustAuthority = memberHasTrustAuthority(status);
-    if (status.rotationPending && currentKey && trustAuthority) {
-      await this.commitRotation();
-      status = await this.request("/api/sync/status");
-      await this.store.updateSyncServerState(status);
-      devices = await this.loadDeviceDirectory();
-      currentKey = await this.keyStore.getEpoch(
-        this.identity.householdId,
-        status.currentEpoch,
-      );
-    }
     if (!currentKey) {
       throw new Error(
         "This device needs an authorized household key before sync can continue.",
       );
     }
-
-    const bootstrap = await this.store.getSyncBootstrap();
-    const remoteBindings = await this.fetchBindings(devices);
-    const needsLegacyBinding = bootstrap.events.some(
-      (row) =>
-        idToHex(row.household_id) !== this.identity.householdId ||
-        idToHex(row.actor_id) !== this.identity.memberId ||
-        idToHex(row.device_id) !== this.identity.deviceId,
-    );
-    let legacyBindingEnvelope = null;
-    if (
-      needsLegacyBinding &&
-      !remoteBindings.some((record) =>
-        sameLegacyTuple(record.binding, bootstrap.legacyIdentity),
-      )
-    ) {
-      const binding = {
-        legacyHouseholdId: bootstrap.legacyIdentity.householdId,
-        legacyActorId: bootstrap.legacyIdentity.actorId,
-        legacyDeviceId: bootstrap.legacyIdentity.deviceId,
-        householdId: this.identity.householdId,
-        actorId: this.identity.memberId,
-        deviceId: this.identity.deviceId,
-      };
-      legacyBindingEnvelope = await encryptIdentityBinding({
-        binding,
-        householdId: this.identity.householdId,
-        deviceId: this.identity.deviceId,
-        deviceSequence: 1,
-        logicalTime: (bootstrap.maxLogicalTime + 1n).toString(),
-        keyEpoch: status.currentEpoch,
-        householdKey: currentKey.householdKey,
-        signingKey: this.deviceKeys.keys.signingPrivateKey,
-      });
-      remoteBindings.push({ binding, envelope: legacyBindingEnvelope });
-    }
-
-    let syncState = await this.store.getSyncState();
-    if (!syncState) {
-      await this.store.initializeSync({
-        identity: this.identity,
-        serverStatus: status,
-        identityBindings: remoteBindings,
-        legacyBindingEnvelope,
-      });
-    } else if (remoteBindings.length) {
-      await this.store.installIdentityBindings(remoteBindings, this.identity);
+    // Set up this device's sync state before any key rotation: a pending
+    // rotation is saved inside that state, and a device whose first sync
+    // finds one (someone was removed or a device revoked before it finished
+    // joining) would otherwise fail with "Kin has not initialized encrypted
+    // sync." and stay stuck, since the relay pauses pushes until the rotation
+    // commits. Bindings sealed under the current epoch stay valid after it.
+    const remoteBindings = await this.prepareSyncState(status, devices, currentKey);
+    // Only Adults may rotate epochs or provision keys (server 403 otherwise).
+    // A Limited or Temporary device must still pull and push with the keys it
+    // was granted instead of pausing on an authority it never had.
+    const trustAuthority = memberHasTrustAuthority(status);
+    if (status.rotationPending && trustAuthority) {
+      await this.commitRotation();
+      status = await this.request("/api/sync/status");
+      await this.store.updateSyncServerState(status);
+      devices = await this.loadDeviceDirectory();
+      // Another device may have committed a newer epoch meanwhile.
+      if (!(await this.keyStore.getEpoch(this.identity.householdId, status.currentEpoch)))
+        throw new Error(
+          "This device needs an authorized household key before sync can continue.",
+        );
     }
 
     if (trustAuthority) await this.provisionMemberHistory(status.currentEpoch, devices);
@@ -815,6 +775,61 @@ export class SyncCoordinator {
       currentEpoch: pending.epoch,
       proposalId: pending.proposalId,
     });
+  }
+
+  // Creates this device's sync state on its first sync, binding any local
+  // history made before it joined; on later syncs installs new bindings.
+  // Returns the household's identity bindings.
+  async prepareSyncState(status, devices, currentKey) {
+    const bootstrap = await this.store.getSyncBootstrap();
+    const remoteBindings = await this.fetchBindings(devices);
+    const needsLegacyBinding = bootstrap.events.some(
+      (row) =>
+        idToHex(row.household_id) !== this.identity.householdId ||
+        idToHex(row.actor_id) !== this.identity.memberId ||
+        idToHex(row.device_id) !== this.identity.deviceId,
+    );
+    let legacyBindingEnvelope = null;
+    if (
+      needsLegacyBinding &&
+      !remoteBindings.some((record) =>
+        sameLegacyTuple(record.binding, bootstrap.legacyIdentity),
+      )
+    ) {
+      const binding = {
+        legacyHouseholdId: bootstrap.legacyIdentity.householdId,
+        legacyActorId: bootstrap.legacyIdentity.actorId,
+        legacyDeviceId: bootstrap.legacyIdentity.deviceId,
+        householdId: this.identity.householdId,
+        actorId: this.identity.memberId,
+        deviceId: this.identity.deviceId,
+      };
+      legacyBindingEnvelope = await encryptIdentityBinding({
+        binding,
+        householdId: this.identity.householdId,
+        deviceId: this.identity.deviceId,
+        deviceSequence: 1,
+        logicalTime: (bootstrap.maxLogicalTime + 1n).toString(),
+        keyEpoch: status.currentEpoch,
+        householdKey: currentKey.householdKey,
+        signingKey: this.deviceKeys.keys.signingPrivateKey,
+      });
+      remoteBindings.push({ binding, envelope: legacyBindingEnvelope });
+    }
+
+    let syncState = await this.store.getSyncState();
+    if (!syncState) {
+      await this.store.initializeSync({
+        identity: this.identity,
+        serverStatus: status,
+        identityBindings: remoteBindings,
+        legacyBindingEnvelope,
+      });
+    } else if (remoteBindings.length) {
+      await this.store.installIdentityBindings(remoteBindings, this.identity);
+    }
+
+    return remoteBindings;
   }
 
   async provisionMemberHistory(currentEpoch, devices) {
