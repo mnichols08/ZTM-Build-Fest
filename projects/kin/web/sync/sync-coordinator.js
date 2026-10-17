@@ -344,76 +344,37 @@ export class SyncCoordinator {
         "An existing trusted device needs to finish setting up household sync first.",
       );
     }
-    // Only Adults may rotate epochs or provision keys (server 403 otherwise).
-    // A Limited or Temporary device must still pull and push with the keys it
-    // was granted instead of pausing on an authority it never had.
-    const trustAuthority = memberHasTrustAuthority(status);
-    if (status.rotationPending && currentKey && trustAuthority) {
-      await this.commitRotation();
-      status = await this.request("/api/sync/status");
-      await this.store.updateSyncServerState(status);
-      devices = await this.loadDeviceDirectory();
-      currentKey = await this.keyStore.getEpoch(
-        this.identity.householdId,
-        status.currentEpoch,
-      );
-    }
     if (!currentKey) {
       throw new Error(
         "This device needs an authorized household key before sync can continue.",
       );
     }
-
-    const bootstrap = await this.store.getSyncBootstrap();
-    const remoteBindings = await this.fetchBindings(devices);
-    const needsLegacyBinding = bootstrap.events.some(
-      (row) =>
-        idToHex(row.household_id) !== this.identity.householdId ||
-        idToHex(row.actor_id) !== this.identity.memberId ||
-        idToHex(row.device_id) !== this.identity.deviceId,
-    );
-    let legacyBindingEnvelope = null;
-    if (
-      needsLegacyBinding &&
-      !remoteBindings.some((record) =>
-        sameLegacyTuple(record.binding, bootstrap.legacyIdentity),
-      )
-    ) {
-      const binding = {
-        legacyHouseholdId: bootstrap.legacyIdentity.householdId,
-        legacyActorId: bootstrap.legacyIdentity.actorId,
-        legacyDeviceId: bootstrap.legacyIdentity.deviceId,
-        householdId: this.identity.householdId,
-        actorId: this.identity.memberId,
-        deviceId: this.identity.deviceId,
-      };
-      legacyBindingEnvelope = await encryptIdentityBinding({
-        binding,
-        householdId: this.identity.householdId,
-        deviceId: this.identity.deviceId,
-        deviceSequence: 1,
-        logicalTime: (bootstrap.maxLogicalTime + 1n).toString(),
-        keyEpoch: status.currentEpoch,
-        householdKey: currentKey.householdKey,
-        signingKey: this.deviceKeys.keys.signingPrivateKey,
-      });
-      remoteBindings.push({ binding, envelope: legacyBindingEnvelope });
-    }
-
-    let syncState = await this.store.getSyncState();
-    if (!syncState) {
-      await this.store.initializeSync({
-        identity: this.identity,
-        serverStatus: status,
-        identityBindings: remoteBindings,
-        legacyBindingEnvelope,
-      });
-    } else if (remoteBindings.length) {
-      await this.store.installIdentityBindings(remoteBindings, this.identity);
+    // Set up this device's sync state before any key rotation: a pending
+    // rotation is saved inside that state, and a device whose first sync
+    // finds one (someone was removed or a device revoked before it finished
+    // joining) would otherwise fail with "Kin has not initialized encrypted
+    // sync." and stay stuck, since the relay pauses pushes until the rotation
+    // commits. History queued now waits for the new epoch (initializeSync),
+    // and pushIdentityBindings re-seals a binding made under an older one.
+    const remoteBindings = await this.prepareSyncState(status, devices, currentKey);
+    // Only Adults may rotate epochs or provision keys (server 403 otherwise).
+    // A Limited or Temporary device must still pull and push with the keys it
+    // was granted instead of pausing on an authority it never had.
+    const trustAuthority = memberHasTrustAuthority(status);
+    if (status.rotationPending && trustAuthority) {
+      await this.commitRotation();
+      status = await this.request("/api/sync/status");
+      await this.store.updateSyncServerState(status);
+      devices = await this.loadDeviceDirectory();
+      // Another device may have committed a newer epoch meanwhile.
+      if (!(await this.keyStore.getEpoch(this.identity.householdId, status.currentEpoch)))
+        throw new Error(
+          "This device needs an authorized household key before sync can continue.",
+        );
     }
 
     if (trustAuthority) await this.provisionMemberHistory(status.currentEpoch, devices);
-    await this.pushIdentityBindings();
+    await this.pushIdentityBindings(status);
     this.catchUp = { status, devices, remoteBindings, startedAt: this.now() };
     return this.pullCatchUpPages(this.catchUp);
   }
@@ -817,6 +778,61 @@ export class SyncCoordinator {
     });
   }
 
+  // Creates this device's sync state on its first sync, binding any local
+  // history made before it joined; on later syncs installs new bindings.
+  // Returns the household's identity bindings.
+  async prepareSyncState(status, devices, currentKey) {
+    const bootstrap = await this.store.getSyncBootstrap();
+    const remoteBindings = await this.fetchBindings(devices);
+    const needsLegacyBinding = bootstrap.events.some(
+      (row) =>
+        idToHex(row.household_id) !== this.identity.householdId ||
+        idToHex(row.actor_id) !== this.identity.memberId ||
+        idToHex(row.device_id) !== this.identity.deviceId,
+    );
+    let legacyBindingEnvelope = null;
+    if (
+      needsLegacyBinding &&
+      !remoteBindings.some((record) =>
+        sameLegacyTuple(record.binding, bootstrap.legacyIdentity),
+      )
+    ) {
+      const binding = {
+        legacyHouseholdId: bootstrap.legacyIdentity.householdId,
+        legacyActorId: bootstrap.legacyIdentity.actorId,
+        legacyDeviceId: bootstrap.legacyIdentity.deviceId,
+        householdId: this.identity.householdId,
+        actorId: this.identity.memberId,
+        deviceId: this.identity.deviceId,
+      };
+      legacyBindingEnvelope = await encryptIdentityBinding({
+        binding,
+        householdId: this.identity.householdId,
+        deviceId: this.identity.deviceId,
+        deviceSequence: 1,
+        logicalTime: (bootstrap.maxLogicalTime + 1n).toString(),
+        keyEpoch: status.currentEpoch,
+        householdKey: currentKey.householdKey,
+        signingKey: this.deviceKeys.keys.signingPrivateKey,
+      });
+      remoteBindings.push({ binding, envelope: legacyBindingEnvelope });
+    }
+
+    let syncState = await this.store.getSyncState();
+    if (!syncState) {
+      await this.store.initializeSync({
+        identity: this.identity,
+        serverStatus: status,
+        identityBindings: remoteBindings,
+        legacyBindingEnvelope,
+      });
+    } else if (remoteBindings.length) {
+      await this.store.installIdentityBindings(remoteBindings, this.identity);
+    }
+
+    return remoteBindings;
+  }
+
   async provisionMemberHistory(currentEpoch, devices) {
     let prepared = 0;
     for (const recipient of devices) {
@@ -941,9 +957,43 @@ export class SyncCoordinator {
     return result;
   }
 
-  async pushIdentityBindings() {
+  // Uploads this device's identity bindings. Like events, they wait while a
+  // key rotation is pending, and one sealed under an epoch older than the
+  // relay's current one is re-sealed first: the retired epoch's key may be
+  // held by a removed device, and a member who joined at the new epoch
+  // could not read it.
+  async pushIdentityBindings(status) {
+    if (status?.rotationPending) return;
     const pending = await this.store.getPendingBindings();
     for (const record of pending) {
+      const envelope = record.controlEnvelope;
+      if (status && envelope.deviceId === this.identity.deviceId &&
+          envelope.keyEpoch < status.currentEpoch) {
+        const currentKey = await this.keyStore.getEpoch(this.identity.householdId, status.currentEpoch);
+        if (!currentKey)
+          throw new Error("This device needs an authorized household key before sync can continue.");
+        const resealed = await encryptIdentityBinding({
+          binding: {
+            legacyHouseholdId: record.legacyHouseholdId,
+            legacyActorId: record.legacyActorId,
+            legacyDeviceId: record.legacyDeviceId,
+            householdId: record.householdId,
+            actorId: record.actorId,
+            deviceId: record.deviceId,
+          },
+          householdId: this.identity.householdId,
+          deviceId: this.identity.deviceId,
+          deviceSequence: envelope.deviceSequence,
+          logicalTime: envelope.logicalTime,
+          keyEpoch: status.currentEpoch,
+          householdKey: currentKey.householdKey,
+          signingKey: this.deviceKeys.keys.signingPrivateKey,
+        });
+        // Only one tab's re-sealed copy is stored and sent; a tab that lost
+        // the race leaves it for the next pass.
+        if (!(await this.store.replacePendingBindingEnvelope(record.legacy_key, envelope.eventId, resealed))) continue;
+        record.controlEnvelope = resealed;
+      }
       await this.request("/api/sync/bindings", {
         method: "POST",
         body: JSON.stringify({ bindings: [record.controlEnvelope] }),
@@ -953,6 +1003,12 @@ export class SyncCoordinator {
   }
 
   async pushPendingEvents() {
+    // Events made under this device's earlier local identity need its binding
+    // on the relay first, or other devices can't attribute them. A binding
+    // still pending (it waits out a key rotation) holds events back too.
+    if ((await this.store.getPendingBindings()).some((record) =>
+      record.controlEnvelope?.deviceId === this.identity.deviceId))
+      return;
     while (true) {
       const pending = await this.store.getPendingOutbox(MAX_PUSH_BATCH);
       if (!pending.length) return;

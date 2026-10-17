@@ -1,9 +1,12 @@
 # Roadmap
 
-Last published release: `v0.10.3 — Bounded Storage/Archive Hardening &
-Architecture Closure`. Current implementation candidate: `v0.47.0 — Household
-Identity & Shared Appearance`. It is in stabilization and release-readiness
-review; no v0.47 tag or production certification is claimed.
+`v1.0.0 — Stable Kin Platform` is in its final release checks ([#168](https://github.com/mnichols08/ZTM-Build-Fest/issues/168)): its
+release candidate will be tagged `kin-v1.0.0-rc.1`, and `kin-v1.0.0` follows
+on the same commit once the checks pass. The last release before it was
+`v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. The work
+between them is planned to ship in v1.0.0, subject to the owner's
+[review-gate decisions](audits/V1.0_REVIEW_GATES.md); this page records how
+Kin got there. Work after v1.0 is tracked as GitHub issues.
 
 ```text
 v0.9.3 — Encrypted Event Sync Stabilization
@@ -42,29 +45,28 @@ v0.42.x–v0.45.x — Unactivated follow-up planning contracts
 	↓
 v0.46.0 — Personal Appearance candidate
 	↓
-v0.47.0 — Household Identity & Shared Appearance (current candidate)
+v0.47.0 — Household Identity & Shared Appearance
 	↓
-stabilization — measured performance, cross-platform acceptance and bounded product experiments
+v1.0 readiness — security fixes, sync quarantine, recovery-key labels, Node 24, frozen formats, real-device testing
 	↓
-v1.0.0 — Stable Kin Platform (readiness-driven, no fixed date)
+v1.0.0 — Stable Kin Platform
 ```
 
 Kin supports encrypted local storage, recovery/optional PRF unlock, verified migration, Rust commands/codecs, encrypted archives and a static offline shell alongside opt-in encrypted sync. The v0.11 candidate adds durable server identity/relay state and service database backup/restore. Archives recover local history, not server identity. Independent security review and broader browser/authenticator coverage remain outstanding.
 
 The v0.11 candidate settled service durability before v0.12 lifecycle/deletion.
 The detailed release records preserve the candidate progression through v0.41.1.
-The separately authorized v0.46.0 candidate adds protected member-bound personal
-appearance, and the current v0.47.0 candidate adds encrypted revisioned household
-identity/default appearance plus recorded admin authority. The intervening
-v0.42.x–v0.45.x documents remain planning contracts, not implied releases.
+The v0.46.0 candidate added protected member-bound personal appearance, and
+v0.47.0 added encrypted revisioned household identity/default appearance plus
+recorded admin authority. v0.21.0–v0.47.0 were never tagged; they are planned to ship in
+v1.0.0. The v0.42.x–v0.45.x documents were planning contracts that were never
+activated; v1.0 readiness (epic #150) took their place.
 
 ## October direction
 
 The October daily plan below is now historical planning context. It drove small
 candidate increments through v0.40.x, but dates and proposal numbers are not
-release evidence. Current work stabilizes the v0.47.0 candidate, completes the
-remaining platform/device acceptance matrix, and permits only measured,
-bounded experiments after those gates.
+release evidence. It ended in v1.0.0.
 
 > Kin should help a household remember, coordinate, hand off, and recover context without requiring everyone to become a project manager.
 
@@ -122,7 +124,7 @@ Establish a Kin-scoped changelog from actual tagged release history and document
 
 ## First coded release
 
-Each minor release represents a new product capability. Its initial stabilization patches address correctness (`.1`), resilience/accessibility (`.2`), and hardening (`.3`) when needed; additional fixes remain patches `.4` and onward. Earlier lines used a human feedback checkpoint before the next feature. Historical work follows the [daily cadence](BUILD-FEST-CADENCE.md) and [release-line protocol](RELEASE-LINE-PROTOCOL.md); the current v0.47.0 candidate remains subject to the same validation, compatibility and human-review gates.
+Each minor release represents a new product capability. Its initial stabilization patches address correctness (`.1`), resilience/accessibility (`.2`), and hardening (`.3`) when needed; additional fixes remain patches `.4` and onward. Earlier lines used a human feedback checkpoint before the next feature. Historical work follows the [daily cadence](BUILD-FEST-CADENCE.md) and [release-line protocol](RELEASE-LINE-PROTOCOL.md); v1.0.0 and every later release remain subject to the same validation, compatibility and human-review gates.
 
 ### `v0.1.0` — Household Heartbeat
 
@@ -274,7 +276,7 @@ Completed: recovery and metadata threat assessment, encrypted logging/privacy bo
 
 ### `v0.10.x` — Portable Core + Local Security
 
-The final local architecture/security development line. v0.10.0 implements cryptographically locked local household data, independent credential/recovery wrappers, recoverable plaintext migration, Rust-owned command semantics and canonical codecs, encrypted export/import, native domain tests, a static offline shell and signed transport-key migration. v0.10.1 corrects overlapping unlock feedback, asynchronous trusted-device pinning and interrupted key-rotation recovery; v0.10.2 adds local root rotation; v0.10.3 hardens bounded storage/archive processing and closes this implementation line. The evidence inventory, compatibility, measured limits and readiness work are in [V0.10.0](V0.10.0.md). Human review of the v0.10 gate precedes the next implementation line.
+The final local architecture/security development line. v0.10.0 implements cryptographically locked local household data, independent credential/recovery wrappers, recoverable plaintext migration, Rust-owned command semantics and canonical codecs, encrypted export/import, native domain tests, a static offline shell and signed transport-key migration. v0.10.1 corrects overlapping unlock feedback, asynchronous trusted-device pinning and interrupted key-rotation recovery; v0.10.2 adds local root rotation; v0.10.3 hardens bounded storage/archive processing and closes this implementation line. The evidence inventory, compatibility, measured limits and readiness work are in [V0.10.0](V0.10.0.md). Human review of the v0.10 gate preceded the next implementation line; its v1.0 decision is in [review gates](audits/V1.0_REVIEW_GATES.md).
 
 Increase the Rust footprint by increasing the amount of Kin that is deterministic, portable, invariant-driven, and independently testable — not by moving browser-native capabilities into Wasm. Web Crypto and networking remain browser/server adapter responsibilities.
 
@@ -285,8 +287,8 @@ and opaque relay state, commit-before-acknowledgement, fail-closed migration and
 corruption handling, an exclusive production-process lock, and verified
 online-backup/offline-restore commands. Automated tests include a spawned HTTP
 process restart and persistence of reauthentication, event identity, cursor and
-device sequence. The last published version remains v0.10.3; the candidate
-awaits human review and release authorization. See [V0.11.0](V0.11.0.md).
+device sequence. It was a review candidate, never published on its own; its
+v1.0 gate decision is item G2 in [review gates](audits/V1.0_REVIEW_GATES.md). See [V0.11.0](V0.11.0.md).
 
 ### `v0.12.x` — Data Lifecycle, Retention & Deletion
 
@@ -318,8 +320,8 @@ Keep the platform work in order: durable service, lifecycle/deletion, recovery a
 
 | Release | Status | Purpose and contract |
 |---|---|---|
-| `v0.11.x` | `v0.11.7` candidate; review pending | [Durable Service & Deployment](V0.11.0.md) — restart-safe identity/relay acceptance while preserving the encrypted relay boundary. |
-| `v0.12.x` | Tagged `v0.12.3` review candidate; scripted Windows checks passed, human review pending | [Data Lifecycle, Retention & Deletion](V0.12.0.md) — explicit deletion, retention, archive, revocation, backup and stale-device behavior. |
+| `v0.11.x` | Tagged through `kin-v0.11.7`; v1.0 gate decision G2 in [review gates](audits/V1.0_REVIEW_GATES.md) | [Durable Service & Deployment](V0.11.0.md) — restart-safe identity/relay acceptance while preserving the encrypted relay boundary. |
+| `v0.12.x` | Tagged through `kin-v0.12.4`; v1.0 gate decision G3 in [review gates](audits/V1.0_REVIEW_GATES.md) | [Data Lifecycle, Retention & Deletion](V0.12.0.md) — explicit deletion, retention, archive, revocation, backup and stale-device behavior. |
 | `v0.13.x` | Tagged candidate through `v0.13.5` | [Recovery & Household Continuity](V0.13.0.md) — explicit outcomes for loss of credentials, devices, browser profiles, server data and recovery material. |
 | `v0.14.x` | Complete through `v0.14.5` | [UX/UI Consolidation](V0.14.0.md) — one coherent, accessible presentation of the settled platform and household workflows. |
 | `v0.15.x` | Complete through v0.15.5 | [Household Areas](releases/V0.15.0.md) — optional, bounded place/context without project management. |
@@ -424,21 +426,23 @@ Through the October plan, preserve the [product principles](PRINCIPLES.md) and [
 - No points, streak pressure, rankings, contribution percentages or spouse scoring.
 - No covert location, presence or activity surveillance.
 - No enterprise workflow builder, arbitrary RBAC, Gantt/sprint/project-management expansion.
-- No chat replacement, public social network or anonymous household sharing.
+- No chat replacement, public social network or anonymous household sharing. (Household chat, #104, is a later owner decision for members of one household, not a general messenger; its own decision record, #105, has to reconcile it with this boundary.)
 - No forced `v1.0.0` on October 31.
 
 ## Scope discipline
 
-Each roadmap item is future work unless explicitly marked as implemented. The
-current v0.47.0 implementation candidate requires security, cross-platform and
-human review before release. v1.0 remains readiness-driven. Releases through
-`v0.0.12` were documentation-only; v0.1.0 was the first coded release.
+Each roadmap item is future work unless explicitly marked as implemented.
+v1.0.0 is gated by the final release checklist (#168): every blocker fixed,
+the owner's [review-gate decisions](audits/V1.0_REVIEW_GATES.md), three green
+CI runs, the reality check and acceptance matrix. Releases through `v0.0.12`
+were documentation-only; v0.1.0 was the first coded release.
 
-Preserve every existing tag. The current batch candidate follows the release gates described in [agent guidance](../AGENTS.md) and the [release process](RELEASES.md); a date alone cannot bypass a release gate.
+Preserve every existing tag. Every release follows the gates described in [agent guidance](../AGENTS.md) and the [release process](RELEASES.md); a date alone cannot bypass a release gate.
 
-## Feedback gate
+## After v1.0
 
-Stabilize the v0.47.0 candidate, gather human feedback, and address only
-confirmed defects. Do not infer publication, activate deferred planning
-contracts, add persistence, or advance to `v1.0.0` from candidate numbering
-alone.
+Every v1.x release keeps reading the v1.0 formats
+([V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md)). New work starts from GitHub
+issues: automatic device names (#71), household install identity (#78), push
+notifications (#85), QR pairing (#93) and household chat (#104). Each new
+capability is a minor release with the stabilization patches described above.

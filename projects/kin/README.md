@@ -2,11 +2,13 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Last published release: `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. Current implementation line: `v0.47.0` — Household Identity & Shared Appearance, on `feat/kin-household-owner-settings`, stacked from Personal Appearance.** Kin keeps household history in the existing local-first encrypted event store. Shared identity/defaults use an owner-authorized, revisioned, opaque encrypted household record; personal appearance remains member-bound and device-local and takes precedence per property.
+**Current implementation line: `v1.0.0` — Stable Kin Platform.** Kin's first stable release is in its final release checks ([#168](https://github.com/mnichols08/ZTM-Build-Fest/issues/168)): its release candidate will be tagged `kin-v1.0.0-rc.1`, and `kin-v1.0.0` follows on the same commit once the checks pass. The last release before it was `v0.10.3`. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Exports are encrypted history recovery and do not restore server membership, device trust, credentials, or sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
-An unversioned household workspace UX candidate (`feat/kin-workspace-ux`) revises the presentation only: five destinations (Today, Lists with To do · Shopping · Staples, Routines, Updates with Handoffs · Talk, Household), a persistent desktop navigation with a conditional item-detail column, a read-only Today composition over existing records, actionable search results, an in-app reminder control, and inline save feedback. See [docs/WORKSPACE-UX.md](docs/WORKSPACE-UX.md).
+Kin's workspace has five destinations: Today, Lists (To do · Shopping · Staples), Routines, Updates (Handoffs · Talk) and Household, with a persistent desktop navigation, a shared item detail view, Quick add, keyboard shortcuts and a command palette, and bulk actions with undo. See [docs/WORKSPACE-UX.md](docs/WORKSPACE-UX.md).
+
+v1.0 freezes Kin's storage, sync, export and server formats: every v1.x release keeps reading them ([v1.0 compatibility commitment](docs/V1.0-COMPATIBILITY.md)). v1.0 makes no compatibility promise for data created before it: start fresh. What v1.0 does not protect against is listed under [known limitations](docs/THREAT-MODEL.md#known-limitations-at-v10).
 
 ## The problem
 
@@ -25,101 +27,29 @@ and retains the query and filters only in memory until the component tree is
 cleared on lock. It shows at most 100 results at once and adds no event,
 protocol, or persistent index.
 
-## October Build Fest plan
+## Status and what's next
 
-> Kin should help a household remember, coordinate, hand off, and recover context without requiring everyone to become a project manager.
+October 2026 took Kin from the v0.11 durable service through more than thirty capability lines to v1.0. The [roadmap](docs/ROADMAP.md) records that path; the [planned release contracts](docs/releases/) describe each line.
 
-The October plan builds on the existing product and technical foundation with one small, coherent capability per minor release, followed by meaningful correctness, resilience, accessibility, and hardening work. The [roadmap](docs/ROADMAP.md) and [planned release contracts](docs/releases/) define the scope; they do not describe implemented features or authorize release tags.
+After v1.0, planned work is tracked as GitHub issues, not dated versions:
 
-October 3–31, 2026 spans 29 planned minor lines from `v0.12.x` through `v0.40.x`. The v0.12.3 scripted Windows gate passed, including both launchers; human review is pending. The WSL HTTP launcher itself was not run because WSL has no Node executable. The remaining dates are targets, not completion claims. If prerequisites or a day's acceptance criteria are not met, narrow the feature or move the dates. Create patches only for real stabilization work; never fabricate releases or tags to meet the calendar.
+- Device names and nicknames as encrypted household data (#71); v1.0 already names new devices automatically
+- The household's own app name and icon on home screens (#78)
+- Push notifications with per-device settings (#85)
+- QR pairing and signing in on a computer with your phone (#93)
+- Household chat (#104), starting with the rest of the Node 24 groundwork in #106
 
-The month targets a coherent, demoable pre-1.0 build at `v0.40.x`. The `v0.41.x`–`v0.45.x` plans remain undated follow-up work after October for recovery drills, broader platform validation, performance, and release-candidate readiness. `v1.0` depends on readiness and human feedback, with no deadline forcing it onto October 31. AI runtime features, gamification, surveillance, and enterprise workflows remain outside this plan.
+AI runtime features, gamification, surveillance, and enterprise workflows stay out of scope.
 
 ## Release history
 
-- `v0.0.1` — Product definition and principles (`kin-v0.0.1`)
-- `v0.0.2` — Architecture, event model, and privacy design (`kin-v0.0.2`)
-- `v0.0.3` — UX flows and implementation planning (`kin-v0.0.3`)
-- `v0.0.4` — Household Domain Specification (`kin-v0.0.4`)
-- `v0.0.5` — Trust, Identity, and Synchronization Design (`kin-v0.0.5`)
-- `v0.0.6` — Implementation Contract (`kin-v0.0.6`)
-- `v0.0.7` — Data Durability & Evolution (`kin-v0.0.7`)
-- `v0.0.8` — Developer & Contributor Experience (`kin-v0.0.8`)
-- `v0.0.9` — Implementation Preflight (`kin-v0.0.9`)
-- `v0.0.10` — GitHub Community & Project Documentation (`kin-v0.0.10`)
-- `v0.0.11` — Implementation Cycle Handoff (`kin-v0.0.11`)
-- `v0.0.12` — Changelog & Release History (`kin-v0.0.12`)
-- `v0.1.0` — Household Heartbeat (`kin-v0.1.0`)
-- `v0.1.1` — Core Correctness (`kin-v0.1.1`)
-- `v0.1.2` — Resilience & Accessibility (`kin-v0.1.2`)
-- `v0.1.3` — Household Heartbeat Hardening (`kin-v0.1.3`)
-- `v0.1.4` — Household Heartbeat Maintenance (`kin-v0.1.4`)
-- `v0.1.5` — Final 0.1.x Stabilization (`kin-v0.1.5`)
-- `v0.2.0` — Today + Needs (`kin-v0.2.0`)
-- `v0.2.1` — Today + Needs Correctness (`kin-v0.2.1`)
-- `v0.2.2` — Today + Needs Resilience & Accessibility (`kin-v0.2.2`)
-- `v0.2.3` — Today + Needs Hardening & Polish (`kin-v0.2.3`)
-- `v0.2.4` — Today + Needs Compatibility Fixes (`kin-v0.2.4`)
-- `v0.3.0` — Handoff (`kin-v0.3.0`)
-- `v0.3.1` — Handoff Correctness (`kin-v0.3.1`)
-- `v0.3.2` — Handoff Resilience & Accessibility (`kin-v0.3.2`)
-- `v0.3.3` — Handoff Hardening & Polish (`kin-v0.3.3`)
-- `v0.3.4` — Handoff Retry Recovery (`kin-v0.3.4`)
-- `v0.3.5` — Build & Run Convenience (`kin-v0.3.5`)
-- `v0.4.0` — Talk (`kin-v0.4.0`)
-- `v0.4.1` — Talk Correctness (`kin-v0.4.1`)
-- `v0.4.2` — Talk Resilience & Accessibility (`kin-v0.4.2`)
-- `v0.4.3` — Talk Hardening & Polish (`kin-v0.4.3`)
-- `v0.5.0` — Pulse (`kin-v0.5.0`)
-- `v0.5.1` — Pulse Correctness (`kin-v0.5.1`)
-- `v0.5.2` — Pulse Resilience & Accessibility (`kin-v0.5.2`)
-- `v0.5.3` — Pulse Hardening & Polish (`kin-v0.5.3`)
-- `v0.6.0` — Since You Last Looked (`kin-v0.6.0`)
-- `v0.6.1` — Summary Correctness (`kin-v0.6.1`)
-- `v0.6.2` — Summary Resilience & Accessibility (`kin-v0.6.2`)
-- `v0.6.3` — Summary Hardening & Polish (`kin-v0.6.3`)
-- `v0.7.0` — Routines (`kin-v0.7.0`)
-- `v0.7.1` — Routine Correctness (`kin-v0.7.1`)
-- `v0.7.2` — Routine Resilience & Accessibility (`kin-v0.7.2`)
-- `v0.7.3` — Routine Hardening & Polish (`kin-v0.7.3`)
-- `v0.7.4` — Routine Stale-Action Correctness (`kin-v0.7.4`)
-- `v0.8.0` — Household Pairing Foundation (`kin-v0.8.0`)
-- `v0.8.1` — Pairing Hardening and Failure Recovery (`kin-v0.8.1`)
-- `v0.8.2` — Trusted Devices, Authorization, and Security UX (`kin-v0.8.2`)
-- `v0.8.3` — Household Pairing Pre-Feedback Stabilization (`kin-v0.8.3`)
-- `v0.8.4` — Pairing Creation Response Correctness (`kin-v0.8.4`)
-- `v0.8.5` — Auth Panel Text Contrast (`kin-v0.8.5`)
-- `v0.8.6` — Pairing Feedback-Gate Corrections (`kin-v0.8.6`)
-- `v0.8.7` — Pairing Security and State Hygiene (`kin-v0.8.7`)
-- `v0.8.8` — Active-Member Slot Correctness (`kin-v0.8.8`)
-- `v0.9.0` — Encrypted Event Sync (`kin-v0.9.0`)
-- `v0.9.1` — Device Provisioning, Epochs, and Revocation (`kin-v0.9.1`)
-- `v0.9.2` — Offline Reconciliation and Conflict Semantics (`kin-v0.9.2`)
-- `v0.9.3` — Recovery, Privacy, and Feedback Readiness (`kin-v0.9.3`)
-- `v0.10.0` — Portable Core + Local Data Security (`kin-v0.10.0`)
-- `v0.10.1` — Security Lifecycle & Sync Recovery Correctness (`kin-v0.10.1`)
-- `v0.10.2` — Local Root Rotation & Recovery Lifecycle (`kin-v0.10.2`)
-- `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure (`kin-v0.10.3`)
-- Earlier candidate: `v0.11.6` — Release Documentation & Code Clarity (includes v0.11.5 durable semantic integrity; not a published release)
-- Earlier candidate: `v0.11.7` — October Roadmap & Startup Diagnostics
-- Candidate: `v0.12.4` — Data Lifecycle, Retention & Deletion with Pending-Deletion Restore Authority Guard
-- Earlier candidate: `v0.13.5` — Cancelled-deletion restore authority correctness
-- Complete: `v0.15.5` — Area form accessibility, merged into `kin-development`
-- Complete: `v0.16.0` — Household Notes & Reference Context (`kin-v0.16.0`, review candidate).
-- Fast-track candidate: `v0.16.3` — concurrent Note archives converge; later and same-device stale archives remain rejected.
-- Complete candidate: `v0.17.0` — Checklist Steps; the existing `kin-v0.17.0` tag is preserved unchanged.
-- Fast-track scope: `v0.18.x` richer routine scheduling, `v0.19.x` shared shopping lists, and `v0.20.x` staples & replenishment; see the [daily roadmap](docs/ROADMAP.md).
-- Fast-track candidate: `v0.26.0` — Pins & Quick Access; see the `v0.26.0` release record.
-- Fast-track candidate: `v0.27.0` — Household Playbooks; see the `v0.27.0` release record.
-- Fast-track candidate: `v0.28.0` - Local Reminders; see the `v0.28.0` release record.
-- Fast-track candidates: `v0.31.0`–`v0.31.1` - Maintenance Records and concurrent archive correction; see their release records.
-- Candidate: `v0.40.3` — Reproducible CI and verification infrastructure; no application feature changes.
-- Preceding candidate: `v0.46.0` — Personal Appearance: member-bound device-local System/Light/Dark modes, preset/custom seed colors, and locally processed protected backgrounds with deterministic dominant-color suggestions. No appearance record enters household history, synchronization, attachments, activity, or portable exports. See the [contract](docs/PERSONAL-APPEARANCE.md).
-- Current candidate: `v0.47.0` — Household Identity & Shared Appearance: founder-backed owner authority, an encrypted revisioned shared name/default appearance, shared processed backgrounds, and per-property personal override inheritance. Legacy households without trustworthy ownership remain read-only. See the [contract](docs/HOUSEHOLD-IDENTITY-DEFAULTS.md).
-- Candidate: `v0.41.0` — Mobile Experience & Passkey-First UX: passkey-first unlock with the recovery key as a secondary fallback, a welcome/setup flow, create/join/add-device household choices, context-sensitive capture on Today and each list, image thumbnails with an in-app viewer, document tiles, phone-first item rows with a Details disclosure, an optional inactivity lock, and plain-language sync/attachment messages. No cryptographic, event, storage, or authorization contract changed. See the [release record](docs/releases/V0.41.0.md).
-- Planned after October, undated: `v0.42.x`–`v0.45.x` plus the deferred Backup Safety & Disaster Drills proposal — recovery drills, broader platform validation, performance, and release-candidate readiness
-- Planned: `v1.0.0` — Stable Kin Platform, when readiness and human feedback support it
-- See the [changelog](CHANGELOG.md) for the completed release history.
+- `v1.0.0` — Stable Kin Platform: everything below since v0.10.3, plus the v1.0 readiness work. In final release checks.
+- `v0.21.0`–`v0.47.0` — Household modes, planning dates, calendar export, history, search, pins, playbooks, reminders, offline install, reference and maintenance records, encrypted attachments, responsibility, more adults, Limited and Temporary members, portable export and restore, mobile experience, personal and household appearance, household admins. These were development candidates and were never tagged; they ship in v1.0.0.
+- `v0.11.0`–`v0.20.1` — Durable service, household deletion, recovery and continuity, UX/UI consolidation, Areas, Notes, checklist steps, routine scheduling, shopping lists and staples. Tagged review lines (`kin-v0.11.0`–`kin-v0.20.1`, some versions untagged); not published on their own.
+- `v0.1.0`–`v0.10.3` — From the first implementation (Household Heartbeat) through encrypted sync and local data security. `v0.10.3` (`kin-v0.10.3`) was the last release before v1.0.
+- `v0.0.1`–`v0.0.12` — Planning and documentation releases.
+
+The [changelog](CHANGELOG.md) has every version, newest first, and marks the ones that were never tagged.
 
 ## Install, build, and run
 
@@ -288,7 +218,8 @@ Kin is nested in the ZTM Build Fest repository. Its community files and template
 - [Debugging and diagnostics](docs/DEBUGGING.md)
 - [Implementation preflight](docs/PREFLIGHT.md)
 - [Requirement traceability](docs/TRACEABILITY.md)
-- [v0.47 release acceptance matrix](docs/audits/V0.47_RELEASE_ACCEPTANCE.md)
+- [v1.0 release acceptance matrix](docs/audits/V1.0_RELEASE_ACCEPTANCE.md), [reality check](docs/audits/V1.0_REALITY_CHECK.md), [tester guide](docs/audits/V1.0_TESTER_GUIDE.md) and [review-gate decisions](docs/audits/V1.0_REVIEW_GATES.md)
+- [v0.47 release acceptance matrix](docs/audits/V0.47_RELEASE_ACCEPTANCE.md) (superseded by the v1.0 matrix)
 - [Canonical test vectors](docs/TEST-VECTORS.md)
 - [Since You Last Looked release contract](docs/V0.6.0.md)
 - [Accepted architecture decision: event-sourced household state](docs/decisions/0001-event-sourced-household-state.md)

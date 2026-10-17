@@ -1,7 +1,7 @@
 # Security Policy
 
-**Current security status:** The last published release is v0.10.3. The current
-unreleased v0.47.0 candidate includes encrypted local household storage,
+**Current security status:** Kin v1.0.0, now in its final release checks
+(the last release before it was v0.10.3), includes encrypted local household storage,
 recovery/optional-PRF unlock, journalled root replacement, encrypted archives,
 passkey-authenticated pairing, client-encrypted sync, durable identity/relay
 storage, recorded household-admin authority, and encrypted shared household
@@ -31,14 +31,13 @@ in [THREAT-MODEL](docs/THREAT-MODEL.md#known-limitations-at-v10):
 
 ## Supported versions
 
-The earlier v0.35.1 corrective candidate requires fresh passkey authentication for
-self-removal as well as removing another adult. Self-removal now requires fresh
-passkey authentication before membership/device revocation and access-change
-rotation. Session cookies alone cannot authorize leave. See the
-[v0.35.1 security/release contract](docs/releases/V0.35.1.md); this is not
-production certification.
+Security fixes go into the latest v1.x release only; there are no separate
+maintenance branches for older versions. v0.x pre-releases are not supported:
+v1.0 starts fresh ([V1.0-COMPATIBILITY](docs/V1.0-COMPATIBILITY.md)). What v1.0
+does not protect against is listed under
+[known limitations](docs/THREAT-MODEL.md#known-limitations-at-v10).
 
-Kin is a prototype and has no staffed security-support commitment or guaranteed response time. Follow the private reporting guidance below and include only synthetic data.
+Kin is a Build Fest project and has no staffed security-support commitment or guaranteed response time. Follow the private reporting guidance below and include only synthetic data.
 
 ## Reporting a vulnerability
 

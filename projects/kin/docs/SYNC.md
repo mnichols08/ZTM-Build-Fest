@@ -209,6 +209,16 @@ the proposal's expected epoch. Rotation runs under a cross-tab Web Lock
 check and the discard; a tab that finds the lock held skips that pass. A recipient set that is unchanged or grows keeps the
 pending key.
 
+A device whose first sync finds a rotation pending sets up its sync state
+first, then commits the rotation. History it held before joining is queued
+without a key epoch, like a new change, and its identity binding waits too, so
+both are sealed under the new epoch, never the retired one; a binding sealed
+earlier and not yet uploaded is re-sealed under the relay's current epoch (by
+one tab only). Events from that earlier identity are not pushed until the
+binding is on the relay. Changes already sealed or stamped before an access
+change are still sent under their epoch once the rotation commits, as ordinary
+queued changes are.
+
 Replacing pending packages compares the complete expected pending record in one
 encrypted IndexedDB transaction. Completion and removal match the proposal ID,
 so a stale tab cannot clear a newer proposal. Completion preserves the local

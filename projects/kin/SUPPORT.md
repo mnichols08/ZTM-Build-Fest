@@ -1,9 +1,9 @@
 # Support
 
-Kin's last published release is v0.10.3. The current unreleased implementation
-candidate is v0.47.0 Household Identity & Shared Appearance; candidate status is
-not production certification. There is no staffed runtime support channel or
-guaranteed response time.
+Kin v1.0.0 — Stable Kin Platform is in its final release checks (release
+candidate `kin-v1.0.0-rc.1` to follow). It is a Build Fest project, not a
+supported service: there is no staffed runtime support channel or guaranteed
+response time.
 
 ## Questions and proposals
 

@@ -1,13 +1,11 @@
 # Persistent Contract Versioning
 
-**Status:** Application implementation candidate v0.47.0 (Household Identity &
-Shared Appearance); the last published product release remains v0.10.3. The
-candidate adds revisioned encrypted household defaults and recorded household
-admins without changing canonical events, replay protocol, KARC, sync-envelope
-or IndexedDB formats. Household membership is bounded to 12 total participants
-(four Adults and eight Limited Members); Temporary Members require expiry.
-Candidate milestones are not production certification. Earlier version sections
-preserve historical data contracts.
+**Status:** Application version 1.0.0 — Stable Kin Platform, in its final
+release checks (release candidate `kin-v1.0.0-rc.1` to follow; the last
+release before it was v0.10.3). Household
+membership is bounded to 12 total participants (four Adults and eight Limited
+Members); Temporary Members require expiry. Earlier version sections preserve
+historical data contracts.
 
 **v1.0:** the formats frozen for v1.0, what every v1.x release promises about
 them, and the "start fresh" rule for v0.x data are in
@@ -19,9 +17,9 @@ historical.
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | Last published v0.10.3 / current candidate v0.47.0 | Governs |
+| Version axis | v1.0.0 | Governs |
 | --- | --- | --- |
-| Application | Last published `0.10.3`; candidate `0.47.0` | Existing capabilities plus member-bound personal appearance and encrypted revisioned household identity/default appearance; the service-worker cache name advances with the release |
+| Application | `1.0.0` | The product release; the service-worker cache name advances with the release |
 | Server database schema | `9` (`PRAGMA user_version`) | SQLite identity, authorization, recorded founder/admin authority, opaque relay, coordination, lifecycle, encrypted settings/attachment records and their uploaders, member kind, Temporary expiry, and authoritative membership status |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v24; writes v24 for local and synchronized requests | Request context and projection semantics |
