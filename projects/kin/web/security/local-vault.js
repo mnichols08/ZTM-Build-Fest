@@ -52,24 +52,32 @@ export class LocalVault {
     this.listeners = new Set();
   }
 
-  static async create(recoverySecret = randomRecoverySecret()) {
+  /** A random ID for a recovery wrapper, chosen before the vault exists so
+   * its key label (key-label.js) can be shown with the new key. */
+  static newWrapperId() {
     requireCrypto();
-    return LocalVault.createRoot(recoverySecret, hex(crypto.getRandomValues(new Uint8Array(16))), 1);
+    return hex(crypto.getRandomValues(new Uint8Array(16)));
   }
 
-  static async createRotation(sourceVault, recoverySecret = randomRecoverySecret()) {
+  static async create(recoverySecret = randomRecoverySecret(), { recoveryWrapperId } = {}) {
+    requireCrypto();
+    return LocalVault.createRoot(recoverySecret, hex(crypto.getRandomValues(new Uint8Array(16))), 1, recoveryWrapperId);
+  }
+
+  static async createRotation(sourceVault, recoverySecret = randomRecoverySecret(), { recoveryWrapperId } = {}) {
     sourceVault.assertUnlocked();
     if (sourceVault.rootVersion >= Number.MAX_SAFE_INTEGER)
       throw new VaultError("Kin cannot advance this household's protection further.");
-    const candidate = await LocalVault.createRoot(recoverySecret, sourceVault.vaultId, sourceVault.rootVersion + 1);
+    const candidate = await LocalVault.createRoot(recoverySecret, sourceVault.vaultId, sourceVault.rootVersion + 1, recoveryWrapperId);
     try {
       sourceVault.assertUnlocked();
       return candidate;
     } catch (error) { candidate.vault.lock(); throw error; }
   }
 
-  static async createRoot(recoverySecret, vaultId, rootVersion) {
+  static async createRoot(recoverySecret, vaultId, rootVersion, recoveryWrapperId = LocalVault.newWrapperId()) {
     requireCrypto();
+    if (!/^[a-f0-9]{32}$/.test(recoveryWrapperId)) throw new VaultError("The unlock mechanism is invalid.");
     const root = crypto.getRandomValues(new Uint8Array(32));
     const manifest = { formatVersion: rootVersion === 1 ? 1 : 2, vaultId, rootVersion, wrappers: [] };
     const vault = new LocalVault(vaultId, root, manifest);
@@ -77,7 +85,7 @@ export class LocalVault {
     let secret;
     try {
       secret = parseRecoverySecret(recoverySecret);
-      manifest.wrappers.push(await vault.createWrapper(secret, { type: "recovery" }));
+      manifest.wrappers.push(await vault.createWrapper(secret, { type: "recovery", id: recoveryWrapperId }));
       manifest.verifier = await vault.seal("kin-vault-check-v1", { store: "security", id: "verifier" });
       vault.manifest = structuredClone(manifest);
       // Verify the recovery path before returning anything eligible for persistence.
@@ -259,7 +267,7 @@ function validRootFormat(manifest) {
     (manifest?.formatVersion === 2 && Number.isSafeInteger(manifest.rootVersion) && manifest.rootVersion >= 2);
 }
 
-function validateManifest(manifest) {
+export function validateManifest(manifest) {
   if (!validRootFormat(manifest) || !/^[a-f0-9]{32}$/.test(manifest.vaultId) ||
       !Array.isArray(manifest.wrappers) || !manifest.wrappers.length || manifest.wrappers.length > MAX_WRAPPERS)
     throw new VaultError("The household security format is unsupported or corrupt.");

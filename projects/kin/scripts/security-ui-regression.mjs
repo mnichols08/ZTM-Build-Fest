@@ -200,12 +200,21 @@ async function browserUiChecks() {
       app.security.querySelector("#confirm-recovery")?.labels?.[0]?.textContent.includes("confirm"),
     "setup asks the person to save and confirm the key",
   );
+  // Not wait(): its timeout message would print the displayed recovery key.
+  for (let i = 0; i < 400 && !/recovery key K-[0-9A-F]{4}/.test(app.security.querySelector(".recovery-key-label")?.textContent ?? ""); i++)
+    await new Promise((r) => setTimeout(r, 25));
+  check(/recovery key K-[0-9A-F]{4}/.test(app.security.querySelector(".recovery-key-label")?.textContent ?? ""), "setup shows the new key's label");
+  const setupLabel = /K-[0-9A-F]{4}/.exec(app.security.querySelector(".recovery-key-label").textContent)[0];
   const confirm = app.security.querySelector("#confirm-recovery");
   confirm.value = recovery;
   const started = performance.now();
   confirm.form.requestSubmit();
   await wait(() => Boolean(app.store) && !app.busy && !app.security.busy);
   const setupMs = performance.now() - started;
+  {
+    const { manifestRecoveryLabels } = await import("/security/key-label.js");
+    check((await manifestRecoveryLabels(app.vault.manifest))[0] === setupLabel, "the label shown at setup is the new key's label");
+  }
   check(
     app.security.phase === "unlocked" && app.state.items.length === 0,
     "setup verifies root and empty replay before unlock",
@@ -308,7 +317,7 @@ async function browserUiChecks() {
     "recovery unlock replays saved ciphertext",
   );
   const unlockMs = performance.now() - unlockStart;
-  const { exportHouseholdArchive } = await import("/security/archive.js");
+  const { exportHouseholdArchive, validateHouseholdArchive: validateHouseholdArchiveForLabel } = await import("/security/archive.js");
   const portableMembership = [
     { memberId: "11111111111111111111111111111111", memberKind: "adult", status: "active" },
     { memberId: "22222222222222222222222222222222", memberKind: "limited", status: "removed" },
@@ -327,6 +336,24 @@ async function browserUiChecks() {
     archive instanceof Uint8Array && archive.length > 100,
     "encrypted archive export available",
   );
+  // #160: the header names the recovery key label that opens the export,
+  // the same label Settings shows and the download file name carries.
+  {
+    const { describeHouseholdArchive } = await import("/security/archive.js");
+    const { exportFileName, manifestRecoveryLabels } = await import("/security/key-label.js");
+    const described = await describeHouseholdArchive(archive, app.engine);
+    const current = await manifestRecoveryLabels(app.vault.manifest);
+    check(
+      described.labels.length === 1 && described.labels[0] === current[0] && /^K-[0-9A-F]{4}$/.test(current[0]) &&
+        exportFileName(described.exportedAt, described.labels[0]) === `kin-${described.exportedAt.slice(0, 10)}-${current[0]}.kin`,
+      "export header and file name carry the current recovery key label",
+    );
+    let mismatch = "";
+    try {
+      await validateHouseholdArchiveForLabel({ bytes: archive, recoverySecret: "f".repeat(64), engine: app.engine, vault: app.vault });
+    } catch (error) { mismatch = error.message; }
+    check(mismatch.includes(current[0]), "a wrong key for an export names the label that opens it");
+  }
   const parsed = app.engine.decodeArchive(archive);
   check(
     !new TextDecoder().decode(archive).includes("Synthetic"),

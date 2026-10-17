@@ -2,7 +2,8 @@
 // Part of <kin-security>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-security.js lists them).
 import { getActiveVault } from "../../security/local-vault.js";
-import { discardValidatedHouseholdArchive, exportHouseholdArchive, restoreValidatedHouseholdArchive, validateHouseholdArchive } from "../../security/archive.js";
+import { describeHouseholdArchive, discardValidatedHouseholdArchive, exportHouseholdArchive, restoreValidatedHouseholdArchive, validateHouseholdArchive } from "../../security/archive.js";
+import { EXPORT_STORAGE_RULE, exportFileName, joinLabels } from "../../security/key-label.js";
 import { portableMembershipFromDirectory } from "../../sync/sync-coordinator.js";
 
 export class SecurityArchive {
@@ -29,13 +30,17 @@ export class SecurityArchive {
       bytes = await exportHouseholdArchive({ store: app.store, engine: app.engine, vault: getActiveVault(), portableMembership, onProgress: progress.update });
     } finally { progress.remove(); }
     this.host.assertCurrentOperation(operation);
+    // The name and message come from the export's own header, so they name
+    // exactly the key label the restore screen will show for this file.
+    const { exportedAt, labels } = await describeHouseholdArchive(bytes, app.engine);
+    this.host.assertCurrentOperation(operation);
     const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = "kin-household.kin";
+    link.download = exportFileName(exportedAt, labels[0]);
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    this.host.message.textContent = "Kin export prepared. Keep it and its recovery key safe.";
+    this.host.message.textContent = `Kin export prepared. It opens with recovery key ${joinLabels(labels)}. ${EXPORT_STORAGE_RULE}`;
   }
 
   // A progress bar after the status message while an archive operation runs.
@@ -65,9 +70,34 @@ export class SecurityArchive {
     const recovery = document.createElement("input");
     recovery.id = "archive-recovery"; recovery.type = "password"; recovery.autocomplete = "off"; recovery.required = true;
     recovery.setAttribute("aria-describedby", "security-alert");
-    const recoveryLabel = document.createElement("label"); recoveryLabel.htmlFor = recovery.id; recoveryLabel.textContent = "Export recovery key";
+    const recoveryLabel = document.createElement("label"); recoveryLabel.htmlFor = recovery.id; recoveryLabel.textContent = "Recovery key for this export";
     const button = document.createElement("button"); button.type = "submit"; button.textContent = "Check export";
-    form.append(fileLabel, file, recoveryLabel, recovery, button);
+    // Before any key is asked for: when the file was made and which key opens it.
+    const about = document.createElement("p");
+    about.id = "archive-about"; about.className = "security-note"; about.hidden = true; about.setAttribute("role", "status");
+    let describing = 0;
+    file.addEventListener("change", () => {
+      const selected = file.files[0];
+      const attempt = ++describing;
+      about.hidden = true;
+      about.textContent = "";
+      if (!selected) return;
+      void (async () => {
+        let text;
+        try {
+          if (selected.size > 160 * 1024 * 1024) throw new Error("Choose a Kin archive no larger than 160 MiB.");
+          const described = await describeHouseholdArchive(new Uint8Array(await selected.arrayBuffer()), this.host.closest("kin-app").engine);
+          const made = new Date(described.exportedAt).toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+          text = `This export was made on ${made} and opens with recovery key ${joinLabels(described.labels)} from the device that made it.`;
+        } catch (error) {
+          text = error?.userMessage ?? "Kin couldn't read this file as a Kin export.";
+        }
+        if (attempt !== describing || !about.isConnected) return;
+        about.textContent = text;
+        about.hidden = false;
+      })();
+    });
+    form.append(fileLabel, file, about, recoveryLabel, recovery, button);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const selected = file.files[0]; const secret = recovery.value; recovery.value = "";

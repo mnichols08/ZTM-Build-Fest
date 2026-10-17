@@ -7,6 +7,7 @@ import { authenticatePrf } from "../../security/passkey-unlock.js";
 import { EventStore } from "../../storage/event-store.js";
 import { commitRootRotationKeys, prepareRootRotationKeys } from "../../sync/key-store.js";
 import { loadKinEngine } from "../../wasm/kin-engine.js";
+import { manifestRecoveryLabels, recoveryKeyLabel } from "../../security/key-label.js";
 
 export class SecurityProtection {
   constructor(ctx) {
@@ -14,9 +15,21 @@ export class SecurityProtection {
     this.host = ctx.host;
   }
 
+  // The new key's label ("Recovery key K-7F3A"), shown with the key so it can
+  // be written down next to it. The wrapper ID is chosen here for that.
+  keyLabelLine(wrapperId, rootVersion) {
+    const line = this.host.text("");
+    line.className = "recovery-key-label";
+    void recoveryKeyLabel(wrapperId, rootVersion).then((label) => {
+      line.textContent = `This is recovery key ${label}. Write the label down with the key: exports made on this device name the key they need by its label.`;
+    }, () => line.remove());
+    return line;
+  }
+
   showSetup() {
     if (this.host.busy) return;
     const secret = randomRecoverySecret();
+    const wrapperId = LocalVault.newWrapperId();
     this.host.render();
     this.host.heading.textContent = "Save your recovery key";
     this.host.text("This key is your backup way into Kin on this device if the passkey is ever lost. Save it somewhere safe outside Kin, such as a password manager.");
@@ -26,6 +39,7 @@ export class SecurityProtection {
     output.textContent = secret;
     output.className = "recovery-key";
     this.host.append(output);
+    this.keyLabelLine(wrapperId, 1);
     if (navigator.clipboard?.writeText) {
       this.host.button("Copy key", async () => {
         try {
@@ -56,7 +70,7 @@ export class SecurityProtection {
       if (confirmation.value.trim() !== secret) return this.host.error(new Error("The recovery keys do not match. Save and re-enter the complete key."));
       confirmation.value = "";
       output.textContent = "";
-      void this.host.run(() => this.host.establishProtection(secret));
+      void this.host.run(() => this.host.establishProtection(secret, { recoveryWrapperId: wrapperId }));
     });
     this.host.append(form);
     confirmation.focus();
@@ -65,9 +79,11 @@ export class SecurityProtection {
   showReplacement() {
     if (this.host.busy || this.host.phase !== "unlocked") return;
     const secret = randomRecoverySecret();
+    const wrapperId = LocalVault.newWrapperId();
+    const rootVersion = (getActiveVault()?.rootVersion ?? this.host.manifest?.rootVersion ?? 0) + 1;
     this.host.render();
     this.host.heading.textContent = "Replace recovery key";
-    this.host.text("Save this new recovery key outside Kin. It replaces your current recovery key for this browser. Add passkey unlock again afterward. Old backups still need their original recovery keys.");
+    this.host.text("Save this new recovery key outside Kin. It replaces your current recovery key for this browser. Add passkey unlock again afterward. Exports you already made still open only with the key they name.");
     const output = document.createElement("code");
     output.className = "recovery-key";
     output.textContent = secret;
@@ -91,14 +107,16 @@ export class SecurityProtection {
         return this.host.error(new Error("The recovery keys do not match. Save and re-enter the complete new key."));
       confirmation.value = "";
       output.textContent = "";
-      void this.host.run(() => this.host.replaceProtection(secret));
+      void this.host.run(() => this.host.replaceProtection(secret, { recoveryWrapperId: wrapperId }));
     });
-    this.host.append(output, form);
+    this.host.append(output);
+    this.keyLabelLine(wrapperId, rootVersion);
+    this.host.append(form);
     this.host.button("Cancel", () => this.host.render());
     confirmation.focus();
   }
 
-  async replaceProtection(secret) {
+  async replaceProtection(secret, { recoveryWrapperId } = {}) {
     const operation = this.host.operation;
     const signal = this.host.operationAbort.signal;
     const active = getActiveVault();
@@ -112,7 +130,7 @@ export class SecurityProtection {
     const cancel = () => { source.lock(); candidate?.lock(); };
     signal.addEventListener("abort", cancel, { once: true });
     try {
-      ({ vault: candidate } = await LocalVault.createRotation(source, secret));
+      ({ vault: candidate } = await LocalVault.createRotation(source, secret, { recoveryWrapperId }));
       this.host.assertCurrentOperation(operation);
       // Read below, during the rotation, to tell peer tabs the new epoch.
       const app = this.host.closest("kin-app");
@@ -135,8 +153,9 @@ export class SecurityProtection {
         },
       });
       this.host.assertCurrentOperation(operation);
+      const [label] = await manifestRecoveryLabels(candidate.manifest);
       await this.ctx.unlock.finishUnlock(candidate, operation);
-      this.host.message.textContent = "Recovery protection updated. Use your new recovery key and add passkey unlock again if needed.";
+      this.host.message.textContent = `Recovery protection updated. Use your new recovery key${label ? ` (${label})` : ""} and add passkey unlock again if needed.`;
     } catch (error) {
       candidate?.lock();
       if (operation === this.host.operation) this.host.phase = "locked";
@@ -148,9 +167,9 @@ export class SecurityProtection {
     }
   }
 
-  async establishProtection(secret) {
+  async establishProtection(secret, { recoveryWrapperId } = {}) {
     const operation = this.host.operation;
-    const { vault, manifest } = await LocalVault.create(secret);
+    const { vault, manifest } = await LocalVault.create(secret, { recoveryWrapperId });
     try {
       this.host.assertCurrentOperation(operation);
       await EventStore.prepareSecurity(manifest);
