@@ -2,8 +2,9 @@
 // browser so the Kin service never decodes an image or renders a font.
 // Either source gives the same four PNGs:
 //   icon192, icon512    — "any" icons, full-bleed squares;
-//   maskable512         — the content inside the central 80% safe zone on
-//                          the household colour, for launchers that crop;
+//   maskable512         — for launchers that crop to a shape: the content sits
+//                          inside the safe zone (a centred circle of 40%
+//                          radius) on the household colour;
 //   apple180            — opaque, for iPhone and iPad.
 // The first-letter icon is the household name's first grapheme on the
 // household palette's accent colour, in the system UI font.
@@ -13,8 +14,11 @@ import { contrastRatio, KIN_DEFAULT_SEED, paletteForSeed } from "./palette.js";
 export const INSTALL_ICON_SIZES = Object.freeze({ icon192: 192, icon512: 512, maskable512: 512, apple180: 180 });
 /** The service accepts icons of at most 512 KB (server/install-identity.mjs). */
 export const MAX_INSTALL_ICON_BYTES = 512 * 1024;
-/** The maskable safe zone: content stays inside the central 80%. */
+/** The maskable safe zone is a centred circle of 40% radius. A letter's ink
+ * fits within 80% of the width; a square image must fit inside the circle,
+ * so its side is at most 0.8 / √2 ≈ 0.56 of the icon. */
 export const MASKABLE_SAFE_ZONE = 0.8;
+export const MASKABLE_IMAGE_ZONE = 0.56;
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif';
 
@@ -63,11 +67,11 @@ async function encode(target) {
   return new Uint8Array(await blob.arrayBuffer());
 }
 
-async function render(draw) {
+async function render(draw, maskableZone = MASKABLE_SAFE_ZONE) {
   const icons = {};
   for (const [key, size] of Object.entries(INSTALL_ICON_SIZES)) {
     const { value, context } = canvas(size);
-    draw(context, size, key === "maskable512" ? MASKABLE_SAFE_ZONE : 1);
+    draw(context, size, key === "maskable512" ? maskableZone : 1);
     icons[key] = await encode(value);
   }
   return icons;
@@ -115,7 +119,7 @@ export async function uploadIcons(file, { seed }) {
       const drawn = size * zone, inset = (size - drawn) / 2;
       context.imageSmoothingQuality = "high";
       context.drawImage(bitmap, sx, sy, side, side, inset, inset, drawn, drawn);
-    });
+    }, MASKABLE_IMAGE_ZONE);
   } finally { bitmap.close?.(); }
 }
 

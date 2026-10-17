@@ -148,10 +148,11 @@ export class KinInstallIdentity extends HTMLElement {
     if (!this.firstElementChild) this.build();
     const changed = (published?.rev ?? 0) !== (this.state.published?.rev ?? 0);
     this.state = { published: published ?? null, householdName: householdName || DEFAULT_HOUSEHOLD_NAME, seed };
-    if (this.dirty && !changed) { this.renderPreview(); return; }
-    if (this.dirty && changed) this.status.textContent = "Another admin changed the home screen details. The latest are shown.";
+    if (this.dirty && !changed && !this.writing) { this.renderPreview(); return; }
+    const otherAdmin = this.dirty && changed && !this.writing;
     this.dirty = false;
     this.render();
+    if (otherAdmin) this.status.textContent = "Another admin changed the home screen details. The latest are shown.";
   }
 
   render() {
@@ -198,6 +199,7 @@ export class KinInstallIdentity extends HTMLElement {
   async regenerate() {
     const generation = (this.generation = (this.generation ?? 0) + 1);
     this.error.textContent = "";
+    this.iconProblem = false;
     try {
       let icons;
       if (this.uploadChoice.input.checked) {
@@ -213,6 +215,8 @@ export class KinInstallIdentity extends HTMLElement {
     } catch (error) {
       if (generation !== this.generation) return;
       this.icons = null;
+      // Block Save: it must not quietly republish the earlier icons.
+      this.iconProblem = true;
       this.error.textContent = error.message || "Kin couldn't make an icon from that image.";
     }
     this.updateControls();
@@ -245,15 +249,20 @@ export class KinInstallIdentity extends HTMLElement {
     this.withdraw.hidden = firstPublish;
     // Saving an uploaded source with no new file republishes the stored icons
     // only when nothing about the icon changed; otherwise a file is needed.
-    const reusing = !this.icons && this.uploadChoice.input.checked && this.state.published?.iconSource === "upload";
-    this.save.disabled = this.busy || (firstPublish && !this.confirm.checked) || (!this.icons && !reusing);
-    for (const control of this.querySelectorAll("input, textarea")) control.disabled = this.busy;
-    this.withdraw.disabled = this.busy;
+    const reusing = !this.icons && !this.iconProblem && this.uploadChoice.input.checked && this.state.published?.iconSource === "upload";
+    this.save.disabled = this.busy || this.writing || (firstPublish && !this.confirm.checked) || (!this.icons && !reusing);
+    for (const control of this.querySelectorAll("input, textarea")) control.disabled = this.busy || this.writing;
+    this.withdraw.disabled = this.busy || this.writing;
   }
 
   set disabled(value) { this.busy = Boolean(value); if (this.firstElementChild) this.updateControls(); }
 
+  // A publish or withdrawal in flight: one at a time, so a double click
+  // can't send a second write that conflicts with the first.
+  setWriting(value) { this.writing = value; this.updateControls(); }
+
   async publish() {
+    if (this.writing) return;
     this.error.textContent = "";
     const shortName = this.shortName.value.trim();
     if (!shortName || graphemes(shortName).length > MAX_SHORT_NAME) {
@@ -262,6 +271,7 @@ export class KinInstallIdentity extends HTMLElement {
       return;
     }
     let icons = this.icons;
+    this.setWriting(true);
     if (!icons && this.uploadChoice.input.checked && this.state.published?.iconSource === "upload") {
       // Keep the published uploaded icons: this device may read them back.
       try {
@@ -274,6 +284,7 @@ export class KinInstallIdentity extends HTMLElement {
         icons = null;
       }
     }
+    this.setWriting(false);
     if (!icons) {
       this.error.textContent = "Choose an image for the icon first.";
       (this.file.hidden ? this.letterChoice.input : this.file).focus();
@@ -288,7 +299,9 @@ export class KinInstallIdentity extends HTMLElement {
       icons: Object.fromEntries(Object.entries(icons).map(([key, bytes]) => [key, bytesToBase64Url(bytes)])),
     };
     this.status.textContent = "Saving…";
-    this.dispatchEvent(new CustomEvent("kin:publish-install-identity", { bubbles: true, detail: { value, complete: (_result, error) => {
+    this.setWriting(true);
+    this.dispatchEvent(new CustomEvent("kin:publish-install-identity", { bubbles: true, detail: { value, complete: (result, error) => {
+      this.setWriting(false);
       if (error) {
         this.status.textContent = "";
         this.error.textContent = error.code === "install_identity_stale"
@@ -297,19 +310,26 @@ export class KinInstallIdentity extends HTMLElement {
         return;
       }
       this.dirty = false;
+      // The app reloads the published copy; if that failed, at least the
+      // next save must not conflict with this one.
+      if (result?.rev && (this.state.published?.rev ?? 0) < result.rev)
+        this.state.published = { ...(this.state.published ?? {}), ...value, icons: this.state.published?.icons ?? {}, rev: result.rev };
+      this.updateControls();
       this.status.textContent = "Saved. Installed apps show it the next time they check for changes.";
     } } }));
   }
 
   stopShowing() {
     const published = this.state.published;
-    if (!published) return;
+    if (!published || this.writing) return;
     if (!confirm("Stop showing your household's name and icon on home screens? The Kin service deletes its copy, and installed apps go back to Kin.")) {
       this.toggle.checked = true;
       return;
     }
     this.error.textContent = "";
+    this.setWriting(true);
     this.dispatchEvent(new CustomEvent("kin:withdraw-install-identity", { bubbles: true, detail: { expectedRev: published.rev, complete: (_result, error) => {
+      this.setWriting(false);
       if (error) {
         this.error.textContent = error.code === "install_identity_stale"
           ? "Another admin changed the home screen details. The latest are shown."
@@ -317,6 +337,7 @@ export class KinInstallIdentity extends HTMLElement {
         return;
       }
       this.dirty = false;
+      if (this.state.published?.rev === published.rev) { this.state.published = null; this.render(); }
       this.status.textContent = "Home screens go back to Kin the next time they check for changes.";
       this.toggle.focus();
     } } }));

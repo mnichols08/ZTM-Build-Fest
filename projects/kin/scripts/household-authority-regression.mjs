@@ -856,8 +856,8 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     const published = await a.call(pagePublishInstallIdentity, { shortName: "Nichols" });
     check(published.section && published.privacyShown && published.gatedBeforeConfirm,
       "admin A's Home screen section states what the service will store and requires confirmation before the first publish");
-    check(published.shortName === "Nichols" && published.id === "/" && /^\/install-icon\/512\.png\?v=1$/.test(published.iconSrc),
-      "A's device receives the published manifest with a stable id and versioned icons: " + JSON.stringify(published));
+    check(published.shortName === "Nichols" && published.id === "/" && /^\/install-icon\/512\.png\?v=[a-f0-9]{16}$/.test(published.iconSrc),
+      "A's device receives the published manifest with a stable id and content-versioned icons: " + JSON.stringify(published));
     check(published.iconSize[0] === 512 && published.iconSize[1] === 512, "the first-letter icon is a real 512x512 PNG drawn in the browser");
     check(published.withdrawShown && !published.cached.some(Boolean), "Stop showing is offered and the service worker never caches the manifest");
     const memberView = await b.call(pageInstallIdentityAsMember);

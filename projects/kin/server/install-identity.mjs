@@ -89,6 +89,17 @@ export function installIcon(value, size) {
   return bytes;
 }
 
+/** A hash of everything published, which names its icon URLs and the
+ * manifest ETag: they change whenever the content does, whatever the
+ * revision (which a backup restore can repeat). */
+export function installContentTag(value) {
+  const hash = createHash("sha256");
+  for (const text of [value.name, value.shortName, value.description, value.iconSource])
+    hash.update(`${Buffer.byteLength(text)}:${text};`);
+  for (const { key } of INSTALL_ICONS) hash.update(`${value.icons[key].length}:`).update(value.icons[key]);
+  return hash.digest("hex").slice(0, 16);
+}
+
 /** A complete publish request, validated. */
 export function validateInstallIdentity(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid("Those home screen details are invalid.");
@@ -106,6 +117,11 @@ export function validateInstallIdentity(value) {
   };
 }
 
+/** A published icon's URL: its file name and the content tag. */
+export function installIconUrl(file, identity) {
+  return `/install-icon/${file}?v=${identity.contentTag}`;
+}
+
 let builtIn = null;
 /** The built-in Kin manifest (web/manifest.webmanifest) and its ETag. */
 export function builtInManifest() {
@@ -116,13 +132,11 @@ export function builtInManifest() {
   return builtIn;
 }
 
-const iconUrl = (file, rev) => `/install-icon/${file}?v=${rev}`;
-
 /** The manifest for a published identity. id, start_url, scope and display
  * are the built-in manifest's, so installed apps update in place. */
 export function publishedManifest(householdId, identity) {
   const base = JSON.parse(builtInManifest().body.toString("utf8"));
-  const icon192 = iconUrl("192.png", identity.rev);
+  const icon192 = installIconUrl("192.png", identity);
   const manifest = {
     ...base,
     name: identity.name,
@@ -130,16 +144,20 @@ export function publishedManifest(householdId, identity) {
     description: identity.description || base.description,
     icons: [
       { src: icon192, sizes: "192x192", type: "image/png", purpose: "any" },
-      { src: iconUrl("512.png", identity.rev), sizes: "512x512", type: "image/png", purpose: "any" },
-      { src: iconUrl("maskable-512.png", identity.rev), sizes: "512x512", type: "image/png", purpose: "maskable" },
+      { src: installIconUrl("512.png", identity), sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: installIconUrl("maskable-512.png", identity), sizes: "512x512", type: "image/png", purpose: "maskable" },
     ],
     shortcuts: (base.shortcuts ?? []).map((shortcut) => ({
       ...shortcut,
       icons: [{ src: icon192, sizes: "192x192", type: "image/png" }],
     })),
   };
-  const householdTag = createHash("sha256").update(`kin-install:${householdId}`).digest("hex").slice(0, 16);
-  return { body: Buffer.from(JSON.stringify(manifest), "utf8"), etag: `"${householdTag}-${identity.rev}"` };
+  // The ETag covers the household, the published content and Kin's own
+  // manifest, whose colours and shortcuts the published one carries over.
+  const tag = createHash("sha256")
+    .update(`kin-install:${householdId}:${identity.contentTag}:${builtInManifest().etag}`)
+    .digest("hex").slice(0, 24);
+  return { body: Buffer.from(JSON.stringify(manifest), "utf8"), etag: `"${tag}"` };
 }
 
 /** Whether an If-None-Match header names `etag`. */

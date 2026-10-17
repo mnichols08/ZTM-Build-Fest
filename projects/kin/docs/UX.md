@@ -1022,7 +1022,9 @@ else):
   characters, "Shown under the icon"), Description (optional, up to 200).
 - **Icon:** "First letter of the household name" (default) or "Upload an
   image", with a preview of the icon and of the round crop some Android
-  launchers use, labelled for screen readers.
+  launchers use, labelled for screen readers. Save and Stop showing are
+  disabled while a save is in flight, and while an uploaded image can't be
+  used.
 - **Before the first publish:** "Your household name and icon will be stored
   by the Kin service without encryption so devices can show them on the home
   screen. Everything else stays encrypted." Save stays disabled until "I

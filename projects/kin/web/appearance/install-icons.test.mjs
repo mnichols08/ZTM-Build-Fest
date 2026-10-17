@@ -87,7 +87,7 @@ test("letter icons come in all four sizes with the letter on the household colou
   assert.ok(fontSize(drawn[2]) < fontSize(drawn[1]), "the maskable letter is smaller, inside the safe zone");
 });
 
-test("uploaded icons are centre-cropped, with the maskable copy inside the safe zone", async () => {
+test("uploaded icons are centre-cropped, with the maskable copy inside the safe circle", async () => {
   const drawn = installCanvas();
   const closed = [];
   globalThis.createImageBitmap = async () => ({ width: 400, height: 300, close() { closed.push(true); } });
@@ -97,7 +97,11 @@ test("uploaded icons are centre-cropped, with the maskable copy inside the safe 
   assert.deepEqual(pngSize(icons.apple180), { width: 180, height: 180 });
   const image = (canvas) => canvas.ops.find(([op]) => op === "drawImage").slice(1);
   assert.deepEqual(image(drawn[1]), [50, 0, 300, 300, 0, 0, 512, 512]);
-  assert.deepEqual(image(drawn[2]).map((value) => Math.round(value * 10) / 10), [50, 0, 300, 300, 51.2, 51.2, 409.6, 409.6]);
+  // The square fits inside the maskable safe circle (radius 40%): side 0.56.
+  assert.deepEqual(image(drawn[2]).map((value) => Math.round(value * 10) / 10), [50, 0, 300, 300, 112.6, 112.6, 286.7, 286.7]);
+  const [, , , , x, , side] = image(drawn[2]);
+  assert.ok(Math.hypot(x - 256, x - 256) <= 0.4 * 512 + 0.01, "the image's corners stay inside the safe circle");
+  assert.ok(side > 0);
   await assert.rejects(uploadIcons({ size: 10, type: "image/svg+xml" }, {}), /JPEG, PNG, or WebP/);
   globalThis.createImageBitmap = async () => ({ width: 10_000, height: 10_000, close() {} });
   await assert.rejects(uploadIcons(file, {}), /32 megapixels/);

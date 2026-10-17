@@ -457,8 +457,10 @@ export const schemaMethods = {
           // v1.1 (#78): the install identity an admin chose to publish
           // unencrypted, so devices can show it on home screens. One row per
           // publishing household; withdrawing deletes the row. The revision
-          // only grows, so a later publish never reuses an earlier one's
-          // icon URLs.
+          // only grows (the second table keeps it across a withdrawal), so a
+          // stale write is refused. content_tag hashes the published content:
+          // icon URLs and the manifest ETag name it, so they change whenever
+          // the content does, even after a backup restore.
           this.db.exec(`
             CREATE TABLE household_install_identity (
               household_id TEXT PRIMARY KEY REFERENCES households(id) ON DELETE CASCADE,
@@ -467,6 +469,7 @@ export const schemaMethods = {
               short_name TEXT NOT NULL CHECK (length(short_name) BETWEEN 1 AND 48),
               description TEXT NOT NULL CHECK (length(description) <= 200),
               icon_source TEXT NOT NULL CHECK (icon_source IN ('letter', 'upload')),
+              content_tag TEXT NOT NULL CHECK (length(content_tag) = 16),
               icon_192 BLOB NOT NULL CHECK (length(icon_192) BETWEEN 33 AND 524288),
               icon_512 BLOB NOT NULL CHECK (length(icon_512) BETWEEN 33 AND 524288),
               icon_maskable_512 BLOB NOT NULL CHECK (length(icon_maskable_512) BETWEEN 33 AND 524288),

@@ -13,6 +13,7 @@ import {
   installIcon,
   installName,
   installShortName,
+  installContentTag,
 } from "./install-identity.mjs";
 import { PairingService } from "./pairing-service.mjs";
 import { createKinServer } from "./server.mjs";
@@ -130,7 +131,7 @@ test("only household admins publish and withdraw; stale revisions conflict", asy
   view = await h.call("/api/household/install-identity", { token: partner.sessionToken });
   assert.equal(view.body.published.rev, 1);
   assert.equal(view.body.published.name, "The \"Nest\" — 家");
-  assert.equal(view.body.published.icons.icon512, "/install-icon/512.png?v=1");
+  assert.match(view.body.published.icons.icon512, /^\/install-icon\/512\.png\?v=[a-f0-9]{16}$/);
 
   assert.equal((await h.call("/api/household/install-identity", { token: h.admin.sessionToken, method: "DELETE", body: { expectedRev: 2 } })).status, 409);
   assert.deepEqual((await h.call("/api/household/install-identity", { token: h.admin.sessionToken, method: "DELETE", body: { expectedRev: 1 } })).body, { withdrawn: true });
@@ -161,6 +162,7 @@ test("the manifest and icons follow the requesting device's household", async (t
     "nothing published: the trusted device gets the built-in manifest too");
 
   await publish(h, h.admin);
+  const tag = h.store.getInstallIdentity(h.admin.householdId).contentTag;
   response = await h.call("/manifest.webmanifest", { device: partner.deviceToken });
   const manifest = JSON.parse(response.body);
   const base = JSON.parse(kin.body);
@@ -169,31 +171,35 @@ test("the manifest and icons follow the requesting device's household", async (t
   assert.equal(manifest.description, "Home base");
   for (const key of ["id", "start_url", "scope", "display"]) assert.equal(manifest[key], base[key], key);
   assert.deepEqual(manifest.icons.map((icon) => [icon.src, icon.purpose]), [
-    ["/install-icon/192.png?v=1", "any"], ["/install-icon/512.png?v=1", "any"], ["/install-icon/maskable-512.png?v=1", "maskable"]]);
+    [`/install-icon/192.png?v=${tag}`, "any"], [`/install-icon/512.png?v=${tag}`, "any"], [`/install-icon/maskable-512.png?v=${tag}`, "maskable"]]);
   const etag = response.headers.get("etag");
-  assert.match(etag, /^"[a-f0-9]{16}-1"$/);
+  assert.match(etag, /^"[a-f0-9]{24}"$/);
+  assert.notEqual(etag, kin.etag);
   assert.equal(response.headers.get("vary"), "Cookie");
   assert.equal((await h.call("/manifest.webmanifest", { device: partner.deviceToken, headers: { "if-none-match": etag } })).status, 304);
   assert.equal((await h.call("/manifest.webmanifest", { headers: { "if-none-match": etag } })).status, 200, "no cookie: Kin's manifest");
 
-  let icon = await h.call("/install-icon/512.png?v=1", { device: partner.deviceToken });
+  let icon = await h.call(`/install-icon/512.png?v=${tag}`, { device: partner.deviceToken });
   assert.equal(icon.headers.get("content-type"), "image/png");
   assert.match(icon.headers.get("cache-control"), /immutable/);
   assert.ok(icon.body.equals(png(512)));
   icon = await h.call("/install-icon/apple-180.png", { device: partner.deviceToken });
   assert.match(icon.headers.get("cache-control"), /no-cache/, "unversioned URLs revalidate");
   assert.ok(icon.body.equals(png(180)));
-  icon = await h.call("/install-icon/512.png?v=1");
+  icon = await h.call(`/install-icon/512.png?v=${tag}`);
   assert.equal(icon.headers.get("content-type"), "image/svg+xml", "no trusted device: Kin's icon");
+  assert.equal((await h.call("/install-icon/apple-180.png")).status, 404, "no PNG touch icon to fall back to: iOS keeps its own");
   assert.equal((await h.call("/install-icon/other.png", { device: partner.deviceToken })).headers.get("content-type"), "image/svg+xml");
 
   // An update changes the ETag and the icon URLs.
   await publish(h, h.admin, { expectedRev: 1, shortName: "Nest 2", icons: icons(20) });
+  const nextTag = h.store.getInstallIdentity(h.admin.householdId).contentTag;
+  assert.notEqual(nextTag, tag);
   response = await h.call("/manifest.webmanifest", { device: partner.deviceToken, headers: { "if-none-match": etag } });
   assert.equal(response.status, 200);
-  assert.match(response.headers.get("etag"), /-2"$/);
-  assert.equal(JSON.parse(response.body).icons[0].src, "/install-icon/192.png?v=2");
-  assert.match((await h.call("/install-icon/512.png?v=1", { device: partner.deviceToken })).headers.get("cache-control"), /no-cache/);
+  assert.notEqual(response.headers.get("etag"), etag);
+  assert.equal(JSON.parse(response.body).icons[0].src, `/install-icon/192.png?v=${nextTag}`);
+  assert.match((await h.call(`/install-icon/512.png?v=${tag}`, { device: partner.deviceToken })).headers.get("cache-control"), /no-cache/);
 
   // A revoked device gets Kin's manifest again.
   h.service.revokeDevice(h.admin.sessionToken, partner.deviceId, h.admin.memberId);
@@ -224,12 +230,16 @@ test("the published copy survives restart and is purged with the household", (t)
   const value = { name: "Nest", shortName: "Nest", description: "", iconSource: "upload",
     icons: { icon192: png(192), icon512: png(512), maskable512: png(512), apple180: png(180) },
     memberId: "a".repeat(32), deviceId: "b".repeat(32), updatedAt: 1 };
+  value.contentTag = installContentTag(value);
   const service = new PairingService({ store, now: () => 1_800_000_000_000 });
   const admin = service.bootstrap({ credential: credential("admin") });
   assert.equal(store.putInstallIdentity(admin.householdId, 0, value), 1);
   store.close();
   store = new DurableStore(databasePath);
   assert.equal(store.getInstallIdentity(admin.householdId).iconSource, "upload");
+  assert.equal(store.getInstallIdentity(admin.householdId).icons, undefined, "metadata reads carry no icon bytes");
+  assert.ok(store.getInstallIcon(admin.householdId, "apple180").equals(png(180)));
+  assert.equal(store.getInstallIcon(admin.householdId, "nope"), null);
   assert.equal(store.validate(), true);
   assert.equal(store.householdPurgeStatus(admin.householdId).counts.installIdentity, 2);
   const status = store.forcePurgeHousehold(admin.householdId, 1_800_000_000_001);
@@ -243,4 +253,30 @@ test("ETag matching accepts lists, weak tags and *", () => {
   assert.equal(etagMatches("*", '"x"'), true);
   assert.equal(etagMatches('"c"', '"b"'), false);
   assert.equal(etagMatches(undefined, '"b"'), false);
+});
+
+test("the content tag follows every published field and icon", () => {
+  const base = { name: "Nest", shortName: "Nest", description: "", iconSource: "letter",
+    icons: { icon192: png(192), icon512: png(512), maskable512: png(512), apple180: png(180) } };
+  const tag = installContentTag(base);
+  assert.match(tag, /^[a-f0-9]{16}$/);
+  assert.equal(installContentTag(structuredClone(base)), tag, "same content, same tag (a restore cannot reuse a URL for other content)");
+  for (const changed of [{ name: "Nest!" }, { shortName: "N" }, { description: "x" }, { iconSource: "upload" },
+    { icons: { ...base.icons, apple180: png(180, { filler: 17 }) } }])
+    assert.notEqual(installContentTag({ ...base, ...changed }), tag);
+});
+
+test("in-memory households erase the published copy when deletion finalizes", async (t) => {
+  const { EncryptedSyncService } = await import("./sync-service.mjs");
+  let now = 1_800_000_000_000;
+  const service = new PairingService({ now: () => now });
+  const sync = new EncryptedSyncService(service, { now: () => now });
+  const admin = service.bootstrap({ credential: credential("admin") });
+  sync.publishInstallIdentity(admin.sessionToken, { expectedRev: 0, name: "Nest", shortName: "Nest", iconSource: "letter", icons: icons() });
+  assert.ok(service.households.get(admin.householdId).installIdentity);
+  service.requestHouseholdDeletion(admin.sessionToken, admin.memberId);
+  now += 31 * 24 * 60 * 60 * 1000;
+  service.finalizeExpiredDeletions(now);
+  assert.equal(service.households.get(admin.householdId).installIdentity, undefined);
+  assert.equal(sync.installIdentityForDevice(admin.deviceToken), null);
 });

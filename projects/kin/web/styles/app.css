@@ -872,6 +872,8 @@ kin-install-identity .install-preview { display: flex; flex-wrap: wrap; align-it
 kin-install-identity .install-preview-icon img { display: block; width: 72px; height: 72px; border-radius: 22%; box-shadow: 0 1px 3px rgb(0 0 0 / .18); }
 kin-install-identity .install-preview-maskable img { border-radius: 50%; }
 kin-install-identity .install-preview-name { font-size: 13px; color: var(--ink-muted); }
+kin-install-identity .field-error, kin-household-defaults .field-error { margin: 0; color: var(--danger); font-size: 14px; }
+kin-install-identity .field-error:empty, kin-household-defaults .field-error:empty { display: none; }
 kin-install-identity .install-privacy { margin: 0; padding: 10px 12px; border-inline-start: 3px solid var(--accent); background: var(--accent-soft); }
 kin-household-defaults kin-appearance > h2, kin-household-defaults kin-appearance > .section-hint,
 kin-household-defaults kin-appearance .appearance-actions,

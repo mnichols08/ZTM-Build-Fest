@@ -46,9 +46,12 @@ read them.
 
 - **What is published.** The household name (the saved name, by the rules
   above), a short name for under the icon (at most 12 characters), an optional
-  description (at most 200 characters) and four PNG icons: 192 and 512 pixels,
-  a 512-pixel maskable icon whose content stays inside the central 80%, and a
-  180-pixel icon for iPhone and iPad. The icon is the first character of the
+  description (at most 200 characters) and four PNG icons of at most 512 KB
+  each: 192 and 512 pixels, a 512-pixel maskable icon whose content stays
+  inside the safe zone (a centred circle of 40% radius) for launchers that crop
+  to a shape, and a 180-pixel icon for iPhone and iPad. (The issue proposed
+  256 KB; a 512-pixel photo saved as PNG often exceeds that, so the cap is
+  512 KB.) The icon is the first character of the
   household name on the household's accent colour, or an uploaded image that
   is centre-cropped and redrawn in the browser (no metadata survives). The
   service checks each PNG's header and size only; it never decodes an image.
@@ -58,8 +61,11 @@ read them.
   confirm before saving.
 - **Storage.** Server schema 10 keeps one row per publishing household in
   `household_install_identity` with a revision that only grows (a second table
-  remembers the last revision after a withdrawal, so icon URLs never repeat).
-  A write supplies the revision it last saw; a stale write gets a conflict.
+  remembers the last revision after a withdrawal). A write supplies the
+  revision it last saw; a stale write gets a conflict. Each row also stores a
+  hash of its content, which names the icon URLs and the manifest ETag, so
+  they change whenever the content does, even if a backup restore repeats a
+  revision.
   Writes are audited as `install_identity_published` / `install_identity_withdrawn`.
 - **Who sees it.** `GET /manifest.webmanifest` and `/install-icon/*` resolve
   the household from the browser's `kin_device` cookie. Only a trusted,
@@ -67,8 +73,15 @@ read them.
   published copy; every other request gets Kin's built-in manifest and icon.
   There is no public URL. The manifest's `id`, `start_url`, `scope` and
   `display` never change, so installed apps update in place. The manifest is
-  `private, no-cache` with an ETag of the household and revision; icon URLs
-  carry the revision and are immutable. The service worker caches neither.
+  `private, no-cache` with an ETag of the household, the published content and
+  Kin's own manifest (whose colours and shortcuts it carries over). The icon
+  URLs in the manifest carry the content hash and are immutable. The
+  `apple-touch-icon` link in the app shell is unversioned and revalidated,
+  because the shell is the same for everyone; with nothing published it
+  returns 404, so iOS keeps its own behaviour (Kin has no PNG icon). The
+  service worker caches neither. A browser still running the previous
+  service worker can serve its cached Kin manifest until the v1.1 worker takes
+  over, which happens on the next launch after the update.
 - **Withdrawing** ("Stop showing") deletes the published copy; the manifest
   goes back to Kin. Household deletion removes it with the household's data.
   A renamed household keeps the old published name until an admin saves the

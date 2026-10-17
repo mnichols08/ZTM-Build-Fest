@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { DurableConflictError, MAX_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "./durable-store.mjs";
 import { canManageTrust, canParticipate, isHouseholdAdmin, PairingError, requireTrustAuthority } from "./pairing-service.mjs";
-import { INSTALL_ICONS, validateInstallIdentity } from "./install-identity.mjs";
+import { INSTALL_ICONS, installContentTag, installIconUrl, validateInstallIdentity } from "./install-identity.mjs";
 import {
   canonicalEventEnvelope,
   canonicalJson,
@@ -141,7 +141,7 @@ export class EncryptedSyncService {
       published: identity ? {
         rev: identity.rev, name: identity.name, shortName: identity.shortName, description: identity.description,
         iconSource: identity.iconSource, updatedAt: identity.updatedAt,
-        icons: Object.fromEntries(INSTALL_ICONS.map(({ key, file }) => [key, `/install-icon/${file}?v=${identity.rev}`])),
+        icons: Object.fromEntries(INSTALL_ICONS.map(({ key, file }) => [key, installIconUrl(file, identity)])),
       } : null,
     };
   }
@@ -158,7 +158,7 @@ export class EncryptedSyncService {
   publishInstallIdentity(sessionToken, value) {
     const auth = this.installIdentityWriter(sessionToken);
     const checked = validateInstallIdentity(value);
-    const record = { ...checked, memberId: auth.member.id, deviceId: auth.device.id, updatedAt: this.now() };
+    const record = { ...checked, contentTag: installContentTag(checked), memberId: auth.member.id, deviceId: auth.device.id, updatedAt: this.now() };
     let rev;
     if (this.store) {
       try { rev = this.store.putInstallIdentity(auth.household.id, checked.expectedRev, record); }
@@ -195,9 +195,18 @@ export class EncryptedSyncService {
     return { withdrawn };
   }
 
+  /** The published identity's metadata (no icon bytes), or null. */
   publishedInstallIdentity(household) {
     if (!household || household.lifecycleState === "deleted") return null;
-    return this.store ? this.store.getInstallIdentity(household.id) : household.installIdentity ?? null;
+    if (this.store) return this.store.getInstallIdentity(household.id);
+    const { icons, ...identity } = household.installIdentity ?? {};
+    return icons ? identity : null;
+  }
+
+  /** One published icon's bytes for the household, or null. */
+  publishedInstallIcon(householdId, key) {
+    if (this.store) return this.store.getInstallIcon(householdId, key);
+    return this.pairingService.households.get(householdId)?.installIdentity?.icons?.[key] ?? null;
   }
 
   /** The identity a browser's kin_device cookie may see: only a trusted,

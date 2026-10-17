@@ -1424,17 +1424,25 @@ function serveManifest(request, response, context) {
 function serveInstallIcon(request, response, url, file, context) {
   const icon = INSTALL_ICONS.find((entry) => entry.file === file);
   const resolved = icon && context.syncService.installIdentityForDevice(cookies(request).kin_device);
-  if (!resolved) {
-    // The built-in Kin icon stands in for every size.
+  const published = resolved && context.syncService.publishedInstallIcon(resolved.householdId, icon.key);
+  if (!published) {
+    // Kin has no PNG icon, and iOS ignores an SVG touch icon. A 404 keeps
+    // iOS's own behaviour from before (a screenshot), as it was until #78.
+    if (file === "apple-180.png") {
+      response.writeHead(404, { "Cache-Control": "private, no-cache", Vary: "Cookie" });
+      response.end();
+      return;
+    }
+    // The built-in Kin icon stands in for the other sizes.
     const body = readFileSync(join(webRoot, "icon.svg"));
     response.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "private, no-cache", Vary: "Cookie", "Content-Length": body.length });
     response.end(request.method === "HEAD" ? undefined : body);
     return;
   }
-  const body = resolved.identity.icons[icon.key];
-  // A URL naming the current revision never changes content; any other
-  // (the unversioned apple-touch-icon link, an old revision) is revalidated.
-  const current = url.searchParams.get("v") === String(resolved.identity.rev);
+  const body = published;
+  // A URL naming the current content never changes; any other (the
+  // unversioned apple-touch-icon link, earlier content) is revalidated.
+  const current = url.searchParams.get("v") === resolved.identity.contentTag;
   response.writeHead(200, {
     "Content-Type": "image/png",
     "Cache-Control": current ? "private, max-age=31536000, immutable" : "private, no-cache",

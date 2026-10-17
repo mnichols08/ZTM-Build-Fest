@@ -109,6 +109,8 @@ export class AppearanceController {
       if (result.value && (this.app.householdSettings?.revision ?? -1) <= result.value.revision) this.app.householdSettings = result.value;
       const draftPreserved = this.app.householdDefaults.initialize({ ...result, value: this.app.householdSettings });
       if (result.admin) void this.refreshInstallIdentity({ onlyFirst: true });
+      // A demotion removes the section; a later promotion loads it again.
+      else this.installIdentitySession = null;
       if (draftPreserved) return;
       if (this.app.appearance?.dirty) this.ctx.appearance.setHouseholdIdentity(this.app.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME);
       else {
