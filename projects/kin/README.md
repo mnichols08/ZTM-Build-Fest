@@ -144,6 +144,12 @@ the first Node 24 release whose `node:sqlite` returns TEXT values with embedded
 NUL characters intact. CI runs Node 24.22.0 on Windows and Linux; other
 platform/runtime combinations are not yet certified.
 
+### Test server with Docker
+
+To let testers use Kin from their own devices and networks, [deploy/](deploy/README.md)
+runs Kin behind Caddy (automatic HTTPS) with Docker Compose on any Linux server:
+set your subdomain in `deploy/.env`, then `docker compose up -d --build`.
+
 ### Running behind a TLS proxy
 
 Kin listens on loopback only (`KIN_HOST`, default `127.0.0.1`), so a hosted
