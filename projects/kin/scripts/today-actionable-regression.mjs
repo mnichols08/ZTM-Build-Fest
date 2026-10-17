@@ -172,7 +172,9 @@ export async function todayActionableRegressions(recovery) {
   opener.click();
   host.remove();
   quick.cancelButton.click();
-  await frame();
+  // The fallback focus can land a frame or two later on a slow runner (#164).
+  for (let wait = 0; wait < 80 && !(!quick.dialog.open && document.activeElement === app.today.querySelector('[data-section="today"] h2')); wait++)
+    await frame();
   check(!quick.dialog.open && document.activeElement === app.today.querySelector('[data-section="today"] h2'),
     "A. when the empty-state action is gone after a refresh, focus lands on the Today heading instead of the page body");
 
