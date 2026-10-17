@@ -175,9 +175,18 @@ contain only recipient-wrapped keys, not server-held household content keys.
 
 The recovery marker is assigned by the relay when it accepts the rotation;
 fields in a submitted package body cannot set or clear it. Clients relax only
-the expiry check, and only for a grant the relay marks this way; the expiry is
-part of the signed package metadata, so the marker cannot make a package
-verify that would not verify otherwise. Durable validation rejects a marker on
+the expiry check, and only for a grant the relay marks this way whose signed
+epoch is at or below the relay's current committed epoch; a newer epoch must
+arrive unexpired. The expiry is part of the signed package metadata, so the
+marker cannot make a package verify that would not verify otherwise.
+
+Epoch numbers come only from signed packages. The grant's outer `keyEpoch`,
+`senderDeviceId` and `grantId` are relay metadata and are not signed, so the
+client refuses a grant unless each equals the signed package's value and the
+package names this household and this device as recipient. A refused grant is
+not saved or acknowledged, and sync pauses with an explanation. The key store
+also refuses to save a sealed key under any epoch or household other than the
+one it was sealed for. Durable validation rejects a marker on
 an acknowledged, request-bound, or package-less grant. Grants stored before
 the marker existed load as ordinary grants and keep their normal expiry.
 Retained packages are bounded by `MAX_KEY_EPOCHS × MAX_ROTATION_PACKAGES`,
@@ -251,6 +260,15 @@ The service must not receive plaintext household event payloads or household con
 - A device may remain offline indefinitely; later synchronization must not rely on wall-clock timestamps as ordering authority.
 - Authorization is checked on every sync operation. Revoked-device queued events are rejected unless an explicit, reviewed recovery procedure says otherwise.
 - A client unable to decrypt or interpret an event must preserve it and surface a recoverable compatibility error; it must not silently drop it.
+
+### Events that can't be applied yet (quarantine)
+
+A remote event that decodes but doesn't fit this device's history (engine code 4, for example a completion delivered one page before the item it completes) doesn't stop sync. The relay cursor still advances, and the event's canonical bytes are kept in the encrypted `sync_state` record as `{ eventId, encoded, reason, firstSeenAt, attempts }` (`web/storage/quarantine.js`). Every later page that brings an event this device doesn't have yet replays the kept events with it, in canonical order. A kept event never stops a batch: if the engine refuses it for any reason (for example "unsupported" after an engine change), it stays kept, while the same failure on a page event still stops the batch. An event that applies, or arrives again as a duplicate, leaves the quarantine; one refused again counts another attempt and does not alert again. A kept event that is already in history, or that arrives again in the new page, is not replayed from the kept copy; history or the page copy decides, so a kept copy can never collide with them and stop sync.
+
+- **Bound:** 100 rows and 64 KiB of canonical bytes (the rows are re-encrypted with every sync state write). Rows already kept stay; refusals beyond the bound are only counted, as every refusal was before v1.0. A row refused 20 times is moved to the count, so a true poison event can't fill the bound or cost a history replay forever. Bytes that can't be decoded at all are never kept, since retrying can't help them; they're counted too. `quarantinedEventCount` is kept rows plus counted refusals.
+- **Review:** while events are kept, the device's status notice names up to three of them by short event ID with a plain-language reason, until they apply. A new refusal also shows it as a toast. It never shows bytes. With nothing kept the toast shows the earlier message.
+- **Lifecycle:** the rows live in the same encrypted record as the sync cursor, so they're unreadable while Kin is locked and are removed with the sync state when the device leaves or the household is deleted. They aren't cleared on lock, because that would drop the only copy before the retry that would apply them; the relay re-sending an event is not relied on.
+- An unreadable (code 2) or unsupported (code 3) event still stops the batch without advancing the cursor.
 
 ## Ordering and reconciliation
 

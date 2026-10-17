@@ -7,6 +7,7 @@
 //
 // Uses a fresh temporary profile and a loopback static server; never an
 // existing Kin database. No npm packages required.
+import { setViewport } from "./cdp-viewport.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -74,7 +75,7 @@ const shot = async (name) => {
   await writeFile(join(outDir, `${name}.png`), Buffer.from(data, "base64"));
   console.log(`saved ${name}.png`);
 };
-const viewport = (width, height, mobile) => client.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
+const viewport = (width, height, mobile) => setViewport(client, { width, height, deviceScaleFactor: 1, mobile });
 const scheme = (value) => client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value }] });
 const visit = async (hash) => { await client.evaluate(`document.querySelector('kin-app').ctx.navigation.navigate(${JSON.stringify(hash)})`); await delay(60); };
 

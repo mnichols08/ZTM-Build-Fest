@@ -10,7 +10,7 @@ export async function syncStorageRegressions(client) {
     const {createHouseholdEpochKey,restoreHouseholdEpochKey}=await import('/sync/crypto.js');
     const {encryptHouseholdSettings,decryptHouseholdSettings}=await import('/appearance/household.js');
     const {DEFAULT_APPEARANCE}=await import('/appearance/store.js');
-    const {encodeAddedRecord,idFromHex,idToHex}=await import('/wasm/kin-engine.js');
+    const {encodeAddedRecord,encodeCompletedRecord,idFromHex,idToHex}=await import('/wasm/kin-engine.js');
     const keyStore=await SyncKeyStore.open();
     const pendingDevice=await keyStore.getOrCreatePendingDevice();
     const keyHousehold='12'.repeat(16);
@@ -234,6 +234,27 @@ export async function syncStorageRegressions(client) {
     });
     if(replay.added!==0 || (await store.loadEvents()).length!==3)
       throw Error('Crash-safe redelivery duplicated a canonical event');
+    // #153: a completion delivered a page before its item is kept encrypted
+    // and applied automatically once the item arrives.
+    const lateItem={householdId:idFromHex(identity.householdId),actorId:idFromHex(identity.memberId),deviceId:idFromHex(identity.deviceId),itemId:idFromHex('5a'.repeat(16))};
+    const earlyCompletion=encodeCompletedRecord({...lateItem,eventId:idFromHex('5c'.repeat(16)),timestamp:4,logicalTime:4n});
+    const lateAdd=encodeAddedRecord({...lateItem,eventId:idFromHex('5b'.repeat(16)),timestamp:3,logicalTime:3n,text:'Arrives after its completion'});
+    const early=await store.commitRemoteBatch({received:[{encodedEvent:earlyCompletion}],nextCursor:'AAAAAAAAAAJ',engine:app.engine});
+    const kept=(await store.getSyncState()).quarantine;
+    if(early.added!==0 || early.quarantined!==1 || kept?.length!==1 || kept[0].eventId!=='5c'.repeat(16) || kept[0].reason!=='not-applicable')
+      throw Error('An early completion was not kept for retry');
+    const rawSyncState=await new Promise((resolve,reject)=>{
+      const request=database.transaction('sync_state').objectStore('sync_state').get('active');
+      request.onsuccess=()=>resolve(request.result);
+      request.onerror=()=>reject(request.error);
+    });
+    if('quarantine' in rawSyncState || JSON.stringify(rawSyncState).includes('5c'.repeat(16)))
+      throw Error('Quarantined events were stored without encryption');
+    const late=await store.commitRemoteBatch({received:[{encodedEvent:lateAdd}],nextCursor:'AAAAAAAAAAK',engine:app.engine});
+    const lateState=await store.getSyncState();
+    if(late.added!==2 || late.quarantined!==0 || lateState.quarantine.length!==0 ||
+       late.state.items.find(item=>item.text==='Arrives after its completion')?.status!=='completed')
+      throw Error('A kept completion was not applied once its item arrived');
     let rollbackRejected=false;
     try{
       await store.commitRemoteBatch({received:[],nextCursor:'',engine:app.engine});
@@ -252,15 +273,15 @@ export async function syncStorageRegressions(client) {
       request.onerror=()=>reject(request.error);
       request.onblocked=()=>reject(Error('Sync fixture database remained open'));
     });
-    return {version:database.version,localBytesPreserved:true,cursorSeparated:true,duplicateAdded:replay.added,offlineSettings:true};
+    return {version:database.version,localBytesPreserved:true,cursorSeparated:true,duplicateAdded:replay.added,offlineSettings:true,quarantineRetried:true};
   })()`);
   if (
     !result.localBytesPreserved ||
     !result.cursorSeparated ||
-    result.duplicateAdded !== 0 || !result.offlineSettings
+    result.duplicateAdded !== 0 || !result.offlineSettings || !result.quarantineRetried
   )
     throw new Error(`Sync storage fixture failed: ${JSON.stringify(result)}`);
   console.log(
-    "PASS sync migration preserves canonical bytes, retries exact envelopes, commits remote replay/cursor atomically, and keeps catch-up separate",
+    "PASS sync migration preserves canonical bytes, retries exact envelopes, commits remote replay/cursor atomically, retries quarantined events, and keeps catch-up separate",
   );
 }
