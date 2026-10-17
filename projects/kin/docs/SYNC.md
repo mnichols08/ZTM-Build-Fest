@@ -196,6 +196,15 @@ legitimate rotation. They do not count against the ordinary 128-transfer
 limit. A recipient's own key migration still discards its outstanding
 packages, because they are bound to its previous fingerprint.
 
+A retried rotation reuses its pending key only while every device it was
+already wrapped for is still a recipient (same device ID and key fingerprint).
+If any of them has been revoked or re-keyed since, the pending proposal is
+discarded and a fresh key and proposal ID are generated, so a relay that kept
+the earlier package cannot hand the departed device the new epoch's key (#176).
+This happens only after reconciliation confirms the relay is still at the
+proposal's expected epoch, so no device can already depend on the discarded
+key. A recipient set that is unchanged or grows keeps the pending key.
+
 Replacing pending packages compares the complete expected pending record in one
 encrypted IndexedDB transaction. Completion and removal match the proposal ID,
 so a stale tab cannot clear a newer proposal. Completion preserves the local

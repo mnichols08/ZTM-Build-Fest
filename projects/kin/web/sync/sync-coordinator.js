@@ -33,6 +33,17 @@ export function memberHasTrustAuthority(status) {
   return status?.memberKind === "adult";
 }
 
+/**
+ * Whether a pending rotation's key was wrapped for a device that is no longer
+ * among `recipients` (matched by device ID and key fingerprint). Reusing that
+ * key is only safe when the recipient set is unchanged or grows (#176).
+ */
+export function rotationRecipientsShrank(packages = [], recipients = []) {
+  return packages.some((keyPackage) => !recipients.some((recipient) =>
+    recipient.deviceId === keyPackage.recipientDeviceId &&
+    recipient.fingerprint === keyPackage.recipientFingerprint));
+}
+
 // A normal empty poll still returns a projection and cursor boundary from the
 // store. Publishing those as a change makes every open tab replay and repaint
 // the same workspace. Only an accepted new event needs a projection broadcast.
@@ -681,6 +692,16 @@ export class SyncCoordinator {
     const devices = await this.loadDeviceDirectory();
     const recipients = devices.filter((device) =>
       device.deviceId !== this.identity.deviceId && !device.revokedAt && device.publicKeys);
+    // #176: the pending key has been wrapped for every earlier recipient. If
+    // one of them is no longer a recipient (revoked, or re-keyed), a relay that
+    // kept that package could hand it the new epoch's key, so the key is
+    // discarded for a fresh one. Reconciliation above has just confirmed the
+    // pending proposal did not commit (the relay is still at expectedEpoch),
+    // so no device can already depend on the discarded key.
+    if (pending && rotationRecipientsShrank(pending.packages, recipients)) {
+      await this.store.clearPendingRotation(pending.proposalId);
+      pending = null;
+    }
     if (!pending) {
       const currentKey = await this.keyStore.getEpoch(
         this.identity.householdId,
