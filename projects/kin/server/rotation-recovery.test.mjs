@@ -239,7 +239,9 @@ test("a committed rotation package is discarded when its recipient is revoked", 
   assert.equal(f.sync.state(f.adult.householdId).grants.size, 0);
 });
 
-test("recipient key succession refreshes pending packages for the same epoch secret", async (t) => {
+// #176: the pending key was wrapped for the recipient's previous key, so an
+// unaccepted proposal is replaced with a fresh epoch key for the new one.
+test("recipient key succession replaces an unaccepted pending rotation with a fresh epoch key", async (t) => {
   const f = await fixture(t);
   const original = await interrupt(f);
   const replacement = await generateDeviceKeys();
@@ -250,18 +252,19 @@ test("recipient key succession refreshes pending packages for the same epoch sec
   f.pairing.transitionSyncPublicKeys(f.partner.sessionToken, transition);
   f.sync.onDeviceKeyTransition(f.adult.householdId, f.partner.deviceId);
   await f.retry();
-  assert.equal(f.epochs.get(2).fingerprint, original.fingerprint);
+  assert.notEqual(f.epochs.get(2).fingerprint, original.fingerprint);
   await assertSameKey(f, f.submitted[0].packages[0], replacement);
 });
 
-test("revoked recipients are removed from an unaccepted pending rotation", async (t) => {
+// #176: never commit a key already wrapped for the revoked device.
+test("a revoked recipient makes an unaccepted pending rotation use a fresh epoch key", async (t) => {
   const f = await fixture(t);
   const original = await interrupt(f);
   f.pairing.devices.get(f.partner.deviceId).revokedAt = Date.now();
   f.sync.onAccessChange(f.adult.householdId, [f.partner.deviceId]);
   await f.retry();
   assert.deepEqual(f.submitted[0].packages, []);
-  assert.equal(f.epochs.get(2).fingerprint, original.fingerprint);
+  assert.notEqual(f.epochs.get(2).fingerprint, original.fingerprint);
 });
 
 test("issuer key migration reseals the pending epoch and refreshes its package signatures", async (t) => {
