@@ -12,6 +12,8 @@
 #      deployment don't add copies, so they can't push good backups out.
 #   3. If KIN_RESTORE_FROM names a backup, restores it once (README: "Roll back
 #      or move data").
+# It also clears database locks left by a container that was killed before
+# Kin could release them (Railway force-stops the old container on redeploy).
 set -euo pipefail
 : "${KIN_ORIGIN:?Set the KIN_ORIGIN variable to the public https:// address, for example https://kin.yourdomain.com}"
 export PORT="${PORT:-8080}"
@@ -44,6 +46,18 @@ fi
 mkdir -p "$data" "$backups"
 chown node:node "$data" "$backups"
 as_node() { setpriv --reuid=node --regid=node --init-groups -- "$@"; }
+
+# Kin refuses to open a database whose lock file exists, and never guesses that
+# a lock is stale. Here one is: Railway mounts a volume on one deployment at a
+# time, and nothing in this container has started yet, so a lock can only be
+# left by a previous container that was stopped before Kin released it.
+for lock in "$database.service.lock" "$database.maintenance.lock"; do
+  if [ -e "$lock" ]; then
+    held_for="$(grep -o '"operation":"[a-z-]*"' "$lock" 2>/dev/null | cut -d'"' -f4 || true)"
+    rm -f -- "$lock"
+    log stale_lock_removed "Removed $(basename "$lock") (${held_for:-unknown} lock) left by a previous container."
+  fi
+done
 
 deployment="${RAILWAY_DEPLOYMENT_ID:-}"
 deployed_marker="$backups/.deployment-${deployment:-none}"
