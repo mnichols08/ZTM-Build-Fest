@@ -144,6 +144,16 @@ pub enum HouseholdCommand {
         target_id: [u8; 16],
         member_id: Option<ActorId>,
     },
+    /// The context's device announces its automatic name.
+    DescribeDevice {
+        auto_name: String,
+    },
+    /// Sets (Some) or clears (None) the nickname of one of the context
+    /// member's devices.
+    NicknameDevice {
+        device_id: DeviceId,
+        nickname: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -352,6 +362,19 @@ pub fn create_event(
             target_id: *target_id,
             member_id: *member_id,
         },
+        DescribeDevice { auto_name } => EventKind::DeviceDescribed {
+            auto_name: crate::state::normalize_device_name(auto_name)?,
+        },
+        NicknameDevice {
+            device_id,
+            nickname,
+        } => EventKind::DeviceNicknamed {
+            device_id: *device_id,
+            nickname: nickname
+                .as_deref()
+                .map(crate::state::normalize_device_nickname)
+                .transpose()?,
+        },
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -542,6 +565,41 @@ pub fn execute_with(
         {
             return Err(KinError::InvalidEvent);
         }
+    }
+    // A device name must change something: describing a device under the
+    // name it already has, or giving a nickname it already has, records
+    // nothing new. A device keeps its member, and only that member names it.
+    match command {
+        HouseholdCommand::DescribeDevice { auto_name } => {
+            let auto_name = crate::state::normalize_device_name(auto_name)?;
+            if current
+                .devices
+                .iter()
+                .find(|device| device.device_id == context.device_id)
+                .is_some_and(|device| {
+                    device.member_id != context.actor_id || device.auto_name == auto_name
+                })
+            {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::NicknameDevice {
+            device_id,
+            nickname,
+        } => {
+            let nickname = nickname
+                .as_deref()
+                .map(crate::state::normalize_device_nickname)
+                .transpose()?;
+            if !current.devices.iter().any(|device| {
+                device.device_id == *device_id
+                    && device.member_id == context.actor_id
+                    && device.nickname != nickname
+            }) {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        _ => {}
     }
     if let HouseholdCommand::SetHouseholdMode(mode) = command {
         if current.mode == *mode {
@@ -854,7 +912,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             .map_err(|_| KinError::MalformedProtocol)?
             .to_owned()
     };
-    let accepts_payload = matches!(kind, 1 | 5 | 8 | 14 | 18 | 19)
+    let accepts_payload = matches!(kind, 1 | 5 | 8 | 14 | 18 | 19 | 42 | 43)
         || kind == 21 && text_length == 16
         || matches!(kind, 22 | 23) && text_length >= 24
         || kind == 25 && (17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
@@ -876,6 +934,9 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 39 && !matches!(option, 1..=4)
         || kind == 40 && text_length != 0
         || kind == 41 && (!matches!(option, 1..=2) || text_length != 16)
+        || kind == 42 && (id != [0; 16] || text.is_empty())
+        || kind == 43 && id == [0; 16]
+        || matches!(kind, 42 | 43) && text_length > crate::state::MAX_DEVICE_NAME_BYTES
     {
         return Err(KinError::MalformedProtocol);
     }
@@ -1210,6 +1271,11 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
                 let value = field(bytes, 128)?;
                 (value != [0; 16]).then_some(ActorId(value))
             },
+        },
+        42 => DescribeDevice { auto_name: text },
+        43 => NicknameDevice {
+            device_id: DeviceId(id),
+            nickname: (!text.is_empty()).then_some(text),
         },
         _ => return Err(KinError::UnsupportedVersion),
     };

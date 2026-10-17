@@ -47,6 +47,8 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::AttachmentBound { .. } => 39,
         EventKind::AttachmentRemoved { .. } => 40,
         EventKind::ResponsibilityChanged { .. } => 41,
+        EventKind::DeviceDescribed { .. } => 42,
+        EventKind::DeviceNicknamed { .. } => 43,
     }
 }
 
@@ -277,6 +279,28 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             payload.push(*target_kind as u8);
             payload.extend_from_slice(target_id);
             payload.extend_from_slice(&member_id.map_or([0; 16], |id| id.0));
+        }
+        EventKind::DeviceDescribed { auto_name } => {
+            let name = crate::state::normalize_device_name(auto_name)?;
+            payload.extend_from_slice(&(name.len() as u32).to_le_bytes());
+            payload.extend_from_slice(name.as_bytes());
+        }
+        EventKind::DeviceNicknamed {
+            device_id,
+            nickname,
+        } => {
+            if device_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&device_id.0);
+            match nickname {
+                Some(nickname) => {
+                    let nickname = crate::state::normalize_device_nickname(nickname)?;
+                    payload.extend_from_slice(&(nickname.len() as u32).to_le_bytes());
+                    payload.extend_from_slice(nickname.as_bytes());
+                }
+                None => payload.extend_from_slice(&0u32.to_le_bytes()),
+            }
         }
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());

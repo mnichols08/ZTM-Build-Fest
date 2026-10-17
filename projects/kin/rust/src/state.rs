@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::KinError;
 use crate::event::{
-    valid_timestamp, ActorId, AreaId, AttachmentId, AttachmentParentKind, EventEnvelope, EventId,
-    EventKind, HandoffId, HouseholdId, HouseholdMode, ItemClassification, ItemId, NoteId,
+    valid_timestamp, ActorId, AreaId, AttachmentId, AttachmentParentKind, DeviceId, EventEnvelope,
+    EventId, EventKind, HandoffId, HouseholdId, HouseholdMode, ItemClassification, ItemId, NoteId,
     PinTargetKind, PulseValue, ReferenceFieldId, ReferenceRecordId, ResponsibilityTargetKind,
     RoutineId, StepId, TalkId,
 };
@@ -280,6 +280,59 @@ pub fn normalize_area_name(name: &str) -> Result<String, KinError> {
     Ok(normalized.to_owned())
 }
 
+/// Device names (#71): an automatic name is at most 48 characters, a
+/// nickname at most 32; either is at most 4 bytes per character.
+pub const MAX_DEVICE_NAME_CHARS: usize = 48;
+pub const MAX_DEVICE_NICKNAME_CHARS: usize = 32;
+pub const MAX_DEVICE_NAME_BYTES: usize = MAX_DEVICE_NAME_CHARS * 4;
+
+/// Invisible characters that can disguise a name: Unicode format characters
+/// (bidirectional overrides and isolates, zero-width space, word joiner,
+/// soft hyphen, byte-order mark and the like). Zero-width joiner and
+/// non-joiner stay allowed: emoji sequences and some scripts need them.
+fn is_disguising_format_char(c: char) -> bool {
+    matches!(c,
+        '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}' | '\u{200E}' | '\u{200F}'
+        | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{206F}'
+        | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}' | '\u{E0001}' | '\u{E0020}'..='\u{E007F}')
+}
+
+/// A device name trimmed of surrounding whitespace, or InvalidEvent if it is
+/// empty, too long, or has control or disguising format characters.
+fn normalize_device_text(text: &str, max_chars: usize) -> Result<String, KinError> {
+    let normalized = text.trim();
+    if normalized.is_empty()
+        || normalized.len() > max_chars * 4
+        || normalized.chars().count() > max_chars
+        || normalized
+            .chars()
+            .any(|c| c.is_control() || is_disguising_format_char(c))
+    {
+        return Err(KinError::InvalidEvent);
+    }
+    Ok(normalized.to_owned())
+}
+
+/// A device's automatic name, such as "Chrome on iPhone".
+pub fn normalize_device_name(name: &str) -> Result<String, KinError> {
+    normalize_device_text(name, MAX_DEVICE_NAME_CHARS)
+}
+
+/// A nickname a member gives one of their devices.
+pub fn normalize_device_nickname(nickname: &str) -> Result<String, KinError> {
+    normalize_device_text(nickname, MAX_DEVICE_NICKNAME_CHARS)
+}
+
+/// One named device: the member it belongs to, the automatic name it last
+/// announced and the nickname its member gave it, if any.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeviceNameState {
+    pub device_id: DeviceId,
+    pub member_id: ActorId,
+    pub auto_name: String,
+    pub nickname: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HandoffStatus {
     Unacknowledged,
@@ -344,6 +397,9 @@ pub struct HouseholdState {
     pub maintenance_events: Vec<MaintenanceEventState>,
     pub attachments: Vec<AttachmentState>,
     pub responsibilities: Vec<ResponsibilityState>,
+    /// Named devices in device-ID order. Not part of the KINS projection;
+    /// hosts read it through `kin_device_names`.
+    pub devices: Vec<DeviceNameState>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

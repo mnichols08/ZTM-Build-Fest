@@ -55,6 +55,9 @@ mod attachment_tests;
 mod responsibility_tests;
 
 #[cfg(test)]
+mod device_name_tests;
+
+#[cfg(test)]
 mod recurring_task_tests;
 
 #[cfg(test)]
