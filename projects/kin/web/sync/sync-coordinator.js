@@ -989,7 +989,9 @@ export class SyncCoordinator {
           householdKey: currentKey.householdKey,
           signingKey: this.deviceKeys.keys.signingPrivateKey,
         });
-        if (!(await this.store.replacePendingBindingEnvelope(record.legacy_key, resealed))) continue;
+        // Only one tab's re-sealed copy is stored and sent; a tab that lost
+        // the race leaves it for the next pass.
+        if (!(await this.store.replacePendingBindingEnvelope(record.legacy_key, envelope.eventId, resealed))) continue;
         record.controlEnvelope = resealed;
       }
       await this.request("/api/sync/bindings", {
@@ -1001,6 +1003,12 @@ export class SyncCoordinator {
   }
 
   async pushPendingEvents() {
+    // Events made under this device's earlier local identity need its binding
+    // on the relay first, or other devices can't attribute them. A binding
+    // still pending (it waits out a key rotation) holds events back too.
+    if ((await this.store.getPendingBindings()).some((record) =>
+      record.controlEnvelope?.deviceId === this.identity.deviceId))
+      return;
     while (true) {
       const pending = await this.store.getPendingOutbox(MAX_PUSH_BATCH);
       if (!pending.length) return;

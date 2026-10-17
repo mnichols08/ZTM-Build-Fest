@@ -1618,8 +1618,9 @@ export class EventStore {
   }
 
   // Replaces the sealed envelope of this device's not-yet-uploaded identity
-  // binding (re-sealed under a newer key epoch). False if it was uploaded.
-  replacePendingBindingEnvelope(legacyKey, envelope) {
+  // binding (re-sealed under a newer key epoch). False if it was uploaded or
+  // another tab already replaced the envelope this one re-sealed.
+  replacePendingBindingEnvelope(legacyKey, expectedEventId, envelope) {
     const transaction = this.database.transaction(
       SYNC_BINDING_STORE,
       "readwrite",
@@ -1629,7 +1630,7 @@ export class EventStore {
     return transactionResult(transaction, (finish) => {
       request.onsuccess = () => {
         const record = request.result;
-        if (!record || record.uploaded) {
+        if (!record || record.uploaded || record.controlEnvelope?.eventId !== expectedEventId) {
           finish(false);
           return;
         }

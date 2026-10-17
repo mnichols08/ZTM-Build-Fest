@@ -108,8 +108,8 @@ async function bindingPusher(sealedEpoch, { uploadedMeanwhile = false } = {}) {
   coordinator.keyStore = { async getEpoch(householdId, keyEpoch) { return epochKeys.has(keyEpoch) ? { householdKey: epochKeys.get(keyEpoch) } : null; } };
   coordinator.store = {
     async getPendingBindings() { return record.uploaded ? [] : [structuredClone(record)]; },
-    async replacePendingBindingEnvelope(key, next) {
-      if (uploadedMeanwhile || record.uploaded) return false;
+    async replacePendingBindingEnvelope(key, expectedEventId, next) {
+      if (uploadedMeanwhile || record.uploaded || record.controlEnvelope.eventId !== expectedEventId) return false;
       record.controlEnvelope = structuredClone(next);
       return true;
     },
@@ -151,5 +151,14 @@ test("a binding already at the current epoch is uploaded as it is", async () => 
 test("a binding another tab uploaded meanwhile is not re-sealed or sent again", async () => {
   const { coordinator, posted } = await bindingPusher(1, { uploadedMeanwhile: true });
   await coordinator.pushIdentityBindings({ currentEpoch: 2, rotationPending: false });
+  assert.equal(posted.length, 0);
+});
+
+test("events wait while this device's own binding is still pending", async () => {
+  const { coordinator, posted } = await bindingPusher(1);
+  let outboxRead = false;
+  coordinator.store.getPendingOutbox = async () => { outboxRead = true; return [{ envelope: { eventId: "x" } }]; };
+  await coordinator.pushPendingEvents();
+  assert.equal(outboxRead, false, "no event is pushed ahead of the binding it depends on");
   assert.equal(posted.length, 0);
 });
