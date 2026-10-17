@@ -2,6 +2,7 @@
 // WebAuthn JSON conversions the other parts use for passkey confirmations.
 // Part of <kin-household>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
+import { automaticDeviceName, currentPlatform } from "../../platform.js";
 
 const decode = (value) =>
   Uint8Array.from(
@@ -67,7 +68,7 @@ export class HouseholdAuth {
         method: "POST",
         body: JSON.stringify({
           purpose,
-          deviceLabel: values.deviceLabel ?? "This device",
+          deviceLabel: values.deviceLabel ?? automaticDeviceName(currentPlatform()),
           code: values.code,
         }),
       });

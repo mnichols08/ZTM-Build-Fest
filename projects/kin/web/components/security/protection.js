@@ -9,6 +9,22 @@ import { commitRootRotationKeys, prepareRootRotationKeys } from "../../sync/key-
 import { loadKinEngine } from "../../wasm/kin-engine.js";
 import { manifestRecoveryLabels, recoveryKeyLabel } from "../../security/key-label.js";
 
+// The password-manager entry name for recovery keys, shared with the unlock form.
+export const RECOVERY_KEY_ACCOUNT = "Kin recovery key";
+
+// A field only a password manager reads: off screen, out of the tab order,
+// hidden from assistive technology.
+export function passwordManagerField(type, autocomplete, value) {
+  const input = document.createElement("input");
+  input.type = type;
+  input.autocomplete = autocomplete;
+  input.value = value;
+  input.tabIndex = -1;
+  input.className = "visually-hidden";
+  input.setAttribute("aria-hidden", "true");
+  return input;
+}
+
 export class SecurityProtection {
   constructor(ctx) {
     this.ctx = ctx;
@@ -30,9 +46,9 @@ export class SecurityProtection {
     if (this.host.busy) return;
     const secret = randomRecoverySecret();
     const wrapperId = LocalVault.newWrapperId();
-    this.host.render();
+    this.host.render({ frameOnly: true });
     this.host.heading.textContent = "Save your recovery key";
-    this.host.text("This key is your backup way into Kin on this device if the passkey is ever lost. Save it somewhere safe outside Kin, such as a password manager.");
+    this.host.text("This key is your backup way into Kin on this device if the passkey is ever lost. Save it somewhere safe outside Kin, such as a password manager. You won't need to type it now.");
     const warning = this.host.text("Anyone with the key can unlock this device's copy of the household. If every unlock method is lost, Kin cannot recover the data.");
     warning.className = "security-note";
     const output = document.createElement("code");
@@ -50,29 +66,34 @@ export class SecurityProtection {
         }
       });
     }
+    const tip = this.host.text("Tap Copy key and paste it into your password manager or a private note. Your browser may also offer to save it when you continue.");
+    tip.className = "security-note";
+    // No retyping (#163): the person confirms they saved the key. The hidden
+    // username and new-password fields let the browser offer to save the key
+    // in its password manager on submit; the unlock form asks for the same
+    // "Kin recovery key" entry, so it can autofill there later.
     const form = document.createElement("form");
-    const label = document.createElement("label");
+    form.append(passwordManagerField("text", "username", RECOVERY_KEY_ACCOUNT), passwordManagerField("password", "new-password", secret));
+    const saved = document.createElement("label");
+    saved.className = "recovery-saved";
     const confirmation = document.createElement("input");
-    confirmation.type = "password";
+    confirmation.type = "checkbox";
     confirmation.id = "confirm-recovery";
-    confirmation.autocomplete = "off";
-    confirmation.spellcheck = false;
     confirmation.required = true;
-    label.htmlFor = confirmation.id;
-    label.textContent = "Paste or type the saved key to confirm";
+    saved.append(confirmation, "I've saved this key somewhere safe, like a password manager.");
     const button = document.createElement("button");
     button.type = "submit";
     button.className = "primary-action";
     button.textContent = "Encrypt and continue";
-    form.append(label, confirmation, button);
+    form.append(saved, button);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      if (confirmation.value.trim() !== secret) return this.host.error(new Error("The recovery keys do not match. Save and re-enter the complete key."));
-      confirmation.value = "";
+      if (!confirmation.checked) return this.host.error(new Error("Save the recovery key first, then tick the box."));
       output.textContent = "";
       void this.host.run(() => this.host.establishProtection(secret, { recoveryWrapperId: wrapperId }));
     });
     this.host.append(form);
+    this.host.button("Back", () => this.host.render(), "secondary");
     confirmation.focus();
   }
 

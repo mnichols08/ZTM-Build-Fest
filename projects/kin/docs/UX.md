@@ -878,6 +878,29 @@ First run is a welcome, a "Save your recovery key" step, then create/join
 choices; passkey unlock is offered as soon as the device holds a household
 credential. Security settings state whether passkey unlock is on.
 
+### First-run friction fixes — Adopted (v1.0 reality check, #163)
+
+Testers on real phones found three setup snags:
+
+- **No retyping the recovery key.** The setup step shows the key with Copy
+  key and asks the person to tick "I've saved this key somewhere safe". It no
+  longer asks them to paste it back. The form carries off-screen
+  `username`/`new-password` fields so the browser can offer to save it as a
+  "Kin recovery key" password; the recovery unlock form asks for
+  `current-password` under the same name, so a saved key can autofill. The
+  setup step shows only the key and its controls (with Back), not the
+  welcome text above it.
+- **Install help on iPhone and iPad.** No iOS browser offers an install
+  prompt, and the Home Screen app keeps its own storage, separate from the
+  browser it was added from. So the welcome screen in an iOS browser shows
+  Home Screen steps for that browser (Safari; Chrome on iOS 16.4+; others
+  fall back to Safari) *before* setup, and More has the same steps under
+  Install Kin. Inside the installed app, nothing is shown.
+- **Automatic device name.** Create and join fill in the device name from the
+  browser and platform ("Chrome on iPhone"; just "iPhone" in the installed
+  app), shown as one line with an optional Change. Encrypted names and
+  nicknames remain issue #71.
+
 ---
 
 ## 8.2 Trusted devices
