@@ -246,6 +246,7 @@ Kin is nested in the ZTM Build Fest repository. Its community files and template
 - [Web Component contract](docs/COMPONENTS.md)
 - [Testing contract](docs/TESTING.md)
 - [Accessibility contract](docs/ACCESSIBILITY.md)
+- [v1.0 compatibility and upgrade commitment](docs/V1.0-COMPATIBILITY.md)
 - [Persistent contract versioning](docs/VERSIONING.md)
 - [Migration safety](docs/MIGRATIONS.md)
 - [Portable household data](docs/PORTABILITY.md)
