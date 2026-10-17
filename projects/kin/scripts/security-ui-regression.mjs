@@ -201,16 +201,22 @@ async function browserUiChecks() {
   check(recovery.length === 64, "setup displays user-held recovery secret");
   check(
     app.security.heading.textContent === "Save your recovery key" &&
-      app.security.querySelector("#confirm-recovery")?.labels?.[0]?.textContent.includes("confirm"),
-    "setup asks the person to save and confirm the key",
+      app.security.querySelector("#confirm-recovery")?.type === "checkbox" &&
+      app.security.querySelector("#confirm-recovery").labels?.[0]?.textContent.includes("saved this key") &&
+      app.security.querySelector('input[autocomplete="new-password"]')?.value === recovery,
+    "setup asks the person to save the key, not retype it, and offers it to the password manager",
   );
   // Not wait(): its timeout message would print the displayed recovery key.
   for (let i = 0; i < 400 && !/recovery key K-[0-9A-F]{4}/.test(app.security.querySelector(".recovery-key-label")?.textContent ?? ""); i++)
     await new Promise((r) => setTimeout(r, 25));
   check(/recovery key K-[0-9A-F]{4}/.test(app.security.querySelector(".recovery-key-label")?.textContent ?? ""), "setup shows the new key's label");
   const setupLabel = /K-[0-9A-F]{4}/.exec(app.security.querySelector(".recovery-key-label").textContent)[0];
+  check(app.security.querySelector('input[autocomplete="username"]')?.value === `Kin recovery key ${setupLabel}`,
+    "the password-manager entry is named for this key's label, so another device's key isn't overwritten");
   const confirm = app.security.querySelector("#confirm-recovery");
-  confirm.value = recovery;
+  confirm.form.requestSubmit();
+  check(!app.security.busy && !app.store, "setup waits until the person says the key is saved");
+  confirm.checked = true;
   const started = performance.now();
   confirm.form.requestSubmit();
   await wait(() => Boolean(app.store) && !app.busy && !app.security.busy);
@@ -495,7 +501,7 @@ async function browserUiChecks() {
   app.security.showSetup();
   recovery = app.security.querySelector(".recovery-key").textContent;
   const targetInput = app.security.querySelector("#confirm-recovery");
-  targetInput.value = recovery;
+  targetInput.checked = true;
   targetInput.form.requestSubmit();
   await wait(() => app.vault?.vaultId && app.state && !app.security.busy && !app.busy);
   check(

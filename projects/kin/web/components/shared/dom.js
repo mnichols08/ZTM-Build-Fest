@@ -65,3 +65,17 @@ export function field(caption, control, { hint = "", className = "", parent = nu
   parent?.append(label);
   return label;
 }
+
+/** Home Screen install steps from platform.js installHelp(), as a card. */
+export function installHelpCard(help, { parent = null } = {}) {
+  const node = document.createElement("section");
+  node.className = "install-help";
+  node.setAttribute("aria-label", help.title);
+  text(help.title, { parent: node, tag: "h3" });
+  const steps = document.createElement("ol");
+  for (const step of help.steps) text(step, { parent: steps, tag: "li" });
+  node.append(steps);
+  text(help.note, { parent: node });
+  parent?.append(node);
+  return node;
+}

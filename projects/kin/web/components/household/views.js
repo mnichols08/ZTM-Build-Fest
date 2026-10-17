@@ -1,11 +1,40 @@
 // The household panel's main views: setup, create, join and member.
 // Part of <kin-household>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
+import { automaticDeviceName, currentPlatform } from "../../platform.js";
 
 export class HouseholdViews {
   constructor(ctx) {
     this.ctx = ctx;
     this.host = ctx.host;
+  }
+
+  // The device name, filled in automatically ("Chrome on iPhone") and shown as
+  // one line; "Change" opens the field. Nobody has to type to continue.
+  deviceNameField() {
+    const automatic = automaticDeviceName(currentPlatform());
+    const details = document.createElement("details");
+    details.className = "device-name";
+    const summary = document.createElement("summary");
+    const shown = document.createElement("span");
+    const change = document.createElement("span");
+    change.className = "device-name-change";
+    change.textContent = "Change";
+    summary.append(shown, " ", change);
+    const label = document.createElement("label");
+    label.textContent = "Device name";
+    const input = document.createElement("input");
+    input.name = "deviceLabel";
+    input.maxLength = 48;
+    input.value = automatic;
+    input.autocomplete = "off";
+    const update = () => { shown.textContent = `This device will show as “${input.value.trim() || automatic}”.`; };
+    input.addEventListener("input", update);
+    update();
+    label.append(input);
+    details.append(summary, label);
+    details.addEventListener("toggle", () => { if (details.open) input.focus(); });
+    return { element: details, value: () => input.value.trim() || automatic };
   }
 
   render() {
@@ -69,22 +98,15 @@ export class HouseholdViews {
       "Kin creates a passkey for this household on this device. Your face, fingerprint, or screen lock then confirms household actions and can unlock Kin.",
     );
     const form = document.createElement("form");
-    const deviceLabel = document.createElement("label");
-    deviceLabel.textContent = "Name this device";
-    const device = document.createElement("input");
-    device.name = "deviceLabel";
-    device.required = true;
-    device.maxLength = 48;
-    device.value = "This device";
-    deviceLabel.append(device);
+    const device = this.deviceNameField();
     const submit = document.createElement("button");
     submit.type = "submit";
     submit.className = "primary-action";
     submit.textContent = "Create household with passkey";
-    form.append(deviceLabel, submit);
+    form.append(device.element, submit);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      this.host.register("bootstrap", { deviceLabel: device.value });
+      this.host.register("bootstrap", { deviceLabel: device.value() });
     });
     this.host.append(form);
     this.host.button("Back", () => this.host.startIntent(null), "secondary");
@@ -198,22 +220,15 @@ export class HouseholdViews {
     help.id = "pair-help";
     help.className = "hint";
     help.textContent = "Codes ignore case and punctuation.";
-    const deviceLabel = document.createElement("label");
-    deviceLabel.textContent = "Name this device";
-    const device = document.createElement("input");
-    device.name = "deviceLabel";
-    device.required = true;
-    device.maxLength = 48;
-    device.value = "This device";
+    const device = this.deviceNameField();
     const submit = document.createElement("button");
     submit.type = "submit";
     submit.textContent = "Create passkey and request approval";
     codeLabel.append(code);
-    deviceLabel.append(device);
-    form.append(codeLabel, help, deviceLabel, submit);
+    form.append(codeLabel, help, device.element, submit);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      this.host.register("claim", { code: code.value, deviceLabel: device.value });
+      this.host.register("claim", { code: code.value, deviceLabel: device.value() });
     });
     this.host.append(form);
     if (this.host.intent && location.pathname !== "/pair")

@@ -169,6 +169,10 @@ export async function mobileUxRegressions(recovery) {
     Boolean(app.household.querySelector('input[name="deviceLabel"]')) &&
     app.household.textContent.includes("join theirs instead"),
     "Create explains that it starts a new household and warns joiners");
+  check(/ on Windows$/.test(app.household.querySelector('input[name="deviceLabel"]').value) &&
+    app.household.querySelector("details.device-name")?.open === false &&
+    app.household.querySelector("details.device-name summary").textContent.includes("This device will show as"),
+    "Create fills in the device name automatically; changing it is optional");
   app.household.startIntent(null);
   const chooser = [...app.household.querySelectorAll("button")].map((button) => button.textContent);
   check(chooser.includes("Create a household") && chooser.includes("Join an existing household") &&

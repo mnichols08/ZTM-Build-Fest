@@ -1,6 +1,8 @@
 // Building the destination pages and their components.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { routeHash, SEGMENTS } from "../../routes.js";
+import { currentPlatform, installHelp } from "../../platform.js";
+import { installHelpCard } from "../shared/dom.js";
 
 export class ViewBuilder {
   constructor(ctx) {
@@ -168,6 +170,17 @@ export class ViewBuilder {
     searchLink.href = "#search";
     searchLink.textContent = "Search household";
     hubTools.append(searchLink, this.app.installButton);
+    // iPhone and iPad browsers have no install prompt; show the steps instead.
+    const iosInstall = installHelp(currentPlatform());
+    if (iosInstall) {
+      const disclosure = document.createElement("details");
+      disclosure.className = "install-disclosure";
+      const summary = document.createElement("summary");
+      summary.textContent = "Install Kin";
+      disclosure.append(summary);
+      installHelpCard(iosInstall, { parent: disclosure });
+      hubTools.append(disclosure);
+    }
     hub.append(hubTools);
 
     const notesPage = document.createElement("section");

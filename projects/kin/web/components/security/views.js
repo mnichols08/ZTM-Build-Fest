@@ -6,6 +6,9 @@ import { getActiveVault } from "../../security/local-vault.js";
 import { passkeyUnlockSupported } from "../../security/passkey-unlock.js";
 import { EventStore } from "../../storage/event-store.js";
 import { EXPORT_STORAGE_RULE, joinLabels, manifestRecoveryLabels } from "../../security/key-label.js";
+import { currentPlatform, installHelp } from "../../platform.js";
+import { installHelpCard } from "../shared/dom.js";
+import { passwordManagerField, recoveryKeyAccount } from "./protection.js";
 
 export const AUTO_LOCK_OPTIONS = [
   [0, "Only when Kin closes"],
@@ -20,7 +23,9 @@ export class SecurityViews {
     this.host = ctx.host;
   }
 
-  render() {
+  // frameOnly: just the heading and status lines, for a flow (recovery-key
+  // setup) that fills in the rest itself.
+  render({ frameOnly = false } = {}) {
     this.host.replaceChildren();
     this.host.className = "security-panel";
     const heading = document.createElement("h2");
@@ -36,6 +41,7 @@ export class SecurityViews {
     this.host.alert.className = "error-message";
     this.host.alert.id = "security-alert";
     this.host.append(this.host.message, this.host.alert);
+    if (frameOnly) return;
     if (this.host.phase === "protecting") {
       this.host.message.textContent = "Protecting household… Keep this tab open.";
       this.host.button("Lock household", () => this.host.onLockRequested?.());
@@ -48,6 +54,10 @@ export class SecurityViews {
 
   renderWelcome() {
     this.host.text("Kin keeps your household's lists, notes, and photos encrypted on this device. Passkey unlock is for everyday use; first, set up this device's encryption with a recovery key.");
+    // On iPhone and iPad the Home Screen app has its own storage, so a
+    // household set up in the browser wouldn't be in the installed app.
+    const install = installHelp(currentPlatform());
+    if (install) installHelpCard(install, { parent: this.host });
     const steps = document.createElement("ol");
     steps.className = "setup-steps";
     for (const step of [
@@ -115,7 +125,7 @@ export class SecurityViews {
     const input = document.createElement("input");
     input.type = "password";
     input.id = "recovery-unlock";
-    input.autocomplete = "off";
+    input.autocomplete = "current-password";
     input.spellcheck = false;
     input.required = true;
     input.setAttribute("aria-describedby", "recovery-unlock-help security-alert");
@@ -128,7 +138,15 @@ export class SecurityViews {
     const button = document.createElement("button");
     button.type = "submit";
     button.textContent = "Unlock with recovery key";
-    form.append(label, input, help, button);
+    // Names the password-manager entry for this device's current key
+    // ("Kin recovery key K-7F3A"), so autofill offers that key, not another
+    // device's or a replaced one.
+    const account = passwordManagerField("text", "username", recoveryKeyAccount());
+    const unlockManifest = this.host.manifest?.phase === "root-rotating" ? this.host.manifest.rotation?.candidateManifest : this.host.manifest;
+    if (unlockManifest) void manifestRecoveryLabels(unlockManifest).then((labels) => {
+      if (labels?.length) account.value = recoveryKeyAccount(labels.at(-1));
+    }, () => {});
+    form.append(account, label, input, help, button);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const secret = input.value;

@@ -51,7 +51,7 @@ async function pageSetupProtection() {
   app.security.showSetup();
   const recovery = app.security.querySelector(".recovery-key").textContent;
   const input = app.security.querySelector("#confirm-recovery");
-  input.value = recovery;
+  input.checked = true;
   input.form.requestSubmit();
   for (let i = 0; i < 400 && !(app.store && !app.security.busy && !app.busy); i++)
     await new Promise((r) => setTimeout(r, 25));

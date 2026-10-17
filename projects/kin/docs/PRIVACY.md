@@ -14,7 +14,7 @@ lock/reload discards them. Startup removes historical sessionStorage draft keys.
 Locked startup does not load/replay household plaintext. The content-free
 `household-locked` peer message and durable lock epoch invalidate peer capabilities.
 Minimal routing IDs, format/lock state, ciphertext lengths and root wrappers remain
-visible. Recovery secrets are user-held and never persisted or sent to the relay.
+visible. Recovery secrets are user-held: Kin never persists them or sends them to the relay. If the person accepts, the browser saves one in its own password manager (THREAT-MODEL C5).
 
 While unlocked, a tab keeps one decrypted copy of the household event history
 in memory so it does not decrypt everything again for each change. It is never

@@ -281,6 +281,17 @@ unlocks that device's copy of the household.
 **Planned.** Clear the clipboard after about 60 seconds if it still holds the
 key.
 
+**Password managers (since #163).** Setup and key replacement mark the key as
+a new password, so the browser may offer to save it, and the recovery unlock
+form can autofill it. That is the person's choice; it puts the key wherever
+their password manager keeps and syncs passwords, protected by that account.
+Each entry is named for the key's label ("Kin recovery key K-7F3A"), because
+each device has its own key: under one shared name, saving a second device's
+key, or a replacement, would overwrite the first. A replaced key's old entry
+stays until the person deletes it; unlock asks for the current label's entry,
+so autofill doesn't offer the old key. If setup fails and is retried, the
+retry has a new key and label, so an unused entry may be left behind.
+
 ### C6: an export's header is readable without the key
 
 **What it is.** The start of a Kin export can be read without its recovery
