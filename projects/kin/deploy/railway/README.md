@@ -52,6 +52,7 @@ sets up again.
    | `KIN_ORIGIN` | `https://kin.yourdomain.com` (the address from step 1, with `https://`, no trailing slash) |
    | `KIN_MAX_HOUSEHOLDS` | optional; defaults to `10` |
    | `KIN_ALLOW_NEW_HOUSEHOLDS` | optional; set to `false` once testers' households exist |
+   | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | `10` (recommended): how long Railway lets the old container shut down before force-stopping it, so Kin can finish requests and close its database cleanly |
 
 4. **Volume (required):** right-click the service (or use the command
    palette) → create a volume for this service, mount path **`/data`**. It
@@ -173,6 +174,17 @@ What a restore does and doesn't bring back:
 - Kin refuses a backup from before a household that exists now was created
   (`Cannot restore a backup that predates a currently active household`).
   Restoring into a new, empty server always works.
+
+### "A Kin service or maintenance lock already exists"
+
+Kin keeps a lock file beside its database while it runs and removes it when it
+stops. If Railway force-stops the old container on a redeploy before Kin has
+closed, the lock is left on the volume. The startup script removes such a
+leftover lock before Kin starts and logs `stale_lock_removed`: Railway never
+mounts a volume on two deployments at once, so at startup no other Kin can be
+using it. You don't need to wipe the volume. Setting
+`RAILWAY_DEPLOYMENT_DRAINING_SECONDS` (above) gives Kin time to close cleanly
+so it usually isn't needed.
 
 ## Day to day
 
