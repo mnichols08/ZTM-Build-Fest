@@ -1325,15 +1325,29 @@ function setHeaders(response) {
 // of the served files as semver build metadata means any changed shell gets a
 // new cache instead of leaving browsers on a frozen snapshot. Static test
 // servers serve the raw file, so the plain release still works.
+//
+// A file or folder can disappear between listing and reading it (an editor's
+// temporary file, a test's scratch folder). That entry is skipped rather than
+// failing the page with a 500: it isn't part of the shell either way.
+const vanished = (error) => error?.code === "ENOENT" || error?.code === "ENOTDIR";
 export function shellFingerprint(root = webRoot) {
   const hash = createHash("sha256");
   const visit = (directory) => {
-    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    let entries;
+    try { entries = readdirSync(directory, { withFileTypes: true }); } catch (error) {
+      if (directory !== root && vanished(error)) return;
+      throw error;
+    }
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) visit(path);
       else if (entry.isFile() && !entry.name.endsWith(".test.mjs")) {
         const name = relative(root, path).replaceAll("\\", "/");
-        const content = readFileSync(path);
+        let content;
+        try { content = readFileSync(path); } catch (error) {
+          if (vanished(error)) continue;
+          throw error;
+        }
         hash.update(`${name.length}:${name}:${content.length}:`);
         hash.update(content);
         hash.update("\n");
