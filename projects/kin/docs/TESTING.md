@@ -336,7 +336,7 @@ reloading always locks immediately. First-run
 copy explains that passkey-first describes everyday unlock; initial encryption
 setup still starts with the recovery key.
 
-## Reproducible verification (v0.47.0 candidate)
+## Reproducible verification
 
 From either the repository root or `projects/kin/`, run `npm run verify
 --prefix projects/kin` at the repository root or `npm run verify` inside Kin.
