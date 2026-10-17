@@ -53,9 +53,14 @@ test("pairing stores only automatic names", () => {
 
 test("labels typed before v1.1 are reset in storage when the service starts", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "kin-device-label-"));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  let store;
+  // Close before removing: Windows can't delete an open database file.
+  t.after(() => {
+    store?.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
   const databasePath = join(directory, "kin.sqlite");
-  let store = new DurableStore(databasePath);
+  store = new DurableStore(databasePath);
   const adult = new PairingService({ store, now: () => 10_000 })
     .bootstrap({ credential: credential("adult"), deviceLabel: "Safari on Mac" });
   // What a v1.0 server could have stored: any 1–48 character label.
@@ -65,7 +70,6 @@ test("labels typed before v1.1 are reset in storage when the service starts", (t
   store.close();
 
   store = new DurableStore(databasePath);
-  t.after(() => store.close());
   assert.equal(store.resetDeviceLabels(deviceLabel), 1);
   assert.equal(JSON.parse(store.db.prepare("SELECT device_json FROM devices").get().device_json).label, "Device");
   assert.equal(store.resetDeviceLabels(deviceLabel), 0, "a second start changes nothing");
