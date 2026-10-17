@@ -5,6 +5,8 @@ import { DurableConflictError, DurableStoreError, isId, isTimestamp } from "./sh
 export function purgeHouseholdData(database, householdId) {
   database.prepare("UPDATE households SET owner_member_id = NULL WHERE id = ?").run(householdId);
   database.prepare("DELETE FROM household_settings WHERE household_id = ?").run(householdId);
+  database.prepare("DELETE FROM household_install_identity WHERE household_id = ?").run(householdId);
+  database.prepare("DELETE FROM household_install_identity_revisions WHERE household_id = ?").run(householdId);
   database.prepare("DELETE FROM sync_attachments WHERE household_id = ?").run(householdId);
   database
     .prepare("DELETE FROM provisioning_grants WHERE household_id = ?")
@@ -71,6 +73,9 @@ export const lifecycleMethods = {
       ),
       settings: count(
         "SELECT COUNT(*) AS count FROM household_settings WHERE household_id = ?",
+      ),
+      installIdentity: count(
+        "SELECT (SELECT COUNT(*) FROM household_install_identity WHERE household_id = ?1) + (SELECT COUNT(*) FROM household_install_identity_revisions WHERE household_id = ?1) AS count",
       ),
       attachments: count(
         "SELECT COUNT(*) AS count FROM sync_attachments WHERE household_id = ?",

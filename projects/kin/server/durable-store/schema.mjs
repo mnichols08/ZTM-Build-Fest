@@ -450,6 +450,47 @@ export const schemaMethods = {
         throw new DurableStoreError("Kin could not complete the attachment uploader migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 9) {
+      try {
+        this.transaction(() => {
+          // v1.1 (#78): the install identity an admin chose to publish
+          // unencrypted, so devices can show it on home screens. One row per
+          // publishing household; withdrawing deletes the row. The revision
+          // only grows (the second table keeps it across a withdrawal), so a
+          // stale write is refused. content_tag hashes the published content:
+          // icon URLs and the manifest ETag name it, so they change whenever
+          // the content does, even after a backup restore.
+          this.db.exec(`
+            CREATE TABLE household_install_identity (
+              household_id TEXT PRIMARY KEY REFERENCES households(id) ON DELETE CASCADE,
+              rev INTEGER NOT NULL CHECK (rev >= 1),
+              name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
+              short_name TEXT NOT NULL CHECK (length(short_name) BETWEEN 1 AND 48),
+              description TEXT NOT NULL CHECK (length(description) <= 200),
+              icon_source TEXT NOT NULL CHECK (icon_source IN ('letter', 'upload')),
+              content_tag TEXT NOT NULL CHECK (length(content_tag) = 16),
+              icon_192 BLOB NOT NULL CHECK (length(icon_192) BETWEEN 33 AND 524288),
+              icon_512 BLOB NOT NULL CHECK (length(icon_512) BETWEEN 33 AND 524288),
+              icon_maskable_512 BLOB NOT NULL CHECK (length(icon_maskable_512) BETWEEN 33 AND 524288),
+              icon_apple_180 BLOB NOT NULL CHECK (length(icon_apple_180) BETWEEN 33 AND 524288),
+              updated_by_member_id TEXT NOT NULL,
+              updated_by_device_id TEXT NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+            CREATE TABLE household_install_identity_revisions (
+              household_id TEXT PRIMARY KEY REFERENCES households(id) ON DELETE CASCADE,
+              last_rev INTEGER NOT NULL CHECK (last_rev >= 1)
+            );
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(10, Date.now());
+          sqlitePragma(this.db, "user_version = 10");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the install identity migration.", { cause: error });
+      }
+    }
   },
 
   verify() {

@@ -118,6 +118,16 @@ pre-join epoch keys in v0.9; missing history may be unavailable. All
 trusted-device/key loss can make content unrecoverable. See [V0.11.0](V0.11.0.md)
 and the [Threat Model](THREAT-MODEL.md).
 
+Published install identity (v1.1, #78): off by default. If a household admin
+turns on "Show our name and icon on home screens", the service stores the
+household name, a short name, an optional description and the icons without
+encryption, so it can build the installed app's manifest. Only the household's
+own trusted devices can fetch them. Withdrawing deletes the copy, as does
+deleting the household; backups taken while it was published still contain
+it. Everything else, including the encrypted household settings, is
+unchanged. See
+[Household identity](HOUSEHOLD-IDENTITY-DEFAULTS.md#published-install-identity).
+
 Device names (v1.1, #71): the server keeps only each device's automatic name
 ("Chrome on iPhone", or "Device"), which it needs to show approvers which
 device is asking to join before that device holds any household key. A name

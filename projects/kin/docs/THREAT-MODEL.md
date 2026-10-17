@@ -335,6 +335,25 @@ server schema 9).
 **Planned.** Carry member roles into replay, or move removal behind an
 Adult-signed record.
 
+### A published install identity is not encrypted (v1.1)
+
+**What it is.** A household admin can choose to show the household's name and
+icon on home screens (#78). That copy is stored by the service in plain form,
+because the service builds the installed app's manifest from it.
+
+**Who and what.** Anyone who can read the service's database or backups, and
+the household's own trusted devices (which already know it). They learn the
+published name, short name, description and icon, nothing else. It is off by
+default, the panel says what is stored before the first publish, and only the
+household's own trusted devices are served it.
+
+**Detail.** Withdrawal and household deletion delete the row; backups taken
+earlier keep it until they are rotated out. An installed app keeps showing the
+old name and icon until its platform checks the manifest again, and on iPhone
+and iPad until it is added again.
+
+**Planned.** Nothing further; this is the opt-in trade the feature makes.
+
 ### v1.0 was not tested across every browser and device
 
 **What it is.** v1.0 shipped on the owner's decision with limited real-world

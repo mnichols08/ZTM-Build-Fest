@@ -108,6 +108,9 @@ export class AppearanceController {
       if (refreshGeneration !== this.householdDefaultsRefreshGeneration) return;
       if (result.value && (this.app.householdSettings?.revision ?? -1) <= result.value.revision) this.app.householdSettings = result.value;
       const draftPreserved = this.app.householdDefaults.initialize({ ...result, value: this.app.householdSettings });
+      if (result.admin) void this.refreshInstallIdentity({ onlyFirst: true });
+      // A demotion removes the section; a later promotion loads it again.
+      else this.installIdentitySession = null;
       if (draftPreserved) return;
       if (this.app.appearance?.dirty) this.ctx.appearance.setHouseholdIdentity(this.app.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME);
       else {
@@ -128,6 +131,41 @@ export class AppearanceController {
       this.ctx.appearance.applyEffectiveAppearance();
     } catch {
       if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setStatus("Kin couldn't restore the last shared appearance. Local household information is still available.");
+    }
+  }
+  // The published install identity (#78) for admins. Loaded once per
+  // session (refreshHouseholdDefaults runs on every sync poll) and again
+  // after each publish, withdrawal or conflict.
+  async refreshInstallIdentity({ onlyFirst = false } = {}) {
+    if (!this.app.syncCoordinator || !this.app.vault || this.app.vault.locked) return;
+    if (onlyFirst && this.installIdentitySession === this.app.securityGeneration) return;
+    this.installIdentitySession = this.app.securityGeneration;
+    const session = this.ctx.session.captureSession();
+    try {
+      const result = await this.app.syncCoordinator.loadInstallIdentity();
+      this.ctx.session.assertCurrentSession(session);
+      if (!result.admin) return;
+      this.app.householdDefaults.initializeInstall({ published: result.published });
+    } catch {
+      if (this.ctx.session.isCurrentSession(session)) this.installIdentitySession = null;
+    }
+  }
+  async handleInstallIdentity(event, withdraw) {
+    const { complete } = event.detail;
+    if (!this.app.syncCoordinator) { complete(null, new Error("Connect household sync before changing what home screens show.")); return; }
+    const session = this.ctx.session.captureSession();
+    try {
+      const result = withdraw
+        ? await this.app.syncCoordinator.withdrawInstallIdentity(event.detail.expectedRev)
+        : await this.app.syncCoordinator.publishInstallIdentity(event.detail.value);
+      this.ctx.session.assertCurrentSession(session);
+      await this.refreshInstallIdentity();
+      complete(result, null);
+    } catch (error) {
+      // A lock or re-open mid-write still releases the panel's writing state.
+      if (!this.ctx.session.isCurrentSession(session)) { complete(null, new Error("Kin locked before the home screen details finished saving.")); return; }
+      if (error.code === "install_identity_stale") await this.refreshInstallIdentity();
+      complete(null, error);
     }
   }
   async handleSaveHouseholdDefaults(event) {

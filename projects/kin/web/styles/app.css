@@ -858,6 +858,23 @@ kin-household-defaults { display: grid; gap: 14px; margin-bottom: 32px; padding-
 kin-household-defaults > fieldset { margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--r-card); background: color-mix(in srgb, var(--surface) 94%, transparent); }
 kin-household-defaults > fieldset label { display: grid; gap: 6px; font-weight: 650; }
 kin-household-defaults > fieldset input { width: min(100%, 34rem); min-height: var(--tap); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
+kin-install-identity { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: var(--r-card); background: color-mix(in srgb, var(--surface) 94%, transparent); }
+kin-install-identity h3 { margin: 0; font-size: 17px; font-weight: 650; }
+kin-install-identity .install-toggle { display: flex; align-items: center; gap: 10px; min-height: var(--tap); font-weight: 650; }
+kin-install-identity .install-form { display: grid; gap: 12px; }
+kin-install-identity .install-form > label { display: grid; gap: 6px; font-weight: 650; }
+kin-install-identity .install-form input:not([type]), kin-install-identity textarea { width: min(100%, 34rem); min-height: var(--tap); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; font-weight: 400; }
+kin-install-identity small { font-weight: 400; color: var(--ink-muted); }
+kin-install-identity fieldset { display: grid; gap: 6px; margin: 0; padding: 0; border: 0; }
+kin-install-identity fieldset label { display: flex; align-items: center; gap: 10px; min-height: var(--tap); }
+kin-install-identity input[type="checkbox"], kin-install-identity input[type="radio"] { width: 20px; height: 20px; flex: none; }
+kin-install-identity .install-preview { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+kin-install-identity .install-preview-icon img { display: block; width: 72px; height: 72px; border-radius: 22%; box-shadow: 0 1px 3px rgb(0 0 0 / .18); }
+kin-install-identity .install-preview-maskable img { border-radius: 50%; }
+kin-install-identity .install-preview-name { font-size: 13px; color: var(--ink-muted); }
+kin-install-identity .field-error, kin-household-defaults .field-error { margin: 0; color: var(--danger); font-size: 14px; }
+kin-install-identity .field-error:empty, kin-household-defaults .field-error:empty { display: none; }
+kin-install-identity .install-privacy { margin: 0; padding: 10px 12px; border-inline-start: 3px solid var(--accent); background: var(--accent-soft); }
 kin-household-defaults kin-appearance > h2, kin-household-defaults kin-appearance > .section-hint,
 kin-household-defaults kin-appearance .appearance-actions,
 kin-household-defaults kin-appearance .appearance-follow { display: none; }
