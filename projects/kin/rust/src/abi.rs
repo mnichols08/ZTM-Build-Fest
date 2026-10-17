@@ -294,6 +294,13 @@ pub extern "C" fn kin_project(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::replay_history, Some(whole))
 }
 
+/// Replays the instance's history in the context of a record-less KINE
+/// request and publishes the KDEV device-name table (core.rs).
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_device_names(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::core::device_names, None)
+}
+
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
 pub extern "C" fn kin_event_metadata(pointer: u32, length: u32) -> i32 {
     operate(pointer, length, crate::codec::encode_metadata)

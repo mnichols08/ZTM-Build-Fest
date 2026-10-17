@@ -35,3 +35,52 @@ pub fn replay_history(context: &[u8], history: &mut History) -> Result<Vec<u8>, 
     let summary = history.summary(&context, &state, None)?;
     crate::state_encode::encode_state(&state, &summary)
 }
+
+/// KDEV v1, the device-name table (`kin_device_names`): "KDEV", version u16,
+/// reserved u16 (0), record count u32, then per device in device-ID order:
+/// device ID (16 bytes), member ID (16), automatic-name length u16 (0 when
+/// this history holds only a nickname for the device), nickname length u16
+/// (0 when there is none), the automatic name, then the nickname, both UTF-8.
+pub const DEVICE_NAMES_VERSION: u16 = 1;
+
+/// The device names in the history an engine instance holds, in the
+/// context of a record-less KINE request (as `replay_history`).
+pub fn device_names(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let context = decode_context(context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    encode_device_names(&state.devices)
+}
+
+pub fn encode_device_names(devices: &[state::DeviceNameState]) -> Result<Vec<u8>, KinError> {
+    let size = devices.iter().try_fold(12usize, |size, device| {
+        size.checked_add(
+            36 + device.auto_name.as_ref().map_or(0, String::len)
+                + device.nickname.as_ref().map_or(0, String::len),
+        )
+    });
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(size.ok_or(KinError::SizeLimit)?)
+        .map_err(|_| KinError::SizeLimit)?;
+    bytes.extend_from_slice(b"KDEV");
+    bytes.extend_from_slice(&DEVICE_NAMES_VERSION.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    let count = u32::try_from(devices.len()).map_err(|_| KinError::SizeLimit)?;
+    bytes.extend_from_slice(&count.to_le_bytes());
+    for device in devices {
+        let auto_name = device.auto_name.as_deref().unwrap_or("");
+        let nickname = device.nickname.as_deref().unwrap_or("");
+        // Canonical names are at most MAX_DEVICE_NAME_BYTES, well inside u16.
+        let auto_length = u16::try_from(auto_name.len()).map_err(|_| KinError::Internal)?;
+        let nickname_length = u16::try_from(nickname.len()).map_err(|_| KinError::Internal)?;
+        bytes.extend_from_slice(&device.device_id.0);
+        bytes.extend_from_slice(&device.member_id.0);
+        bytes.extend_from_slice(&auto_length.to_le_bytes());
+        bytes.extend_from_slice(&nickname_length.to_le_bytes());
+        bytes.extend_from_slice(auto_name.as_bytes());
+        bytes.extend_from_slice(nickname.as_bytes());
+    }
+    Ok(bytes)
+}

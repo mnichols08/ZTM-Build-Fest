@@ -1216,6 +1216,15 @@ export class EventStore {
     return this.engine.applyEvents(events, asOf, cursor.eventId, civilDate, syncIdentity);
   }
 
+  /** The household's named devices (#71), replayed from the current history
+   * under its sync identity: [{ deviceId, memberId, autoName, nickname }]. */
+  async deviceNames() {
+    if (!this.engine) throw new EventStoreError("Kin could not read device names.");
+    const { events, syncIdentity } = await this.getCatchUpState();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.deviceNames(events, asOf, civilDate, syncIdentity);
+  }
+
   updateSyncServerState(status) {
     const transaction = this.database.transaction(
       [SYNC_STATE_STORE, SYNC_OUTBOX_STORE],

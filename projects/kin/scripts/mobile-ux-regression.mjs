@@ -166,13 +166,12 @@ export async function mobileUxRegressions(recovery) {
     "Add this device explains the existing-device step and uses the same approval flow");
   app.household.startIntent("create");
   check([...app.household.querySelectorAll("button")].some((button) => button.textContent === "Create household with passkey") &&
-    Boolean(app.household.querySelector('input[name="deviceLabel"]')) &&
     app.household.textContent.includes("join theirs instead"),
     "Create explains that it starts a new household and warns joiners");
-  check(/ on Windows$/.test(app.household.querySelector('input[name="deviceLabel"]').value) &&
-    app.household.querySelector("details.device-name")?.open === false &&
-    app.household.querySelector("details.device-name summary").textContent.includes("This device will show as"),
-    "Create fills in the device name automatically; changing it is optional");
+  check(!app.household.querySelector('input[name="deviceLabel"]') &&
+    / on Windows”/.test(app.household.querySelector("p.device-name")?.textContent ?? "") &&
+    app.household.querySelector("p.device-name").textContent.includes("nickname later"),
+    "Create names the device automatically and asks nobody to type a name (#71)");
   app.household.startIntent(null);
   const chooser = [...app.household.querySelectorAll("button")].map((button) => button.textContent);
   check(chooser.includes("Create a household") && chooser.includes("Join an existing household") &&

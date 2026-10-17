@@ -237,9 +237,10 @@ async function pageTrustDevice(deviceLabel) {
   const device = listed.devices.find((entry) => entry.label === deviceLabel);
   if (!device) throw new Error(`Trusted-device list is missing ${deviceLabel}`);
   await h.showDevices();
-  const item = [...h.querySelectorAll("li")].find((entry) =>
-    entry.textContent.includes(`${deviceLabel} — Trusted`),
-  );
+  // The row shows the device's synced name (#71), which can differ from the
+  // server label, so it is found by device ID.
+  const item = h.querySelector(`li[data-device-id="${device.id}"]`);
+  if (!item?.textContent.includes("Trusted")) throw new Error(`Trusted-device row is missing for ${deviceLabel}`);
   const verify = [...(item?.querySelectorAll("button") ?? [])].find(
     (button) => button.textContent === "Verify device",
   );
@@ -356,6 +357,9 @@ async function pageSync() {
   };
   try {
     await coordinator.syncNow();
+    // A device records its automatic name after a successful sync (#71);
+    // send it now so relay counts and event sets settle within this call.
+    if (await app.deviceDescription) await coordinator.syncNow();
   } finally {
     coordinator.onState = original;
   }
@@ -403,17 +407,22 @@ async function pageRevokeDeviceButton(label) {
   const originalConfirm = globalThis.confirm;
   globalThis.confirm = () => true;
   try {
+    // Rows show synced device names (#71), so the row is found by the ID
+    // behind the server label.
+    const device = (await h.api("/api/devices")).devices.find((entry) => entry.label === label);
+    if (!device) throw new Error("No trusted device labelled " + label);
+    const row = () => h.querySelector(`li[data-device-id="${device.id}"]`);
     await h.showDevices();
-    const button = [...h.querySelectorAll("button")].find((b) => b.textContent === `Revoke ${label}`);
+    const button = [...(row()?.querySelectorAll("button") ?? [])].find((b) => b.textContent.startsWith("Revoke "));
     if (!button) throw new Error("No revoke control for " + label + ": " + h.textContent);
     button.click();
     for (let i = 0; i < 400; i++) {
       await new Promise((r) => setTimeout(r, 25));
-      if (!h.busy && h.textContent.includes(`${label} — Revoked`)) break;
+      if (!h.busy && row()?.textContent.includes("Revoked")) break;
       const alert = h.querySelector(".household-message");
       if (!h.busy && alert?.getAttribute("role") === "alert") throw new Error("Revocation failed: " + alert.textContent);
     }
-    if (!h.textContent.includes(`${label} — Revoked`)) throw new Error("Device not shown revoked: " + h.textContent);
+    if (!row()?.textContent.includes("Revoked")) throw new Error("Device not shown revoked: " + h.textContent);
     return h.textContent;
   } finally {
     globalThis.confirm = originalConfirm;
@@ -771,7 +780,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
   try {
     // ---- Profile A: first Adult, household creator -----------------------
     const a = await launch("adult-a");
-    const aBoot = await a.call(pageBootstrap, "Client A");
+    const aBoot = await a.call(pageBootstrap, "Chrome on Windows");
     check(aBoot.identity && aBoot.prf, "Adult A registers with a real virtual passkey and PRF wrapper");
     await a.call(pageAddItem, "A1 before anyone joins");
     const aSync = await a.call(pageEnableSync);
@@ -779,12 +788,12 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     let result = await a.call(pageSync);
     check(result.last?.state !== "paused", "Adult A completes the first relay sync: " + JSON.stringify(result.last));
     const aRelay = relaySession(aBoot.identity.memberId, aBoot.identity.deviceId);
-    check(relayEvents(aRelay).length === 1, "relay holds A1 as one opaque envelope");
+    check(relayEvents(aRelay).length === 2, "relay holds A1 and A's device name (#71) as two opaque envelopes");
     pass(`${checks} household creation assertions (profile A)`);
 
     // ---- Profile B: second Adult -----------------------------------------
     const b = await launch("adult-b");
-    const bIdentity = await join({ inviter: a, invitee: b, kind: "adult", deviceLabel: "Client B" });
+    const bIdentity = await join({ inviter: a, invitee: b, kind: "adult", deviceLabel: "Edge on Windows" });
     let household = await b.callStable(pageHousehold);
     const bMember = household.members.find((member) => member.current);
     check(bMember?.kind === "adult" && bMember.active, "Adult B is an active Adult in the server household view");
@@ -806,7 +815,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
 
     // ---- Profile C: Limited member ---------------------------------------
     let c = await launch("limited-c");
-    await join({ inviter: a, invitee: c, kind: "limited", deviceLabel: "Client C" });
+    await join({ inviter: a, invitee: c, kind: "limited", deviceLabel: "Firefox on Linux" });
     household = await c.callStable(pageHousehold);
     const cMember = household.members.find((member) => member.current);
     check(cMember?.kind === "limited" && cMember.active, "Limited C is an active Limited member");
@@ -826,7 +835,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     result = await a.call(pageSync);
     result = await c.call(pageSync);
     check(result.started && result.last?.state !== "paused", "Limited C syncs after Adult A provisions it: " + JSON.stringify(result.last));
-    const bTrustsC = await b.call(pageTrustDevice, "Client C");
+    const bTrustsC = await b.call(pageTrustDevice, "Firefox on Linux");
     check(bTrustsC.visuallyGated && bTrustsC.gateSurvivedBusyCycle,
       "Adult B's Trust this device control stays disabled through a busy cycle until code confirmation");
     check(bTrustsC.refusedBeforeConfirmation && bTrustsC.unpinnedBeforeConfirmation,
@@ -868,8 +877,8 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     result = await a.call(pageSync);
     check(result.items.includes("C1 limited member item") && !result.items.includes("C2 written offline before removal"),
       "Adult A keeps C1 history and never receives C's post-removal offline event");
-    check(relayEvents(aRelay).filter((row) => row.envelope.deviceId === cDevice.id).length === 1,
-      "relay holds exactly C's single pre-removal envelope from C's device");
+    check(relayEvents(aRelay).filter((row) => row.envelope.deviceId === cDevice.id).length === 2,
+      "relay holds exactly C's two pre-removal envelopes (its device name and C1) from C's device");
     pass(`${checks} member removal during disconnection assertions (profile C)`);
     await retire(c);
 
@@ -877,7 +886,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     const c2 = await launch("temporary-c2");
     // Short real expiry: the server clock is advanced for instant enforcement.
     const temporaryExpiry = clock.now() + 20_000;
-    const c2Identity = await join({ inviter: a, invitee: c2, kind: "temporary", expiresAt: temporaryExpiry, deviceLabel: "Client C2" });
+    const c2Identity = await join({ inviter: a, invitee: c2, kind: "temporary", expiresAt: temporaryExpiry, deviceLabel: "Opera on Linux" });
     household = await c2.callStable(pageHousehold);
     const c2Member = household.members.find((member) => member.current);
     check(c2Member?.kind === "temporary" && c2Member.active && c2Member.expiresAt === temporaryExpiry,
@@ -934,9 +943,11 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     await b.setOffline(true);
     await b.call(pageAddItem, "B1 written offline before revocation");
     const bBefore = await b.callStable(pageLocal);
+    const bRelayBefore = relayEvents(aRelay).filter((row) => row.envelope.deviceId === bIdentity.deviceId).length;
+    check(bRelayBefore === 1, "before revocation the relay holds only B's device name from B's device");
     check(bBefore.pendingOutbox >= 1, "Adult B holds an unsent outbox entry while offline");
     await a.setOffline(false);
-    await a.call(pageRevokeDeviceButton, "Client B");
+    await a.call(pageRevokeDeviceButton, "Edge on Windows");
     check(Boolean(service.devices.get(bIdentity.deviceId).revokedAt), "Adult A revokes B's device with a fresh passkey through the UI");
     check(service.members.get(bIdentity.memberId).active === true, "device revocation keeps B's membership (device ≠ member)");
     check(syncService.state(aBoot.identity.householdId).grants.has(waitingForA.grantId),
@@ -967,8 +978,8 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       "revocation leaves B's local history and unsent outbox intact");
     result = await a.call(pageSync);
     check(!result.items.includes("B1 written offline before revocation"), "Adult A never receives B's post-revocation offline event");
-    check(!relayEvents(aRelay).some((row) => row.envelope.deviceId === bIdentity.deviceId),
-      "relay holds no envelope from B's device");
+    check(relayEvents(aRelay).filter((row) => row.envelope.deviceId === bIdentity.deviceId).length === bRelayBefore,
+      "relay holds no envelope B wrote after its revocation");
     pass(`${checks} device revocation during disconnection assertions (profile B)`);
     await retire(b);
 
@@ -1016,7 +1027,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     });
     await d.callStable(pageWaitHousehold);
     const { approved: dApproved, approverKey: dApproverKey } =
-      await verifyAndApprove({ inviter: a, invitee: d, invitation, deviceLabel: "Client D" });
+      await verifyAndApprove({ inviter: a, invitee: d, invitation, deviceLabel: "Safari on Mac" });
     check(dApproved.memberId === aBoot.identity.memberId, "device pairing binds D to Adult A's membership");
     const dActivation = await d.call(pageActivate, { approvingKey: dApproverKey });
     check(dActivation.visuallyGated && dActivation.gateSurvivedBusyCycle,
@@ -1028,12 +1039,14 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     result = await d.call(pageSync);
     if (result.last?.state === "paused") result = await d.call(pageSync);
     check(result.last?.state !== "paused", "restored D syncs after approval: " + JSON.stringify(result.last));
+    result = await a.call(pageSync); // A receives D's device name (#71).
     const dLocal = await d.callStable(pageLocal);
     const aLocal = await a.callStable(pageLocal);
     check(dLocal.items.includes("A3 after export"), "D catches up with history created after the export");
     check(dLocal.events === aLocal.events && JSON.stringify(dLocal.eventIds) === JSON.stringify(aLocal.eventIds),
       `D and A hold identical event sets without duplication (${dLocal.events} events)`);
-    check(relayEvents(aRelay).length === relayTotal, "re-authorizing a restored device adds no duplicate relay events");
+    check(relayEvents(aRelay).length === relayTotal + 1,
+      "re-authorizing a restored device adds only its device name (#71), no duplicate relay events");
     pass(`${checks} clean-profile restore and re-authorization assertions (profile D)`);
 
     // ---- Two authorized clients reconnect after concurrent offline edits ------
@@ -1058,7 +1071,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(aFinal.items.filter((text) => text === "A4 offline concurrent").length === 1 &&
       dFinal.items.filter((text) => text === "D1 offline concurrent").length === 1,
       "repeated syncs do not duplicate items");
-    check(relayEvents(aRelay).length === relayTotal + 2, "relay gained exactly the two concurrent events");
+    check(relayEvents(aRelay).length === relayTotal + 3, "relay gained exactly the two concurrent events");
     pass(`${checks} two-client reconciliation assertions (profiles A and D)`);
     console.log(`PASS ${checks} live household authority and recovery assertions across independent browser profiles`);
     return checks;

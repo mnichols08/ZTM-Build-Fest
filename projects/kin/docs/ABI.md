@@ -12,6 +12,7 @@ kin_history_reset() -> status        empty the instance's history
 kin_history_append(ptr, len)         append a record batch to the history
 kin_history_truncate(count) -> status   keep the first `count` records
 kin_project(ptr, len)                replay the history: KINE context -> KINS
+kin_device_names(ptr, len)           replay the history: KINE context -> KDEV (v1.1)
 kin_execute(ptr, len)                command: length + KCMD + KINE context -> KCMT
 kin_encode_command(ptr, len)         KCMD -> canonical event bytes
 kin_event_metadata(ptr, len)         one canonical event -> KMET
@@ -195,10 +196,26 @@ N  payload
 | 39 | ATTACHMENT_BOUND | attachment ID, parent kind u8 (1 Note, 2 Reference Record, 3 Maintenance, 4 Item), parent ID |
 | 40 | ATTACHMENT_REMOVED | attachment ID |
 | 41 | RESPONSIBILITY_CHANGED | target kind u8 (1 Item, 2 Routine), target ID, member ID (zero clears) |
+| 42 | DEVICE_DESCRIBED (v1.1) | name length u32, the header device's automatic name (1–48 characters, at most 192 bytes) |
+| 43 | DEVICE_NICKNAMED (v1.1) | device ID (non-zero), nickname length u32 (zero clears), nickname (1–32 characters) |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
 limits) are domain validation in `state.rs` and fail with code 4.
+
+Device names (kinds 42 and 43, added in v1.1 without a protocol change) are
+the exception: their names must already be canonical in the event, so the
+decoder fails a name with surrounding whitespace, a control character, a
+disguising format character (bidirectional controls, zero-width space, word
+joiner, soft hyphen, byte-order mark; zero-width joiner and non-joiner are
+allowed) or too many characters with code 2. Once decoded, a device-name
+event never fails replay, because names are cosmetic (`replay/devices.rs`): a
+device keeps the member that first described it, an event from another member
+changes nothing, and a nickname for a device this history has not seen
+described is kept as a nickname-only entry. The latest description and
+nickname in replay order win. Commands enforce the strict rules. Device names are not part of KINS: they leave the engine
+only through `kin_device_names`. An engine older than v1.1 fails both kinds
+with code 3 (unsupported).
 
 ## KINS projection (protocol 24)
 
@@ -332,6 +349,16 @@ revision is meaningful only within one instance.
   u16. **KMDQ v1 / KMDL v1** batch these: `"KMDQ"`, version, reserved, count,
   then length-prefixed events; the result is `"KMDL"` with the same prefix and
   `count` KMET records. One invalid record rejects the batch.
+- **KDEV v1** (device names, `kin_device_names`): `"KDEV"`, version 1,
+  reserved u16, device count u32, then per device in device-ID order: device
+  ID, member ID (16 bytes each, after identity bindings), automatic-name
+  length u16 (zero for a nickname-only entry), nickname length u16 (zero
+  when none), the automatic name and the nickname (UTF-8). Every entry has at
+  least one of the two names. The context is a record-less KINE request, as for
+  `kin_project`. KCMD action 42 (`describe-device`) carries the name as its
+  payload and a zero entity ID; action 43 (`nickname-device`) carries the
+  target device as its entity ID and the nickname as its payload (empty
+  clears). Executing either rejects a name that would change nothing.
 - **KIMP v1** (import plan): `"KIMP"`, version 1, reserved, event count u32,
   next logical time u64, projection length u32, KINS projection. Duplicate
   event IDs, including exact duplicates, fail.

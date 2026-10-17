@@ -224,6 +224,12 @@ export class ViewBuilder {
     peoplePage.className = "household-subpage";
     peoplePage.setAttribute("aria-label", "People & devices");
     this.app.household = document.createElement("kin-household");
+    // People & devices reads and sets device names through the app, which
+    // owns the household history and its engine (#71).
+    this.app.household.deviceNames = {
+      load: () => this.ctx.sync.deviceNames(),
+      rename: (deviceId, nickname) => this.ctx.sync.renameDevice(deviceId, nickname),
+    };
     this.app.peoplePage = peoplePage;
 
     const privacyPage = document.createElement("section");

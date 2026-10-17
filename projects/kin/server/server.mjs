@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { PairingError, PairingService, parseHouseholdPolicy, requireTrustAuthority } from "./pairing-service.mjs";
+import { deviceLabel } from "./pairing-service/device-label.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
 import {
@@ -441,7 +442,8 @@ async function api(request, response, url, context) {
       {
         purpose: flowPurpose,
         code: body.code,
-        deviceLabel: body.deviceLabel,
+        // Only an automatic name is kept, even in memory (#71).
+        deviceLabel: deviceLabel(body.deviceLabel),
       },
       context,
       { anonymous: body.purpose === "bootstrap" },

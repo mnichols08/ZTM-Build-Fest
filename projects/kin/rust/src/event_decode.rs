@@ -507,6 +507,42 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
                 member_id: (member != [0; 16]).then_some(ActorId(member)),
             }
         }
+        (1, 42) => {
+            let auto_name = device_text(payload, 0)?.ok_or(KinError::MalformedProtocol)?;
+            if crate::state::normalize_device_name(auto_name)
+                .ok()
+                .as_deref()
+                != Some(auto_name)
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::DeviceDescribed {
+                auto_name: auto_name.to_owned(),
+            }
+        }
+        (1, 43) => {
+            let device_id = DeviceId(read_id(payload, 0)?);
+            if device_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            let nickname = match device_text(payload, 16)? {
+                Some(nickname) => {
+                    if crate::state::normalize_device_nickname(nickname)
+                        .ok()
+                        .as_deref()
+                        != Some(nickname)
+                    {
+                        return Err(KinError::MalformedProtocol);
+                    }
+                    Some(nickname.to_owned())
+                }
+                None => None,
+            };
+            EventKind::DeviceNicknamed {
+                device_id,
+                nickname,
+            }
+        }
         (1, 15..=17) => {
             if payload.len() != if event_kind == 17 { 16 } else { 20 }
                 || !valid_timestamp(read_i64(record, 68)?)
@@ -691,4 +727,20 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
         kind,
         canonical_bytes,
     })
+}
+
+/// A device-name field: u32 length at `at`, then exactly that many UTF-8
+/// bytes ending the payload. None for length 0 (a cleared nickname).
+fn device_text(payload: &[u8], at: usize) -> Result<Option<&str>, KinError> {
+    let length = read_u32(payload, at)? as usize;
+    let start = at + 4;
+    if payload.len() != start + length || length > crate::state::MAX_DEVICE_NAME_BYTES {
+        return Err(KinError::MalformedProtocol);
+    }
+    if length == 0 {
+        return Ok(None);
+    }
+    std::str::from_utf8(&payload[start..])
+        .map(Some)
+        .map_err(|_| KinError::MalformedProtocol)
 }
