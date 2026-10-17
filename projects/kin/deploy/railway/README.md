@@ -54,7 +54,8 @@ sets up again.
    | `KIN_ALLOW_NEW_HOUSEHOLDS` | optional; set to `false` once testers' households exist |
 
 4. **Volume (required):** right-click the service (or use the command
-   palette) → **Attach Volume**, mount path **`/data`**. Without it, every
+   palette) → create a volume for this service, mount path **`/data`**. It
+   then appears under the service on the project canvas. Without it, every
    deploy starts with an empty database: all households are gone and testers'
    passkeys stop working. Kin refuses to start when `/data` isn't a volume and
    says so in the deploy logs (`/data is not a mounted volume…`).
@@ -154,10 +155,11 @@ commit; a backup taken by older code may not open with newer code.
 To **move** a test server's data to a new Railway service or another server,
 copy a backup file into the new server's `/data/backups` and restore it the
 same way (for the Docker setup, see
-[Restore a backup](../README.md#restore-a-backup)). Railway volumes have no
-download or upload button, so getting a file in or out takes a shell on the
-service (`railway ssh`). Keep the same address: passkeys only work on the
-domain they were made on.
+[Restore a backup](../README.md#restore-a-backup)). The Railway CLI moves
+files in and out of a volume: `railway volume browse /` to look around, or
+`railway volume files download` / `railway volume files upload`
+([Railway: Volumes](https://docs.railway.com/guides/volumes)). Keep the same
+address: passkeys only work on the domain they were made on.
 
 What a restore does and doesn't bring back:
 
