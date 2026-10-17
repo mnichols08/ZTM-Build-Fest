@@ -211,6 +211,8 @@ async function browserUiChecks() {
     await new Promise((r) => setTimeout(r, 25));
   check(/recovery key K-[0-9A-F]{4}/.test(app.security.querySelector(".recovery-key-label")?.textContent ?? ""), "setup shows the new key's label");
   const setupLabel = /K-[0-9A-F]{4}/.exec(app.security.querySelector(".recovery-key-label").textContent)[0];
+  check(app.security.querySelector('input[autocomplete="username"]')?.value === `Kin recovery key ${setupLabel}`,
+    "the password-manager entry is named for this key's label, so another device's key isn't overwritten");
   const confirm = app.security.querySelector("#confirm-recovery");
   confirm.form.requestSubmit();
   check(!app.security.busy && !app.store, "setup waits until the person says the key is saved");

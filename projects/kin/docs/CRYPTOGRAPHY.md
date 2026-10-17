@@ -89,8 +89,10 @@ capabilities, without promising physical memory erasure.
 PRF is an optional WebAuthn extension, not a universal passkey property. Use required
 user verification, actual credential-associated extension output and domain-separated
 HKDF. A normal WebAuthn signature or server session must never serve as a KEK.
-Recovery is a deliberately user-held random 256-bit secret, confirmed before
-migration and never stored or sent to the server. An encrypted archive plus that
+Recovery is a deliberately user-held random 256-bit secret. The person
+confirms they saved it before migration (since #163 by a checkbox, not by
+retyping it). Kin never stores it or sends it to the server; the browser may
+offer to save it in its password manager (THREAT-MODEL C5). An encrypted archive plus that
 secret supports profile-loss recovery; a secret alone cannot restore absent data.
 
 PRF enrollment/unlock verifies an assertion with the same-origin identity server;

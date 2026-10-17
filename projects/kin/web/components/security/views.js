@@ -8,7 +8,7 @@ import { EventStore } from "../../storage/event-store.js";
 import { EXPORT_STORAGE_RULE, joinLabels, manifestRecoveryLabels } from "../../security/key-label.js";
 import { currentPlatform, installHelp } from "../../platform.js";
 import { installHelpCard } from "../shared/dom.js";
-import { passwordManagerField, RECOVERY_KEY_ACCOUNT } from "./protection.js";
+import { passwordManagerField, recoveryKeyAccount } from "./protection.js";
 
 export const AUTO_LOCK_OPTIONS = [
   [0, "Only when Kin closes"],
@@ -138,8 +138,15 @@ export class SecurityViews {
     const button = document.createElement("button");
     button.type = "submit";
     button.textContent = "Unlock with recovery key";
-    // Lets a key saved to the password manager at setup autofill here.
-    form.append(passwordManagerField("text", "username", RECOVERY_KEY_ACCOUNT), label, input, help, button);
+    // Names the password-manager entry for this device's current key
+    // ("Kin recovery key K-7F3A"), so autofill offers that key, not another
+    // device's or a replaced one.
+    const account = passwordManagerField("text", "username", recoveryKeyAccount());
+    const unlockManifest = this.host.manifest?.phase === "root-rotating" ? this.host.manifest.rotation?.candidateManifest : this.host.manifest;
+    if (unlockManifest) void manifestRecoveryLabels(unlockManifest).then((labels) => {
+      if (labels?.length) account.value = recoveryKeyAccount(labels.at(-1));
+    }, () => {});
+    form.append(account, label, input, help, button);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const secret = input.value;

@@ -33,8 +33,12 @@ export function describePlatform({ userAgent = "", maxTouchPoints = 0, standalon
   else if (/Linux/.test(userAgent)) os = "Linux";
   const ios = os === "iPhone" || os === "iPad";
   // Every iOS browser is WebKit; only its own token says which app it is.
+  // Safari itself carries "Version/… Safari/"; an app's built-in browser
+  // (Instagram, Facebook, the Google app, Gmail…) has neither, and can't add
+  // to the Home Screen, so it stays unknown (null).
   const table = ios ? IOS_BROWSERS : BROWSERS;
-  const browser = table.find(([pattern]) => pattern.test(userAgent))?.[1] ?? (ios ? "Safari" : null);
+  const browser = table.find(([pattern]) => pattern.test(userAgent))?.[1] ??
+    (ios && /Version\/[\d.]+.*Safari\//.test(userAgent) ? "Safari" : null);
   return { os, browser, ios, standalone: Boolean(standalone) };
 }
 
@@ -51,15 +55,20 @@ export function automaticDeviceName({ os, browser, ios, standalone }) {
 export function installHelp({ os, browser, ios, standalone }) {
   if (!ios || standalone) return null;
   const device = os ?? "iPhone";
+  // iOS 26 adds an "Open as Web App" switch to Add to Home Screen. Left off,
+  // the icon opens in the browser and shares its data, so it must stay on.
+  const add = "Choose Add to Home Screen (it may be under View More). If you see Open as Web App, keep it on. Then tap Add.";
   const steps =
     browser === "Safari"
-      ? ["Tap the Share button (the square with an arrow).", "Choose Add to Home Screen, then Add."]
+      ? ["Tap Share. (On iOS 26, tap ••• next to the address bar first.)", add]
       : browser === "Chrome"
-        ? ["Tap the Share button in the address bar.", "Choose Add to Home Screen, then Add. (Needs iOS 16.4 or later.)"]
-        : [`Open ${browser ?? "this browser"}'s Share menu.`, "Choose Add to Home Screen. If it isn't there, open this page in Safari and add it from there."];
+        ? ["Tap Share in the address bar. (Needs iOS 16.4 or later.)", add]
+        : browser
+          ? [`Open ${browser}'s Share menu.`, `${add} If it isn't there, open this page in Safari and add it from there.`]
+          : ["Open this page in Safari: use this app's menu, such as Open in Safari or Open in browser.", "Then follow the steps Kin shows there."];
   return {
     title: `Install Kin on your ${device}`,
-    steps: [...steps, "Open Kin from your Home Screen and set it up there."],
+    steps: browser ? [...steps, "Open Kin from your Home Screen and set it up there."] : steps,
     note: `On ${device}, the Home Screen app keeps its own data, separate from this browser. Set up in the app you'll use every day.`,
   };
 }

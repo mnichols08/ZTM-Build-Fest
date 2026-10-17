@@ -886,16 +886,22 @@ Testers on real phones found three setup snags:
   key and asks the person to tick "I've saved this key somewhere safe". It no
   longer asks them to paste it back. The form carries off-screen
   `username`/`new-password` fields so the browser can offer to save it as a
-  "Kin recovery key" password; the recovery unlock form asks for
-  `current-password` under the same name, so a saved key can autofill. The
-  setup step shows only the key and its controls (with Back), not the
-  welcome text above it.
+  password named for the key's label ("Kin recovery key K-7F3A"; one shared
+  name would let a second device's key overwrite the first). The recovery
+  unlock form asks for `current-password` under the current key's name, so a
+  saved key can autofill; key replacement offers the new key under its own
+  label. The copy says not to count on the browser's offer: copying the key
+  is the main path. The setup step shows only the key and its controls (with
+  Back), not the welcome text above it, and focus starts on its heading.
 - **Install help on iPhone and iPad.** No iOS browser offers an install
   prompt, and the Home Screen app keeps its own storage, separate from the
   browser it was added from. So the welcome screen in an iOS browser shows
-  Home Screen steps for that browser (Safari; Chrome on iOS 16.4+; others
-  fall back to Safari) *before* setup, and More has the same steps under
-  Install Kin. Inside the installed app, nothing is shown.
+  Home Screen steps for that browser *before* setup (Safari, including the
+  iOS 26 ••• menu and its "Open as Web App" switch; Chrome on iOS 16.4+;
+  other browsers, falling back to Safari). An app's built-in browser
+  (Instagram, the Google app…) can't add to the Home Screen, so it's told to
+  open the page in Safari. More has the same steps under Install Kin. Inside
+  the installed app, nothing is shown.
 - **Automatic device name.** Create and join fill in the device name from the
   browser and platform ("Chrome on iPhone"; just "iPhone" in the installed
   app), shown as one line with an optional Change. Encrypted names and
