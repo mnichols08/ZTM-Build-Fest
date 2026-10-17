@@ -201,15 +201,23 @@ payloads). They keep device names inside the encrypted household history, so
 the server never learns a name anyone typed ([PRIVACY](PRIVACY.md),
 [IDENTITY](IDENTITY.md#device-names)).
 
+- Names are cosmetic, so a decoded device-name event never fails replay. An
+  event that conflicts with what a history knows is kept and changes nothing;
+  commands enforce the rules below when the event is created.
 - A description names the event's own header device. The device belongs to
-  the member who first described it; a description of it from another member
-  is invalid. A device describes itself again when its automatic name changes
-  (a browser update, an installed app), and the latest description wins.
-- A nickname targets a device by ID. It is valid only when the target is
-  already described and the author is that device's member. A member names
-  any of their own devices from any of them. The naming device has seen the
-  description, so the nickname always replays after it. An empty nickname
-  clears it, and the latest nickname wins.
+  the member who first described it; a later description of it by another
+  member changes nothing. A device describes itself again when its automatic
+  name changes (a browser update, an installed app), and the latest
+  description wins.
+- A nickname targets a device by ID, and only that device's member may set
+  it, from any of their devices. An empty nickname clears it, and the latest
+  nickname wins. Within one history the naming device has seen the
+  description, so the nickname replays after it. But a member who joined
+  later never receives descriptions made before they joined, so their history
+  can hold a nickname for a device it has never seen described. Replay keeps
+  that as a nickname-only entry owned by its author. A later description by
+  the same member completes it; one by another member wins and drops the
+  nickname.
 - Names are canonical in the event: trimmed, at most 48 characters for an
   automatic name and 32 for a nickname, with no control characters and no
   disguising format characters. Anything else is a malformed event.

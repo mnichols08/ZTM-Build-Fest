@@ -104,7 +104,9 @@ After its first successful sync, a device records its automatic name as an
 encrypted `DEVICE_DESCRIBED` event, and again whenever that name changes.
 Trusted devices groups devices by member, marks this device, and shows the
 nickname, else the synced automatic name, else the server's automatic name,
-else "New device" with the start of its sync code. Only a device's own member
+else "New device" with the start of its sync code. A member who joined later
+has no description for devices that described themselves earlier, so they see
+those devices by nickname or by the server's automatic name. Only a device's own member
 can rename it ([EVENTS](EVENTS.md#v110-device-names) has the rules).
 
 ## v0.8.6 existing-member reauthentication

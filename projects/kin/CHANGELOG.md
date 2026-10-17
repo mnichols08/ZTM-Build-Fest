@@ -26,8 +26,8 @@ documentation only.
   service starts.
 - **Update prompt.** A device that receives changes from a newer Kin now says
   to update Kin on that device; its saved information stays.
-- **Mixed versions.** A v1.0 device in a household with a v1.1 device pauses
-  sync until it updates.
+- **Mixed versions.** As soon as a v1.1 device syncs, a v1.0 device in the
+  same household pauses sync until it updates; its data stays.
 
 ## v1.0.0 — Stable Kin Platform
 

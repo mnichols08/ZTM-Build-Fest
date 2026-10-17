@@ -577,7 +577,13 @@ pub fn execute_with(
                 .iter()
                 .find(|device| device.device_id == context.device_id)
                 .is_some_and(|device| {
-                    device.member_id != context.actor_id || device.auto_name == auto_name
+                    if device.member_id == context.actor_id {
+                        device.auto_name.as_deref() == Some(auto_name.as_str())
+                    } else {
+                        // Another member's description; a nickname-only
+                        // entry gives way to the device's own description.
+                        device.auto_name.is_some()
+                    }
                 })
             {
                 return Err(KinError::InvalidEvent);

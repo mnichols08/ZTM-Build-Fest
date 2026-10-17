@@ -123,8 +123,10 @@ Device names (v1.1, #71): the server keeps only each device's automatic name
 device is asking to join before that device holds any household key. A name
 someone types is a nickname: it travels only inside encrypted household events,
 so the server, its logs and its backups never contain it. Labels typed before
-v1.1 are reset to "Device" when the service starts; backups taken before that
-still contain them until they are rotated out. See
+v1.1 are reset to "Device" when the service starts, with freed database pages
+zeroed and the write-ahead log truncated. Backups taken before that still
+contain them until they are rotated out, and restoring one brings them back
+until the next start resets them again. See
 [Identity](IDENTITY.md#device-names).
 
 The planning design for these boundaries is documented in [Identity](IDENTITY.md), [Pairing](PAIRING.md), [Synchronization](SYNC.md), [Cryptography](CRYPTOGRAPHY.md), and the [Threat Model](THREAT-MODEL.md). These documents specify intended properties and open decisions; they do not establish implemented security guarantees.

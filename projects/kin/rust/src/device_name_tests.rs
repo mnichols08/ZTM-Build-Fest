@@ -54,7 +54,7 @@ fn device(id: u8, member: [u8; 16], auto_name: &str, nickname: Option<&str>) -> 
     DeviceNameState {
         device_id: DeviceId([id; 16]),
         member_id: ActorId(member),
-        auto_name: auto_name.into(),
+        auto_name: Some(auto_name.into()),
         nickname: nickname.map(Into::into),
     }
 }
@@ -89,21 +89,81 @@ fn a_description_and_nicknames_replay_last_writer_wins() {
 }
 
 #[test]
-fn only_the_devices_member_may_name_it() {
+fn conflicting_device_events_are_kept_and_change_nothing() {
+    // Device names are cosmetic: no decoded device event fails replay.
     let base = described(1, MEMBER_1, 0x11, "Chrome on iPhone");
-    for invalid in [
+    for conflicting in [
         // Another member names it.
         nicknamed(2, MEMBER_2, 0x21, 0x11, "Mine now"),
-        // Nobody described the target.
-        nicknamed(2, MEMBER_1, 0x11, 0x12, "Laptop"),
         // Another member describes the same device.
         described(2, MEMBER_2, 0x11, "Chrome on Android"),
     ] {
         assert_eq!(
-            project(&[base.clone(), invalid]).unwrap_err(),
-            KinError::InvalidEvent
+            project(&[base.clone(), conflicting]).unwrap().devices,
+            vec![device(0x11, MEMBER_1, "Chrome on iPhone", None)]
         );
     }
+}
+
+#[test]
+fn a_later_member_replays_nicknames_for_devices_described_before_they_joined() {
+    // Member 2 joined after device 0x11 described itself, so member 2's
+    // history starts with member 1 renaming it: the description is missing.
+    let late = [
+        nicknamed(5, MEMBER_1, 0x12, 0x11, "Kitchen tablet"),
+        described(6, MEMBER_2, 0x21, "Safari on Mac"),
+    ];
+    let state = project(&late).unwrap();
+    assert_eq!(
+        state.devices,
+        vec![
+            DeviceNameState {
+                device_id: DeviceId([0x11; 16]),
+                member_id: ActorId(MEMBER_1),
+                auto_name: None,
+                nickname: Some("Kitchen tablet".into()),
+            },
+            device(0x21, MEMBER_2, "Safari on Mac", None),
+        ]
+    );
+    // The device describes itself again later: same member keeps the nickname.
+    let mut same = late.to_vec();
+    same.push(described(7, MEMBER_1, 0x11, "Chrome on iPad"));
+    assert_eq!(
+        project(&same).unwrap().devices[0],
+        device(0x11, MEMBER_1, "Chrome on iPad", Some("Kitchen tablet"))
+    );
+    // A description by another member names its own device and wins.
+    let mut other = late.to_vec();
+    other.push(described(7, MEMBER_2, 0x11, "Firefox on Linux"));
+    assert_eq!(
+        project(&other).unwrap().devices[0],
+        device(0x11, MEMBER_2, "Firefox on Linux", None)
+    );
+    // Its member can still rename it, and nobody else can.
+    let mut events = decode_request(&kine(&late, 0, TEST_DATE, None))
+        .unwrap()
+        .events;
+    assert!(run(
+        &mut events,
+        C::NicknameDevice {
+            device_id: DeviceId([0x11; 16]),
+            nickname: Some("Hall tablet".into())
+        },
+        context(7, MEMBER_1, 0x12, 7)
+    )
+    .is_ok());
+    assert_eq!(
+        run(
+            &mut events,
+            C::NicknameDevice {
+                device_id: DeviceId([0x11; 16]),
+                nickname: Some("Mine".into())
+            },
+            context(8, MEMBER_2, 0x21, 8)
+        ),
+        Err(KinError::InvalidEvent)
+    );
 }
 
 #[test]
@@ -371,6 +431,15 @@ fn the_kdev_table_is_laid_out_as_documented() {
     expected.extend_from_slice(b"Mac");
     assert_eq!(bytes, expected);
     assert_eq!(encode_device_names(&[]).unwrap(), b"KDEV\x01\0\0\0\0\0\0\0");
+    let nickname_only = encode_device_names(&[DeviceNameState {
+        device_id: DeviceId([0x11; 16]),
+        member_id: ActorId(MEMBER_1),
+        auto_name: None,
+        nickname: Some("Desk".into()),
+    }])
+    .unwrap();
+    assert_eq!(nickname_only[44..48], [0, 0, 4, 0]);
+    assert_eq!(&nickname_only[48..], b"Desk");
 }
 
 #[test]

@@ -1,17 +1,24 @@
 //! Replay of device names (#71).
 //!
-//! `DeviceDescribed` records the automatic name a device announces for
-//! itself: the device is the event's header device, and its member is the
-//! header actor, both after identity bindings. A device keeps the member it
-//! was first described by; a description from another member is invalid.
-//! A device may describe itself again (a browser update changes its name),
-//! and the latest description in replay order wins.
+//! Device names are cosmetic, so no device-name event ever fails replay once
+//! it has decoded: an event that conflicts with what this history already
+//! knows is kept and changes nothing. The strict rules are enforced when a
+//! command creates the event (`command::execute_with`).
 //!
-//! `DeviceNicknamed` sets or clears a nickname. The target must already be
-//! described, and only its member may name it, from any of their devices.
-//! The member's device saw the description before naming it, so the
-//! nickname always has a greater logical time and replays after it. The
-//! latest nickname in replay order wins.
+//! `DeviceDescribed` records the automatic name a device announces for
+//! itself: the device is the event's header device and its member is the
+//! header actor, both after identity bindings. A device keeps the member that
+//! first described it; a later description from another member changes
+//! nothing. A device may describe itself again (a browser update changes its
+//! name), and the latest description in replay order wins.
+//!
+//! `DeviceNicknamed` sets or clears a nickname, and only the device's member
+//! may give one. A member who joined later never receives descriptions made
+//! before they joined (history starts at their first key epoch), so a
+//! nickname can arrive for a device this history has never seen described.
+//! It is kept as a nickname-only entry owned by its author. A later
+//! description by the same member completes it; one by another member wins,
+//! as the description names its own device, and drops the nickname.
 //!
 //! Names are canonical by the time they get here: the decoder rejects
 //! anything `normalize_device_name` or `normalize_device_nickname` would
@@ -25,17 +32,23 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 return Err(KinError::InvalidEvent);
             }
             match r.devices.get_mut(&event.device_id) {
-                Some(device) if device.member_id != event.actor_id => {
-                    return Err(KinError::InvalidEvent)
+                Some(device) if device.member_id == event.actor_id => {
+                    device.auto_name = Some(auto_name.clone());
                 }
-                Some(device) => device.auto_name.clone_from(auto_name),
+                // Only a nickname-only entry: the description is authoritative.
+                Some(device) if device.auto_name.is_none() => {
+                    device.member_id = event.actor_id;
+                    device.auto_name = Some(auto_name.clone());
+                    device.nickname = None;
+                }
+                Some(_) => {}
                 None => {
                     r.devices.insert(
                         event.device_id,
                         DeviceNameState {
                             device_id: event.device_id,
                             member_id: event.actor_id,
-                            auto_name: auto_name.clone(),
+                            auto_name: Some(auto_name.clone()),
                             nickname: None,
                         },
                     );
@@ -49,7 +62,18 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
             Some(device) if device.member_id == event.actor_id => {
                 device.nickname.clone_from(nickname)
             }
-            _ => return Err(KinError::InvalidEvent),
+            Some(_) => {}
+            None => {
+                r.devices.insert(
+                    *device_id,
+                    DeviceNameState {
+                        device_id: *device_id,
+                        member_id: event.actor_id,
+                        auto_name: None,
+                        nickname: nickname.clone(),
+                    },
+                );
+            }
         },
         _ => return Err(KinError::Internal),
     }

@@ -249,7 +249,9 @@ export class SyncController {
     } catch {
       // Retried on the next successful sync; the name is a convenience.
     } finally {
-      if (this.ctx.session.isCurrentSession(session)) this.app.describingDevice = false;
+      // Always released: a lock or reset mid-way must not stop later
+      // sessions on this page from describing the device.
+      this.app.describingDevice = false;
     }
     return described;
   }
@@ -264,7 +266,9 @@ export class SyncController {
   }
   // Sets or clears (empty) the nickname of one of this member's devices.
   async renameDevice(deviceId, nickname) {
+    const session = this.ctx.session.captureSession();
     await this.ctx.append.appendCommand({ type: "nickname-device", targetDeviceId: deviceId, nickname: nickname || null });
+    this.ctx.session.assertCurrentSession(session);
     this.ctx.peers.broadcastEventChange();
   }
 }

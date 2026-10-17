@@ -324,12 +324,15 @@ pub fn normalize_device_nickname(nickname: &str) -> Result<String, KinError> {
 }
 
 /// One named device: the member it belongs to, the automatic name it last
-/// announced and the nickname its member gave it, if any.
+/// announced and the nickname its member gave it, if any. `auto_name` is None
+/// when this history holds a nickname for the device but not its description
+/// (the device described itself before this member joined); `member_id` is
+/// then the nickname's author until a description says otherwise.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeviceNameState {
     pub device_id: DeviceId,
     pub member_id: ActorId,
-    pub auto_name: String,
+    pub auto_name: Option<String>,
     pub nickname: Option<String>,
 }
 

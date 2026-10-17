@@ -2,7 +2,7 @@
 // names become "Device" on the way in, and names stored by v1.0 are reset
 // when the service starts.
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -72,6 +72,8 @@ test("labels typed before v1.1 are reset in storage when the service starts", (t
   store = new DurableStore(databasePath);
   assert.equal(store.resetDeviceLabels(deviceLabel), 1);
   assert.equal(JSON.parse(store.db.prepare("SELECT device_json FROM devices").get().device_json).label, "Device");
+  for (const file of [databasePath, `${databasePath}-wal`].filter(existsSync))
+    assert.equal(readFileSync(file).includes("Mikey's work laptop"), false, `the typed label is gone from ${file}`);
   assert.equal(store.resetDeviceLabels(deviceLabel), 0, "a second start changes nothing");
   store.db.prepare("UPDATE devices SET device_json = ? WHERE id = ?")
     .run(JSON.stringify({ ...JSON.parse(row.device_json), label: "Kitchen" }), adult.deviceId);

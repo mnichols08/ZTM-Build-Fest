@@ -208,11 +208,12 @@ the exception: their names must already be canonical in the event, so the
 decoder fails a name with surrounding whitespace, a control character, a
 disguising format character (bidirectional controls, zero-width space, word
 joiner, soft hyphen, byte-order mark; zero-width joiner and non-joiner are
-allowed) or too many characters with code 2. Replay (`replay/devices.rs`)
-gives a device the member that first described it; a description from
-another member, or a nickname for a device that is not described or belongs
-to another member, fails with code 4. The latest description and nickname in
-replay order win. Device names are not part of KINS: they leave the engine
+allowed) or too many characters with code 2. Once decoded, a device-name
+event never fails replay, because names are cosmetic (`replay/devices.rs`): a
+device keeps the member that first described it, an event from another member
+changes nothing, and a nickname for a device this history has not seen
+described is kept as a nickname-only entry. The latest description and
+nickname in replay order win. Commands enforce the strict rules. Device names are not part of KINS: they leave the engine
 only through `kin_device_names`. An engine older than v1.1 fails both kinds
 with code 3 (unsupported).
 
@@ -351,8 +352,9 @@ revision is meaningful only within one instance.
 - **KDEV v1** (device names, `kin_device_names`): `"KDEV"`, version 1,
   reserved u16, device count u32, then per device in device-ID order: device
   ID, member ID (16 bytes each, after identity bindings), automatic-name
-  length u16, nickname length u16 (zero when none), the automatic name and
-  the nickname (UTF-8). The context is a record-less KINE request, as for
+  length u16 (zero for a nickname-only entry), nickname length u16 (zero
+  when none), the automatic name and the nickname (UTF-8). Every entry has at
+  least one of the two names. The context is a record-less KINE request, as for
   `kin_project`. KCMD action 42 (`describe-device`) carries the name as its
   payload and a zero entity ID; action 43 (`nickname-device`) carries the
   target device as its entity ID and the nickname as its payload (empty

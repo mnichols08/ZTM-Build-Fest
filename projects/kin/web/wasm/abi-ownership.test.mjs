@@ -116,13 +116,16 @@ test("device names decode from the KDEV table", () => {
   const table = kdev([
     { deviceId: 0x11, memberId: 0x01, autoName: "Chrome on iPhone", nickname: "Mikey’s phone 📱" },
     { deviceId: 0x21, memberId: 0x02, autoName: "Safari on Mac" },
+    { deviceId: 0x31, memberId: 0x01, autoName: "", nickname: "Hall tablet" },
   ]);
   const engine = createEngine(substituteExports({ operation: () => 0, result: table }).exports);
   assert.deepEqual(engine.deviceNames([], 1_760_000_000_000, 20261003), [
     { deviceId: "11".repeat(16), memberId: "01".repeat(16), autoName: "Chrome on iPhone", nickname: "Mikey’s phone 📱" },
     { deviceId: "21".repeat(16), memberId: "02".repeat(16), autoName: "Safari on Mac", nickname: null },
+    { deviceId: "31".repeat(16), memberId: "01".repeat(16), autoName: null, nickname: "Hall tablet" },
   ]);
-  for (const broken of [table.slice(0, -1), Uint8Array.of(...table, 0), (() => { const t = table.slice(); t[4] = 2; return t; })()]) {
+  const nameless = kdev([{ deviceId: 0x11, memberId: 0x01, autoName: "" }]);
+  for (const broken of [table.slice(0, -1), Uint8Array.of(...table, 0), (() => { const t = table.slice(); t[4] = 2; return t; })(), nameless]) {
     const fake = substituteExports({ operation: () => 0, result: broken });
     assert.throws(() => createEngine(fake.exports).deviceNames([], 1_760_000_000_000, 20261003),
       (error) => error instanceof KinEngineError && error.code === 6);

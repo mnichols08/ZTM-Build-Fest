@@ -27,11 +27,25 @@ export const identityMethods = {
   /** Replaces every stored device label that `normalize` changes, in one
    * transaction, and returns how many changed. Since v1.1 the only label the
    * server keeps is a device's automatic name (#71): a name someone typed
-   * before then is reset here when the service starts, so it leaves storage
-   * and every later backup. Rows that do not parse are left for loadIdentity
-   * to report. */
+   * before then is reset here when the service starts. Freed pages are
+   * zeroed (secure_delete) and the WAL is checkpointed and truncated, so the
+   * old text is not left in the database files; backups taken before the
+   * reset still hold it. Rows that do not parse are left for loadIdentity to
+   * report. */
   resetDeviceLabels(normalize) {
     this.assertAvailable();
+    const secureDelete = this.db.prepare("PRAGMA secure_delete").get().secure_delete;
+    this.db.exec("PRAGMA secure_delete = ON");
+    try {
+      const changed = this.rewriteDeviceLabels(normalize);
+      if (changed) this.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+      return changed;
+    } finally {
+      this.db.exec(`PRAGMA secure_delete = ${secureDelete ? "ON" : "OFF"}`);
+    }
+  },
+
+  rewriteDeviceLabels(normalize) {
     return this.transaction(() => {
       const update = this.db.prepare("UPDATE devices SET device_json = ? WHERE id = ?");
       let changed = 0;

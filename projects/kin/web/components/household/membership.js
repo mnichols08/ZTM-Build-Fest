@@ -234,10 +234,12 @@ export class HouseholdMembership {
     form.className = "device-rename-form";
     form.hidden = true;
     const label = document.createElement("label");
-    label.textContent = "Nickname";
+    label.textContent = `Nickname for ${displayName}`;
     const input = document.createElement("input");
     input.name = "nickname";
-    input.maxLength = 32;
+    // 32 characters, checked on save: maxLength counts UTF-16 units, which
+    // would cut an emoji nickname short. 128 units is the most 32 can take.
+    input.maxLength = 128;
     input.autocomplete = "off";
     input.value = nickname ?? "";
     input.placeholder = "Kitchen tablet";
@@ -271,7 +273,11 @@ export class HouseholdMembership {
       if (event.key === "Escape") { event.preventDefault(); close(); }
     });
     form.append(label, save, cancel);
-    if (nickname) form.append(this.host.makeButton("Remove nickname", () => rename(""), "secondary"));
+    if (nickname) {
+      const remove = this.host.makeButton("Remove nickname", () => rename(""), "secondary");
+      remove.setAttribute("aria-label", `Remove the nickname ${nickname}`);
+      form.append(remove);
+    }
     wrapper.append(open, form);
     return wrapper;
   }

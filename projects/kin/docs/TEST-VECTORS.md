@@ -154,9 +154,12 @@ as "Chrome on iPhone 17"; member 2 sets and clears a nickname. Expected KDEV
 order 0x11, 0x12, 0x21 with 0x11 keeping its newer automatic name and the
 later nickname, and no nickname on 0x12 or 0x21.
 
-**025 — Authority.** After member 1 describes 0x11, each of these fails replay
-with code 4: member 2 nicknaming 0x11, member 1 nicknaming an undescribed
-device, and member 2 describing 0x11.
+**025 — Authority without poisoning.** After member 1 describes 0x11, member 2
+nicknaming 0x11 or describing 0x11 replays and changes nothing. A history that
+starts with member 1 nicknaming an undescribed 0x11 (a member who joined later)
+replays with a nickname-only entry owned by member 1; a later description by
+member 1 keeps the nickname, one by member 2 replaces the entry. Member 1 can
+still rename it by command; member 2 cannot (code 4).
 
 **026 — Canonical names.** An empty name, surrounding whitespace, a newline,
 U+202E, U+200B, a leading U+FEFF, a 49-character automatic name and a

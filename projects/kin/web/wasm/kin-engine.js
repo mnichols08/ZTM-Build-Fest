@@ -241,7 +241,8 @@ export function createEngine(instanceExports) {
       replayBytes(exports, mirror, records, asOf, cursorEventId, civilDate, syncIdentity),
     // The household's named devices (#71), replayed from the same history:
     // [{ deviceId, memberId, autoName, nickname }] in device-ID order, IDs
-    // as hex, nickname null when none is set.
+    // as hex. nickname is null when none is set; autoName is null when this
+    // history has a nickname for the device but not its description.
     deviceNames: (records, asOf, civilDate, syncIdentity = null) =>
       safeDecode(() => decodeDeviceNames(
         replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_device_names"),
@@ -251,7 +252,8 @@ export function createEngine(instanceExports) {
 
 // KDEV v1 (ABI.md): "KDEV", version u16, reserved u16, count u32, then per
 // device its ID and member ID (16 bytes each), automatic-name and nickname
-// lengths (u16 each) and the two UTF-8 names.
+// lengths (u16 each; a zero automatic-name length means it is not in this
+// history) and the two UTF-8 names. Every entry has at least one name.
 function decodeDeviceNames(bytes) {
   const invalid = () => new KinEngineError(6, "Kin received invalid device names.");
   if (bytes.length < 12 || readAscii(bytes, 0, 4) !== "KDEV") throw invalid();
@@ -265,11 +267,13 @@ function decodeDeviceNames(bytes) {
     const autoLength = view.getUint16(offset + 32, true);
     const nicknameLength = view.getUint16(offset + 34, true);
     const end = offset + 36 + autoLength + nicknameLength;
-    if (autoLength < 1 || end > bytes.length) throw invalid();
+    if (autoLength + nicknameLength < 1 || end > bytes.length) throw invalid();
     devices.push({
       deviceId: idToHex(bytes.subarray(offset, offset + 16)),
       memberId: idToHex(bytes.subarray(offset + 16, offset + 32)),
-      autoName: strictTextDecoder.decode(bytes.subarray(offset + 36, offset + 36 + autoLength)),
+      autoName: autoLength
+        ? strictTextDecoder.decode(bytes.subarray(offset + 36, offset + 36 + autoLength))
+        : null,
       nickname: nicknameLength
         ? strictTextDecoder.decode(bytes.subarray(offset + 36 + autoLength, end))
         : null,
