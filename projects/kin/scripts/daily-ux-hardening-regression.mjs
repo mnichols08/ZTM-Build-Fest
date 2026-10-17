@@ -1,3 +1,4 @@
+import { setViewport } from "./cdp-viewport.mjs";
 import assert from "node:assert/strict";
 
 // Daily UX hardening (PR 07): session-lifecycle, offline, accessibility and
@@ -31,7 +32,7 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
     await settle();
   };
   const viewport = async (width, height, mobile) => {
-    await client.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile });
+    await setViewport(client, { width, height, deviceScaleFactor: 1, mobile });
     await settle();
   };
   const network = async (offline) => {
@@ -765,6 +766,14 @@ export async function dailyUxHardeningRegressions(client, { visit, ready, tab: o
       await press(KEYS.n);
       afterPalette = await page(() => { const q = document.querySelector("kin-app").quickAdd; return { open: q.dialog.open, focus: document.activeElement === q.input }; });
       if (afterPalette.open) break;
+    }
+    // Quick add moves focus to its title after it opens; on a slow runner the
+    // read above can come first (#164). Wait for it, bounded, before checking.
+    if (afterPalette.open && !afterPalette.focus) {
+      for (let wait = 0; wait < 80 && !afterPalette.focus; wait++) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        afterPalette = await page(() => { const q = document.querySelector("kin-app").quickAdd; return { open: q.dialog.open, focus: document.activeElement === q.input }; });
+      }
     }
     check(afterPalette.open && afterPalette.focus, "keyboard commands keep working after the palette fallback", afterPalette);
     await press(KEYS.escape);
