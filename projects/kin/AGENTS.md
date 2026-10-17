@@ -106,74 +106,40 @@ If an unrelated parent-repository file was modified accidentally, revert that ch
 
 # Current Development Stage
 
-The current implementation candidate is v0.47.0 Household Identity & Shared
-Appearance. It remains pre-release and in stabilization/readiness review; no
-tag or production certification is implied. The historical progression below
-records the earlier authorized candidate sequence and remains relevant to its
-compatibility constraints.
+Kin is at **v1.0.0 — Stable Kin Platform**, Kin's first stable release. Its
+release candidate is `kin-v1.0.0-rc.1`; `kin-v1.0.0` is tagged on the same
+commit once the final release gate passes (issue #168). Create, move or push
+tags only with the owner's explicit approval.
 
-The v0.13.x Recovery & Household Continuity candidate established the earlier
-recovery baseline.
-v0.13.5 preserves a newer deletion cancellation over an older pending-deletion backup; v0.13.4 corrects capacity and predating-backup review findings after the v0.13.3 recovery UX/documentation gate, v0.13.2 stale-backup hardening, v0.13.1 member-assisted recovery, and the v0.13.0 capability matrix
-and bounded same-member replacement-device enrollment. Recovery must restore continuity
-without reviving revoked authority; no server content-key escrow is permitted.
-The v0.14.x UX/UI Consolidation line is complete through `kin-v0.14.5` on
-`kin-development`. v0.15.5 is merged into `kin-development`; annotated
-`kin-v0.15.5` is complete at `12da21288252a9559da5b3acb8eb3efb81aaeec3`.
-PR #26 is merged into `kin-development` at
-`25e854eaa41a569650f89ea41db70a6f2bcb5c92`. Preserve the immutable annotated
-`kin-v0.16.0`, `kin-v0.16.1`, and `kin-v0.16.2` tags. The user explicitly
-authorized `v0.17.0 — Checklist Steps`; implementation and validation are
-complete on `kin-v0.17.x-checklist-steps`, with its existing tag preserved.
-This candidate is not production certification. The user authorized the
-v0.16.3-v0.20.x fast-track on
-`kin-fast-track-v0.16.3-v0.20.x`. The v0.16.3 Notes hardening commit is
-`6a59070`; it makes concurrent cross-device Note archives converge while
-rejecting stale rearchives. The existing v0.17.0 Checklist Steps commit/tag is
-preserved unchanged. v0.18.0 Richer Routine Scheduling is implemented and
-validated on the fast-track branch with protocol 12 and bounded
-creation-anchored biweekly/calendar-month cadence. v0.19.0 Shared Shopping
-Lists (`kin-v0.19.0` candidate) adds Shopping classification under protocol
-13. The current v0.20.0 Staples & Replenishment (`kin-v0.20.0` candidate)
-adds reusable Staples under protocol 14 with user-triggered transfer to
-Shopping. The v0.21.0 Household Modes (`kin-v0.21.0` candidate) adds protocol 15 and
-pauses routine occurrences in non-Normal modes. The v0.22.0 Lightweight
-Planning Dates (`kin-v0.22.0` candidate) adds protocol 16 and an optional,
-fixed civil date to Items. The v0.23.0 Calendar Interoperability candidate
-(`kin-v0.23.0` candidate) exports active dated Items as local all-day iCalendar
-files, without a new domain or storage contract. The v0.24.0 Useful Household
-History candidate (`kin-v0.24.0`) derives each Item's date-only Last changed
-label from effective Item and checklist-Step events under protocol 17, without
-actor attribution or a persistent-format migration. The v0.25.0 Search & Filters (`kin-v0.25.0` candidate name; no tag created)
-searches unarchived Item/Step, Handoff, Talk, and Note text locally,
-with Item-only classification/status/Area filters and no persistent index.
-The user-authorized v0.26.0 Pins & Quick Access milestone (`kin-v0.26.0`
-candidate name; no tag created) adds protocol 18 Pin/Unpin events, deterministic
-bounded replay and a compact Today section. The authorized v0.27.0 Household
-Playbooks milestone (`kin-v0.27.0` candidate name; no tag created) adds
-protocol 19 ordered reusable checklist templates that instantiate as ordinary
-Items and Steps. The authorized v0.28.0 Local Reminders milestone (`kin-v0.28.0` candidate; no tag created) adds opt-in browser-local foreground notifications for Items and Routines; it adds no canonical event or server dependency, and browser suspension/termination may suppress delivery. The authorized v0.29.0 PWA candidate (`kin-v0.29.0`; no tag created) adds complete-shell cache staging, safe update activation, offline navigation fallback and a calm update prompt. The authorized fast-track continues
-through v0.34.0 on `kin-fast-track-v0.31-v0.34`. Current v0.31.0 Maintenance
-Records candidate adds protocol 21 bounded factual maintenance history under
-Reference Records. The authorized batch continues through v0.32.0 Encrypted
-Attachments Foundation, v0.33.0 Attachment UX & Lifecycle, and v0.34.0
-Responsibility Ownership. The user has separately authorized v0.35.0 More Adult
-Members v0.35.0 on `kin-v0.35-more-adults`; keep its trust-model changes isolated for
-security and human review. Preserve separate milestone commits; do not tag or
-merge this branch. These are implementation candidates, not production certification.
-The release label `kin-v0.35.0` is reserved for a separately approved release commit.
-The user-authorized `kin-fast-track-v0.36-v0.38` batch ships the v0.36.0,
-v0.37.0, and v0.38.0 implementation candidates in separate milestone commits.
-Preserve the v0.13.5 recovery authority guarantees and all earlier
-security/domain contracts. Do not merge or tag this candidate branch.
+v1.0.0 includes everything since the last published release, v0.10.3: the
+tagged v0.11.x–v0.20.x review lines, the untagged v0.21.0–v0.47.0 development
+candidates, the desktop workspace UX, the performance refactor, and the v1.0
+readiness fixes. [CHANGELOG](CHANGELOG.md) lists every version and marks the
+untagged ones.
 
-Kin's last published release is `v0.10.3` — Bounded Storage/Archive Hardening & Architecture Closure. The v0.31.0–v0.34.0 batch is complete; v0.35.0 More Adult Members is authorized on `kin-v0.35-more-adults`. Preserve every existing tag exactly. Root replacement follows [ROOT-ROTATION](docs/ROOT-ROTATION.md); archive recovery remains intentionally local-only and KARC v1 remains supported. No production certification, mobile readiness or independent audit is claimed. Do not merge the batch. See the release records for actual evidence and limitations.
+Standing constraints from v1.0:
 
-The authorized final feature batch is `kin-fast-track-v0.39-v0.40`. The v0.39.0 candidate (`kin-v0.39.0`) adds authenticated portable-package metadata while preserving KARC v1 compatibility. The v0.40.0 candidate (`kin-v0.40.0`) adds validated restore staging and device-migration UX while preserving the archive/device-trust boundary. v0.40.0 is the final planned feature release in this phase; stop feature development afterward and do not begin v0.41. The v0.40.1 portability-status correction, v0.40.2 clock/archive correctness patch, and v0.40.3 verification-infrastructure patch (`kin-v0.40.3`) preserve the existing v0.40.0 milestone and did not begin v0.41. These candidates are not tags or production certification.
-
-After real-world mobile testing, the user separately authorized `v0.41.0 — Mobile Experience & Passkey-First UX` (`kin-v0.41.0` candidate name; no tag created) on `feat/kin-v0.41.0-mobile-experience`. It changes presentation only: passkey-first unlock with recovery as the fallback, welcome/setup and create/join/add-device onboarding, context-sensitive capture, attachment previews, phone-first item rows, and plain-language state messages. The server-verified PRF unlock contract, local encryption, household authorization, event protocol, storage formats, and KARC compatibility are unchanged. The former "Backup Safety & Disaster Drills" v0.41.0 proposal is deferred and will be renumbered. The v0.41.1 correctness patch (`kin-v0.41.1` candidate name; no tag created) on `fix/kin-v0.41.1-mobile-attachments` fixes mobile photo/file attaching: one app-owned file input opened synchronously from a visible row button, feedback that survives list refreshes, specific file refusals, and a stale-sync guard. It changes no persistent, transport, or cryptographic contract. Do not begin v0.42.x.
-
-The user separately authorized an unversioned desktop-first UX implementation candidate on `feat/kin-workspace-ux` (base `d27bf48`): five destinations (Today, Lists, Routines, Updates, Household) with legacy route aliases, a persistent desktop navigation and conditional item-detail column, a read-only Today composition over existing records (legacy `today` items preserved), a shared item detail view, actionable search results, an in-app reminder control, and contextual save feedback. See [docs/WORKSPACE-UX.md](docs/WORKSPACE-UX.md). It carries no version number, tag, or release line and changes no persistent, transport, or cryptographic contract.
+- **Formats are frozen.** Every v1.x release must keep reading the storage,
+  sync, export and server formats listed in
+  [V1.0-COMPATIBILITY](docs/V1.0-COMPATIBILITY.md); CI fails if a frozen
+  version changes without that document. A new format is an addition, never a
+  replacement.
+- **Known limitations** at v1.0 are listed in
+  [THREAT-MODEL](docs/THREAT-MODEL.md#known-limitations-at-v10). Don't claim
+  protection against them.
+- **Household authority:** up to four Adults, Limited members (children and
+  teens) and Temporary members (babysitters, caregivers, guests). The founder
+  is the first **household admin**; admins promote or demote other Adults with
+  a fresh passkey. Membership management, revoking another member's device,
+  household deletion, admin recovery and shared settings require an admin.
+  Legacy households without an admin keep Adult-level management and stay
+  fail-closed for settings and admin grants.
+- **Recovery** must restore continuity without reviving revoked authority; no
+  server content-key escrow.
+- Work after v1.0 is tracked as GitHub issues (device names #71, install
+  identity #78, push #85, QR pairing #93, household chat #104), not as
+  pre-assigned version numbers. Follow the release cadence below for each new
+  minor line.
 
 The pre-implementation releases are:
 
@@ -1084,19 +1050,18 @@ v0.8.0 — Household Pairing
 v0.9.0 — Encrypted Sync
 v0.9.3 — Encrypted Event Sync Stabilization
 v0.10.x — Portable Core + Local Security
-v0.11.x — Durable Service & Deployment (implementation candidate; awaiting human review)
-v0.12.x — Data Lifecycle, Retention & Deletion (v0.12.3 candidate; release gate pending)
-v0.13.x — Recovery & Household Continuity (complete through v0.13.5)
-v0.14.x — UX/UI Consolidation (complete through v0.14.5)
-v0.15.x — Household Areas (complete through v0.15.5)
-v0.16.x — Household Notes & Reference Context (v0.16.3 hardening candidate)
-v0.17.0 — Checklist Steps (existing tagged candidate)
-v0.18.x — Richer Routine Scheduling (authorized fast-track)
-v0.19.x — Shared Shopping Lists (authorized fast-track)
-v0.20.x — Staples & Replenishment (authorized fast-track)
-v0.21.x–v0.40.x — Incremental household capabilities, portability and device migration (October targets)
-v0.41.x–v0.45.x — Recovery drills, platform validation, performance and release-candidate readiness (undated follow-ups)
-v1.0.0 — Stable Kin Platform (planned, readiness-driven)
+v0.11.x — Durable Service & Deployment
+v0.12.x — Data Lifecycle, Retention & Deletion
+v0.13.x — Recovery & Household Continuity
+v0.14.x — UX/UI Consolidation
+v0.15.x — Household Areas
+v0.16.x — Household Notes & Reference Context
+v0.17.0 — Checklist Steps
+v0.18.x — Richer Routine Scheduling
+v0.19.x — Shared Shopping Lists
+v0.20.x — Staples & Replenishment
+v0.21.0–v0.47.0 — Household capabilities through household admins (untagged development candidates)
+v1.0.0 — Stable Kin Platform
 ```
 
 This roadmap may evolve.
@@ -1512,19 +1477,3 @@ If an explicit task intentionally changes an architectural decision, update the 
 Kin should make family life require **less remembering, less repeating, and less unnecessary friction**.
 
 If a proposed feature makes Kin harder to use than simply sending a text message, reconsider it.
-
-The user-authorized Personal Appearance candidate is `kin-v0.46.0` on
-`feat/kin-personal-appearance`, stacked from open PR #42 at `dadd92b`; no tag
-has been created. It is member-bound and device-local and adds no household
-event, sync, attachment, activity, or portable-export contract.
-
-The user-authorized Household Identity & Shared Appearance candidate is
-`kin-v0.47.0` on `feat/kin-household-owner-settings`, stacked from the Personal
-Appearance candidate; no tag has been created. It adds narrow founder-backed
-owner authority and a revisioned, opaque encrypted household-settings record.
-The same candidate replaces single-owner settings authority with household
-admins (server schema 8). The founder is the first admin. Admins can promote or
-demote other Adults with a fresh passkey. Membership management, other
-members' device revocation, household deletion, admin recovery, and shared
-settings require an admin. Legacy households without one keep Adult-level
-management and stay fail-closed for settings and admin grants.

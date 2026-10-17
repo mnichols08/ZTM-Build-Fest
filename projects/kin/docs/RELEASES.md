@@ -1,9 +1,9 @@
 # Release Process
 
-**Status:** Last published implementation: v0.10.3 Bounded Storage/Archive
-Hardening & Architecture Closure. The current implementation candidate is
-v0.47.0 Household Identity & Shared Appearance; it has no release tag and is
-not production certification.
+**Status:** Current release: v1.0.0 — Stable Kin Platform, with release
+candidate `kin-v1.0.0-rc.1`. The release before it was v0.10.3 Bounded
+Storage/Archive Hardening & Architecture Closure. Neither is production
+certification or an independent audit.
 
 Before any v1.x release, check it against the
 [v1.0 compatibility commitment](V1.0-COMPATIBILITY.md): a release may add
@@ -21,10 +21,9 @@ Service & Deployment gates, the v0.11.6 documentation/comment patch, and the
 v0.11.7 October Roadmap & Startup Diagnostics patch. The tagged v0.12.3 review
 candidate implements lifecycle capability, correctness, stale-device hardening
 and UX/docs; the tag does not indicate publication.
-The [roadmap](ROADMAP.md) records the implemented-candidate progression through
-v0.41.1, the still-unactivated v0.42.x–v0.45.x planning contracts, and the
-separately authorized v0.46.0 and v0.47.0 candidates. v1.0.0 depends on
-readiness, not on filling every proposed version number.
+The [roadmap](ROADMAP.md) records the candidate progression from v0.11 through
+v0.47.0. The v0.21.0–v0.47.0 candidates were never tagged; together with the
+tagged v0.11.x–v0.20.x review lines they ship in v1.0.0.
 v1.0 requires the readiness properties of every preceding line, not
 only architecture/security and UX/UI. Use the release-specific planning contracts
 and [V0.10.0](V0.10.0.md); do not manufacture patch releases or knowingly defer a
@@ -118,7 +117,27 @@ Follow [V0.7.0](V0.7.0.md) for capability, correctness, resilience/accessibility
 
 The v0.7.x line completed at `kin-v0.7.4`, validated commit `a8ded079be6fdbedba8738a64a5f0fb753e7fdd6`, pushed to the fork. The v0.8 record is [V0.8.0](V0.8.0.md); `kin-v0.8.8` corrected active-member slots. The v0.9 record is [V0.9.0](V0.9.0.md). The merged v0.9.3 base and completed v0.10 implementation line are recorded in [V0.10.0](V0.10.0.md). v1.0 remains gated by local security, durable service, lifecycle/deletion, recovery/continuity and UX/UI readiness. Later implementation candidates do not change the last-published v0.10.3 status.
 
-The current candidate is v0.47.0; see the
-[Household Identity & Shared Appearance contract](HOUSEHOLD-IDENTITY-DEFAULTS.md),
-[versioning matrix](VERSIONING.md), and [changelog](../CHANGELOG.md). The active
-root verification workflow is release evidence, not a publication or tag.
+The current release is v1.0.0; see the [changelog](../CHANGELOG.md), the
+[versioning matrix](VERSIONING.md) and the
+[v1.0 compatibility commitment](V1.0-COMPATIBILITY.md). The root verification
+workflow is release evidence, not a publication or tag.
+
+## Release candidates
+
+A release candidate is an annotated `kin-vX.Y.Z-rc.N` tag (for example
+`kin-v1.0.0-rc.1`) on the commit that would become `vX.Y.Z`. The version in
+`package.json`, `Cargo.toml` and the app is already `X.Y.Z`: the service
+worker and the version check accept only plain `X.Y.Z`. Deploy the candidate,
+run the acceptance smoke on it, and if it holds with no new P0/P1 findings,
+put `kin-vX.Y.Z` on the same commit. If it needs a fix, the fix gets a new
+commit and `rc.N+1`.
+
+## Publishing on GitHub
+
+A tag alone is not a published release. A release is published when it has a
+GitHub Release on its `kin-vX.Y.Z` tag, with notes taken from its
+[changelog](../CHANGELOG.md) entry, including known limitations and, for
+v1.x, the compatibility commitment. Release candidates are published as
+pre-releases. Earlier `kin-v0.*` tags stay as tags: they are review
+milestones whose history is the changelog, not separate publications (owner
+decision in [V1.0_REVIEW_GATES](audits/V1.0_REVIEW_GATES.md)).

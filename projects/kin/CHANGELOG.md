@@ -1,16 +1,120 @@
 # Changelog
 
-## Unreleased — refactor track
+Kin's release history, newest first. Versions marked *not tagged* were
+development candidates that never received a release tag; their changes
+ship in v1.0.0. The project's planning releases v0.0.1–v0.0.12 are
+documentation only.
+
+## v1.0.0 — Stable Kin Platform
+
+Kin's first stable release. Its release candidate is `kin-v1.0.0-rc.1`, and
+`kin-v1.0.0` follows on the same commit once the final release checks pass
+([#168](https://github.com/mnichols08/ZTM-Build-Fest/issues/168)).
+
+**What's in it.** The last published release was v0.10.3. Everything since then
+ships in v1.0.0:
+
+- the tagged review lines v0.11.x through v0.20.x;
+- the v0.21.0–v0.47.0 development candidates, which were never tagged or
+  published (each entry below says so);
+- the unversioned desktop workspace and the performance refactor
+  (under *Included* below);
+- the v1.0 readiness work listed next.
+
+**Compatibility.** v1.0 freezes its storage, sync, export and server formats
+and promises that every v1.x release keeps reading them; see the
+[v1.0 compatibility commitment](docs/V1.0-COMPATIBILITY.md). Data from 0.x
+builds is not carried over: v1.0 starts fresh. What v1.0 does not protect
+against is listed under
+[known limitations](docs/THREAT-MODEL.md#known-limitations-at-v10).
+
+### New since v0.47.0
+
+- **Quick add** from anywhere, with partial-save recovery; recurring tasks can
+  be created from Quick add, Today and Routines.
+- **Today** is an actionable dashboard.
+- **Keyboard shortcuts and a command palette.**
+- **Bulk actions** with safe undo.
+
+### Setup and devices (from the v1.0 reality check, #163)
+
+- Setup no longer asks you to retype the recovery key. You confirm you saved
+  it, and the browser can offer to save it as a password named for its label
+  ("Kin recovery key K-7F3A"); recovery unlock can then autofill it.
+- iPhone and iPad browsers show Home Screen install steps before setup,
+  because the installed app keeps its own data, separate from the browser.
+- New devices are named automatically ("Chrome on iPhone"), with an optional
+  change.
+
+### Sync and data
+
+- Offline edits survive another device archiving the same item (#151).
+- Key-grant epochs are taken only from the signed package (#152).
+- Events another device sent that this one can't apply yet are kept
+  (encrypted), retried when new history arrives, and shown as needing review
+  instead of being dropped (#153).
+- Key rotation never reuses a key already wrapped for a device that has since
+  left (#176).
+- Notes, references and maintenance records keep their own entity IDs (#171).
+
+### Security and access
+
+- Approving a member recovery re-checks admin authority (#154).
+- Pairing-code guesses are limited per real client, also behind a trusted
+  reverse proxy (`KIN_TRUSTED_PROXIES`) (#155).
+- Only the uploader or an Adult can delete an attachment, and only Adults see
+  the remove control (#156).
+- Creating households is rate-limited, and operators can cap or close it
+  (`KIN_MAX_HOUSEHOLDS`, `KIN_ALLOW_NEW_HOUSEHOLDS`) (#157).
+- A passkey's sign counter can never go backwards (#158).
+- A malformed static path returns 404, not 500 (#159).
+- Opened attachment URLs are revoked when Kin locks (#161).
+- Calendar export strips control characters (#162).
+- Kin pages can't be framed by other sites.
+
+### Recovery and backups
+
+- Recovery keys have short labels (`K-7F3A`). Exports are named for the key
+  that opens them, and restore says which key it needs before asking for one
+  (#160).
+
+### Reliability and polish
+
+- Drafts survive sync refreshes (appearance, Areas, maintenance records), and
+  reminders are kept until their changes commit.
+- Overlapping playbook commands are guarded; a checklist that was only
+  partly created says so; responsibility changes refresh correctly.
+- Trusted-passkey capacity holds under anonymous bootstrap load; fingerprint
+  confirmation gates are kept; control boundaries meet contrast requirements;
+  appearance presets use native radios.
+
+### Platform and operations
+
+- Node.js 24 (24.16 or later) is required; CI runs 24.22.0 (#183).
+- A public test server: Docker with Caddy for HTTPS, or Railway. On Railway
+  it refuses to start without a data volume, backs up the database once per
+  deployment, and can restore a backup at startup (`deploy/`).
+- CI: the intermittent Windows Edge browser-suite failures are fixed, and
+  both jobs report readable failures (#164).
+
+### Documentation
+
+- [v1.0 compatibility commitment](docs/V1.0-COMPATIBILITY.md) (#165) and
+  [known limitations](docs/THREAT-MODEL.md#known-limitations-at-v10) (#166).
+- Checklists for the v1.0 reality check, the acceptance matrix and testers
+  (`docs/audits/V1.0_*`), and the owner's
+  [review-gate decisions](docs/audits/V1.0_REVIEW_GATES.md).
+
+### Included: performance and maintainability refactor (slices 1–10)
 
 Development durable stores that accepted older JSON sync pushes should be
 wiped or restored from a fresh export. Non-canonical envelope text is now
 rejected; no data migration or event-skipping recovery is provided.
 
-Performance and maintainability work on `kin-refactor-track`. These slices
-carry no version of their own and are folded into regular feature minors when
-merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](docs/audits/REFACTOR-BASELINE.md).
+Performance and maintainability work, merged from `kin-refactor-track` (#55).
+The slices carry no version of their own; they ship in v1.0.0. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](docs/audits/REFACTOR-BASELINE.md).
 
-### Slice 1 — Measurement baseline and session plaintext arena
+#### Slice 1 — Measurement baseline and session plaintext arena
 
 - An unlocked tab keeps the decrypted event history in one contiguous
   in-memory arena (`web/storage/event-arena.js`). Commands and refreshes
@@ -28,7 +132,7 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
 - Documents the arena in STORAGE, THREAT-MODEL and PRIVACY, and a
   `RUSTUP_TOOLCHAIN=stable` fallback in DEVELOPMENT (the 1.93.0 pin is unchanged).
 
-### Slice 2 — Protocol 24 is the only format
+#### Slice 2 — Protocol 24 is the only format
 
 - Protocols 1–23, the 19 `encode_state_vN` wrappers, the legacy entity
   encoder, the version-keyed decode branches and the pre-v8 replay entry
@@ -49,7 +153,7 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
   and are part of the current sync flow (IDENTITY.md).
 - MIGRATIONS.md, TEST-VECTORS.md and ABI.md now describe a single baseline.
 
-### Slice 3 — Shared component helpers and the `<kin-app>` split
+#### Slice 3 — Shared component helpers and the `<kin-app>` split
 
 - `web/components/shared/` adds DOM builders, icons, focus snapshots,
   `defineProps`, `OperationGuard` and the session guard. `<kin-household>`,
@@ -63,7 +167,7 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
 - The version check reads the service-worker registration from
   `app/status.js`.
 
-### Slice 4 — Incremental rendering
+#### Slice 4 — Incremental rendering
 
 - The protocol-24 projection gains a section table after its header: one
   `(revision, byte length)` entry per domain section. The body is regrouped so
@@ -86,7 +190,7 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
 - Adds Rust section and revision tests, decoder reuse tests and a two-tab
   incremental-render regression. ABI.md documents the table and revisions.
 
-### Slice 5 — `<kin-household>`, `<kin-today>` and `<kin-security>` split
+#### Slice 5 — `<kin-household>`, `<kin-today>` and `<kin-security>` split
 
 - The three largest remaining components become element shells with part
   classes, following `<kin-app>`'s shape. `kin-household.js` 1,404 → 158
@@ -101,7 +205,7 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
   empty array. `update()` renders at once. Selecting an Item uses `update()`
   so focus can return to the rebuilt row.
 
-### Slice 6 — The engine holds the history; detail, routines and notes split
+#### Slice 6 — The engine holds the history; detail, routines and notes split
 
 - Rust keeps each engine instance's canonical history (`history.rs`). The
   bridge's `HistoryMirror` appends only the records added since the last
@@ -118,7 +222,7 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
   131 with `notes/notes.js` and `notes/references.js`.
 - `defineProps` rejects a field named like its property.
 
-### Slice 7 — Replay struct, finalize and checkpoint
+#### Slice 7 — Replay struct, finalize and checkpoint
 
 - The 1,040-line `rebuild_with_context` becomes `rust/src/replay/`. `Replay`
   checks every event and dispatches it to one of five domain reducers, whose
@@ -133,7 +237,7 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
   Projecting after one new event: 3.6 ms instead of 9.7 at 10k events, 30
   instead of 62 at 10k × 4 KB. Store refresh is 28–44% faster.
 
-### Slice 8 — Reading events in place; one test hook
+#### Slice 8 — Reading events in place; one test hook
 
 - `EventView` reads a canonical record in place (header fields, payload
   slice), and the history keeps records as `(offset, length)` spans. A
@@ -148,7 +252,7 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
   test hook. `<kin-security>` gets its six operations from `shell.js` as
   `security.services` instead of calling methods on the element.
 
-### Slice 9 — Streaming archives
+#### Slice 9 — Streaming archives
 
 - Exports are package format 3: the same contents, sealed as segments inside
   the KARC v1 container (the context, one per attachment record, then 256
@@ -169,7 +273,7 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
   private memory (was +955 MB); restore 15 s (was 26 s) with +166–219 MB
   (was +525 MB).
 
-### Slice 10 — Server hygiene
+#### Slice 10 — Server hygiene
 
 - `/api/sync/events` carries envelopes as binary (`application/octet-stream`)
   instead of base64url text in JSON; JSON is refused. The envelopes, their
@@ -185,7 +289,26 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
 - Portable membership records are compared field by field instead of by
   `JSON.stringify`.
 
-## Unreleased — v0.47.0 — Household Identity & Shared Appearance
+### Included: desktop workspace UX
+
+Desktop-first UX revision from `feat/kin-workspace-ux` (#42); it had no version of its own and ships in v1.0.0. Presentation, navigation and browser-side composition only: Rust/WASM domain rules, events, storage, sync, authorization and cryptography are unchanged. Contract: [docs/WORKSPACE-UX.md](docs/WORKSPACE-UX.md).
+
+- Navigation: five destinations on every width — Today, Lists (To do · Shopping · Staples), Routines (Routines · Reusable checklists), Updates (Handoffs · Talk), Household (Overview · Notes & reference · Areas & status · People & devices · Privacy & recovery). Legacy `#handoff`, `#more`, `#lists`, `#search` and `#needs` resolve to the new routes; `/pair` without a hash opens People & devices. The resolved route is exposed on `kin-app[data-route]` and in the title; Back/Forward and refresh restore page and segment.
+- Desktop shell: persistent left navigation from 720px, a readable content column, header Search, a truthful sync chip ("On this device", "Up to date", "Syncing…", "Sync paused", "Offline — saved here") and Lock. Mobile keeps the bottom bar, now with five equal tracks (it previously declared six).
+- Shared item detail: one `<kin-item-detail>` holds checklist, photos/files, planned date, responsibility, Area, reminder, pin, archive and Last changed. It opens beside the list from 1180px, in place of the list with a Back control at 720–1179px, and as a full-height sheet below 720px; the same element is re-homed on resize so drafts survive. Archived or missing records are explained instead of acted on.
+- Rows: a restrained complete control, the text (opens details), context (planned date, responsibility, Area, pinned), step progress only when steps exist, a compact attachment strip only when attachments exist, `Add photo` and `Details`. No "0 of 0 steps" or repeated history on rows.
+- Today: a practical heading with the local date and a capture that asks what the item is (Task or Shopping item), when it matters (Today, Tomorrow, a date, none) and whether to pin it; it creates ordinary `need`/`shopping` records and sets the planning date explicitly. Today is a read-only composition (`web/today-view.js`): items planned for today keep their identity, undated legacy `today` items stay on Today and are also listed under To do, explicit dates win, unfinished earlier plans sit under a calm "Earlier plans" disclosure, routines show from the Rust occurrence state as Today / This week / This two-week period / This month with pauses in non-Normal modes, waiting handoffs link to Updates, pins stay in Quick access, and completed content is a collapsed section.
+- Capture feedback: inline "Saved on this device." / "Saved here. Waiting to sync." / "Couldn't save. Your text is still here." with Try again beside the field; a Today capture that saved the item but not its date says so and the retry resumes against the same record (`web/capture-plan.js`).
+- Search: results are controls that open the matching item, checklist step (parent opened with the step focused), handoff, topic, note, reference or maintenance entry by canonical id; matches are highlighted with DOM-built `mark` elements; query, filters and results survive navigating away and Back; unavailable targets are explained.
+- Routines: existing routines are the page's content; `Add routine` reveals creation; playbooks appear as "Reusable checklists" with their own segment and editor; the `window.prompt` reminder is replaced by `<kin-reminder>` with labelled date/time inputs, shortcuts, a readable confirmation, validation and the "On this device only" explanation (`web/reminder-time.js`).
+- Household: the former More page is split into an overview (mode and Pulse at a glance) and four secondary destinations; the mode copy explains its routine effect.
+- Wording: byte-count validation messages replaced with plain language that keeps the real limits; handoff acknowledgement reads "Got it" / "Seen"; Talk explains it holds topics to discuss.
+- Correctness found along the way: `web/reminders.js` called the browser's `setTimeout`/`clearTimeout` through the class instance, which throws "Illegal invocation" in browsers, so local reminders could never be scheduled from the UI (Node tests passed because they inject timers); the defaults now wrap the globals. `<kin-attachments>` skipped a cached thumbnail when the tile was still being built, so a re-rendered row with a warm preview cache could stay blank; cached previews now apply during the build. Rows that are rebuilt while the viewer is open (a sync tick or a progress update) return focus to the equivalent control instead of losing it. Capture ids are generated as hex so a partial-save retry can find the record it created.
+- Tests: `scripts/workspace-ux-regression.mjs` (in-page journeys plus CDP viewport checks with screenshots), `scripts/workspace-screenshots.mjs`, Node tests for routes, Today composition, reminder time and capture plan; existing suites updated for the new structure.
+
+## v0.47.0 — Household Identity & Shared Appearance
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Activate repository-root GitHub verification for Kin changes and
   `kin-development` pushes. The pinned Windows job runs the complete local and
@@ -202,29 +325,16 @@ merged. Baseline and per-slice measurements: [docs/audits/REFACTOR-BASELINE.md](
 
 ## v0.46.0 — Personal Appearance
 
+_Not tagged: a development candidate whose changes ship in v1.0.0._
+
 Implementation candidate on `feat/kin-personal-appearance`, stacked from the
 open workspace PR #42 at `dadd92b`. Adds protected member-bound, device-local
 appearance modes, palette seeds, and processed backgrounds without adding a
 household event, shared attachment, sync, activity, or export contract.
 
-## Unreleased — Household Workspace UX (unversioned implementation candidate)
+## v0.41.1 — Mobile Attachment Upload Fix
 
-Desktop-first UX revision on `feat/kin-workspace-ux` (base `d27bf48`); no version number, tag, release, or production certification. Presentation, navigation and browser-side composition only: Rust/WASM domain rules, events, storage, sync, authorization and cryptography are unchanged. Contract: [docs/WORKSPACE-UX.md](docs/WORKSPACE-UX.md).
-
-- Navigation: five destinations on every width — Today, Lists (To do · Shopping · Staples), Routines (Routines · Reusable checklists), Updates (Handoffs · Talk), Household (Overview · Notes & reference · Areas & status · People & devices · Privacy & recovery). Legacy `#handoff`, `#more`, `#lists`, `#search` and `#needs` resolve to the new routes; `/pair` without a hash opens People & devices. The resolved route is exposed on `kin-app[data-route]` and in the title; Back/Forward and refresh restore page and segment.
-- Desktop shell: persistent left navigation from 720px, a readable content column, header Search, a truthful sync chip ("On this device", "Up to date", "Syncing…", "Sync paused", "Offline — saved here") and Lock. Mobile keeps the bottom bar, now with five equal tracks (it previously declared six).
-- Shared item detail: one `<kin-item-detail>` holds checklist, photos/files, planned date, responsibility, Area, reminder, pin, archive and Last changed. It opens beside the list from 1180px, in place of the list with a Back control at 720–1179px, and as a full-height sheet below 720px; the same element is re-homed on resize so drafts survive. Archived or missing records are explained instead of acted on.
-- Rows: a restrained complete control, the text (opens details), context (planned date, responsibility, Area, pinned), step progress only when steps exist, a compact attachment strip only when attachments exist, `Add photo` and `Details`. No "0 of 0 steps" or repeated history on rows.
-- Today: a practical heading with the local date and a capture that asks what the item is (Task or Shopping item), when it matters (Today, Tomorrow, a date, none) and whether to pin it; it creates ordinary `need`/`shopping` records and sets the planning date explicitly. Today is a read-only composition (`web/today-view.js`): items planned for today keep their identity, undated legacy `today` items stay on Today and are also listed under To do, explicit dates win, unfinished earlier plans sit under a calm "Earlier plans" disclosure, routines show from the Rust occurrence state as Today / This week / This two-week period / This month with pauses in non-Normal modes, waiting handoffs link to Updates, pins stay in Quick access, and completed content is a collapsed section.
-- Capture feedback: inline "Saved on this device." / "Saved here. Waiting to sync." / "Couldn't save. Your text is still here." with Try again beside the field; a Today capture that saved the item but not its date says so and the retry resumes against the same record (`web/capture-plan.js`).
-- Search: results are controls that open the matching item, checklist step (parent opened with the step focused), handoff, topic, note, reference or maintenance entry by canonical id; matches are highlighted with DOM-built `mark` elements; query, filters and results survive navigating away and Back; unavailable targets are explained.
-- Routines: existing routines are the page's content; `Add routine` reveals creation; playbooks appear as "Reusable checklists" with their own segment and editor; the `window.prompt` reminder is replaced by `<kin-reminder>` with labelled date/time inputs, shortcuts, a readable confirmation, validation and the "On this device only" explanation (`web/reminder-time.js`).
-- Household: the former More page is split into an overview (mode and Pulse at a glance) and four secondary destinations; the mode copy explains its routine effect.
-- Wording: byte-count validation messages replaced with plain language that keeps the real limits; handoff acknowledgement reads "Got it" / "Seen"; Talk explains it holds topics to discuss.
-- Correctness found along the way: `web/reminders.js` called the browser's `setTimeout`/`clearTimeout` through the class instance, which throws "Illegal invocation" in browsers, so local reminders could never be scheduled from the UI (Node tests passed because they inject timers); the defaults now wrap the globals. `<kin-attachments>` skipped a cached thumbnail when the tile was still being built, so a re-rendered row with a warm preview cache could stay blank; cached previews now apply during the build. Rows that are rebuilt while the viewer is open (a sync tick or a progress update) return focus to the equivalent control instead of losing it. Capture ids are generated as hex so a partial-save retry can find the record it created.
-- Tests: `scripts/workspace-ux-regression.mjs` (in-page journeys plus CDP viewport checks with screenshots), `scripts/workspace-screenshots.mjs`, Node tests for routes, Today composition, reminder time and capture plan; existing suites updated for the new structure.
-
-## Unreleased — v0.41.1 — Mobile Attachment Upload Fix
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 Correctness patch on `fix/kin-v0.41.1-mobile-attachments`; no tag, release, or production certification. Real-world phone testing showed that photos chosen for an item were silently lost, gave no confirmation, and never appeared as tiles.
 
@@ -237,7 +347,9 @@ Correctness patch on `fix/kin-v0.41.1-mobile-attachments`; no tag, release, or p
 - Tile state labels: "Saved on this device", "Saved here, waiting to sync", "Syncing", "Synced", "Not downloaded yet", "Couldn't sync or open" (with Retry). The service worker precaches the new progress module so the offline shell still loads.
 - Tests: `scripts/attachment-upload-regression.mjs` (run inside the browser regression) drives the journey on a 390×844 mobile viewport through CDP: a synthesized touch on `Add photo`, the browser's own `Page.fileChooserOpened` for the app input, a list re-render while the picker is open, a real JPEG supplied with `DOM.setFileInputFiles`, feedback phases, stored sealed record and canonical binding, tile and thumbnail, viewer open/close with focus return, navigation, Details toggling, a stale sync refresh, lock/unlock restore, an unsupported file refusal, picker cancel, and isolation from another item. The passkey suite now attaches through the row button and the shared input with a household identity. Node tests cover the progress store, the file-problem messages, failure stage tagging, orphan grace, and the rewritten `<kin-attachments>`.
 
-## Unreleased — v0.41.0 — Mobile Experience & Passkey-First UX
+## v0.41.0 — Mobile Experience & Passkey-First UX
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 Implementation candidate on `feat/kin-v0.41.0-mobile-experience`; no tag, release, or production certification.
 
@@ -257,16 +369,18 @@ Implementation candidate on `feat/kin-v0.41.0-mobile-experience`; no tag, releas
 - Catch up names the list an item was actually added to ("added to Shopping", "added to Staples") instead of reporting every non-Today item as added to Needs; the copy now shares the compose destination labels. Covered by `web/components/kin-catch-up.test.mjs`.
 - Tests: new `scripts/mobile-ux-regression.mjs` (run inside the browser regression), passkey-first lock-screen and attachment viewer checks in the passkey suite, welcome/lock-screen checks in the security UI suite, planning-date and area tests expand Details, a 320px Today layout check, Node tests for the preview cache and the new passkey error paths.
 
-## Unreleased — v0.40.x candidates
+## v0.40.3 — CI & Verification Infrastructure
 
-### v0.40.3 — CI & Verification Infrastructure
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Add `npm run verify` as the local release gate for pinned Node/Rust/WASM prerequisites, formatting, warnings-denied Clippy, version consistency, every discovered server/web Node test, Rust tests, release WASM and committed-artifact comparison.
 - Add `npm run verify:browser` for the five existing browser regression runners, with an explicit `KIN_BROWSER` executable and failing behavior when it is missing.
 - Document the local gate and provide a proposed Kin workflow for later root-level integration approval. No product behavior or persistent contract changes.
 - Compare generated WASM with a tracked reference when the repository commits one; this repository ignores its generated browser WASM and the runner never replaces it automatically.
 
-### v0.40.2 — Clock & Archive Correctness
+## v0.40.2 — Clock & Archive Correctness
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Revoking the device that committed the latest key rotation no longer strands the remaining devices (B-002). The relay keeps each committed rotation package for a still-trusted recipient until that recipient acknowledges it, including after the package's original expiry, and removes it when the recipient is revoked, removed, expired, or changes its device key. Only packages from the relay's own committed rotation get this exception; ordinary key transfers still expire. Clients still check the recipient binding and the sender's signature against verified device-key history.
 - The rotating device is now recorded as holding the epoch it committed (P-001).
@@ -281,18 +395,15 @@ Implementation candidate on `feat/kin-v0.41.0-mobile-experience`; no tag, releas
 
 ## v0.40.1 — Portable Membership Status Fidelity
 
+_Not tagged: a development candidate whose changes ship in v1.0.0._
+
 - Preserve explicitly removed Temporary members separately from naturally expired Temporary members in the authoritative server membership directory, package export, and restore normalization.
 - Only normalize active Temporary membership to expired when its absolute expiry has passed; removed remains removed after time passes.
 - Add a durable server membership-status field without changing access-control decisions.
 
-## v0.39.0 — Portable Household Export v2
-
-- Introduce an authenticated package-v2 manifest with Kin/package versions, export time, canonical event count, attachment count and ciphertext-byte count while retaining KARC v1 framing.
-- Preserve canonical event history, bounded Adult/Limited/Temporary membership status and absolute expiry metadata, and protected attachment records under the existing complete 160 MiB archive and 50 MiB ciphertext limits.
-- Continue to read documented archive-v1 packages; reject unknown versions, invalid manifests, damaged attachments, invalid replay, duplicate events and oversized packages before import.
-- Keep credentials, sessions and device authority out of the export. Restored data gains sync only after normal household approval.
-
 ## v0.40.0 — Restore & Device Migration UX
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Validate the complete package and show its event/attachment summary before the user confirms restore.
 - Stage validated data in memory; reload or cancellation discards incomplete staging, and IndexedDB promotion remains one transaction.
@@ -301,17 +412,32 @@ Implementation candidate on `feat/kin-v0.41.0-mobile-experience`; no tag, releas
 - Temporary expiry and removed-member state remain data only and cannot reinstate access.
 - Same-household restore does not import missing archive rows into an existing installation. If any package event or attachment is absent from the populated target, restore refuses; use a fresh local installation and ordinary approved-device sync for migration catch-up.
 
+## v0.39.0 — Portable Household Export v2
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
+
+- Introduce an authenticated package-v2 manifest with Kin/package versions, export time, canonical event count, attachment count and ciphertext-byte count while retaining KARC v1 framing.
+- Preserve canonical event history, bounded Adult/Limited/Temporary membership status and absolute expiry metadata, and protected attachment records under the existing complete 160 MiB archive and 50 MiB ciphertext limits.
+- Continue to read documented archive-v1 packages; reject unknown versions, invalid manifests, damaged attachments, invalid replay, duplicate events and oversized packages before import.
+- Keep credentials, sessions and device authority out of the export. Restored data gains sync only after normal household approval.
+
 ## v0.38.4 — PWA & Archive Preflight
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Derive service-worker caches from the current release and stage complete shells before activation.
 - Align the finite 160 MiB archive cap with the documented 50 MiB encrypted-attachment household bound.
 
 ## v0.38.3 — Trust & Access Hardening
 
+_Not tagged: a development candidate whose changes ship in v1.0.0._
+
 - Require Adult authority to enable sync while preserving authorized Limited/Temporary participation.
 - Require target-bound fresh passkey proof for device revocation and preserve a usable last-Adult trust path.
 
 ## v0.38.2 — Replay & Logical-Time Hardening
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Stale cross-device Item completion/reopen and Responsibility assignment/clear events racing with archive now converge as terminal no-ops; same-device commands after archive remain rejected.
 - Remote malformed or replay-invalid events are quarantined before durable acceptance, the relay cursor advances, and later valid events remain replayable.
@@ -320,10 +446,14 @@ Implementation candidate on `feat/kin-v0.41.0-mobile-experience`; no tag, releas
 
 ## v0.38.1 — Authenticated Member Self-Leave
 
+_Not tagged: a development candidate whose changes ship in v1.0.0._
+
 - Limited and Temporary members can leave their own household membership after fresh passkey authentication, while removal of other members remains Adult-only.
 - Self-leave revokes the member's devices and sessions and preserves transactional access-change/key-epoch handling. Last-Adult protection remains enforced.
 
-## v0.38.0 — Modes & Member Context Polish (shipped on this branch)
+## v0.38.0 — Modes & Member Context Polish
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Household settings present Adults, Limited Members, and Temporary Access as compact sections. Active Temporary access shows its absolute end time; ended access remains identifiable.
 - Adult-only controls stay out of Limited and Temporary views. Removal/revocation actions name the member target; Temporary revocation uses the existing passkey-protected access-change flow.
@@ -333,7 +463,9 @@ Implementation candidate on `feat/kin-v0.41.0-mobile-experience`; no tag, releas
 - No presence, activity tracking, read receipts, location, scores, contribution analytics, or behavior-monitoring notifications were added.
 - Full release gate: 372 Node tests, 170 Rust tests, Edge browser/accessibility regressions, 32 virtual-authenticator assertions, formatting, lint, WASM build, and version consistency pass. WASM-target test execution is unverified on Windows because the generated test binary is not executable there.
 
-## v0.37.0 — Guest & Caregiver Access (shipped on this branch)
+## v0.37.0 — Guest & Caregiver Access
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Adults can invite Temporary Members through the existing pairing flow with a required local date/time expiry held by the server.
 - Claimants cannot supply or extend kind/expiry during confirmation; server confirmation uses the invitation record.
@@ -343,7 +475,9 @@ Implementation candidate on `feat/kin-v0.41.0-mobile-experience`; no tag, releas
 - Already decrypted plaintext on an offline device cannot be remotely erased. A reconnect after expiry is denied.
 - Pairing/expiry, durable identity and sync security regressions pass under Node 24.21.0. The full batch release gate remains in progress.
 
-## v0.36.0 — Limited Household Members (shipped on this branch)
+## v0.36.0 — Limited Household Members
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Adult invitations carry a server-held `adult` or `limited` member kind through the existing pairing, passkey, approval, and single-use confirmation flow.
 - Limited Members can participate in ordinary synced household work and Responsibility; trust administration stays Adult-only at the server boundary.
@@ -353,7 +487,9 @@ Implementation candidate on `feat/kin-v0.41.0-mobile-experience`; no tag, releas
 - Local content archives remain event-history archives; durable server identity backups preserve member kind and expiry.
 - Pairing security (50), durable identity (40), durable store/identity round-trip (8), and sync service security (16) pass under Node 24.21.0. The full v0.36–v0.38 gate is recorded under v0.38.0.
 
-## v0.35.1 — Fresh Passkey Self-Removal (candidate)
+## v0.35.1 — Fresh Passkey Self-Removal
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Self-removal now requires fresh passkey authentication before membership/device revocation and access-change rotation.
 - Reuse the existing action-bound adult-removal WebAuthn ceremony; reject session-only leave.
@@ -363,13 +499,17 @@ Implementation candidate on `feat/kin-v0.41.0-mobile-experience`; no tag, releas
 - Add server and browser/component regressions for fresh proof, cancellation, invalid
   assertions, revocation, sync denial, and durable failure rollback.
 
-## v0.35.0 — More Adult Members (candidate)
+## v0.35.0 — More Adult Members
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Bound households at four active adults using the existing approved pairing ceremony.
 - Extend Responsibility assignment controls across active member IDs.
 - Preserve current/future epoch access for new adults and document recovery, removal, and legacy behavior.
 
 ## v0.34.0 — Responsibility Ownership
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Add canonical Items and Routines responsibility assignments with Take, explicit handoff, and clear actions.
 - Resolve concurrent assignments by `(logical time, device ID, event ID)` and clear ownership through canonical events after sync detects removed members.
@@ -378,12 +518,16 @@ Implementation candidate on `feat/kin-v0.41.0-mobile-experience`; no tag, releas
 
 ## v0.33.0 — Attachment UX & Lifecycle
 
+_Not tagged: a development candidate whose changes ship in v1.0.0._
+
 - Add local-first attachment capture, protected offline persistence, retryable authenticated relay sync, remote restore, canonical removal, and client orphan reconciliation.
 - Include attachment records in bounded household archive format 2; verify ciphertext digests and local-sealed metadata against canonical parent bindings. Older format 1 archives remain supported.
 - Add file controls to Items, Notes, Reference Records, and Maintenance Records using the JPEG/PNG/WebP/PDF 4 MiB limit.
 - Native, real-WASM, crypto, and offline lifecycle tests pass. Browser interaction, accessibility, and direct archive migration checks remain unverified.
 
 ## v0.32.0 — Encrypted Attachments Foundation
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Add bounded AES-256-GCM attachment encryption with routing and epoch authenticated as additional data; filename, MIME type, size, and parent remain encrypted.
 - Add authenticated opaque encrypted attachment relay with digest verification, idempotent upload, 4 MiB file, 64-file and 50 MiB household limits, and durable SQLite storage.
@@ -392,11 +536,15 @@ Implementation candidate on `feat/kin-v0.41.0-mobile-experience`; no tag, releas
 
 ## v0.31.1 — Concurrent Maintenance Archive Correction
 
+_Not tagged: a development candidate whose changes ship in v1.0.0._
+
 - Preserve a maintenance event created offline concurrently with archiving its Reference Record, independent of deterministic device replay order.
 - Continue rejecting new maintenance events authored after a Reference Record was archived.
 - Rust replay regression test passes.
 
 ## v0.31.0 — Maintenance Records
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Add bounded factual maintenance history to Reference Records, including optional next dates and active Routine links.
 - Add protocol 21 save/archive events; old histories remain valid and event export/sync reuse existing encrypted paths.
@@ -404,6 +552,8 @@ Implementation candidate on `feat/kin-v0.41.0-mobile-experience`; no tag, releas
 - Native Rust, Node, and real WASM tests pass. Manual browser accessibility and the broad regression gate remain pending.
 
 ## v0.30.0 — Home Reference Records
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Add bounded structured household reference cards with optional Area, labeled fields, edit, and archive.
 - Add protocol 20 save/archive events and deterministic replay; older protocols reject records rather than discard them.
@@ -414,11 +564,15 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 
 ## v0.29.0 — PWA & Offline Install Polish
 
+_Not tagged: a development candidate whose changes ship in v1.0.0._
+
 - Complete-shell service-worker staging keeps the prior known-good cache on failure; intentional activation cleans obsolete caches.
 - Add calm, user-controlled update-ready messaging and local manifest metadata.
 - Browser installation/offline launch validation remains environment-unverified.
 
 ## v0.28.0 — Local Reminders
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Add explicit, browser-local reminders for active Items and Routines.
 - Request Notification permission only after a reminder action; handle denied and unsupported browsers.
@@ -426,6 +580,8 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Reminders exist only in the active page session. Browser shutdown, suspension, and unavailable service workers can delay or prevent delivery. No push service or nag loop is used.
 
 ## v0.27.0 — Household Playbooks
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Add canonical protocol 19 Playbook templates with ordered checklist entries,
   bounded household counts and lengths, edit/archive, and stable replay.
@@ -435,6 +591,8 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
   history rather than silently dropping templates.
 
 ## v0.26.0 — Pins & Quick Access
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Add stable, ordered Pin and Unpin events with a ten-Pin household limit.
 - Add an accessible Quick Access section on Today. The current UI supports
@@ -446,6 +604,8 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 
 ## v0.25.0 — Search & Filters
 
+_Not tagged: a development candidate whose changes ship in v1.0.0._
+
 - Add private, in-memory search across unarchived Items, checklist Steps,
   Handoffs, Talks, and Notes. Searches remain on the current device and are not
   saved or synchronized separately.
@@ -456,6 +616,8 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 
 ## v0.24.0 — Useful Household History
 
+_Not tagged: a development candidate whose changes ship in v1.0.0._
+
 - Show a date-only “Last changed” label for each Item, derived from its latest
   effective Item or checklist-Step event in deterministic replay order.
 - Add protocol 17's per-Item timestamp projection extension without adding an
@@ -463,12 +625,16 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 
 ## v0.23.0 — Calendar Interoperability
 
+_Not tagged: a development candidate whose changes ship in v1.0.0._
+
 - Download active Items with planning dates as UTF-8 iCalendar (`.ics`)
   all-day events, sorted by date with stable Item-based UIDs.
 - Keep export local and read-only; omit completed/archived and undated Items,
   Routines, household metadata, and reminders. No storage migration is needed.
 
 ## v0.22.0 — Lightweight Planning Dates
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Add an optional Gregorian civil planning date to existing Items, with a
   native date control, Today/Tomorrow shortcuts, and an explicit clear action.
@@ -478,6 +644,8 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
   migration; older replay protocols fail closed on dated histories.
 
 ## v0.21.0 — Household Modes
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Add Normal, Vacation, Guests, and Rest as explicit canonical household
   modes; old histories default to Normal.
@@ -539,7 +707,9 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
   consecutive full Edge browser regressions, targeted security/storage/passkey
   browser suites, version consistency, formatting, and warnings-denied Clippy.
 
-### v0.16.3 Notes hardening — fast-track candidate
+## v0.16.3 — Notes hardening
+
+_Not tagged: a development candidate whose changes ship in v1.0.0._
 
 - Treat same-logical-time Note archives from different devices as one
   deterministic terminal action; reject later or same-device duplicate
@@ -554,7 +724,7 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Preserve deterministic stale-command rejection through canonical transaction
   replay and keep Note content within the existing encrypted event pipeline.
 
-## v0.16.1 Notes correctness
+## v0.16.1 — Notes correctness
 
 - Make an equal-logical-time cross-device Note update lose to a concurrent
   terminal archive in either deterministic device ordering.
@@ -564,7 +734,7 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
   regressions instead of mistaking an idle pre-action state for completion.
 - Cache the Notes component in the service worker's versioned static shell.
 
-## v0.16.0 Household Notes & Reference Context
+## v0.16.0 — Household Notes & Reference Context
 
 - Add stable Note identities and canonical create, update, and terminal archive
   events with plain-text title/body validation and optional existing Area links.
@@ -574,7 +744,7 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Keep Note content inside canonical encrypted events; do not add server-visible
   Note metadata or a plaintext relay index.
 
-## v0.15.5 Area form accessibility and release-state reconciliation
+## v0.15.5 — Area form accessibility and release-state reconciliation
 
 - Verified `kin-v0.15.4` is already an ancestor of `kin-development`, both point
   to the same release commit, and the version metadata/content are aligned; no
@@ -584,7 +754,7 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Add browser regressions for duplicate IDs, the rename label, isolated create
   and rename errors, and preserve shared Unicode/UTF-8 validation coverage.
 
-## v0.15.4 Area input validation and release documentation cleanup
+## v0.15.4 — Area input validation and release documentation cleanup
 
 - Align create and rename input checks with Rust Area-name rules for trimming,
   control characters, Unicode scalar count, and UTF-8 size; show specific
@@ -596,6 +766,86 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Keep decoded pre-v9 item objects on their historical shape; expose `areaId`
   only for v9 results. Update the legacy ABI test adapter for the v9 request
   header and preserve coverage of the earlier wire layouts.
+
+## v0.15.3 — Area UX polish and release gate
+
+- Keep More → Areas light and direct, with explicit empty state and keyboard create/rename/archive flows.
+- Verify post-action focus and live status, long names, archived assignment context, 320px reflow, 200% zoom, dark mode, forced colors, labels, and touch targets.
+- Run the full relevant regression gate for Rust, replay/migration, WASM, encrypted sync/offline, archive import, backup/restore, browser/accessibility, continuity, and version consistency.
+
+## v0.15.2 — Offline, sync, and hostile-state hardening
+
+- Prove deterministic two-device convergence for independent Area creation, concurrent rename/assignment, and stale pre-archive assignment in either delivery order.
+- Verify retry/duplicate delivery remains idempotent and archived Areas reject new commands while retaining old assignments.
+- Exercise an encrypted Area event through the relay; plaintext names remain absent from server-visible envelopes/state and decrypt/replay only on a trusted client.
+- Keep Areas under the existing household encryption, device revocation, backup, and restore boundaries; no plaintext relay metadata or server schema is added.
+
+## v0.15.1 — Area correctness and migration
+
+- Verify old pre-Area projections remain valid without synthesized records and reject Area state at older protocol versions.
+- Reject malformed Area names and zero Area identities during replay; preserve archive associations and treat assignment to a missing identity as invalid.
+- Keep known-name duplicate commands idempotently rejected while replay preserves independently created stable identities instead of merging them.
+
+## v0.15.0 — Areas foundation
+
+- Add stable-ID Areas with Rust-owned create, rename, archive, and Item assignment events.
+- Add optional Item Area selection and the Area manager under More; quick capture remains Area-free.
+- Keep archived associations, reject new assignment to an archived Area when the client knows its state, and preserve pre-Area histories without synthetic records.
+- Introduce replay protocol 9 additively; relay metadata remains opaque and Area names stay inside encrypted event payloads.
+- Bound households to 32 lifetime Areas; trim Unicode whitespace and limit names to 48 Unicode scalar values and 96 UTF-8 bytes.
+
+## v0.14.5 — Responsive form and More card-flow corrections
+
+- Keep household and security custom elements in block layout so More cards
+  have clear boundaries and do not overlap neighboring content.
+- Keep the routine form to one column on narrow screens, including its Add
+  button, so the entry field remains comfortably usable.
+- Correct the optional visual walkthrough to navigate to each destination
+  before capturing desktop and phone screenshots.
+
+## v0.14.4 — UX/UI Correctness and Accessibility
+
+- Keep the persistent sync/security state notice attached across lock/unlock
+  view rebuilds, with browser regression for offline and revoked-device states.
+- Reconcile wide-screen navigation with UX-D4 using a centered primary column
+  and a compact horizontal destination row.
+- Announce primary route changes politely and update the document title.
+
+## v0.14.3 — Polish, Prototype Alignment, and Design Feedback Gate
+
+- Consolidated the remaining mobile navigation radius on the shared shape
+  token, kept the persistent state notice with the current page content, and
+  removed remaining one-off shell styling.
+- Added npm ignore rules so a package dry run includes the built WASM runtime
+  and excludes local build/data trees.
+- Recorded the intentional visual differences and deferred prototype
+  capabilities in `docs/V0.14.3-DESIGN-NOTE.md`.
+
+#### Visual correction
+
+- Give Kin a clear forest-green brand header, a contained desktop navigation
+  rail, stronger page typography, and a welcoming Today introduction.
+- Refine the warm-neutral/green palette, card spacing, and capture surface so
+  the visual foundation is visible in the product rather than only in tokens.
+- Keep the same destinations, household data, and accessible responsive shell.
+
+## v0.14.2 — State Design, Accessibility, Responsive Behavior
+
+- Added a persistent, live-announced offline notice grounded in the browser's
+  connectivity event; it reports local saved state and does not claim remote
+  sync succeeded.
+- Translate server-confirmed untrusted-device and removed-membership sync
+  states into plain language while preserving the local copy explanation.
+- Keep connection errors and local storage errors separate from successful
+  saved state; leave recovery, deletion, and domain authority unchanged.
+
+## v0.14.1 — Information Architecture and Existing Flow Consolidation
+
+- Brought Handoffs and Talk together under Handoff with distinct, keyboard
+  operable tabs. Handoffs retain explicit acknowledge/archive actions; Talk
+  remains lightweight and has no read receipts or presence.
+- Grouped existing household access and privacy/continuity operations in More;
+  no route, domain operation, or security authority was removed.
 
 ## v0.14.0 — App Shell and Visual Foundation
 
@@ -612,93 +862,7 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Deferred shopping, household areas/modes, notes, maintenance, and other
   prototype-only capabilities.
 
-## v0.14.1 — Information Architecture and Existing Flow Consolidation
-
-- Brought Handoffs and Talk together under Handoff with distinct, keyboard
-  operable tabs. Handoffs retain explicit acknowledge/archive actions; Talk
-  remains lightweight and has no read receipts or presence.
-- Grouped existing household access and privacy/continuity operations in More;
-  no route, domain operation, or security authority was removed.
-
-## v0.14.2 — State Design, Accessibility, Responsive Behavior
-
-- Added a persistent, live-announced offline notice grounded in the browser's
-  connectivity event; it reports local saved state and does not claim remote
-  sync succeeded.
-- Translate server-confirmed untrusted-device and removed-membership sync
-  states into plain language while preserving the local copy explanation.
-- Keep connection errors and local storage errors separate from successful
-  saved state; leave recovery, deletion, and domain authority unchanged.
-
-## v0.15.3 — Area UX polish and release gate
-
-### v0.15.3 — UX polish and release gate
-
-- Keep More → Areas light and direct, with explicit empty state and keyboard create/rename/archive flows.
-- Verify post-action focus and live status, long names, archived assignment context, 320px reflow, 200% zoom, dark mode, forced colors, labels, and touch targets.
-- Run the full relevant regression gate for Rust, replay/migration, WASM, encrypted sync/offline, archive import, backup/restore, browser/accessibility, continuity, and version consistency.
-
-### v0.15.2 — Offline, sync, and hostile-state hardening
-
-- Prove deterministic two-device convergence for independent Area creation, concurrent rename/assignment, and stale pre-archive assignment in either delivery order.
-- Verify retry/duplicate delivery remains idempotent and archived Areas reject new commands while retaining old assignments.
-- Exercise an encrypted Area event through the relay; plaintext names remain absent from server-visible envelopes/state and decrypt/replay only on a trusted client.
-- Keep Areas under the existing household encryption, device revocation, backup, and restore boundaries; no plaintext relay metadata or server schema is added.
-
-### v0.15.1 — Area correctness and migration
-
-- Verify old pre-Area projections remain valid without synthesized records and reject Area state at older protocol versions.
-- Reject malformed Area names and zero Area identities during replay; preserve archive associations and treat assignment to a missing identity as invalid.
-- Keep known-name duplicate commands idempotently rejected while replay preserves independently created stable identities instead of merging them.
-
-### v0.15.0 — Areas foundation
-
-- Add stable-ID Areas with Rust-owned create, rename, archive, and Item assignment events.
-- Add optional Item Area selection and the Area manager under More; quick capture remains Area-free.
-- Keep archived associations, reject new assignment to an archived Area when the client knows its state, and preserve pre-Area histories without synthetic records.
-- Introduce replay protocol 9 additively; relay metadata remains opaque and Area names stay inside encrypted event payloads.
-- Bound households to 32 lifetime Areas; trim Unicode whitespace and limit names to 48 Unicode scalar values and 96 UTF-8 bytes.
-
-## v0.14.5 UX/UI Consolidation candidate
-
-### v0.14.5 — Responsive form and More card-flow corrections
-
-- Keep household and security custom elements in block layout so More cards
-  have clear boundaries and do not overlap neighboring content.
-- Keep the routine form to one column on narrow screens, including its Add
-  button, so the entry field remains comfortably usable.
-- Correct the optional visual walkthrough to navigate to each destination
-  before capturing desktop and phone screenshots.
-
-## v0.14.4 — UX/UI Correctness and Accessibility
-
-### v0.14.4 — UX correctness and accessibility corrections
-
-- Keep the persistent sync/security state notice attached across lock/unlock
-  view rebuilds, with browser regression for offline and revoked-device states.
-- Reconcile wide-screen navigation with UX-D4 using a centered primary column
-  and a compact horizontal destination row.
-- Announce primary route changes politely and update the document title.
-
-### v0.14.3 visual correction
-
-- Give Kin a clear forest-green brand header, a contained desktop navigation
-  rail, stronger page typography, and a welcoming Today introduction.
-- Refine the warm-neutral/green palette, card spacing, and capture surface so
-  the visual foundation is visible in the product rather than only in tokens.
-- Keep the same destinations, household data, and accessible responsive shell.
-
-### v0.14.3 — Polish, Prototype Alignment, and Design Feedback Gate
-
-- Consolidated the remaining mobile navigation radius on the shared shape
-  token, kept the persistent state notice with the current page content, and
-  removed remaining one-off shell styling.
-- Added npm ignore rules so a package dry run includes the built WASM runtime
-  and excludes local build/data trees.
-- Recorded the intentional visual differences and deferred prototype
-  capabilities in `docs/V0.14.3-DESIGN-NOTE.md`.
-
-### v0.13.5 — Cancelled-Deletion Restore Authority Correctness
+## v0.13.5 — Cancelled-Deletion Restore Authority Correctness
 
 - Preserve a current active household when restoring a backup captured during
   an older, subsequently cancelled deletion request.
@@ -707,7 +871,7 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Reconcile recovery release documentation and agent guidance with the completed
   v0.13.x implementation line.
 
-### v0.13.4 — Recovery Capacity and Predating-Backup Correction
+## v0.13.4 — Recovery Capacity and Predating-Backup Correction
 
 - Evaluate trusted-device limits after replacement/member-recovery revocations,
   so legitimate recovery remains available at the 16-device boundary.
@@ -715,7 +879,7 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
   backup instead of silently dropping its current authority.
 - Add boundary regressions for both recovery modes and fail-closed restore.
 
-### v0.13.3 — Recovery UX, Documentation, and Release Gate
+## v0.13.3 — Recovery UX, Documentation, and Release Gate
 
 - Added plain-language “Replace this device” and “Authorize recovery” actions
   to the existing trusted-device and household-access views.
@@ -725,7 +889,7 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Completed recovery, key continuity, stale-backup, disaster, irreversible
   boundary, threat-model, and accessibility documentation.
 
-### v0.13.2 — Rollback, Stale Backup, and Disaster Hardening
+## v0.13.2 — Rollback, Stale Backup, and Disaster Hardening
 
 - Preserve a surviving target database's current active membership,
   credentials, device revocations, device tokens, epoch/rotation state, and
@@ -737,7 +901,7 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Prove a stale backup cannot revive the recovered adult's old credential or
   device and cannot clear a required key rotation.
 
-### v0.13.1 — Member-Assisted Recovery Correctness
+## v0.13.1 — Member-Assisted Recovery Correctness
 
 - Let one active adult authorize a short-lived recovery claim for the other
   active adult without changing the target member identity.
@@ -746,7 +910,7 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Reject self-targeted, unrelated, removed-member, revoked-device, stale, and
   replayed recovery attempts, and record attributable recovery audit events.
 
-### v0.13.0 — Recovery Model and Device Replacement
+## v0.13.0 — Recovery Model and Device Replacement
 
 - Defined the recovery capability matrix and separated identity, device,
   content-key, server-restore, and membership authority.
@@ -757,9 +921,7 @@ This file records completed Kin releases. The `v0.0.x` releases are planning and
 - Documented the honest unrecoverable boundary when all legitimate authority
   and key copies are gone.
 
-### v0.12.4 — Data Lifecycle candidate
-
-### v0.12.4 — Pending-Deletion Restore Authority Guard
+## v0.12.4 — Pending-Deletion Restore Authority Guard
 
 Refuse restore if any household in the existing target is `deletion_pending`,
 before opening/copying the backup or replacing the target. The storage error
@@ -795,7 +957,27 @@ Other operating systems/browsers,
 physical authenticators, independent security review and production
 certification are not claimed.
 
-### v0.12.0 — Household Deletion Lifecycle
+## v0.12.3 — Lifecycle UX & Release Gate
+
+Adds explicit deletion consequences, passkey cancellation, accessible terminal
+sync status, retention guidance and lifecycle regression coverage. Scripted
+release gates passed on Windows. The annotated `kin-v0.12.3` tag identifies
+this review candidate; publication remains pending human review.
+
+## v0.12.2 — Stale-Device & Recovery Hardening
+
+Finalizes expired requests after restart and on a bounded maintenance interval.
+Rejects stale sessions/devices and stops retrying when sync discovers a pending
+or deleted household. Documents local-copy, missing-deletion-ledger and backup
+limitations.
+
+## v0.12.1 — Retention, Backup & Authorization Correctness
+
+Adds SQLite schema v2 lifecycle metadata and write guards. Restore requires
+explicit lifecycle acknowledgement and merges newer pending/deleted tombstones
+from an existing target over older backup data.
+
+## v0.12.0 — Household Deletion Lifecycle
 
 Adds an explicit `active → deletion_pending → deleted` server state machine.
 Fresh passkey authorization is required to request deletion; household writes
@@ -803,131 +985,12 @@ stop immediately, and either adult can cancel with a fresh passkey during the
 30-day grace period. Finalization purges server-held household data and leaves
 a minimal tombstone.
 
-### v0.12.1 — Retention, Backup & Authorization Correctness
-
-Adds SQLite schema v2 lifecycle metadata and write guards. Restore requires
-explicit lifecycle acknowledgement and merges newer pending/deleted tombstones
-from an existing target over older backup data.
-
-### v0.12.2 — Stale-Device & Recovery Hardening
-
-Finalizes expired requests after restart and on a bounded maintenance interval.
-Rejects stale sessions/devices and stops retrying when sync discovers a pending
-or deleted household. Documents local-copy, missing-deletion-ledger and backup
-limitations.
-
-### v0.12.3 — Lifecycle UX & Release Gate
-
-Adds explicit deletion consequences, passkey cancellation, accessible terminal
-sync status, retention guidance and lifecycle regression coverage. Scripted
-release gates passed on Windows. The annotated `kin-v0.12.3` tag identifies
-this review candidate; publication remains pending human review.
-
-## Historical v0.11.0–v0.11.7 Durable Service & Deployment candidate
+## v0.11.7 — October Roadmap & Startup Diagnostics
 
 The implementation candidate with durable semantic validation, October planning
 and startup diagnostics is tagged `kin-v0.11.7` for human review. Earlier candidate
 tags through `kin-v0.11.6` are preserved.
 These are review candidates, not published product releases.
-
-### v0.11.0 — Durable Identity & Relay Foundation
-
-Introduces SQLite server schema v1 and durable household identity, membership,
-credential, trusted-device, authorization, sync-coordination and opaque relay
-state. Event success is reported only after the transaction commits. Bounded
-indexed reads and persisted relay/device sequences preserve opaque envelopes,
-idempotency and cursor behavior across restarts.
-
-### v0.11.1 — Transaction & Interruption Correctness
-
-Makes migration transactional and fail-closed on interruption or unsupported
-newer schemas. Adds on-disk rollback/corruption checks, transaction boundaries
-for cross-service mutations and stale-writer compare-and-commit checks.
-
-### v0.11.2 — Operations & Recovery
-
-Adds readiness, graceful shutdown and an exclusive single-process service lock.
-Adds `npm run backup` using SQLite's online backup API and `npm run restore`
-with source validation, exclusive maintenance locking and offline replacement;
-preserves the replaced database and any WAL sidecars.
-
-### v0.11.3 — Privacy & Durable-Service Hardening
-
-Hardens persistent record validation, bounded reads, corruption behavior,
-error/log output, process restart behavior and backup/rollback documentation.
-Tests cover migration interruption, newer-schema rejection, corrupt relay
-data, stale-writer conflicts, backup/restore, lock exclusion and a spawned HTTP
-server restart that reauthenticates and recovers accepted ciphertext and
-sequence state. On Windows x64/Node 22.12 the full Node suite passed 157 tests
-after `npm ci`, including all 83 server tests; the Rust, WASM, browser,
-security-storage, security-UI, virtual-authenticator and version-consistency
-gates also passed. npm reported zero vulnerabilities but warned that the
-`better-sqlite3` install script is not covered by `allowScripts`; the installed
-native binding loaded successfully. Linux/macOS and launch-workflow validation,
-an independent security audit and production certification are not claimed.
-Restoring an old backup can roll back revocation or key epochs.
-
-### v0.11.4 — Pre-Merge Durability & Operations Corrections
-
-Share canonical web-root guards between service startup and admin commands,
-including symlinked missing ancestors, and prevent static routes from escaping
-the web root. Expected stale-writer conflicts now roll back, return HTTP 409
-and permit retry without poisoning the store; fatal storage errors still fail
-closed. Lock errors include the exact path and safe manual recovery guidance.
-
-Correct durable cursor encoding so bounded pulls can resume, reject missing,
-empty and unsupported restore sources before replacement, and isolate the
-passkey regression store from the default service database. Regression coverage
-proves admin exclusion, cleanup, verified backups and preserved database/WAL/SHM
-state. Schema v1, backup format and client/domain versions are unchanged.
-
-Passed 181 Node tests (107 server), 118 Rust tests, formatting, Clippy, release
-WASM, product/security-storage/security-UI/WebAuthn-PRF browser gates, npm audit,
-version checks and PowerShell/POSIX launcher smoke tests. The POSIX launcher
-used Windows Node through WSL; native Linux Node and macOS remain unverified.
-See [the hardening evidence](docs/V0.11.0.md#pr-17-pre-merge-hardening-evidence-2026-10-03).
-
-### v0.11.5 — Durable Semantic Integrity
-
-Durable startup, readiness, backup and restore now share schema, SQLite and
-Kin semantic validation. Cross-check normalized routing/authorization columns
-against grant JSON, device JSON and canonical opaque envelopes; reject
-impossible membership/device limits, credential ownership, sequence and
-epoch/rotation state before readiness. Backup validates both source and copy;
-restore validates read-only before replacement. No automatic repair or whole-
-database tamper resistance is claimed. Expired grants, retained historical
-authority and accepted certificate encodings remain supported. Strict input
-identity checks prevent malformed grants/proposals from committing invalid state.
-
-Passed 281 Node/real-WASM tests (207 server, 100 new regressions), 118 Rust tests
-on both Windows and WSL, formatting, Clippy, release WASM, the product browser
-gate, 313 security-storage assertions, 97 security-UI assertions and 18 virtual
-WebAuthn/PRF assertions. npm ci/audit, version checks and PowerShell/POSIX
-build/launcher smoke gates passed. POSIX used Windows Node through WSL;
-native Linux Node and macOS remain unverified. Server schema v1, sync envelope
-v1, client/domain formats and backup format remain unchanged. See
-[semantic-integrity evidence and measurements](docs/V0.11.0.md#v0115-semantic-integrity-evidence-2026-10-03).
-
-### v0.11.6 — Release Documentation & Code Clarity
-
-Standardize historical release headings on the newer `vX.Y.Z` notation without
-changing their release descriptions or grouping. Update the version checker to
-recognize those headings and align current candidate metadata and documentation.
-Clarify non-obvious code invariants and ownership with focused comments,
-especially at the Rust/WASM boundary and in deterministic replay.
-
-This patch adds no product capability or runtime behavior change. The last
-published client version remains v0.10.3; server schema v1, canonical events,
-replay protocols, local database/envelope versions and archive formats are
-unchanged. Earlier validation evidence remains attached to its original version.
-
-Passed 118 Rust tests and doc-tests, Rust formatting, 55 targeted server tests,
-JavaScript syntax checks, version consistency and heading-format checks,
-238 local Markdown file-link target checks and whitespace validation.
-This was a bounded documentation/comment pass, not a full audit or a rerun of
-the browser, cross-platform and security release gates.
-
-### v0.11.7 — October Roadmap & Startup Diagnostics
 
 Blend the October plan into the existing README and roadmap while preserving
 project setup, milestone history and platform contracts. Target one small minor
@@ -956,6 +1019,103 @@ rerun for this patch; previous results retain their original release attribution
 The published client remains v0.10.3; server schema v1, canonical events,
 WASM/browser storage contracts and archive formats are unchanged. This patch
 remains a review candidate; no v0.12 capability or broader certification is claimed.
+
+## v0.11.6 — Release Documentation & Code Clarity
+
+Standardize historical release headings on the newer `vX.Y.Z` notation without
+changing their release descriptions or grouping. Update the version checker to
+recognize those headings and align current candidate metadata and documentation.
+Clarify non-obvious code invariants and ownership with focused comments,
+especially at the Rust/WASM boundary and in deterministic replay.
+
+This patch adds no product capability or runtime behavior change. The last
+published client version remains v0.10.3; server schema v1, canonical events,
+replay protocols, local database/envelope versions and archive formats are
+unchanged. Earlier validation evidence remains attached to its original version.
+
+Passed 118 Rust tests and doc-tests, Rust formatting, 55 targeted server tests,
+JavaScript syntax checks, version consistency and heading-format checks,
+238 local Markdown file-link target checks and whitespace validation.
+This was a bounded documentation/comment pass, not a full audit or a rerun of
+the browser, cross-platform and security release gates.
+
+## v0.11.5 — Durable Semantic Integrity
+
+Durable startup, readiness, backup and restore now share schema, SQLite and
+Kin semantic validation. Cross-check normalized routing/authorization columns
+against grant JSON, device JSON and canonical opaque envelopes; reject
+impossible membership/device limits, credential ownership, sequence and
+epoch/rotation state before readiness. Backup validates both source and copy;
+restore validates read-only before replacement. No automatic repair or whole-
+database tamper resistance is claimed. Expired grants, retained historical
+authority and accepted certificate encodings remain supported. Strict input
+identity checks prevent malformed grants/proposals from committing invalid state.
+
+Passed 281 Node/real-WASM tests (207 server, 100 new regressions), 118 Rust tests
+on both Windows and WSL, formatting, Clippy, release WASM, the product browser
+gate, 313 security-storage assertions, 97 security-UI assertions and 18 virtual
+WebAuthn/PRF assertions. npm ci/audit, version checks and PowerShell/POSIX
+build/launcher smoke gates passed. POSIX used Windows Node through WSL;
+native Linux Node and macOS remain unverified. Server schema v1, sync envelope
+v1, client/domain formats and backup format remain unchanged. See
+[semantic-integrity evidence and measurements](docs/V0.11.0.md#v0115-semantic-integrity-evidence-2026-10-03).
+
+## v0.11.4 — Pre-Merge Durability & Operations Corrections
+
+Share canonical web-root guards between service startup and admin commands,
+including symlinked missing ancestors, and prevent static routes from escaping
+the web root. Expected stale-writer conflicts now roll back, return HTTP 409
+and permit retry without poisoning the store; fatal storage errors still fail
+closed. Lock errors include the exact path and safe manual recovery guidance.
+
+Correct durable cursor encoding so bounded pulls can resume, reject missing,
+empty and unsupported restore sources before replacement, and isolate the
+passkey regression store from the default service database. Regression coverage
+proves admin exclusion, cleanup, verified backups and preserved database/WAL/SHM
+state. Schema v1, backup format and client/domain versions are unchanged.
+
+Passed 181 Node tests (107 server), 118 Rust tests, formatting, Clippy, release
+WASM, product/security-storage/security-UI/WebAuthn-PRF browser gates, npm audit,
+version checks and PowerShell/POSIX launcher smoke tests. The POSIX launcher
+used Windows Node through WSL; native Linux Node and macOS remain unverified.
+See [the hardening evidence](docs/V0.11.0.md#pr-17-pre-merge-hardening-evidence-2026-10-03).
+
+## v0.11.3 — Privacy & Durable-Service Hardening
+
+Hardens persistent record validation, bounded reads, corruption behavior,
+error/log output, process restart behavior and backup/rollback documentation.
+Tests cover migration interruption, newer-schema rejection, corrupt relay
+data, stale-writer conflicts, backup/restore, lock exclusion and a spawned HTTP
+server restart that reauthenticates and recovers accepted ciphertext and
+sequence state. On Windows x64/Node 22.12 the full Node suite passed 157 tests
+after `npm ci`, including all 83 server tests; the Rust, WASM, browser,
+security-storage, security-UI, virtual-authenticator and version-consistency
+gates also passed. npm reported zero vulnerabilities but warned that the
+`better-sqlite3` install script is not covered by `allowScripts`; the installed
+native binding loaded successfully. Linux/macOS and launch-workflow validation,
+an independent security audit and production certification are not claimed.
+Restoring an old backup can roll back revocation or key epochs.
+
+## v0.11.2 — Operations & Recovery
+
+Adds readiness, graceful shutdown and an exclusive single-process service lock.
+Adds `npm run backup` using SQLite's online backup API and `npm run restore`
+with source validation, exclusive maintenance locking and offline replacement;
+preserves the replaced database and any WAL sidecars.
+
+## v0.11.1 — Transaction & Interruption Correctness
+
+Makes migration transactional and fail-closed on interruption or unsupported
+newer schemas. Adds on-disk rollback/corruption checks, transaction boundaries
+for cross-service mutations and stale-writer compare-and-commit checks.
+
+## v0.11.0 — Durable Identity & Relay Foundation
+
+Introduces SQLite server schema v1 and durable household identity, membership,
+credential, trusted-device, authorization, sync-coordination and opaque relay
+state. Event success is reported only after the transaction commits. Bounded
+indexed reads and persisted relay/device sequences preserve opaque envelopes,
+idempotency and cursor behavior across restarts.
 
 ## v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure
 
