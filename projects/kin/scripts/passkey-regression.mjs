@@ -177,12 +177,15 @@ async function setupPasskey() {
     if (!value) throw Error(message);
     checks++;
   };
+  // 30 s: a fresh profile's first start (WASM, IndexedDB, service worker)
+  // can take longer than 10 s on the Windows runner (#164).
   const wait = async (condition) => {
-    for (let i = 0; i < 400; i++) {
+    for (let i = 0; i < 1200; i++) {
       if (condition()) return;
       await new Promise((r) => setTimeout(r, 25));
     }
-    throw Error("Passkey setup timed out");
+    const app = document.querySelector("kin-app");
+    throw Error(`Passkey setup timed out (starting=${app?.starting}, heading=${Boolean(app?.security?.heading)}, phase=${app?.security?.phase})`);
   };
   await wait(
     () =>

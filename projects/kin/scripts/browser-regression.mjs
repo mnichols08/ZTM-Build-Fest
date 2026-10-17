@@ -1168,14 +1168,15 @@ try {
     return client;
   }
   async function ready(client) {
-    await until(() => client.evaluate('Boolean(document.querySelector("kin-app")?.security?.heading)'));
+    // 30 s: a new tab's first start can exceed 10 s on the Windows runner (#164).
+    await until(() => client.evaluate('Boolean(document.querySelector("kin-app")?.security?.heading)'), { attempts: 600 });
     const locked = await client.evaluate('document.querySelector("kin-app").security.phase !== "unlocked"');
     if (locked) await client.evaluate(`(async () => {
       const security = document.querySelector("kin-app").security;
       if (security.manifest) await security.unlockRecovery(${JSON.stringify(recoverySecret)});
       else await security.establishProtection(${JSON.stringify(recoverySecret)});
     })()`);
-    await until(() => client.evaluate('Boolean(document.querySelector("kin-app")?.store && !document.querySelector("kin-app").busy)'));
+    await until(() => client.evaluate('Boolean(document.querySelector("kin-app")?.store && !document.querySelector("kin-app").busy)'), { attempts: 600 });
   }
   async function householdState(client, predicate) {
     try {

@@ -171,6 +171,10 @@ async function browserUiChecks() {
     }
     throw Error("UI wait timed out: " + document.body.innerText);
   };
+  // A fresh profile's first start can take longer than wait()'s 10 s on the
+  // Windows runner (#164); give it 30 s.
+  for (let i = 0; i < 1200 && !(document.querySelector("kin-app")?.security?.heading && !document.querySelector("kin-app").starting); i++)
+    await new Promise((r) => setTimeout(r, 25));
   await wait(
     () =>
       document.querySelector("kin-app")?.security?.heading &&
