@@ -129,3 +129,15 @@ No capability was added. Real-WASM tests validate all truncated v6 summary/resul
 | Device names stay out of KINS; replay protocol stays 24 | [ABI](ABI.md), [V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md) | Vector 027; unchanged golden fixtures; `scripts/v1-compatibility.test.mjs`. |
 | KDEV export decodes exactly | [ABI](ABI.md) | Vector 028; KDEV decode and broken-table tests in `web/wasm/abi-ownership.test.mjs`. |
 | Nobody types a device name; Trusted devices groups, marks and renames | [UX](UX.md) §8.1–8.2, [ACCESSIBILITY](ACCESSIBILITY.md) | `web/components/kin-household.test.mjs`; `scripts/mobile-ux-regression.mjs`; `scripts/household-authority-regression.mjs` (relay counts include each device's name). |
+
+## v1.1.0 Household app name and icon on home screens (#78)
+
+| Requirement | Specification authority | v1.1.0 validation |
+| --- | --- | --- |
+| Opt-in plaintext install identity, admin-only writes, stale revisions conflict, legacy households fail closed | [HOUSEHOLD-IDENTITY-DEFAULTS](HOUSEHOLD-IDENTITY-DEFAULTS.md#published-install-identity) | `server/install-identity.test.mjs` (authority, stale, validation, audit). |
+| Icons are PNGs of exact sizes checked by framing only | same | `server/install-identity.test.mjs` (signature, IHDR, depth, IEND, size cap). |
+| Per-device manifest and icons; others get Kin's; stable id; ETag and versioned icon URLs change on update | same, [V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md#additions-since-v10) | `server/install-identity.test.mjs` (default vs published, revoked device, other household, ETag/304, JSON escaping). |
+| Withdrawal and household deletion delete the copy | [PRIVACY](PRIVACY.md), [THREAT-MODEL](THREAT-MODEL.md) | Withdrawal, purge-status and forced-purge tests; schema 10 migration tests in `server/durable-store.test.mjs`. |
+| The service worker never caches the manifest or install icons | [HOUSEHOLD-IDENTITY-DEFAULTS](HOUSEHOLD-IDENTITY-DEFAULTS.md#published-install-identity) | `web/service-worker.test.mjs`; browser check in `scripts/household-authority-regression.mjs`. |
+| Icons drawn in the browser (first letter or upload) | same | `web/appearance/install-icons.test.mjs`; real 512-pixel PNG in the browser regression. |
+| Admin-only Home screen controls state what is stored before the first publish | [UX](UX.md) §8.7 | `web/components/kin-household-defaults.test.mjs`; `scripts/household-authority-regression.mjs`. |

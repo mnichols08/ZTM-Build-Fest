@@ -77,3 +77,17 @@ test('a fingerprinted release stages its own cache and rejects malformed metadat
   await assert.rejects(worker({ release: '0.38.2+not valid!' }), /release is missing/);
   await assert.rejects(worker({ release: '0.38.2-rc1' }), /release is missing/);
 });
+
+test('the manifest and install icons are never cached and always come from the network (#78)', async () => {
+  const { listeners, stored } = await worker(); let install;
+  listeners.get('install')({ waitUntil(value) { install = value; } }); await install;
+  const cached = stored.get('kin-static-v0.38.2');
+  assert.ok(!cached.has('/manifest.webmanifest'), 'the household-specific manifest is not in the shell');
+  assert.ok(![...cached.keys()].some((key) => key.startsWith('/install-icon/')));
+  assert.ok(cached.has('/icon.svg'), "Kin's own icon stays in the shell");
+  for (const path of ['/manifest.webmanifest', '/install-icon/192.png?v=3', '/install-icon/apple-180.png']) {
+    let handled = false;
+    listeners.get('fetch')({ request: { method: 'GET', url: `https://kin.test${path}`, mode: 'cors' }, respondWith() { handled = true; } });
+    assert.equal(handled, false, `${path} passes through to the network`);
+  }
+});

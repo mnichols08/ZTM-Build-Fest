@@ -18,6 +18,7 @@ An admin can make another active Adult an admin or remove admin status, using th
 | Recover a non-admin member, manage own devices, key provisioning and rotation | Any Adult | Any Adult |
 | Change shared household settings | Admin | Nobody (fails closed) |
 | Grant or remove admin status | Admin | Nobody (fails closed) |
+| Publish or withdraw the home-screen install identity | Admin | Nobody (fails closed) |
 | Remove an attachment in the app | Any Adult | Any Adult |
 | Delete an attachment's encrypted copy from the relay | Its uploader or any Adult | Its uploader or any Adult |
 
@@ -33,7 +34,51 @@ The Identity & defaults management panel is absent from the rendered and accessi
 
 `household_settings` stores one household-scoped opaque ciphertext, its key epoch, SHA-256 integrity digest, monotonic revision, authenticated writer IDs, and update time. The client payload is version 1 and contains the normalized household name plus appearance mode, color source/seed, manual color metadata, and the processed optional image. The service cannot read the name or image. A write supplies the last observed revision; stale writes receive a conflict and never overwrite a newer value. The service accepts a write only at the authoritative active epoch, while rotation is not pending, and only from a device provisioned for that epoch. The encrypted record survives restart and is removed with household data.
 
-Names are trimmed and NFC-normalized, must be nonempty, contain at most 80 Unicode code points and 240 UTF-8 bytes, and may not contain control, formatting, or surrogate characters. UI rendering must use text nodes/textContent. Locked and signed-out shells retain the neutral `Kin` title; the manifest and global PWA identity remain Kin.
+Names are trimmed and NFC-normalized, must be nonempty, contain at most 80 Unicode code points and 240 UTF-8 bytes, and may not contain control, formatting, or surrogate characters. UI rendering must use text nodes/textContent. Locked and signed-out shells retain the neutral `Kin` title. The manifest and installed-app identity are Kin unless an admin publishes an install identity (below); that never changes the encrypted settings or the locked shell.
+
+## Published install identity
+
+Since v1.1 (#78) an admin can choose, in Identity & defaults → **Home screen**,
+to show the household's name and icon when Kin is installed, instead of "Kin".
+This is opt-in and off by default. It is a **separate, plaintext copy**: the
+encrypted `household_settings` above are unchanged, and the service still can't
+read them.
+
+- **What is published.** The household name (the saved name, by the rules
+  above), a short name for under the icon (at most 12 characters), an optional
+  description (at most 200 characters) and four PNG icons: 192 and 512 pixels,
+  a 512-pixel maskable icon whose content stays inside the central 80%, and a
+  180-pixel icon for iPhone and iPad. The icon is the first character of the
+  household name on the household's accent colour, or an uploaded image that
+  is centre-cropped and redrawn in the browser (no metadata survives). The
+  service checks each PNG's header and size only; it never decodes an image.
+- **Before the first publish** the panel says: "Your household name and icon
+  will be stored by the Kin service without encryption so devices can show
+  them on the home screen. Everything else stays encrypted." The admin must
+  confirm before saving.
+- **Storage.** Server schema 10 keeps one row per publishing household in
+  `household_install_identity` with a revision that only grows (a second table
+  remembers the last revision after a withdrawal, so icon URLs never repeat).
+  A write supplies the revision it last saw; a stale write gets a conflict.
+  Writes are audited as `install_identity_published` / `install_identity_withdrawn`.
+- **Who sees it.** `GET /manifest.webmanifest` and `/install-icon/*` resolve
+  the household from the browser's `kin_device` cookie. Only a trusted,
+  unrevoked device of an active member of an active household gets the
+  published copy; every other request gets Kin's built-in manifest and icon.
+  There is no public URL. The manifest's `id`, `start_url`, `scope` and
+  `display` never change, so installed apps update in place. The manifest is
+  `private, no-cache` with an ETag of the household and revision; icon URLs
+  carry the revision and are immutable. The service worker caches neither.
+- **Withdrawing** ("Stop showing") deletes the published copy; the manifest
+  goes back to Kin. Household deletion removes it with the household's data.
+  A renamed household keeps the old published name until an admin saves the
+  home screen again; the panel says so.
+
+| Platform | Picks up a change |
+| --- | --- |
+| Chrome and Edge on a computer | On a later launch, roughly daily. A name or icon change asks the user to accept it. |
+| Android (Chrome) | At the next installed-app update check, which can take a day or more. Chrome may check without the device cookie, and then keeps the earlier name and icon. |
+| iPhone and iPad | Never on its own. Remove Kin from the Home Screen and add it again. |
 
 ## Appearance precedence
 
@@ -50,6 +95,7 @@ The ciphertext records its epoch and is readable only by devices entitled to tha
 ## Known limitations
 
 - Claiming admin status in a legacy household is deferred.
+- A published install identity is plaintext on the service and in its backups until it is withdrawn or the household is deleted. Installed apps already showing it keep it until their platform checks again (table above).
 - The relay accepts and serves the encrypted revision; recipient receipt is not implied by write acceptance.
 - An unavailable admin does not cause automatic promotion. If the only admin loses every device, other Adults cannot recover them, and admin actions stay unavailable. Households should keep a second admin. Authorized members retain read-only use of the last settings.
 - "Child" is presented as the existing Limited member class and "babysitter" as the existing Temporary class. Kin adds no separate child or babysitter permission tier.

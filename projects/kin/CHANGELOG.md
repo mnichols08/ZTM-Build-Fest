@@ -7,6 +7,27 @@ documentation only.
 
 ## Unreleased — v1.1.0
 
+### Household name and icon on home screens (#78)
+
+- **Opt-in.** In Identity & defaults → Home screen, a household admin can show
+  the household's name and icon on installed apps instead of "Kin": a short
+  name, an optional description, and an icon that is the household name's
+  first letter on the household colour or an uploaded image.
+- **Plainly stated.** Before the first publish the panel explains that the name
+  and icon are stored by the Kin service without encryption, and asks the admin
+  to confirm. Everything else stays encrypted; the encrypted household settings
+  are unchanged.
+- **Only your devices.** The manifest and icons are served per device, from the
+  household's trusted devices' cookie; everyone else gets Kin's. "Stop showing"
+  deletes the copy, as does deleting the household.
+- **Updates in place.** The app's identity (`id`, start URL, scope) never
+  changes. Computers and Android pick up changes on their own; iPhone and iPad
+  need the app added again.
+- **Server schema 10.** New tables with a forward migration from 9. A v1.0
+  server can't open a schema-10 database, so keep the pre-upgrade backup if you
+  might roll back.
+- The service worker no longer caches the manifest.
+
 ### Device names and nicknames (#71)
 
 - **Nobody types a device name.** Creating or joining a household names the

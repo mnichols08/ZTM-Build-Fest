@@ -429,6 +429,48 @@ async function pageRevokeDeviceButton(label) {
   }
 }
 
+// #78: Adult A publishes the household's home-screen identity through the
+// admin-only Home screen section; the manifest and icons then follow A's
+// device cookie. Non-admins have no section and the service refuses them.
+async function pagePublishInstallIdentity({ shortName }) {
+  const app = document.querySelector("kin-app");
+  await app.ctx.appearance.refreshHouseholdDefaults();
+  await app.ctx.appearance.refreshInstallIdentity();
+  const panel = app.householdDefaults.install;
+  if (!panel) return { section: false };
+  const wait = async (predicate, label) => {
+    for (let i = 0; i < 400; i++) { if (predicate()) return; await new Promise((r) => setTimeout(r, 25)); }
+    throw new Error("Timed out waiting for " + label + ": " + panel.textContent);
+  };
+  panel.toggle.click();
+  await wait(() => panel.icons, "first-letter icons");
+  const privacyShown = !panel.privacy.hidden && panel.privacy.textContent.includes("without encryption");
+  const gatedBeforeConfirm = panel.save.disabled;
+  panel.shortName.value = shortName;
+  panel.shortName.dispatchEvent(new Event("input"));
+  panel.confirm.click();
+  panel.save.click();
+  await wait(() => panel.status.textContent.startsWith("Saved"), "the publish");
+  const manifest = await (await fetch("/manifest.webmanifest", { credentials: "same-origin", cache: "no-store" })).json();
+  const icon = new Uint8Array(await (await fetch(manifest.icons[1].src, { credentials: "same-origin" })).arrayBuffer());
+  const view = new DataView(icon.buffer);
+  return {
+    section: true, privacyShown, gatedBeforeConfirm,
+    shortName: manifest.short_name, name: manifest.name, id: manifest.id, iconSrc: manifest.icons[1].src,
+    iconSize: [view.getUint32(16), view.getUint32(20)], withdrawShown: !panel.withdraw.hidden,
+    cached: (await caches.keys()).length ? await Promise.all((await caches.keys()).map(async (key) => Boolean(await (await caches.open(key)).match("/manifest.webmanifest")))) : [],
+  };
+}
+
+async function pageInstallIdentityAsMember() {
+  const app = document.querySelector("kin-app");
+  await app.ctx.appearance.refreshHouseholdDefaults();
+  await app.ctx.appearance.refreshInstallIdentity();
+  const put = await fetch("/api/household/install-identity", { method: "PUT", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const manifest = await (await fetch("/manifest.webmanifest", { credentials: "same-origin", cache: "no-store" })).json();
+  return { section: Boolean(app.householdDefaults.install || document.querySelector("kin-install-identity")), putStatus: put.status, shortName: manifest.short_name };
+}
+
 async function pageRemoveMemberButton(buttonText) {
   const app = document.querySelector("kin-app");
   const h = app.household;
@@ -811,6 +853,17 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(result.started && result.items.includes("A2 after B joined"), "Adult B receives A2 through the relay: " + JSON.stringify(result));
     check(!result.items.includes("A1 before anyone joins"),
       "new Adult B receives current and later epochs only; pre-join A1 is not provisioned (PAIRING contract)");
+    const published = await a.call(pagePublishInstallIdentity, { shortName: "Nichols" });
+    check(published.section && published.privacyShown && published.gatedBeforeConfirm,
+      "admin A's Home screen section states what the service will store and requires confirmation before the first publish");
+    check(published.shortName === "Nichols" && published.id === "/" && /^\/install-icon\/512\.png\?v=1$/.test(published.iconSrc),
+      "A's device receives the published manifest with a stable id and versioned icons: " + JSON.stringify(published));
+    check(published.iconSize[0] === 512 && published.iconSize[1] === 512, "the first-letter icon is a real 512x512 PNG drawn in the browser");
+    check(published.withdrawShown && !published.cached.some(Boolean), "Stop showing is offered and the service worker never caches the manifest");
+    const memberView = await b.call(pageInstallIdentityAsMember);
+    check(!memberView.section && memberView.putStatus === 403,
+      "non-admin B has no Home screen section and the service refuses B's publish");
+    check(memberView.shortName === "Nichols", "B's device in the same household receives the published manifest");
     pass(`${checks} Adult admission assertions (profiles A and B)`);
 
     // ---- Profile C: Limited member ---------------------------------------

@@ -1011,6 +1011,35 @@ Old backups and stale devices must not be presented as legitimate ways to bypass
 
 ---
 
+## 8.7 Home screen name and icon (v1.1, #78)
+
+In Identity & defaults, admins only (the section isn't in the DOM for anyone
+else):
+
+- **Toggle:** "Show our name and icon on home screens", off by default.
+  Turning it on opens the form; nothing is published until Save.
+- **Fields:** Short name (prefilled from the household name, up to 12
+  characters, "Shown under the icon"), Description (optional, up to 200).
+- **Icon:** "First letter of the household name" (default) or "Upload an
+  image", with a preview of the icon and of the round crop some Android
+  launchers use, labelled for screen readers.
+- **Before the first publish:** "Your household name and icon will be stored
+  by the Kin service without encryption so devices can show them on the home
+  screen. Everything else stays encrypted." Save stays disabled until "I
+  understand the name and icon are not encrypted" is checked.
+- **Platforms:** "Computers and Android phones pick up changes on their own,
+  usually within a day. On iPhone and iPad, remove Kin from the Home Screen
+  and add it again to see a change."
+- **Save home screen** reports in a polite status ("Saved. Installed apps show
+  it the next time they check for changes."). Errors use alert semantics. A
+  conflict reloads the latest and says another admin changed it.
+- **Stop showing** (or unchecking the toggle) asks for confirmation, deletes
+  the service's copy and returns focus to the toggle.
+- After a household rename, the status says home screens still show the old
+  name until Save.
+
+---
+
 # 9. States every relevant screen must handle
 
 | State | User-facing behavior |

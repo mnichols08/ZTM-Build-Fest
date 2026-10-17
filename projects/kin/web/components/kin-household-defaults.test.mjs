@@ -36,6 +36,7 @@ globalThis.document = {
   createElement: (tagName) => {
     const element = new ElementStub(tagName);
     if (tagName === "kin-appearance") element.initialize = () => {};
+    if (tagName === "kin-install-identity") element.initialize = (state) => { element.state = state; };
     return element;
   },
 };
@@ -141,4 +142,19 @@ test("a delayed save completion cannot replace a newer revision received while s
   assert.equal(panel.pending, null);
   assert.equal(panel.dirty, false);
   assert.match(panel.feedback.textContent, /newer household settings arrived/i);
+});
+
+test("the Home screen section exists only for admins and follows the saved household (#78)", () => {
+  const panel = new KinHouseholdDefaults();
+  panel.connectedCallback();
+  panel.initialize({ admin: false, adminRecorded: true, value: null });
+  panel.initializeInstall({ published: null });
+  assert.equal(panel.install, null, "a non-admin never gets the section");
+  panel.initialize({ admin: true, adminRecorded: true, value: { version: 1, revision: 3, name: "Willow", appearance: { version: 1, mode: "system", colorSource: "preset", seed: "#397052", manual: null, image: null, owner: "household" } } });
+  const published = { rev: 2, shortName: "Willow" };
+  panel.initializeInstall({ published });
+  assert.equal(panel.install.tagName, "kin-install-identity");
+  assert.deepEqual(panel.install.state, { published, householdName: "Willow", seed: "#397052" });
+  panel.initialize({ admin: false, adminRecorded: true, value: null });
+  assert.equal(panel.install, null, "withdrawn authority removes the section");
 });

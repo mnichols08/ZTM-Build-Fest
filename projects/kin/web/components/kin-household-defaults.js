@@ -1,4 +1,5 @@
 import "./kin-appearance.js";
+import "./kin-install-identity.js";
 import { DEFAULT_APPEARANCE } from "../appearance/store.js";
 import { DEFAULT_HOUSEHOLD_NAME, normalizeHouseholdName } from "../appearance/household.js";
 
@@ -31,6 +32,7 @@ export class KinHouseholdDefaults extends HTMLElement {
       // Authority can be withdrawn after it was granted; drop the privileged
       // actions and lock the remaining controls rather than only hiding them.
       this.actions?.remove(); this.actions = null;
+      this.install?.remove(); this.install = null;
       this.dirty = false; this.pending = null;
       this.disabled = this.busy;
       return false;
@@ -51,10 +53,22 @@ export class KinHouseholdDefaults extends HTMLElement {
     this.note.textContent = "Set the name and default appearance shared by your household.";
     this.identity.disabled = false; this.editor.disabled = false;
     this.installActions();
+    if (this.install) this.initializeInstall({ published: this.install.state?.published ?? null });
     // Busy state may have been applied before admin authority arrived and
     // left the name input disabled; recompute control state now.
     this.disabled = this.busy;
     return false;
+  }
+  // The admin-only "Home screen" section (#78). It exists in the DOM only
+  // while the server says this member is an admin.
+  initializeInstall(state) {
+    if (!this.admin) { this.install?.remove(); this.install = null; return; }
+    if (!this.install) {
+      this.install = document.createElement("kin-install-identity");
+      this.append(this.install);
+    }
+    this.install.initialize({ ...state, householdName: this.saved?.name, seed: this.saved?.appearance?.seed });
+    this.install.disabled = this.busy;
   }
   installActions() {
     this.actions?.remove(); this.actions = document.createElement("div"); this.actions.className = "appearance-actions";
@@ -93,10 +107,18 @@ export class KinHouseholdDefaults extends HTMLElement {
         this.initializing = true; this.editor.initialize(this.draftAppearance); this.initializing = false;
         this.note.textContent = "Set the name and default appearance shared by your household.";
         if (newerPending) this.feedback.textContent = "Your change was saved, then newer household settings arrived. The latest settings are shown.";
+        if (this.install) this.initializeInstall({ published: this.install.state?.published ?? null });
       }
     } } }));
   }
-  set disabled(value) { this.busy = Boolean(value); for (const control of this.querySelectorAll("button,input")) control.disabled = this.busy || (!this.admin && this.contains(control)); }
+  set disabled(value) {
+    this.busy = Boolean(value);
+    for (const control of this.querySelectorAll("button,input")) {
+      if (this.install?.contains(control)) continue;
+      control.disabled = this.busy || (!this.admin && this.contains(control));
+    }
+    if (this.install) this.install.disabled = this.busy;
+  }
 }
 function button(label, action, className = "") { const value = document.createElement("button"); value.type = "button"; value.textContent = label; value.className = className; value.addEventListener("click", action); return value; }
 customElements.define("kin-household-defaults", KinHouseholdDefaults);

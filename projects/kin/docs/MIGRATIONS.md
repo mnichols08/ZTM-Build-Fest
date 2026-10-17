@@ -15,7 +15,7 @@
 | Event IndexedDB `kin` | schema 5 | Structures are created on first open |
 | Key IndexedDB `kin-crypto-keys` | schema 5 | Structures are created on first open |
 | Local envelope / root manifest | Format 1 roots, format 2 after rotation | Both current |
-| Server SQLite | `user_version` 9 | Upgrade chain 0→9 retained (see below) |
+| Server SQLite | `user_version` 10 (9 at v1.0) | Upgrade chain 0→10 retained (see below); 10 adds the published install identity tables (v1.1) |
 
 Application, event, protocol, IndexedDB, archive and server versions remain
 independent; change only the axis whose contract changes.
