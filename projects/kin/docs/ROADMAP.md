@@ -1,12 +1,10 @@
 # Roadmap
 
-`v1.0.0 — Stable Kin Platform` is in its final release checks ([#168](https://github.com/mnichols08/ZTM-Build-Fest/issues/168)): its
-release candidate will be tagged `kin-v1.0.0-rc.1`, and `kin-v1.0.0` follows
-on the same commit once the checks pass. The last release before it was
-`v0.10.3 — Bounded Storage/Archive Hardening & Architecture Closure`. The work
-between them is planned to ship in v1.0.0, subject to the owner's
-[review-gate decisions](audits/V1.0_REVIEW_GATES.md); this page records how
-Kin got there. Work after v1.0 is tracked as GitHub issues.
+Current release: `v1.0.0 — Stable Kin Platform`, released 2026-10-17 as
+`kin-v1.0.0`. The last release before it was `v0.10.3 — Bounded Storage/Archive
+Hardening & Architecture Closure`. The work between them shipped in v1.0.0, per
+the owner's [review-gate decisions](audits/V1.0_REVIEW_GATES.md); this page
+records how Kin got there. Work after v1.0 is tracked as GitHub issues.
 
 ```text
 v0.9.3 — Encrypted Event Sync Stabilization
@@ -58,7 +56,7 @@ The v0.11 candidate settled service durability before v0.12 lifecycle/deletion.
 The detailed release records preserve the candidate progression through v0.41.1.
 The v0.46.0 candidate added protected member-bound personal appearance, and
 v0.47.0 added encrypted revisioned household identity/default appearance plus
-recorded admin authority. v0.21.0–v0.47.0 were never tagged; they are planned to ship in
+recorded admin authority. v0.21.0–v0.47.0 were never tagged; they shipped in
 v1.0.0. The v0.42.x–v0.45.x documents were planning contracts that were never
 activated; v1.0 readiness (epic #150) took their place.
 

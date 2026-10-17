@@ -7,13 +7,11 @@ documentation only.
 
 ## v1.0.0 — Stable Kin Platform
 
-Kin's first stable release, in its final release checks
-([#168](https://github.com/mnichols08/ZTM-Build-Fest/issues/168)): its release
-candidate will be tagged `kin-v1.0.0-rc.1`, and `kin-v1.0.0` follows on the
-same commit once the checks pass.
+Released 2026-10-17 as `kin-v1.0.0`, with the release candidate
+`kin-v1.0.0-rc.1` on the same commit. Kin's first stable release.
 
 **What's in it.** The last release was v0.10.3. Everything since then
-ships in v1.0.0, subject to the owner's
+ships in v1.0.0, per the owner's
 [review-gate decisions](docs/audits/V1.0_REVIEW_GATES.md):
 
 - the tagged review lines v0.11.x through v0.20.x;
@@ -58,6 +56,10 @@ against is listed under
 - Key rotation never reuses a key already wrapped for a device that has since
   left (#176).
 - Notes, references and maintenance records keep their own entity IDs (#171).
+- A device whose first sync finds a key rotation pending (someone was removed
+  or a device revoked before it finished joining) now syncs instead of
+  failing with "Kin has not initialized encrypted sync."; history it had
+  before joining is sealed under the new key, never the retired one (#203).
 
 ### Security and access
 
@@ -98,6 +100,10 @@ against is listed under
 - A public test server: Docker with Caddy for HTTPS, or Railway. On Railway
   it refuses to start without a data volume, backs up the database once per
   deployment, and can restore a backup at startup (`deploy/`).
+- The Railway startup script clears a database lock left by a container that
+  was force-stopped during a redeploy (#204).
+- The home page no longer fails when a file in the app folder disappears
+  while Kin fingerprints it (#201).
 - CI: the intermittent Windows Edge browser-suite failures are fixed, and
   both jobs report readable failures (#164).
 

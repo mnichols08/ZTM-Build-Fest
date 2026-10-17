@@ -1,6 +1,6 @@
 # Household Identity & Shared Appearance
 
-**Ships in:** v1.0.0 (developed as the v0.47.0 candidate on `feat/kin-household-owner-settings`)
+**Shipped in:** v1.0.0 (developed as the v0.47.0 candidate on `feat/kin-household-owner-settings`)
 **Base:** Personal Appearance v0.46.0 candidate at `158160ad4bc84a12b7346a4dfd5facf82f8cccca`
 
 ## Authority

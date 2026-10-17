@@ -335,6 +335,22 @@ server schema 9).
 **Planned.** Carry member roles into replay, or move removal behind an
 Adult-signed record.
 
+### v1.0 was not tested across every browser and device
+
+**What it is.** v1.0 shipped on the owner's decision with limited real-world
+testing. The automated browser suites run the full flow on Edge for Windows on
+every change. Beyond that, only the owner's and a few testers' use of the test
+server on real phones and computers was recorded. Firefox, Safari on macOS,
+Chrome on Android, installed-app updates and offline launch, roaming security
+keys, separate networks and moving an export between physical devices were
+not run ([V1.0_RELEASE_ACCEPTANCE](audits/V1.0_RELEASE_ACCEPTANCE.md)).
+
+**Who and what.** No attacker gains anything from this. People on untested
+browsers or devices may hit problems nobody has seen yet.
+
+**Planned.** Run the remaining rows on later releases and report problems as
+issues.
+
 ## Remaining Limitations
 
 The incubation service stores identity and relay records in memory. Full restart loses household identity, sessions, pairing state, relay envelopes and cursors; surviving local encrypted history cannot alone resume that household's sync. A relay-only reset is detected against local high-water and exact cached envelopes are requeued when identity survives. Encrypted archive restore recovers local data only. There is no transparency witness, pre-join history grant for new adults, server-identity recovery or remote erasure. Missing epoch keys pause sync. Key-grant epochs come only from signed packages, so a relay cannot relabel an old key as a newer epoch. The current committed epoch, the committed-rotation marker and device revocation are still relay-asserted, so the expiry relaxation for committed-rotation packages only keeps an honest relay consistent; it gives no protection against a malicious one. Such a relay can serve any expired package signed by a device in its directory for an epoch at or below the epoch it reports, including a losing concurrent rotation proposal's key or one signed by a device it has hidden the revocation of. It still cannot relabel a key as a different epoch. Adult-signed rotation and revocation records are the long-term fix. Wrapper removal alone cannot invalidate a copied wrapper plus its secret; explicit root replacement in v0.10.2 protects newly re-encrypted local data, while prior copies remain exposed. New runtime private keys are imported nonextractable, but that is not hardware-backed storage. A compromised unlocked runtime defeats confidentiality. Independent security review and production operational hardening remain required.

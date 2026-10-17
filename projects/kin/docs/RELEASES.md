@@ -1,9 +1,8 @@
 # Release Process
 
-**Status:** v1.0.0 — Stable Kin Platform is in its final release checks
-([#168](https://github.com/mnichols08/ZTM-Build-Fest/issues/168)): its release candidate will be tagged `kin-v1.0.0-rc.1`, and
-`kin-v1.0.0` follows on the same commit once the checks pass. The last
-release before it was v0.10.3 Bounded Storage/Archive Hardening &
+**Status:** Current release: v1.0.0 — Stable Kin Platform, released
+2026-10-17 as `kin-v1.0.0` (release candidate `kin-v1.0.0-rc.1` on the same
+commit). The release before it was v0.10.3 Bounded Storage/Archive Hardening &
 Architecture Closure. Neither is production certification or an independent
 audit.
 
@@ -25,8 +24,8 @@ candidate implements lifecycle capability, correctness, stale-device hardening
 and UX/docs; the tag does not indicate publication.
 The [roadmap](ROADMAP.md) records the candidate progression from v0.11 through
 v0.47.0. The v0.21.0–v0.47.0 candidates were never tagged; together with the
-tagged v0.11.x–v0.20.x review lines they are planned to ship in v1.0.0,
-subject to the [review-gate decisions](audits/V1.0_REVIEW_GATES.md).
+tagged v0.11.x–v0.20.x review lines they shipped in v1.0.0, per the
+[review-gate decisions](audits/V1.0_REVIEW_GATES.md).
 v1.0 requires the readiness properties of every preceding line, not
 only architecture/security and UX/UI. Use the release-specific planning contracts
 and [V0.10.0](V0.10.0.md); do not manufacture patch releases or knowingly defer a
