@@ -99,4 +99,26 @@ jobs:
         run: ./build-wasm.sh
       - name: Run browserless verification
         working-directory: projects/kin
-        run: node scripts/verify.mjs
+        # As on Windows: on failure, report the failing lines and the end of
+        # the output as annotations the checks API can return (#164).
+        run: |
+          set -o pipefail
+          status=0
+          node scripts/verify.mjs 2>&1 | tee "$RUNNER_TEMP/kin-verify.txt" || status=$?
+          if [ "$status" -ne 0 ]; then
+            report() {
+              title="$1"; chunk=""; part=1
+              while IFS= read -r line; do
+                line="${line:0:1500}"
+                if [ $(( ${#chunk} + ${#line} )) -gt 3800 ]; then
+                  printf '::error title=%s (%s)::%s\n' "$title" "$part" "$(printf '%s' "$chunk" | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')"
+                  chunk=""; part=$((part + 1))
+                fi
+                chunk="${chunk}${line}"$'\n'
+              done
+              [ -n "$chunk" ] && printf '::error title=%s (%s)::%s\n' "$title" "$part" "$(printf '%s' "$chunk" | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')"
+            }
+            grep -E 'FAIL|Error|not ok|timed out|✖' "$RUNNER_TEMP/kin-verify.txt" | tail -n 30 | report "Kin verification failed - failing lines"
+            tail -n 40 "$RUNNER_TEMP/kin-verify.txt" | report "Kin verification failed - last lines"
+          fi
+          exit "$status"

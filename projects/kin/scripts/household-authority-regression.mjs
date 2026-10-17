@@ -31,7 +31,8 @@ const MINUTE = 60_000;
 // ---------------------------------------------------------------------------
 
 async function pageWaitReady() {
-  for (let i = 0; i < 400; i++) {
+  // 30 s: a fresh profile's first start can take longer than 10 s (#164).
+  for (let i = 0; i < 1200; i++) {
     const app = document.querySelector("kin-app");
     if (app?.security?.heading && !app.starting) return true;
     await new Promise((r) => setTimeout(r, 25));
