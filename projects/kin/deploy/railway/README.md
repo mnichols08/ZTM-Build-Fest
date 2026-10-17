@@ -37,7 +37,8 @@ sets up again.
    `mnichols08/ZTM-Build-Fest`.
 2. Open the service's **Settings**:
    - **Source → Root Directory:** `projects/kin`
-   - **Source → Branch:** `kin-development`
+   - **Source → Branch:** `kin-testing` (see [Testing branch](#testing-branch):
+     testers only get new code when you choose to promote it)
    - **Source → Watch Paths:** `/projects/kin/**` (so other projects in the
      repo don't redeploy Kin)
    - **Deploy → Healthcheck Path:** `/health`
@@ -52,9 +53,11 @@ sets up again.
    | `KIN_MAX_HOUSEHOLDS` | optional; defaults to `10` |
    | `KIN_ALLOW_NEW_HOUSEHOLDS` | optional; set to `false` once testers' households exist |
 
-4. **Volume:** right-click the service (or use the command palette) →
-   **Attach Volume**, mount path **`/data`**. This keeps households across
-   deploys and restarts.
+4. **Volume (required):** right-click the service (or use the command
+   palette) → **Attach Volume**, mount path **`/data`**. Without it, every
+   deploy starts with an empty database: all households are gone and testers'
+   passkeys stop working. Kin refuses to start when `/data` isn't a volume and
+   says so in the deploy logs (`/data is not a mounted volume…`).
 
 ## 3. Connect your subdomain
 
@@ -86,18 +89,74 @@ Directory is exactly `projects/kin`: Railway uses `projects/kin/Dockerfile`
 from there automatically. Remove any `RAILWAY_DOCKERFILE_PATH` variable left
 from an earlier setup.
 
+## Testing branch
+
+Railway deploys the `kin-testing` branch, not `kin-development`. Merging work
+into `kin-development` no longer touches the test server; you decide when
+testers get it.
+
+**Promote** the current `kin-development` to testers by opening a pull request
+from `kin-development` into `kin-testing` and merging it (or, from a clone,
+`git push origin origin/kin-development:kin-testing`). Railway redeploys, Kin
+backs up the database first (below), and testers see the update prompt the next
+time they open Kin.
+
+Promote when CI is green and you aren't in the middle of a test session.
+Households, passkeys and data carry over: the server database stays on the
+volume, and v1.0's formats are frozen
+([V1.0-COMPATIBILITY](../../docs/V1.0-COMPATIBILITY.md)).
+
+## Backups
+
+Every time the container starts (each deploy and restart), before Kin opens
+the database, it writes an integrity-checked copy to
+`/data/backups/kin-<UTC time>.sqlite` and keeps the newest 10. The deploy log
+shows `backup_created`. Change how many are kept with `KIN_BACKUPS_KEEP`.
+
+The first start on a new volume logs `database_new` instead. If you see that on
+a server that already had households, the volume isn't the one you expected.
+
+To take one on demand, from the service's shell (Railway CLI `railway ssh`, or
+the dashboard):
+
+```sh
+node /app/server/admin.mjs backup /data/backups/manual-$(date +%F).sqlite
+```
+
+## Roll back or move data
+
+Kin can only replace its database while it isn't running, so a restore happens
+at startup:
+
+1. Find the backup to use: `ls -lt /data/backups` from the service's shell, or
+   the `backup_created` lines in earlier deploy logs.
+2. Set the variable `KIN_RESTORE_FROM=/data/backups/kin-<time>.sqlite`. Railway
+   redeploys.
+3. The deploy log shows `restore_finished`. The database it replaced is kept
+   next to it as `kin.sqlite.pre-restore-…`.
+4. Delete the `KIN_RESTORE_FROM` variable. (If you forget, it isn't applied a
+   second time: the log says `restore_skipped`.)
+
+To **move** a test server's data to a new Railway service or another server,
+copy a backup file into the new server's `/data/backups` and restore it the
+same way (for the Docker setup, see
+[Restore a backup](../README.md#restore-a-backup)). Keep the same address:
+passkeys only work on the domain they were made on.
+
+A restore brings back accounts, devices and encrypted sync history as they were
+when the backup was taken. Anything that reached the server after that is gone
+from it, so restore the newest backup that predates the problem.
+
 ## Day to day
 
-- **Updates:** every push to `kin-development` that touches `projects/kin`
-  redeploys automatically. Testers see Kin's update prompt the next time they
-  open it.
+- **Updates:** promote `kin-development` into `kin-testing`
+  ([Testing branch](#testing-branch)).
 - **Close sign-ups:** set `KIN_ALLOW_NEW_HOUSEHOLDS=false`. Existing households
   keep working and can still invite people; anyone else sees "This Kin server
   isn't accepting new households."
-- **Back up:** from the service's shell (Railway CLI `railway ssh`, or the
-  dashboard), run
-  `node /app/server/admin.mjs backup /data/backup-$(date +%F).sqlite`.
-- **Start over:** delete and re-attach the volume. This removes every household.
+- **Back up / roll back:** automatic at every start; see [Backups](#backups).
+- **Start over:** delete the volume and attach a new one at `/data`. This
+  removes every household and its backups.
 
 ## Cost
 

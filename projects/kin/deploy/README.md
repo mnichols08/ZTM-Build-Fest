@@ -49,7 +49,7 @@ docker ps            # nothing should still publish 0.0.0.0:80 or :443
 ```sh
 git clone https://github.com/mnichols08/ZTM-Build-Fest.git
 cd ZTM-Build-Fest
-git switch kin-development
+git switch kin-testing        # the branch testers get; see railway/README.md#testing-branch
 cd projects/kin/deploy
 cp .env.example .env
 nano .env            # set KIN_DOMAIN=kin.yourdomain.com
@@ -108,6 +108,21 @@ docker compose exec kin node server/admin.mjs backup /data/backup-$(date +%F).sq
 docker compose ps
 docker compose logs --tail 100 kin
 ```
+
+## Restore a backup
+
+Kin must be stopped while its database is replaced:
+
+```sh
+docker compose cp ./kin-backup.sqlite kin:/data/kin-backup.sqlite
+docker compose stop kin
+docker compose run --rm --no-deps kin node server/admin.mjs restore /data/kin-backup.sqlite --acknowledge-deletion-history
+docker compose up -d && docker compose restart caddy
+```
+
+The replaced database is kept next to it as `kin.sqlite.pre-restore-…`. To
+move a [Railway](railway/README.md) test server here, copy one of its
+`/data/backups` files over and restore it this way, keeping the same domain.
 
 ## Start over
 
