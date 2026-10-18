@@ -10,6 +10,7 @@ import { configuredDatabasePath, permissionProblem } from "./permissions.mjs";
 import { builtInManifest, etagMatches, INSTALL_ICONS, publishedManifest } from "./install-identity.mjs";
 import { PushService } from "./push-service.mjs";
 import { ChatBlobService } from "./chat-blob-service.mjs";
+import { ChatRelayService } from "./chat-relay-service.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
 import {
@@ -87,6 +88,9 @@ export function createKinServer(options = {}) {
   // Chat content blobs (#110).
   const chatBlobService = new ChatBlobService({ pairingService: service, store, now: options.now ?? (() => Date.now()) });
   syncService.chatBlobService = chatBlobService;
+  // The chat relay (#111): chat events in their own encrypted stream.
+  const chatRelayService = new ChatRelayService({ syncService, store });
+  syncService.chatRelayService = chatRelayService;
   const webauthn =
     options.webauthn ??
     new WebAuthn({
@@ -102,6 +106,7 @@ export function createKinServer(options = {}) {
     syncService,
     pushService,
     chatBlobService,
+    chatRelayService,
     store,
     webauthn,
     flows: new Map(),
@@ -249,6 +254,7 @@ export function createKinServer(options = {}) {
     syncService,
     pushService,
     chatBlobService,
+    chatRelayService,
     liveService,
     webauthn,
     store,
@@ -385,7 +391,7 @@ async function api(request, response, url, context) {
     chatUploadAuth !== null ||
     (request.method === "PUT" && url.pathname === "/api/household/settings");
   // Event envelopes travel as binary batches (web/sync/envelope-wire.js).
-  const envelopePush = request.method === "POST" && url.pathname === "/api/sync/events";
+  const envelopePush = request.method === "POST" && (url.pathname === "/api/sync/events" || url.pathname === "/api/chat/events");
   const body = envelopePush
     ? await readEnvelopeBatch(request, response)
     : binaryUpload
@@ -907,8 +913,31 @@ async function api(request, response, url, context) {
     });
     return;
   }
-  if (envelopePush) {
+  if (envelopePush && url.pathname === "/api/sync/events") {
     json(response, 200, syncService.push(session, body));
+    return;
+  }
+  if (url.pathname === "/api/chat/events" && request.method === "POST") {
+    const auth = syncService.authorize(session);
+    json(response, 200, withTransaction(context, () => context.chatRelayService.push(auth, body)));
+    return;
+  }
+  if (url.pathname === "/api/chat/status" && request.method === "GET") {
+    json(response, 200, context.chatRelayService.status(syncService.authorize(session)));
+    return;
+  }
+  if (url.pathname === "/api/chat/events" && request.method === "GET") {
+    const auth = syncService.authorize(session);
+    let page;
+    try {
+      page = context.chatRelayService.pull(auth, url.searchParams.get("cursor") ?? "", url.searchParams.get("limit") ?? "20");
+      binary(response, encodeEventPage(page));
+    } catch (error) {
+      if (!(error instanceof EnvelopeWireError) &&
+          !(error instanceof DurableStoreError && error.code === "sync_store_invalid")) throw error;
+      console.error(JSON.stringify({ event: "chat_store_invalid", householdId: auth.household.id }));
+      throw new PairingError("sync_store_invalid", "Kin's stored chat history is invalid.", 500);
+    }
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/sync/events") {
