@@ -28,7 +28,11 @@ class KinEmojiPicker extends HTMLElement {
   }
 
   connectedCallback() {
-    if (this.toggle) return;
+    if (this.toggle) {
+      // Moved on its own: its panel comes back with it.
+      if (!this.panel.isConnected) (this.panelHost ?? this).append(this.panel);
+      return;
+    }
     // Not in the constructor: a new element may not get attributes there.
     this.id ||= `kin-emoji-picker-${++pickers}`;
     this.toggle = document.createElement("button");
@@ -64,6 +68,7 @@ class KinEmojiPicker extends HTMLElement {
     });
     this.append(this.toggle);
     (this.panelHost ?? this).append(this.panel);
+    if (this.panelHost) this.panelHost.hidden = true;
     this.applyDisabled();
   }
 
@@ -109,6 +114,7 @@ class KinEmojiPicker extends HTMLElement {
   async open() {
     this.toggle.setAttribute("aria-expanded", "true");
     this.panel.hidden = false;
+    if (this.panelHost) this.panelHost.hidden = false;
     if (!this.table) {
       this.status("Loading emoji…");
       try {
@@ -128,6 +134,7 @@ class KinEmojiPicker extends HTMLElement {
   close({ focusToggle = false } = {}) {
     if (!this.panel || this.panel.hidden) return;
     this.panel.hidden = true;
+    if (this.panelHost) this.panelHost.hidden = true;
     this.toggle.setAttribute("aria-expanded", "false");
     if (focusToggle) this.toggle.focus();
   }
@@ -230,6 +237,14 @@ class KinEmojiPicker extends HTMLElement {
     }
     // Through the editing commands where they exist, so the insert joins
     // the textarea's undo history (setRangeText would clear it).
+    // On a touch screen, focusing the textarea would flash the keyboard on
+    // every tap: insert directly there (Undo isn't a touch gesture anyway).
+    if (typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches) {
+      input.setRangeText(emoji, start, end, "end");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      this.dispatchEvent(new CustomEvent("kin:emoji-inserted", { bubbles: true, detail: { emoji } }));
+      return;
+    }
     // Focus visits the textarea for the command: that isn't leaving.
     const back = document.activeElement;
     this.inserting = true;

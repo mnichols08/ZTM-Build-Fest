@@ -275,7 +275,8 @@ common emoji in six categories, each a recommended (RGI) emoji with a short
 name), fetched once from the app and cached by the offline shell; a failed
 load is announced with a Try again button. Its panel sits right after the
 textarea, so the tab order follows the layout. It inserts at the cursor
-(replacing a selection) through the editing commands, so Undo still works,
+(replacing a selection) through the editing commands, so Undo still works
+(on a touch screen it inserts directly, so the keyboard doesn't flash),
 and stays open for another; an insert that would pass 4,000 characters is
 refused with a message. Category buttons switch the grid (`aria-pressed`);
 the grid has one tab stop, arrow keys move (up and down by a row of the
