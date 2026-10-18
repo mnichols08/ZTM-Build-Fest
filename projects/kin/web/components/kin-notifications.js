@@ -143,12 +143,12 @@ export class KinNotifications extends HTMLElement {
       // even when the service holds the same endpoint. The browser still
       // holds one, so the person's "on" stands: replace it.
       if (!sameServerKey(subscription, key)) {
+        // Once the old one is gone this runs to the end, even if a press
+        // lands meanwhile: presses wait for repairs, so a mute or turn-off
+        // then applies to the replacement rather than to nothing.
         await subscription.unsubscribe();
-        if (stale()) return;
         subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
-        if (stale()) { await subscription.unsubscribe().catch(() => {}); return; }
-      } else if ((await endpointTag(subscription.endpoint)) === status.endpointTag) return;
-      if (stale()) return;
+      } else if ((await endpointTag(subscription.endpoint)) === status.endpointTag || stale()) return;
       const { endpoint, keys } = subscription.toJSON();
       const updated = await api("/api/push/subscription", { method: "PUT", body: JSON.stringify({ endpoint, keys }) });
       if (!stale()) { this.status = updated; this.render(); }
