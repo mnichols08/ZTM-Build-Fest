@@ -7,6 +7,33 @@ documentation only.
 
 ## Unreleased — v1.1.0
 
+### QR pairing and signing in with a phone (#93)
+
+- **QR codes, written and read by Kin itself.** The engine encodes and
+  decodes QR codes in Rust (`rust/src/qr/`, byte mode, level M, versions
+  1–10) with a bounded amount of work per camera frame. `<kin-qr>` draws a
+  code, beside its typed alternative where there is one; `<kin-qr-scanner>` turns the camera on
+  only when tapped, stops it on every way out, and accepts only this Kin's
+  own links. No frame is stored or sent.
+- **Invite by QR code (#97).** A waiting invitation shows a QR code for
+  `/pair#code=…`. The code rides in the URL fragment, which never reaches the
+  server; opening or scanning it only fills in the join screen. The QR code
+  goes as soon as the invitation is claimed, expires or is revoked.
+- **Sign in on a computer with your phone (#98).** On the computer, "Sign in
+  with your phone" shows a QR code. On the phone, People & devices → Add a
+  computer → Scan shows the computer's name and "Only approve a computer
+  that's in front of you."; approving with a passkey shows a 6-digit code to
+  type on the computer. A new computer becomes one of your devices with the
+  household's history; a computer that's already yours is signed back in.
+  Adults only. New service routes under `/api/link/requests` (#99).
+- **The code binds the phone.** The phone's random code comes with a tag
+  keyed by the code and a nonce only the QR code carries; with the right
+  code the computer receives the tag, checks it and pins the phone's key, so
+  neither the QR code alone nor the service can substitute a device.
+- **Limits.** A sign-in QR code needs an origin of at most 56 bytes. The
+  decoder can miss very small (version 1) codes seen at an angle; Kin's links
+  are far larger.
+
 ### Push notifications (#85)
 
 - **Per device, opt-in.** People & devices → Notifications on this device:

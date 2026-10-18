@@ -123,6 +123,9 @@ Rust owns deterministic domain behavior:
 - Implemented Daily/Weekly/biweekly/monthly recurrence with explicit civil-date context
 - Diffing and useful search/indexing where justified
 - Distributed v8 event ordering and deterministic domain replay
+- QR codes since v1.1 (#94, #95): encoding a Kin link to a module grid and
+  decoding camera frames (`rust/src/qr/`, no crates). The browser only draws
+  the grid and turns camera frames into grayscale ([ABI](ABI.md#qr-codes-94-95))
 
 Rust must not manipulate the DOM. It should be possible to test domain behavior independently from browser rendering and storage.
 

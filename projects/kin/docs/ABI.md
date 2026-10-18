@@ -366,6 +366,14 @@ fragment, so the payload never reaches a server log or `Referer`.
     still allocates its small result buffer. `kin_clear` frees the scratch for
     reuse; WASM linear memory itself never shrinks.
 
+Link sizes: an invitation link is the origin plus 20 bytes
+(`/pair#code=F7KM-Q2DX`); a sign-in link is the origin plus 157 bytes
+(`/link#r=` 32 hex, `&s=` 43 base64url, `&f=` the 32-byte fingerprint as 43
+base64url, `&c=` a 22-character nonce). Both fit the 213-byte limit for any
+origin up to 56 bytes. A longer origin can't show a sign-in QR
+code: the computer says the code couldn't be drawn, and the computer signs in
+with a passkey or a pairing code instead.
+
 Limits of the decoder: version 1 symbols (up to 14 bytes) can fail on
 perspective frames, because the fourth corner cannot be pinned without an
 alignment pattern. Invitation and sign-in links are much longer, so they are
