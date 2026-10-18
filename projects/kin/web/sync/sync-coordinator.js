@@ -15,6 +15,7 @@ import {
   verifyDeviceAuthorizationCertificate,
 } from "./crypto.js";
 import { SyncKeyStore } from "./key-store.js";
+import { LiveChannel, liveUrl } from "./live-channel.js";
 import { QUARANTINE_MESSAGE, quarantineMessage } from "../storage/quarantine.js";
 import { idToHex } from "../wasm/kin-engine.js";
 import { reconcileAttachments } from "../attachments/attachment-lifecycle.js";
@@ -122,9 +123,19 @@ const REQUEST_WINDOW_MS = 60_000;
 const RATE_LIMIT_RETRY_MS = 5_000;
 const CATCH_UP_CONTEXT_MAX_AGE_MS = 30_000;
 const KEY_GRANT_TTL_MS = 10 * 60_000;
+// How often to poll: while the live channel is up, hints bring new events at
+// once and polling is only a safety net; otherwise every five seconds.
+export const POLL_MS = 5_000;
+export const LIVE_POLL_MS = 30_000;
+
+/** The live channel for a browser page, or null elsewhere (tests, workers). */
+function browserLiveChannel(options) {
+  if (typeof WebSocket === "undefined" || typeof location === "undefined" || !location.href) return null;
+  return new LiveChannel({ url: liveUrl(location), ...options });
+}
 
 export class SyncCoordinator {
-  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now() }) {
+  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel }) {
     this.store = store;
     this.engine = engine;
     this.identity = identity;
@@ -144,6 +155,9 @@ export class SyncCoordinator {
     this.stopped = false;
     this.terminal = false;
     this.abortController = new AbortController();
+    this.createLiveChannel = liveChannel;
+    this.live = null;
+    this.pollMs = POLL_MS;
   }
 
   async start() {
@@ -170,7 +184,42 @@ export class SyncCoordinator {
     if (this.stopped) return;
     await this.syncNow();
     if (this.stopped) return;
-    if (!this.terminal) this.timer = setInterval(() => void this.syncNow(), 5_000);
+    if (!this.terminal) {
+      this.timer = setInterval(() => void this.syncNow(), this.pollMs);
+      this.startLive();
+    }
+  }
+
+  /** Opens the live channel (#108): hints and reconnects sync at once, and
+   * polling slows while it is up. HTTP sync stays the source of truth. */
+  startLive() {
+    if (this.live || this.stopped || this.terminal) return;
+    this.live = this.createLiveChannel?.({
+      lockName: `kin-live:${this.identity.deviceId}`,
+      onHint: () => void this.syncNow(),
+      onUp: () => {
+        this.setPollInterval(LIVE_POLL_MS);
+        // Catch up on anything missed while disconnected, and send what the
+        // outbox kept meanwhile.
+        void this.syncNow();
+      },
+      onDown: () => this.setPollInterval(POLL_MS),
+      // Access was lost: the next HTTP sync meets the same refusal and
+      // reports the signed-out or deleted state.
+      onEnd: () => {
+        this.setPollInterval(POLL_MS);
+        void this.syncNow();
+      },
+    }) ?? null;
+    this.live?.start();
+  }
+
+  setPollInterval(ms) {
+    if (this.stopped || this.terminal || this.pollMs === ms) return;
+    this.pollMs = ms;
+    if (this.timer === null) return;
+    clearInterval(this.timer);
+    this.timer = setInterval(() => void this.syncNow(), ms);
   }
 
   async syncNow() {
@@ -248,6 +297,8 @@ export class SyncCoordinator {
           this.continuationTimer = null;
           clearInterval(this.timer);
           this.timer = null;
+          this.live?.stop();
+          this.live = null;
           this.onState({
             state: "deleted",
             lifecycleState: lifecycle.state,
@@ -1182,6 +1233,8 @@ export class SyncCoordinator {
 
   stop() {
     this.stopped = true;
+    this.live?.stop();
+    this.live = null;
     this.abortController.abort();
     clearInterval(this.timer);
     this.timer = null;

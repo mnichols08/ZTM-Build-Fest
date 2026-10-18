@@ -356,6 +356,23 @@ the fallback whenever the socket is closed.
   household's other devices when events are accepted. Both are empty: a hint
   says neither what changed nor who changed it. Clients send nothing yet; an
   unknown record type closes the socket.
+- **The client (#108, `web/sync/live-channel.js`).** An unlocked device opens
+  the socket after its first sync and closes it on lock or sign-out. One
+  tab per device holds it (a Web Lock named for the device); another tab
+  takes over when that one closes or locks. `HELLO` and every `SYNC_HINT`
+  make the coordinator sync now over HTTP, so a reconnect resumes from the
+  stored transport cursor, any gap is filled by the pull, and events the
+  outbox kept while offline go out. While the socket is up the coordinator
+  polls every 30 s as a safety net instead of every 5 s. A dropped socket
+  reconnects after a jittered, doubling wait from 1 s to 30 s (at once when
+  the browser comes back online; the longest wait after being replaced by
+  another socket for the device). Close 4401 or 4403 stops reconnecting, and
+  the next HTTP sync meets the same refusal and shows the signed-out or
+  deleted state. The client sends nothing on the socket, so no plaintext or
+  envelope ever travels on it; events go up and down over HTTP only (a
+  deliberate narrowing of #108's "upload over the socket", keeping one data
+  path that #107 already secures). A browser whose content security policy
+  doesn't let `connect-src 'self'` cover WebSockets simply keeps polling.
 
 ## Privacy boundary
 
