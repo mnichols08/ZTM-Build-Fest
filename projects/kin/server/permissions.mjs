@@ -7,8 +7,12 @@
 // Maintenance commands (server/admin.mjs, deploy/railway/snapshot.mjs) run as
 // separate, short-lived processes outside this sandbox, because backups and
 // restores write outside the data directory.
+//
+// The model governs Node's own APIs. SQLite's file I/O is native and is not
+// checked: SQL such as ATTACH or VACUUM INTO could still write elsewhere.
+// No request input reaches SQL text, so that is not reachable today.
 import { dirname, join, resolve } from "node:path";
-import { canonicalPath, resolveDurablePath } from "./path-safety.mjs";
+import { canonicalPath, isInsideRoot, resolveDurablePath } from "./path-safety.mjs";
 
 export const APP_ROOT = resolve(import.meta.dirname, "..");
 
@@ -51,8 +55,16 @@ export function permissionProblem(databasePath, permission = process.permission)
   for (const scope of ["child", "worker", "addon", "wasi"])
     if (permission.has(scope))
       return `Kin's service must not be allowed to use "${scope}". Remove that --allow flag.`;
-  // Writing anywhere but the data directory must be denied.
-  if (permission.has("fs.write", canonicalPath(APP_ROOT)) && !data.startsWith(canonicalPath(APP_ROOT)))
-    return "Kin's service may write only its data directory. Remove the broader --allow-fs-write flag.";
+  const app = canonicalPath(APP_ROOT);
+  // The data directory may sit inside the app (.kin-data) but must not be the
+  // app directory or contain it: the service would then be able to rewrite
+  // its own code.
+  if (isInsideRoot(app, data))
+    return `Kin's data directory ${JSON.stringify(data)} contains the app. Choose a data directory of its own with KIN_DATA_DIR.`;
+  // Writing anywhere but the data directory must be denied: probe the app's
+  // code, the data directory's parent and the filesystem root.
+  for (const canary of [join(app, "server", "server.mjs"), join(dirname(data), "kin-permission-canary"), resolve("/kin-permission-canary")])
+    if (!isInsideRoot(canary, data) && permission.has("fs.write", canary))
+      return `Kin's service may write only its data directory, but it may write ${JSON.stringify(canary)}. Remove the broader --allow-fs-write flag (check NODE_OPTIONS too).`;
   return null;
 }

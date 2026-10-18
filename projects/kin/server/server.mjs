@@ -291,6 +291,7 @@ if (
             ? error.code
             : "configuration_or_storage",
         ...(["durable_lock_exists", "trusted_proxies_invalid", "household_policy_invalid", "permission_model_required"].includes(error.code) ? { message: error.message } : {}),
+        ...(error.code === "ERR_ACCESS_DENIED" || error.cause?.code === "ERR_ACCESS_DENIED" ? { message: "Node's permission model denied access to a path the service needs. Start Kin with server/start.mjs, which allows the app and data directories." } : {}),
       }),
     );
     process.exitCode = 1;
@@ -1188,8 +1189,11 @@ function installShutdown({ server, store }) {
       store?.close();
     });
   };
-  process.once("SIGINT", () => shutdown("SIGINT"));
-  process.once("SIGTERM", () => shutdown("SIGTERM"));
+  // `on`, not `once`: a terminal's Ctrl+C reaches the service and its
+  // launcher together, and the launcher forwards a stop too. A repeated
+  // signal must not kill the service before it closes the store and its lock.
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 function defaultAnonymousCapacity(maximum) {

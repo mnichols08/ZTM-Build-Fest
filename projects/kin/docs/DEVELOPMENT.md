@@ -95,6 +95,16 @@ from its allowlist. `server/permissions.mjs` builds the flags.
 - Maintenance commands (`server/admin.mjs` backup and restore,
   `deploy/railway/snapshot.mjs`) run outside the sandbox as short-lived
   processes, because they write outside the data directory.
+- The permission model checks Node's own file APIs. SQLite's file I/O is
+  native and unchecked (SQL such as `ATTACH` could write elsewhere); no
+  request input reaches SQL text. `fsync` is unavailable inside the sandbox,
+  so anything that needs durable writes belongs in SQLite.
+- The launcher passes the canonical database path to the service, because the
+  model compares paths as written: a symlinked data directory works through
+  `start.mjs`. A data directory that is the app directory, or contains it, is
+  refused.
+- Running `node server/server.mjs` directly (for example from a systemd unit)
+  is refused; use `node server/start.mjs`.
 - Node's permission model disables `fsync`, so the service's lock file is not
   fsynced (the exclusive create is the lock; its content is diagnostic). The
   database's own durability is SQLite's.

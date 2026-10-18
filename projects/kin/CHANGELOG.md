@@ -15,6 +15,9 @@ documentation only.
   it that way (`npm start`, `run.sh`, `run.ps1`, the container and Railway),
   and the service refuses to start otherwise. `npm run dev` stays unsandboxed
   because Node's watch mode needs a child process.
+- **If you start Kin your own way** (a systemd unit, a script running
+  `node server/server.mjs`), switch it to `node server/start.mjs`: the service
+  now refuses to start outside the sandbox.
 - `node:sqlite`'s own busy timeout replaces the pragma, and every transaction
   checks SQLite agrees about whether one is open.
 - New routes use `URLPattern`; locks and stores support `using`.

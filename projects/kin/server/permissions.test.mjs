@@ -3,7 +3,7 @@
 // processes, workers, addons or WASI.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -47,6 +47,12 @@ test("startup explains what is missing from the sandbox", (t) => {
   assert.equal(permissionProblem(database, allowing(complete)), null);
   assert.match(permissionProblem(database, allowing([...complete, ["child"]])), /"child"/);
   assert.match(permissionProblem(database, allowing([...complete, ["worker"]])), /"worker"/);
+  // Broader write access is refused, wherever the data directory is.
+  const everywhere = { has: (scope) => scope !== "child" && scope !== "worker" && scope !== "addon" && scope !== "wasi" };
+  assert.match(permissionProblem(database, everywhere), /may write only its data directory/);
+  assert.match(permissionProblem(join(app, ".kin-data", "kin.sqlite"), everywhere), /may write only its data directory/);
+  // A data directory that is (or contains) the app could rewrite its code.
+  assert.match(permissionProblem(join(app, "kin.sqlite"), allowing([["fs.read", app], ["fs.write", app]])), /contains the app/);
 });
 
 test("inside the sandbox, writes outside the data directory, processes and workers are denied", NETWORK_TEST, (t) => {
@@ -126,6 +132,37 @@ test("server/start.mjs creates the data directory and serves inside the sandbox"
   assert.ok(existsSync(database));
   const code = await stop(child);
   if (process.platform !== "win32") assert.equal(code, 0, "a stop signal reaches the service, which shuts down cleanly");
+});
+
+test("Ctrl+C in a terminal stops the service cleanly and releases its lock", { ...NETWORK_TEST, skip: process.platform === "win32" && "a POSIX process group" }, async (t) => {
+  const root = temporary(t);
+  const port = await freePort();
+  const database = join(root, "kin.sqlite");
+  // A terminal delivers SIGINT to the whole process group: launcher and service.
+  const child = spawn(process.execPath, [join(APP_ROOT, "server", "start.mjs")], {
+    detached: true,
+    env: { ...process.env, KIN_DATABASE_PATH: database, KIN_PORT: String(port), KIN_HOST: "127.0.0.1" },
+  });
+  t.after(() => { try { process.kill(-child.pid, "SIGKILL"); } catch {} });
+  await waitForLine(child, /service_ready/);
+  const exited = new Promise((resolve) => child.once("exit", (code) => resolve(code)));
+  process.kill(-child.pid, "SIGINT");
+  assert.equal(await exited, 0);
+  assert.equal(existsSync(`${database}.service.lock`), false, "the lock is released");
+});
+
+test("a symlinked data directory works through the launcher", { ...NETWORK_TEST, skip: process.platform === "win32" && "symlinks need privileges on Windows" }, async (t) => {
+  const root = temporary(t);
+  mkdirSync(join(root, "real"));
+  symlinkSync(join(root, "real"), join(root, "link"));
+  const port = await freePort();
+  const child = spawn(process.execPath, [join(APP_ROOT, "server", "start.mjs")], {
+    env: { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== "KIN_DATABASE_PATH")), KIN_DATA_DIR: join(root, "link"), KIN_PORT: String(port), KIN_HOST: "127.0.0.1" },
+  });
+  t.after(() => stop(child));
+  await waitForLine(child, /service_ready/);
+  assert.ok(existsSync(join(root, "real", "kin.sqlite")));
+  await stop(child);
 });
 
 test("the service refuses to start outside the sandbox unless asked to for development", NETWORK_TEST, (t) => {
