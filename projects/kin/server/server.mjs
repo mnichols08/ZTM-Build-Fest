@@ -1624,6 +1624,8 @@ function serve(response, pathname) {
     ".wasm": "application/wasm",
     ".webmanifest": "application/manifest+json",
     ".svg": "image/svg+xml",
+    // The chat emoji table (#113).
+    ".json": "application/json; charset=utf-8",
   };
   if (requested === "index.html") {
     let body;

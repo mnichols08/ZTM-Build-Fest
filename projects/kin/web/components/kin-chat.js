@@ -20,6 +20,8 @@
 // seen before (by message ID), never paging or the history shown on opening.
 // The draft lives in this element only: locking replaces the element.
 import { chatTextProblem, MAX_CHAT_TEXT_CHARS } from "../chat/chat-room.js";
+import { emojiOnlyCount } from "../chat/emoji.js";
+import "./kin-emoji-picker.js";
 
 /** Rows rendered at first and added per page. */
 const PAGE = 60;
@@ -172,9 +174,16 @@ class KinChat extends HTMLElement {
       event.preventDefault();
       void this.submit();
     });
+    // Emoji (#113): the OS emoji keyboard works here too.
+    this.emoji = document.createElement("kin-emoji-picker");
+    this.emoji.target = this.input;
+    this.emoji.addEventListener("kin:emoji-refused", () => {
+      this.message.textContent = `That would make the message too long. Keep it to ${MAX_CHAT_TEXT_CHARS.toLocaleString("en-US")} characters.`;
+    });
+    this.emoji.addEventListener("kin:emoji-inserted", () => { this.message.textContent = ""; });
     const buttons = document.createElement("div");
     buttons.className = "chat-form-buttons";
-    buttons.append(this.send, this.cancel);
+    buttons.append(this.send, this.cancel, this.emoji);
     form.append(this.label, this.input, buttons, this.message);
 
     section.append(heading, this.notice, this.scroller, this.jump, form, this.announcer);
@@ -213,6 +222,7 @@ class KinChat extends HTMLElement {
     const off = this.isDisabled || !this.chatRoom;
     this.input.disabled = off;
     this.send.disabled = off || Boolean(this.sending);
+    this.emoji.disabled = off;
   }
 
   enterSends() {
@@ -480,6 +490,9 @@ class KinChat extends HTMLElement {
       body.textContent = STATUS_TEXT[message.status];
     } else if (message.text !== null) {
       body.textContent = message.text;
+      // A message of only 1–3 emoji shows larger (#113).
+      const count = emojiOnlyCount(message.text);
+      if (count >= 1 && count <= 3) body.classList.add("chat-emoji-only");
     } else {
       const status = this.textStatus.get(message.messageId);
       body.classList.add("chat-gone");

@@ -131,6 +131,11 @@ test("the chat event routes move binary batches and pages", { timeout: 30_000 },
   t.after(() => new Promise((resolve) => app.server.close(resolve)));
   const url = `http://127.0.0.1:${app.server.address().port}`;
   assert.equal((await fetch(`${url}/api/chat/events`)).status, 401);
+  // The emoji table (#113) is served as JSON from the app.
+  const table = await fetch(`${url}/chat/emoji.json`);
+  assert.equal(table.status, 200);
+  assert.match(table.headers.get("content-type"), /^application\/json/);
+  assert.equal((await table.json()).version, 1);
   const adult = app.service.bootstrap({ credential: credential("adult") });
   app.syncService.enable(adult.sessionToken);
   const cookie = `kin_session=${adult.sessionToken}; kin_device=${adult.deviceToken}`;
