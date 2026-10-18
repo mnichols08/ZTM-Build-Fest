@@ -227,6 +227,9 @@ async function pageSignInCodeField() {
   for (let i = 0; i < 400 && !h.querySelector(".sign-in-code input"); i++) await new Promise((r) => setTimeout(r, 25));
   const field = h.querySelector(".sign-in-code input");
   if (!field) throw new Error("The computer never asked for the code: " + h.textContent.slice(0, 300));
+  // The status is announced just after the field appears, so the region
+  // exists first and screen readers hear it change.
+  for (let i = 0; i < 80 && !h.querySelector(".sign-in-status")?.textContent; i++) await new Promise((r) => setTimeout(r, 25));
   return {
     inputMode: field.inputMode, autocomplete: field.autocomplete, focused: document.activeElement === field,
     qrGone: !h.querySelector("kin-qr"), status: h.querySelector(".sign-in-status")?.textContent ?? "",
