@@ -16,6 +16,15 @@ sync. The refactor track's protocol reset (Slice 2) therefore keeps them.
 
 ## Separate identities
 
+The identity-presentation contract requires the stable member ID to remain the
+authority and treats a future optional preferred name only as presentation.
+“You” identifies the signed-in member; “This device” identifies the active
+installation. Neither label, a preferred name nor a device name may change
+permissions, event authorship or push filtering. When preferred member names
+are implemented, existing members without one must keep a deterministic
+fallback and must never be forced to rename. See the cross-platform contract in
+[Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md).
+
 ```text
 Household
 ├── Member A

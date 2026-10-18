@@ -12,7 +12,32 @@ export const MUTE_CHOICES = Object.freeze([
   ["indefinite", "Mute until I turn them back on"],
 ]);
 
-const EXPLANATION = "Notifications say only that something is new. They never include what it is or who added it, and Kin doesn't record whether you saw them.";
+const EXPLANATION = "Notifications go to other household members' opted-in, unmuted devices. Your own devices never receive notifications for changes you make. Notifications say only that something is new; Kin doesn't record delivery, reads, or presence.";
+
+/** Local-only diagnostic copy. Endpoint hosts, URLs, keys and fingerprints
+ * deliberately never enter this view. */
+export function notificationDeviceChecks({ support, permission, status, now = Date.now(), formatDate = (value) => new Date(value).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) }) {
+  const permissionText = support === "unsupported" ? "Unavailable in this browser"
+    : support === "ios-home-screen" ? "Available after adding Kin to the Home Screen"
+    : permission === "granted" ? "Allowed"
+    : permission === "denied" ? "Blocked in browser settings"
+    : "Not allowed yet";
+  const subscriptionText = !status ? "Could not check — check your connection and try again"
+    : status.available === false ? "Unavailable on this Kin server"
+    : status.subscribed ? "On for this device"
+    : "Off for this device";
+  let muteText = "Not applicable while notifications are off";
+  if (status?.subscribed) {
+    if (status.mutedIndefinitely) muteText = "Muted until you turn them back on";
+    else if (status.mutedUntil && status.mutedUntil > now) muteText = `Muted until ${formatDate(status.mutedUntil)}`;
+    else muteText = "Not muted";
+  }
+  return [
+    ["Browser permission", permissionText],
+    ["Kin subscription", subscriptionText],
+    ["Mute", muteText],
+  ];
+}
 
 /** What this browser can do, from plain values (testable without a DOM). */
 export function notificationSupport({ hasServiceWorker, hasPushManager, hasNotification, permission, platform }) {
@@ -66,8 +91,37 @@ export class KinNotifications extends HTMLElement {
     explanation.textContent = EXPLANATION;
     this.state = document.createElement("p");
     this.state.className = "notification-state";
+    this.checks = document.createElement("dl");
+    this.checks.className = "notification-checks";
+    this.checkValues = [];
+    for (const label of ["Browser permission", "Kin subscription", "Mute"]) {
+      const term = document.createElement("dt");
+      term.textContent = label;
+      const value = document.createElement("dd");
+      this.checkValues.push(value);
+      this.checks.append(term, value);
+    }
     this.actions = document.createElement("div");
     this.actions.className = "appearance-actions";
+    const testGuide = document.createElement("details");
+    testGuide.className = "notification-test-guide";
+    const testSummary = document.createElement("summary");
+    testSummary.textContent = "Test with another household member";
+    const testIntro = document.createElement("p");
+    testIntro.textContent = "Kin doesn't have a manual send button. Test the real private flow with two distinct household members:";
+    const steps = document.createElement("ol");
+    for (const text of [
+      "On the other member's device, open this page and turn notifications on. Make sure it is not muted.",
+      "On this device, make a household change and let it sync.",
+      'Wait up to two minutes for “Something new in Kin” on the other member\'s device.',
+    ]) {
+      const item = document.createElement("li");
+      item.textContent = text;
+      steps.append(item);
+    }
+    const testNote = document.createElement("p");
+    testNote.textContent = "A second device linked to your own member identity is not a valid test: Kin never notifies you about your own changes. Kin also cannot confirm delivery or whether someone read a notification.";
+    testGuide.append(testSummary, testIntro, steps, testNote);
     this.feedback = document.createElement("p");
     this.feedback.className = "appearance-feedback";
     this.feedback.setAttribute("role", "status");
@@ -75,7 +129,7 @@ export class KinNotifications extends HTMLElement {
     this.error = document.createElement("p");
     this.error.className = "field-error";
     this.error.setAttribute("role", "alert");
-    this.append(heading, explanation, this.state, this.actions, this.error, this.feedback);
+    this.append(heading, explanation, this.state, this.checks, this.actions, testGuide, this.error, this.feedback);
     this.hidden = true;
   }
 
@@ -96,19 +150,34 @@ export class KinNotifications extends HTMLElement {
     // A press in progress owns the state; refresh once it has finished.
     if (this.busy) { this.refreshPending = { identity }; return; }
     const generation = (this.generation = (this.generation ?? 0) + 1);
+    const activeElement = typeof document === "undefined" ? null : document.activeElement;
+    const restoreRetryFocus = activeElement?.dataset?.notificationAction === "retry" &&
+      this.actions?.contains?.(activeElement);
     // Only a household device has anything to ask the service about.
     if (!identity) { this.hidden = true; return; }
     let status;
     try {
       status = await api("/api/push/subscription");
     } catch {
-      if (generation === this.generation) this.hidden = true;
+      if (generation === this.generation) {
+        this.status = null;
+        this.hidden = false;
+        this.render();
+        this.error.textContent = "Kin couldn't check notification settings for this device. Check your connection and try again.";
+        if (restoreRetryFocus) this.actions.querySelector("button")?.focus();
+      }
       return;
     }
     if (generation !== this.generation) return;
     this.status = status;
     this.hidden = false;
     this.render();
+    if (restoreRetryFocus) {
+      this.feedback.textContent = "Notification settings updated.";
+      const focusTarget = this.actions.querySelector("button") ?? this.state;
+      if (focusTarget === this.state) focusTarget.setAttribute("tabindex", "-1");
+      focusTarget.focus();
+    }
     // Kept so a press can wait for a repair's request to land first.
     const repair = this.repair(generation);
     (this.repairs ??= new Set()).add(repair);
@@ -159,16 +228,26 @@ export class KinNotifications extends HTMLElement {
 
   render() {
     const support = this.support();
-    const status = this.status ?? { subscribed: false, mutedUntil: null };
+    const status = this.status;
     this.actions.replaceChildren();
     this.error.textContent = "";
+    const permission = typeof Notification === "undefined" ? "unavailable" : Notification.permission;
+    const checks = notificationDeviceChecks({ support, permission, status });
+    checks.forEach(([, value], index) => { if (this.checkValues?.[index]) this.checkValues[index].textContent = value; });
     const messages = {
       unsupported: "This browser can't show Kin notifications.",
       "ios-home-screen": "Add Kin to your Home Screen to get notifications. On iPhone and iPad, only the Home Screen app can receive them.",
       blocked: "Notifications are blocked for Kin in this browser's settings. Allow notifications for this site there, then come back to turn them on.",
     };
+    if (!status) {
+      this.state.textContent = "Kin couldn't check notification settings for this device. Check your connection and try again.";
+      const retry = this.button("Try again", () => this.refresh());
+      retry.dataset.notificationAction = "retry";
+      this.actions.append(retry);
+      return;
+    }
     if (status.available === false) {
-      this.state.textContent = "Notifications aren't set up on this Kin server yet.";
+      this.state.textContent = "Notifications aren't set up on this Kin server yet. Ask the person who runs this server to configure them.";
       return;
     }
     if (support !== "available" && !status.subscribed) {
