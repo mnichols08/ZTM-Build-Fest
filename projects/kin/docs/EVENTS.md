@@ -261,7 +261,9 @@ the product decisions).
   could copy one into an earlier-dated event. A reused reference applies like
   any other, and a blob a visible message shows is never retired. A copy can
   only show the content again as its author's own message; it can't hide or
-  delete the original.
+  delete the original. It can keep a deleted message's blob from being
+  retired while the copy is visible, which adds nothing: whoever made it
+  already held the key and the bytes.
 - **Retired blobs.** Hosts delete these locally and on the service. The
   candidates are every blob an edit replaced or the author's deletion
   dropped, and every blob brought by an event that applies nowhere (a second
