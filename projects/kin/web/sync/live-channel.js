@@ -89,6 +89,8 @@ export class LiveChannel {
     this.lockAbort = null;
     this.online = () => {
       if (this.stopped || this.ended || this.socket) return;
+      // Back online: the failures while offline say nothing about now.
+      this.attempts = 0;
       this.clearTimer(this.timer);
       this.timer = null;
       this.connect();
@@ -196,6 +198,8 @@ export class LiveChannel {
       this.up = false;
       if (event.code === LIVE_CLOSE.SESSION_ENDED || event.code === LIVE_CLOSE.ACCESS_LOST) {
         this.ended = true;
+        // An ended channel holds nothing: the lock goes to whoever is next.
+        this.stop();
         this.onEnd({ code: event.code });
         return;
       }

@@ -367,7 +367,8 @@ the fallback whenever the socket is closed.
   accepted and when keys, provisioning grants, identity bindings or a key
   rotation change. While the socket is up and the last sync succeeded, the
   coordinator polls every 30 s as a safety net; otherwise (no socket, or a
-  sync paused on an error, missing keys or a rotation) every 5 s. A dropped
+  sync paused on an error, no progress, missing keys or a rotation, or sync
+  turned off) every 5 s. A dropped
   socket reconnects after a jittered, doubling wait (1-2 s at first, at most
   30 s; at once when the browser comes back online; the longest after being
   replaced by another socket for the device). Going offline drops the

@@ -130,8 +130,6 @@ export const LIVE_POLL_MS = 30_000;
 // Hint-driven syncs run at most this often: a hint during a sync runs one
 // more after it, no sooner than this after the last one started.
 export const MIN_HINT_GAP_MS = 1_000;
-// HELLO syncs only if the last sync finished longer ago than this.
-const HELLO_SYNC_AFTER_MS = 3_000;
 // Sync errors that mean this session can't hold a live channel.
 const ACCESS_ERRORS = new Set(["authentication_required", "device_not_trusted", "membership_removed"]);
 
@@ -213,9 +211,10 @@ export class SyncCoordinator {
       onUp: () => {
         this.liveUp = true;
         this.updatePollInterval();
-        // Catch up on anything missed while disconnected, and send what the
-        // outbox kept meanwhile, unless a sync (unlock's own) just ended.
-        if (this.now() - this.lastSyncEndedAt > HELLO_SYNC_AFTER_MS) this.hinted();
+        // Catch up on anything missed while disconnected (including events
+        // accepted before the service registered this socket), and send
+        // what the outbox kept meanwhile. hinted() keeps it cheap.
+        this.hinted();
       },
       onDown: () => {
         this.liveUp = false;
@@ -225,8 +224,9 @@ export class SyncCoordinator {
       // reports the signed-out or deleted state. A later successful sync
       // starts a new channel.
       onEnd: () => {
-        this.liveUp = false;
-        this.live = null;
+        // Stop it properly, so its Web Lock and listeners are released and
+        // a later channel (in this tab or another) can take the lock.
+        this.stopLive();
         this.updatePollInterval();
         void this.syncNow();
       },
@@ -283,12 +283,14 @@ export class SyncCoordinator {
     this.syncAgain = false;
     this.running = this.runOnce()
       .then((result) => {
-        this.lastSyncOk = true;
-        // A channel that ended on lost access comes back once this session
-        // syncs again (a new session after signing in elsewhere, say).
-        if (!this.live && !this.terminal) this.startLive();
         const hasMore = typeof result === "object" ? result.hasMore : result;
         const advanced = typeof result === "object" ? result.advanced : hasMore;
+        // Healthy only if the pass finished without pausing: a pass that
+        // made no progress, found sync off, or was cut short isn't.
+        this.lastSyncOk = result !== undefined && result !== null && !result.disabled && !(hasMore && !advanced);
+        // A channel that ended on lost access comes back once this session
+        // syncs again (a new session after signing in elsewhere, say).
+        if (this.lastSyncOk && !this.live && !this.terminal) this.startLive();
         if (hasMore && advanced) this.scheduleContinuation();
         else if (hasMore) {
           this.catchUp = null;
@@ -416,7 +418,7 @@ export class SyncCoordinator {
     let status = await this.request("/api/sync/status");
     if (!status.enabled) {
       this.onState({ state: "disabled", message: "Device sync is off." });
-      return;
+      return { disabled: true, hasMore: false };
     }
     await this.store.requeueAfterRelayReset(status.latestCursor);
     await this.store.updateSyncServerState(status);

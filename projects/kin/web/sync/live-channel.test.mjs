@@ -280,9 +280,13 @@ test("the coordinator polls less only while the channel is up and sync is health
     assert.equal(rig.coordinator.pollMs, LIVE_POLL_MS);
     rig.made.options.onDown();
     assert.equal(rig.coordinator.pollMs, POLL_MS);
-    // A HELLO right after a sync doesn't sync again.
+    // A pass that made no progress is a pause, not health.
+    rig.advance(10_000);
     rig.made.options.onUp();
-    assert.equal(rig.runs.length, 3);
+    rig.runs.at(-1).resolve({ hasMore: true, advanced: false });
+    await rig.settle(); await rig.settle();
+    assert.equal(rig.coordinator.lastSyncOk, false);
+    assert.equal(rig.coordinator.pollMs, POLL_MS);
   } finally {
     rig.done();
   }
@@ -337,6 +341,42 @@ test("lost access stops the channel; the next successful sync starts a new one",
     assert.equal(rig.created, 3);
   } finally {
     rig.done();
+  }
+});
+
+test("a channel that ended on lost access lets go of its lock, so a new one connects", async () => {
+  const locks = fakeLocks();
+  const { sockets, FakeSocket } = fakeSockets();
+  const coordinator = new SyncCoordinator({
+    store: {}, engine: {}, identity: { deviceId: "d1" },
+    liveChannel: (options) => new LiveChannel({ url: "wss://kin.example/api/live", WebSocket: FakeSocket, locks, events: new EventTarget(), ...options }),
+  });
+  const runs = [];
+  coordinator.runOnce = () => new Promise((resolve) => runs.push(resolve));
+  const settle = async () => { for (let index = 0; index < 4; index += 1) await new Promise((resolve) => setImmediate(resolve)); };
+  try {
+    coordinator.startLive();
+    await settle();
+    assert.equal(sockets.length, 1);
+    sockets[0].receive(record(LIVE_TYPE.HELLO));
+    sockets[0].end(LIVE_CLOSE.SESSION_ENDED);
+    // The end syncs; that sync succeeds (a new session) and starts a new
+    // channel, which must get the lock and connect.
+    await settle();
+    for (const resolve of runs.splice(0)) resolve({ hasMore: false });
+    await settle();
+    assert.equal(sockets.length, 2, "the new channel connected");
+    assert.equal(locks.queue.get("kin-live:d1")?.length ?? 0, 0, "nobody waits on an orphaned lock");
+    coordinator.stop();
+    await settle();
+    // After stop, another tab's channel can take the lock at once.
+    const other = new LiveChannel({ url: "wss://kin.example/api/live", lockName: "kin-live:d1", WebSocket: FakeSocket, locks, events: new EventTarget() });
+    other.start();
+    await settle();
+    assert.equal(sockets.length, 3);
+    other.stop();
+  } finally {
+    coordinator.stop();
   }
 });
 
