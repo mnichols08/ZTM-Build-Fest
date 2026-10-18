@@ -176,6 +176,63 @@ count 2, then for each the device ID, member ID, the two u16 lengths and the
 names; the empty table is the 12-byte header with count 0. Held history with
 an identity binding names the bound device and member.
 
+## Household chat (v1.1)
+
+Chat records are written out by hand in `rust/src/chat_tests.rs`; IDs, blob
+refs and keys are distinct byte patterns per message and version.
+
+**030 — Lifecycle.** Member 1 posts message 1 and member 2 posts message 2;
+member 1 edits message 1 twice (once from another device) and member 2
+deletes message 2. Expected: message 1 edited with the second edit's blob and
+key, its edited-at time the second edit's; message 2 deleted with a zero blob
+and key; retired blobs message 1 v0, message 1 v1, message 2 v0, in that
+order.
+
+**031 — Conflicts change nothing shown.** Against a posted text message and a
+posted attachment, each of these leaves the messages and claims unchanged: a
+second post of the same ID (by anyone), an edit by another member, an edit
+of the attachment (each makes its new blob a retirement candidate), an edit
+to the blob the message already has, an edit or deletion of an unknown
+message, and a non-admin deletion by another member (none adds a
+candidate). Nothing changes a deleted message; an edit after it makes its
+blob a candidate.
+
+**032 — Delete beats edit.** An edit and a deletion by the author at the same
+logical time, from two devices, in both replay orders: the message ends
+deleted with a zero blob, and both blobs it had (the original and the edit's)
+are retired.
+
+**033 — Admin claims.** An admin removes member 1's message twice and member
+2 claims once. Replay records the claims (the admin once) and leaves the
+message live; a page naming the admin, or member 2, shows it removed and
+retires its blob; a page naming neither shows it live.
+
+**034 — Separate logs.** The household history refuses a batch holding a
+chat record and keeps nothing of it; the chat log refuses a household
+record; a whole household KINE request refuses a chat record (code 4).
+Chat commands fail against the household history and household commands
+against the chat log (code 4).
+
+**035 — KCHP layout.** Four messages (one edited, one attachment removed by
+the named admin, one deleted by its author), texts held for two blobs: the
+newest three with texts and retired blobs encode byte for byte as ABI.md
+describes, and reading the page forgets the retired blobs' texts.
+
+**036 — Long chat.** 100,000 posts, one in ten edited, one in twenty deleted:
+the newest page of 50 replays within the test's bound, and the next page
+reuses the checkpoint (`History::last_replay_reused`).
+
+**037 — Shown blobs are never retired.** Edits A, B, then A again: the
+message shows A and only B is retired. Two messages sharing a blob: deleting
+one retires nothing while the other shows it; deleting both retires it once.
+Commands refuse both reuses.
+
+**038 — Backdated copies.** A modified client copies member 1's blob into an
+earlier-dated post of its own message: both messages show (the copy as its
+author's) and nothing is retired. Into an earlier-dated edit of its own
+attachment: the blob is a candidate, but member 1's message still shows it,
+so it is not retired.
+
 ## Push payload (RFC 8291)
 
 **029 — RFC 8291 Appendix A.** Plaintext "When I grow up, I want to be a

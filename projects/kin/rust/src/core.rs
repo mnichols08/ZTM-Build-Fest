@@ -53,6 +53,29 @@ pub fn device_names(context: &[u8], history: &mut History) -> Result<Vec<u8>, Ki
     encode_device_names(&state.devices)
 }
 
+/// A chat page (`kin_chat_page`): a KCHQ request (chat.rs) carrying the
+/// record-less KINE context, against the instance's history. Texts of
+/// retired blobs, and of messages the page shows as deleted or removed, are
+/// forgotten from the arena first, so a deleted message's text never comes
+/// back out.
+pub fn chat_page(
+    input: &[u8],
+    history: &mut History,
+    texts: &mut crate::chat::ChatTexts,
+) -> Result<Vec<u8>, KinError> {
+    let request = crate::chat::decode_page_request(input)?;
+    let context = decode_context(request.context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    let chat = &state.chat;
+    let retired = chat.retired_blobs(&request.admins);
+    for blob in &retired {
+        texts.forget(blob);
+    }
+    crate::chat::encode_page(chat, &request, texts, &retired)
+}
+
 pub fn encode_device_names(devices: &[state::DeviceNameState]) -> Result<Vec<u8>, KinError> {
     let size = devices.iter().try_fold(12usize, |size, device| {
         size.checked_add(

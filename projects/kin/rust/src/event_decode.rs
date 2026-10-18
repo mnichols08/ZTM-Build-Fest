@@ -2,10 +2,10 @@
 //! decoding validates them and never rewrites them.
 use crate::error::KinError;
 use crate::event::{
-    valid_timestamp, ActorId, AttachmentId, AttachmentParentKind, DeviceId, EventEnvelope, EventId,
-    EventKind, HandoffId, HouseholdId, HouseholdMode, ItemClassification, ItemId,
-    MaintenanceEventId, PinTargetKind, PulseValue, ReferenceFieldId, ReferenceRecordId,
-    ResponsibilityTargetKind, RoutineId, TalkId,
+    valid_timestamp, ActorId, AttachmentId, AttachmentParentKind, ChatContentKind, ChatMessageId,
+    DeviceId, EventEnvelope, EventId, EventKind, HandoffId, HouseholdId, HouseholdMode,
+    ItemClassification, ItemId, MaintenanceEventId, PinTargetKind, PulseValue, ReferenceFieldId,
+    ReferenceRecordId, ResponsibilityTargetKind, RoutineId, TalkId,
 };
 use crate::recurrence::{Cadence, CivilDate};
 use crate::wire::{
@@ -543,6 +543,65 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
                 nickname,
             }
         }
+        // Chat (#109). IDs, blob references and keys are never zero.
+        (1, 44) => {
+            if payload.len() != 84
+                || payload[17..20] != [0; 3]
+                || !valid_timestamp(read_i64(record, 68)?)
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            let message_id = ChatMessageId(read_id(payload, 0)?);
+            let content_kind = match payload[16] {
+                1 => ChatContentKind::Text,
+                2 => ChatContentKind::Attachment,
+                _ => return Err(KinError::MalformedProtocol),
+            };
+            let blob_ref = read_32(payload, 20)?;
+            let blob_key = read_32(payload, 52)?;
+            if message_id.0 == [0; 16] || blob_ref == [0; 32] || blob_key == [0; 32] {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::ChatMessagePosted {
+                message_id,
+                content_kind,
+                blob_ref,
+                blob_key,
+            }
+        }
+        (1, 45) => {
+            if payload.len() != 80 || !valid_timestamp(read_i64(record, 68)?) {
+                return Err(KinError::MalformedProtocol);
+            }
+            let message_id = ChatMessageId(read_id(payload, 0)?);
+            let blob_ref = read_32(payload, 16)?;
+            let blob_key = read_32(payload, 48)?;
+            if message_id.0 == [0; 16] || blob_ref == [0; 32] || blob_key == [0; 32] {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::ChatMessageEdited {
+                message_id,
+                blob_ref,
+                blob_key,
+            }
+        }
+        (1, 46) => {
+            if payload.len() != 20
+                || payload[17..20] != [0; 3]
+                || payload[16] > 1
+                || !valid_timestamp(read_i64(record, 68)?)
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            let message_id = ChatMessageId(read_id(payload, 0)?);
+            if message_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::ChatMessageDeleted {
+                message_id,
+                by_admin: payload[16] == 1,
+            }
+        }
         (1, 15..=17) => {
             if payload.len() != if event_kind == 17 { 16 } else { 20 }
                 || !valid_timestamp(read_i64(record, 68)?)
@@ -743,4 +802,12 @@ fn device_text(payload: &[u8], at: usize) -> Result<Option<&str>, KinError> {
     std::str::from_utf8(&payload[start..])
         .map(Some)
         .map_err(|_| KinError::MalformedProtocol)
+}
+
+/// 32 bytes at `offset` (blob references and keys).
+fn read_32(bytes: &[u8], offset: usize) -> Result<[u8; 32], KinError> {
+    bytes
+        .get(offset..offset + 32)
+        .and_then(|slice| slice.try_into().ok())
+        .ok_or(KinError::MalformedProtocol)
 }

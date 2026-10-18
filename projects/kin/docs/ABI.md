@@ -13,6 +13,13 @@ kin_history_append(ptr, len)         append a record batch to the history
 kin_history_truncate(count) -> status   keep the first `count` records
 kin_project(ptr, len)                replay the history: KINE context -> KINS
 kin_device_names(ptr, len)           replay the history: KINE context -> KDEV (v1.1)
+kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
+kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
+kin_chat_history_truncate(count) -> status   keep the chat log's first `count`
+kin_chat_execute(ptr, len)           chat command: length + KCMD + admins + KINE context -> KCMT
+kin_chat_page(ptr, len)              replay the chat log: KCHQ -> KCHP (v1.1)
+kin_chat_text(ptr, len)              decrypted texts for the arena: KCHT -> KCHS
+kin_chat_texts_clear() -> status     drop every decrypted chat text
 kin_execute(ptr, len)                command: length + KCMD + KINE context -> KCMT
 kin_encode_command(ptr, len)         KCMD -> canonical event bytes
 kin_event_metadata(ptr, len)         one canonical event -> KMET
@@ -34,13 +41,14 @@ re-reads `memory.buffer` after every call, since memory may grow. The host
 frees each input exactly once on every exit path (`callCore` in
 `web/wasm/kin-engine.js`); `kin_free` returns 1 for an unknown or mismatched
 range and never frees an unrelated allocation. Requests and results are capped
-at 64 MiB and 10,000 events.
+at 64 MiB and 10,000 events (250,000 for the chat log).
 
 `kin_alloc(0)` and a failed allocation return 0, which the host treats as
 failure. Live allocations sit in a fixed table of 8 slots. The host holds one
 input at a time, so a full table means a leaked allocation, and `kin_alloc`
-returns 0. `kin_clear` releases retained buffers and the history (whose bytes
-it zero-fills first); it does not promise physical erasure. `engine.dispose()`
+returns 0. `kin_clear` releases retained buffers, the history, the chat log
+and the chat-text arena (whose bytes it zero-fills first); it does not
+promise physical erasure. `engine.dispose()`
 calls it.
 
 ## Instance history (Slice 6)
@@ -82,6 +90,20 @@ truncation below N, or an apply error. The result always equals a replay of
 the whole history; `rust/src/history_tests.rs` checks this after every record
 of every golden fixture. `kin_project` advances the checkpoint to the whole
 history. `kin_execute` uses it and applies the command's event to a copy.
+
+**The chat log (v1.1, #109).** Each instance also holds a second history,
+the chat log, with the same layout, batches, checkpoint and mirror
+(`kin_chat_history_*`). It takes chat records (kinds 44–46) only, and the
+household history takes every other kind; either refuses the other's with
+code 4, as does a whole KINE request carrying a chat record. The chat log
+holds up to 250,000 records and 64 MiB. `kin_chat_execute` runs chat
+commands against it (any other command fails with code 4, as a chat command
+does against the household history). Its input is `intent length:u32`, the
+KCMD intent, `admin count:u32` (at most 16), the household admins' member IDs
+as the service reports them (16 bytes each, non-zero), then a record-less
+KINE context. It publishes KCMT with an empty projection: a chat event changes
+no projection, and applying it to a copy of the chat would copy all of it. `kin_chat_page` and `kin_chat_text` read the
+chat log and the text arena (side formats below).
 
 Records stay where they were appended: the history keeps one buffer and an
 `(offset, length)` span per record, and reads them as `EventView`s
@@ -198,6 +220,9 @@ N  payload
 | 41 | RESPONSIBILITY_CHANGED | target kind u8 (1 Item, 2 Routine), target ID, member ID (zero clears) |
 | 42 | DEVICE_DESCRIBED (v1.1) | name length u32, the header device's automatic name (1–48 characters, at most 192 bytes) |
 | 43 | DEVICE_NICKNAMED (v1.1) | device ID (non-zero), nickname length u32 (zero clears), nickname (1–32 characters) |
+| 44 | CHAT_MESSAGE_POSTED (v1.1, chat log) | message ID, content kind u8 (1 text, 2 attachment), 3 reserved, blob ref (32), blob key (32): 84 bytes |
+| 45 | CHAT_MESSAGE_EDITED (v1.1, chat log) | message ID, blob ref (32), blob key (32): 80 bytes |
+| 46 | CHAT_MESSAGE_DELETED (v1.1, chat log) | message ID, by_admin u8 (0 or 1), 3 reserved: 20 bytes |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -216,6 +241,14 @@ described is kept as a nickname-only entry. The latest description and
 nickname in replay order win. Commands enforce the strict rules. Device names are not part of KINS: they leave the engine
 only through `kin_device_names`. An engine older than v1.1 fails both kinds
 with code 3 (unsupported).
+
+Chat events (kinds 44–46, v1.1, no protocol change) belong to the chat log
+(above). A zero message ID, blob ref or key, an unknown content kind, a
+`by_admin` other than 0 or 1, or a non-zero reserved byte fails with code 2.
+Once decoded, a chat event never fails replay (`replay/chat.rs`): one that
+conflicts with what the log knows is kept and changes nothing
+([EVENTS](EVENTS.md#v110-household-chat) has the rules). An engine older than
+v1.1 fails all three with code 3.
 
 ## KINS projection (protocol 24)
 
@@ -359,6 +392,54 @@ revision is meaningful only within one instance.
   payload and a zero entity ID; action 43 (`nickname-device`) carries the
   target device as its entity ID and the nickname as its payload (empty
   clears). Executing either rejects a name that would change nothing.
+- **Chat commands (KCMD 44–46, v1.1).** The entity ID is the message ID.
+  Action 44 (`post-chat-message`) carries the content kind in the u8 field
+  (1 text, 2 attachment) and a 64-byte payload: blob ref, then blob key.
+  Action 45 (`edit-chat-message`) carries the same payload and a zero u8
+  field. Action 46 (`delete-chat-message`) carries `by_admin` (0 or 1) in the
+  u8 field and no payload. A zero ref or key is malformed (code 2). Executing
+  requires a blob reference the chat log has never seen (to post or edit), a
+  new message ID to post; the author, a text message and a message not
+  deleted to edit; and to delete, a message not deleted, with `by_admin` 0
+  for your own and 1 for another member's, once per admin and only with the
+  actor among the admins named in the request.
+- **KCHQ v1** (chat page request, `kin_chat_page`): `"KCHQ"`, version 1,
+  reserved u16, before u32 (the page ends before this message index;
+  `0xFFFFFFFF` for the newest), limit u16 (1–500), flags u8 (bit 0: texts the
+  arena holds; bit 1: retired blobs), reserved u8, admin count u32 (at most
+  16), the admins' member IDs (16 bytes each, non-zero), then a record-less
+  KINE context as for `kin_project`.
+- **KCHP v1** (chat page): `"KCHP"`, version 1, reserved u16, then u32s:
+  total messages, index of the page's first message, messages in the page,
+  text bytes, retired blobs. Then 128 bytes per message, oldest first:
+  message ID @0, author @16, posting device @32 (after identity bindings),
+  posted at i64 @48, edited at i64 @56 (0 if never), index u32 @64, status u8
+  @68 (0 live, 1 edited, 2 deleted, 3 removed by an admin), content kind u8
+  @69, reserved u16, blob ref @72 (zero unless live or edited), text offset
+  u32 @104 and length u32 @108 (length 0: the arena doesn't hold the text),
+  16 reserved. Then 32 bytes of blob key per message (zero unless live or
+  edited), the text bytes, and 32 bytes per retired blob: every blob replaced
+  by an edit or deleted by its author, every blob brought by an event that
+  applies nowhere ([EVENTS](EVENTS.md#v110-household-chat)), plus the blobs
+  of messages removed by a named admin, each once and only if no live or
+  edited message shows it (`ChatState::retired_blobs`). Reading a page first forgets
+  the arena's texts for those blobs, so a deleted message's text never comes
+  back out. Message indexes
+  are positions in posting (replay) order, so a late-arriving older message
+  shifts them; hosts re-read from the newest after a sync.
+- **KCHT v1 / KCHS v1** (chat texts, `kin_chat_text`): `"KCHT"`, version 1,
+  reserved u16, count u32 (1–500), then per text: blob ref (32, non-zero),
+  length u32, the UTF-8 text. Every entry is framed before any is stored. The
+  result is `"KCHS"`, version 1, reserved u16, count u32, then a status byte
+  per text: 0 held (or already held: texts are content-addressed), 1 refused
+  by the text rules. The arena holds at most 16 MiB: a batch that wouldn't
+  fit starts it over once, before storing anything, so every text a batch
+  reports as held is held, and the host supplies earlier texts again. The
+  arena grows by copying into a new buffer and zero-filling the old one, so
+  freed memory holds no text. Texts stay until lock (`kin_clear`) or
+  `kin_chat_texts_clear` (a member who lost chat access while unlocked);
+  `kin_chat_history_reset` keeps them, since the history mirror resets the
+  chat log whenever it is handed a plain array.
 - **KIMP v1** (import plan): `"KIMP"`, version 1, reserved, event count u32,
   next logical time u64, projection length u32, KINS projection. Duplicate
   event IDs, including exact duplicates, fail.

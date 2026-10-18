@@ -96,6 +96,13 @@ export function createEngine(instanceExports) {
     "kin_archive_header",
     "kin_archive_layout",
     "kin_plan_import",
+    "kin_chat_history_reset",
+    "kin_chat_history_append",
+    "kin_chat_history_truncate",
+    "kin_chat_execute",
+    "kin_chat_page",
+    "kin_chat_text",
+    "kin_chat_texts_clear",
     "kin_clear",
     "kin_result_ptr",
     "kin_result_len",
@@ -126,11 +133,19 @@ export function createEngine(instanceExports) {
     (batch) => callCore(exports, "kin_history_append", batch, { statusOnly: true }),
     asBytes,
   );
+  // The chat log, a second history apart from the household's (#109).
+  const chatMirror = new HistoryMirror(
+    exports,
+    (batch) => callCore(exports, "kin_chat_history_append", batch, { statusOnly: true }),
+    asBytes,
+    { reset: "kin_chat_history_reset", truncate: "kin_chat_history_truncate" },
+  );
   return {
     dispose() {
       if (exports) {
         exports.kin_clear();
         mirror.forget();
+        chatMirror.forget();
         if (sharedCodec === exports) sharedCodec = null;
         exports = null;
         lastState = null;
@@ -247,7 +262,191 @@ export function createEngine(instanceExports) {
       safeDecode(() => decodeDeviceNames(
         replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_device_names"),
       )),
+    // Household chat (#109). `chatRecords` is the chat log (a history view
+    // or an array of canonical chat records), never the household history.
+    // A chat command validated against the chat log: { encodedEvent,
+    // metadata }. The host stores the event, then reads a page. `admins`
+    // are the household admins' member IDs (hex) as the service reports
+    // them; removing another member's message needs the actor among them.
+    executeChatCommand: (command, identity, chatRecords, asOf, civilDate, syncIdentity = null, admins = []) =>
+      executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity, admins),
+    // A page of messages, oldest first (KCHP, ABI.md). Options: before (an
+    // index; omit for the newest), limit (1 to 500), includeText, includeRetired,
+    // admins (the household admins' member IDs as hex; at most 16).
+    chatPage: (chatRecords, options, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeChatPage(
+        chatPageBytes(exports, chatMirror, chatRecords, options, asOf, civilDate, syncIdentity),
+      )),
+    // Hands decrypted texts to the engine's arena: [{ blobRef, text }] with
+    // blobRef as 64 hex digits. Returns one boolean per text: whether it
+    // passed Rust's checks and is held.
+    putChatTexts: (entries) => putChatTexts(exports, entries),
+    // Drops every decrypted chat text the engine holds, for a member who
+    // lost access to chat while unlocked (locking drops them too).
+    clearChatTexts: () => {
+      if (exports) exports.kin_chat_texts_clear();
+    },
   };
+}
+
+const CHAT_STATUSES = ["live", "edited", "deleted", "removed-by-admin"];
+const CHAT_CONTENT_KINDS = [null, "text", "attachment"];
+export const MAX_CHAT_EVENT_COUNT = 250_000;
+const MAX_CHAT_PAGE = 500;
+
+function blobFromHex(value, what) {
+  if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value) || /^0{64}$/.test(value))
+    throw new KinEngineError(2, `Kin received an invalid chat ${what}.`);
+  const bytes = new Uint8Array(32);
+  for (let index = 0; index < 32; index += 1) bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
+  return bytes;
+}
+
+function executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity, admins) {
+  if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
+  if (!["post-chat-message", "edit-chat-message", "delete-chat-message"].includes(command?.type))
+    throw new KinEngineError(2, "Kin received an invalid household action.");
+  if (chatRecords.length > MAX_CHAT_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  if (!Array.isArray(admins) || admins.length > 16)
+    throw new KinEngineError(2, "Kin received an invalid household action.");
+  const intent = encodeIntentPacket(command, identity);
+  // u32 intent length, KCMD, u32 admin count, admins, KINE context.
+  const prefix = 4 + intent.length + 4 + admins.length * 16;
+  const request = encodeRequest([], asOf, null, civilDate, syncIdentity, prefix);
+  const requestView = new DataView(request.buffer);
+  requestView.setUint32(0, intent.length, true);
+  request.set(intent, 4);
+  requestView.setUint32(4 + intent.length, admins.length, true);
+  admins.forEach((admin, index) => request.set(idFromHex(admin), 8 + intent.length + index * 16));
+  const release = chatMirror.hold(chatRecords);
+  let bytes;
+  try {
+    bytes = callCore(exports, "kin_chat_execute", request);
+  } finally {
+    release();
+  }
+  const invalid = () => new KinEngineError(6, "Kin received an invalid command result.");
+  if (bytes.length < 20 || readAscii(bytes, 0, 4) !== "KCMT") throw invalid();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const eventLength = view.getUint32(8, true), metadataLength = view.getUint32(12, true);
+  if (view.getUint16(4, true) !== 1 || view.getUint16(6, true) !== 0 || view.getUint32(16, true) !== 0 ||
+    20 + eventLength + metadataLength !== bytes.length)
+    throw invalid();
+  return {
+    encodedEvent: bytes.slice(20, 20 + eventLength),
+    metadata: decodeMetadata(bytes.subarray(20 + eventLength)),
+  };
+}
+
+// KCHQ v1 (ABI.md): "KCHQ", version, reserved, before u32, limit u16,
+// flags u8 (1 texts, 2 retired), reserved u8, admin count u32, admins,
+// then the record-less KINE context.
+function chatPageBytes(exports, chatMirror, chatRecords, options = {}, asOf, civilDate, syncIdentity) {
+  if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
+  if (chatRecords.length > MAX_CHAT_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  const { before = null, limit = 50, includeText = true, includeRetired = false, admins = [] } = options;
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_CHAT_PAGE ||
+    (before !== null && (!Number.isInteger(before) || before < 0 || before > 0xffff_ffff)) ||
+    !Array.isArray(admins) || admins.length > 16)
+    throw new KinEngineError(2, "Kin received an invalid chat page request.");
+  const prefix = 20 + admins.length * 16;
+  const request = encodeRequest([], asOf, null, civilDate, syncIdentity, prefix);
+  const view = new DataView(request.buffer);
+  request.set([75, 67, 72, 81, 1, 0, 0, 0]);
+  view.setUint32(8, before ?? 0xffff_ffff, true);
+  view.setUint16(12, limit, true);
+  request[14] = (includeText ? 1 : 0) | (includeRetired ? 2 : 0);
+  view.setUint32(16, admins.length, true);
+  admins.forEach((admin, index) => request.set(idFromHex(admin), 20 + index * 16));
+  const release = chatMirror.hold(chatRecords);
+  try {
+    return callCore(exports, "kin_chat_page", request);
+  } finally {
+    release();
+  }
+}
+
+// KCHP v1 (ABI.md): a 28-byte header, 128 bytes per message, 32 bytes of
+// key per message, the texts, then 32 bytes per retired blob.
+function decodeChatPage(bytes) {
+  const invalid = () => new KinEngineError(6, "Kin received an invalid chat page.");
+  if (bytes.length < 28 || readAscii(bytes, 0, 4) !== "KCHP") throw invalid();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint16(4, true) !== 1 || view.getUint16(6, true) !== 0) throw invalid();
+  const total = view.getUint32(8, true), start = view.getUint32(12, true), count = view.getUint32(16, true);
+  const textBytes = view.getUint32(20, true), retiredCount = view.getUint32(24, true);
+  const keysAt = 28 + count * 128, textsAt = keysAt + count * 32, retiredAt = textsAt + textBytes;
+  if (count > MAX_CHAT_PAGE || start + count > total || retiredAt + retiredCount * 32 !== bytes.length) throw invalid();
+  const zero = (slice) => slice.every((byte) => byte === 0);
+  const messages = [];
+  // Texts follow each other in record order, with no gaps or overlaps.
+  let nextText = 0;
+  for (let index = 0; index < count; index += 1) {
+    const at = 28 + index * 128;
+    const status = CHAT_STATUSES[bytes[at + 68]], contentKind = CHAT_CONTENT_KINDS[bytes[at + 69]];
+    const textOffset = view.getUint32(at + 104, true), textLength = view.getUint32(at + 108, true);
+    const postedAt = Number(view.getBigInt64(at + 48, true)), editedAt = Number(view.getBigInt64(at + 56, true));
+    if (!status || !contentKind || view.getUint32(at + 64, true) !== start + index ||
+      textOffset + textLength > textBytes || !Number.isSafeInteger(postedAt) || !Number.isSafeInteger(editedAt))
+      throw invalid();
+    const visible = status === "live" || status === "edited";
+    const blobRef = bytes.subarray(at + 72, at + 104), blobKey = bytes.subarray(keysAt + index * 32, keysAt + index * 32 + 32);
+    if (visible === zero(blobRef) || visible === zero(blobKey) || (!visible && textLength) ||
+      (textLength && (contentKind !== "text" || textOffset !== nextText)) || (!textLength && textOffset) ||
+      bytes[at + 70] || bytes[at + 71] || !zero(bytes.subarray(at + 112, at + 128)) ||
+      (status === "edited" && !editedAt) || (status === "live" && editedAt))
+      throw invalid();
+    nextText += textLength;
+    messages.push({
+      messageId: idToHex(bytes.subarray(at, at + 16)),
+      authorId: idToHex(bytes.subarray(at + 16, at + 32)),
+      deviceId: idToHex(bytes.subarray(at + 32, at + 48)),
+      postedAt,
+      editedAt: editedAt || null,
+      index: start + index,
+      status,
+      contentKind,
+      blobRef: visible ? idToHex(blobRef) : null,
+      blobKey: visible ? blobKey.slice() : null,
+      // null: the arena doesn't hold it yet; fetch, decrypt and putChatTexts.
+      text: textLength ? strictTextDecoder.decode(bytes.subarray(textsAt + textOffset, textsAt + textOffset + textLength)) : null,
+    });
+  }
+  if (nextText !== textBytes) throw invalid();
+  const retired = [];
+  for (let index = 0; index < retiredCount; index += 1)
+    retired.push(idToHex(bytes.subarray(retiredAt + index * 32, retiredAt + index * 32 + 32)));
+  return { total, start, messages, retired };
+}
+
+// KCHT v1 / KCHS v1 (ABI.md).
+function putChatTexts(exports, entries) {
+  if (!Array.isArray(entries) || entries.length < 1 || entries.length > MAX_CHAT_PAGE)
+    throw new KinEngineError(2, "Kin received invalid chat texts.");
+  const encoded = entries.map(({ blobRef, text }) => {
+    // A lone surrogate would be encoded as U+FFFD, so Rust would check
+    // different text from the host's.
+    if (typeof text !== "string" || !text.isWellFormed()) throw new KinEngineError(2, "Kin received invalid chat texts.");
+    return [blobFromHex(blobRef, "reference"), textEncoder.encode(text)];
+  });
+  const request = new Uint8Array(12 + encoded.reduce((sum, [, text]) => sum + 36 + text.length, 0));
+  const view = new DataView(request.buffer);
+  request.set([75, 67, 72, 84, 1, 0, 0, 0]);
+  view.setUint32(8, entries.length, true);
+  let offset = 12;
+  for (const [blobRef, text] of encoded) {
+    request.set(blobRef, offset);
+    view.setUint32(offset + 32, text.length, true);
+    request.set(text, offset + 36);
+    offset += 36 + text.length;
+  }
+  const bytes = callCore(exports, "kin_chat_text", request);
+  if (bytes.length !== 12 + entries.length || readAscii(bytes, 0, 4) !== "KCHS" || bytes[4] !== 1 ||
+    bytes[5] !== 0 || bytes[6] !== 0 || bytes[7] !== 0 ||
+    new DataView(bytes.buffer, bytes.byteOffset).getUint32(8, true) !== entries.length ||
+    bytes.subarray(12).some((status) => status > 1))
+    throw new KinEngineError(6, "Kin received an invalid chat text result.");
+  return [...bytes.subarray(12)].map((status) => status === 0);
 }
 
 // KDEV v1 (ABI.md): "KDEV", version u16, reserved u16, count u32, then per
@@ -390,6 +589,9 @@ const COMMAND_TYPES = [
   "change-responsibility",
   "describe-device",
   "nickname-device",
+  "post-chat-message",
+  "edit-chat-message",
+  "delete-chat-message",
 ];
 const EVENT_KINDS = [
   null,
@@ -436,6 +638,9 @@ const EVENT_KINDS = [
   "RESPONSIBILITY_CHANGED",
   "DEVICE_DESCRIBED",
   "DEVICE_NICKNAMED",
+  "CHAT_MESSAGE_POSTED",
+  "CHAT_MESSAGE_EDITED",
+  "CHAT_MESSAGE_DELETED",
 ];
 
 // The command field that names each event's own entity (packet offset 92).
@@ -484,6 +689,9 @@ const ENTITY_FIELDS = Object.freeze({
   "remove-attachment": "attachmentId",
   "change-responsibility": "targetId",
   "nickname-device": "targetDeviceId",
+  "post-chat-message": "messageId",
+  "edit-chat-message": "messageId",
+  "delete-chat-message": "messageId",
 });
 
 /** The entity ID an intent packet carries: the type's own field, else `id`, else the caller's fallback. */
@@ -541,6 +749,10 @@ function encodeIntentPacket(command, identity) {
   const playbookBytes = kind === 33 ? encodePlaybookPayload(command) : null;
   const referenceBytes = kind === 35 ? encodeReferencePayload(command) : null;
   const maintenanceBytes = kind === 37 ? encodeMaintenancePayload(command) : null;
+  // Chat (#109): the content blob's reference and key; Rust checks the rest.
+  const chatBlob = kind === 44 || kind === 45
+    ? Uint8Array.of(...blobFromHex(command.blobRef, "reference"), ...blobFromHex(command.blobKey, "key"))
+    : null;
   if (
     hasText &&
     (typeof text !== "string" ||
@@ -562,7 +774,7 @@ function encodeIntentPacket(command, identity) {
           ? 16 + stepText.length
           : kind === 22 || kind === 23
             ? 24 + noteTitle.length + noteBody.length
-            : kind === 33 ? playbookBytes.length : kind === 35 ? referenceBytes.length : kind === 37 ? maintenanceBytes.length : kind === 39 || kind === 41 ? 16 : deviceNameBytes ? deviceNameBytes.length : textBytes.length),
+            : kind === 33 ? playbookBytes.length : kind === 35 ? referenceBytes.length : kind === 37 ? maintenanceBytes.length : kind === 39 || kind === 41 ? 16 : chatBlob ? 64 : deviceNameBytes ? deviceNameBytes.length : textBytes.length),
   );
   packet.set([75, 67, 77, 68, 1, 0, 0, 0]);
   const view = new DataView(packet.buffer);
@@ -640,6 +852,13 @@ function encodeIntentPacket(command, identity) {
     packet[112] = targetKind;
     packet.set(command.memberId ? idFromHex(command.memberId) : new Uint8Array(16), 128);
     view.setUint32(124, 16, true);
+  } else if (kind === 44) {
+    const code = CHAT_CONTENT_KINDS.indexOf(command.contentKind ?? "text");
+    if (code < 1) throw new KinEngineError(2, "Kin received an invalid chat message.");
+    packet[112] = code;
+  } else if (kind === 46) {
+    if (typeof (command.byAdmin ?? false) !== "boolean") throw new KinEngineError(2, "Kin received an invalid chat message.");
+    packet[112] = command.byAdmin ? 1 : 0;
   } else if (kind === 33) {
     packet.set(playbookBytes, 128);
     view.setUint32(124, playbookBytes.length, true);
@@ -665,8 +884,11 @@ function encodeIntentPacket(command, identity) {
   } else if (stepAction) {
     packet.set(idFromHex(command.itemId), 128);
     view.setUint32(124, 16, true);
-  } else if (kind === 33 || kind === 35 || kind === 37 || kind === 39 || kind === 41) {
-    // The Playbook packet payload was encoded above.
+  } else if (chatBlob) {
+    packet.set(chatBlob, 128);
+    view.setUint32(124, 64, true);
+  } else if (kind === 33 || kind === 35 || kind === 37 || kind === 39 || kind === 41 || kind === 46) {
+    // The Playbook packet payload was encoded above; a chat deletion has none.
   } else if (deviceNameBytes) {
     view.setUint32(124, deviceNameBytes.length, true);
     packet.set(deviceNameBytes, 128);
