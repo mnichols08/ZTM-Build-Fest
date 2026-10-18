@@ -70,6 +70,17 @@ export function safeAttachmentName(name) {
   return [...clean].slice(0, MAX_ATTACHMENT_NAME_CHARS).join("");
 }
 
+/** The image type a file's first bytes show (JPEG, PNG or WebP), or null.
+ * Decides whether a file is redrawn as a photo, whatever it claims to be. */
+export async function sniffPhotoType(file) {
+  const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  const at = (offset, bytes) => bytes.every((byte, index) => head[offset + index] === byte);
+  if (at(0, [0xff, 0xd8, 0xff])) return "image/jpeg";
+  if (at(0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "image/png";
+  if (at(0, [0x52, 0x49, 0x46, 0x46]) && at(8, [0x57, 0x45, 0x42, 0x50])) return "image/webp";
+  return null;
+}
+
 /** The MIME type to store and show: a photo keeps its (re-encoded) type; any
  * other file keeps a well-formed type, else a generic one. */
 export function safeAttachmentType(type) {
@@ -150,7 +161,7 @@ export function decodeManifest(bytes) {
     [...value.text].length > 4000 || !Array.isArray(value.files) || value.files.length < 1 || value.files.length > MAX_ATTACHMENT_FILES) throw invalid();
   const files = value.files.map((file) => {
     if (!file || typeof file !== "object" || typeof file.name !== "string" || !file.name || [...file.name].length > MAX_ATTACHMENT_NAME_CHARS ||
-      typeof file.type !== "string" || !MIME.test(file.type) || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > MAX_ATTACHMENT_BYTES ||
+      typeof file.type !== "string" || file.type.length > 127 || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > MAX_ATTACHMENT_BYTES ||
       !Array.isArray(file.parts) || file.parts.length !== Math.ceil(file.size / ATTACHMENT_PART_BYTES)) throw invalid();
     if (file.thumbnail !== null && (!isPart(file.thumbnail, ATTACHMENT_PART_BYTES) || !PHOTO_TYPES.has(file.type))) throw invalid();
     let total = 0;
@@ -161,7 +172,7 @@ export function decodeManifest(bytes) {
     });
     if (total !== file.size) throw invalid();
     return {
-      name: file.name, type: file.type, size: file.size,
+      name: safeAttachmentName(file.name), type: safeAttachmentType(file.type), size: file.size,
       thumbnail: file.thumbnail === null ? null : { ref: file.thumbnail.ref, key: file.thumbnail.key, size: file.thumbnail.size },
       parts: file.parts.map((part) => ({ ref: part.ref, key: part.key, size: part.size })),
     };

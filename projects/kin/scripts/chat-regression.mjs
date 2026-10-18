@@ -542,7 +542,7 @@ export async function chatRegressions() {
   sent.querySelector(".chat-photo").click();
   await settle();
   const viewer = chat.querySelector("dialog.chat-viewer");
-  check(viewer.open && viewer.querySelector("img").alt === "IMG_2041.jpg", "a photo opens in the viewer");
+  check(viewer.open && viewer.querySelector("img").alt === "Photo: IMG_2041.jpg", "a photo opens in the viewer");
   viewer.querySelector(".chat-viewer-actions button:last-child").click();
   await settle();
   check(!viewer.open, "the viewer closes");

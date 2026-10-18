@@ -454,9 +454,13 @@ characters, captions up to 4,000, a manifest up to 256 KiB.
 - **Sending.** Each file is read and sealed in parts as it goes (no whole
   file in memory), then the manifest. Parts and thumbnails are uploaded
   first, the manifest last, and the event after all of them, so a receiver
-  that sees the message finds every part. A failed send drops the parts kept
-  on this device.
-- **Photos** (JPEG, PNG, WebP) are drawn again on a canvas before sealing,
+  that sees the message finds every part. A send that fails while sealing
+  drops the parts kept on this device. If the event itself can't be stored,
+  the sealed parts stay in this device's blob store, as ciphertext that is
+  never uploaded; nothing cleans them up yet, a known local leak of storage
+  (not of content).
+- **Photos** (recognized by their first bytes: JPEG, PNG, WebP, whatever
+  their declared type) are drawn again on a canvas before sealing,
   which removes EXIF, GPS and camera metadata; a 320-pixel JPEG thumbnail is
   made from the same pixels. A photo over 40 megapixels, or in another format
   (HEIC, say), is refused with a message saying what to export.

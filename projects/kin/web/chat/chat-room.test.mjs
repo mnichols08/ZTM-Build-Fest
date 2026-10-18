@@ -819,7 +819,7 @@ test("photos and files go to the other device in parts, and deleting the message
   const slip = new Uint8Array(2.5 * 1024 * 1024);
   for (let index = 0; index < slip.length; index += 1) slip[index] = (index * 31 + 7) & 0xff;
   const slipFile = new File([slip], "Permission slip.pdf", { type: "application/pdf" });
-  const photoFile = new File([new Uint8Array(40)], "IMG_2041.heic.jpg", { type: "image/jpeg" });
+  const photoFile = new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe1, ...new Array(36).fill(0)])], "IMG_2041.heic.jpg", { type: "image/jpeg" });
 
   await a.room.sendAttachments({ text: "Sign by Friday", files: [slipFile, photoFile] });
   await a.room.sync({ status: STATUS, devices });

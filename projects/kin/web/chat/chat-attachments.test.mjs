@@ -112,3 +112,22 @@ test("a photo the browser can't read, or can't draw again as its own type, is re
   await assert.rejects(preparePhoto(webp, { decode: async () => ({ width: 10, height: 10, close() {} }), makeCanvas: () => noPng }),
     /can't prepare that photo.*JPEG/);
 });
+
+test("a photo is recognized by its bytes, whatever it claims to be", async () => {
+  const { sniffPhotoType } = await import("./chat-attachments.js");
+  const jpeg = new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0, 0])], "a", { type: "" });
+  const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0])], "b", { type: "application/octet-stream" });
+  const webp = new File([new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50])], "c");
+  const text = new File([new TextEncoder().encode("hello world")], "d.txt", { type: "image/jpeg" });
+  assert.equal(await sniffPhotoType(jpeg), "image/jpeg");
+  assert.equal(await sniffPhotoType(png), "image/png");
+  assert.equal(await sniffPhotoType(webp), "image/webp");
+  assert.equal(await sniffPhotoType(text), null);
+});
+
+test("a decoded manifest's names and types are plain text, and a non-photo's type is generic when odd", () => {
+  const bytes = encodeManifest({ text: "", files: [{ name: "x‮f.pdf", type: "text/html; evil", size: 3, thumbnail: null, parts: [part(1, 3)] }] });
+  const [file] = decodeManifest(bytes).files;
+  assert.equal(file.name, "xf.pdf");
+  assert.equal(file.type, "application/octet-stream");
+});

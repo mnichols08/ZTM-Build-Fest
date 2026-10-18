@@ -24,8 +24,8 @@ import { projectionContext } from "../browser-time.js";
 import { ChatBlobClient } from "./chat-blob-client.js";
 import { refHex } from "./chat-blob-crypto.js";
 import {
-  ATTACHMENT_PART_BYTES, ChatAttachmentError, MAX_ATTACHMENT_BYTES, PHOTO_TYPES, attachmentProblem, decodeManifest,
-  encodeManifest, manifestRefs, preparePhoto as browserPreparePhoto, safeAttachmentName, safeAttachmentType,
+  ATTACHMENT_PART_BYTES, ChatAttachmentError, MAX_ATTACHMENT_BYTES, attachmentProblem, decodeManifest,
+  encodeManifest, manifestRefs, preparePhoto as browserPreparePhoto, safeAttachmentName, safeAttachmentType, sniffPhotoType,
 } from "./chat-attachments.js";
 import { ChatBlobStore } from "./chat-blob-store.js";
 import { ChatBlobs } from "./chat-blobs.js";
@@ -526,8 +526,11 @@ export class ChatRoom {
   async sealFile(file) {
     let source = file;
     let thumbnail = null;
-    if (PHOTO_TYPES.has(file.type)) {
-      const photo = await this.preparePhoto(file);
+    // Photos are recognized by their bytes, not their claimed type, so a
+    // photo labelled as something else still loses its metadata.
+    const photoType = await sniffPhotoType(file);
+    if (photoType) {
+      const photo = await this.preparePhoto(new File([file], safeAttachmentName(file.name), { type: photoType }));
       source = photo.blob;
       thumbnail = photo.thumbnail;
     }
@@ -646,7 +649,10 @@ export class ChatRoom {
     try {
       return manifestRefs(await this.manifestOf(message));
     } catch (error) {
-      if (error.code === "chat_attachment_deleted" || error.code === "chat_attachment_pending") return [];
+      // Gone, still arriving, or not a manifest this device can read: no
+      // parts it can name. A connection failure still stops the deletion, so
+      // the parts aren't left behind on the service.
+      if (error.code === "chat_attachment_deleted" || error.code === "chat_attachment_pending" || error.code === "chat_attachment_invalid") return [];
       throw error;
     }
   }
@@ -664,6 +670,8 @@ export class ChatRoom {
 
   /** Replaces a message's text. `message` is the page entry being edited. */
   async edit(message, text) {
+    // Attachments are deleted, not edited (the engine refuses the edit too).
+    if (message.contentKind !== "text") throw new ChatRoomError("Attachments can't be edited.", "chat_attachment_invalid");
     const sealed = await this.sealText(text);
     return this.author({ type: "edit-chat-message", messageId: message.messageId, blobRef: sealed.ref, blobKey: sealed.key },
       { blobRef: sealed.ref, retireRef: message.blobRef });

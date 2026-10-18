@@ -42,6 +42,8 @@ const ATTACHMENT_TEXT = { loading: "Loading…", pending: "Waiting for these to 
 /** Blob URLs for photos and downloads last until the room is left (or the
  * page locks): a long lifetime, revoked explicitly. */
 const URL_LIFETIME_MS = 2 ** 31 - 1;
+// (Blob URLs for photos are also revoked when the room is left, which the
+// registry's revokeAll does on resetView and on disconnect.)
 /** How long a downloaded file's blob URL lives after the click that saved it. */
 const DOWNLOAD_URL_MS = 60_000;
 const TIME = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
@@ -700,8 +702,10 @@ class KinChat extends HTMLElement {
       const blob = await room.attachmentFile(message, index);
       const url = this.urls.create(blob);
       const file = this.attachments.get(message.messageId)?.files[index];
+      if (this.viewerUrl) this.urls.revoke(this.viewerUrl);
       this.viewerUrl = url;
-      this.viewerMessage = message.messageId;
+      // Focus goes back to the photo that was opened, when the viewer closes.
+      this.viewerOpener = document.activeElement;
       this.viewer.replaceChildren();
       const heading = document.createElement("p");
       heading.id = "chat-viewer-name";
@@ -709,7 +713,7 @@ class KinChat extends HTMLElement {
       heading.textContent = file?.name ?? "Photo";
       const image = document.createElement("img");
       image.src = url;
-      image.alt = file?.name ?? "Photo";
+      image.alt = `Photo: ${file?.name ?? "attachment"}`;
       const actions = document.createElement("div");
       actions.className = "chat-viewer-actions";
       const download = document.createElement("button");
@@ -735,7 +739,9 @@ class KinChat extends HTMLElement {
     this.viewerUrl = null;
     this.viewer.replaceChildren();
     this.viewer.removeAttribute("open");
-    this.rowFor(this.viewerMessage)?.querySelector(".chat-photo")?.focus?.();
+    const opener = this.viewerOpener;
+    this.viewerOpener = null;
+    if (opener?.isConnected) opener.focus({ preventScroll: true });
   }
 
   /** Saves a file (or a photo at full size) through a short-lived link. */
