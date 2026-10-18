@@ -270,18 +270,24 @@ change. Every text goes in through `textContent`; links stay plain text.
 Emoji are ordinary Unicode text: the OS emoji keyboard works in the
 composer, and the OS font draws them (no images or outside data).
 `<kin-emoji-picker>` (`web/components/kin-emoji-picker.js`) is the composer's
-😊 button: a disclosure over a hand-curated table (`web/chat/emoji.json`,
-about 330 common emoji in six categories, each with a short name), fetched
-once from the app and cached by the offline shell. It inserts at the cursor
-(replacing a selection) and stays open for another; an insert that would
-pass 4,000 characters is refused with a message. Category buttons switch the
-grid (`aria-pressed`); the grid has one tab stop, arrow keys move (up and
-down by a row of the wrapped layout), Home and End jump, Enter or Space
-inserts, and Escape or tabbing away closes it, focus back on the button.
-Each emoji's accessible name is its short name. A message of only 1–3 emoji
-(graphemes counted with `Intl.Segmenter`, whitespace aside;
-`web/chat/emoji.js`) renders larger. The length limit stays the engine's: 4,000
-Unicode scalar values, as Rust counts them, whatever the grapheme count.
+😊 button: a disclosure over a hand-curated table (`web/chat/emoji.json`, 334
+common emoji in six categories, each a recommended (RGI) emoji with a short
+name), fetched once from the app and cached by the offline shell; a failed
+load is announced with a Try again button. Its panel sits right after the
+textarea, so the tab order follows the layout. It inserts at the cursor
+(replacing a selection) through the editing commands, so Undo still works,
+and stays open for another; an insert that would pass 4,000 characters is
+refused with a message. Category buttons switch the grid (`aria-pressed`);
+the grid has one tab stop, arrow keys move (up and down by a row of the
+wrapped layout), Home and End jump, Enter or Space inserts. Escape closes it
+with focus back on the button; tabbing away closes it too. Each emoji's
+accessible name is its short name. A message of only 1–3 emoji renders
+larger (`web/chat/emoji.js`): graphemes counted with `Intl.Segmenter`,
+whitespace aside, each a recommended emoji (or, without the `v` regex flag,
+a pictograph shown as emoji), so text symbols such as © or a lone ✔ stay
+text. The length limit stays the engine's: 4,000 Unicode scalar values,
+whatever the grapheme count; the client's `chatTextProblem` and Rust's
+`check_text` count the same way, each with an emoji test at the limit.
 
 ## v0.5.0 Pulse
 

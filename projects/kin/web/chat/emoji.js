@@ -2,17 +2,27 @@
 // keyboard already types them, the picker inserts them, and the OS font draws
 // them. Nothing here fetches images or outside data.
 //
-// emoji.json is the picker's hand-curated table (about 300 common emoji in a
+// emoji.json is the picker's hand-curated table (about 330 common emoji in a
 // few categories, each with a short name used as its accessible name).
 
-/** A grapheme (user-perceived character) that is one emoji: a pictograph
- * with any modifiers, joiners and variation selectors, a flag (two regional
- * indicators) or a keycap. */
-const EMOJI_PARTS = /^[\p{Extended_Pictographic}\p{Emoji_Component}‍️⃣]+$/u;
-const EMOJI_BASE = /\p{Extended_Pictographic}|\p{Regional_Indicator}|⃣/u;
+/** A grapheme (user-perceived character) that is one emoji as systems draw
+ * them: a recommended emoji (RGI, Unicode's list of emoji fonts support)
+ * where the browser knows that property, else a pictograph shown as an
+ * emoji: one with emoji presentation, or with a variation selector, skin
+ * tone, joiner or keycap, or a flag. A text symbol on its own (©, ™, ✔
+ * without U+FE0F) and unassigned code points are not emoji here. */
+let RGI = null;
+try { RGI = new RegExp("^\\p{RGI_Emoji}$", "v"); } catch { /* no v flag: fallback below */ }
+const EMOJI_PARTS = /^[\p{Extended_Pictographic}\p{Emoji_Component}\u200D\uFE0F\u20E3]+$/u;
+const PRESENTED = /\p{Emoji_Presentation}|\uFE0F|\u20E3|\u200D|\p{Emoji_Modifier}|\p{Regional_Indicator}{2}|\u{E007F}/u;
 
 export function isEmojiGrapheme(segment) {
-  return EMOJI_PARTS.test(segment) && EMOJI_BASE.test(segment);
+  return RGI ? RGI.test(segment) : isEmojiGraphemeFallback(segment);
+}
+
+/** The fallback rule, exported for tests of browsers without the v flag. */
+export function isEmojiGraphemeFallback(segment) {
+  return EMOJI_PARTS.test(segment) && /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20E3/u.test(segment) && PRESENTED.test(segment);
 }
 
 let segmenter = null;

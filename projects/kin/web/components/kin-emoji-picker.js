@@ -2,7 +2,8 @@
 // (web/chat/emoji.json), drawn by the OS font. It inserts at the cursor of
 // its `target` textarea; the OS emoji keyboard works in the composer too.
 //
-// Keyboard: the toggle opens it with focus on the first emoji. Category
+// Keyboard: the toggle opens it with focus on the last emoji used (the first,
+// at first). Category
 // buttons switch the grid. In the grid the arrow keys move (up and down by a
 // row), Home and End go to the first and last, Enter or Space inserts, and
 // Escape closes and returns focus to the toggle. The grid keeps one tab stop
@@ -19,6 +20,11 @@ class KinEmojiPicker extends HTMLElement {
     this.table = null;
     this.category = null;
     this.active = 0;
+    // Where the panel goes: inside this element by default, or (set before
+    // connecting) a place of the host's choosing, so the panel can sit in
+    // the tab order where it shows.
+    this.panelHost = null;
+    this.isDisabled = false;
   }
 
   connectedCallback() {
@@ -37,35 +43,79 @@ class KinEmojiPicker extends HTMLElement {
     this.panel.id = `${this.id}-panel`;
     this.panel.className = "emoji-panel";
     this.panel.setAttribute("role", "group");
-    this.panel.setAttribute("aria-label", "Emoji");
+    this.panel.setAttribute("aria-label", "Emoji picker");
     this.panel.hidden = true;
-    this.addEventListener("keydown", (event) => {
-      if (event.key !== "Escape" || this.panel.hidden) return;
-      event.preventDefault();
-      event.stopPropagation();
-      this.close({ focusToggle: true });
+    const inside = (node) => node && (this.toggle.contains(node) || this.panel.contains(node));
+    for (const part of [this.toggle, this.panel]) {
+      part.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape" || this.panel.hidden) return;
+        event.preventDefault();
+        event.stopPropagation();
+        this.close({ focusToggle: true });
+      });
+      part.addEventListener("focusout", (event) => {
+        if (!this.panel.hidden && !this.inserting && event.relatedTarget && !inside(event.relatedTarget)) this.close();
+      });
+    }
+    // A click on the panel's own space (not a button) keeps focus where it
+    // was, so the keyboard keeps working.
+    this.panel.addEventListener("mousedown", (event) => {
+      if (!event.target.closest("button")) event.preventDefault();
     });
-    this.addEventListener("focusout", (event) => {
-      if (!this.panel.hidden && event.relatedTarget && !this.contains(event.relatedTarget)) this.close();
-    });
-    this.append(this.toggle, this.panel);
+    this.append(this.toggle);
+    (this.panelHost ?? this).append(this.panel);
+    this.applyDisabled();
+  }
+
+  disconnectedCallback() {
+    // A panel placed elsewhere goes with its picker.
+    if (this.panelHost && this.panel?.isConnected && !this.isConnected) this.panel.remove();
   }
 
   set disabled(value) {
+    this.isDisabled = Boolean(value);
+    this.applyDisabled();
+  }
+
+  get disabled() {
+    return this.isDisabled;
+  }
+
+  applyDisabled() {
     if (!this.toggle) return;
-    this.toggle.disabled = Boolean(value);
-    if (value) this.close();
+    this.toggle.disabled = this.isDisabled;
+    if (this.isDisabled) this.close();
+  }
+
+  /** A status line screen readers announce (loading, a failed load). */
+  status(text, { retry = false } = {}) {
+    const line = document.createElement("p");
+    line.className = "emoji-status";
+    line.setAttribute("role", "status");
+    line.textContent = text;
+    const parts = [line];
+    if (retry) {
+      const again = document.createElement("button");
+      again.type = "button";
+      again.className = "emoji-retry";
+      again.textContent = "Try again";
+      again.addEventListener("click", () => void this.open());
+      parts.push(again);
+    }
+    this.panel.replaceChildren(...parts);
+    return parts.at(-1);
   }
 
   async open() {
     this.toggle.setAttribute("aria-expanded", "true");
     this.panel.hidden = false;
     if (!this.table) {
-      this.panel.replaceChildren(Object.assign(document.createElement("p"), { className: "emoji-status", textContent: "Loading emoji…" }));
+      this.status("Loading emoji…");
       try {
         this.table = await loadEmojiTable();
       } catch {
-        this.panel.replaceChildren(Object.assign(document.createElement("p"), { className: "emoji-status", textContent: "Kin couldn't load its emoji. Your device's emoji keyboard still works." }));
+        if (this.panel.hidden) return;
+        this.status("Kin couldn't load its emoji. Your device's emoji keyboard still works.", { retry: true }).focus();
         return;
       }
       if (this.panel.hidden) return;
@@ -159,7 +209,9 @@ class KinEmojiPicker extends HTMLElement {
     if (!(event.key in moves)) return;
     event.preventDefault();
     const step = moves[event.key];
-    const next = step === -Infinity ? 0 : step === Infinity ? count - 1 : this.active + step;
+    let next = step === -Infinity ? 0 : step === Infinity ? count - 1 : this.active + step;
+    // Down from the row above a short last row: the last emoji.
+    if (event.key === "ArrowDown" && next >= count && Math.floor(this.active / columns) < Math.floor((count - 1) / columns)) next = count - 1;
     if (next < 0 || next >= count) return;
     this.focusEmoji(next);
   }
@@ -176,8 +228,24 @@ class KinEmojiPicker extends HTMLElement {
       this.dispatchEvent(new CustomEvent("kin:emoji-refused", { bubbles: true, detail: { reason: "too-long" } }));
       return;
     }
-    input.setRangeText(emoji, start, end, "end");
-    input.dispatchEvent(new Event("input", { bubbles: true }));
+    // Through the editing commands where they exist, so the insert joins
+    // the textarea's undo history (setRangeText would clear it).
+    // Focus visits the textarea for the command: that isn't leaving.
+    const back = document.activeElement;
+    this.inserting = true;
+    try {
+      input.focus({ preventScroll: true });
+      input.setSelectionRange(start, end);
+      let inserted = false;
+      try { inserted = document.execCommand("insertText", false, emoji); } catch { inserted = false; }
+      if (!inserted) {
+        input.setRangeText(emoji, start, end, "end");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      back?.focus?.({ preventScroll: true });
+    } finally {
+      this.inserting = false;
+    }
     this.dispatchEvent(new CustomEvent("kin:emoji-inserted", { bubbles: true, detail: { emoji } }));
   }
 }

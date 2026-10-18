@@ -320,6 +320,8 @@ export async function chatRegressions() {
   // each emoji; a message of 1–3 emoji shows larger.
   {
     const toggle = chat.querySelector(".emoji-toggle");
+    const order = [...chat.querySelectorAll("textarea, .emoji-slot, .emoji-toggle, .chat-form button[type=submit]")];
+    check(order.map((node) => node.className || node.tagName).join() === "TEXTAREA,emoji-slot,emoji-toggle,add-button", "the panel sits after the message, before the buttons");
     check(toggle && toggle.getAttribute("aria-expanded") === "false", "an emoji button");
     input.value = "Dinner ready";
     input.setSelectionRange(6, 6);
@@ -360,6 +362,21 @@ export async function chatRegressions() {
     for (let i = 0; i < 20 && chat.querySelector(".emoji-panel").hidden; i += 1) await settle();
     chat.querySelector(".emoji-grid button").click();
     check(input.value.length === 4000 && chat.querySelector("#chat-message").textContent.includes("too long"), "an emoji past the limit is refused");
+    input.value = "x".repeat(3999);
+    input.setSelectionRange(3999, 3999);
+    const firstEmoji = chat.querySelector(".emoji-grid button");
+    firstEmoji.click();
+    check(input.value === "x".repeat(3999) + firstEmoji.textContent && firstEmoji.textContent.length === 2, "4,000 scalars (4,001 UTF-16 units) fit");
+    check(!chat.querySelector("#chat-message").textContent, "and clear the too-long message");
+    // Undo still works after an insert.
+    input.value = "";
+    input.focus();
+    document.execCommand("insertText", false, "hello");
+    chat.querySelector(".emoji-grid button").click();
+    check(input.value === "hello" + firstEmoji.textContent, "inserted after typing");
+    input.focus();
+    document.execCommand("undo");
+    check(input.value === "hello", `undo takes back the emoji (${input.value})`);
     toggle.click();
     input.value = "";
     chat.querySelector("#chat-message").textContent = "";

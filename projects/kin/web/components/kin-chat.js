@@ -175,16 +175,22 @@ class KinChat extends HTMLElement {
       void this.submit();
     });
     // Emoji (#113): the OS emoji keyboard works here too.
+    // Its panel sits right after the textarea, so the tab order follows what
+    // shows: message, emoji (when open), then the buttons.
+    const tooLong = `That would make the message too long. Keep it to ${MAX_CHAT_TEXT_CHARS.toLocaleString("en-US")} characters.`;
     this.emoji = document.createElement("kin-emoji-picker");
     this.emoji.target = this.input;
-    this.emoji.addEventListener("kin:emoji-refused", () => {
-      this.message.textContent = `That would make the message too long. Keep it to ${MAX_CHAT_TEXT_CHARS.toLocaleString("en-US")} characters.`;
+    const panelSlot = document.createElement("div");
+    panelSlot.className = "emoji-slot";
+    this.emoji.panelHost = panelSlot;
+    this.emoji.addEventListener("kin:emoji-refused", () => { this.message.textContent = tooLong; });
+    this.emoji.addEventListener("kin:emoji-inserted", () => {
+      if (this.message.textContent === tooLong) this.message.textContent = "";
     });
-    this.emoji.addEventListener("kin:emoji-inserted", () => { this.message.textContent = ""; });
     const buttons = document.createElement("div");
     buttons.className = "chat-form-buttons";
-    buttons.append(this.send, this.cancel, this.emoji);
-    form.append(this.label, this.input, buttons, this.message);
+    buttons.append(this.emoji, this.send, this.cancel);
+    form.append(this.label, this.input, panelSlot, buttons, this.message);
 
     section.append(heading, this.notice, this.scroller, this.jump, form, this.announcer);
     this.replaceChildren(section);
