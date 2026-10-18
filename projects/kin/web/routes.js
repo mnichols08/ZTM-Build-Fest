@@ -69,6 +69,11 @@ const ALIASES = Object.freeze({
   "routines/playbooks": "routines/checklists",
 });
 
+/** Dispatched on window when the visible page or segment changes. In-app
+ * navigation uses history.pushState and hides views rather than removing
+ * them, so neither hashchange nor disconnection signals it. */
+export const ROUTE_CHANGE_EVENT = "kin-route-change";
+
 export function routeHash(page, segment = null) {
   const segments = SEGMENTS[page];
   if (!segments) return `#${page}`;

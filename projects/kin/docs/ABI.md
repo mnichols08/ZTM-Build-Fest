@@ -41,7 +41,8 @@ at 64 MiB and 10,000 events.
 `kin_alloc(0)` and a failed allocation return 0, which the host treats as
 failure. Live allocations sit in a fixed table of 8 slots. The host holds one
 input at a time, so a full table means a leaked allocation, and `kin_alloc`
-returns 0. `kin_clear` releases retained buffers and the history (whose bytes
+returns 0. The browser's QR codec runs on its own instance and holds two at
+most: its frame buffer and, briefly, an encode input. `kin_clear` releases retained buffers and the history (whose bytes
 it zero-fills first); it does not promise physical erasure. `engine.dispose()`
 calls it.
 
@@ -359,8 +360,10 @@ fragment, so the payload never reaches a server log or `Referer`.
     it is refused, not misread. The slowest adversarial frame measured (dense
     finder-like tiles over all of 1280 × 720) took 36 ms natively.
   - The decoder's working memory (about 4.7 MB at 720p) is kept between calls,
-    so its scratch doesn't grow for frames of the same size. Each call still
-    allocates its input and result buffers. `kin_clear` frees the scratch for
+    so its scratch doesn't grow for frames of the same size. The browser's QR
+    codec (`web/wasm/kin-qr.js`, its own engine instance) keeps one frame
+    input buffer per frame size and writes luma straight into it; each decode
+    still allocates its small result buffer. `kin_clear` frees the scratch for
     reuse; WASM linear memory itself never shrinks.
 
 Limits of the decoder: version 1 symbols (up to 14 bytes) can fail on

@@ -20,6 +20,7 @@ import { mobileUxRegressions } from "./mobile-ux-regression.mjs";
 import { attachmentUploadRegressions } from "./attachment-upload-regression.mjs";
 import { syncMotionRegressions, workspaceUxRegressions, workspaceViewportRegressions } from "./workspace-ux-regression.mjs";
 import { quickAddRegressions } from "./quick-add-regression.mjs";
+import { qrRegressions, writeQrCamera } from "./qr-regression.mjs";
 import { todayActionableRegressions, todayLifecycleRegressions } from "./today-actionable-regression.mjs";
 import { keyboardCommandRegressions } from "./keyboard-commands-regression.mjs";
 import { bulkActionRegressions } from "./bulk-actions-regression.mjs";
@@ -87,6 +88,11 @@ const server = createServer(async (request, response) => {
 });
 await new Promise((done) => server.listen(0, "127.0.0.1", done));
 const origin = `http://127.0.0.1:${server.address().port}`;
+// The browser's camera plays a file with a foreign QR code, then this Kin's
+// pairing link (qr-regression.mjs). No other suite uses the camera.
+const qrExpected = { reject: "https://elsewhere.example/pair#code=QR-CAMERA", accept: `${origin}/pair#code=QR-CAMERA` };
+const qrCamera = join(profile, "qr-camera.y4m");
+await writeQrCamera(qrCamera, qrExpected);
 const browser = spawn(
   executable,
   [
@@ -96,6 +102,9 @@ const browser = spawn(
     "--no-first-run",
     "--no-default-browser-check",
     "--remote-debugging-port=0",
+    "--use-fake-ui-for-media-stream",
+    "--use-fake-device-for-media-stream",
+    `--use-file-for-fake-video-capture=${qrCamera}`,
     `--user-data-dir=${profile}`,
     "about:blank",
   ],
@@ -1332,6 +1341,8 @@ try {
   console.log(await first.evaluate(`(${planningDateRegressions.toString()})()`));
   await visit(first, "today");
   console.log(await first.evaluate(`(${quickAddRegressions.toString()})()`));
+  await visit(first, "today");
+  console.log(await first.evaluate(`(${qrRegressions.toString()})(${JSON.stringify(qrExpected)})`));
   await visit(first, "today");
   console.log(await first.evaluate(`(${mobileUxRegressions.toString()})(${JSON.stringify(recoverySecret)})`));
   console.log(await attachmentUploadRegressions(first, { recovery: recoverySecret, visit: (id) => visit(first, id), scratch: profile }));
