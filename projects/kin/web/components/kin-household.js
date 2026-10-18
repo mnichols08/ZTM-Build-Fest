@@ -4,9 +4,12 @@ import { OperationGuard } from "./shared/operation.js";
 import { HouseholdApi } from "./household/api.js";
 import { HouseholdAuth } from "./household/auth.js";
 import { HouseholdLifecycle } from "./household/lifecycle.js";
+import { HouseholdLink } from "./household/link.js";
+import { HouseholdLinkApproval } from "./household/link-approval.js";
 import { HouseholdMembership } from "./household/membership.js";
 import { HouseholdPairing } from "./household/pairing.js";
 import { HouseholdViews } from "./household/views.js";
+import { consumeInvitationCode, takeInvitationCode } from "../pairing-link.js";
 
 // The household element's parts (./household/), built once per element with
 // one shared context { host, ...parts }; each part reaches the element as `this.host`.
@@ -14,6 +17,8 @@ const PARTS = {
   api: HouseholdApi,
   auth: HouseholdAuth,
   pairing: HouseholdPairing,
+  link: HouseholdLink,
+  linkApproval: HouseholdLinkApproval,
   membership: HouseholdMembership,
   lifecycle: HouseholdLifecycle,
   views: HouseholdViews,
@@ -54,6 +59,11 @@ class KinHousehold extends HTMLElement {
   }
 
   startIntent(kind) {
+    if (kind === "phone" && !this.claim) {
+      // Signing in with a phone (#100) starts a request at once.
+      this.intent = "phone";
+      return this.ctx.link.begin();
+    }
     this.intent = ["create", "join", "device"].includes(kind) ? kind : null;
     this.render();
     requestAnimationFrame(() => {
@@ -73,15 +83,26 @@ class KinHousehold extends HTMLElement {
     if (!this.routeCodeCaptured) {
       this.routeCodeCaptured = true;
       if (location.pathname === "/pair") {
-        this.prefilledCode =
-          new URLSearchParams(location.search).get("code")?.slice(0, 9) ?? "";
-        if (location.search) history.replaceState(null, "", "/pair");
+        // kin-app took the code from the address as it loaded; reading the
+        // address here as well covers a code still in it.
+        this.prefilledCode = consumeInvitationCode() || takeInvitationCode();
       }
     }
     this.load();
   }
 
+  /** An invitation code arrived after this element connected (a same-page
+   * jump to /pair#code=…): fill the join screen with it (#97). */
+  offerInvitationCode() {
+    const code = consumeInvitationCode();
+    if (!code) return;
+    this.prefilledCode = code;
+    this.render();
+  }
+
   disconnectedCallback() {
+    this.ctx.link.abandon();
+    this.ctx.linkApproval.abandon();
     this.connectionAbort.abort();
     clearInterval(this.timer);
     clearTimeout(this.poll);

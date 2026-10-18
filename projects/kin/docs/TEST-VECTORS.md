@@ -186,3 +186,60 @@ auth secret `BTBZMqHH6r4Tts7J_aSIgg`, salt `DGv6ra1nlYgDCS1FRnbzlw`.
 `encryptPushPayload` must produce the RFC's message exactly, and decrypting
 it with the user-agent private key `q1dXpw3UpT5VOmu_cf_v6ih07Aems3njxI-JWgLcM94`
 must give the plaintext (`server/push.test.mjs`).
+
+## QR symbols (#94)
+
+The engine's QR encoder (`rust/src/qr/`) must produce the module grid below
+for each text and mask, byte mode, level M. Each grid is pinned by the FNV-1a
+64 hash of its modules (one byte per module, row-major, no quiet zone). The
+reference is python-qrcode 8.x with byte mode forced and `mask_pattern` set,
+run once and recorded here; it is not a runtime or build dependency.
+`coverage::golden_grids_match_an_independent_encoder_for_every_mask` checks
+all of them.
+
+- `01234567`, version 1 (side 21): the ISO/IEC 18004 Annex I example, in byte
+  mode. The annex example itself is numeric, so this is its byte-mode
+  equivalent.
+- `https://kin.example.org/#join=7kq4-zpm2-hr9t-vxb6`, version 4 (side 33).
+- `https://kin.example.org/#sign-in=q7tk-2mzp-vx8r-3hdn-4wjb-9cfl-6ygs-zt5m`,
+  version 5 (side 37).
+- `https://kin.example.org/#v7=` followed by `0123456789abcdef` five times,
+  version 7 (side 45), which carries version information.
+- `https://kin.example.org/#v10=` followed by `0123456789abcdef` eleven
+  times, version 10 (side 57).
+
+| Text | Mask | FNV-1a 64 |
+|---|---|---|
+| `01234567` | 0–7 | `6ca855685a57b68d` `d3a2a295bf82e0c3` `03266a2fbe5602a3` `e2cffb098f25ae39` `fef5e643e723249b` `e20213afa4307655` `4c91aab4c8c01f95` `ef39ad586b7ebd8f` |
+| join link | 0–7 | `92424d5f7ff9a791` `5e761cb029f507e3` `21f4527da7335d8a` `18e017e9e3e71022` `c01aac4b6d43773f` `2aff60efa4dc7421` `9eedae69d11331e6` `31ab0d471c819530` |
+| sign-in link | 0–7 | `9050850d9fab18d5` `077723bf125628f3` `76bb94d44063b69f` `7c55179d943c7a85` `532d25518e3545cf` `12bc4b76d93e24be` `524efe1360e99449` `aee5e630353e1e1f` |
+| version 7 text | 0–7 | `5b34cdaec1d9bd61` `0e6a1f274c02af4a` `d237884cd26ca547` `8da5669b736d8525` `08a6e8a98fd7136b` `cd1d4ccbeab9f7a9` `7a10146e7cc5a345` `97941fff7077a7d7` |
+| version 10 text | 0–7 | `1bf516d39bd37249` `f77dc892ed145b02` `f3d2907f803b734f` `ce259b63f00e8839` `4dedc77efa96692b` `234fcb9d1fb8814d` `2ce91836c8b2447d` `01e5eb08f87c65ab` |
+
+The V4 and V6 grids in `tests.rs` come from the same reference. Their masks
+differ from the encoder's lowest-penalty choice, which is still a valid
+symbol.
+
+### Decoder frames (#95)
+
+The decoder is checked on synthetic camera frames built in the Rust tests
+from encoded symbols, not on stored images, so the corpus is code and can't
+drift from the encoder:
+
+- every version 1–10 with every mask, round-tripped (80 frames);
+- rotation at every 15° (24 angles), a mild perspective tilt for versions
+  2–10 (version 1 has no alignment pattern: the documented limit), and
+  perspective with rotation and noise together;
+- scale from 3 to 8 pixels per module;
+- Gaussian sensor noise (an Irwin–Hall approximation), blur of radius 1 at
+  6 pixels per module and radius 2 at 8, and light-on-dark symbols;
+- damage up to the Reed–Solomon budget is read, and beyond it is refused or
+  detected, never misread;
+- adversarial frames: a symbol among finder-like decoys is still read, and
+  too many decoys are refused rather than misread;
+- the work budget: a clean symbol given too small a budget ends the search
+  instead of running on.
+
+[QR-ACCEPTANCE](QR-ACCEPTANCE.md) lists each test by name.
+`scripts/qr-regression.mjs` reads a QR code through a real browser camera
+(a fake video device) and the engine.

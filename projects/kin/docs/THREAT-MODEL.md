@@ -371,6 +371,79 @@ and iPad until it is added again.
 
 **Planned.** Nothing further; this is the opt-in trade the feature makes.
 
+### QR pairing and phone sign-in (v1.1)
+
+**What it is.** Invitations can travel as a QR code (#97), and a phone can
+sign a computer in by scanning the computer's QR code and approving with a
+passkey (#98).
+
+**QR-jacking.** An attacker shows a victim their own computer's sign-in QR
+code, for example on a page that looks like Kin, and hopes the victim scans
+and approves it. Approval alone signs nothing in: the phone then shows a
+6-digit code, and only a computer that types it finishes. The attacker's
+computer is not in front of the victim, so it never sees the code unless the
+victim reads it out or types it into the attacker's page. The code is
+random, and nothing about the approval is released before it is typed, so
+the QR code alone (photographed, or shown on a page) can't finish the
+sign-in. The phone names the computer, says it will sign in as you, warns "Only approve a computer that's
+in front of you." and says to type the code only on that computer. Three
+wrong codes end the request, and each approval allows only those three
+tries, so guessing the code means about one chance in 333 000 per approval.
+**Residual:** a victim who approves and then types the code into a page the
+attacker controls (a live relay) signs the attacker's computer in. That is
+the same trust a person places in typing a one-time code anywhere; the screens
+say where it belongs.
+
+**A camera-swapped fingerprint vs a server-swapped one.** The QR code carries
+the computer's key fingerprint along with the request. The service refuses an
+approval whose scanned fingerprint doesn't match the keys it holds, and the
+phone itself checks the keys the service returns against the fingerprint it
+scanned before it signs a certificate. So a service that swaps the computer's
+keys is caught by the phone, which read the fingerprint from the computer's
+own screen. A camera that reads a different QR code (someone else's screen)
+is the QR-jacking case above: the keys match that code, and the 6-digit code
+is what stops it. The invitation QR code carries only the pairing code; its
+fingerprints are still compared on both screens before approval.
+
+**Which phone the computer trusts.** A new computer must pin the approving
+phone's key before its first sync can verify anything. It learns that key
+from the service, which could name a device of its own. The phone's tag
+prevents that: an HMAC over the request and the phone's device ID and key,
+keyed by the code and a nonce that only the QR code carries. The service has
+the code but not the nonce, so it can't make a tag for a device of its own;
+the computer checks the tag with the nonce and the code the person typed,
+and pins only a directory key with the tagged fingerprint. Someone who
+photographs the QR code has the nonce but not the code, and the service
+releases nothing until the right code is typed (three tries in a million).
+**Residual:** the service and a QR holder working together could forge a tag;
+only comparing fingerprints by eye defends against that, and this flow
+doesn't ask people to.
+
+**Shoulder-surfing a QR code.** A sign-in QR code photographed by someone else
+gives them a request they can't use: scanning it needs an Adult's trusted
+session and a fresh passkey, and finishing needs the code shown on that
+Adult's phone. It lasts 2 minutes. **Residual:** whoever holds it can end
+the request (cancelling needs only the secret), and an Adult of any household
+could scan and approve it under their own account, which ends the owner's
+attempt; neither can finish it without the code. A cancelled request ends
+the computer's screen, and the person shows a new code. A foreign approval
+makes the computer ask for a code its owner never receives, until they
+cancel or it expires. An invitation QR code is the invitation
+code itself: whoever reads it can claim it, as with a code read over a
+shoulder, and an Adult must still approve the claim after comparing
+fingerprints. Either side can cancel.
+
+**What the service sees.** Secrets and codes travel in URL fragments and
+request bodies, never in a request URL, a log or a `Referer`. The service
+keeps a verifier of the request secret, not the secret. It does receive the
+6-digit code and keeps it only as a hash, which, with a million possible
+codes, is no secret from the service itself; it keeps the tag as is. Neither
+is any use without the QR code's nonce, which the service never sees. Audit
+events hold IDs and outcomes only.
+
+**Planned.** Nothing further for v1.1; comparing fingerprints by eye remains
+the defence against a malicious service working with a QR holder.
+
 ### v1.0 was not tested across every browser and device
 
 **What it is.** v1.0 shipped on the owner's decision with limited real-world

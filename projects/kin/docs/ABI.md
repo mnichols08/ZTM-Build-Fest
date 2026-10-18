@@ -20,9 +20,11 @@ kin_event_metadata_batch(ptr, len)   KMDQ -> KMDL
 kin_plan_import(ptr, len)            import plan of the history: KINE context -> KIMP
 kin_archive_header(ptr, len)         two lengths -> 16-byte KARC header
 kin_archive_layout(ptr, len)         KARC header + total length -> two lengths
+kin_qr_encode(ptr, len)              UTF-8 text -> KQRM matrix (no crates; qr/)
+kin_qr_decode(ptr, len)              width, height, luma -> QR payload bytes
 kin_encode_archive / kin_decode_archive   whole KARC framing (retained)
 kin_result_ptr/len, kin_error_ptr/len     the last call's result or error
-kin_clear()                               drop every retained buffer
+kin_clear()                               drop every retained buffer (and QR scratch)
 ```
 
 Pointers are byte offsets into the module's linear memory. Every operation
@@ -39,7 +41,8 @@ at 64 MiB and 10,000 events.
 `kin_alloc(0)` and a failed allocation return 0, which the host treats as
 failure. Live allocations sit in a fixed table of 8 slots. The host holds one
 input at a time, so a full table means a leaked allocation, and `kin_alloc`
-returns 0. `kin_clear` releases retained buffers and the history (whose bytes
+returns 0. The browser's QR codec runs on its own instance and holds two at
+most: its frame buffer and, briefly, an encode input. `kin_clear` releases retained buffers and the history (whose bytes
 it zero-fills first); it does not promise physical erasure. `engine.dispose()`
 calls it.
 
@@ -104,7 +107,8 @@ than the history holds, so appending a few events copies nothing.
 
 `0` success, `1` invalid ABI pointer or range, `2` malformed protocol or
 payload, `3` unsupported version or kind, `4` invalid domain event or state,
-`5` size or allocation limit, `6` internal error. The same failure always maps
+`5` size or allocation limit, `6` internal error, `7` no readable QR code in
+the image. The same failure always maps
 to the same code; messages are diagnostic only and never contain household
 text. The error buffer is `KERR | version:u16 = 1 | code:u16 | length:u32 |
 UTF-8 message`.
@@ -321,6 +325,61 @@ unchanged section.
 
 The bridge keys reuse on the engine instance as well as the revision. A
 revision is meaningful only within one instance.
+
+## QR codes (#94, #95)
+
+The engine writes and reads QR codes itself (`rust/src/qr/`, ISO/IEC 18004,
+byte mode, level M, versions 1–10, about 200 bytes). The browser only draws
+the matrix and reads the camera. Pairing links carry their secrets in the URL
+fragment, so the payload never reaches a server log or `Referer`.
+
+- `kin_qr_encode(ptr, len)`: the input is the text's UTF-8 bytes. The result
+  is `KQRM | version:u16 = 1 | reserved:u16 = 0 | side:u32 | side*side bytes`,
+  one byte per module in row-major order (1 dark, 0 light), with no quiet
+  zone. Empty input is `2`; more than 213 bytes is `5`; invalid UTF-8 is `2`.
+  The encoder itself works in fixed arrays sized for version 10; only the
+  returned result buffer is allocated.
+- `kin_qr_decode(ptr, len)`: the input is `width:u32 | height:u32 | luma`, where
+  luma is `width*height` bytes of 8-bit grayscale, row-major. The result is the
+  decoded payload bytes.
+  - A zero size, or a luma length that doesn't equal `width*height`, is `2`.
+  - A frame wider or taller than 1280, or with more than 921 600 pixels
+    (1280 × 720), is `5`.
+  - A frame with no symbol Kin can read is `7`.
+  - Light-on-dark symbols are read: the decoder retries the frame inverted when
+    the first pass fails.
+  - Each pass has a work budget of 4 000 000 units, charged for scan pixel
+    reads, alignment template checks, finder comparisons, timing samples and
+    triangle attempts, so a noisy frame stops instead of searching on. Fixed
+    linear passes over the frame are bounded by the frame limits instead.
+  - At most 256 finder candidates are kept. Triangles from the 32 strongest
+    are ranked by timing-pattern agreement, and up to 12 are tried. A frame
+    with 30 or more finder-like patterns as strong as the symbol's own can
+    lose the symbol, and so can one with more than 256 weaker multi-row
+    patterns ahead of it in raster order (the table fills first). Either way
+    it is refused, not misread. The slowest adversarial frame measured (dense
+    finder-like tiles over all of 1280 × 720) took 36 ms natively.
+  - The decoder's working memory (about 4.7 MB at 720p) is kept between calls,
+    so its scratch doesn't grow for frames of the same size. The browser's QR
+    codec (`web/wasm/kin-qr.js`, its own engine instance) keeps one frame
+    input buffer per frame size and writes luma straight into it; each decode
+    still allocates its small result buffer. `kin_clear` frees the scratch for
+    reuse; WASM linear memory itself never shrinks.
+
+Link sizes: an invitation link is the origin plus 20 bytes
+(`/pair#code=F7KM-Q2DX`); a sign-in link is the origin plus 157 bytes
+(`/link#r=` 32 hex, `&s=` 43 base64url, `&f=` the 32-byte fingerprint as 43
+base64url, `&c=` a 22-character nonce). Both fit the 213-byte limit for any
+origin up to 56 bytes. A longer origin can't show a sign-in QR
+code: the computer says the code couldn't be drawn, and the computer signs in
+with a passkey or a pairing code instead.
+
+Limits of the decoder: version 1 symbols (up to 14 bytes) can fail on
+perspective frames, because the fourth corner cannot be pinned without an
+alignment pattern. Invitation and sign-in links are much longer, so they are
+unaffected. Multi-segment symbols (mixed text modes) are refused, not
+partially read. The decoder reads what a camera shows of a screen; it is not
+tuned for printed codes under heavy blur.
 
 ## Side formats
 

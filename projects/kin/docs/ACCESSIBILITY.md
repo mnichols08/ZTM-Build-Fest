@@ -104,6 +104,31 @@ is not claimed without direct assistive-technology testing.
 - Use ARIA only when native HTML cannot express the needed semantics.
 - Test custom elements and shadow-boundary event behavior with keyboard and assistive technology where practical.
 
+## QR codes, the scanner and sign-in codes (v1.1, #93)
+
+- **QR codes are an enhancement.** Every QR code has a typed alternative
+  beside it (an invitation's code with Copy), except a computer's sign-in
+  code, whose alternatives are signing in with a passkey or a pairing code.
+  The canvas has `role="img"` and a label that says what it is for. Modules
+  are drawn at whole device pixels, black on white in every colour scheme.
+- **No per-second announcements.** Countdowns are plain text, outside any
+  live region. Errors that stop the flow use the household panel's alert.
+- **Focus and status.** Opening the sign-in or Add a computer screen, and
+  each change of step, moves focus to the step's heading; the 6-digit field
+  takes focus when it appears, and again after a wrong code (cleared). On the
+  computer, approval, a wrong code and a short code are also announced in a
+  polite status, set just after the region appears. The invitation scanner
+  takes focus on its start button, and closing it returns focus to the code
+  field; on Add a computer, Cancel closes the whole flow.
+- **Code entry.** `inputmode="numeric"` and `autocomplete="one-time-code"`;
+  spaces and dashes are ignored; a short code is caught before sending, with
+  a status saying all 6 digits are needed.
+- **The phone's code** is large selectable text, not a live region; screen
+  readers hear it spelled out ("Code 0 4 2 9 1 7") from visually hidden text.
+- **The camera** is used only after a tap, says in words what each state
+  means, and is never the only way forward: "Type the code instead" is always
+  offered.
+
 ## Mobile interaction contract
 
 Kin should remain usable one-handed on a phone and during interruptions:

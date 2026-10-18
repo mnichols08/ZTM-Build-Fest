@@ -1,7 +1,7 @@
 // Routes, keyboard shortcuts and search-result navigation.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { projectionContext } from "../../browser-time.js";
-import { listSegmentForClassification, resolveRoute, routeHash } from "../../routes.js";
+import { listSegmentForClassification, resolveRoute, ROUTE_CHANGE_EVENT, routeHash } from "../../routes.js";
 import { isTypingContext, shortcutForKey } from "../../keyboard-commands.js";
 
 export class NavigationController {
@@ -26,6 +26,7 @@ export class NavigationController {
     this.app.dataset.route = route.canonical;
     document.title = this.app.vault && !this.app.vault.locked && this.app.householdName ? `${this.app.householdName} — Kin` : `${route.title} — Kin`;
     if (changed && this.app.routeAnnouncement) this.app.routeAnnouncement.textContent = `${route.title} view`;
+    if (changed && previous) window.dispatchEvent(new CustomEvent(ROUTE_CHANGE_EVENT, { detail: { from: previous.canonical, to: route.canonical } }));
     for (const [id, section] of this.app.pages) section.hidden = id !== route.page;
     for (const [id, link] of this.app.navLinks) {
       if (id === route.destination) link.setAttribute("aria-current", "page");

@@ -11,7 +11,7 @@ const SHELL = [
   // Not the manifest or /install-icon/*: they depend on the household that
   // published an install identity (#78), so they always come from the network.
   "/", "/index.html", "/styles/app.css", "/icon.svg",
-  "/browser-time.js", "/platform.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin_engine.wasm",
+  "/browser-time.js", "/platform.js", "/pairing-link.js", "/device-link.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin_engine.wasm", "/wasm/kin-qr.js",
   "/wasm/wire.js", "/wasm/history-mirror.js", "/wasm/projection-decode.js", "/wasm/projection/reader.js", "/wasm/projection/items.js",
   "/wasm/projection/conversations.js", "/wasm/projection/routines.js", "/wasm/projection/records.js",
   "/routes.js", "/today-view.js", "/reminder-time.js", "/capture-plan.js", "/keyboard-commands.js", "/bulk-actions.js", "/recurrence.js",
@@ -20,10 +20,10 @@ const SHELL = [
   "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js", "/security/archive-stream.js", "/security/key-label.js",
   "/appearance/palette.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js", "/appearance/install-icons.js",
   "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js", "/sync/envelope-wire.js",
-  ...["app", "appearance", "household-defaults", "install-identity", "notifications", "security", "household", "quick-add", "command-palette", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility", "bulk-bar", "playbook-editor", "routine-schedule"].map((name) => `/components/kin-${name}.js`),
+  ...["app", "appearance", "household-defaults", "install-identity", "notifications", "security", "household", "quick-add", "command-palette", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility", "bulk-bar", "playbook-editor", "routine-schedule", "qr", "qr-scanner"].map((name) => `/components/kin-${name}.js`),
   "/components/app/appearance.js", "/components/app/attachments.js", "/components/app/commands/append.js", "/components/app/commands/bulk.js", "/components/app/commands/conversations.js", "/components/app/commands/items.js", "/components/app/commands/records.js", "/components/app/commands/routines.js", "/components/app/constants.js", "/components/app/context.js", "/components/app/detail.js", "/components/app/navigation.js", "/components/app/peer-channel.js", "/components/app/refresh.js", "/components/app/render.js", "/components/app/session.js", "/components/app/shell.js", "/components/app/status.js", "/components/app/sync.js", "/components/app/views.js",
   ...["dom", "focus", "icons", "operation", "props", "session-guard"].map((name) => `/components/shared/${name}.js`),
-  ...["api", "auth", "lifecycle", "membership", "pairing", "views"].map((name) => `/components/household/${name}.js`),
+  ...["api", "auth", "lifecycle", "link", "link-approval", "membership", "pairing", "views"].map((name) => `/components/household/${name}.js`),
   ...["archive", "protection", "unlock", "views"].map((name) => `/components/security/${name}.js`),
   ...["focus", "sections", "selection"].map((name) => `/components/today/${name}.js`),
   "/components/item-detail/sections.js", "/components/notes/notes.js", "/components/notes/references.js",
@@ -70,7 +70,7 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
-  if (event.request.mode === "navigate" && ["/", "/pair"].includes(url.pathname)) {
+  if (event.request.mode === "navigate" && ["/", "/pair", "/link"].includes(url.pathname)) {
     // Never cache the requested URL (which could contain a pairing code).
     event.respondWith(fetch(event.request).catch(() => caches.open(CACHE).then((cache) => cache.match("/index.html"))));
   } else if (!url.search && ALLOWED.has(url.pathname)) {
