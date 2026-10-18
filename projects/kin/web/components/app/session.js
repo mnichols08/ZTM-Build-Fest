@@ -3,6 +3,7 @@
 import { clearAttachmentProgress } from "../../attachments/attachment-progress.js";
 import { AttachmentPreviewCache } from "../../attachments/attachment-preview.js";
 import { loadKinEngine } from "../../wasm/kin-engine.js";
+import { releaseQrCodec } from "../../wasm/kin-qr.js";
 import { EventStore } from "../../storage/event-store.js";
 import { clearLegacyDrafts } from "../kin-security.js";
 import { loadAppearance } from "../../appearance/store.js";
@@ -203,6 +204,8 @@ export class SessionController {
     this.app.store = null;
     this.app.engine?.dispose?.();
     this.app.engine = null;
+    // The QR codec may hold a pairing link it just read; drop it with the rest.
+    void releaseQrCodec();
     this.app.state = null;
     this.ctx.detail.clearResponsibilityContext();
     this.app.attachmentRows = [];

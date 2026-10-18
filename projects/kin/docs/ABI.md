@@ -359,8 +359,10 @@ fragment, so the payload never reaches a server log or `Referer`.
     it is refused, not misread. The slowest adversarial frame measured (dense
     finder-like tiles over all of 1280 × 720) took 36 ms natively.
   - The decoder's working memory (about 4.7 MB at 720p) is kept between calls,
-    so its scratch doesn't grow for frames of the same size. Each call still
-    allocates its input and result buffers. `kin_clear` frees the scratch for
+    so its scratch doesn't grow for frames of the same size. The browser's QR
+    codec (`web/wasm/kin-qr.js`, its own engine instance) keeps one frame
+    input buffer per frame size and writes luma straight into it; each decode
+    still allocates its small result buffer. `kin_clear` frees the scratch for
     reuse; WASM linear memory itself never shrinks.
 
 Limits of the decoder: version 1 symbols (up to 14 bytes) can fail on
