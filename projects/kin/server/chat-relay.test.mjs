@@ -90,7 +90,7 @@ bothStores("the envelope rules hold: sequences, duplicates, devices, epochs, cur
   assert.throws(() => h.relay.push(auth, []), rejects("sync_batch_invalid", 400));
   assert.throws(() => h.relay.push(auth, [envelope(h.adult, { eventId: hex(6), deviceSequence: 2, logicalTime: 10 ** 15 })]), rejects("logical_time_invalid", 400));
   assert.throws(() => h.relay.pull(auth, "AAAAAAAAAAk", "20"), rejects("sync_cursor_invalid", 400));
-  assert.throws(() => h.relay.pull(auth, "", "21"), rejects("sync_cursor_invalid", 400));
+  assert.throws(() => h.relay.pull(auth, "", "201"), rejects("sync_cursor_invalid", 400));
 });
 
 bothStores("chat waits out a key rotation and needs household sync set up", (h) => {

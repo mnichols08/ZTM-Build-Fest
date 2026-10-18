@@ -234,8 +234,36 @@ Deleting a blob removes its bytes and adds its tombstone in one transaction.
 `ChatBlobStore.destroy()` deletes the whole database; a tab holding it open
 closes its connection when asked, and an old tab that doesn't blocks the
 deletion with a "close other tabs" error. Calling it when the household
-leaves the device, and keeping only recent blobs (#125), come with the chat
-room (#111); today local household data stays on the device as before.
+leaves the device, and keeping only recent blobs (#125), are still to come;
+today local household data stays on the device as before.
+
+## Chat log (v1.1, #111)
+
+The chat log is kept apart from the frozen event database, in its own
+database per household, `kin-chat-log:<householdId>`, version 1
+(`web/chat/chat-log-store.js`):
+
+- `events`: `{ order, eventId, envelope }`, every chat event as the signed,
+  encrypted envelope it travelled in, keyed by the order this device stored
+  it. Envelopes are encrypted under a household key epoch held in the key
+  database, so the log needs no sealing of its own and root rotation doesn't
+  touch it. Signatures are checked once, when an event arrives; reopening the
+  log only decrypts.
+- `ids`: `{ eventId, order }`, so each event is stored once even when two
+  tabs store it together.
+- `outbox`: `{ deviceSequence, eventId, blobRef, retireRef }`, this device's
+  events the relay hasn't accepted, the blob each uploads first and the blob
+  it replaced. A message in the outbox shows as waiting to send.
+- `meta`: `{ key: "state", nextOrder, cursor, deviceSequence, provisional }`,
+  the relay position read up to and this device's last chat sequence
+  ([SYNC](SYNC.md#chat-relay-v11-111)).
+
+While Kin is unlocked the decrypted log is held in memory as one growing
+buffer (`web/chat/chat-records.js`) that the engine's chat log mirrors
+incrementally; locking zeroes and drops it. Sending takes a Web Lock per
+household, and a store write checks the sequence, so two tabs can't take the
+same sequence. Deleting the log with the household, like the blob database,
+is still to come.
 
 ## Handoff storage
 

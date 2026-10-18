@@ -1,10 +1,15 @@
 // A small in-memory IndexedDB for Node tests of chat storage (not shipped).
-// It models only what chat-blob-store.js uses: open with an upgrade, object
-// stores with a key path, get/put/delete, transactions that stay active
+// It models only what chat storage uses: open with an upgrade, object
+// stores with a key path, get/getAll (in key order, from a lower
+// bound)/put/delete, transactions that stay active
 // while microtasks run and commit once no request is pending, failing
 // requests (`failNext`), and deleteDatabase, which asks open connections to
 // close (versionchange) and is blocked by one that doesn't. Values are
 // structured-cloned as a browser would.
+// IndexedDB orders numbers before strings; within each, by value.
+const compareKeys = (left, right) =>
+  typeof left !== typeof right ? (typeof left === "number" ? -1 : 1) : left < right ? -1 : left > right ? 1 : 0;
+
 class Request {
   constructor() { this.result = undefined; this.error = null; this.onsuccess = null; this.onerror = null; }
   succeed(result) { this.result = result; queueMicrotask(() => this.onsuccess?.({ target: this })); }
@@ -53,6 +58,10 @@ class Transaction {
     };
     return {
       get: (key) => request(() => (rows.has(key) ? structuredClone(rows.get(key)) : undefined)),
+      getAll: (range) => request(() => [...rows.keys()]
+        .filter((key) => range === undefined || compareKeys(key, range.lower) >= 0)
+        .sort(compareKeys)
+        .map((key) => structuredClone(rows.get(key)))),
       put: (value) => write(() => { rows.set(value[keyPath], structuredClone(value)); return value[keyPath]; }),
       delete: (key) => write(() => { rows.delete(key); }),
     };
@@ -69,6 +78,9 @@ class Database {
   }
   close() { this.closed = true; }
 }
+
+/** IDBKeyRange for the fake: only lowerBound (inclusive), which getAll takes. */
+export const fakeKeyRange = { lowerBound: (lower) => ({ lower }) };
 
 export function fakeIndexedDB() {
   const databases = new Map();

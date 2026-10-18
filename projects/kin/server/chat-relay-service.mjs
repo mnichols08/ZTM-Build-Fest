@@ -20,6 +20,10 @@ import { decodeCursor, encodeCursor, MAX_EVENTS_PER_BATCH, validateEventEnvelope
 import { DurableConflictError, MAX_HOUSEHOLD_CHAT_EVENTS } from "./durable-store.mjs";
 
 const MAX_REQUEST_BYTES = 200_000;
+/** Most chat events one pull returns. Chat is far busier than household
+ * events, so its pages are larger than the household relay's (at most
+ * about 1.6 MB of envelopes). */
+export const MAX_CHAT_PULL = 200;
 
 /** Storage when the service has no durable store (tests, in-memory mode),
  * with the same decisions as durable-store/chat-events.mjs. */
@@ -149,13 +153,13 @@ export class ChatRelayService {
     };
   }
 
-  pull(auth, cursorValue = "", limitValue = "20") {
+  pull(auth, cursorValue = "", limitValue = String(MAX_CHAT_PULL)) {
     this.assertCanChat(auth);
     const householdId = auth.household.id;
     const cursor = decodeCursor(cursorValue);
     const limit = Number(limitValue);
     const relay = this.storage.chatRelayState(householdId);
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_EVENTS_PER_BATCH || cursor > relay.nextSequence - 1)
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_CHAT_PULL || cursor > relay.nextSequence - 1)
       throw new PairingError("sync_cursor_invalid", "Kin could not continue from that chat position.", 400);
     return this.storage.readChatEvents(householdId, cursor, limit, auth.device.syncHistoryFromEpoch ?? 1);
   }

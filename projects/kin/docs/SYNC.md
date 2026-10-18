@@ -406,7 +406,7 @@ deleting the blob deletes the content.
   lists blobs as retired (an edit replaced one, its author deleted the
   message, an admin removed it), every device deletes its local copy, and the
   author's device (an admin's, for a removal) asks the service to retire
-  them. The service retires a live blob only for the member who uploaded it
+  them once the replacing event is accepted (#111). The service retires a live blob only for the member who uploaded it
   (from any of their devices) or a household admin, all of a request or none
   of it; already retired blobs are skipped. A retired blob keeps a tombstone
   (its reference, size, uploader and times, no bytes), so it is not served
@@ -439,6 +439,53 @@ deleting the blob deletes the content.
 - Household deletion purges every blob and tombstone at finalization. An
   admin removal adds a `chat_content_removed_by_admin` audit row with a count,
   never what was removed.
+
+## Chat relay (v1.1, #111)
+
+Chat events are canonical events in the same signed, encrypted envelopes as
+household events (protocol 1, envelope 1), but they travel in a stream of
+their own (`server/chat-relay-service.mjs`) and land in the device's chat log
+rather than the household history ([ADR 0008](decisions/0008-household-chat.md)).
+Until the chat key exists (#123) they are encrypted under the household key
+epoch, like household events.
+
+- **Routes.** `POST /api/chat/events` takes a KSEV batch (at most 20
+  envelopes); `GET /api/chat/events?cursor=&limit=` returns a KSEP page of at
+  most 200; `GET /api/chat/status` returns `{ deviceSequence, latestCursor }`
+  for the calling device. Every route needs a trusted device of a member who
+  may take part in the household; pushes also need household sync set up and
+  wait out a pending key rotation (409 `sync_rotation_pending`).
+- **The same envelope rules as the household relay:** the authenticated
+  device's own envelopes only, under a key epoch it holds; each device's chat
+  sequence (counted apart from its household sequence) has no gaps; a repeated
+  event ID is accepted only with identical bytes; the logical-time advance
+  bound applies to the chat stream's own clock; pages only show epochs the
+  reading device may read. Its own cursor, sequence and quota (250,000 chat
+  events per household) keep chat from counting against household limits.
+  Accepted chat sends the same push and live hints as household events.
+- **The client** (`web/chat/chat-room.js`) runs one chat pass after each full
+  household pass of the sync coordinator, and a message sent hints the
+  coordinator at once. A pass uploads each pending event's content blob, then
+  pushes the events in batches of 20, then asks the service to retire the
+  blobs those events replaced (an edit's old text, a deleted message's), then
+  pulls up to five pages. Each pulled event is checked as household events
+  are: from a device in the verified directory, not revoked before the
+  current epoch, not from before its device's history, signed by one of that
+  device's keys, and carrying the same event ID, household, author (the
+  signing device's member), device and logical time inside as outside; its
+  kind must be a chat kind. Anything else pauses chat (not household sync)
+  and is not stored.
+- **Sequences.** A device's chat log starts with a provisional sequence. The
+  first pass asks `/api/chat/status`: events written before then (offline,
+  on a fresh device) are renumbered after the relay's count and sealed again.
+  Later passes ask only while something is pending; events at or below the
+  relay's count were accepted before a lost reply and leave the outbox
+  without being sent again. A pending event sealed under an older key epoch
+  is sealed again under the current one before it leaves the device.
+- **Failure handling.** Chat trouble is reported to the chat room and the
+  household pass still finishes; only lost access or a deleted household
+  stops the whole pass. A backlog larger than one pass continues on the
+  coordinator's normal continuation schedule.
 
 ## Privacy boundary
 

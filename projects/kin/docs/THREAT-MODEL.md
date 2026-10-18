@@ -416,6 +416,19 @@ copied a blob's bytes and key before deletion keeps them; service backups
 keep deleted bytes as of backup time, and restoring one can bring deleted
 blobs back on the service.
 
+**Chat relay (#111, in place).** Chat events travel in their own relay
+stream, encrypted and signed like household events and, until the chat key
+(#123), under the household key epoch: anyone holding that epoch (every
+device of the household that may sync) can read them, and the service can't.
+The service learns each chat event's size, time, sending device and order,
+and counts chat apart from household events, so it can tell chat activity
+from other household activity. Devices accept a chat event only from a
+verified household device, signed by it, with the same identity inside as
+outside, so the service can't forge, alter or misattribute one; it can still
+withhold or delay events, as for household sync. The device keeps chat
+events as those encrypted envelopes; the decrypted log lives in memory only
+while unlocked.
+
 **Planned.** Each chat story records its own detail here as it lands.
 
 ### v1.0 was not tested across every browser and device
