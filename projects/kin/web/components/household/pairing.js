@@ -249,6 +249,8 @@ export class HouseholdPairing {
       : "Expired — request a new code.";
     if (!seconds) {
       clearInterval(this.host.timer);
+      // Show the ended state now; the poll confirms it with the service.
+      this.host.render();
       this.pollPairing();
     }
   }

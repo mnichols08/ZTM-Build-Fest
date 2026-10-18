@@ -54,15 +54,13 @@ test("a claimed invitation shows no QR: the code has been used", () => {
 });
 
 for (const [state, wording] of [
-  ["Expired", "This invitation ended: it expired. Create a new one to invite someone."],
+  ["Expired", "This invitation ended: it expired."],
   ["Revoked", "This invitation ended: it was revoked."],
-  ["Rejected", "This invitation ended: it was turned down."],
 ]) {
   test(`a ${state.toLowerCase()} invitation is replaced by "This invitation ended", never a stale code`, () => {
     const { host, views } = memberHost({ state, code: "F7KM-Q2DX", expiresAt: Date.now() - 1, pairingId: "p1", version: 3 });
     views.renderMember();
     clearInterval(host.timer);
-  clearInterval(host.timer);
     assert.equal(stateText(host), wording);
     assert.equal(qrIn(host), null);
     assert.equal(host.byClass("pairing-code"), null, "no code is offered either");
@@ -106,4 +104,26 @@ test("typing the code instead closes the scanner and returns to the field", () =
   r.scanner.dispatchEvent(new CustomEvent("kin-qr-manual"));
   assert.equal(r.area.children.includes(r.scanner), false);
   assert.equal(document.activeElement, r.field);
+});
+
+test("a pending invitation past its expiry shows as ended before the next poll", () => {
+  const { host, views } = memberHost({ state: "Pending", code: "F7KM-Q2DX", expiresAt: Date.now() - 1000, pairingId: "p1", version: 1 });
+  views.renderMember();
+  clearInterval(host.timer);
+  assert.equal(stateText(host), "This invitation ended: it expired.");
+  assert.equal(qrIn(host), null);
+  assert.equal(host.byClass("pairing-code"), null);
+  assert.equal(host.byText("Copy code"), null);
+  assert.equal(host.byText("Share invitation"), null);
+});
+
+test("a device that is already a member drops a captured invitation code and says so", () => {
+  globalThis.window = { PublicKeyCredential: function PublicKeyCredential() {} };
+  const { host, views } = memberHost(null);
+  host.identity = { memberId: "m1", deviceId: "d1" };
+  host.prefilledCode = "F7KM-Q2DX";
+  host.renderMember = () => views.renderMember();
+  views.render();
+  assert.equal(host.prefilledCode, "", "the code is not kept");
+  assert.ok(host.find((node) => node.className === "household-message" && /already in a household/.test(node.textContent)));
 });

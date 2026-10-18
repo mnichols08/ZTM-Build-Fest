@@ -38,10 +38,18 @@ test("opening an invitation link takes the code and clears the address bar", () 
   assert.deepEqual(past.calls, ["/pair"], "the fragment is replaced at once");
 });
 
-test("links shared before #97 (code in the query) are read and cleared too", () => {
+test("a code in the query is not used, only removed from the address", () => {
+  // It has already travelled to the server, unlike a fragment.
   const past = recorder();
-  assert.equal(takeInvitationCode(address("https://kin.test/pair?code=F7KM-Q2DX"), past), "F7KM-Q2DX");
+  assert.equal(takeInvitationCode(address("https://kin.test/pair?code=F7KM-Q2DX"), past), "");
   assert.deepEqual(past.calls, ["/pair"]);
+});
+
+test("the code parameter is found in any letter case, as the router lower-cases fragments", () => {
+  const past = recorder();
+  assert.equal(takeInvitationCode(address("https://kin.test/pair#CODE=F7KM-Q2DX"), past), "F7KM-Q2DX");
+  assert.deepEqual(past.calls, ["/pair"]);
+  assert.equal(invitationCode("https://kin.test/pair#Code=F7KM-Q2DX"), "F7KM-Q2DX");
 });
 
 test("addresses without a code are left alone", () => {

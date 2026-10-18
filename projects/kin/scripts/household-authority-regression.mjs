@@ -159,7 +159,7 @@ async function pageJoinField() {
   for (let i = 0; i < 400 && !h.querySelector('input[name="code"]'); i++) await new Promise((r) => setTimeout(r, 25));
   const field = h.querySelector('input[name="code"]');
   if (!field) throw new Error("The join screen has no code field: " + h.textContent.slice(0, 300));
-  return { value: field.value, path: location.pathname, hash: location.hash, search: location.search };
+  return { value: field.value, path: location.pathname, hash: location.hash, search: location.search, claimed: Boolean(h.claim) };
 }
 
 async function pageScanInvitation(link) {
@@ -180,6 +180,7 @@ async function pageScanInvitation(link) {
     offersTyping,
     cameraOff,
     scannerClosed: !h.querySelector("kin-qr-scanner"),
+    claimed: Boolean(h.claim),
     status: h.querySelector(".pairing-scan [role=status]")?.textContent ?? "",
     stillJoining: Boolean([...h.querySelectorAll("button")].find((button) => button.textContent === "Create passkey and request approval")),
   };
@@ -957,15 +958,21 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     await b.send("Page.navigate", { url: shownQr.value });
     await b.waitForReloadAndUnlock();
     const opened = await b.callStable(pageJoinField);
-    check(opened.value === qrInvitation.code && opened.path === "/pair" && opened.hash === "" && opened.search === "",
+    check(opened.value === qrInvitation.code && opened.path === "/pair" && opened.hash === "" && opened.search === "" && !opened.claimed,
       "opening the invitation link fills in the code and clears it from the address bar: " + JSON.stringify(opened));
     const scanned = await b.call(pageScanInvitation, shownQr.value);
-    check(scanned.value === qrInvitation.code && scanned.scannerClosed && scanned.offersTyping && scanned.cameraOff && scanned.stillJoining &&
+    check(scanned.value === qrInvitation.code && scanned.scannerClosed && scanned.offersTyping && scanned.cameraOff && scanned.stillJoining && !scanned.claimed &&
       /Code filled in/.test(scanned.status),
       "a scanned invitation fills in the code; the camera waits for a tap, typing is offered, and joining still needs a passkey: " + JSON.stringify(scanned));
     const codeForms = [qrInvitation.code, qrInvitation.code.replaceAll("-", "")].map((value) => value.toLowerCase());
     const leaked = requests.filter(({ url, referer }) => codeForms.some((value) => url.toLowerCase().includes(value) || referer.toLowerCase().includes(value)));
+    // The service also sends Referrer-Policy: no-referrer, so the Referer half
+    // is a second line of defence; the request URLs are the real check.
     check(requests.length > 0 && leaked.length === 0, "the invitation code never appears in a request URL or Referer: " + JSON.stringify(leaked.slice(0, 3)));
+    // Opening the link and scanning it filled in a field and nothing more.
+    const untouched = await a.call(pageFetch, { path: `/api/pairings/${qrInvitation.pairingId}` });
+    check(untouched.status === 200 && untouched.body?.state === "Pending",
+      "opening or scanning an invitation claims nothing: the service still has it pending: " + JSON.stringify(untouched.body?.state));
     const ended = await a.call(pageRevokeInvitation);
     check(ended.state === "Revoked" && ended.stateText === "This invitation ended: it was revoked." && !ended.qrShown && !ended.codeShown,
       "a revoked invitation is replaced by \"This invitation ended\", never a stale QR or code: " + JSON.stringify(ended));

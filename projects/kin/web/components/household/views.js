@@ -8,9 +8,8 @@ import "../kin-qr-scanner.js";
 
 /** Invitation states that mean the code no longer works. */
 const ENDED = {
-  Expired: "This invitation ended: it expired. Create a new one to invite someone.",
+  Expired: "This invitation ended: it expired.",
   Revoked: "This invitation ended: it was revoked.",
-  Rejected: "This invitation ended: it was turned down.",
 };
 
 export class HouseholdViews {
@@ -50,6 +49,12 @@ export class HouseholdViews {
     if (location.pathname === "/pair" && !this.host.identity)
       return this.renderJoin();
     if (!this.host.identity) return this.renderSetup();
+    if (this.host.prefilledCode) {
+      // An invitation opened on a device that is already a member: say so,
+      // and don't keep the code (#97).
+      this.host.prefilledCode = "";
+      this.host.message("This device is already in a household, so the invitation code was not used.");
+    }
     this.host.renderMember();
     this.host.disabled = this.host.disabled;
   }
@@ -136,6 +141,8 @@ export class HouseholdViews {
     trigger.hidden = true;
     status.textContent = "";
     area.append(scanner);
+    // The button that had focus is hidden; the scanner's own start takes it.
+    scanner.querySelector?.("button.primary-action")?.focus();
   }
 
   renderJoin() {
@@ -303,11 +310,16 @@ export class HouseholdViews {
       this.host.button("Log out", () => this.ctx.auth.logout(), "secondary");
       return;
     }
+    // A pending invitation past its expiry is shown as ended at once, before
+    // the next poll confirms it: never a stale code beside "ended" (#97).
+    const lapsed = this.host.pairing.state === "Pending" &&
+      Number.isFinite(this.host.pairing.expiresAt) && this.host.pairing.expiresAt <= Date.now();
+    const pairingState = lapsed ? "Expired" : this.host.pairing.state;
     const state = document.createElement("p");
     state.className = "pairing-state";
     state.setAttribute("role", "status");
     state.textContent =
-      this.host.pairing.state === "Pending"
+      pairingState === "Pending"
         ? "Waiting for another trusted adult to claim this code."
         : this.host.pairing.state === "Claimed"
           ? ["device", "replacement"].includes(this.host.pairing.purpose)
@@ -315,14 +327,14 @@ export class HouseholdViews {
             : this.host.pairing.purpose === "member-recovery"
               ? `${this.host.pairing.deviceLabel || "The recovery device"} is awaiting authorization. Approval revokes that adult's old credentials and devices.`
               : `${this.host.pairing.deviceLabel || "The other device"} is awaiting your approval.`
-          : ENDED[this.host.pairing.state]
-            ? ENDED[this.host.pairing.state]
+          : ENDED[pairingState]
+            ? ENDED[pairingState]
             : typeof this.host.pairing.state === "string"
               ? `Pairing ${this.host.pairing.state.toLowerCase()}.`
               : "Kin could not read the pairing status. Revoke this request or reload before continuing.";
     this.host.append(state);
-    if (["Pending", "Claimed"].includes(this.host.pairing.state)) {
-      if (this.host.pairing.state === "Pending")
+    if (["Pending", "Claimed"].includes(pairingState)) {
+      if (pairingState === "Pending")
         this.host.showFingerprint(
           "Compare this household device key",
           this.host.localFingerprint,
@@ -330,7 +342,7 @@ export class HouseholdViews {
       // While the invitation waits, a QR code carries it, beside the code
       // that can always be typed (#97). It is never shown once the code has
       // been claimed or has ended.
-      if (this.host.pairing.state === "Pending" && this.host.pairing.code) {
+      if (pairingState === "Pending" && this.host.pairing.code) {
         const qr = document.createElement("kin-qr");
         qr.className = "pairing-qr";
         qr.label = "QR code for this invitation. Scan it with the joining device's camera.";

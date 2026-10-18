@@ -82,6 +82,15 @@ class KinHousehold extends HTMLElement {
     this.load();
   }
 
+  /** An invitation code arrived after this element connected (a same-page
+   * jump to /pair#code=…): fill the join screen with it (#97). */
+  offerInvitationCode() {
+    const code = consumeInvitationCode();
+    if (!code) return;
+    this.prefilledCode = code;
+    this.render();
+  }
+
   disconnectedCallback() {
     this.connectionAbort.abort();
     clearInterval(this.timer);
