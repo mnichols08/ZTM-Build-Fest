@@ -22,7 +22,8 @@ pub struct Frame<'a> {
 
 /// Reads the single QR symbol in `frame` and returns its payload.
 pub fn decode(frame: &Frame) -> Result<Vec<u8>, QrError> {
-    if frame.width == 0 || frame.height == 0 || frame.luma.len() != frame.width * frame.height {
+    let pixels = frame.width.checked_mul(frame.height);
+    if frame.width == 0 || frame.height == 0 || pixels != Some(frame.luma.len()) {
         return Err(QrError::NotFound);
     }
     let binary = binarize(frame);
@@ -47,11 +48,12 @@ pub fn decode(frame: &Frame) -> Result<Vec<u8>, QrError> {
 /// tolerate uneven lighting and glare, which a global threshold doesn't.
 fn binarize(frame: &Frame) -> Vec<u8> {
     let (w, h) = (frame.width, frame.height);
-    let mut integral = vec![0u32; (w + 1) * (h + 1)];
+    // u64: a 4200x4200 frame's running sums overflow u32 in debug builds.
+    let mut integral = vec![0u64; (w + 1) * (h + 1)];
     for y in 0..h {
-        let mut row = 0u32;
+        let mut row = 0u64;
         for x in 0..w {
-            row += u32::from(frame.luma[y * w + x]);
+            row += u64::from(frame.luma[y * w + x]);
             integral[(y + 1) * (w + 1) + x + 1] = integral[y * (w + 1) + x + 1] + row;
         }
     }
@@ -67,7 +69,7 @@ fn binarize(frame: &Frame) -> Vec<u8> {
             let count = ((y1 - y0) * (x1 - x0)) as u64;
             let pixel = u64::from(frame.luma[y * w + x]);
             // pixel < mean - 8, without dividing.
-            if pixel * count + 8 * count < u64::from(sum) {
+            if pixel * count + 8 * count < sum {
                 out[y * w + x] = 1;
             }
         }
