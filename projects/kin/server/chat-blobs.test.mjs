@@ -222,6 +222,19 @@ test("blobs, tombstones and claims persist; retired bytes leave the database fil
   assert.equal(store.validate(), true);
 });
 
+test("finalizing deletions checkpoints only when it purged something", () => {
+  const store = new DurableStore(":memory:");
+  try {
+    const statements = [];
+    const prepare = store.db.prepare.bind(store.db);
+    store.db.prepare = (sql) => { statements.push(sql); return prepare(sql); };
+    store.finalizeExpiredDeletions(clock.now);
+    assert.equal(statements.some((sql) => sql.includes("wal_checkpoint")), false);
+  } finally {
+    store.close();
+  }
+});
+
 test("validation notices running counts that drifted from the rows", () => {
   const store = new DurableStore(":memory:");
   try {

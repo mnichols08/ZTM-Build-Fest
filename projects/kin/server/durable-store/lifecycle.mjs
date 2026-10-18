@@ -65,8 +65,8 @@ export const lifecycleMethods = {
 
   /** Purge zeroes freed pages; checkpointing the WAL afterwards carries the
    * zeroed pages into the main file at once (outside a transaction only). */
-  checkpointAfterPurge(result) {
-    if (!this.db.isTransaction) this.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+  checkpointAfterPurge(result, purged = true) {
+    if (purged && !this.db.isTransaction) this.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
     return result;
   },
 
@@ -218,7 +218,9 @@ export const lifecycleMethods = {
   finalizeExpiredDeletions(now) {
     if (!isTimestamp(now))
       throw new DurableStoreError("Kin household deletion time is invalid.");
-    return this.checkpointAfterPurge(this.transaction(() => {
+    // Runs at the start of every API request: checkpoint only after an
+    // actual purge, never on the common nothing-to-do call.
+    const purged = this.transaction(() => {
       const rows = this.db
         .prepare(
           `SELECT id FROM households
@@ -241,7 +243,8 @@ export const lifecycleMethods = {
           .run(now, householdId);
       }
       return rows.map(({ id }) => id);
-    }));
+    });
+    return this.checkpointAfterPurge(purged, purged.length > 0);
   },
 
   loadNonActiveHouseholds() {
