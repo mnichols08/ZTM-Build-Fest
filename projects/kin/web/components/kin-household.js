@@ -5,6 +5,7 @@ import { HouseholdApi } from "./household/api.js";
 import { HouseholdAuth } from "./household/auth.js";
 import { HouseholdLifecycle } from "./household/lifecycle.js";
 import { HouseholdLink } from "./household/link.js";
+import { HouseholdLinkApproval } from "./household/link-approval.js";
 import { HouseholdMembership } from "./household/membership.js";
 import { HouseholdPairing } from "./household/pairing.js";
 import { HouseholdViews } from "./household/views.js";
@@ -17,6 +18,7 @@ const PARTS = {
   auth: HouseholdAuth,
   pairing: HouseholdPairing,
   link: HouseholdLink,
+  linkApproval: HouseholdLinkApproval,
   membership: HouseholdMembership,
   lifecycle: HouseholdLifecycle,
   views: HouseholdViews,
@@ -100,6 +102,7 @@ class KinHousehold extends HTMLElement {
 
   disconnectedCallback() {
     this.ctx.link.abandon();
+    this.ctx.linkApproval.abandon();
     this.connectionAbort.abort();
     clearInterval(this.timer);
     clearTimeout(this.poll);

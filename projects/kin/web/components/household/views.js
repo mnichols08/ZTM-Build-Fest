@@ -289,6 +289,8 @@ export class HouseholdViews {
   }
 
   renderMember() {
+    // Add a computer (#101) takes the panel while it is open.
+    if (this.ctx.linkApproval?.open) return this.ctx.linkApproval.render();
     this.host.text("This device belongs to an authenticated household member.");
     if (this.host.syncStatus?.memberKind === "temporary" && this.host.syncStatus.memberExpiresAt)
       this.host.text(`Temporary household access · ends ${new Date(this.host.syncStatus.memberExpiresAt).toLocaleString()}`);
@@ -314,6 +316,8 @@ export class HouseholdViews {
           () => this.host.createDevicePairing(),
           "secondary",
         );
+        // Sign in a computer by scanning its code (#101).
+        this.host.button("Add a computer", () => this.ctx.linkApproval.start(), "secondary");
       }
       if (this.host.syncStatus?.memberKind === "adult")
         this.host.button("Trusted devices", () => this.host.showDevices(), "secondary");
