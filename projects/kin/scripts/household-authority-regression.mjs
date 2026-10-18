@@ -522,6 +522,13 @@ async function pageResumeAutomaticSync() {
   delete app.ctx.sync.configureSyncCoordinator;
 }
 
+async function pageReconnectAutomaticSync() {
+  const app = document.querySelector("kin-app");
+  for (let i = 0; i < 400 && !(app.syncCoordinator && app.household?.localFingerprint); i++)
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  return Boolean(app.syncCoordinator && app.household?.localFingerprint);
+}
+
 async function pageShiftClock(offsetMs) {
   const original = Date.now.bind(Date);
   window.__kinOriginalDateNow = original;
@@ -722,6 +729,40 @@ async function pageHeaderBrandModes() {
   }
   app.ctx.appearance.applyAppearance(previous);
   return results;
+}
+
+async function pagePrivateBrandState() {
+  const app = document.querySelector("kin-app");
+  for (let i = 0; i < 400 && app.brandUploadedMark.hidden && app.householdSettings?.brand?.iconSource === "upload"; i++)
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  return { locked: !app.vault || app.vault.locked, name: app.brandTitle.textContent,
+    label: app.brandLink.getAttribute("aria-label"), revision: app.householdSettings?.revision ?? null,
+    privateBrand: app.householdSettings?.brand?.iconSource ?? null, genericHidden: app.brandGenericMark.hidden,
+    letterHidden: app.brandLetterMark.hidden, uploadHidden: app.brandUploadedMark.hidden };
+}
+
+async function pageFailPrivateBrandAsset() {
+  const app = document.querySelector("kin-app");
+  app.brandUploadedMark.onerror?.(new Event("error"));
+  return { genericHidden: app.brandGenericMark.hidden, letterHidden: app.brandLetterMark.hidden,
+    uploadHidden: app.brandUploadedMark.hidden, hasObjectUrl: Boolean(app.brandObjectUrl) };
+}
+
+async function pageLockAndReadBrand() {
+  const app = document.querySelector("kin-app");
+  app.ctx.session.lockHousehold(false);
+  for (let i = 0; i < 400 && app.store !== null; i++) await new Promise((resolve) => setTimeout(resolve, 25));
+  return { locked: !app.vault, title: document.title, name: app.brandTitle.textContent,
+    label: app.brandLink.getAttribute("aria-label"), genericHidden: app.brandGenericMark.hidden,
+    letterHidden: app.brandLetterMark.hidden, uploadHidden: app.brandUploadedMark.hidden };
+}
+
+async function pageWaitForLockedBrand() {
+  const app = document.querySelector("kin-app");
+  for (let i = 0; i < 400 && app.vault; i++) await new Promise((resolve) => setTimeout(resolve, 25));
+  return { locked: !app.vault, name: app.brandTitle.textContent, label: app.brandLink.getAttribute("aria-label"),
+    genericHidden: app.brandGenericMark.hidden, letterHidden: app.brandLetterMark.hidden,
+    uploadHidden: app.brandUploadedMark.hidden };
 }
 
 // #85, #90, #227: turn notifications on and off through the real panel, with the
@@ -1218,6 +1259,15 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(published.privateBrand === "upload" && published.header.name && published.header.label === `${published.header.name} — Today` &&
       published.header.genericHidden && published.header.letterHidden && !published.header.uploadHidden,
       "admin A's unlocked header uses the uploaded icon from encrypted household settings: " + JSON.stringify(published.header));
+    await a.setOffline(true);
+    await a.send("Page.reload", {});
+    await a.waitForReloadAndUnlock();
+    const offlineBrand = await a.call(pagePrivateBrandState);
+    check(!offlineBrand.locked && offlineBrand.privateBrand === "upload" && offlineBrand.revision > 0 &&
+      offlineBrand.genericHidden && offlineBrand.letterHidden && !offlineBrand.uploadHidden,
+      "an immediate offline hard reload restores the accepted private icon from the protected revision cache: " + JSON.stringify(offlineBrand));
+    await a.setOffline(false);
+    check(await a.call(pageReconnectAutomaticSync), "A reconnects household sync after the offline identity restore");
     const mobileBrandModes = await a.call(pageHeaderBrandModes);
     check(mobileBrandModes.every((entry) => entry.width === 320 && entry.mark[0] === 32 && entry.mark[1] === 32 && entry.headerFits &&
       entry.uploadVisible && entry.genericHidden && entry.background !== entry.color),
@@ -1235,6 +1285,22 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(memberView.privateBrand === "upload" && memberView.header.name === published.header.name && memberView.header.label === published.header.label &&
       memberView.header.genericHidden && memberView.header.letterHidden && !memberView.header.uploadHidden,
       "non-admin B's unlocked header receives the private household icon and accessible name: " + JSON.stringify(memberView.header));
+    const failedBrand = await b.call(pageFailPrivateBrandAsset);
+    check(!failedBrand.genericHidden && failedBrand.letterHidden && failedBrand.uploadHidden && !failedBrand.hasObjectUrl,
+      "a failed private icon asset falls back to the generic Kin mark without retaining its object URL: " + JSON.stringify(failedBrand));
+    const recoveredBrand = await b.call(pageInstallIdentityAsMember);
+    check(recoveredBrand.header.genericHidden && recoveredBrand.header.letterHidden && !recoveredBrand.header.uploadHidden,
+      "the next verified household refresh replaces an asset failure with the current private icon");
+    const lockedBrand = await b.call(pageLockAndReadBrand);
+    check(lockedBrand.locked && lockedBrand.title.endsWith("— Kin") && !lockedBrand.title.includes(published.header.name) &&
+      lockedBrand.name === "Kin" && lockedBrand.label === "Kin — Today" &&
+      !lockedBrand.genericHidden && lockedBrand.letterHidden && lockedBrand.uploadHidden,
+      "locking clears the private household identity before the locked shell is exposed: " + JSON.stringify(lockedBrand));
+    await b.call(pageUnlock, b.recovery);
+    await b.callStable(pageWaitHousehold);
+    const reopenedBrand = await b.call(pagePrivateBrandState);
+    check(reopenedBrand.privateBrand === "upload" && reopenedBrand.genericHidden && reopenedBrand.letterHidden && !reopenedBrand.uploadHidden,
+      "reopening the household restores its private identity without retaining the locked fallback: " + JSON.stringify(reopenedBrand));
     const withdrawn = await a.call(pageWithdrawInstallIdentity);
     check(!withdrawn.published && withdrawn.shortName === "Kin" && withdrawn.privateBrand === "upload" &&
       withdrawn.header.genericHidden && withdrawn.header.letterHidden && !withdrawn.header.uploadHidden,
@@ -1396,9 +1462,10 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(syncService.status(relaySession(aBoot.identity.memberId, aBoot.identity.deviceId)).currentEpoch === committedEpoch + 1,
       "Adult A obtains the committed epoch before completing the required post-revocation rotation");
     await b.setOffline(false);
-    result = await b.call(pageSync);
-    check(result.last?.state === "paused" && ["authentication_required", "device_not_trusted"].includes(result.last.code),
-      "revoked B's reconnect sync is refused: " + JSON.stringify(result.last));
+    const revokedBrand = await b.call(pageWaitForLockedBrand);
+    check(revokedBrand.locked && revokedBrand.name === "Kin" && revokedBrand.label === "Kin — Today" &&
+      !revokedBrand.genericHidden && revokedBrand.letterHidden && revokedBrand.uploadHidden,
+      "revoked B is locked and private branding is cleared immediately on reconnect: " + JSON.stringify(revokedBrand));
     const bPush = await b.call(pageFetch, { path: "/api/sync/events", method: "POST", bytes: [75, 83, 69, 86, 1, 0, 0, 0] });
     check([401, 403].includes(bPush.status), `revoked B cannot push its stale outbox (${bPush.status})`);
     const bLogin = await b.call(pageFetch, { path: "/api/login/options", method: "POST", body: {} });

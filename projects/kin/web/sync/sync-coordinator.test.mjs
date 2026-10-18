@@ -466,6 +466,48 @@ test("household settings are cached only after validation and newer protected re
   assert.deepEqual(calls, []);
 });
 
+test("an accepted household settings save is immediately available to offline startup", async () => {
+  const householdId = "31".repeat(16);
+  const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+  const value = { version: 1, revision: 2, name: "Willow", appearance: {
+    version: 1, owner: "household", mode: "light", colorSource: "default", seed: "#984D38", manual: null, image: null,
+  }, brand: { version: 1, iconSource: "letter", icon: null } };
+  const cached = [];
+  const coordinator = new SyncCoordinator({ store: {}, engine: {}, identity: { householdId, deviceId: "device" } });
+  coordinator.request = async (path) => path === "/api/sync/status" ? { currentEpoch: 4 } : { revision: 3 };
+  coordinator.keyStore = {
+    getEpoch: async () => ({ householdKey: key }),
+    cacheHouseholdSettings: async (record) => { cached.push(record); return record; },
+  };
+  assert.deepEqual(await coordinator.saveHouseholdSettings(value), { ...value, revision: 3 });
+  assert.equal(cached.length, 1);
+  assert.equal(cached[0].householdId, householdId);
+  assert.equal(cached[0].revision, 3);
+  assert.equal(cached[0].keyEpoch, 4);
+  assert.match(cached[0].ciphertext, /^[A-Za-z0-9_-]+$/);
+  assert.match(cached[0].digest, /^[a-f0-9]{64}$/);
+});
+
+test("a cache failure after server acceptance reports the committed settings", async () => {
+  const householdId = "32".repeat(16);
+  const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
+  const value = { version: 1, revision: 2, name: "Willow", appearance: {
+    version: 1, owner: "household", mode: "light", colorSource: "default", seed: "#984D38", manual: null, image: null,
+  }, brand: { version: 1, iconSource: "letter", icon: null } };
+  const coordinator = new SyncCoordinator({ store: {}, engine: {}, identity: { householdId, deviceId: "device" } });
+  coordinator.request = async (path) => path === "/api/sync/status" ? { currentEpoch: 4 } : { revision: 3 };
+  coordinator.keyStore = {
+    getEpoch: async () => ({ householdKey: key }),
+    cacheHouseholdSettings: async () => { throw new Error("storage closed"); },
+  };
+  await assert.rejects(() => coordinator.saveHouseholdSettings(value), (error) => {
+    assert.equal(error.code, "household_settings_cache_partial");
+    assert.deepEqual(error.savedValue, { ...value, revision: 3 });
+    assert.match(error.message, /were saved.*offline copy/i);
+    return true;
+  });
+});
+
 test("a member listed twice must agree field by field", () => {
   const entry = { memberId: "aa".repeat(16), memberKind: "temporary", memberActive: true, memberStatus: "active", memberExpiresAt: 9_000 };
   // The same record with its fields in another order is one member.

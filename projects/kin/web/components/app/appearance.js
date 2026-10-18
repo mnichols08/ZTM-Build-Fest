@@ -225,11 +225,19 @@ export class AppearanceController {
     if (!this.app.syncCoordinator) { complete(null, new Error("Connect household sync before changing what home screens show.")); return; }
     const session = this.ctx.session.captureSession();
     let privateBrandSaved = false;
+    let cacheWarning = null;
     try {
       if (!withdraw) {
         const current = this.app.householdSettings ?? { version: 1, revision: 0, name: DEFAULT_HOUSEHOLD_NAME,
           appearance: { ...DEFAULT_APPEARANCE, owner: "household" }, brand: { ...DEFAULT_HOUSEHOLD_BRAND } };
-        const saved = await this.app.syncCoordinator.saveHouseholdSettings({ ...current, brand: event.detail.brand });
+        let saved;
+        try {
+          saved = await this.app.syncCoordinator.saveHouseholdSettings({ ...current, brand: event.detail.brand });
+        } catch (error) {
+          if (error.code !== "household_settings_cache_partial" || !error.savedValue) throw error;
+          saved = error.savedValue;
+          cacheWarning = error;
+        }
         privateBrandSaved = true;
         this.ctx.session.assertCurrentSession(session);
         if ((this.app.householdSettings?.revision ?? -1) <= saved.revision) this.app.householdSettings = saved;
@@ -242,7 +250,7 @@ export class AppearanceController {
         : await this.app.syncCoordinator.publishInstallIdentity(event.detail.value);
       this.ctx.session.assertCurrentSession(session);
       if (withdraw || event.detail.publish !== false) await this.refreshInstallIdentity();
-      complete(result, null);
+      complete(result, cacheWarning);
     } catch (error) {
       // A lock or re-open mid-write still releases the panel's writing state.
       if (!this.ctx.session.isCurrentSession(session)) {
@@ -267,11 +275,19 @@ export class AppearanceController {
     if (!this.app.syncCoordinator) { complete(null, new Error("Connect household sync before changing shared settings.")); return; }
     const session = this.ctx.session.captureSession();
     try {
-      const saved = await this.app.syncCoordinator.saveHouseholdSettings(value);
+      let saved;
+      let cacheWarning = null;
+      try {
+        saved = await this.app.syncCoordinator.saveHouseholdSettings(value);
+      } catch (error) {
+        if (error.code !== "household_settings_cache_partial" || !error.savedValue) throw error;
+        saved = error.savedValue;
+        cacheWarning = error;
+      }
       this.ctx.session.assertCurrentSession(session);
       if ((this.app.householdSettings?.revision ?? -1) <= saved.revision) this.app.householdSettings = saved;
       this.ctx.appearance.applyEffectiveAppearance();
-      complete(saved, null);
+      complete(saved, cacheWarning);
     } catch (error) {
       // A save settling after lock or a household re-open (including the
       // stale-session assert above) reports nothing: a re-open keeps the same

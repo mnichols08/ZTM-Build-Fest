@@ -29,7 +29,8 @@ export async function projectionOracle({ store, engine, vault, asOf = 1_791_900_
   const [context] = await mapProtectedBatch(contexts, (row) => unprotectRecord(vault, "local_context", EVENT_STORE_DEFINITIONS.local_context, row));
   const cursor = context.last_looked_event_id ? idToHex(context.last_looked_event_id) : null;
   const identity = context.sync_household_id
-    ? { householdId: idToHex(context.sync_household_id), bindings: context.sync_identity_bindings }
+    ? { householdId: idToHex(context.sync_household_id), memberId: idToHex(context.sync_member_id),
+      deviceId: idToHex(context.sync_device_id), bindings: context.sync_identity_bindings }
     : null;
   const snapshot = await store.getCatchUpState();
   const fail = (message) => { throw new Error(`Projection oracle: ${message}`); };
