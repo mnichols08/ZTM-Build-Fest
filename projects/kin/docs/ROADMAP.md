@@ -1,7 +1,7 @@
 # Roadmap
 
-Current release: `v1.1.1 — Member and Notification Clarity`, released 2026-10-18
-as `kin-v1.1.1`. The release before it was `v1.1.0 — Connected Household Devices`.
+Current release: `v1.1.2 — Private Household Branding`, released 2026-10-18
+as `kin-v1.1.2`. The release before it was `v1.1.1 — Member and Notification Clarity`.
 The work between v0.10.3 and v1.0.0 shipped per the owner's
 [review-gate decisions](audits/V1.0_REVIEW_GATES.md); this page records how Kin
 got there and continues through v1.1. Work after v1.0 is tracked as GitHub
@@ -53,6 +53,8 @@ v1.0.0 — Stable Kin Platform
 v1.1.0 — Connected Household Devices
 	↓
 v1.1.1 — Member and Notification Clarity
+	↓
+v1.1.2 — Private Household Branding
 ```
 
 Kin supports encrypted local storage, recovery/optional PRF unlock, verified migration, Rust commands/codecs, encrypted archives and a static offline shell alongside opt-in encrypted sync. The v0.11 candidate adds durable server identity/relay state and service database backup/restore. Archives recover local history, not server identity. Independent security review and broader browser/authenticator coverage remain outstanding.
@@ -70,6 +72,8 @@ screens (#78), opt-in content-free push notifications (#85), QR pairing and
 phone-approved computer sign-in (#93), and the Node service sandbox (#106).
 v1.1.1 clarifies member/device identity, pairing choices, device trust, and
 push-recipient diagnostics (#221).
+v1.1.2 keeps private household branding synchronized across the unlocked shell,
+installed-app identity, and session transitions (#231–#233).
 The next unshipped product capability is tracked in GitHub rather than assigned
 a version here.
 

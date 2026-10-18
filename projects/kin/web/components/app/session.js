@@ -71,6 +71,7 @@ export class SessionController {
       this.ctx.peers.openPeerChannel();
       const snapshot = await store.getCatchUpState();
       this.assertCurrentSession(session);
+      this.app.hasLocalSyncBinding = Boolean(snapshot.syncIdentity);
       this.ctx.refresh.applyCatchUpSnapshot(snapshot);
       await this.ctx.appearance.restoreCachedHouseholdDefaults(snapshot.syncIdentity, session);
       this.ctx.render.renderState();
@@ -110,6 +111,7 @@ export class SessionController {
     // initialize() resumes them only if this is the same vault.
     this.app.localReminders.suspendAll(this.app.vault?.vaultId ?? null);
     this.ctx.appearance.clearAppliedAppearance();
+    this.app.hasLocalSyncBinding = false;
     vault.assertUnlocked();
     this.app.vault = vault;
     this.app.securityGeneration++;
@@ -163,6 +165,7 @@ export class SessionController {
         });
     }
     this.app.securityGeneration++;
+    this.app.hasLocalSyncBinding = false;
     this.ctx.appearance.clearAppliedAppearance();
     this.app.removeLockListener?.();
     this.app.removeLockListener = null;

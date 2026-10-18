@@ -6,7 +6,7 @@ canonical events protected by the existing local and sync encryption
 boundaries. Rendering uses text nodes/textContent; household Step text is not
 treated as HTML or sent to an AI service.
 
-**Status:** Current as of v1.1.1. Local protected content is encrypted after verified migration. Sync is optional and uploads client-encrypted canonical event envelopes. The durable service receives no plaintext household event payloads or content keys, but it sees and persists routing and traffic metadata; no anonymity or zero-knowledge claim is made.
+**Status:** Current as of v1.1.2. Local protected content is encrypted after verified migration. Sync is optional and uploads client-encrypted canonical event envelopes. The durable service receives no plaintext household event payloads or content keys, but it sees and persists routing and traffic metadata; no anonymity or zero-knowledge claim is made.
 
 v0.10 encrypts local canonical events, duplicated outbox content, protected metadata
 and private sync key material. Household drafts remain in unlocked memory only;
@@ -142,9 +142,13 @@ household name, a short name, an optional description and the icons without
 encryption, so it can build the installed app's manifest. Only the household's
 own trusted devices can fetch them. Withdrawing deletes the copy, as does
 deleting the household; backups taken while it was published still contain
-it. Everything else, including the encrypted household settings, is
-unchanged. See
+it. The unlocked app uses the name and icon from encrypted household settings,
+not this plaintext copy, so withdrawing publication does not remove internal
+branding. See
 [Household identity](HOUSEHOLD-IDENTITY-DEFAULTS.md#published-install-identity).
+The latest accepted encrypted identity revision is cached only in the device's
+root-protected sync-key store for offline startup. Its decrypted icon URL is
+session-scoped and is revoked when Kin locks, logs out, or changes households.
 
 Device names (v1.1, #71): the server keeps only each device's automatic name
 ("Chrome on iPhone", or "Device"), which it needs to show approvers which

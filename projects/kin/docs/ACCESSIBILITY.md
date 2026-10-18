@@ -15,7 +15,10 @@ The five primary destinations are links in a `nav` labelled "Main": a sticky
 left rail from 720px and a fixed bottom bar with five equal tracks below. The
 current destination carries `aria-current="page"`; secondary destinations are
 links in a labelled `nav` with `aria-current="true"`; the resolved route is
-on `kin-app[data-route]` and in `document.title`. The header exposes Search
+on `kin-app[data-route]` and in `document.title`. While unlocked, the header's
+brand link is named with the private household name and shows its decorative
+icon; locked and unauthorized views keep the generic Kin name and K. The mark
+retains a visible forced-colors boundary and does not animate. The header exposes Search
 and Lock as labelled controls on every width. Item rows separate the
 complete control (a `button` with `aria-pressed`) from the text control that
 opens details. The detail view is one `section` labelled by its heading; on

@@ -5,6 +5,30 @@ development candidates that never received a release tag; their changes
 ship in v1.0.0. The project's planning releases v0.0.1–v0.0.12 are
 documentation only.
 
+## v1.1.2 — Private Household Branding
+
+Released 2026-10-18 as `kin-v1.1.2`. This patch shows the private household
+name and icon in the unlocked shell and keeps that identity synchronized across
+unlock, restore, join, sync, and leave transitions. Locked and unassociated
+surfaces retain generic Kin branding. It does not change Kin's persistent
+formats, protocol versions, or v1.0 compatibility commitment.
+
+### Changed
+
+- The unlocked app header uses the household's private name and icon while
+  preserving generic Kin branding on the lock screen.
+- Restore, join, unlock, sync, and leave flows now refresh or clear both the
+  shell brand and installed-app identity at the appropriate boundary.
+- Household appearance projection and session lifecycle tests cover stale-name,
+  stale-icon, locked-state, and leave/rejoin behavior (#231–#233).
+
+### Verification
+
+- Passed 1,024 Node tests, 261 Rust tests, release WASM/static comparison, and
+  version consistency.
+- Passed the full browser, encrypted-storage, security-UI, virtual-passkey, and
+  154-assertion household-authority suites on the release promotion gate.
+
 ## v1.1.1 — Member and Notification Clarity
 
 Released 2026-10-18 as `kin-v1.1.1`. This patch makes the People & devices

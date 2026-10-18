@@ -14,7 +14,7 @@ import { EventStore } from "../storage/event-store.js";
 import { readArchive, writeArchive } from "./archive-stream.js";
 import { manifestRecoveryLabels } from "./key-label.js";
 
-const KIN_VERSION = "1.1.1";
+const KIN_VERSION = "1.1.2";
 const PACKAGE_FORMAT = 3;
 const MAX_ARCHIVE_BYTES = 160 * 1024 * 1024;
 const MAX_EVENT_COUNT = 10_000;
