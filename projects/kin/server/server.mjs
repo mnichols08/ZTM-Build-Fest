@@ -29,6 +29,7 @@ import {
 } from "../web/sync/envelope-wire.js";
 import { isInsideRoot, webRoot } from "./path-safety.mjs";
 import { clientKey, parseTrustedProxies } from "./client-key.mjs";
+import { LiveService } from "./live/live-service.mjs";
 
 const FLOW_TTL_MS = 2 * 60_000;
 const MAX_ACTIVE_FLOWS = 512;
@@ -112,6 +113,12 @@ export function createKinServer(options = {}) {
     origin,
     clientKey: (request) => clientKey(request, trustedProxies),
   };
+  // The live channel (#107): one WebSocket per trusted device at /api/live.
+  const liveService = options.liveService ?? new LiveService({
+    service, origin, store, readSession: (request) => cookies(request).kin_session, ...(options.live ?? {}),
+  });
+  syncService.liveService = liveService;
+  context.liveService = liveService;
   const server = createServer(async (request, response) => {
     const requestId = randomBytes(12).toString("hex");
     response.setHeader("X-Request-ID", requestId);
@@ -218,11 +225,25 @@ export function createKinServer(options = {}) {
   const lifecycleTimer = setInterval(pruneExpiredDeletions, 60_000);
   lifecycleTimer.unref?.();
   server.on("close", () => clearInterval(lifecycleTimer));
+  server.on("upgrade", (request, socket, head) => {
+    try {
+      liveService.handleUpgrade(request, socket, head);
+    } catch {
+      socket.destroy();
+    }
+  });
+  // close() waits for open sockets, so end live connections first.
+  const close = server.close.bind(server);
+  server.close = (callback) => {
+    liveService.closeAll();
+    return close(callback);
+  };
   return {
     server,
     service,
     syncService,
     pushService,
+    liveService,
     webauthn,
     store,
     flows: context.flows,
@@ -652,6 +673,8 @@ async function api(request, response, url, context) {
         });
       return result;
     });
+    // A replacement or recovery revokes old devices: their sockets close now.
+    context.liveService.revalidate(auth.household.id);
     json(response, 200, approved);
     return;
   }
@@ -712,6 +735,7 @@ async function api(request, response, url, context) {
     }
     if (signedOutDevice) context.pushService.signedOut(signedOutDevice);
     service.logout(session);
+    if (signedOutDevice) context.liveService.revalidate(service.devices.get(signedOutDevice)?.householdId);
     clearCookie(response, "kin_session", secureCookies);
     json(response, 200, { loggedOut: true });
     return;
@@ -1000,6 +1024,7 @@ async function api(request, response, url, context) {
         auth.household.members.has(activeFlow.memberId)
       )
         context.flows.delete(flowId);
+    context.liveService.revalidate(auth.household.id);
     clearCookie(response, "kin_session", secureCookies);
     json(response, 200, {
       ...result,
