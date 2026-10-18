@@ -213,6 +213,30 @@ Increment the IndexedDB schema version only for structural database changes. Eac
 
 Archive is an Item, Handoff or Talk tombstone event; it does not delete source events or implement physical deletion. Portable copy, household deletion, remote deletion, backup retention, and event compaction remain future work described in [RETENTION](RETENTION.md) and [PORTABILITY](PORTABILITY.md). Do not silently delete history as a side effect of completing or archiving an item.
 
+## Chat content blobs (v1.1, #110)
+
+Chat message content is stored apart from the event store, so deleting a
+message can delete its content without touching the immutable log or the
+frozen event database schema. Each household has its own database,
+`kin-chat-blobs:<householdId>`, version 1 (`web/chat/chat-blob-store.js`):
+
+- `blobs`: `{ ref, ciphertext, storedAt }`, sealed content by the SHA-256 of
+  its bytes ([SYNC](SYNC.md#chat-content-blobs-v11-110)). Blobs are already
+  ciphertext and their keys live only in the encrypted chat events, so the
+  store holds nothing readable on its own; it is not wrapped in the
+  encrypted record format.
+- `retired`: `{ ref, retiredAt }`, blobs this device deleted. A retired blob
+  is never stored or fetched again; its message shows as deleted.
+
+A blob is fetched when its message is first shown and kept afterwards; a
+blob from the service is checked against its reference before it is kept.
+Deleting a blob removes its bytes and adds its tombstone in one transaction.
+`ChatBlobStore.destroy()` deletes the whole database; a tab holding it open
+closes its connection when asked, and an old tab that doesn't blocks the
+deletion with a "close other tabs" error. Calling it when the household
+leaves the device, and keeping only recent blobs (#125), come with the chat
+room (#111); today local household data stays on the device as before.
+
 ## Handoff storage
 
 The independent draft key is `kin.handoff.draft`; it is best-effort, tab-scoped, and cleared only if successful submitted text still matches. Handoff shares atomic append/counter transactions and content-free invalidation.

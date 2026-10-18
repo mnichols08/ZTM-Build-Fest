@@ -52,6 +52,7 @@ export class EncryptedSyncService {
   forgetHousehold(householdId) {
     this.households.delete(householdId);
     this.pushService?.removeUntrusted(householdId);
+    this.chatBlobService?.forgetHousehold(householdId);
     this.liveService?.revalidate(householdId);
   }
 

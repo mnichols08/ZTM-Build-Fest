@@ -382,6 +382,64 @@ the fallback whenever the socket is closed.
   path that #107 already secures. A browser whose content security policy
   doesn't let `connect-src 'self'` cover WebSockets simply keeps polling.
 
+## Chat content blobs (v1.1, #110)
+
+Each chat message's content (its text now, a photo or file later) is a
+**content blob**: sealed on the device under its own random 32-byte AES-GCM
+key (`web/chat/chat-blob-crypto.js`), kept outside the event log, and named
+by the SHA-256 of its sealed bytes. The key travels only inside the
+encrypted chat event, so the service stores ciphertext it can't open and
+deleting the blob deletes the content.
+
+- **Format 1:** version byte 1, a 12-byte random nonce, then the AES-GCM
+  ciphertext and its 16-byte tag; the additional data binds the format. A key
+  seals one blob only. Blobs are 29 bytes to 4 MiB plus 4 KiB.
+- **Routes.** `PUT /api/chat/blobs/<ref>` stores a blob (raw bytes; the
+  service checks they hash to `<ref>`, and nothing else). Storing the same
+  blob again is a no-op. `GET /api/chat/blobs/<ref>` returns it, re-checked;
+  404 means it hasn't been uploaded yet, and 410 `chat_blob_deleted` means it
+  was deleted, which clients show as a deleted message rather than an error.
+  `POST /api/chat/blobs/retire` with `{"refs": [...]}` (at most 64) deletes
+  blobs. Every route needs a trusted device of a member who may take part in
+  the household, and only reaches that household's blobs.
+- **Deletion.** There is no direct `DELETE`. When the engine's chat page
+  lists blobs as retired (an edit replaced one, its author deleted the
+  message, an admin removed it), every device deletes its local copy, and the
+  author's device (an admin's, for a removal) asks the service to retire
+  them. The service retires a live blob only for the member who uploaded it
+  (from any of their devices) or a household admin, all of a request or none
+  of it; already retired blobs are skipped. A retired blob keeps a tombstone
+  (its reference, size, uploader and times, no bytes), so it is not served
+  or accepted again. A device that was offline deletes its copy when it next
+  syncs and reads a page.
+- **Deleted before uploaded.** A retire that names a blob the service
+  doesn't have yet (an outbox still holding the upload, an upload in
+  flight) is kept as a claim for that member. The upload is refused (410)
+  when it comes from the claiming member or when an admin claimed it; a
+  claim by anyone else can't stop another member's upload, and it is
+  dropped when the upload is stored. A device whose own blob is deleted
+  while its upload is in flight also retires it right after the upload.
+- **Erasure on the service.** Retiring drops a blob's bytes with SQLite's
+  `secure_delete`, so freed pages are zeroed, and then checkpoints the WAL;
+  household purge zeroes chat pages the same way and checkpoints after it
+  commits. An admin removal's audit row commits together with the retire. Backups taken earlier
+  still hold the bytes, and restoring one brings those blobs back as they
+  were at the backup, tombstones included or not; devices that already
+  deleted their copies keep their own record of the deletion.
+- **Bounds.** Per household: 256 MiB of live blobs and 250,000 live blobs;
+  beyond either, uploads fail with `chat_storage_full` until content is
+  retired. Running counts keep every upload's check constant-time.
+  Tombstones (at most 500,000 per household) and claims (at most 20,000 per
+  member) never block retiring: past their bound the oldest are dropped
+  (for claims, only the claiming member's own), after which a very old
+  retired blob could be uploaded again by someone who kept its bytes. #125
+  revisits these bounds with measured chat volume.
+- **On the device,** blobs live in their own IndexedDB database per
+  household ([STORAGE](STORAGE.md#chat-content-blobs-v11-110)).
+- Household deletion purges every blob and tombstone at finalization. An
+  admin removal adds a `chat_content_removed_by_admin` audit row with a count,
+  never what was removed.
+
 ## Privacy boundary
 
 Ciphertext payloads conceal content only to the extent that key management and client integrity hold. The relay can still observe routing IDs, ciphertext lengths, timing, delivery patterns, and possibly IP/log metadata. Document retention and access controls for these fields. Do not claim perfect anonymity, complete metadata privacy, or protection from a compromised authorized client.

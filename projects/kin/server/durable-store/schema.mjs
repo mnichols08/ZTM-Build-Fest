@@ -3,6 +3,8 @@ import { MAX_ACTIVE_MEMBERS } from "../identity-limits.mjs";
 import {
   DurableStoreError,
   MAX_ATTACHMENT_BYTES,
+  MAX_CHAT_BLOB_BYTES,
+  MIN_CHAT_BLOB_BYTES,
   SERVER_SCHEMA_VERSION,
   sqlitePragma,
 } from "./shared.mjs";
@@ -525,6 +527,57 @@ export const schemaMethods = {
       } catch (error) {
         if (error instanceof DurableStoreError) throw error;
         throw new DurableStoreError("Kin could not complete the push notification migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 11) {
+      try {
+        this.transaction(() => {
+          // v1.1 (#110): chat content blobs, addressed by the SHA-256 of
+          // their encrypted bytes. A retired blob keeps its row without
+          // bytes (a tombstone), so it can't be uploaded again; a retire that
+          // arrives before its upload is kept as a claim; running counts keep
+          // uploads O(1). ciphertext is the last column, so reading a row's
+          // other fields never walks a blob's overflow pages.
+          this.db.exec(`
+            CREATE TABLE chat_blobs (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              blob_ref TEXT NOT NULL CHECK (length(blob_ref) = 64 AND blob_ref NOT GLOB '*[^0-9a-f]*'),
+              retired INTEGER NOT NULL DEFAULT 0 CHECK (retired IN (0, 1)),
+              size_bytes INTEGER NOT NULL CHECK (size_bytes BETWEEN ${MIN_CHAT_BLOB_BYTES} AND ${MAX_CHAT_BLOB_BYTES}),
+              uploader_member_id TEXT NOT NULL,
+              uploader_device_id TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              retired_at INTEGER,
+              ciphertext BLOB,
+              CHECK ((retired = 1) = (ciphertext IS NULL)),
+              CHECK ((retired = 1) = (retired_at IS NOT NULL)),
+              PRIMARY KEY (household_id, blob_ref)
+            );
+            CREATE INDEX chat_blob_tombstones ON chat_blobs(household_id, retired_at) WHERE retired = 1;
+            CREATE TABLE chat_blob_claims (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              blob_ref TEXT NOT NULL CHECK (length(blob_ref) = 64 AND blob_ref NOT GLOB '*[^0-9a-f]*'),
+              member_id TEXT NOT NULL,
+              by_admin INTEGER NOT NULL CHECK (by_admin IN (0, 1)),
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (household_id, blob_ref, member_id)
+            );
+            CREATE INDEX chat_blob_claims_by_member ON chat_blob_claims(household_id, member_id, created_at);
+            CREATE TABLE chat_blob_usage (
+              household_id TEXT PRIMARY KEY REFERENCES households(id),
+              live_blobs INTEGER NOT NULL DEFAULT 0 CHECK (live_blobs >= 0),
+              live_bytes INTEGER NOT NULL DEFAULT 0 CHECK (live_bytes >= 0),
+              tombstones INTEGER NOT NULL DEFAULT 0 CHECK (tombstones >= 0),
+              claims INTEGER NOT NULL DEFAULT 0 CHECK (claims >= 0)
+            );
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(12, Date.now());
+          sqlitePragma(this.db, "user_version = 12");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the chat blob migration.", { cause: error });
       }
     }
   },

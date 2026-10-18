@@ -41,6 +41,11 @@ because they are visible and switchable, not hidden.
   log; deleting or editing a message deletes the old blob on the relay and on
   every device. The log keeps the message event (who sent it, when, and that
   it was edited or deleted) but not its content.
+- **Who deletes a blob on the service** (recorded in #110). The service
+  deletes a message's content blob for the member who uploaded it, from any
+  of their devices, or for a household admin. #110 said "the same device";
+  tying it to the member lets an author who sent from a phone delete from a
+  laptop, and a revoked device can't authenticate anyway.
 - **Chat has its own log** (recorded in #109). Chat events are canonical
   events like any other, but they are kept in a chat log apart from the
   household history: a household's history is capped at 10,000 events and a

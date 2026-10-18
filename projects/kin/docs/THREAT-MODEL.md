@@ -398,6 +398,24 @@ entry records the boundary before the code exists; each story updates it.
 - **Admin removal** of another member's message is shown to everyone as
   "Removed by an admin", never silent.
 
+**Content blobs (#110, in place).** The service stores each message's
+content as a blob sealed under that message's own key, which only the
+encrypted chat event carries; it checks a blob's hash and records which
+member and device uploaded it. A deleted blob's bytes are dropped on the
+service with freed pages zeroed, and a tombstone (reference, size, uploader,
+times) keeps it from being served or accepted again; a deletion that beats
+its upload is kept as a claim that refuses the upload. Devices drop their
+copies when they next read the chat. Only the uploader or a household admin
+can have the service delete a blob; in a legacy household with no admin,
+nobody can delete a removed member's blobs on the service (it fails closed).
+The service also learns when each device fetches each blob (a read signal
+to whoever runs it, finer than a read receipt) and when blobs are retired
+(when messages are edited or deleted). Limits: any trusted device of the
+household can upload blobs within the household's quota; a member who
+copied a blob's bytes and key before deletion keeps them; service backups
+keep deleted bytes as of backup time, and restoring one can bring deleted
+blobs back on the service.
+
 **Planned.** Each chat story records its own detail here as it lands.
 
 ### v1.0 was not tested across every browser and device
