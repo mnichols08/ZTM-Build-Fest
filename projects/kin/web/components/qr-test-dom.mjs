@@ -14,8 +14,24 @@ export class FakeElement {
     this._text = "";
     this.isConnected = false;
   }
-  append(...nodes) { this.children.push(...nodes); }
-  replaceChildren(...nodes) { this.children = [...nodes]; }
+  append(...nodes) {
+    for (const node of nodes) if (node && typeof node === "object") node.parentNode = this;
+    this.children.push(...nodes);
+  }
+  replaceChildren(...nodes) {
+    this.children = [];
+    this.append(...nodes);
+  }
+  remove() {
+    if (!this.parentNode) return;
+    this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
+    this.parentNode = null;
+    if (this.isConnected) {
+      this.isConnected = false;
+      this.disconnectedCallback?.();
+    }
+  }
+  focus() { globalThis.document.activeElement = this; }
   setAttribute(name, value) { this.attributes[name] = String(value); }
   getAttribute(name) { return this.attributes[name] ?? null; }
   addEventListener(type, listener) { (this.listeners[type] ??= []).push(listener); }
@@ -60,7 +76,8 @@ export function installDom() {
   globalThis.CustomEvent = class { constructor(type, init = {}) { this.type = type; this.detail = init.detail; this.bubbles = init.bubbles; } };
   globalThis.document = {
     visibilityState: "visible",
-    createElement: (tag) => (tag === "canvas" ? new FakeCanvas() : new FakeElement(tag)),
+    createElement: (tag) => (tag === "canvas" ? new FakeCanvas() : defined[tag] ? new defined[tag]() : new FakeElement(tag)),
+    createTextNode: (text) => ({ textContent: String(text) }),
     addEventListener: (type, listener) => (documentListeners[type] ??= []).push(listener),
     removeEventListener: (type, listener) => { documentListeners[type] = (documentListeners[type] ?? []).filter((l) => l !== listener); },
     fire: (type) => { for (const listener of documentListeners[type] ?? []) listener({ type }); },

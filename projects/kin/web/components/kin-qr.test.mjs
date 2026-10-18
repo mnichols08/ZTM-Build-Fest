@@ -162,6 +162,18 @@ test("a refresh that returns an already-expired payload ends there, without aski
   disconnect(qr);
 });
 
+test("a refresh that expires within a second is not shown, so refreshes can't race", async () => {
+  let calls = 0;
+  const qr = element();
+  qr.refresh = async () => { calls += 1; return { value: "https://kin.test/pair#code=BRIEF", code: "BRIEF", expiresAt: Date.now() + 2 }; };
+  connect(qr);
+  qr.expiresAt = Date.now() - 1;
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(calls, 1, "one refresh, not one every few milliseconds");
+  assert.equal(qr.expired, true);
+  disconnect(qr);
+});
+
 test("a refresh that fails shows the expired state", async () => {
   const qr = element();
   qr.refresh = async () => { throw new Error("offline"); };

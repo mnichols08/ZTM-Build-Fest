@@ -1302,3 +1302,8 @@ kin-qr-scanner { display: block; }
   .kin-qr-scanner-guide { border-color: Highlight; box-shadow: none; }
   .kin-qr-scanner-manual { color: LinkText; }
 }
+
+/* Invite by QR (#97). */
+.household-panel .pairing-qr { margin: var(--space-2) 0; }
+.pairing-scan { display: grid; gap: var(--space-1); justify-items: start; }
+.pairing-scan kin-qr-scanner { width: 100%; }

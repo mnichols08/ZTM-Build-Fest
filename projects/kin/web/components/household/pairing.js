@@ -4,6 +4,7 @@
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
 import { createDeviceAuthorizationCertificate, deviceKeyFingerprint } from "../../sync/crypto.js";
 import { authenticationOptions, credentialJson } from "./auth.js";
+import { invitationLink } from "../../pairing-link.js";
 
 export class HouseholdPairing {
   constructor(ctx) {
@@ -185,7 +186,8 @@ export class HouseholdPairing {
   }
 
   async share() {
-    const url = `${location.origin}/pair?code=${encodeURIComponent(this.host.pairing.code)}`;
+    // The code rides in the fragment, which never reaches a server (#97).
+    const url = invitationLink(location.origin, this.host.pairing.code);
     if (navigator.share) {
       try {
         await navigator.share({

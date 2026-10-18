@@ -25,6 +25,7 @@ test("only links to this Kin's pairing and sign-in paths are accepted", () => {
   assert.equal(kinLink("http://127.0.0.1:8080/pair#code=ABCD", "http://127.0.0.1:8080"), "http://127.0.0.1:8080/pair#code=ABCD");
   for (const text of [
     "https://kin.test/pair?code=ABCD", // a query reaches the server; Kin's secrets ride in the fragment
+    "https://kin.test/pair?#code=ABCD", // an empty query is still a query
     "https://evil.test/pair#code=ABCD", // another origin
     "http://kin.test/pair#code=ABCD", // the same host without TLS is another origin
     "https://kin.test.evil.test/pair", // a look-alike host

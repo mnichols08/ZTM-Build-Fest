@@ -2,6 +2,16 @@
 // Part of <kin-household>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
 import { currentPlatform, householdDeviceName } from "../../platform.js";
+import { invitationCode, invitationLink } from "../../pairing-link.js";
+import "../kin-qr.js";
+import "../kin-qr-scanner.js";
+
+/** Invitation states that mean the code no longer works. */
+const ENDED = {
+  Expired: "This invitation ended: it expired. Create a new one to invite someone.",
+  Revoked: "This invitation ended: it was revoked.",
+  Rejected: "This invitation ended: it was turned down.",
+};
 
 export class HouseholdViews {
   constructor(ctx) {
@@ -94,6 +104,38 @@ export class HouseholdViews {
     });
     this.host.append(form);
     this.host.button("Back", () => this.host.startIntent(null), "secondary");
+  }
+
+  /** Opens the camera scanner in place of the Scan button. A scanned
+   * invitation fills the code field; the person still checks it and creates
+   * a passkey, and an adult still approves (#97). */
+  openInvitationScanner(area, trigger, field, status) {
+    const scanner = document.createElement("kin-qr-scanner");
+    const close = () => {
+      scanner.remove();
+      trigger.hidden = false;
+    };
+    scanner.addEventListener("kin-qr-scan", (event) => {
+      const scanned = invitationCode(event.detail.url);
+      close();
+      if (scanned) {
+        field.value = scanned;
+        status.textContent = "Code filled in from the invitation. Check it, then continue.";
+      } else {
+        status.textContent = "That Kin code isn't an invitation. Scan the invitation's code, or type it.";
+      }
+      field.focus();
+    });
+    for (const type of ["kin-qr-manual", "kin-qr-cancel"]) {
+      scanner.addEventListener(type, () => {
+        close();
+        status.textContent = "";
+        field.focus();
+      });
+    }
+    trigger.hidden = true;
+    status.textContent = "";
+    area.append(scanner);
   }
 
   renderJoin() {
@@ -209,7 +251,15 @@ export class HouseholdViews {
     submit.type = "submit";
     submit.textContent = "Create passkey and request approval";
     codeLabel.append(code);
-    form.append(codeLabel, help, device.element, submit);
+    const scanArea = document.createElement("div");
+    scanArea.className = "pairing-scan";
+    const scanStatus = document.createElement("p");
+    scanStatus.className = "hint";
+    scanStatus.setAttribute("role", "status");
+    const scan = this.host.makeButton("Scan invitation", () => this.openInvitationScanner(scanArea, scan, code, scanStatus), "secondary");
+    scan.type = "button";
+    scanArea.append(scan, scanStatus);
+    form.append(codeLabel, help, scanArea, device.element, submit);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       this.host.register("claim", { code: code.value, deviceLabel: device.value() });
@@ -265,9 +315,11 @@ export class HouseholdViews {
             : this.host.pairing.purpose === "member-recovery"
               ? `${this.host.pairing.deviceLabel || "The recovery device"} is awaiting authorization. Approval revokes that adult's old credentials and devices.`
               : `${this.host.pairing.deviceLabel || "The other device"} is awaiting your approval.`
-          : typeof this.host.pairing.state === "string"
-            ? `Pairing ${this.host.pairing.state.toLowerCase()}.`
-            : "Kin could not read the pairing status. Revoke this request or reload before continuing.";
+          : ENDED[this.host.pairing.state]
+            ? ENDED[this.host.pairing.state]
+            : typeof this.host.pairing.state === "string"
+              ? `Pairing ${this.host.pairing.state.toLowerCase()}.`
+              : "Kin could not read the pairing status. Revoke this request or reload before continuing.";
     this.host.append(state);
     if (["Pending", "Claimed"].includes(this.host.pairing.state)) {
       if (this.host.pairing.state === "Pending")
@@ -275,6 +327,19 @@ export class HouseholdViews {
           "Compare this household device key",
           this.host.localFingerprint,
         );
+      // While the invitation waits, a QR code carries it, beside the code
+      // that can always be typed (#97). It is never shown once the code has
+      // been claimed or has ended.
+      if (this.host.pairing.state === "Pending" && this.host.pairing.code) {
+        const qr = document.createElement("kin-qr");
+        qr.className = "pairing-qr";
+        qr.label = "QR code for this invitation. Scan it with the joining device's camera.";
+        qr.expiredMessage = "This invitation ended.";
+        qr.code = "";
+        qr.value = invitationLink(location.origin, this.host.pairing.code);
+        qr.expiresAt = this.host.pairing.expiresAt;
+        this.host.append(qr);
+      }
       if (this.host.pairing.code) {
         const code = document.createElement("output");
         code.className = "pairing-code";

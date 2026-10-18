@@ -7,6 +7,7 @@ import { HouseholdLifecycle } from "./household/lifecycle.js";
 import { HouseholdMembership } from "./household/membership.js";
 import { HouseholdPairing } from "./household/pairing.js";
 import { HouseholdViews } from "./household/views.js";
+import { consumeInvitationCode, takeInvitationCode } from "../pairing-link.js";
 
 // The household element's parts (./household/), built once per element with
 // one shared context { host, ...parts }; each part reaches the element as `this.host`.
@@ -73,9 +74,9 @@ class KinHousehold extends HTMLElement {
     if (!this.routeCodeCaptured) {
       this.routeCodeCaptured = true;
       if (location.pathname === "/pair") {
-        this.prefilledCode =
-          new URLSearchParams(location.search).get("code")?.slice(0, 9) ?? "";
-        if (location.search) history.replaceState(null, "", "/pair");
+        // kin-app took the code from the address as it loaded; reading the
+        // address here as well covers a code still in it.
+        this.prefilledCode = consumeInvitationCode() || takeInvitationCode();
       }
     }
     this.load();

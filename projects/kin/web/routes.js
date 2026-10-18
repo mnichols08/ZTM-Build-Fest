@@ -85,6 +85,9 @@ export function routeHash(page, segment = null) {
 
 export function resolveRoute({ hash = "", pathname = "/" } = {}) {
   let requested = String(hash ?? "").replace(/^#/, "").replace(/\/+$/, "").toLowerCase();
+  // An invitation link's fragment (#code=…) is not a route. pairing-link.js
+  // takes it as the app loads; this keeps /pair on the join screen even so.
+  if (pathname === "/pair" && /^code=/.test(requested)) requested = "";
   if (!requested && pathname === "/pair") requested = "household/people";
   requested = ALIASES[requested] ?? requested;
   const [pageCandidate, segmentCandidate] = requested.split("/");

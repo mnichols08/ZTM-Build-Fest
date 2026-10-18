@@ -132,6 +132,73 @@ async function pageClaim({ code, deviceLabel }) {
   };
 }
 
+// Invite by QR (#97). The inviter's QR is read back from its canvas pixels by
+// the real engine; the joining browser opens the link as a phone's camera app
+// would, and a scanner result is stubbed (the camera itself is covered by
+// qr-regression.mjs in the browser regression).
+async function pageInvitationQr() {
+  const h = document.querySelector("kin-app").household;
+  const qr = h.querySelector("kin-qr.pairing-qr");
+  if (!qr) throw new Error("The invitation shows no QR code");
+  for (let i = 0; i < 400 && qr.querySelector(".kin-qr-frame")?.hidden !== false; i++) await new Promise((r) => setTimeout(r, 25));
+  const canvas = qr.querySelector("canvas");
+  if (!canvas || qr.querySelector(".kin-qr-frame").hidden) throw new Error("The invitation QR was not drawn: " + qr.textContent);
+  const { qrCodec } = await import("/wasm/kin-qr.js");
+  const codec = await qrCodec();
+  const { width, height } = canvas;
+  const rgba = canvas.getContext("2d").getImageData(0, 0, width, height).data;
+  const readBack = codec.decodeFrame(width, height, (target) => {
+    for (let pixel = 0, byte = 0; pixel < target.length; pixel += 1, byte += 4)
+      target[pixel] = (rgba[byte] * 77 + rgba[byte + 1] * 150 + rgba[byte + 2] * 29) >> 8;
+  });
+  return { value: qr.value, readBack, label: canvas.getAttribute("aria-label"), codeShown: h.querySelector(".pairing-code")?.textContent ?? null };
+}
+
+async function pageJoinField() {
+  const h = document.querySelector("kin-app").household;
+  for (let i = 0; i < 400 && !h.querySelector('input[name="code"]'); i++) await new Promise((r) => setTimeout(r, 25));
+  const field = h.querySelector('input[name="code"]');
+  if (!field) throw new Error("The join screen has no code field: " + h.textContent.slice(0, 300));
+  return { value: field.value, path: location.pathname, hash: location.hash, search: location.search };
+}
+
+async function pageScanInvitation(link) {
+  const h = document.querySelector("kin-app").household;
+  const field = h.querySelector('input[name="code"]');
+  field.value = "";
+  const scan = [...h.querySelectorAll("button")].find((button) => button.textContent === "Scan invitation");
+  if (!scan) throw new Error("The join screen offers no Scan invitation button");
+  scan.click();
+  const scanner = h.querySelector("kin-qr-scanner");
+  if (!scanner) throw new Error("Scan invitation did not open the scanner");
+  const offersTyping = [...scanner.querySelectorAll("button")].some((button) => button.textContent === "Type the code instead");
+  const cameraOff = scanner.state === "idle";
+  // The stub: the scanner reports the link as it would from the camera.
+  scanner.dispatchEvent(new CustomEvent("kin-qr-scan", { bubbles: true, detail: { url: link } }));
+  return {
+    value: field.value,
+    offersTyping,
+    cameraOff,
+    scannerClosed: !h.querySelector("kin-qr-scanner"),
+    status: h.querySelector(".pairing-scan [role=status]")?.textContent ?? "",
+    stillJoining: Boolean([...h.querySelectorAll("button")].find((button) => button.textContent === "Create passkey and request approval")),
+  };
+}
+
+async function pageRevokeInvitation() {
+  const h = document.querySelector("kin-app").household;
+  const revoke = [...h.querySelectorAll("button")].find((button) => button.textContent === "Revoke");
+  if (!revoke) throw new Error("The invitation has no Revoke button");
+  revoke.click();
+  for (let i = 0; i < 400 && (h.busy || h.pairing?.state !== "Revoked"); i++) await new Promise((r) => setTimeout(r, 25));
+  return {
+    state: h.pairing?.state,
+    stateText: h.querySelector(".pairing-state")?.textContent ?? "",
+    qrShown: Boolean(h.querySelector("kin-qr")),
+    codeShown: Boolean(h.querySelector(".pairing-code")),
+  };
+}
+
 async function pageCreatePairing({ kind, expiresAt }) {
   const app = document.querySelector("kin-app");
   const h = app.household;
@@ -800,7 +867,7 @@ async function launchProfile(executable, label, origin) {
 // The drill.
 // ---------------------------------------------------------------------------
 
-export async function householdAuthorityDrill({ executable, origin, service, syncService, clock, pushes = [] }) {
+export async function householdAuthorityDrill({ executable, origin, service, syncService, clock, pushes = [], requests = [] }) {
   let checks = 0;
   const check = (condition, message) => {
     assert.ok(condition, message);
@@ -879,6 +946,30 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
 
     // ---- Profile B: second Adult -----------------------------------------
     const b = await launch("adult-b");
+
+    // Invite by QR (#97), with an invitation that is then revoked; B joins
+    // below with a fresh one.
+    const qrInvitation = await a.call(pageCreatePairing, { kind: "adult" });
+    const shownQr = await a.call(pageInvitationQr);
+    check(shownQr.value === `${origin}/pair#code=${encodeURIComponent(qrInvitation.code)}` && shownQr.readBack === shownQr.value &&
+      shownQr.codeShown === qrInvitation.code && /QR code for this invitation/.test(shownQr.label ?? ""),
+      "the invitation shows a labelled QR code, beside its code, that reads back as the fragment link");
+    await b.send("Page.navigate", { url: shownQr.value });
+    await b.waitForReloadAndUnlock();
+    const opened = await b.callStable(pageJoinField);
+    check(opened.value === qrInvitation.code && opened.path === "/pair" && opened.hash === "" && opened.search === "",
+      "opening the invitation link fills in the code and clears it from the address bar: " + JSON.stringify(opened));
+    const scanned = await b.call(pageScanInvitation, shownQr.value);
+    check(scanned.value === qrInvitation.code && scanned.scannerClosed && scanned.offersTyping && scanned.cameraOff && scanned.stillJoining &&
+      /Code filled in/.test(scanned.status),
+      "a scanned invitation fills in the code; the camera waits for a tap, typing is offered, and joining still needs a passkey: " + JSON.stringify(scanned));
+    const codeForms = [qrInvitation.code, qrInvitation.code.replaceAll("-", "")].map((value) => value.toLowerCase());
+    const leaked = requests.filter(({ url, referer }) => codeForms.some((value) => url.toLowerCase().includes(value) || referer.toLowerCase().includes(value)));
+    check(requests.length > 0 && leaked.length === 0, "the invitation code never appears in a request URL or Referer: " + JSON.stringify(leaked.slice(0, 3)));
+    const ended = await a.call(pageRevokeInvitation);
+    check(ended.state === "Revoked" && ended.stateText === "This invitation ended: it was revoked." && !ended.qrShown && !ended.codeShown,
+      "a revoked invitation is replaced by \"This invitation ended\", never a stale QR or code: " + JSON.stringify(ended));
+    pass("invite by QR assertions (#97)");
     const bIdentity = await join({ inviter: a, invitee: b, kind: "adult", deviceLabel: "Edge on Windows" });
     let household = await b.callStable(pageHousehold);
     const bMember = household.members.find((member) => member.current);
@@ -1203,6 +1294,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     store: new DurableStore(":memory:"),
     now: () => clock.now(),
   });
+  // Every request URL and Referer the service receives, so the drill can show
+  // that an invitation code never travels in either (#97).
+  const requests = [];
+  server.on("request", (request) => requests.push({ url: request.url ?? "", referer: request.headers.referer ?? "" }));
   await new Promise((resolveListen) => server.listen(applicationPort, "127.0.0.1", resolveListen));
   // Push services are not reachable from the drill: record what would be sent.
   const pushes = [];
@@ -1211,7 +1306,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   // VAPID subject; name one as an operator would (KIN_PUSH_SUBJECT).
   pushService.subject = "mailto:drill@example.org";
   try {
-    await householdAuthorityDrill({ executable, origin, service, syncService, clock, pushes });
+    await householdAuthorityDrill({ executable, origin, service, syncService, clock, pushes, requests });
   } finally {
     server.closeAllConnections();
     try {

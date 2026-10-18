@@ -65,6 +65,8 @@ export function kinLink(text, origin, paths = KIN_PATHS) {
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   if (url.origin !== origin || !paths.includes(url.pathname)) return null;
   if (url.username || url.password || url.search) return null;
+  // An empty query ("/pair?#…") leaves url.search empty; refuse it too.
+  if (text.split("#")[0].includes("?")) return null;
   return url.href;
 }
 

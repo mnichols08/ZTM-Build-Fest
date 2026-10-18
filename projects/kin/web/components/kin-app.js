@@ -20,6 +20,11 @@ import "./kin-security.js";
 import "./kin-appearance.js";
 import "./kin-household-defaults.js";
 import { createAppContext, initializeAppState } from "./app/context.js";
+import { captureInvitationCode } from "../pairing-link.js";
+
+// An invitation link (/pair#code=…) hands over its code before any route is
+// resolved, and the address bar drops it at once (#97).
+captureInvitationCode();
 
 // The application root. It owns lifecycle, event wiring and the state the
 // controllers in ./app/ share; each behavior lives in one of those controllers.

@@ -67,3 +67,9 @@ test("classification maps to its list segment, legacy Today items live under To 
   assert.equal(listSegmentForClassification(undefined), "todo");
   assert.equal(SEGMENTS.lists[0].classification, "need");
 });
+
+test("an invitation link's fragment on /pair is not taken for a route (#97)", () => {
+  assert.equal(resolveRoute({ hash: "#code=F7KM-Q2DX", pathname: "/pair" }).canonical, "household/people");
+  assert.equal(resolveRoute({ hash: "", pathname: "/pair" }).canonical, "household/people");
+  assert.equal(resolveRoute({ hash: "#code=F7KM-Q2DX", pathname: "/" }).canonical, "today", "only on /pair");
+});
