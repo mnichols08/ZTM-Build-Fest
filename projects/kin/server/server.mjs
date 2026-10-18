@@ -8,6 +8,7 @@ import { PairingError, PairingService, parseHouseholdPolicy, requireTrustAuthori
 import { deviceLabel } from "./pairing-service/device-label.mjs";
 import { configuredDatabasePath, permissionProblem } from "./permissions.mjs";
 import { builtInManifest, etagMatches, INSTALL_ICONS, publishedManifest } from "./install-identity.mjs";
+import { PushService } from "./push-service.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
 import {
@@ -75,6 +76,12 @@ export function createKinServer(options = {}) {
     for (const [householdId, state] of syncService.households)
       store.saveSyncState(householdId, state, service);
   }
+  // Push notifications (#85). Subscriptions belong to this service's store.
+  // VAPID's subject must be a mailto: or https: URL the push services accept;
+  // the deployment's own origin is one unless KIN_PUSH_SUBJECT says otherwise.
+  const pushService = options.pushService ?? new PushService({ pairingService: service, store, now: options.now ?? (() => Date.now()),
+    subject: process.env.KIN_PUSH_SUBJECT || origin });
+  syncService.pushService = pushService;
   const webauthn =
     options.webauthn ??
     new WebAuthn({
@@ -88,6 +95,7 @@ export function createKinServer(options = {}) {
   const context = {
     service,
     syncService,
+    pushService,
     store,
     webauthn,
     flows: new Map(),
@@ -214,6 +222,7 @@ export function createKinServer(options = {}) {
     server,
     service,
     syncService,
+    pushService,
     webauthn,
     store,
     flows: context.flows,
@@ -695,6 +704,13 @@ async function api(request, response, url, context) {
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/logout") {
+    // Signing out stops this browser's notifications (#85).
+    // An expired session still names the browser through its device cookie.
+    let signedOutDevice = null;
+    try { signedOutDevice = service.authorize(session).device.id; } catch {
+      try { signedOutDevice = service.trustedDevice(deviceToken, { allowDeletionPending: true }).device.id; } catch { /* no device */ }
+    }
+    if (signedOutDevice) context.pushService.signedOut(signedOutDevice);
     service.logout(session);
     clearCookie(response, "kin_session", secureCookies);
     json(response, 200, { loggedOut: true });
@@ -805,6 +821,23 @@ async function api(request, response, url, context) {
     }
     if (request.method === "DELETE") {
       json(response, 200, withTransaction(context, () => syncService.withdrawInstallIdentity(session, body.expectedRev)));
+      return;
+    }
+  }
+  if (url.pathname.startsWith("/api/push/")) {
+    const auth = syncService.authorize(session);
+    const { pushService } = context;
+    if (request.method === "GET" && url.pathname === "/api/push/vapid-public-key") {
+      json(response, 200, { publicKey: pushService.publicKey() });
+      return;
+    }
+    if (url.pathname === "/api/push/subscription") {
+      if (request.method === "GET") { json(response, 200, pushService.status(auth)); return; }
+      if (request.method === "PUT") { json(response, 200, withTransaction(context, () => pushService.subscribe(auth, body))); return; }
+      if (request.method === "DELETE") { json(response, 200, withTransaction(context, () => pushService.unsubscribe(auth))); return; }
+    }
+    if (request.method === "PUT" && url.pathname === "/api/push/mute") {
+      json(response, 200, withTransaction(context, () => pushService.mute(auth, body.choice ?? null)));
       return;
     }
   }

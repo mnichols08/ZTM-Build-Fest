@@ -15,6 +15,7 @@ import "./kin-sync-status.js";
 import "./kin-pulse.js";
 import "./kin-catch-up.js";
 import "./kin-household.js";
+import "./kin-notifications.js";
 import "./kin-security.js";
 import "./kin-appearance.js";
 import "./kin-household-defaults.js";

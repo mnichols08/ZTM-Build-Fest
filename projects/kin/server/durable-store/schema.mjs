@@ -491,6 +491,42 @@ export const schemaMethods = {
         throw new DurableStoreError("Kin could not complete the install identity migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 10) {
+      try {
+        this.transaction(() => {
+          // v1.1 (#85): Web Push. One subscription per device, deleted when
+          // the device loses access; the VAPID key pair lives here rather
+          // than in a file, because the sandboxed service cannot fsync files
+          // and SQLite makes it durable and part of every backup.
+          this.db.exec(`
+            CREATE TABLE push_subscriptions (
+              device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+              household_id TEXT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+              member_id TEXT NOT NULL,
+              endpoint TEXT NOT NULL CHECK (length(endpoint) BETWEEN 9 AND 2048),
+              p256dh BLOB NOT NULL CHECK (length(p256dh) = 65),
+              auth BLOB NOT NULL CHECK (length(auth) = 16),
+              muted_until INTEGER,
+              muted_indefinitely INTEGER NOT NULL DEFAULT 0 CHECK (muted_indefinitely IN (0, 1)),
+              created_at INTEGER NOT NULL
+            );
+            CREATE INDEX push_subscriptions_household ON push_subscriptions(household_id);
+            CREATE TABLE push_vapid_keys (
+              id INTEGER PRIMARY KEY CHECK (id = 1),
+              private_jwk TEXT NOT NULL,
+              public_jwk TEXT NOT NULL,
+              created_at INTEGER NOT NULL
+            );
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(11, Date.now());
+          sqlitePragma(this.db, "user_version = 11");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the push notification migration.", { cause: error });
+      }
+    }
   },
 
   verify() {

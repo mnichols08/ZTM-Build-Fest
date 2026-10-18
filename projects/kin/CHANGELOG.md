@@ -7,6 +7,29 @@ documentation only.
 
 ## Unreleased — v1.1.0
 
+### Push notifications (#85)
+
+- **Per device, opt-in.** People & devices → Notifications on this device:
+  turn on (the browser asks only then), mute for 1 hour, 8 hours or until
+  turned back on, or turn off. Clear messages for unsupported browsers,
+  iPhone/iPad outside the Home Screen, and notifications blocked in settings.
+- **Content-free and calm.** "Something new in Kin" (or the household's
+  published name), to other members' devices only, at most one per device
+  every two minutes. Nothing about delivery or reading is recorded.
+- **No dependencies.** Web Push with VAPID (RFC 8292) and RFC 8291 encryption
+  on `node:crypto`, checked against the RFC's test vector. Only the major push
+  services are contacted.
+- **Server schema 11** stores subscriptions and the VAPID key pair. Revoking a
+  device, removing a member, signing out of that browser or deleting the
+  household deletes subscriptions, and so does a push service reporting one
+  will never work (400, 404, 410, 413). A 401 or 403 (the service's own VAPID
+  signature refused) is logged as `push_rejected_by_service` and keeps them.
+  Development databases created from an early build of this branch, before
+  `muted_indefinitely` was added to schema 11, need to be recreated.
+- **Needs a VAPID subject.** The server's `https` origin or `KIN_PUSH_SUBJECT`
+  (`mailto:` or `https:`); without one (a development server on
+  `http://localhost`) the section says notifications aren't set up.
+
 ### Service sandbox (#106)
 
 - **Node's permission model.** The service now runs with `--permission`: it can

@@ -309,6 +309,13 @@ Implemented conflict behavior and remaining UX limitations:
 
 No generic CRDT or wall-clock last-write-wins policy is used. See the exact v8 replay rules and limitations in [V0.9.0](V0.9.0.md).
 
+## Push notifications after commit (v1.1)
+
+When a push batch with new events commits, the relay asks the push service
+(#85) to notify other members' subscribed devices. That happens after the
+response is decided, in the background; it can't fail, delay or reorder sync,
+and a duplicate-only batch notifies nobody. See [Push notifications](PUSH.md).
+
 ## Privacy boundary
 
 Ciphertext payloads conceal content only to the extent that key management and client integrity hold. The relay can still observe routing IDs, ciphertext lengths, timing, delivery patterns, and possibly IP/log metadata. Document retention and access controls for these fields. Do not claim perfect anonymity, complete metadata privacy, or protection from a compromised authorized client.

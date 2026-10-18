@@ -25,6 +25,7 @@ import { authorityMethods } from "./durable-store/authority.mjs";
 import { envelopeMethods } from "./durable-store/envelopes.mjs";
 import { identityMethods } from "./durable-store/identity.mjs";
 import { installIdentityMethods } from "./durable-store/install-identity.mjs";
+import { pushMethods } from "./durable-store/push.mjs";
 import { lifecycleMethods } from "./durable-store/lifecycle.mjs";
 import {
   acquireDatabaseMaintenanceLock,
@@ -441,4 +442,4 @@ export class DurableStore {
   }
 }
 
-addMethods(DurableStore, schemaMethods, validationMethods, identityMethods, installIdentityMethods, lifecycleMethods, authorityMethods, envelopeMethods);
+addMethods(DurableStore, schemaMethods, validationMethods, identityMethods, installIdentityMethods, pushMethods, lifecycleMethods, authorityMethods, envelopeMethods);

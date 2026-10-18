@@ -141,3 +141,15 @@ No capability was added. Real-WASM tests validate all truncated v6 summary/resul
 | The service worker never caches the manifest or install icons | [HOUSEHOLD-IDENTITY-DEFAULTS](HOUSEHOLD-IDENTITY-DEFAULTS.md#published-install-identity) | `web/service-worker.test.mjs`; browser check in `scripts/household-authority-regression.mjs`. |
 | Icons drawn in the browser (first letter or upload) | same | `web/appearance/install-icons.test.mjs`; real 512-pixel PNG in the browser regression. |
 | Admin-only Home screen controls state what is stored before the first publish | [UX](UX.md) §8.7 | `web/components/kin-household-defaults.test.mjs`; `scripts/household-authority-regression.mjs`. |
+
+## v1.1.0 Push notifications (#85)
+
+| Requirement | Specification authority | v1.1.0 validation |
+| --- | --- | --- |
+| Dependency-free VAPID and RFC 8291 sender | [PUSH](PUSH.md), [TEST-VECTORS](TEST-VECTORS.md#push-payload-rfc-8291) | `server/push.test.mjs`: RFC vector byte for byte, ES256 JWT verified, headers. |
+| Only allowlisted push services | [PUSH](PUSH.md) | Allowlist and refusal cases in `server/push.test.mjs`. |
+| Per-device subscription, mute and API authority | [PUSH](PUSH.md) | Subscription, mute and HTTP API tests in `server/push.test.mjs`. |
+| Other members only, unmuted, coalesced, never delaying sync | [PUSH](PUSH.md), [SYNC](SYNC.md) | Author exclusion, mute, coalescing with trailing send, hanging push service tests. |
+| Access loss and deletion remove subscriptions | [PUSH](PUSH.md), [PRIVACY](PRIVACY.md) | Revocation/access-change, pending deletion and purge tests; schema 11 migration tests. |
+| Content-free notification, focus or open on tap | [PUSH](PUSH.md) | `web/service-worker.test.mjs`. |
+| Per-device controls, prompt only on press, honest states | [UX](UX.md) §8.8 | `web/components/kin-notifications.test.mjs`; `scripts/household-authority-regression.mjs` with a stubbed PushManager. |

@@ -175,3 +175,14 @@ nickname gives identical KINS bytes except the summary's through event ID.
 count 2, then for each the device ID, member ID, the two u16 lengths and the
 names; the empty table is the 12-byte header with count 0. Held history with
 an identity binding names the bound device and member.
+
+## Push payload (RFC 8291)
+
+**029 — RFC 8291 Appendix A.** Plaintext "When I grow up, I want to be a
+watermelon", application-server private key
+`yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw`, user-agent public key
+`BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4`,
+auth secret `BTBZMqHH6r4Tts7J_aSIgg`, salt `DGv6ra1nlYgDCS1FRnbzlw`.
+`encryptPushPayload` must produce the RFC's message exactly, and decrypting
+it with the user-agent private key `q1dXpw3UpT5VOmu_cf_v6ih07Aems3njxI-JWgLcM94`
+must give the plaintext (`server/push.test.mjs`).

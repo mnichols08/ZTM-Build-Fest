@@ -119,7 +119,7 @@ export function initializeAppState(app) {
     app.pendingScheduleChange = null;
     app.householdStatus = null;
     app.passkeyPromptDismissed = false;
-    app.onHouseholdStatus = (event) => { app.householdStatus = event.detail; app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); };
+    app.onHouseholdStatus = (event) => { app.householdStatus = event.detail; app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
     app.onSecurityChanged = () => app.ctx.status.renderOnboarding();
     app.autoLockMinutes = readAutoLockPreference();
     app.autoLockTimer = null;

@@ -471,6 +471,50 @@ async function pageInstallIdentityAsMember() {
   return { section: Boolean(app.householdDefaults.install || document.querySelector("kin-install-identity")), putStatus: put.status, shortName: manifest.short_name };
 }
 
+// #85: turn notifications on and off through the real panel, with the
+// browser's permission prompt and PushManager stubbed (no push service).
+async function pageNotifications(action) {
+  const app = document.querySelector("kin-app");
+  const panel = app.notifications;
+  if (!window.__kinPushStub) {
+    const pair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+    const raw = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+    const b64 = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    let current = null;
+    const stub = { prompts: 0, unsubscribed: 0 };
+    window.__kinPushStub = stub;
+    window.Notification = { permission: "default", requestPermission: async () => { stub.prompts += 1; window.Notification.permission = "granted"; return "granted"; } };
+    window.PushManager ??= function PushManager() {};
+    const pushManager = {
+      getSubscription: async () => current,
+      subscribe: async ({ applicationServerKey, userVisibleOnly }) => {
+        stub.userVisibleOnly = userVisibleOnly;
+        current = { options: { applicationServerKey }, unsubscribe: async () => { stub.unsubscribed += 1; current = null; return true; },
+          toJSON: () => ({ endpoint: "https://fcm.googleapis.com/fcm/send/kin-drill", keys: { p256dh: b64(raw), auth: b64(crypto.getRandomValues(new Uint8Array(16))) } }) };
+        return current;
+      },
+    };
+    Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { ready: Promise.resolve({ pushManager }), controller: null } });
+  }
+  const stub = window.__kinPushStub;
+  await panel.refresh();
+  const wait = async (predicate, label) => {
+    for (let i = 0; i < 200; i++) { if (predicate()) return; await new Promise((r) => setTimeout(r, 25)); }
+    throw new Error("Timed out waiting for " + label + ": " + panel.textContent);
+  };
+  const button = (text) => [...panel.querySelectorAll("button")].find((entry) => entry.textContent === text);
+  if (action === "on") {
+    const promptsBefore = stub.prompts;
+    button("Turn on notifications").click();
+    await wait(() => panel.state.textContent === "On.", "notifications on");
+    return { state: panel.state.textContent, promptedOnlyOnPress: stub.prompts === promptsBefore + 1, userVisibleOnly: stub.userVisibleOnly,
+      status: await (await fetch("/api/push/subscription")).json(), explained: panel.textContent.includes("never include what it is") };
+  }
+  button("Turn off notifications").click();
+  await wait(() => panel.state.textContent === "Off.", "notifications off");
+  return { state: panel.state.textContent, unsubscribed: stub.unsubscribed, status: await (await fetch("/api/push/subscription")).json() };
+}
+
 async function pageRemoveMemberButton(buttonText) {
   const app = document.querySelector("kin-app");
   const h = app.household;
@@ -756,7 +800,7 @@ async function launchProfile(executable, label, origin) {
 // The drill.
 // ---------------------------------------------------------------------------
 
-export async function householdAuthorityDrill({ executable, origin, service, syncService, clock }) {
+export async function householdAuthorityDrill({ executable, origin, service, syncService, clock, pushes = [] }) {
   let checks = 0;
   const check = (condition, message) => {
     assert.ok(condition, message);
@@ -847,10 +891,20 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       "non-admin Adult B cannot create invitations: " + JSON.stringify(bPairing));
     result = await a.call(pageSync); // A commits the rotation and provisions B's epoch keys.
     check(result.last?.state !== "paused", "Adult A rotates and provisions after B joins: " + JSON.stringify(result.last));
+    const notificationsOn = await b.call(pageNotifications, "on");
+    check(notificationsOn.state === "On." && notificationsOn.promptedOnlyOnPress && notificationsOn.userVisibleOnly === true &&
+      notificationsOn.status.subscribed && notificationsOn.explained,
+      "Adult B turns notifications on: one permission prompt after pressing Turn on, a visible-only subscription, the content-free promise stated");
+    const pushesBefore = pushes.length;
     await a.call(pageAddItem, "A2 after B joined");
     result = await a.call(pageSync);
     result = await b.call(pageSync);
     check(result.started && result.items.includes("A2 after B joined"), "Adult B receives A2 through the relay: " + JSON.stringify(result));
+    check(pushes.slice(pushesBefore).includes(bIdentity.deviceId) && !pushes.slice(pushesBefore).includes(aBoot.identity.deviceId),
+      "A's synced change notifies B's device, never the author's own: " + JSON.stringify(pushes.slice(pushesBefore)));
+    const notificationsOff = await b.call(pageNotifications, "off");
+    check(notificationsOff.state === "Off." && notificationsOff.unsubscribed === 1 && !notificationsOff.status.subscribed,
+      "Adult B turns notifications off: the browser subscription and the service's copy are both removed");
     check(!result.items.includes("A1 before anyone joins"),
       "new Adult B receives current and later epochs only; pre-join A1 is not provisioned (PAIRING contract)");
     const published = await a.call(pagePublishInstallIdentity, { shortName: "Nichols" });
@@ -1142,7 +1196,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   await new Promise((resolveClose) => reservation.close(resolveClose));
   const origin = `http://localhost:${applicationPort}`;
   const clock = { offset: 0, now() { return Date.now() + this.offset; } };
-  const { server, store, service, syncService } = createKinServer({
+  const { server, store, service, syncService, pushService } = createKinServer({
     port: applicationPort,
     host: "127.0.0.1",
     origin,
@@ -1150,8 +1204,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     now: () => clock.now(),
   });
   await new Promise((resolveListen) => server.listen(applicationPort, "127.0.0.1", resolveListen));
+  // Push services are not reachable from the drill: record what would be sent.
+  const pushes = [];
+  pushService.send = (row) => { pushes.push(row.deviceId); return Promise.resolve({ status: 201 }); };
+  // The drill serves http://127.0.0.1, which push services won't take as a
+  // VAPID subject; name one as an operator would (KIN_PUSH_SUBJECT).
+  pushService.subject = "mailto:drill@example.org";
   try {
-    await householdAuthorityDrill({ executable, origin, service, syncService, clock });
+    await householdAuthorityDrill({ executable, origin, service, syncService, clock, pushes });
   } finally {
     server.closeAllConnections();
     try {
