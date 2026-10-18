@@ -20,7 +20,12 @@ documentation only.
   on `node:crypto`, checked against the RFC's test vector. Only the major push
   services are contacted.
 - **Server schema 11** stores subscriptions and the VAPID key pair. Revoking a
-  device, removing a member or deleting the household deletes subscriptions.
+  device, removing a member, signing out of that browser or deleting the
+  household deletes subscriptions, and so does a push service reporting one
+  will never work (400, 401, 403, 404, 410, 413).
+- **Needs a VAPID subject.** The server's `https` origin or `KIN_PUSH_SUBJECT`
+  (`mailto:` or `https:`); without one (a development server on
+  `http://localhost`) the section says notifications aren't set up.
 
 ### Service sandbox (#106)
 

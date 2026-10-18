@@ -1207,6 +1207,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   // Push services are not reachable from the drill: record what would be sent.
   const pushes = [];
   pushService.send = (row) => { pushes.push(row.deviceId); return Promise.resolve({ status: 201 }); };
+  // The drill serves http://127.0.0.1, which push services won't take as a
+  // VAPID subject; name one as an operator would (KIN_PUSH_SUBJECT).
+  pushService.subject = "mailto:drill@example.org";
   try {
     await householdAuthorityDrill({ executable, origin, service, syncService, clock, pushes });
   } finally {

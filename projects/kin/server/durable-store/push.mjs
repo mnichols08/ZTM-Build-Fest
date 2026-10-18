@@ -2,7 +2,8 @@
 // device and the service's VAPID key pair.
 const subscription = (row) => row ? {
   deviceId: row.device_id, householdId: row.household_id, memberId: row.member_id, endpoint: row.endpoint,
-  p256dh: Buffer.from(row.p256dh), auth: Buffer.from(row.auth), mutedUntil: row.muted_until, createdAt: row.created_at,
+  p256dh: Buffer.from(row.p256dh), auth: Buffer.from(row.auth), mutedUntil: row.muted_until,
+  mutedIndefinitely: row.muted_indefinitely === 1, createdAt: row.created_at,
 } : null;
 
 export const pushMethods = {
@@ -35,17 +36,20 @@ export const pushMethods = {
   putPushSubscription(value) {
     return this.transaction(() => {
       this.db.prepare(`INSERT INTO push_subscriptions
-        (device_id, household_id, member_id, endpoint, p256dh, auth, muted_until, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (device_id, household_id, member_id, endpoint, p256dh, auth, muted_until, muted_indefinitely, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(device_id) DO UPDATE SET household_id=excluded.household_id, member_id=excluded.member_id,
           endpoint=excluded.endpoint, p256dh=excluded.p256dh, auth=excluded.auth, created_at=excluded.created_at`)
-        .run(value.deviceId, value.householdId, value.memberId, value.endpoint, value.p256dh, value.auth, value.mutedUntil ?? null, value.createdAt);
+        .run(value.deviceId, value.householdId, value.memberId, value.endpoint, value.p256dh, value.auth,
+          value.mutedUntil ?? null, value.mutedIndefinitely ? 1 : 0, value.createdAt);
     });
   },
 
-  setPushMute(deviceId, mutedUntil) {
+  /** Mutes until a time, indefinitely (`indefinitely`), or unmutes (null). */
+  setPushMute(deviceId, mutedUntil, indefinitely = false) {
     return this.transaction(() =>
-      this.db.prepare("UPDATE push_subscriptions SET muted_until = ? WHERE device_id = ?").run(mutedUntil, deviceId).changes > 0);
+      this.db.prepare("UPDATE push_subscriptions SET muted_until = ?, muted_indefinitely = ? WHERE device_id = ?")
+        .run(indefinitely ? null : mutedUntil, indefinitely ? 1 : 0, deviceId).changes > 0);
   },
 
   deletePushSubscriptions(deviceIds) {

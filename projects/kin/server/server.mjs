@@ -704,6 +704,8 @@ async function api(request, response, url, context) {
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/logout") {
+    // Signing out stops this browser's notifications (#85).
+    try { context.pushService.signedOut(service.authorize(session).device.id); } catch { /* not signed in */ }
     service.logout(session);
     clearCookie(response, "kin_session", secureCookies);
     json(response, 200, { loggedOut: true });
@@ -830,7 +832,7 @@ async function api(request, response, url, context) {
       if (request.method === "DELETE") { json(response, 200, withTransaction(context, () => pushService.unsubscribe(auth))); return; }
     }
     if (request.method === "PUT" && url.pathname === "/api/push/mute") {
-      json(response, 200, withTransaction(context, () => pushService.mute(auth, body.until ?? null)));
+      json(response, 200, withTransaction(context, () => pushService.mute(auth, body.choice ?? null)));
       return;
     }
   }

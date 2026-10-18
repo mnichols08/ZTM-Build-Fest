@@ -9,7 +9,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { DurableStore } from "./durable-store.mjs";
 import { PairingService } from "./pairing-service.mjs";
-import { PUSH_COALESCE_MS, PUSH_PAYLOAD, PushService } from "./push-service.mjs";
+import { endpointTag, PUSH_COALESCE_MS, PUSH_MUTES, PUSH_PAYLOAD, PushService } from "./push-service.mjs";
 import { createKinServer } from "./server.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
 import {
@@ -18,7 +18,7 @@ import {
   encryptPushPayload,
   fromB64url,
   generateVapidKeys,
-  pushTopic,
+  PUSH_TOPIC,
   rawPublicKey,
   sendPush,
   vapidAuthorization,
@@ -67,7 +67,7 @@ test("only allowlisted push services on port 443 are contacted", () => {
     "https://fcm.googleapis.com.evil.com/x", "https://push.services.mozilla.com/x", "https://127.0.0.1/x", "https://[::1]/x",
     "https://user:pw@fcm.googleapis.com/x", "https://localhost/x", "not a url", `https://fcm.googleapis.com/${"x".repeat(2100)}`])
     assert.equal(allowedPushEndpoint(bad), null, bad);
-  assert.match(pushTopic("a".repeat(32)), /^[A-Za-z0-9_-]{32}$/);
+  assert.equal(PUSH_TOPIC, "kin-new", "a fixed topic: nothing that links a household's devices at the push service");
 });
 
 test("sendPush posts the encrypted payload with VAPID, TTL, urgency and topic", async () => {
@@ -136,7 +136,7 @@ function household({ store = null } = {}) {
 test("a device manages only its own validated subscription and mute", () => {
   const h = household();
   const partner = h.join("partner");
-  assert.deepEqual(h.push.status(h.auth(partner)), { subscribed: false, mutedUntil: null, endpointHost: null });
+  assert.deepEqual(h.push.status(h.auth(partner)), { available: true, subscribed: false, mutedUntil: null, mutedIndefinitely: false, endpointHost: null, endpointTag: null });
   for (const [value, pattern] of [
     [{ endpoint: "https://evil.example/x", keys: {} }, /supported browser push service/],
     [{ endpoint: "https://fcm.googleapis.com/x", keys: { p256dh: Buffer.alloc(64, 4).toString("base64url"), auth: Buffer.alloc(16).toString("base64url") } }, /invalid keys/],
@@ -145,16 +145,23 @@ test("a device manages only its own validated subscription and mute", () => {
   ])
     assert.throws(() => h.push.subscribe(h.auth(partner), value), (error) => error.code === "push_subscription_invalid" && pattern.test(error.message));
   assert.throws(() => h.push.mute(h.auth(partner), null), (error) => error.code === "push_not_subscribed");
-  assert.deepEqual(h.subscribe(partner), { subscribed: true, mutedUntil: null, endpointHost: "fcm.googleapis.com" });
+  assert.deepEqual(h.subscribe(partner), { available: true, subscribed: true, mutedUntil: null, mutedIndefinitely: false, endpointHost: "fcm.googleapis.com",
+    endpointTag: endpointTag(`https://fcm.googleapis.com/fcm/send/${partner.deviceId}`) });
   h.subscribe(partner, "https://updates.push.services.mozilla.com/wpush/v2/new");
   assert.equal(h.push.storage.householdPushSubscriptions(h.adult.householdId).length, 1, "one subscription per device");
-  const until = h.now() + 3_600_000;
-  assert.equal(h.push.mute(h.auth(partner), until).mutedUntil, until);
+  // Mute ends are computed on the service's clock from a choice.
+  assert.equal(h.push.mute(h.auth(partner), "hour").mutedUntil, h.now() + PUSH_MUTES.hour);
+  assert.equal(h.push.mute(h.auth(partner), "night").mutedUntil, h.now() + PUSH_MUTES.night);
   h.subscribe(partner);
-  assert.equal(h.push.status(h.auth(partner)).mutedUntil, until, "re-subscribing keeps the mute");
-  for (const bad of [h.now() - 1, h.now() + 366 * 24 * 3600_000, 1.5, "soon"])
+  assert.equal(h.push.status(h.auth(partner)).mutedUntil, h.now() + PUSH_MUTES.night, "re-subscribing keeps the mute");
+  const indefinite = h.push.mute(h.auth(partner), "indefinite");
+  assert.equal(indefinite.mutedIndefinitely, true);
+  assert.equal(indefinite.mutedUntil, null);
+  for (const bad of [h.now() + 1000, "forever", "constructor", 1])
     assert.throws(() => h.push.mute(h.auth(partner), bad), (error) => error.code === "push_subscription_invalid");
-  assert.equal(h.push.mute(h.auth(partner), null).mutedUntil, null);
+  const unmuted = h.push.mute(h.auth(partner), null);
+  assert.equal(unmuted.mutedUntil, null);
+  assert.equal(unmuted.mutedIndefinitely, false);
   assert.equal(h.push.unsubscribe(h.auth(partner)).subscribed, false);
   assert.equal(h.push.status(h.auth(h.adult)).subscribed, false, "another device's state is its own");
 });
@@ -166,12 +173,12 @@ test("an accepted batch notifies other members' unmuted devices once, content-fr
   h.subscribe(h.adult);
   h.subscribe(partner);
   h.subscribe(third);
-  h.push.mute(h.auth(third), h.now() + 3_600_000);
+  h.push.mute(h.auth(third), "indefinite");
   h.push.eventsAccepted(h.adult.householdId, h.adult.memberId);
   await h.settle();
   assert.deepEqual(h.sent.map((entry) => entry.deviceId), [partner.deviceId], "never the author's devices; never a muted one");
   assert.equal(h.sent[0].options.payload, '{"v":1,"kind":"new"}');
-  assert.equal(h.sent[0].options.topic, pushTopic(h.adult.householdId));
+  assert.equal(h.sent[0].options.topic, "kin-new");
 });
 
 test("notifications coalesce to one per device per two minutes, with one trailing send", async () => {
@@ -212,22 +219,58 @@ test("revocation, removal and deletion stop notifications and delete subscriptio
   assert.equal(h.sent.length, 1, "a household pending deletion gets nothing");
 });
 
-test("gone subscriptions are deleted; failures retry a bounded number of times", async () => {
+test("permanent refusals delete the subscription; failures retry a bounded number of times", async () => {
   const h = household();
   const partner = h.join("partner");
   h.subscribe(partner);
-  h.setRespond(() => Promise.resolve({ status: 410 }));
-  h.push.eventsAccepted(h.adult.householdId, h.adult.memberId);
-  await h.settle();
-  assert.equal(h.push.storage.getPushSubscription(partner.deviceId), null);
+  for (const status of [410, 404, 403, 400]) {
+    h.subscribe(partner);
+    h.setRespond(() => Promise.resolve({ status }));
+    await h.advance(PUSH_COALESCE_MS);
+    h.push.eventsAccepted(h.adult.householdId, h.adult.memberId);
+    await h.settle();
+    assert.equal(h.push.storage.getPushSubscription(partner.deviceId), null, `status ${status} removes it, so the device shows notifications as off`);
+  }
+  const sentBefore = h.sent.length;
   h.subscribe(partner);
   h.setRespond(() => Promise.resolve({ status: 503 }));
   await h.advance(PUSH_COALESCE_MS);
   h.push.eventsAccepted(h.adult.householdId, h.adult.memberId);
   await h.settle();
   for (let i = 0; i < 5; i++) await h.advance(60_000);
-  assert.equal(h.sent.length, 1 + 3, "the first attempt and two retries, then dropped");
+  assert.equal(h.sent.length - sentBefore, 3, "the first attempt and two retries, then dropped");
   assert.ok(h.push.storage.getPushSubscription(partner.deviceId), "a failing push service keeps the subscription");
+});
+
+test("Retry-After is honoured up to a minute", async () => {
+  const h = household();
+  const partner = h.join("partner");
+  h.subscribe(partner);
+  h.setRespond(() => Promise.resolve({ status: 429, retryAfter: "20" }));
+  h.push.eventsAccepted(h.adult.householdId, h.adult.memberId);
+  await h.settle();
+  await h.advance(19_000);
+  assert.equal(h.sent.length, 1);
+  await h.advance(1_000);
+  assert.equal(h.sent.length, 2, "retried after the push service's 20 seconds, not the default 5");
+});
+
+test("push is unavailable without a subject push services accept", () => {
+  for (const subject of [null, "http://localhost:8000", "mailto:kin@localhost", "https://localhost"]) {
+    const push = new PushService({ pairingService: new PairingService(), subject, log: () => {} });
+    assert.equal(push.available, false, String(subject));
+    assert.throws(() => push.publicKey(), (error) => error.code === "push_unavailable" && error.status === 503);
+  }
+  for (const subject of ["https://kin.example.org", "mailto:ops@example.org"])
+    assert.equal(new PushService({ pairingService: new PairingService(), subject }).available, true, subject);
+});
+
+test("signing out of a browser deletes its subscription", () => {
+  const h = household();
+  const partner = h.join("partner");
+  h.subscribe(partner);
+  h.push.signedOut(partner.deviceId);
+  assert.equal(h.push.storage.getPushSubscription(partner.deviceId), null);
 });
 
 test("a hanging push service never delays the sync response", NETWORK_TEST, async () => {
@@ -268,7 +311,7 @@ test("subscriptions persist, and household deletion purges them", (t) => {
 });
 
 test("the push API requires a trusted session and serves the VAPID public key", NETWORK_TEST, async (t) => {
-  const app = createKinServer({ store: false, origin: "http://localhost:8000" });
+  const app = createKinServer({ store: false, origin: "https://kin.example.org", host: "127.0.0.1" });
   await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => app.server.close(resolve)));
   const url = `http://127.0.0.1:${app.server.address().port}`;
@@ -280,6 +323,10 @@ test("the push API requires a trusted session and serves the VAPID public key", 
   const ua = createECDH("prime256v1"); ua.generateKeys();
   const put = await call("/api/push/subscription", { method: "PUT", body: JSON.stringify({ endpoint: "https://fcm.googleapis.com/fcm/send/x", keys: { p256dh: ua.getPublicKey().toString("base64url"), auth: Buffer.alloc(16, 1).toString("base64url") } }) });
   assert.equal((await put.json()).subscribed, true);
-  assert.equal((await call("/api/push/mute", { method: "PUT", body: JSON.stringify({ until: null }) })).status, 200);
+  assert.equal((await (await call("/api/push/mute", { method: "PUT", body: JSON.stringify({ choice: "hour" }) })).json()).mutedUntil > Date.now(), true);
+  assert.equal((await call("/api/push/mute", { method: "PUT", body: JSON.stringify({ choice: null }) })).status, 200);
   assert.equal((await (await call("/api/push/subscription", { method: "DELETE", body: "{}" })).json()).subscribed, false);
+  await call("/api/push/subscription", { method: "PUT", body: JSON.stringify({ endpoint: "https://fcm.googleapis.com/fcm/send/x", keys: { p256dh: ua.getPublicKey().toString("base64url"), auth: Buffer.alloc(16, 1).toString("base64url") } }) });
+  assert.equal((await call("/api/logout", { method: "POST", body: "{}" })).status, 200);
+  assert.equal(app.pushService.storage.getPushSubscription(adult.deviceId), null, "signing out stops this browser's notifications");
 });

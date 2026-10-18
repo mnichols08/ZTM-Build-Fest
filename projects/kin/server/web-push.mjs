@@ -2,7 +2,7 @@
 // and aes128gcm payload encryption (RFC 8291, RFC 8188), on node:crypto and
 // node:https. Kin's payload is fixed and content-free; this module would
 // encrypt anything, but the notifier only ever sends {"v":1,"kind":"new"}.
-import { createCipheriv, createDecipheriv, createECDH, createHash, createHmac, createPrivateKey, generateKeyPairSync, randomBytes, sign } from "node:crypto";
+import { createCipheriv, createDecipheriv, createECDH, createHmac, createPrivateKey, generateKeyPairSync, randomBytes, sign } from "node:crypto";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 
@@ -119,11 +119,12 @@ export function decryptPushPayload(message, { privateKey, auth }) {
 
 // ---- Sending -----------------------------------------------------------------
 
-/** A Topic header value (≤ 32 base64url characters) for a household, so a
- * push service replaces an undelivered notification instead of queueing. */
-export function pushTopic(householdId) {
-  return createHash("sha256").update(`kin-push:${householdId}`).digest("base64url").slice(0, 32);
-}
+/** The Topic header: a push service replaces an undelivered notification
+ * with the same topic for the same subscription instead of queueing both.
+ * Topics only apply within one subscription, so one fixed value does that;
+ * anything derived from the household would let a push service link the
+ * household's members' devices. */
+export const PUSH_TOPIC = "kin-new";
 
 /** Sends one encrypted push. Resolves { status }; never rejects for HTTP
  * statuses, rejects on network failure or timeout. `transport` replaces

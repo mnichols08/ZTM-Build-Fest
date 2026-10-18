@@ -5,7 +5,7 @@ import test from "node:test";
 
 globalThis.HTMLElement = class {};
 globalThis.customElements = { define() {} };
-const { applicationServerKey, MUTE_CHOICES, notificationSupport } = await import("./kin-notifications.js");
+const { applicationServerKey, endpointTag, MUTE_CHOICES, notificationSupport } = await import("./kin-notifications.js");
 
 test("each unsupported situation gets its own state", () => {
   const base = { hasServiceWorker: true, hasPushManager: true, hasNotification: true, permission: "default", platform: { ios: false, standalone: false } };
@@ -23,7 +23,13 @@ test("the VAPID key becomes the subscribe() bytes", () => {
   assert.deepEqual(applicationServerKey(key), raw);
 });
 
-test("mute choices are 1 hour, 8 hours and until turned back on (within the service's one-year cap)", () => {
-  assert.deepEqual(MUTE_CHOICES.map(([value]) => value), ["hour", "night", "indefinite"]);
-  assert.ok(MUTE_CHOICES[2][2] < 365 * 24 * 60 * 60 * 1000);
+test("mute choices match the service's choices", async () => {
+  const { PUSH_MUTES } = await import("../../server/push-service.mjs");
+  assert.deepEqual(MUTE_CHOICES.map(([value]) => value), Object.keys(PUSH_MUTES));
+});
+
+test("the endpoint fingerprint matches the service's", async () => {
+  const { endpointTag: serverTag } = await import("../../server/push-service.mjs");
+  const endpoint = "https://fcm.googleapis.com/fcm/send/abc";
+  assert.equal(await endpointTag(endpoint), serverTag(endpoint));
 });

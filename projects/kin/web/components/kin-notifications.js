@@ -5,13 +5,12 @@
 // reading is recorded.
 import { currentPlatform } from "../platform.js";
 
+/** Mute choices; the service computes the end on its own clock. */
 export const MUTE_CHOICES = Object.freeze([
-  ["hour", "For 1 hour", 60 * 60 * 1000],
-  ["night", "For 8 hours", 8 * 60 * 60 * 1000],
-  // The service caps a mute at a year; a year reads as "until turned back on".
-  ["indefinite", "Until I turn them back on", 365 * 24 * 60 * 60 * 1000 - 60 * 1000],
+  ["hour", "Mute for 1 hour"],
+  ["night", "Mute for 8 hours"],
+  ["indefinite", "Mute until I turn them back on"],
 ]);
-const INDEFINITE_AFTER_MS = 300 * 24 * 60 * 60 * 1000;
 
 const EXPLANATION = "Notifications say only that something is new. They never include what it is or who added it, and Kin doesn't record whether you saw them.";
 
@@ -29,6 +28,12 @@ export function applicationServerKey(publicKey) {
   return Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
 }
 
+/** The service's short fingerprint of an endpoint (server/push-service.mjs). */
+export async function endpointTag(endpoint) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(endpoint)));
+  return btoa(String.fromCharCode(...digest)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "").slice(0, 16);
+}
+
 async function api(path, init = {}) {
   const response = await fetch(path, { credentials: "same-origin", ...init, headers: { "Content-Type": "application/json", ...(init.headers ?? {}) } });
   const value = await response.json().catch(() => ({}));
@@ -39,7 +44,6 @@ async function api(path, init = {}) {
 export class KinNotifications extends HTMLElement {
   connectedCallback() {
     if (!this.firstElementChild) this.build();
-    void this.refresh();
   }
 
   build() {
@@ -79,8 +83,11 @@ export class KinNotifications extends HTMLElement {
 
   /** Loads this device's state from the service. Hidden until this browser
    * is a trusted device of a household (the API refuses otherwise). */
-  async refresh() {
+  async refresh({ identity = true } = {}) {
+    if (!this.firstElementChild) this.build();
     const generation = (this.generation = (this.generation ?? 0) + 1);
+    // Only a household device has anything to ask the service about.
+    if (!identity) { this.hidden = true; return; }
     let status;
     try {
       status = await api("/api/push/subscription");
@@ -92,6 +99,30 @@ export class KinNotifications extends HTMLElement {
     this.status = status;
     this.hidden = false;
     this.render();
+    void this.repair(generation);
+  }
+
+  /** Keeps the service's copy in step with this browser's subscription,
+   * without a prompt: a browser may replace its subscription while Kin is
+   * closed (the service worker's own update can fail once the session has
+   * expired), or lose it when site data is cleared. */
+  async repair(generation) {
+    const status = this.status;
+    if (!status?.subscribed || this.support() !== "available" || Notification.permission !== "granted") return;
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      let subscription = await registration.pushManager.getSubscription();
+      if (subscription && (await endpointTag(subscription.endpoint)) === status.endpointTag) return;
+      if (!subscription) {
+        const { publicKey } = await api("/api/push/vapid-public-key");
+        subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: applicationServerKey(publicKey) });
+      }
+      const { endpoint, keys } = subscription.toJSON();
+      const updated = await api("/api/push/subscription", { method: "PUT", body: JSON.stringify({ endpoint, keys }) });
+      if (generation === this.generation) { this.status = updated; this.render(); }
+    } catch {
+      // Left as it is; the next refresh tries again.
+    }
   }
 
   render() {
@@ -104,6 +135,10 @@ export class KinNotifications extends HTMLElement {
       "ios-home-screen": "Add Kin to your Home Screen to get notifications. On iPhone and iPad, only the Home Screen app can receive them.",
       blocked: "Notifications are blocked for Kin in this browser's settings. Allow notifications for this site there, then come back to turn them on.",
     };
+    if (status.available === false) {
+      this.state.textContent = "Notifications aren't set up on this Kin server yet.";
+      return;
+    }
     if (support !== "available" && !status.subscribed) {
       this.state.textContent = messages[support];
       return;
@@ -113,24 +148,13 @@ export class KinNotifications extends HTMLElement {
       this.actions.append(this.button("Turn on notifications", () => this.turnOn(), "primary-action"));
       return;
     }
-    const muted = status.mutedUntil && status.mutedUntil > Date.now();
+    const muted = status.mutedIndefinitely || Boolean(status.mutedUntil);
     this.state.textContent = !muted ? "On."
-      : status.mutedUntil - Date.now() > INDEFINITE_AFTER_MS ? "Muted until you turn them back on."
+      : status.mutedIndefinitely ? "Muted until you turn them back on."
       : `Muted until ${new Date(status.mutedUntil).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}.`;
+    // Separate buttons, not a select: each choice is one deliberate press.
     if (muted) this.actions.append(this.button("Unmute", () => this.mute(null)));
-    else {
-      const label = document.createElement("label");
-      label.textContent = "Mute";
-      const select = document.createElement("select");
-      select.append(new Option("Choose how long", ""));
-      for (const [value, text] of MUTE_CHOICES) select.append(new Option(text, value));
-      select.addEventListener("change", () => {
-        const choice = MUTE_CHOICES.find(([value]) => value === select.value);
-        if (choice) void this.mute(Date.now() + choice[2]);
-      });
-      label.append(select);
-      this.actions.append(label);
-    }
+    else for (const [choice, text] of MUTE_CHOICES) this.actions.append(this.button(text, () => this.mute(choice)));
     this.actions.append(this.button("Turn off notifications", () => this.turnOff()));
   }
 
@@ -146,7 +170,7 @@ export class KinNotifications extends HTMLElement {
   async run(action) {
     if (this.busy) return;
     this.busy = true;
-    for (const control of this.querySelectorAll("button, select")) control.disabled = true;
+    for (const control of this.querySelectorAll("button")) control.disabled = true;
     this.error.textContent = "";
     try {
       await action();
@@ -155,7 +179,7 @@ export class KinNotifications extends HTMLElement {
       this.error.textContent = error.message || "Kin couldn't change notifications.";
     } finally {
       this.busy = false;
-      for (const control of this.querySelectorAll("button, select")) control.disabled = false;
+      for (const control of this.querySelectorAll("button")) control.disabled = false;
     }
   }
 
@@ -178,7 +202,13 @@ export class KinNotifications extends HTMLElement {
     if (subscription && !sameKey) { await subscription.unsubscribe(); subscription = null; }
     subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
     const { endpoint, keys } = subscription.toJSON();
-    this.status = await api("/api/push/subscription", { method: "PUT", body: JSON.stringify({ endpoint, keys }) });
+    try {
+      this.status = await api("/api/push/subscription", { method: "PUT", body: JSON.stringify({ endpoint, keys }) });
+    } catch (error) {
+      // The service refused it: don't leave a browser subscription behind.
+      await subscription.unsubscribe().catch(() => {});
+      throw error;
+    }
     this.render();
     this.feedback.textContent = "Notifications are on for this device.";
   }
@@ -192,11 +222,11 @@ export class KinNotifications extends HTMLElement {
     this.querySelector("button")?.focus();
   }
 
-  async mute(until) {
-    this.status = await api("/api/push/mute", { method: "PUT", body: JSON.stringify({ until }) });
+  async mute(choice) {
+    this.status = await api("/api/push/mute", { method: "PUT", body: JSON.stringify({ choice }) });
     this.render();
-    this.feedback.textContent = until === null ? "Notifications are back on." : this.state.textContent;
-    this.querySelector("button, select")?.focus();
+    this.feedback.textContent = choice === null ? "Notifications are back on." : this.state.textContent;
+    this.querySelector("button")?.focus();
   }
 }
 

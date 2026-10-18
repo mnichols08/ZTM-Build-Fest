@@ -16,14 +16,19 @@ People & devices → **Notifications on this device**:
 | iPhone/iPad in a browser tab | "Add Kin to your Home Screen to get notifications. On iPhone and iPad, only the Home Screen app can receive them." |
 | Blocked in browser settings | "Notifications are blocked for Kin in this browser's settings. Allow notifications for this site there, then come back to turn them on." |
 | Off | "Off." and **Turn on notifications** |
-| On | "On.", **Mute** (1 hour, 8 hours, until I turn them back on) and **Turn off notifications** |
+| On | "On.", **Mute for 1 hour**, **Mute for 8 hours**, **Mute until I turn them back on** and **Turn off notifications** |
 | Muted | "Muted until <local date and time>." (or "until you turn them back on") and **Unmute** |
+| Server without push | "Notifications aren't set up on this Kin server yet." |
 
 The section explains once: "Notifications say only that something is new.
 They never include what it is or who added it, and Kin doesn't record whether
 you saw them." The browser's permission prompt appears only after **Turn on**
-is pressed. A mute is stored as an absolute time (no time zone is collected);
-"until I turn them back on" is a one-year mute, the service's limit.
+is pressed. The service computes a mute's end on its own clock (no time zone is
+collected, and a wrong device clock can't break it); "until I turn them back
+on" is stored as such and never ends by itself. Signing out of a browser turns
+its notifications off (a shared computer stops getting them). Each time the
+section loads it checks the service still holds this browser's current
+subscription and quietly updates it if the browser replaced it.
 
 The notification reads "Something new in Kin", or "Something new in <name>"
 when the household published a home-screen name ([#78](HOUSEHOLD-IDENTITY-DEFAULTS.md#published-install-identity)).
@@ -32,14 +37,20 @@ Tapping it focuses an open Kin window or opens Kin; a locked Kin stays locked.
 | Platform | Support |
 | --- | --- |
 | Chrome, Edge, Firefox (computer and Android) | Yes |
+| Safari on a Mac | Yes |
 | iPhone and iPad (iOS 16.4+) | Only Kin added to the Home Screen |
+
+A server must have a VAPID subject the push services accept: its origin when
+it serves Kin over `https`, or `KIN_PUSH_SUBJECT` (a `mailto:` address or an
+`https` URL). Without one, for example a development server on
+`http://localhost`, push is unavailable and the section says so.
 
 ## How it works
 
 - **Subscriptions.** `PUT /api/push/subscription` stores one subscription per
   device (`push_subscriptions`, server schema 11): the endpoint, the
-  browser's P-256 key and auth secret, an optional mute time. `DELETE` removes
-  it; `PUT /api/push/mute` sets or clears the mute (at most a year ahead). Each
+  browser's P-256 key and auth secret, an optional mute. `DELETE` removes it;
+  `PUT /api/push/mute` takes `{ "choice": "hour" | "night" | "indefinite" | null }`. Each
   call needs a session on a trusted device of an active member, and a device
   manages only its own row.
 - **Who is notified.** After a sync batch with new events commits, every
@@ -48,11 +59,16 @@ Tapping it focuses an open Kin window or opens Kin; a locked Kin stays locked.
   gets nothing.
 - **Calm.** At most one push per device per two minutes. Changes inside the
   window send one more push when it ends, so the last change isn't lost. The
-  push `Topic` (per household) lets a push service replace an undelivered
-  notification, and the notification `tag` replaces a shown one.
-- **Never in the way.** Sending happens after the response, at most four at a
-  time, with a 10-second timeout. 429 and 5xx are retried twice (after 5 and
-  30 seconds) and then dropped. 404 and 410 delete the subscription.
+  push `Topic` is the fixed `kin-new`, so a push service replaces an
+  undelivered notification for the same subscription; nothing in it links a
+  household's devices. The notification `tag` replaces a shown one.
+- **Never in the way.** Pushes are queued once the batch has committed and
+  sent without blocking the response, at most four at a time, with a
+  10-second timeout. 429, 5xx and network failures are retried twice (after 5 and
+  30 seconds, or a `Retry-After` of up to a minute) and then dropped. 400,
+  401, 403, 404, 410 and 413 mean the subscription will never work: it is
+  deleted, so the device shows notifications as off instead of silently
+  getting nothing. Only the status is logged.
 - **Sender, no dependencies** (`server/web-push.mjs`). VAPID (RFC 8292): an
   ES256 JWT for the endpoint's origin, at most 12 hours, with the deployment's
   origin (or `KIN_PUSH_SUBJECT`) as `sub`. Payload encryption (RFC 8291,
@@ -70,8 +86,12 @@ Tapping it focuses an open Kin window or opens Kin; a locked Kin stays locked.
 - **Lifecycle.** Revoking a device, removing a member, a Temporary member's
   expiry and leaving the household delete the affected subscriptions in the
   same transaction (the sync service's access-change hook). Household
-  deletion purges them. Sending re-checks trust, so nothing reaches a device
-  that lost access in between.
+  deletion purges them. Devices replaced during pairing or member recovery
+  keep their row until the next access change, but sending re-checks trust
+  every time, so nothing reaches a device that lost access.
+- **The sandbox.** Node 24's permission model doesn't restrict the network,
+  so pushes go out from inside it. If a later Node does, every send fails and
+  the service logs `push_network_denied`.
 - **Service worker.** `push` always shows the notification (browsers require
   one), reading only the manifest for the household's name and icon; it never
   opens key stores or decrypts. `notificationclick` focuses or opens Kin.

@@ -508,6 +508,7 @@ export const schemaMethods = {
               p256dh BLOB NOT NULL CHECK (length(p256dh) = 65),
               auth BLOB NOT NULL CHECK (length(auth) = 16),
               muted_until INTEGER,
+              muted_indefinitely INTEGER NOT NULL DEFAULT 0 CHECK (muted_indefinitely IN (0, 1)),
               created_at INTEGER NOT NULL
             );
             CREATE INDEX push_subscriptions_household ON push_subscriptions(household_id);
