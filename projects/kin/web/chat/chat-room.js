@@ -450,13 +450,16 @@ export class ChatRoom {
     let members = this.members, membersSignature = this.membersSignature;
     if (signature !== this.membersSignature) {
       // The household's member list, in the service's order, for labels.
-      // Without it (offline, say) the labels wait for a later pass.
+      // Without it (offline, a service error) the labels wait for a later
+      // pass.
       try {
         const household = await this.request("/api/household");
         members = (household.members ?? []).map(({ id, kind, active }) => ({ id, kind, active: active !== false }));
         membersSignature = signature;
       } catch (error) {
-        if (error?.code !== "connection_unavailable" && error?.code !== "sync_client_rate_budget") throw error;
+        // Labels are a nicety: keep the old ones and try again next pass,
+        // rather than hold up sending and receiving.
+        if (error?.code === "chat_locked") throw error;
       }
     }
     if (adminsChanged || membersSignature !== this.membersSignature) {

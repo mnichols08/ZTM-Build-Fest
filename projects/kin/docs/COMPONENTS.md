@@ -228,7 +228,7 @@ sync coordinator hands the app once it opens (`onChatRoom`) and takes back on
 stop; without one the element explains that chat needs sync and turns its
 composer off. The room owns the chat log, sending and sync; the element
 renders a window of at most 240 rows of `room.page()` (one engine page per
-render), loads older pages as the list scrolls up and newer ones as it
+render, plus a check of the newest 50 while reading older history), loads older pages as the list scrolls up and newer ones as it
 scrolls down (keeping the rows on screen in place) and trims the far end,
 and shows "Jump to latest" when the latest message isn't in view. Rows are
 reconciled by message ID, so an unchanged row (with its focus or selection)
@@ -257,10 +257,12 @@ change. Every text goes in through `textContent`; links stay plain text.
   everyone on your own messages and Remove as admin on others' for household
   admins; Escape or tabbing away closes it, and focus returns to the button.
 - **Accessibility:** the list is a focusable `role="log"` region with
-  `aria-live="off"`; a separate polite live region announces only messages
-  from others this view hasn't seen before, by message ID ("Adult 2: …"),
-  once each and after their text opens: never paging, your own messages or
-  the history shown on opening. Controls are 48px targets;
+  `aria-live="off"`; a separate polite live region announces only new
+  messages from others: among the newest 50, ones this view hasn't seen
+  before, by message ID ("Adult 2: …", once each, after their text opens;
+  "New message from Adult 2." while you're reading older history). History
+  brought in by paging, your own messages and what's there when the room
+  opens are never announced. Controls are 48px targets;
   rows wrap at 320px; colours follow the theme tokens and forced colours.
 
 ## v0.5.0 Pulse

@@ -117,6 +117,30 @@ export async function chatRegressions() {
   const grouped = rows().filter((row) => row.classList.contains("grouped"));
   check(grouped.length > 0 && grouped.every((row) => row.querySelector(".chat-meta.visually-hidden")), "grouped rows keep their author for screen readers");
 
+  // A fresh view paging up through history it never showed stays quiet.
+  {
+    const fresh = document.createElement("kin-chat");
+    chat.after(fresh);
+    fresh.room = room;
+    await settle();
+    const heard = [];
+    const freshAnnouncer = fresh.querySelector('[aria-live="polite"]');
+    const ear = new MutationObserver(() => { if (freshAnnouncer.textContent) heard.push(freshAnnouncer.textContent); });
+    ear.observe(freshAnnouncer, { childList: true, characterData: true, subtree: true });
+    for (let i = 0; i < 4; i += 1) {
+      fresh.querySelector(".chat-older").click();
+      await settle();
+    }
+    const freshScroller = fresh.querySelector(".chat-scroll");
+    freshScroller.scrollTop = 0;
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    check(heard.length === 0, `paging through unseen history announces nothing (${heard})`);
+    ear.disconnect();
+    fresh.room = null;
+    fresh.remove();
+  }
+
   // Scrolling up loads older messages and keeps the rows on screen in place.
   const anchorRow = rows()[3];
   const anchorId = anchorRow.dataset.messageId;

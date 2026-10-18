@@ -461,7 +461,9 @@ test("pending events sealed under an older key epoch are sealed again before the
   const request = async (path, options = {}) => {
     if (request.offline) throw Object.assign(new Error("offline"), { code: "connection_unavailable" });
     if (path === "/api/chat/status") return { deviceSequence: relaySequence };
-    if (path === "/api/household") return { members: [{ id: "bb".repeat(16), kind: "adult", active: true }] };
+    // A service error on the member list doesn't hold chat back (labels
+    // wait for a later pass).
+    if (path === "/api/household") throw Object.assign(new Error("Internal error"), { code: "internal_error" });
     if (path.startsWith("/api/chat/events") && options.method === "POST") {
       const batch = decodeEnvelopeBatch(options.body);
       pushed.push(...batch);

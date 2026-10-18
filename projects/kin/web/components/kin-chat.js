@@ -325,15 +325,17 @@ class KinChat extends HTMLElement {
     this.end = page.start + page.messages.length;
     if (this.end === this.total) this.following = true;
 
-    // Arrivals: messages from others this view hasn't seen. The history
-    // shown on opening (a reset) is seen, not announced.
-    const newest = this.following ? page.messages : room.page({ limit: ARRIVAL_CHECK }).messages;
+    // Arrivals: among the newest messages only, those from others this view
+    // hasn't seen. Older history brought in by paging, and what's there when
+    // a room opens, is seen, not announced.
+    const newest = this.following ? page.messages.slice(-ARRIVAL_CHECK) : room.page({ limit: ARRIVAL_CHECK }).messages;
     const arrived = [];
-    for (const message of [...page.messages, ...newest]) {
+    for (const message of newest) {
       if (this.seen.has(message.messageId)) continue;
       this.seen.add(message.messageId);
       if (mode !== "reset" && !firstRender && message.authorId !== room.identity.memberId && visible(message)) arrived.push(message);
     }
+    for (const message of page.messages) this.seen.add(message.messageId);
 
     this.reconcile();
     this.older.hidden = this.start === 0;
@@ -384,14 +386,17 @@ class KinChat extends HTMLElement {
       const message = byId.get(messageId);
       if (!message) continue;
       const status = this.textStatus.get(messageId);
-      if (message.text !== null || !message.blobRef || (status && !status.loading)) ready.push(message);
+      // Outside the window its text isn't being opened: say who wrote.
+      const shown = this.rows.has(messageId);
+      if (message.text !== null || !message.blobRef || !shown || (status && !status.loading)) ready.push(message);
       else waiting.push(messageId);
     }
     this.toAnnounce = waiting;
     if (!ready.length) return;
     const last = ready.at(-1);
     const more = ready.length > 1 ? `${ready.length} new messages. ` : "";
-    this.say(`${more}${room.authorLabel(last.authorId)}: ${last.text ?? "new message"}`);
+    const who = room.authorLabel(last.authorId);
+    this.say(last.text !== null ? `${more}${who}: ${last.text}` : `${more}New message from ${who}.`);
   }
 
   /** Brings the list in line with this.messages, reusing unchanged rows. */
