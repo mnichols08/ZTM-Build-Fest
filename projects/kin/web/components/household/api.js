@@ -79,8 +79,10 @@ export class HouseholdApi {
       if (this.host.identity) this.host.intent = null;
       this.host.render();
       this.notifyStatus();
+      return { loaded: true, identity: this.host.identity };
     } catch (error) {
       this.host.renderError(error);
+      return { loaded: false, identity: this.host.identity };
     }
   }
 

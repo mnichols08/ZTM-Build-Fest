@@ -32,17 +32,18 @@ The Identity & defaults management panel is absent from the rendered and accessi
 
 ## Protected contract
 
-`household_settings` stores one household-scoped opaque ciphertext, its key epoch, SHA-256 integrity digest, monotonic revision, authenticated writer IDs, and update time. The client payload is version 1 and contains the normalized household name plus appearance mode, color source/seed, manual color metadata, and the processed optional image. The service cannot read the name or image. A write supplies the last observed revision; stale writes receive a conflict and never overwrite a newer value. The service accepts a write only at the authoritative active epoch, while rotation is not pending, and only from a device provisioned for that epoch. The encrypted record survives restart and is removed with household data.
+`household_settings` stores one household-scoped opaque ciphertext, its key epoch, SHA-256 integrity digest, monotonic revision, authenticated writer IDs, and update time. The client payload is version 1 and contains the normalized household name, its private in-app icon choice, plus appearance mode, color source/seed, manual color metadata, and the processed optional image. The icon is either a generated first grapheme or a metadata-free, bounded 512-pixel PNG produced by the existing install-icon pipeline. The service cannot read the name, private icon, or appearance image. A write supplies the last observed revision; stale writes receive a conflict and never overwrite a newer value. The service accepts a write only at the authoritative active epoch, while rotation is not pending, and only from a device provisioned for that epoch. The encrypted record survives restart and is removed with household data.
 
-Names are trimmed and NFC-normalized, must be nonempty, contain at most 80 Unicode code points and 240 UTF-8 bytes, and may not contain control, formatting, or surrogate characters. UI rendering must use text nodes/textContent. Locked and signed-out shells retain the neutral `Kin` title. The manifest and installed-app identity are Kin unless an admin publishes an install identity (below); that never changes the encrypted settings or the locked shell.
+Names are trimmed and NFC-normalized, must be nonempty, contain at most 80 Unicode code points and 240 UTF-8 bytes, and may not contain control, formatting, or surrogate characters. UI rendering must use text nodes/textContent. The unlocked header uses the private household name and icon; an uploaded icon is shown only after it decodes, with the generated initial as its fallback. Locked and signed-out shells retain the neutral `Kin` title and built-in K. The manifest and installed-app identity are Kin unless an admin publishes an install identity (below); publishing copies the chosen icon to the plaintext install record but does not make that record the source of truth for unlocked UI.
 
 ## Published install identity
 
 Since v1.1 (#78) an admin can choose, in Identity & defaults → **Home screen**,
 to show the household's name and icon when Kin is installed, instead of "Kin".
-This is opt-in and off by default. It is a **separate, plaintext copy**: the
-encrypted `household_settings` above are unchanged, and the service still can't
-read them.
+This is opt-in and off by default. It is a **separate, plaintext copy** of the
+private household identity, and the service still can't read the encrypted
+source. Withdrawing this copy changes only installed-app presentation; the
+unlocked header continues to use the encrypted name and icon.
 
 - **What is published.** The household name (the saved name, by the rules
   above), a short name for under the icon (at most 12 characters), an optional
@@ -101,7 +102,9 @@ Shared images use the Personal Appearance validation, bounded resize, metadata-s
 
 ## Offline, rotation, and lifecycle
 
-Shared writes require a current online authenticated session and authoritative revision. No offline mutation is queued. After transport decryption, digest verification, AEAD authentication, and content validation succeed, Kin stores the accepted envelope in the root-protected `kin-crypto-keys` IndexedDB database, scoped by household ID. A fresh offline unlock reopens that protected cache and decrypts it again with the recorded household epoch key; missing keys, routing mismatches, malformed records, and tampering fail closed. A lower server or cached revision cannot replace a newer validated cache, while a newer valid server revision replaces it after reconnection. The owner-editing capability is never restored from cache.
+Shared writes require a current online authenticated session and authoritative revision. No offline mutation is queued. After the service accepts a write, Kin stores that exact accepted envelope in the root-protected `kin-crypto-keys` IndexedDB database before reporting success. After transport decryption, digest verification, AEAD authentication, and content validation succeed, server reads update the same cache, scoped by household ID. A hard refresh or fresh offline unlock reopens that protected cache and decrypts it again with the recorded household epoch key; missing keys, routing mismatches, malformed records, and tampering fail closed. A lower server or cached revision cannot replace a newer validated cache, while a newer valid server revision replaces it after reconnection. The owner-editing capability is never restored from cache.
+
+The decrypted header identity is session-scoped. Lock, logout, household switch, revocation, and deletion synchronously replace it with generic Kin branding and revoke its temporary icon URL before the locked shell is exposed. Uploaded-icon decode failure also uses the generic mark; a later verified settings refresh retries the current private revision.
 
 The ciphertext records its epoch and is readable only by devices entitled to that epoch. Rotation pauses settings writes; after commit, a later save must use the new active epoch. Key rotation does not weaken historic read entitlement. Revoked/removed devices cannot read or write through the API, and queued forged writes have no special path. Household deletion removes the server record; archive restore alone does not restore server authority.
 
