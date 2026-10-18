@@ -41,6 +41,13 @@ because they are visible and switchable, not hidden.
   log; deleting or editing a message deletes the old blob on the relay and on
   every device. The log keeps the message event (who sent it, when, and that
   it was edited or deleted) but not its content.
+- **Chat has its own log** (recorded in #109). Chat events are canonical
+  events like any other, but they are kept in a chat log apart from the
+  household history: a household's history is capped at 10,000 events and a
+  busy chat would fill it, chat events are encrypted under the chat key that
+  only members allowed to chat hold, and chat never enters the household
+  projection. The chat log has its own cap (250,000 events), its own replay
+  checkpoint, and each log refuses the other's events.
 - **Still open:** whether a mention may make the push notification say "You
   were mentioned", which would tell the service who was mentioned (not the
   text). Decided in the Mentions story.

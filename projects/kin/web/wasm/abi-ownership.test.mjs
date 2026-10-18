@@ -37,6 +37,13 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_archive_header: status,
       kin_archive_layout: status,
       kin_plan_import: status,
+      kin_chat_history_reset: () => 0,
+      kin_chat_history_append: status,
+      kin_chat_history_truncate: () => 0,
+      kin_chat_execute: status,
+      kin_chat_page: status,
+      kin_chat_text: status,
+      kin_chat_texts_clear: () => 0,
       kin_clear() {},
       kin_result_ptr: () => (output.length ? 32 : 0),
       kin_result_len: () => output.length,
@@ -82,6 +89,17 @@ test("a missing result buffer frees for every operation family", () => {
         entityId: new Uint8Array(16).fill(5), timestamp: 1, logicalTime: 1n,
       },
       [], 1_760_000_000_000, null, 20261003,
+    ),
+    () => engine.chatPage([], {}, 1_760_000_000_000, 20261003),
+    () => engine.putChatTexts([{ blobRef: "ab".repeat(32), text: "hi" }]),
+    () => engine.executeChatCommand(
+      { type: "post-chat-message", messageId: "07".repeat(16), blobRef: "ab".repeat(32), blobKey: "cd".repeat(32) },
+      {
+        eventId: new Uint8Array(16).fill(1), householdId: new Uint8Array(16).fill(2),
+        actorId: new Uint8Array(16).fill(3), deviceId: new Uint8Array(16).fill(4),
+        timestamp: 1, logicalTime: 1n,
+      },
+      [], 1_760_000_000_000, 20261003,
     ),
   ];
   for (const call of calls) {
@@ -157,4 +175,104 @@ test("the real engine leaves no allocation behind after a rejected request", asy
   // A freed pointer is no longer tracked; freeing it again is refused safely.
   assert.equal(exports.kin_free(frees[0], 64 + 88), 1);
   await loadKinEngine(`data:application/wasm;base64,${bytes.toString("base64")}`);
+});
+
+// KCHP v1 (docs/ABI.md): the chat page kin_chat_page publishes, built by hand.
+function kchp({ total, start, messages, retired = [] }) {
+  const text = new TextEncoder();
+  const texts = messages.map((message) => text.encode(message.text ?? ""));
+  const textBytes = texts.reduce((sum, bytes) => sum + bytes.length, 0);
+  const out = new Uint8Array(28 + messages.length * 160 + textBytes + retired.length * 32);
+  const view = new DataView(out.buffer);
+  out.set(text.encode("KCHP")); out[4] = 1;
+  [total, start, messages.length, textBytes, retired.length].forEach((value, index) => view.setUint32(8 + index * 4, value, true));
+  let textOffset = 0;
+  messages.forEach((message, index) => {
+    const at = 28 + index * 128;
+    out.fill(message.id, at, at + 16); out.fill(message.author, at + 16, at + 32); out.fill(message.device, at + 32, at + 48);
+    view.setBigInt64(at + 48, BigInt(message.postedAt), true);
+    view.setBigInt64(at + 56, BigInt(message.editedAt ?? 0), true);
+    view.setUint32(at + 64, start + index, true);
+    out[at + 68] = message.status; out[at + 69] = message.kind ?? 1;
+    if (message.blob) out.fill(message.blob, at + 72, at + 104);
+    if (texts[index].length) { view.setUint32(at + 104, textOffset, true); view.setUint32(at + 108, texts[index].length, true); }
+    textOffset += texts[index].length;
+    if (message.blob) out.fill(message.key, 28 + messages.length * 128 + index * 32, 28 + messages.length * 128 + index * 32 + 32);
+  });
+  out.set(texts.reduce((all, bytes) => Uint8Array.of(...all, ...bytes), new Uint8Array()), 28 + messages.length * 160);
+  retired.forEach((blob, index) => out.fill(blob, out.length - (retired.length - index) * 32, out.length - (retired.length - index - 1) * 32));
+  return out;
+}
+
+test("chat pages decode from KCHP and malformed pages are refused (#109)", () => {
+  const page = kchp({
+    total: 5,
+    start: 3,
+    messages: [
+      { id: 0x01, author: 0x11, device: 0x21, postedAt: 1_791_475_200_001, editedAt: 1_791_475_200_009, status: 1, blob: 0xb1, key: 0xc1, text: "Dinner at 6 🍝" },
+      { id: 0x02, author: 0x12, device: 0x22, postedAt: 1_791_475_200_002, status: 3 },
+    ],
+    retired: [0xd1, 0xd2],
+  });
+  const engine = createEngine(substituteExports({ operation: () => 0, result: page }).exports);
+  const decoded = engine.chatPage([], { limit: 2, admins: ["33".repeat(16)] }, 1_760_000_000_000, 20261003);
+  assert.equal(decoded.total, 5);
+  assert.equal(decoded.start, 3);
+  assert.deepEqual(decoded.retired, ["d1".repeat(32), "d2".repeat(32)]);
+  assert.deepEqual(decoded.messages[0], {
+    messageId: "01".repeat(16), authorId: "11".repeat(16), deviceId: "21".repeat(16),
+    postedAt: 1_791_475_200_001, editedAt: 1_791_475_200_009, index: 3, status: "edited", contentKind: "text",
+    blobRef: "b1".repeat(32), blobKey: new Uint8Array(32).fill(0xc1), text: "Dinner at 6 🍝",
+  });
+  assert.deepEqual(decoded.messages[1], {
+    messageId: "02".repeat(16), authorId: "12".repeat(16), deviceId: "22".repeat(16),
+    postedAt: 1_791_475_200_002, editedAt: null, index: 4, status: "removed-by-admin", contentKind: "text",
+    blobRef: null, blobKey: null, text: null,
+  });
+  const broken = [
+    page.slice(0, -1),
+    Uint8Array.of(...page, 0),
+    (() => { const copy = page.slice(); copy[4] = 2; return copy; })(),
+    (() => { const copy = page.slice(); copy[28 + 68] = 4; return copy; })(),
+    (() => { const copy = page.slice(); copy[28 + 69] = 0; return copy; })(),
+    (() => { const copy = page.slice(); copy[28 + 64] = 9; return copy; })(),
+    // A visible message without its blob, a removed one with a blob.
+    (() => { const copy = page.slice(); copy.fill(0, 28 + 72, 28 + 104); return copy; })(),
+    (() => { const copy = page.slice(); copy[28 + 128 + 72] = 1; return copy; })(),
+    // start + count past the total.
+    (() => { const copy = page.slice(); new DataView(copy.buffer).setUint32(8, 4, true); return copy; })(),
+    // Reserved bytes, a text that doesn't start where the last one ended,
+    // and an edited message without its edit time.
+    (() => { const copy = page.slice(); copy[28 + 70] = 1; return copy; })(),
+    (() => { const copy = page.slice(); copy[28 + 120] = 1; return copy; })(),
+    (() => { const copy = page.slice(); copy[28 + 104] = 1; return copy; })(),
+    (() => { const copy = page.slice(); copy.fill(0, 28 + 56, 28 + 64); return copy; })(),
+  ];
+  for (const bytes of broken) {
+    const fake = substituteExports({ operation: () => 0, result: bytes });
+    assert.throws(() => createEngine(fake.exports).chatPage([], {}, 1_760_000_000_000, 20261003),
+      (error) => error instanceof KinEngineError && error.code === 6);
+  }
+  for (const options of [{ limit: 0 }, { limit: 501 }, { before: -1 }, { admins: ["zz"] }, { admins: Array(17).fill("33".repeat(16)) }]) {
+    assert.throws(() => engine.chatPage([], options, 1_760_000_000_000, 20261003), KinEngineError);
+  }
+});
+
+test("chat texts report one status per text (#109)", () => {
+  const statuses = new Uint8Array([75, 67, 72, 83, 1, 0, 0, 0, 2, 0, 0, 0, 0, 1]);
+  const fake = substituteExports({ operation: () => 0, result: statuses });
+  const engine = createEngine(fake.exports);
+  assert.deepEqual(engine.putChatTexts([{ blobRef: "ab".repeat(32), text: "ok" }, { blobRef: "cd".repeat(32), text: "\u0007" }]), [true, false]);
+  for (const entries of [[], [{ blobRef: "00".repeat(32), text: "zero" }], [{ blobRef: "AB".repeat(32), text: "upper" }], [{ blobRef: "ab".repeat(32), text: 7 }], [{ blobRef: "ab".repeat(32), text: "lone \ud800" }]]) {
+    assert.throws(() => engine.putChatTexts(entries), KinEngineError);
+  }
+  const wrong = createEngine(substituteExports({ operation: () => 0, result: statuses.slice(0, -1) }).exports);
+  assert.throws(() => wrong.putChatTexts([{ blobRef: "ab".repeat(32), text: "ok" }, { blobRef: "cd".repeat(32), text: "x" }]),
+    (error) => error.code === 6);
+});
+
+test("an engine without the chat exports is refused", () => {
+  const fake = substituteExports({ operation: () => 0 });
+  delete fake.exports.kin_chat_page;
+  assert.throws(() => createEngine(fake.exports), (error) => error instanceof KinEngineError && error.code === 6);
 });

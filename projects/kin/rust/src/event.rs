@@ -33,6 +33,15 @@ id_type!(ReferenceRecordId);
 id_type!(ReferenceFieldId);
 id_type!(MaintenanceEventId);
 id_type!(AttachmentId);
+id_type!(ChatMessageId);
+
+/// What a chat message's content blob holds (#109).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum ChatContentKind {
+    Text = 1,
+    Attachment = 2,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -279,6 +288,39 @@ pub enum EventKind {
         device_id: DeviceId,
         nickname: Option<String>,
     },
+    /// A chat message (#109). Its content is a blob outside the log: the
+    /// 32-byte content hash and the blob's own 32-byte key (chat.rs).
+    ChatMessagePosted {
+        message_id: ChatMessageId,
+        content_kind: ChatContentKind,
+        blob_ref: [u8; 32],
+        blob_key: [u8; 32],
+    },
+    /// The author replaces a message's content with a new blob.
+    ChatMessageEdited {
+        message_id: ChatMessageId,
+        blob_ref: [u8; 32],
+        blob_key: [u8; 32],
+    },
+    /// Deletes a message for everyone: by its author, or (`by_admin`) by a
+    /// household admin.
+    ChatMessageDeleted {
+        message_id: ChatMessageId,
+        by_admin: bool,
+    },
+}
+
+impl EventKind {
+    /// Chat events (#109) live in the chat log, never in the household log
+    /// (history.rs): the two are replayed, capped and kept apart.
+    pub const fn is_chat(&self) -> bool {
+        matches!(
+            self,
+            EventKind::ChatMessagePosted { .. }
+                | EventKind::ChatMessageEdited { .. }
+                | EventKind::ChatMessageDeleted { .. }
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

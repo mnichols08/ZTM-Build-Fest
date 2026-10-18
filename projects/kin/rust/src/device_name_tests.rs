@@ -417,7 +417,7 @@ fn kcmd_carries_device_names() {
         KinError::MalformedProtocol
     );
     assert_eq!(
-        decode_command(&kcmd(44, [0; 16], b"")).unwrap_err(),
+        decode_command(&kcmd(47, [0; 16], b"")).unwrap_err(),
         KinError::UnsupportedVersion
     );
 }

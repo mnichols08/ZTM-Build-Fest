@@ -211,6 +211,53 @@ test("device names describe, nickname, clear and replay outside the projection (
   assert.equal(engine.applyEvents(records, asOf, null, day).items.length, 0);
 });
 
+test("chat posts, edits, deletes and pages from its own log through real WASM (#109)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const member = new Uint8Array(16).fill(0xbb), other = new Uint8Array(16).fill(0xbe), admin = new Uint8Array(16).fill(0xbf);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const context = (sequence, actorId = member) => ({ eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId, deviceId: new Uint8Array(16).fill(actorId[0] - 0x10), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) });
+  const asOf = 1_791_475_200_100, day = 20261009;
+  const blob = (byte) => byte.toString(16).padStart(2, "0").repeat(32);
+  const chat = [];
+  const run = (command, ctx) => {
+    const result = engine.executeChatCommand(command, ctx, chat, asOf, day);
+    chat.push(result.encodedEvent);
+    return result;
+  };
+  const posted = run({ type: "post-chat-message", messageId: "01".repeat(16), blobRef: blob(0xa1), blobKey: blob(0xc1) }, context(1));
+  assert.equal(new DataView(posted.encodedEvent.buffer).getUint16(2, true), 44);
+  assert.equal(posted.metadata.kind, "CHAT_MESSAGE_POSTED");
+  run({ type: "post-chat-message", messageId: "02".repeat(16), blobRef: blob(0xa2), blobKey: blob(0xc2) }, context(2, other));
+  run({ type: "edit-chat-message", messageId: "01".repeat(16), blobRef: blob(0xa3), blobKey: blob(0xc3) }, context(3));
+  // Only the author edits; your own message is not deleted "as admin".
+  assert.throws(() => engine.executeChatCommand({ type: "edit-chat-message", messageId: "01".repeat(16), blobRef: blob(0xa4), blobKey: blob(0xc4) }, context(4, other), chat, asOf, day), (error) => error.code === 4);
+  assert.throws(() => engine.executeChatCommand({ type: "delete-chat-message", messageId: "01".repeat(16), byAdmin: true }, context(4), chat, asOf, day, null, [hex(member)]), (error) => error.code === 4);
+  // A removal needs its actor among the admins the host names.
+  assert.throws(() => engine.executeChatCommand({ type: "delete-chat-message", messageId: "02".repeat(16), byAdmin: true }, context(4, admin), chat, asOf, day), (error) => error.code === 4);
+  chat.push(engine.executeChatCommand({ type: "delete-chat-message", messageId: "02".repeat(16), byAdmin: true }, context(4, admin), chat, asOf, day, null, [hex(admin)]).encodedEvent);
+  assert.deepEqual(engine.putChatTexts([{ blobRef: blob(0xa3), text: "Dinner at 6" }, { blobRef: blob(0xa2), text: "\u0007" }]), [true, false]);
+  const page = engine.chatPage(chat, { includeRetired: true, admins: [hex(admin)] }, asOf, day);
+  assert.equal(page.total, 2);
+  assert.deepEqual(page.messages.map(({ status, text }) => [status, text]), [["edited", "Dinner at 6"], ["removed-by-admin", null]]);
+  assert.equal(page.messages[0].blobRef, blob(0xa3));
+  assert.deepEqual(page.messages[0].blobKey, new Uint8Array(32).fill(0xc3));
+  assert.deepEqual(page.retired, [blob(0xa1), blob(0xa2)]);
+  // Without that admin named, the removal doesn't count.
+  assert.equal(engine.chatPage(chat, {}, asOf, day).messages[1].status, "live");
+  run({ type: "delete-chat-message", messageId: "01".repeat(16) }, context(5));
+  assert.equal(engine.chatPage(chat, { limit: 1, before: 1 }, asOf, day).messages[0].status, "deleted");
+  // The logs stay apart: chat events never enter the household history, and
+  // chat commands never run against it.
+  assert.throws(() => engine.applyEvents(chat, asOf, null, day), (error) => error.code === 4);
+  assert.throws(() => engine.executeCommand({ type: "post-chat-message", messageId: "09".repeat(16), blobRef: blob(0xa9), blobKey: blob(0xc9) }, context(6), [], asOf, null, day), (error) => error.code === 4);
+  assert.throws(() => engine.executeChatCommand({ type: "add", text: "Milk" }, context(6), chat, asOf, day), (error) => error.code === 2);
+  assert.equal(engine.applyEvents([], asOf, null, day).items.length, 0);
+  // Texts last until lock, or until cleared.
+  engine.putChatTexts([{ blobRef: blob(0xa5), text: "kept" }]);
+  engine.clearChatTexts();
+  assert.equal(engine.chatPage(chat, {}, asOf, day).messages.some((message) => message.text !== null), false);
+});
+
 test("Attachment bind and remove intent payloads roundtrip through real WASM", async () => {
   const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
   const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
