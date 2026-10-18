@@ -405,6 +405,64 @@ test("over HTTP: request, approve with a passkey, complete with the code, and si
   }
 });
 
+/** A household created over HTTP: the phone's cookies, IDs and keys. */
+async function httpPhone(s, label = "phone") {
+  const phoneKeys = await keyPair();
+  const options = await s.call("POST", "/api/passkeys/register/options", { purpose: "bootstrap", deviceLabel: "iPhone" });
+  const credentialId = `${label}-${options.body.flow}`;
+  const phone = await s.call("POST", "/api/passkeys/register/finish", { flow: options.body.flow, credential: { id: credentialId }, syncPublicKeys: phoneKeys.publicKeys });
+  return { ...phone, phoneKeys, credentialId };
+}
+
+/** Request and approve over HTTP; returns the request and the code. */
+async function httpApproved(s, phone) {
+  const computerKeys = await keyPair();
+  const created = await s.call("POST", "/api/link/requests", { syncPublicKeys: computerKeys.publicKeys, deviceLabel: "Chrome on Windows" });
+  const { requestId, secret, fingerprint } = created.body;
+  const options = await s.call("POST", `/api/link/requests/${requestId}/approve/options`, { secret, fingerprint }, phone.cookies);
+  const deviceCertificate = await certificateFor({ phone: { deviceId: phone.body.deviceId }, phoneKeys: phone.phoneKeys }, options.body.request);
+  const finish = await s.call("POST", `/api/link/requests/${requestId}/approve/finish`,
+    { flow: options.body.flow, credential: { id: phone.credentialId }, secret, fingerprint, deviceCertificate }, phone.cookies);
+  assert.equal(finish.status, 200);
+  return { requestId, secret, code: finish.body.code };
+}
+
+test("over HTTP: a request ended by a failing call keeps its audit, though the call rolls back", async () => {
+  const s = await server();
+  try {
+    const phone = await httpPhone(s);
+    const { requestId, secret, code } = await httpApproved(s, phone);
+    const wrong = code === "000000" ? "000001" : "000000";
+    for (let attempt = 1; attempt <= LINK_CODE_ATTEMPTS; attempt += 1)
+      await s.call("POST", `/api/link/requests/${requestId}/complete`, { secret, code: wrong });
+    const rows = s.application.store.db.prepare("SELECT details_json FROM security_audit WHERE event_type = 'device_link_failed'").all();
+    assert.equal(rows.length, 1);
+    assert.equal(JSON.parse(rows[0].details_json).reason, "code_attempts");
+  } finally {
+    await s.close();
+  }
+});
+
+test("over HTTP: deleting a household ends its requests, and nothing can then break the store", async () => {
+  const s = await server();
+  try {
+    const phone = await httpPhone(s);
+    const bystander = await httpPhone(s, "bystander");
+    const { requestId, secret } = await httpApproved(s, phone);
+    const sessionToken = phone.cookies.match(/kin_session=([^;]+)/)[1];
+    s.application.service.requestHouseholdDeletion(sessionToken, phone.body.memberId);
+    const status = await s.call("POST", `/api/link/requests/${requestId}/status`, { secret });
+    assert.equal(status.body.state, "ended", "the request ended with the household");
+    assert.equal((await s.call("DELETE", `/api/link/requests/${requestId}`, { secret })).status, 200);
+    assert.equal(s.application.store.failed, false);
+    const other = await s.call("GET", "/api/status", undefined, bystander.cookies);
+    assert.equal(other.status, 200, "every other household keeps working");
+    assert.equal(other.body.identity.householdId, bystander.body.householdId);
+  } finally {
+    await s.close();
+  }
+});
+
 test("over HTTP: the computer can cancel, and a cross-site request is refused", async () => {
   const s = await server();
   try {

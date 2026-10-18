@@ -555,13 +555,22 @@ async function api(request, response, url, context) {
   }
   // Phone-approved sign-in (#99). The request secret travels only in request
   // bodies, never in a URL; every route takes it as `secret`.
+  // Each link call saves the households whose requests it ended once its own
+  // transaction is over, so a rolled-back failure keeps its audit (#99).
+  const linked = (operation) => {
+    try {
+      return operation();
+    } finally {
+      service.flushLinkAudits();
+    }
+  };
   if (request.method === "POST" && url.pathname === "/api/link/requests") {
-    const created = service.createLinkRequest({
+    const created = linked(() => service.createLinkRequest({
       syncPublicKeys: body.syncPublicKeys,
       deviceLabel: body.deviceLabel,
       deviceToken,
       rateKey: context.clientKey(request),
-    });
+    }));
     json(response, 201, created);
     return;
   }
@@ -571,19 +580,19 @@ async function api(request, response, url, context) {
   if (linkMatch) {
     const [, requestId, action] = linkMatch;
     if (request.method === "DELETE" && !action) {
-      json(response, 200, service.cancelLinkRequest(requestId, body.secret));
+      json(response, 200, linked(() => service.cancelLinkRequest(requestId, body.secret)));
       return;
     }
     if (request.method === "POST" && action === "status") {
-      json(response, 200, service.linkStatus(requestId, body.secret));
+      json(response, 200, linked(() => service.linkStatus(requestId, body.secret)));
       return;
     }
     if (request.method === "POST" && action === "approve/options") {
       const auth = service.authorize(session);
-      const view = service.linkRequestForApprover(session, requestId, {
+      const view = linked(() => service.linkRequestForApprover(session, requestId, {
         secret: body.secret,
         fingerprint: body.fingerprint,
-      });
+      }));
       const issued = issueAuthenticationFlow(
         { purpose: "link-approve", requestId, memberId: auth.member.id },
         [...auth.member.credentials],
@@ -599,18 +608,18 @@ async function api(request, response, url, context) {
         throw badRequest();
       const credential = service.credentialForAuthenticatedMember(session, body.credential?.id);
       webauthn.verifyAuthentication(body.credential, body.flow, credential);
-      const approved = withTransaction(context, () =>
+      const approved = linked(() => withTransaction(context, () =>
         service.approveLinkRequest(session, requestId, {
           secret: body.secret,
           fingerprint: body.fingerprint,
           deviceCertificate: body.deviceCertificate,
         }),
-      );
+      ));
       json(response, 200, approved);
       return;
     }
     if (request.method === "POST" && action === "complete") {
-      const completed = withTransaction(context, () => {
+      const completed = linked(() => withTransaction(context, () => {
         const result = service.completeLinkRequest({
           requestId,
           secret: body.secret,
@@ -621,7 +630,7 @@ async function api(request, response, url, context) {
         // device added with a pairing code does.
         if (result.newDevice) syncService.onDeviceAdded(result.householdId, result.deviceId, { historyFromEpoch: 1 });
         return result;
-      });
+      }));
       cookie(response, "kin_session", completed.sessionToken, secureCookies);
       cookie(response, "kin_device", completed.deviceToken, secureCookies, 31_536_000);
       json(response, 200, omitToken(completed));

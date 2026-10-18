@@ -23,10 +23,14 @@
 // - Either side can cancel with the secret. Requests are process-local and
 //   end on restart, like pairings. Errors about a request are generic: an
 //   unknown, expired, cancelled or mismatched request looks the same.
-// - Audit events hold IDs and outcomes only. Approval, completion and any
-//   end after approval are saved with the household at once. A request that
-//   was never approved belongs to no household, so its requested and failed
-//   events stay in the in-memory log only.
+// - Audit events hold IDs and outcomes only. Approval and completion are
+//   saved with the household in their own transactions. An end after
+//   approval marks its household, and the route saves it once its own
+//   transaction is over (flushLinkAudits), so a failure that rolls the route
+//   back can't take the audit with it. A household being deleted is never
+//   saved again (the store refuses it), and asking to delete one ends its
+//   requests. A request that was never approved belongs to no household, so
+//   its requested and failed events stay in the in-memory log only.
 // - Limits: request creation per client (every request counts) and live
 //   requests per client and in all; approval failures per member; wrong codes
 //   per client. Link limits keep their own buckets, apart from pairing codes.
@@ -97,7 +101,26 @@ export const linkMethods = {
       ...(request.approval ? { householdId: request.approval.householdId, memberId: request.approval.memberId } : {}),
       reason,
     });
-    if (request.approval) this.persistHousehold(request.approval.householdId);
+    if (request.approval) this.linkAuditsPending.add(request.approval.householdId);
+  },
+
+  /** Saves the households whose requests ended, outside any transaction the
+   * caller had open. Households no longer active are skipped: the store
+   * refuses them, and their deletion is the record that matters. */
+  flushLinkAudits() {
+    const households = [...this.linkAuditsPending];
+    this.linkAuditsPending.clear();
+    for (const householdId of households) {
+      const household = this.households.get(householdId);
+      if (!household || ["deletion_pending", "deleted"].includes(household.lifecycleState)) continue;
+      this.persistHousehold(householdId);
+    }
+  },
+
+  /** A household's deletion was requested: its requests end with it. */
+  endHouseholdLinkRequests(householdId) {
+    for (const request of this.linkRequests.values())
+      if (request.approval?.householdId === householdId) this.endLinkRequest(request, "household_unavailable");
   },
 
   /** The request for `requestId` if `secret` is its secret; otherwise the
@@ -205,7 +228,7 @@ export const linkMethods = {
         this.endLinkRequest(request, "device_taken");
         throw new PairingError(
           "link_device_taken",
-          "This computer is already set up for another Kin account. Sign in there with that account's phone or passkey, or remove this computer from that account first.",
+          "This computer is already set up for another Kin account. Sign in on it with that account's phone or passkey, or start again on the computer.",
           409,
         );
       }
@@ -225,9 +248,13 @@ export const linkMethods = {
     }, { ...LIMITS, table: this.linkRateBuckets });
   },
 
-  /** Any device, in any household and revoked or not, with these keys. */
+  /** Any device, in any household and revoked or not, that has or had
+   * these keys. */
   deviceWithKeys(fingerprint) {
-    for (const device of this.devices.values()) if (device.syncKeyFingerprint === fingerprint) return device;
+    for (const device of this.devices.values()) {
+      if (device.syncKeyFingerprint === fingerprint) return device;
+      if (device.syncKeyHistory?.some((entry) => entry.fingerprint === fingerprint)) return device;
+    }
     return null;
   },
 

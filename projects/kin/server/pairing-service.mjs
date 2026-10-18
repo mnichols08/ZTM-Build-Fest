@@ -91,6 +91,8 @@ export class PairingService {
     this.rateBuckets = new Map();
     // Sign-in link limits (#99), apart from the pairing-code limits.
     this.linkRateBuckets = new Map();
+    // Households whose link requests ended, saved after the route (#99).
+    this.linkAuditsPending = new Set();
     this.bootstrapBuckets = new Map();
     this.householdPolicy = householdPolicy;
     this.events = [];
