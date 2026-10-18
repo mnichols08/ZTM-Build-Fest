@@ -60,6 +60,10 @@ because they are visible and switchable, not hidden.
   without reading anything. Until the chat key exists (#123), chat events
   are encrypted under the household key epoch; the chat key story moves
   them to it.
+- **Delete for me** (recorded in #117/#119) is a per-member record on the
+  service, sealed to that member's own devices for each revision (ECDH to
+  each device's agreement key) instead of a member-wide key: it hides the
+  message on all their devices, and nobody else can tell.
 - **Still open:** whether a mention may make the push notification say "You
   were mentioned", which would tell the service who was mentioned (not the
   text). Decided in the Mentions story.

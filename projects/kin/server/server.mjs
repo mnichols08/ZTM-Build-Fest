@@ -18,6 +18,7 @@ import {
   DurableStore,
   DurableStoreError,
   MAX_ATTACHMENT_BYTES,
+  MAX_CHAT_HIDDEN_RECORD_BYTES,
 } from "./durable-store.mjs";
 import { WebAuthn } from "./webauthn.mjs";
 import { readBody, readJsonBody } from "./http-body.mjs";
@@ -398,6 +399,8 @@ async function api(request, response, url, context) {
     ? await readBinary(request, response)
     : request.method === "PUT" && url.pathname === "/api/household/install-identity"
     ? await readJsonBody(request, response, MAX_INSTALL_IDENTITY_BODY_BYTES)
+    : request.method === "PUT" && url.pathname === "/api/chat/hidden"
+    ? await readJsonBody(request, response, MAX_CHAT_HIDDEN_RECORD_BYTES + 1024)
     : ["POST", "PUT", "DELETE"].includes(request.method)
     ? await readJsonBody(request, response, MAX_JSON_BODY_BYTES)
     : {};
@@ -920,6 +923,15 @@ async function api(request, response, url, context) {
   if (url.pathname === "/api/chat/events" && request.method === "POST") {
     const auth = syncService.authorize(session);
     json(response, 200, withTransaction(context, () => context.chatRelayService.push(auth, body)));
+    return;
+  }
+  if (url.pathname === "/api/chat/hidden" && request.method === "GET") {
+    json(response, 200, context.chatRelayService.hidden(syncService.authorize(session)));
+    return;
+  }
+  if (url.pathname === "/api/chat/hidden" && request.method === "PUT") {
+    const auth = syncService.authorize(session);
+    json(response, 200, context.chatRelayService.putHidden(auth, body));
     return;
   }
   if (url.pathname === "/api/chat/status" && request.method === "GET") {

@@ -512,6 +512,39 @@ should also separate the two domains.
 - **Quota.** At 250,000 chat events a household's pushes fail with
   `chat_limit` and outboxes wait; retention (#125) is what frees room.
 
+## Delete for me (v1.1, #119)
+
+Deleting a message "for me" hides it on all of the member's devices and
+changes nothing for anyone else, so it can't be a household or chat event:
+every member's devices hold those keys. Each member instead has one record on
+the service (`GET`/`PUT /api/chat/hidden`, compare-and-set on its revision,
+at most 256 KiB, about 10,000 messages) holding the IDs they hid, sealed by
+`web/chat/chat-hidden.js`:
+
+- A new random AES-256-GCM key per revision encrypts the sorted ID list; the
+  additional data binds household, member, revision and the writing device.
+- That key is wrapped to each of the member's trusted devices from the
+  verified directory: an ephemeral ECDH P-256 key and HKDF-SHA-256 to the
+  device's agreement key. Other members' devices are never recipients. This
+  stands in for a member-wide key provisioned to the member's devices (#119
+  suggested one): the record itself is the only thing such a key would
+  protect, and sealing each revision to the member's current devices needs
+  no new provisioning path.
+- The writing device signs every field; a device accepts a record only from a
+  trusted, unrevoked device of the same member, for this household, member
+  and the revision the service gave.
+
+Hiding works offline: the ID is kept on the device and the next chat pass
+reads the record, adds it, and writes the result. Hiding only adds, so two
+of the member's devices writing at once merge on the next pass (the loser of
+the compare-and-set reads and writes again). A device the member adds can't
+open the record until one of their other devices writes it again, which a
+pass does whenever the member's devices changed; meanwhile its own hides
+wait. Past 5,000 IDs a pass drops those since deleted for everyone. The
+service sees only the record's size, timing and revision. It could serve an
+older revision, which shows fewer hidden messages on a device that hasn't
+kept them, until a device writes again; it can't read, forge or move one.
+
 ## Privacy boundary
 
 Ciphertext payloads conceal content only to the extent that key management and client integrity hold. The relay can still observe routing IDs, ciphertext lengths, timing, delivery patterns, and possibly IP/log metadata. Document retention and access controls for these fields. Do not claim perfect anonymity, complete metadata privacy, or protection from a compromised authorized client.

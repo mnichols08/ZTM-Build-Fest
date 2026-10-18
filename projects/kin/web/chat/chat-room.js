@@ -28,6 +28,11 @@ import { ChatBlobs } from "./chat-blobs.js";
 import { ChatLogError, ChatLogStore } from "./chat-log-store.js";
 import { ChatRecords } from "./chat-records.js";
 import { memberLabels } from "../components/household/member-labels.js";
+import { MAX_HIDDEN_MESSAGES, openHiddenRecord, sealHiddenRecord } from "./chat-hidden.js";
+
+/** Past this many hidden messages, a pass drops those since deleted for
+ * everyone from the record (finding them reads the whole log). */
+const HIDDEN_COMPACT_AT = MAX_HIDDEN_MESSAGES / 2;
 
 /** Most events one push sends (the relay's batch bound). */
 export const MAX_CHAT_PUSH = 20;
@@ -170,6 +175,9 @@ export class ChatRoom {
     this.retiredThrough = 0;
     this.retiredApplied = new Set();
     this.refused = [];
+    this.hidden = new Set();
+    this.hiddenError = null;
+    this.hiddenWaiting = false;
     // Events whose signature failed once: eventId -> the pass it failed in.
     this.suspects = new Map();
     this.pass = 0;
@@ -287,6 +295,99 @@ export class ChatRoom {
     this.labels = memberLabels(this.members, this.identity.memberId);
     this.retiredThrough = state.retiredThrough ?? 0;
     this.refused = state.refused ?? [];
+    this.hidden = new Set(state.hidden ?? []);
+  }
+
+  /** Whether this member hid `messageId` for themselves ("delete for me"). */
+  isHidden(messageId) {
+    return this.hidden.has(messageId);
+  }
+
+  /** Deletes a message for this member only, on all their devices (#119):
+   * nobody else sees any change. */
+  async hide(message) {
+    this.assertOpen();
+    const ids = await this.store.addHidden([message.messageId]);
+    this.hidden = new Set(ids);
+    this.notify();
+    try { this.onLocalChange(); } catch { /* sync starts on its own schedule */ }
+  }
+
+  /**
+   * Brings this member's hidden messages in line with their sealed record
+   * on the service: reads it, adds what was hidden here, and writes it back
+   * when it changed or when the member's devices did (so a new device of
+   * theirs can read it). A record not sealed to this device yet (it joined
+   * after the last write) is left alone until another of the member's
+   * devices writes it again; hides made here wait until then.
+   */
+  async syncHidden(devices) {
+    const memberId = this.identity.memberId, householdId = this.identity.householdId;
+    const mine = devices.filter((device) => device.memberId === memberId && !device.revokedAt && device.publicKeys);
+    if (!mine.some((device) => device.deviceId === this.identity.deviceId)) return;
+    const state = await this.store.state();
+    const { revision, record } = await this.request("/api/chat/hidden");
+    if (!Number.isSafeInteger(revision) || revision < 0) throw new ChatRoomError("Chat received an invalid record.", "chat_hidden_invalid");
+    let remote = [];
+    let rewrite = false;
+    if (record) {
+      try {
+        remote = await openHiddenRecord({
+          record, householdId, memberId, revision, deviceId: this.identity.deviceId,
+          agreementPrivateKey: this.deviceKeys?.keys?.agreementPrivateKey, senders: mine,
+        });
+      } catch (error) {
+        if (error?.code === "chat_hidden_not_for_me") {
+          this.hiddenWaiting = true;
+          return;
+        }
+        throw error;
+      }
+      const sealedFor = new Set(record.recipients.map((entry) => entry.deviceId));
+      rewrite = mine.length !== sealedFor.size || mine.some((device) => !sealedFor.has(device.deviceId));
+    }
+    this.hiddenWaiting = false;
+    const remoteSet = new Set(remote);
+    let merged = [...new Set([...remote, ...(state.hidden ?? [])])];
+    const dropped = merged.length > HIDDEN_COMPACT_AT ? this.deletedForEveryone(new Set(merged)) : [];
+    if (dropped.length) merged = merged.filter((id) => !dropped.includes(id));
+    const changed = merged.length !== remote.length || merged.some((id) => !remoteSet.has(id));
+    let current = revision;
+    if (changed || rewrite) {
+      const sealed = await sealHiddenRecord({
+        ids: merged, householdId, memberId, revision: revision + 1, senderDeviceId: this.identity.deviceId,
+        signingKey: this.signingKey(),
+        recipients: mine.map((device) => ({ deviceId: device.deviceId, fingerprint: device.fingerprint ?? "", publicKeys: device.publicKeys })),
+      });
+      try {
+        current = (await this.request("/api/chat/hidden", { method: "PUT", body: JSON.stringify({ expectedRevision: revision, record: sealed }) })).revision;
+      } catch (error) {
+        // Another of the member's devices wrote meanwhile: merge on the next
+        // pass (hides here stay due for writing).
+        if (error?.code !== "chat_hidden_stale") throw error;
+        const settled = await this.store.settleHidden({ ids: remote, revision, dirty: true });
+        this.hidden = new Set(settled.ids);
+        this.notify();
+        return;
+      }
+    }
+    const settled = await this.store.settleHidden({ ids: merged, revision: current, dropped });
+    const before = this.hidden;
+    this.hidden = new Set(settled.ids);
+    if (before.size !== this.hidden.size || [...this.hidden].some((id) => !before.has(id))) this.notify();
+  }
+
+  /** Message IDs among `ids` deleted for everyone (by author or admin). */
+  deletedForEveryone(ids) {
+    const found = [];
+    let before = null;
+    for (;;) {
+      const page = this.page({ before, limit: 500, includeText: false });
+      for (const message of page.messages)
+        if ((message.status === "deleted" || message.status === "removed-by-admin") && ids.has(message.messageId)) found.push(message.messageId);
+      if (page.start === 0 || !page.messages.length) return found;
+      before = page.start;
+    }
   }
 
   /** How the view names a message's author: "You", or the member's kind and
@@ -477,6 +578,15 @@ export class ChatRoom {
     const pushMore = status.rotationPending ? false : await this.push();
     const pullMore = await this.pull(status, devices);
     await this.retireReplaced();
+    // "Delete for me" is a nicety beside the chat itself: its trouble is
+    // reported, and messages still flow.
+    try {
+      await this.syncHidden(devices);
+      this.hiddenError = null;
+    } catch (error) {
+      if (error?.code === "chat_locked") throw error;
+      this.hiddenError = error;
+    }
     return { hasMore: pushMore || pullMore };
   }
 
@@ -713,6 +823,7 @@ export class ChatRoom {
     this.pending.clear();
     this.pendingMessages.clear();
     this.retiredApplied.clear();
+    this.hidden?.clear();
     this.listeners.clear();
     this.deviceKeys = null;
     this.store.close();

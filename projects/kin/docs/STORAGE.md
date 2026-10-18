@@ -255,14 +255,19 @@ database per household, `kin-chat-log:<householdId>`, version 1
   events the relay hasn't accepted, the blob each uploads first and the blob
   it replaced. A message in the outbox shows as waiting to send.
 - `meta`: `{ key: "state", nextOrder, cursor, deviceSequence, provisional,
-  admins, members, membersSignature, retiredThrough, refused }`: the relay
+  admins, members, membersSignature, retiredThrough, refused, hidden,
+  hiddenRevision, hiddenDirty }`: the relay
   position read up to, this device's last chat sequence
   ([SYNC](SYNC.md#chat-relay-v11-111)), the household admins last seen and
   the household's member list (ID, kind, active, in the service's order, with
   the directory state it was fetched for) so removals and author labels show
   offline, how many events'
   replaced blobs were already deleted here, and the last 100 relay events
-  skipped because they failed authentication.
+  skipped because they failed authentication; and `hidden`, `hiddenRevision`
+  and `hiddenDirty`: the messages this member deleted for themselves, the
+  record revision they were last read or written at, and whether one hidden
+  here still has to be written to the member's record
+  ([SYNC](SYNC.md#delete-for-me-v11-119)).
 
 While Kin is unlocked the decrypted log is held in memory as one growing
 buffer (`web/chat/chat-records.js`) that the engine's chat log mirrors

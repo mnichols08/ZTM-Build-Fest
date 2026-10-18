@@ -823,6 +823,9 @@ kin-household, kin-security, kin-areas, kin-notes, kin-search, kin-item, kin-att
 .chat-form-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .chat-cancel { min-height: var(--tap); padding-inline: 14px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
 .chat-cancel[hidden] { display: none; }
+.chat-edited { color: var(--ink-muted); }
+.chat-form.chat-editing { border-color: var(--accent); background: var(--accent-soft); }
+.chat-form.chat-editing > label { color: var(--accent); }
 .chat-text.chat-emoji-only { font-size: 2.2em; line-height: 1.2; }
 kin-emoji-picker { display: contents; }
 .emoji-toggle { min-width: var(--tap); min-height: var(--tap); border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); font: inherit; font-size: 22px; line-height: 1; }

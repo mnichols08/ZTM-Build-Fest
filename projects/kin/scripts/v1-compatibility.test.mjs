@@ -26,6 +26,7 @@ const SOURCES = {
   "household-settings": [["web/appearance/household.js", /value\.version !== (\d+)/]],
   "server-schema": [["server/durable-store/shared.mjs", /export const SERVER_SCHEMA_VERSION = (\d+);/]],
   "chat-blob": [["web/chat/chat-blob-crypto.js", /const VERSION = (\d+);/]],
+  "chat-hidden": [["web/chat/chat-hidden.js", /const VERSION = (\d+);/]],
 };
 
 async function frozenVersions() {
@@ -74,6 +75,7 @@ test("the table in the compatibility document agrees with the machine-readable b
     "household-settings": "Household settings record",
     "server-schema": "Server database schema",
     "chat-blob": "Chat content blob",
+    "chat-hidden": "Chat delete-for-me record",
   };
   for (const [name, label] of Object.entries(rows)) {
     const row = doc.split("\n").find((line) => line.startsWith(`| ${label} |`));

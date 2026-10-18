@@ -34,11 +34,12 @@ const EDGE = 160;
 /** Messages from one author this close together are grouped. */
 const GROUP_MS = 5 * 60_000;
 
-const STATUS_TEXT = { deleted: "Message deleted", "removed-by-admin": "Removed by an admin" };
+const STATUS_TEXT = { deleted: "This message was deleted", "removed-by-admin": "Removed by an admin" };
 const TIME = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 const DATE_TIME = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const FULL = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "short" });
-const ACTION_LABELS = { copy: "Copy text", edit: "Edit", delete: "Delete for everyone", remove: "Remove as admin" };
+const ACTION_LABELS = { copy: "Copy text", edit: "Edit", delete: "Delete for everyone", remove: "Remove as admin", hide: "Delete for me" };
+const NO_RECALL = "Copies people already saved, screenshotted or downloaded can't be recalled.";
 
 const visible = (message) => message.status === "live" || message.status === "edited";
 
@@ -133,6 +134,7 @@ class KinChat extends HTMLElement {
 
     const form = document.createElement("form");
     form.className = "compose-form chat-form";
+    this.form = form;
     this.label = document.createElement("label");
     this.label.htmlFor = "chat-text";
     this.label.textContent = "Message";
@@ -336,7 +338,9 @@ class KinChat extends HTMLElement {
       page = room.page({ before: this.end, limit: Math.max(1, this.end - this.start) });
     }
     this.total = page.total;
-    this.messages = page.messages;
+    // Messages this member deleted for themselves don't show (#119); the
+    // window still counts them, as the engine does.
+    this.messages = page.messages.filter((message) => !room.isHidden?.(message.messageId));
     this.start = page.start;
     this.end = page.start + page.messages.length;
     if (this.end === this.total) this.following = true;
@@ -349,7 +353,7 @@ class KinChat extends HTMLElement {
     for (const message of newest) {
       if (this.seen.has(message.messageId)) continue;
       this.seen.add(message.messageId);
-      if (mode !== "reset" && !firstRender && message.authorId !== room.identity.memberId && visible(message)) arrived.push(message);
+      if (mode !== "reset" && !firstRender && message.authorId !== room.identity.memberId && visible(message) && !room.isHidden?.(message.messageId)) arrived.push(message);
     }
     for (const message of page.messages) this.seen.add(message.messageId);
 
@@ -487,6 +491,13 @@ class KinChat extends HTMLElement {
     time.textContent = (sameDay ? TIME : DATE_TIME).format(posted);
     time.title = FULL.format(posted);
     header.append(name, " · ", time);
+    // "edited" sits by the time (and so in its row's accessible text).
+    if (message.status === "edited") {
+      const edited = document.createElement("span");
+      edited.className = "chat-edited";
+      edited.textContent = " · edited";
+      header.append(edited);
+    }
     item.append(header);
 
     const body = document.createElement("p");
@@ -502,7 +513,7 @@ class KinChat extends HTMLElement {
     } else {
       const status = this.textStatus.get(message.messageId);
       body.classList.add("chat-gone");
-      body.textContent = status?.deleted ? "Message deleted"
+      body.textContent = status?.deleted ? "This message was deleted"
         : status?.pending ? "Waiting for this message to arrive…"
         : status?.failed ? "This message couldn't be opened yet."
         : "Loading…";
@@ -510,7 +521,8 @@ class KinChat extends HTMLElement {
     item.append(body);
 
     const notes = [];
-    if (message.status === "edited") notes.push("Edited");
+    // A grouped row's time is visually hidden: show "edited" with the notes.
+    if (message.status === "edited" && grouped) notes.push("Edited");
     if (room.pendingMessages?.has(message.messageId)) notes.push("Waiting to send");
     if (notes.length) {
       const note = document.createElement("p");
@@ -524,13 +536,15 @@ class KinChat extends HTMLElement {
   }
 
   actionsFor(message, room) {
-    if (!visible(message)) return [];
+    // Anyone can delete any message for themselves; a deleted one too.
+    if (!visible(message)) return ["hide"];
     const own = message.authorId === room.identity.memberId;
     const actions = [];
     if (message.text !== null) actions.push("copy");
-    if (own && message.text !== null) actions.push("edit");
+    if (own && message.text !== null && message.contentKind === "text") actions.push("edit");
     if (own) actions.push("delete");
     else if (room.isAdmin) actions.push("remove");
+    actions.push("hide");
     return actions;
   }
 
@@ -613,14 +627,24 @@ class KinChat extends HTMLElement {
         if (!this.editing) this.stashedDraft = this.input.value;
         this.editing = message;
         this.input.value = message.text;
-        this.label.textContent = "Edit message";
+        this.label.textContent = "Editing message";
+        this.form.classList.add("chat-editing");
         this.send.textContent = "Save";
         this.cancel.hidden = false;
         this.input.focus();
+      } else if (action === "hide") {
+        if (!confirm("Delete this message for you? It disappears on all your devices. Nobody else sees any change.")) {
+          this.rowFor(message.messageId)?.querySelector(".chat-menu-button")?.focus();
+          return;
+        }
+        await room.hide(message);
+        this.say("Deleted for you.");
+        await this.queueRender("update");
+        this.input.focus();
       } else if (action === "delete" || action === "remove") {
         const question = action === "delete"
-          ? "Delete this message for everyone? Its text is deleted from every device when they next sync."
-          : "Remove this message for everyone? Everyone will see \"Removed by an admin\".";
+          ? `Delete this message for everyone? Everyone will see that it was deleted. ${NO_RECALL}`
+          : `Remove this message for everyone? Everyone will see "Removed by an admin". ${NO_RECALL}`;
         if (!confirm(question)) {
           this.rowFor(message.messageId)?.querySelector(".chat-menu-button")?.focus();
           return;
@@ -628,7 +652,7 @@ class KinChat extends HTMLElement {
         await room.remove(message, { byAdmin: action === "remove" });
         this.say(action === "delete" ? "Message deleted." : "Message removed.");
         await this.queueRender("update");
-        // The row stays (now "Message deleted") without its actions.
+        // The row stays (now "This message was deleted").
         this.input.focus();
       }
     } catch (error) {
@@ -645,6 +669,7 @@ class KinChat extends HTMLElement {
     if (wasEditing && restoreDraft) this.input.value = this.stashedDraft ?? "";
     this.stashedDraft = null;
     this.label.textContent = "Message";
+    this.form?.classList.remove("chat-editing");
     this.send.textContent = "Send";
     this.cancel.hidden = true;
   }

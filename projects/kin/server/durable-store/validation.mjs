@@ -39,9 +39,10 @@ export const validationMethods = {
                (SELECT COUNT(*) FROM chat_blob_usage WHERE household_id = ?) +
                (SELECT COUNT(*) FROM chat_events WHERE household_id = ?) +
                (SELECT COUNT(*) FROM chat_device_sequences WHERE household_id = ?) +
-               (SELECT COUNT(*) FROM chat_relay_state WHERE household_id = ?) AS count`,
+               (SELECT COUNT(*) FROM chat_relay_state WHERE household_id = ?) +
+               (SELECT COUNT(*) FROM chat_hidden WHERE household_id = ?) AS count`,
           )
-          .get(householdId, householdId, householdId, householdId, householdId, householdId, householdId, householdId, householdId, householdId, householdId, householdId, householdId).count;
+          .get(householdId, householdId, householdId, householdId, householdId, householdId, householdId, householdId, householdId, householdId, householdId, householdId, householdId, householdId).count;
         if (retainedRows !== 0)
           throw new DurableStoreError("Kin deleted-household data is invalid.");
         continue;

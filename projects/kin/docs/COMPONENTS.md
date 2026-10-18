@@ -254,8 +254,14 @@ change. Every text goes in through `textContent`; links stay plain text.
   deleted" or "Removed by an admin". Consecutive messages from one author
   within five minutes are grouped; the hidden author stays for screen
   readers. A disclosure button per row shows Copy text, Edit and Delete for
-  everyone on your own messages and Remove as admin on others' for household
-  admins; Escape or tabbing away closes it, and focus returns to the button.
+  everyone on your own messages, Remove as admin on others' for household
+  admins, and Delete for me on any message (#117); Escape or tabbing away
+  closes it, and focus returns to the button. Editing shows an "Editing
+  message" bar on the composer; an edited row says "edited" by its time.
+  Deleting for everyone (or removing) asks first and says copies people
+  already saved can't be recalled; the row then reads "This message was
+  deleted" (or "Removed by an admin"), keeping author and time. A message
+  deleted for me disappears from my view on all my devices.
 - **Accessibility:** the list is a focusable `role="log"` region with
   `aria-live="off"`; a separate polite live region announces only new
   messages from others: among the newest 50, ones this view hasn't seen

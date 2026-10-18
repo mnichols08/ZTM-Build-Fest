@@ -618,6 +618,28 @@ export const schemaMethods = {
         throw new DurableStoreError("Kin could not complete the chat relay migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 13) {
+      try {
+        this.transaction(() => {
+          // v1.1 (#119): each member's sealed "delete for me" record.
+          this.db.exec(`
+            CREATE TABLE chat_hidden (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              member_id TEXT NOT NULL,
+              revision INTEGER NOT NULL CHECK (revision >= 1),
+              record TEXT NOT NULL,
+              PRIMARY KEY (household_id, member_id)
+            );
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(14, Date.now());
+          sqlitePragma(this.db, "user_version = 14");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the chat preferences migration.", { cause: error });
+      }
+    }
   },
 
   verify() {
