@@ -26,6 +26,7 @@ import { createDeviceAuthorizationCertificate, deviceKeyFingerprint } from "../.
 import { linkTag, newLinkCode, signInRequest } from "../../device-link.js";
 import { invitationCode } from "../../pairing-link.js";
 import { authenticationOptions, credentialJson } from "./auth.js";
+import { SIGN_IN_TTL_MS } from "./link.js";
 
 export const APPROVE_WARNING = "Only approve a computer that's in front of you.";
 /** How often the phone checks whether the computer has finished. */
@@ -234,7 +235,8 @@ export class HouseholdLinkApproval {
           return this.end("Kin couldn't save the computer's key on this phone, so the sign-in was cancelled. Nothing was signed in.", scanned);
         }
       }
-      this.flow = { step: "code", scanned, view, code, expiresAt: approved.expiresAt, notice: "" };
+      // Counted on this phone's clock (the service's may differ), as on the computer.
+      this.flow = { step: "code", scanned, view, code, expiresAt: Date.now() + SIGN_IN_TTL_MS, notice: "" };
       this.focusNext = "heading";
       this.host.render();
     });
