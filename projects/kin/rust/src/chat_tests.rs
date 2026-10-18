@@ -807,6 +807,18 @@ fn texts_are_checked() {
     }
     let too_long = "a".repeat(MAX_CHAT_TEXT_CHARS + 1);
     assert_eq!(check_text(too_long.as_bytes()), Err(KinError::InvalidEvent));
+    // Emoji count as their scalar values, not as graphemes (#113): a
+    // five-scalar family emoji is five toward the limit, as the client's
+    // chatTextProblem counts them.
+    let family = "👨\u{200d}👩\u{200d}👧";
+    assert_eq!(family.chars().count(), 5);
+    let at_limit = family.repeat(MAX_CHAT_TEXT_CHARS / 5);
+    assert!(check_text(at_limit.as_bytes()).is_ok());
+    let past_limit = format!("{at_limit}a");
+    assert_eq!(
+        check_text(past_limit.as_bytes()),
+        Err(KinError::InvalidEvent)
+    );
 }
 
 fn kcht(entries: &[([u8; 32], &[u8])]) -> Vec<u8> {

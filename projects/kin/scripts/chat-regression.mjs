@@ -316,6 +316,83 @@ export async function chatRegressions() {
   check(after2 !== undefined && Math.abs(after2 - lastTop) < 3, `reaching the newest page keeps the place (${lastTop} → ${after2})`);
   watcher.disconnect();
 
+  // Emoji (#113): the picker inserts at the cursor, moves by keyboard, names
+  // each emoji; a message of 1–3 emoji shows larger.
+  {
+    const toggle = chat.querySelector(".emoji-toggle");
+    const order = [...chat.querySelectorAll("textarea, .emoji-slot, .emoji-toggle, .chat-form button[type=submit]")];
+    check(order.map((node) => node.className || node.tagName).join() === "TEXTAREA,emoji-slot,emoji-toggle,add-button", "the panel sits after the message, before the buttons");
+    check(toggle && toggle.getAttribute("aria-expanded") === "false", "an emoji button");
+    input.value = "Dinner ready";
+    input.setSelectionRange(6, 6);
+    toggle.click();
+    for (let i = 0; i < 40 && !chat.querySelector(".emoji-grid button"); i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+    const grid = chat.querySelector(".emoji-grid");
+    check(grid && toggle.getAttribute("aria-expanded") === "true", "the picker opens");
+    const buttons = [...grid.querySelectorAll("button")];
+    check(document.activeElement === buttons[0], "focus on the first emoji");
+    check(buttons.every((button) => button.getAttribute("aria-label")) && buttons[0].getAttribute("aria-label") === "grinning face", "each emoji has its short name");
+    check(buttons.filter((button) => button.tabIndex === 0).length === 1, "one tab stop in the grid");
+    buttons[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    check(document.activeElement === buttons[1], "ArrowRight moves");
+    const perRow = buttons.findIndex((button) => button.offsetTop !== buttons[0].offsetTop);
+    buttons[1].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    check(document.activeElement === buttons[1 + perRow], `ArrowDown moves a row (${perRow})`);
+    document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    check(document.activeElement === buttons.at(-1), "End");
+    document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+    check(document.activeElement === buttons[0], "Home");
+    buttons[0].click();
+    check(input.value === "Dinner😀 ready", `inserted at the cursor (${input.value})`);
+    // Another category.
+    const categories = [...chat.querySelectorAll(".emoji-categories button")];
+    check(categories.length >= 5 && categories[0].getAttribute("aria-pressed") === "true", "categories");
+    categories[3].click();
+    await settle();
+    check(chat.querySelector(".emoji-categories button[aria-pressed=\"true\"]").getAttribute("aria-label") === "Food & drink", "switches category");
+    check(chat.querySelector(".emoji-grid button").getAttribute("aria-label") === "red apple", "that category's emoji");
+    // Escape closes and returns focus to the button.
+    chat.querySelector(".emoji-grid button").focus();
+    document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    check(chat.querySelector(".emoji-panel").hidden && document.activeElement === toggle, "Escape closes the picker");
+    // Too long: refused with a message, text unchanged.
+    input.value = "x".repeat(4000);
+    input.setSelectionRange(4000, 4000);
+    toggle.click();
+    for (let i = 0; i < 20 && chat.querySelector(".emoji-panel").hidden; i += 1) await settle();
+    chat.querySelector(".emoji-grid button").click();
+    check(input.value.length === 4000 && chat.querySelector("#chat-message").textContent.includes("too long"), "an emoji past the limit is refused");
+    input.value = "x".repeat(3999);
+    input.setSelectionRange(3999, 3999);
+    const firstEmoji = chat.querySelector(".emoji-grid button");
+    firstEmoji.click();
+    check(input.value === "x".repeat(3999) + firstEmoji.textContent && firstEmoji.textContent.length === 2, "4,000 scalars (4,001 UTF-16 units) fit");
+    check(!chat.querySelector("#chat-message").textContent, "and clear the too-long message");
+    // Undo still works after an insert.
+    input.value = "";
+    input.focus();
+    document.execCommand("insertText", false, "hello");
+    chat.querySelector(".emoji-grid button").click();
+    check(input.value === "hello" + firstEmoji.textContent, "inserted after typing");
+    input.focus();
+    document.execCommand("undo");
+    check(input.value === "hello", `undo takes back the emoji (${input.value})`);
+    toggle.click();
+    input.value = "";
+    chat.querySelector("#chat-message").textContent = "";
+    // Large emoji-only messages.
+    const big = add(other, "🎉🎂", { incoming: true });
+    const mixed = add(other, "Happy birthday 🎉", { incoming: true });
+    const four = add(other, "😀😀😀😀", { incoming: true });
+    notify();
+    await settle();
+    await settle();
+    const bodyOf = (id) => chat.querySelector(`[data-message-id="${id}"] .chat-text`);
+    check(bodyOf(big).classList.contains("chat-emoji-only"), "1–3 emoji render larger");
+    check(!bodyOf(mixed).classList.contains("chat-emoji-only") && !bodyOf(four).classList.contains("chat-emoji-only"), "text, or four emoji, don't");
+    check(parseFloat(getComputedStyle(bodyOf(big)).fontSize) > parseFloat(getComputedStyle(bodyOf(mixed)).fontSize) * 1.5, "visibly larger");
+  }
+
   // Offline notice.
   room.syncError = Object.assign(new Error("offline"), { code: "connection_unavailable" });
   notify();
