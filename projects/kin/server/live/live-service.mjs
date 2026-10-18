@@ -11,16 +11,21 @@
 // - One socket per device: a new one replaces the old (close 4409).
 // - Losing access closes the socket at once: a signed-out or expired session
 //   with 4401, a revoked device, removed member or deleted household with
-//   4403. Anything that changes access calls revalidate(); each ping also
-//   re-checks the session, which catches expiry.
-// - Pings every 25 s; two unanswered pings close the socket.
-// - Backpressure: while the socket can't take more, messages queue; past
-//   1 MiB queued, the socket closes (4429) and the client falls back to HTTP.
+//   4403. Anything that changes access calls revalidate(); a timer fires when
+//   the session or a Temporary membership expires; each ping re-checks too.
+//   A storage failure closes with 1011, not as lost access.
+// - Pings every 25 s; two unanswered pings close the socket. A client that
+//   half-closes (TCP FIN without a close frame) is closed at once.
+// - Backpressure: while the socket can't take more, messages queue (a
+//   sync hint already waiting isn't queued twice); past 1 MiB queued, the
+//   socket closes with 4429 and the client catches up over HTTP.
 // - Each connection keeps its socket and timers in a DisposableStack, so
-//   every way it ends releases the same resources exactly once.
+//   every way it ends releases the same resources exactly once. Sockets that
+//   are still closing count against the connection limit.
 import {
   acceptKey, CLOSE, closePayload, encodeFrame, encodeMessage, FrameParser, isClientKey, MAX_MESSAGE_BYTES, OPCODE, parseMessage,
 } from "./websocket.mjs";
+import { PairingError } from "../pairing-service/shared.mjs";
 
 export const LIVE_PATH = "/api/live";
 export const PING_INTERVAL_MS = 25_000;
@@ -29,6 +34,10 @@ export const MAX_QUEUED_BYTES = 1024 * 1024;
 export const MAX_CONNECTIONS = 4096;
 /** How long a closing socket may take to finish its closing handshake. */
 const CLOSE_GRACE_MS = 5_000;
+/** The same at shutdown, so stopping the service never waits on a peer. */
+const SHUTDOWN_GRACE_MS = 250;
+/** setTimeout's longest delay; longer expiries are re-armed in steps. */
+const MAX_TIMER_MS = 2_147_483_647;
 
 /** Kin record types on the live channel (server → client unless noted). */
 export const LIVE_TYPE = Object.freeze({
@@ -47,10 +56,17 @@ const ACCESS_CODES = new Map([
   ["household_deleted", CLOSE.ACCESS_LOST],
 ]);
 
-function refuse(socket, status, text) {
+const STATUS_TEXT = new Map([
+  [400, "Bad Request"], [401, "Unauthorized"], [403, "Forbidden"], [404, "Not Found"],
+  [426, "Upgrade Required"], [503, "Service Unavailable"],
+]);
+
+function refuse(socket, status, headers = "") {
   if (socket.destroyed) return;
-  socket.end(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
-  socket.destroy();
+  const response = `HTTP/1.1 ${status} ${STATUS_TEXT.get(status)}\r\nConnection: close\r\n${headers}Content-Length: 0\r\n\r\n`;
+  // Let the refusal reach the client before the socket goes.
+  socket.end(response, () => socket.destroy());
+  setTimeout(() => socket.destroy(), 1_000).unref?.();
 }
 
 function headerList(value) {
@@ -58,7 +74,7 @@ function headerList(value) {
 }
 
 class LiveConnection {
-  constructor(live, socket, { sessionToken, deviceId, householdId, memberId }) {
+  constructor(live, socket, { sessionToken, deviceId, householdId, memberId, deadline }) {
     this.live = live;
     this.socket = socket;
     this.sessionToken = sessionToken;
@@ -68,6 +84,7 @@ class LiveConnection {
     this.parser = new FrameParser({ maxMessage: live.maxMessage });
     this.queue = [];
     this.queuedBytes = 0;
+    this.queuedHint = false;
     this.blocked = false;
     this.missedPongs = 0;
     this.closing = false;
@@ -76,19 +93,24 @@ class LiveConnection {
     const onData = (chunk) => this.receive(chunk);
     const onDrain = () => this.flush();
     const onEnd = () => this.dispose();
+    // A half-close (FIN without a close frame) means the peer is gone.
+    const onHalfClose = () => (this.closing ? this.dispose() : this.close(CLOSE.GOING_AWAY, "", { grace: 0 }));
     socket.on("data", onData);
     socket.on("drain", onDrain);
+    socket.on("end", onHalfClose);
     socket.on("close", onEnd);
     socket.on("error", onEnd);
     socket.setNoDelay?.(true);
     this.resources.defer(() => {
       socket.off("data", onData);
       socket.off("drain", onDrain);
+      socket.off("end", onHalfClose);
       socket.destroy();
     });
     const ping = setInterval(() => this.tick(), live.pingInterval);
     ping.unref?.();
     this.resources.defer(() => clearInterval(ping));
+    this.armExpiry(deadline);
   }
 
   [Symbol.dispose]() {
@@ -100,8 +122,20 @@ class LiveConnection {
     this.disposed = true;
     this.queue = [];
     this.queuedBytes = 0;
-    this.live.forget(this);
+    this.live.forget(this, { socket: true });
     this.resources.dispose();
+  }
+
+  /** Re-checks access when the session or a Temporary membership expires. */
+  armExpiry(deadline) {
+    if (!Number.isFinite(deadline)) return;
+    const wait = Math.max(0, deadline - this.live.service.now());
+    const timer = setTimeout(() => {
+      if (wait > MAX_TIMER_MS) return this.armExpiry(deadline);
+      this.live.stillAllowed(this);
+    }, Math.min(wait, MAX_TIMER_MS) + 1);
+    timer.unref?.();
+    this.resources.defer(() => clearTimeout(timer));
   }
 
   /** Every ping interval: give up on a silent peer, re-check the session. */
@@ -117,15 +151,16 @@ class LiveConnection {
     if (this.disposed) return;
     for (const event of this.parser.feed(chunk)) {
       if (event.type === "error") return this.close(event.code, event.reason);
-      if (event.type === "ping") this.write(encodeFrame(OPCODE.PONG, event.data));
-      else if (event.type === "pong") this.missedPongs = 0;
-      else if (event.type === "close") {
+      if (event.type === "close") {
         // Echo the peer's close and finish.
         const code = event.code === 1005 ? CLOSE.NORMAL : event.code;
         this.close(code, "", { echo: true });
         return;
-      } else if (event.type === "message") {
-        if (this.closing) continue;
+      }
+      if (this.closing) continue;
+      if (event.type === "ping") this.write(encodeFrame(OPCODE.PONG, event.data));
+      else if (event.type === "pong") this.missedPongs = 0;
+      else if (event.type === "message") {
         const record = parseMessage(event.data);
         if (!record) return this.close(CLOSE.INVALID_DATA, "Malformed message");
         const handler = this.live.handlers.get(record.type);
@@ -142,6 +177,11 @@ class LiveConnection {
   /** Sends one Kin record. */
   send(type, payload, flags) {
     if (this.closing || this.disposed) return false;
+    // An empty sync hint already waiting says all a second one would.
+    if (type === LIVE_TYPE.SYNC_HINT && this.blocked) {
+      if (this.queuedHint) return true;
+      this.queuedHint = true;
+    }
     return this.write(encodeFrame(OPCODE.BINARY, encodeMessage(type, payload, flags)));
   }
 
@@ -152,7 +192,7 @@ class LiveConnection {
       this.queuedBytes += frame.length;
       if (this.queuedBytes > this.live.maxQueued) {
         // The client isn't reading; it can catch up over HTTP.
-        this.dispose();
+        this.close(CLOSE.SLOW_CONSUMER, "Too slow", { grace: 1_000, force: true });
         return false;
       }
       return true;
@@ -168,11 +208,13 @@ class LiveConnection {
       this.queuedBytes -= frame.length;
       this.blocked = !this.socket.write(frame);
     }
+    if (!this.blocked) this.queuedHint = false;
   }
 
   /** Starts the closing handshake; the socket ends once the close frame is
-   * written (and at the latest after a grace period). */
-  close(code, reason = "", { echo = false } = {}) {
+   * written, and at the latest after `grace`. `force` drops anything queued
+   * and writes the close frame past it. */
+  close(code, reason = "", { echo = false, grace = CLOSE_GRACE_MS } = {}) {
     if (this.closing || this.disposed) {
       if (echo) this.dispose();
       return;
@@ -181,17 +223,19 @@ class LiveConnection {
     this.queue = [];
     this.queuedBytes = 0;
     this.blocked = false;
-    this.socket.write(encodeFrame(OPCODE.CLOSE, closePayload(code, reason)));
     this.live.forget(this);
-    if (echo) {
+    if (!this.socket.writableEnded && !this.socket.destroyed) {
+      this.socket.write(encodeFrame(OPCODE.CLOSE, closePayload(code, reason)));
       this.socket.end();
-      this.dispose();
+    }
+    if (echo || grace === 0) {
+      if (grace === 0) setImmediate(() => this.dispose());
+      else this.dispose();
       return;
     }
-    this.socket.end();
-    const grace = setTimeout(() => this.dispose(), CLOSE_GRACE_MS);
-    grace.unref?.();
-    this.resources.defer(() => clearTimeout(grace));
+    const timer = setTimeout(() => this.dispose(), grace);
+    timer.unref?.();
+    this.resources.defer(() => clearTimeout(timer));
   }
 }
 
@@ -202,7 +246,8 @@ export class LiveService {
     maxMessage = MAX_MESSAGE_BYTES, maxConnections = MAX_CONNECTIONS,
   }) {
     this.service = service;
-    this.origin = origin;
+    // Compared as a browser sends it: scheme, host and port only.
+    this.origin = new URL(origin).origin;
     this.readSession = readSession;
     this.store = store;
     this.pingInterval = pingInterval;
@@ -214,6 +259,8 @@ export class LiveService {
     this.connections = new Map();
     /** householdId → Set of connections */
     this.households = new Map();
+    /** Every socket still held, open or closing (the connection limit). */
+    this.sockets = new Set();
     /** Kin record type → handler(connection, record), for client messages. */
     this.handlers = new Map();
   }
@@ -225,36 +272,41 @@ export class LiveService {
     try {
       url = new URL(request.url, this.origin);
     } catch {
-      return refuse(socket, 400, "Bad Request");
+      return refuse(socket, 400);
     }
-    if (url.pathname !== LIVE_PATH || request.method !== "GET") return refuse(socket, 404, "Not Found");
+    if (url.pathname !== LIVE_PATH || request.method !== "GET") return refuse(socket, 404);
     const key = request.headers["sec-websocket-key"];
     if (!headerList(request.headers.upgrade).includes("websocket") ||
-        !headerList(request.headers.connection).includes("upgrade") ||
-        request.headers["sec-websocket-version"] !== "13" || !isClientKey(key))
-      return refuse(socket, 400, "Bad Request");
+        !headerList(request.headers.connection).includes("upgrade") || !isClientKey(key))
+      return refuse(socket, 400);
+    if (request.headers["sec-websocket-version"] !== "13")
+      return refuse(socket, 426, "Sec-WebSocket-Version: 13\r\n");
     // Cross-site WebSocket hijacking: the browser always sends Origin.
-    if (request.headers.origin !== this.origin) return refuse(socket, 403, "Forbidden");
+    if (request.headers.origin !== this.origin) return refuse(socket, 403);
     // Kin speaks no subprotocol; extensions are declined by not echoing them.
-    if (request.headers["sec-websocket-protocol"] !== undefined) return refuse(socket, 400, "Bad Request");
+    if (request.headers["sec-websocket-protocol"] !== undefined) return refuse(socket, 400);
     let auth;
     const sessionToken = this.readSession(request);
     try {
       this.store?.assertAvailable();
       auth = this.service.authorize(sessionToken);
     } catch (error) {
-      return refuse(socket, ACCESS_CODES.get(error?.code) === CLOSE.SESSION_ENDED ? 401 : 403, "Forbidden");
+      if (!(error instanceof PairingError)) return refuse(socket, 503);
+      return refuse(socket, ACCESS_CODES.get(error.code) === CLOSE.SESSION_ENDED ? 401 : 403);
     }
     const replacing = this.connections.get(auth.device.id);
-    if (!replacing && this.connections.size >= this.maxConnections) return refuse(socket, 503, "Service Unavailable");
+    if (!replacing && this.sockets.size >= this.maxConnections) return refuse(socket, 503);
     socket.write(
       "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
       `Sec-WebSocket-Accept: ${acceptKey(key)}\r\n\r\n`,
     );
     replacing?.close(CLOSE.REPLACED, "Replaced by a newer connection");
+    const temporaryEnd = Number.isFinite(auth.member.expiresAt) ? auth.member.expiresAt : Infinity;
     const connection = new LiveConnection(this, socket, {
       sessionToken, deviceId: auth.device.id, householdId: auth.household.id, memberId: auth.member.id,
+      deadline: Math.min(auth.session.expiresAt ?? Infinity, temporaryEnd),
     });
+    this.sockets.add(connection);
     this.connections.set(connection.deviceId, connection);
     let group = this.households.get(connection.householdId);
     if (!group) this.households.set(connection.householdId, (group = new Set()));
@@ -263,21 +315,25 @@ export class LiveService {
     if (head?.length) connection.receive(head);
   }
 
-  forget(connection) {
+  /** Drops a connection from the maps; with `socket`, its socket is gone too. */
+  forget(connection, { socket = false } = {}) {
     if (this.connections.get(connection.deviceId) === connection) this.connections.delete(connection.deviceId);
     const group = this.households.get(connection.householdId);
     group?.delete(connection);
     if (group?.size === 0) this.households.delete(connection.householdId);
+    if (socket) this.sockets.delete(connection);
   }
 
   /** Whether the connection's session still grants access; closes it if not. */
   stillAllowed(connection) {
+    if (connection.closing || connection.disposed) return false;
     try {
       const auth = this.service.authorize(connection.sessionToken);
       if (auth.device.id === connection.deviceId && auth.household.id === connection.householdId) return true;
       connection.close(CLOSE.ACCESS_LOST, "Access changed");
     } catch (error) {
-      connection.close(this.lostAccess(connection) ? CLOSE.ACCESS_LOST : ACCESS_CODES.get(error?.code) ?? CLOSE.ACCESS_LOST, "Access changed");
+      if (!(error instanceof PairingError)) connection.close(CLOSE.SERVER_ERROR, "");
+      else connection.close(this.lostAccess(connection) ? CLOSE.ACCESS_LOST : ACCESS_CODES.get(error.code) ?? CLOSE.ACCESS_LOST, "Access changed");
     }
     return false;
   }
@@ -306,8 +362,11 @@ export class LiveService {
       if (connection.deviceId !== authorDeviceId) connection.send(LIVE_TYPE.SYNC_HINT);
   }
 
-  /** Closes every connection (service shutdown). */
+  /** Closes every socket (service shutdown), without waiting long. */
   closeAll(code = CLOSE.GOING_AWAY) {
-    for (const connection of [...this.connections.values()]) connection.close(code, "Service stopping");
+    for (const connection of [...this.sockets]) {
+      if (connection.closing) connection.dispose();
+      else connection.close(code, "Service stopping", { grace: SHUTDOWN_GRACE_MS });
+    }
   }
 }

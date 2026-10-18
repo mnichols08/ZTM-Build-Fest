@@ -11,7 +11,8 @@
 // - Every client frame must be masked (RFC 6455 §5.1); an unmasked frame
 //   closes with 1002.
 // - A message, reassembled from its fragments, is at most `maxMessage` bytes
-//   (256 KiB by default); larger closes with 1009 before the bytes arrive.
+//   (256 KiB by default) in at most 128 frames; more closes with 1009 before
+//   the bytes arrive.
 //
 // Inside each binary message Kin carries one record:
 //   [u8 type][u8 flags][u16 reserved = 0][u32 length][length bytes payload]
@@ -21,6 +22,9 @@ import { createHash } from "node:crypto";
 /** The GUID every server appends to the client's key (RFC 6455 §1.3). */
 export const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 export const MAX_MESSAGE_BYTES = 256 * 1024;
+/** Most frames one message may be split into. Empty fragments cost memory
+ * without adding bytes, so the byte cap alone doesn't bound them. */
+export const MAX_FRAGMENTS = 128;
 export const KIN_HEADER_BYTES = 8;
 
 export const OPCODE = Object.freeze({ CONTINUATION: 0x0, TEXT: 0x1, BINARY: 0x2, CLOSE: 0x8, PING: 0x9, PONG: 0xa });
@@ -46,6 +50,9 @@ export const CLOSE = Object.freeze({
 });
 
 const utf8 = new TextDecoder("utf-8", { fatal: true });
+const EMPTY = Buffer.alloc(0);
+/** Returned by FrameParser.next for a non-final fragment. */
+const FRAGMENT = Symbol("fragment");
 
 /** Sec-WebSocket-Accept for a client's Sec-WebSocket-Key. */
 export function acceptKey(key) {
@@ -71,11 +78,13 @@ export function isValidCloseCode(code) {
  *   { type: "error", code, reason } a protocol violation; the caller closes
  *                                   with `code`, and the parser stops.
  * Header parsing is a small state machine over a fixed scratch; payloads are
- * unmasked in place in the buffer they arrived in.
+ * unmasked in place in the buffer they arrived in, so feed() takes ownership
+ * of each chunk (a socket's chunks are read by nothing else).
  */
 export class FrameParser {
-  constructor({ maxMessage = MAX_MESSAGE_BYTES } = {}) {
+  constructor({ maxMessage = MAX_MESSAGE_BYTES, maxFragments = MAX_FRAGMENTS } = {}) {
     this.maxMessage = maxMessage;
+    this.maxFragments = maxFragments;
     this.pending = [];        // unparsed chunks
     this.pendingBytes = 0;
     this.fragments = [];      // payloads of the message being reassembled
@@ -140,16 +149,20 @@ export class FrameParser {
       this.pending.push(chunk);
       this.pendingBytes += chunk.length;
     }
+    // A loop, never recursion: a client can send any number of frames in
+    // one chunk.
     for (;;) {
       const event = this.next();
-      if (!event) break;
+      if (event === null) break;
+      if (event === FRAGMENT) continue;
       events.push(event);
       if (event.type === "error") break;
     }
     return events;
   }
 
-  /** One frame, if all of it has arrived; otherwise null. */
+  /** One frame, if all of it has arrived: its event, FRAGMENT for a non-final
+   * part of a message, or null when more bytes are needed. */
   next() {
     const head = this.peek(2);
     if (!head) return null;
@@ -181,13 +194,14 @@ export class FrameParser {
     // Refuse an oversized message as soon as its header says so.
     if (!control && (this.inMessage ? this.fragmentBytes : 0) + length > this.maxMessage)
       return this.fail(CLOSE.TOO_BIG, "Message too large.");
+    if (!control && this.inMessage && this.fragments.length >= this.maxFragments)
+      return this.fail(CLOSE.TOO_BIG, "Message in too many fragments.");
     if (this.pendingBytes < headerBytes + length) return null;
     const frameHeader = this.take(headerBytes);
     const mask = frameHeader.subarray(headerBytes - 4, headerBytes);
-    const payload = length ? this.take(length) : Buffer.alloc(0);
-    // A view into a chunk may be shared with the next frame's bytes; unmask
-    // a private copy only when the payload isn't already one of ours.
-    const data = payload.byteOffset === 0 && payload.length === payload.buffer.byteLength ? payload : Buffer.from(payload);
+    // Unmasked in place: the payload is a view of only its own bytes in a
+    // chunk the socket handed over and nothing else reads.
+    const data = length ? this.take(length) : EMPTY;
     for (let index = 0; index < data.length; index += 1) data[index] ^= mask[index & 3];
 
     if (opcode === OPCODE.PING) return { type: "ping", data };
@@ -217,7 +231,7 @@ export class FrameParser {
     }
     this.fragments.push(data);
     this.fragmentBytes += data.length;
-    if (!fin) return this.next();
+    if (!fin) return FRAGMENT;
     const message = this.fragments.length === 1 ? this.fragments[0] : Buffer.concat(this.fragments, this.fragmentBytes);
     this.inMessage = false;
     this.fragments = [];

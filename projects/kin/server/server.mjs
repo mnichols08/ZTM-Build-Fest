@@ -673,6 +673,8 @@ async function api(request, response, url, context) {
         });
       return result;
     });
+    // A replacement or recovery revokes old devices: their sockets close now.
+    context.liveService.revalidate(auth.household.id);
     json(response, 200, approved);
     return;
   }

@@ -45,10 +45,11 @@ test("the handshake answers the RFC's own example key", () => {
 test("the RFC's masked frame is read, but Kin takes binary only", () => {
   // RFC 6455 §5.7: a single-frame masked text message "Hello".
   const hello = Buffer.from([0x81, 0x85, 0x37, 0xfa, 0x21, 0x3d, 0x7f, 0x9f, 0x4d, 0x51, 0x58]);
-  const [event] = new FrameParser().feed(hello);
-  assert.deepEqual(event, { type: "error", code: CLOSE.UNSUPPORTED_DATA, reason: "Kin uses binary messages only." });
+  // The parser owns what it is fed (it unmasks in place), so each gets a copy.
   const binary = Buffer.from(hello);
   binary[0] = 0x82;
+  const [event] = new FrameParser().feed(Buffer.from(hello));
+  assert.deepEqual(event, { type: "error", code: CLOSE.UNSUPPORTED_DATA, reason: "Kin uses binary messages only." });
   assert.equal(new FrameParser().feed(binary)[0].data.toString(), "Hello");
 });
 
@@ -62,7 +63,8 @@ test("fragments reassemble, with control frames between them, across any chunkin
   for (const size of [1, 2, 3, 7, frames.length]) {
     const parser = new FrameParser();
     const events = [];
-    for (let at = 0; at < frames.length; at += size) events.push(...parser.feed(frames.subarray(at, at + size)));
+    const copy = Buffer.from(frames);
+    for (let at = 0; at < copy.length; at += size) events.push(...parser.feed(copy.subarray(at, at + size)));
     assert.deepEqual(events.map((event) => event.type), ["ping", "message"], `chunks of ${size}`);
     assert.equal(events[1].data.toString(), "Hello, Kin");
   }
@@ -80,6 +82,20 @@ test("16-bit and 64-bit lengths parse; a message past the cap is refused from it
   const parser = new FrameParser({ maxMessage: 1000 });
   assert.deepEqual(parser.feed(clientFrame(OPCODE.BINARY, Buffer.alloc(600), { fin: false })), []);
   assert.equal(parser.feed(clientFrame(OPCODE.CONTINUATION, Buffer.alloc(600)))[0].code, CLOSE.TOO_BIG);
+});
+
+test("thousands of tiny fragments in one chunk end in a refusal, never a crash", () => {
+  const flood = [clientFrame(OPCODE.BINARY, Buffer.alloc(0), { fin: false })];
+  for (let index = 0; index < 20_000; index += 1) flood.push(clientFrame(OPCODE.CONTINUATION, Buffer.alloc(0), { fin: false }));
+  const events = new FrameParser().feed(Buffer.concat(flood));
+  assert.equal(events.length, 1);
+  assert.equal(events[0].code, CLOSE.TOO_BIG, "past 128 fragments the message is refused");
+  // Up to the cap, fragments reassemble.
+  const fine = [clientFrame(OPCODE.BINARY, Buffer.from("a"), { fin: false })];
+  for (let index = 0; index < 126; index += 1) fine.push(clientFrame(OPCODE.CONTINUATION, Buffer.from("b"), { fin: false }));
+  fine.push(clientFrame(OPCODE.CONTINUATION, Buffer.from("c")));
+  const [message] = new FrameParser().feed(Buffer.concat(fine));
+  assert.equal(message.data.length, 128);
 });
 
 test("protocol violations close with the right code", () => {
@@ -380,12 +396,162 @@ test("a client that stops reading is dropped once its queue passes the limit", a
     client.socket.pause();
     const connection = r.application.liveService.connections.get(r.adult.deviceId);
     const big = Buffer.alloc(32 * 1024);
-    for (let index = 0; index < 400 && !connection.disposed; index += 1) connection.send(0x02, big);
-    assert.equal(connection.disposed, true, "the slow consumer is dropped");
+    for (let index = 0; index < 400 && !connection.closing; index += 1) connection.send(0x03, big);
+    assert.equal(connection.closing, true, "the slow consumer is closed (4429)");
+    assert.equal(connection.queuedBytes, 0, "and its queue dropped");
     assert.equal(r.application.liveService.connections.size, 0);
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    assert.equal(connection.disposed, true, "its socket goes after a short grace");
+    assert.equal(r.application.liveService.sockets.size, 0);
   } finally {
     await r.close();
   }
+});
+
+test("a flood of fragments over the socket closes it with 1009 and the service lives on", async () => {
+  const r = await rig();
+  try {
+    const client = await open(r.port, { session: r.adult.sessionToken });
+    const flood = [clientFrame(OPCODE.BINARY, Buffer.alloc(0), { fin: false })];
+    for (let index = 0; index < 5_000; index += 1) flood.push(clientFrame(OPCODE.CONTINUATION, Buffer.alloc(0), { fin: false }));
+    client.send(Buffer.concat(flood));
+    await client.until(() => client.ended);
+    assert.equal(client.closeFrame()?.code, CLOSE.TOO_BIG);
+    const again = await open(r.port, { session: r.adult.sessionToken });
+    assert.equal(again.status, 101, "the service still answers");
+  } finally {
+    await r.close();
+  }
+});
+
+test("a client that half-closes is let go at once", async () => {
+  const r = await rig();
+  try {
+    const client = await open(r.port, { session: r.adult.sessionToken });
+    await client.until(() => client.records().length);
+    client.socket.end();
+    const live = r.application.liveService;
+    const deadline = Date.now() + 1000;
+    while (live.sockets.size && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(live.connections.size, 0);
+    assert.equal(live.sockets.size, 0);
+  } finally {
+    await r.close();
+  }
+});
+
+test("bytes sent with the upgrade request are read after it is accepted", async () => {
+  const r = await rig();
+  try {
+    const socket = connect(r.port, "127.0.0.1");
+    await once(socket, "connect");
+    const chunks = [];
+    socket.on("data", (chunk) => chunks.push(chunk));
+    socket.write(Buffer.concat([
+      Buffer.from(`GET /api/live HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+        `Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ${randomBytes(16).toString("base64")}\r\nOrigin: http://localhost\r\n` +
+        `Cookie: kin_session=${r.adult.sessionToken}\r\n\r\n`),
+      clientFrame(OPCODE.PING, Buffer.from("early")),
+    ]));
+    const deadline = Date.now() + 2000;
+    while (!Buffer.concat(chunks).includes(Buffer.from("early")) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(Buffer.concat(chunks).includes(Buffer.from([0x8a, 5, ...Buffer.from("early")])), "the early ping is answered");
+    socket.destroy();
+  } finally {
+    await r.close();
+  }
+});
+
+test("the socket closes when the session expires, without waiting for a ping", async () => {
+  const r = await rig();
+  try {
+    const auth = r.service.authorize(r.adult.sessionToken);
+    auth.session.expiresAt = r.service.now() + 150;
+    const client = await open(r.port, { session: r.adult.sessionToken });
+    assert.equal(client.status, 101);
+    await client.until(() => client.ended, 2000);
+    assert.equal(client.closeFrame()?.code, CLOSE.SESSION_ENDED);
+  } finally {
+    await r.close();
+  }
+});
+
+test("a Temporary member's socket closes when the membership ends", async () => {
+  const r = await rig();
+  try {
+    const member = r.service.members.get(r.adult.memberId);
+    member.kind = "temporary";
+    member.expiresAt = r.service.now() + 150;
+    const client = await open(r.port, { session: r.adult.sessionToken });
+    assert.equal(client.status, 101);
+    await client.until(() => client.ended, 2000);
+    assert.equal(client.closeFrame()?.code, CLOSE.ACCESS_LOST);
+  } finally {
+    await r.close();
+  }
+});
+
+test("a storage failure is a server error, not lost access", async () => {
+  const r = await rig();
+  try {
+    const client = await open(r.port, { session: r.adult.sessionToken });
+    const authorize = r.service.authorize;
+    r.service.authorize = () => { throw new Error("disk gone"); };
+    r.application.liveService.revalidate(r.adult.householdId);
+    await client.until(() => client.ended);
+    assert.equal(client.closeFrame()?.code, CLOSE.SERVER_ERROR);
+    assert.equal((await open(r.port, { session: r.adult.sessionToken })).status, 503, "and the upgrade says unavailable");
+    r.service.authorize = authorize;
+  } finally {
+    await r.close();
+  }
+});
+
+test("the connection limit counts every socket; a wrong version gets 426", async () => {
+  const r = await rig({ maxConnections: 1 });
+  try {
+    const phone = await open(r.port, { session: r.adult.sessionToken });
+    assert.equal(phone.status, 101);
+    assert.equal((await open(r.port, { session: r.laptop.sessionToken })).status, 503, "a second device past the limit");
+    assert.equal((await open(r.port, { session: r.adult.sessionToken })).status, 101, "the same device still replaces its own");
+    const old = await open(r.port, { session: r.adult.sessionToken, extraHeaders: "" });
+    assert.equal(old.status, 101);
+    const versioned = connect(r.port, "127.0.0.1");
+    await once(versioned, "connect");
+    versioned.write(`GET /api/live HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 8\r\n` +
+      `Sec-WebSocket-Key: ${randomBytes(16).toString("base64")}\r\nOrigin: http://localhost\r\n\r\n`);
+    const [answer] = await once(versioned, "data");
+    assert.match(answer.toString(), /^HTTP\/1.1 426 Upgrade Required/);
+    assert.match(answer.toString(), /Sec-WebSocket-Version: 13/);
+    versioned.destroy();
+  } finally {
+    await r.close();
+  }
+});
+
+test("sync hints waiting behind a full socket are queued once", async () => {
+  const r = await rig();
+  try {
+    const client = await open(r.port, { session: r.adult.sessionToken });
+    client.socket.pause();
+    const connection = r.application.liveService.connections.get(r.adult.deviceId);
+    connection.blocked = true; // as if the socket refused more
+    for (let index = 0; index < 1000; index += 1) r.application.liveService.eventsAccepted(r.adult.householdId, r.laptop.deviceId);
+    assert.equal(connection.queue.length, 1, "one hint says it all");
+    connection.flush();
+    assert.equal(connection.queuedHint, false);
+  } finally {
+    await r.close();
+  }
+});
+
+test("stopping the service doesn't wait on a peer that ignores the close", async () => {
+  const r = await rig();
+  const client = await open(r.port, { session: r.adult.sessionToken });
+  client.socket.pause(); // never reads the close frame, never answers
+  const started = Date.now();
+  await r.close();
+  assert.ok(Date.now() - started < 1500, `stopped in ${Date.now() - started} ms`);
 });
 
 test("closing the service closes live sockets", async () => {
