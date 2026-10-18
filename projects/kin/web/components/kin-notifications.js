@@ -117,19 +117,26 @@ export class KinNotifications extends HTMLElement {
   async repair(generation) {
     const status = this.status;
     if (!status?.subscribed || this.support() !== "available" || Notification.permission !== "granted") return;
+    // Any press (turn off, mute) or newer refresh supersedes this repair: it
+    // re-checks before every step that changes something.
+    const stale = () => generation !== this.generation || this.busy;
     try {
       const registration = await navigator.serviceWorker.ready;
-      let subscription = await registration.pushManager.getSubscription();
       const { publicKey } = await api("/api/push/vapid-public-key");
+      if (stale()) return;
       const key = applicationServerKey(publicKey);
+      let subscription = await registration.pushManager.getSubscription();
+      if (stale()) return;
       // A subscription made for other server keys would only be refused,
       // even when the service holds the same endpoint.
       if (subscription && !sameServerKey(subscription, key)) { await subscription.unsubscribe(); subscription = null; }
       if (subscription && (await endpointTag(subscription.endpoint)) === status.endpointTag) return;
+      if (stale()) return;
       subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      if (stale()) return;
       const { endpoint, keys } = subscription.toJSON();
       const updated = await api("/api/push/subscription", { method: "PUT", body: JSON.stringify({ endpoint, keys }) });
-      if (generation === this.generation) { this.status = updated; this.render(); }
+      if (!stale()) { this.status = updated; this.render(); }
     } catch {
       // Left as it is; the next refresh tries again.
     }
@@ -189,6 +196,8 @@ export class KinNotifications extends HTMLElement {
   async run(action) {
     if (this.busy) return;
     this.busy = true;
+    // Supersedes any refresh or repair still in flight.
+    this.generation = (this.generation ?? 0) + 1;
     for (const control of this.querySelectorAll("button")) control.disabled = true;
     this.error.textContent = "";
     try {
