@@ -37,6 +37,7 @@ export const lifecycleMethods = {
       if (this.members.get(session.memberId)?.householdId === household.id)
         this.sessions.delete(sessionHash);
     this.expireHouseholdPairings(household.id);
+    this.endHouseholdLinkRequests(household.id);
     return {
       state: lifecycle.state,
       requestedAt: lifecycle.requestedAt,

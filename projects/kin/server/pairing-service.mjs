@@ -5,7 +5,7 @@
 // sessions.mjs (bootstrap, sessions, reauthentication), create.mjs (stage 1:
 // an adult creates a pairing), claim.mjs (stage 2: the new device claims it),
 // approve.mjs (stage 3: approval or revocation), then devices.mjs,
-// membership.mjs and lifecycle.mjs. shared.mjs holds the constants, errors
+// membership.mjs, lifecycle.mjs and link.mjs (phone-approved sign-in, #99). shared.mjs holds the constants, errors
 // and member-kind rules; its public names are re-exported here.
 import { createHmac, randomBytes } from "node:crypto";
 import { addMethods } from "./mixins.mjs";
@@ -16,6 +16,7 @@ import { createMethods } from "./pairing-service/create.mjs";
 import { deviceLabel } from "./pairing-service/device-label.mjs";
 import { deviceMethods } from "./pairing-service/devices.mjs";
 import { lifecycleMethods } from "./pairing-service/lifecycle.mjs";
+import { linkMethods } from "./pairing-service/link.mjs";
 import { membershipMethods } from "./pairing-service/membership.mjs";
 import { sessionMethods } from "./pairing-service/sessions.mjs";
 import {
@@ -48,6 +49,7 @@ export {
   TERMINAL_PAIRING_RETENTION_MS,
 } from "./pairing-service/shared.mjs";
 export { MAX_ACTIVE_MEMBERS, MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
+export { LINK_CODE_ATTEMPTS, LINK_CODE_TTL_MS, LINK_REQUEST_TTL_MS, MAX_LINK_REQUESTS, MAX_LINK_REQUESTS_PER_CLIENT } from "./pairing-service/link.mjs";
 export {
   BOOTSTRAP_LIMIT,
   BOOTSTRAP_WINDOW_MS,
@@ -84,7 +86,13 @@ export class PairingService {
     this.codeIndex = new Map();
     this.sessions = new Map();
     this.claimTokens = new Map();
+    // Phone-approved sign-in requests (#99): process-local, like pairings.
+    this.linkRequests = new Map();
     this.rateBuckets = new Map();
+    // Sign-in link limits (#99), apart from the pairing-code limits.
+    this.linkRateBuckets = new Map();
+    // Households whose link requests ended, saved after the route (#99).
+    this.linkAuditsPending = new Set();
     this.bootstrapBuckets = new Map();
     this.householdPolicy = householdPolicy;
     this.events = [];
@@ -127,26 +135,28 @@ export class PairingService {
   // claim never spends its budget. Once a client is over the limit every
   // attempt is refused, valid code or not; otherwise the 429 itself would
   // tell a guesser which code is right.
-  pruneRateBuckets() {
+  pruneRateBuckets(table = this.rateBuckets) {
     const cutoff = this.now() - RATE_WINDOW_MS;
-    for (const [rateKey, values] of this.rateBuckets) {
+    for (const [rateKey, values] of table) {
       const active = values.filter((at) => at > cutoff);
-      if (active.length) this.rateBuckets.set(rateKey, active);
-      else this.rateBuckets.delete(rateKey);
+      if (active.length) table.set(rateKey, active);
+      else table.delete(rateKey);
     }
   }
 
-  assertRateAvailable(key) {
-    this.pruneRateBuckets();
-    const bucket = this.rateBuckets.get(key);
+  // `table` and `event` let another limit (sign-in links, #99) keep its own
+  // buckets, so it can never fill the pairing-code table.
+  assertRateAvailable(key, { table = this.rateBuckets, event = "pairing_rate_limited" } = {}) {
+    this.pruneRateBuckets(table);
+    const bucket = table.get(key);
     // A client that could not be charged for a failure must not get to try
     // at all: refuse a new client before its attempt while the table is
     // full, so no response ever depends on whether its code was right.
     if (
-      (!bucket && this.rateBuckets.size >= this.maxRateBuckets) ||
+      (!bucket && table.size >= this.maxRateBuckets) ||
       (bucket?.length ?? 0) >= RATE_LIMIT
     ) {
-      this.audit("pairing_rate_limited");
+      this.audit(event);
       throw new PairingError(
         "rate_limited",
         "Too many attempts. Wait a minute and try again.",
@@ -155,11 +165,11 @@ export class PairingService {
     }
   }
 
-  recordFailedAttempt(key) {
-    let bucket = this.rateBuckets.get(key);
+  recordFailedAttempt(key, { table = this.rateBuckets, event = "pairing_rate_limited" } = {}) {
+    let bucket = table.get(key);
     if (!bucket) {
-      if (this.rateBuckets.size >= this.maxRateBuckets) {
-        this.audit("pairing_rate_limited");
+      if (table.size >= this.maxRateBuckets) {
+        this.audit(event);
         throw new PairingError(
           "rate_limited",
           "Too many attempts. Wait a minute and try again.",
@@ -167,23 +177,23 @@ export class PairingService {
         );
       }
       bucket = [];
-      this.rateBuckets.set(key, bucket);
+      table.set(key, bucket);
     }
     bucket.push(this.now());
   }
 
   /** Runs one code attempt for `key`, charging the limit only if it fails. */
-  rateLimitedAttempt(key, attempt) {
-    this.assertRateAvailable(key);
+  rateLimitedAttempt(key, attempt, limits) {
+    this.assertRateAvailable(key, limits);
     try {
       return attempt();
     } catch (error) {
       if (error instanceof PairingError && error.code !== "rate_limited")
-        this.recordFailedAttempt(key);
+        this.recordFailedAttempt(key, limits);
       throw error;
     }
   }
 
 }
 
-addMethods(PairingService, bootstrapLimitMethods, sessionMethods, createMethods, claimMethods, approveMethods, deviceMethods, membershipMethods, lifecycleMethods);
+addMethods(PairingService, bootstrapLimitMethods, sessionMethods, createMethods, claimMethods, approveMethods, deviceMethods, membershipMethods, lifecycleMethods, linkMethods);
