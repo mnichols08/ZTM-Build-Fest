@@ -120,11 +120,12 @@ export class KinNotifications extends HTMLElement {
     try {
       const registration = await navigator.serviceWorker.ready;
       let subscription = await registration.pushManager.getSubscription();
-      if (subscription && (await endpointTag(subscription.endpoint)) === status.endpointTag) return;
       const { publicKey } = await api("/api/push/vapid-public-key");
       const key = applicationServerKey(publicKey);
-      // A subscription made for other server keys would only be refused.
+      // A subscription made for other server keys would only be refused,
+      // even when the service holds the same endpoint.
       if (subscription && !sameServerKey(subscription, key)) { await subscription.unsubscribe(); subscription = null; }
+      if (subscription && (await endpointTag(subscription.endpoint)) === status.endpointTag) return;
       subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
       const { endpoint, keys } = subscription.toJSON();
       const updated = await api("/api/push/subscription", { method: "PUT", body: JSON.stringify({ endpoint, keys }) });
@@ -161,7 +162,11 @@ export class KinNotifications extends HTMLElement {
     // it ends rather than leaving "Muted until" on screen.
     clearTimeout(this.unmuteTimer);
     const remaining = status.mutedUntil ? status.mutedUntil - Date.now() : 0;
-    if (remaining > 0 && remaining < 2 ** 31 - 1) this.unmuteTimer = setTimeout(() => { if (this.isConnected && !this.busy) this.render(); }, remaining + 500);
+    if (remaining > 0 && remaining < 2 ** 31 - 1) this.unmuteTimer = setTimeout(function ended() {
+      if (!this.isConnected) return;
+      if (this.busy) this.unmuteTimer = setTimeout(ended.bind(this), 1000);
+      else this.render();
+    }.bind(this), remaining + 500);
     const muted = status.mutedIndefinitely || remaining > 0;
     this.state.textContent = !muted ? "On."
       : status.mutedIndefinitely ? "Muted until you turn them back on."

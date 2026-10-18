@@ -708,7 +708,7 @@ async function api(request, response, url, context) {
     // An expired session still names the browser through its device cookie.
     let signedOutDevice = null;
     try { signedOutDevice = service.authorize(session).device.id; } catch {
-      try { signedOutDevice = service.trustedDevice(deviceToken).device.id; } catch { /* no device */ }
+      try { signedOutDevice = service.trustedDevice(deviceToken, { allowDeletionPending: true }).device.id; } catch { /* no device */ }
     }
     if (signedOutDevice) context.pushService.signedOut(signedOutDevice);
     service.logout(session);

@@ -70,7 +70,7 @@ it serves Kin over `https`, or `KIN_PUSH_SUBJECT` (a `mailto:` address or an
   404, 410 and 413 mean the subscription will never work: it is deleted, so
   the device shows notifications as off instead of silently getting nothing.
   401 and 403 usually mean the push service refused the server's own VAPID
-  signature (a wrong subject, or keys restored from an old backup), so they
+  signature (for example a subject it doesn't accept), so they
   are logged as `push_rejected_by_service` and every subscription is kept.
   Only the status and the push service's host are logged.
 - **Sender, no dependencies** (`server/web-push.mjs`). VAPID (RFC 8292): an
