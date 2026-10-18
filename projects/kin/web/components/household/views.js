@@ -68,17 +68,17 @@ export class HouseholdViews {
     if (this.host.intent === "create") return this.renderCreate();
     if (this.host.intent === "join" || this.host.intent === "device") return this.renderJoin();
     this.host.text(
-      "Your recovery key and passkey protect this device's copy of Kin. Household membership is separate: an existing member approves this device, and then it syncs with theirs.",
+      "Kin keeps your household information private. You'll set up a passkey to protect this device. If you're joining someone else's household, a member must approve you before anything is shared.",
     );
-    const prompt = this.host.text("How would you like to get started?");
+    const prompt = this.host.text("What are you here to do?");
     prompt.className = "household-prompt";
     const choices = document.createElement("div");
     choices.className = "household-choices";
     for (const [label, description, action, className] of [
-      ["Create a household", "Start a brand-new household on this device. Only one person in a household does this.", () => this.host.startIntent("create"), "primary-action"],
-      ["Join an existing household", "Someone in your household sends you an invitation code and approves this device.", () => this.host.startIntent("join"), ""],
-      ["Sign in with your phone", "You're already signed in to Kin on a phone. Scan this computer's code with it, then type the 6-digit code it shows.", () => this.host.startIntent("phone"), ""],
-      ["Add this device to my existing membership", "You already use Kin on another device and want this one too.", () => this.host.startIntent("device"), ""],
+      ["Start a new household", "Choose this only if nobody in your household has set up Kin yet.", () => this.host.startIntent("create"), "primary-action"],
+      ["Join my household", "Someone invited you to their Kin household. You'll need their code and approval.", () => this.host.startIntent("join"), ""],
+      ["Sign in using my phone", "Already using Kin on your phone? Use it to sign in here without joining again.", () => this.host.startIntent("phone"), ""],
+      ["Use Kin on another device", "You already belong to a household and want to add this phone or computer to your membership.", () => this.host.startIntent("device"), ""],
     ].filter(([label]) => label !== "Sign in with your phone" || !this.host.claim)) {
       const choice = document.createElement("div");
       choice.className = "household-choice";
@@ -90,9 +90,9 @@ export class HouseholdViews {
       choices.append(choice);
     }
     this.host.append(choices);
-    const note = this.host.text("Already a member on this device but logged out?");
+    const note = this.host.text("Used Kin on this device before?");
     note.className = "household-choice-hint";
-    this.host.button("Log in with passkey", () => this.host.login(), "secondary");
+    this.host.button("Sign in with my passkey", () => this.host.login(), "secondary");
   }
 
   renderCreate() {
@@ -233,18 +233,18 @@ export class HouseholdViews {
     }
     if (this.host.intent === "device")
       this.host.text(
-        "On a device where you're already in the household, open More → Household → Add another device. Enter the code it shows here, then approve this device from there after comparing the device keys.",
+        "On a device where you already use Kin, go to Household → People & devices → Add another device. Enter the code here, then approve this device there. Compare the device keys on both screens to keep your household safe.",
       );
     else if (this.host.intent === "join")
       this.host.text(
-        "Ask an adult in the household to open Kin → More → Household access and add you as an Adult or Limited Member. Enter the code they get here. They approve this device after you both compare the device keys.",
+        "Ask a household adult to open Kin → Household → People & devices and invite you. Enter their invitation code here. They must approve your request after you both compare the device keys.",
       );
     this.host.text(
       "A code starts a short-lived invitation or recovery request. You must create a fresh passkey, and an existing trusted adult must still approve this device. No household details or encryption keys are shown before approval. Entering a code never creates a second household.",
     );
     const form = document.createElement("form");
     const codeLabel = document.createElement("label");
-    codeLabel.textContent = "Pairing code";
+    codeLabel.textContent = "Invitation or device code";
     const code = document.createElement("input");
     code.name = "code";
     code.required = true;
