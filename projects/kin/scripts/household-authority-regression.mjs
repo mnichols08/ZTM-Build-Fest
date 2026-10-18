@@ -216,7 +216,7 @@ async function pagePhoneApprove(link) {
   const shown = h.querySelector(".link-approval-code");
   if (!shown) throw new Error("The phone shows no code: " + h.textContent.slice(0, 300));
   return {
-    code: shown.textContent, existingDevice: view.existingDevice, deviceId: view.deviceId, deviceLabel: view.deviceLabel,
+    code: shown.querySelector("[aria-hidden=true]")?.textContent ?? "", existingDevice: view.existingDevice, deviceId: view.deviceId, deviceLabel: view.deviceLabel,
     secret: h.ctx.linkApproval.flow.scanned.secret, nonce: h.ctx.linkApproval.flow.scanned.nonce, warning, deviceName, asYou, cameraOff,
     countdown: h.querySelector(".link-approval-countdown")?.textContent ?? "",
   };

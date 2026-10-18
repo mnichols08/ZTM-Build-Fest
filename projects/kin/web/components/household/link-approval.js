@@ -160,10 +160,7 @@ export class HouseholdLinkApproval {
         view = started.request;
         if (view?.householdId !== this.host.identity.householdId || view?.memberId !== this.host.identity.memberId)
           throw new Error("Kin couldn't confirm who this computer would sign in as. It was not approved.");
-        const credential = await navigator.credentials.get({
-          publicKey: authenticationOptions(started.publicKey),
-          signal: this.host.connectionAbort.signal,
-        });
+        // Every check that could refuse runs before the passkey prompt.
         await this.ctx.api.openSyncKeyStore();
         const own = await this.host.syncKeyStore.getDevice(this.host.identity.deviceId);
         // Mid key change, the service may still hold this device's earlier
@@ -179,11 +176,15 @@ export class HouseholdLinkApproval {
           approverDeviceId: this.host.identity.deviceId, approverFingerprint: issuerFingerprint,
           computerFingerprint: scanned.fingerprint,
         });
+        // The keys must be the ones the camera saw on the computer.
+        if (!view.existingDevice && (await deviceKeyFingerprint(view.syncPublicKeys)) !== scanned.fingerprint)
+          throw new Error("The computer's key doesn't match the code you scanned. The computer was not approved.");
+        const credential = await navigator.credentials.get({
+          publicKey: authenticationOptions(started.publicKey),
+          signal: this.host.connectionAbort.signal,
+        });
         let deviceCertificate;
         if (!view.existingDevice) {
-          // The keys must be the ones the camera saw on the computer.
-          if ((await deviceKeyFingerprint(view.syncPublicKeys)) !== scanned.fingerprint)
-            throw new Error("The computer's key doesn't match the code you scanned. The computer was not approved.");
           deviceCertificate = await createDeviceAuthorizationCertificate({
             householdId: view.householdId,
             memberId: view.memberId,
@@ -219,13 +220,19 @@ export class HouseholdLinkApproval {
       if (this.flow !== flow) return;
       if (!view.existingDevice) {
         // Pin the key the camera read, so sync trusts nothing else for it.
-        await this.host.syncKeyStore.pinTrustedDevice({
-          householdId: view.householdId,
-          memberId: view.memberId,
-          deviceId: view.deviceId,
-          publicKeys: view.syncPublicKeys,
-          fingerprint: view.syncKeyFingerprint,
-        });
+        // If that fails, end the request rather than leave it approved with
+        // no code on screen.
+        try {
+          await this.host.syncKeyStore.pinTrustedDevice({
+            householdId: view.householdId,
+            memberId: view.memberId,
+            deviceId: view.deviceId,
+            publicKeys: view.syncPublicKeys,
+            fingerprint: view.syncKeyFingerprint,
+          });
+        } catch {
+          return this.end("Kin couldn't save the computer's key on this phone, so the sign-in was cancelled. Nothing was signed in.", scanned);
+        }
       }
       this.flow = { step: "code", scanned, view, code, expiresAt: approved.expiresAt, notice: "" };
       this.focusNext = "heading";
@@ -341,10 +348,16 @@ export class HouseholdLinkApproval {
       this.host.append(actions);
     } else if (flow.step === "code") {
       heading = this.heading("Type this code on the computer");
-      const code = document.createElement("output");
+      // Not a live region: the digits are shown, and read out one by one.
+      const code = document.createElement("p");
       code.className = "link-approval-code";
-      code.textContent = flow.code;
-      code.setAttribute("aria-label", `Code ${[...flow.code].join(" ")}`);
+      const digits = document.createElement("span");
+      digits.setAttribute("aria-hidden", "true");
+      digits.textContent = flow.code;
+      const spoken = document.createElement("span");
+      spoken.className = "visually-hidden";
+      spoken.textContent = `Code ${[...flow.code].join(" ")}`;
+      code.append(digits, spoken);
       this.host.append(code);
       this.host.text(`Only type it on ${flow.view.deviceLabel ? `“${flow.view.deviceLabel}”` : "the computer"}, the one in front of you.`);
       const countdown = document.createElement("p");
@@ -372,6 +385,7 @@ export class HouseholdLinkApproval {
     }
     const target = this.focusNext === "heading" ? heading : null;
     this.focusNext = null;
-    if (target) requestAnimationFrame(() => target.focus());
+    // Now, not on the next frame: a background window may not paint frames.
+    target?.focus();
   }
 }

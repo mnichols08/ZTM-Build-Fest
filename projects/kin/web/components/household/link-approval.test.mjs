@@ -192,8 +192,10 @@ test("Approve runs a fresh passkey, signs the certificate for the scanned keys, 
   assert.deepEqual(r.pins, [{ householdId: identity.householdId, memberId: identity.memberId, deviceId: view().deviceId,
     publicKeys: computerKeys.publicKeys, fingerprint: computerFingerprint }]);
   const code = r.host.byClass("link-approval-code");
-  assert.equal(code.textContent, finishBody.code, "the code shown is the one sent");
-  assert.equal(code.getAttribute("aria-label"), `Code ${[...finishBody.code].join(" ")}`);
+  assert.equal(code.children[0].textContent, finishBody.code, "the code shown is the one sent");
+  assert.equal(code.children[0].getAttribute("aria-hidden"), "true");
+  assert.equal(code.byClass("visually-hidden").textContent, `Code ${[...finishBody.code].join(" ")}`, "read out digit by digit");
+  assert.notEqual(code.tagName, "OUTPUT", "not a live region");
   assert.match(r.host.byClass("link-approval-countdown").textContent, /^The code works for 0[12]:\d\d$/);
   assert.equal(r.host.byClass("link-approval-countdown").getAttribute("role"), null);
   r.approval.stop();
@@ -315,7 +317,17 @@ test("a phone in the middle of a key update doesn't approve", async () => {
   r.host.syncKeyStore.getDevice = async (id) => ({ ...(await getDevice(id)), pendingTransition: { generation: 1 } });
   await r.approval.approve();
   assert.equal(finished.length, 0);
+  assert.equal(assertions.length, 0, "refused before any passkey prompt");
   assert.ok(texts(r.host).some((value) => /finishing a key update/.test(value)));
+});
+
+test("a key that can't be pinned cancels the approved request instead of hanging", async () => {
+  const r = await reviewed({ "/approve/finish": () => ({ expiresAt: Date.now() + 120_000 }) });
+  r.host.syncKeyStore.pinTrustedDevice = async () => { throw new Error("storage"); };
+  await r.approval.approve();
+  assert.ok(texts(r.host).some((value) => /couldn't save the computer's key/.test(value)));
+  assert.equal(deletes().length, 1);
+  assert.equal(r.host.byClass("link-approval-code"), null);
 });
 
 test("a request that ends while the code is shown says nothing was signed in", async () => {
