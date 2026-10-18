@@ -181,3 +181,21 @@ test("a session change after the private write reports that the icon saved", asy
   assert.equal(completion.error.code, "install_identity_partial");
   assert.match(completion.error.message, /icon was saved inside Kin.*unlock Kin/i);
 });
+
+test("a committed settings save updates the header when only the offline cache failed", async () => {
+  const { app, controller } = harness();
+  const saved = settings({ version: 1, iconSource: "letter", icon: null });
+  const warning = new Error("Household settings were saved, but the offline copy failed.");
+  warning.code = "household_settings_cache_partial";
+  warning.savedValue = saved;
+  app.syncCoordinator = { async saveHouseholdSettings() { throw warning; } };
+  let applied = false;
+  controller.applyEffectiveAppearance = () => { applied = true; };
+  controller.ctx.session = { captureSession: () => ({ vault: app.vault }), assertCurrentSession: () => {}, isCurrentSession: () => true };
+  let completion;
+  await controller.handleSaveHouseholdDefaults({ detail: { value: saved,
+    complete: (result, error) => { completion = { result, error }; } } });
+  assert.equal(app.householdSettings, saved);
+  assert.equal(applied, true);
+  assert.deepEqual(completion, { result: saved, error: warning });
+});

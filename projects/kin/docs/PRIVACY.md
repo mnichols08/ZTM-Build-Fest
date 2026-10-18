@@ -146,6 +146,9 @@ it. The unlocked app uses the name and icon from encrypted household settings,
 not this plaintext copy, so withdrawing publication does not remove internal
 branding. See
 [Household identity](HOUSEHOLD-IDENTITY-DEFAULTS.md#published-install-identity).
+The latest accepted encrypted identity revision is cached only in the device's
+root-protected sync-key store for offline startup. Its decrypted icon URL is
+session-scoped and is revoked when Kin locks, logs out, or changes households.
 
 Device names (v1.1, #71): the server keeps only each device's automatic name
 ("Chrome on iPhone", or "Device"), which it needs to show approvers which
