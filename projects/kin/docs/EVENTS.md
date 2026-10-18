@@ -76,6 +76,9 @@ Use uppercase entity/action-past-tense names consistently. The milestone column 
 | `ITEM_PLANNING_DATE_CHANGED`    | v0.22.0           | Set or clear an Item's optional fixed civil planning date.     |
 | `DEVICE_DESCRIBED`              | v1.1.0            | Record the automatic name a device reports for itself.         |
 | `DEVICE_NICKNAMED`              | v1.1.0            | Set or clear the nickname a member gives one of their devices. |
+| `CHAT_MESSAGE_POSTED`           | v1.1.0 (chat log) | Post a chat message whose content is a separate encrypted blob. |
+| `CHAT_MESSAGE_EDITED`           | v1.1.0 (chat log) | The author replaces a text message's content blob.             |
+| `CHAT_MESSAGE_DELETED`          | v1.1.0 (chat log) | The author deletes a message for everyone, or an admin removes it. |
 | `HOUSEHOLD_CREATED`            | v0.8.0            | Establish a household identity when pairing is introduced.   |
 | `MEMBER_INVITED`               | v0.8.0            | Record a member invitation.                                  |
 | `MEMBER_JOINED`                | v0.8.0            | Record accepted household membership.                        |
@@ -228,6 +231,45 @@ the server never learns a name anyone typed ([PRIVACY](PRIVACY.md),
 - A v1.0 engine does not know these kinds. It stops at the first one with the
   unsupported-event error above and syncs again once updated
   ([V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md)).
+
+## v1.1.0 Household chat
+
+`CHAT_MESSAGE_POSTED` (44), `CHAT_MESSAGE_EDITED` (45) and
+`CHAT_MESSAGE_DELETED` (46) are schema 1 and leave replay protocol 24
+unchanged ([ABI](ABI.md) has the payloads; [ADR 0008](decisions/0008-household-chat.md)
+the product decisions).
+
+- **Their own log.** Chat events live in the chat log, never in the
+  household history. Each refuses the other's events (code 4), so chat never
+  counts against the household's 10,000 events and a household request never
+  carries chat. The chat log holds up to 250,000 events.
+- **Metadata only.** An event carries the message ID, the content blob's
+  32-byte SHA-256 reference and its 32-byte random key, and (for a post) the
+  content kind: text or attachment. Text and files live in the blob, outside
+  the log, so deleting a message can delete its content.
+- **Conflicts change nothing.** As with device names, a decoded chat event
+  never fails replay. One that conflicts with what a history knows is kept
+  and changes nothing; commands enforce the rules when the event is created.
+  The first post of a message ID wins. Only the author edits, only a text
+  message, never a deleted one, and an edit must change the blob. The author
+  deletes for everyone; deletion is terminal, so it wins over an edit at the
+  same logical time in either replay order. Every replaced or deleted blob is
+  listed as retired for hosts to delete.
+- **Admin removal is a claim.** `by_admin` set on another member's message
+  records a claim. Only the service knows who is an admin, so a page counts
+  the claim when the host names its author among the household's admins;
+  the message then shows "Removed by an admin" and its blob is retired. If
+  that member later stops being an admin, the claim stops counting and the
+  message reads as live again, but its blob has usually been deleted by then,
+  so its content stays gone.
+- **Text rules.** A message's decrypted text is checked in Rust when the host
+  hands it over: 1 to 4,000 Unicode scalar values, valid UTF-8, not only
+  whitespace, and no control characters other than tab and line feed. It is
+  plain text, rendered with `textContent`.
+- Chat never appears in the KINS projection or the catch-up summary. Hosts
+  read it with `kin_chat_page`.
+- An engine older than v1.1 does not know these kinds and rejects them with
+  the unsupported-event error (code 3), rather than dropping them.
 
 ## v0.22.0 Lightweight Planning Dates
 
