@@ -5,7 +5,12 @@ development candidates that never received a release tag; their changes
 ship in v1.0.0. The project's planning releases v0.0.1–v0.0.12 are
 documentation only.
 
-## Unreleased — v1.1.0
+## v1.1.0 — Connected Household Devices
+
+Released 2026-10-18 as `kin-v1.1.0`. This release adds device names and
+nicknames, household identity on installed home screens, opt-in content-free
+push notifications, a sandboxed Node service, and QR pairing/phone-approved
+computer sign-in while preserving the v1.0 compatibility commitment.
 
 ### QR pairing and signing in with a phone (#93)
 
@@ -30,9 +35,15 @@ documentation only.
   keyed by the code and a nonce only the QR code carries; with the right
   code the computer receives the tag, checks it and pins the phone's key, so
   neither the QR code alone nor the service can substitute a device.
+- **Production camera access.** Kin's response policy permits camera capture
+  only for its own document; microphone, geolocation and cross-origin camera
+  access remain disabled. A real-server regression covers the policy, and the
+  scanner was exercised on a physical Moto G.
 - **Limits.** A sign-in QR code needs an origin of at most 56 bytes. The
   decoder can miss very small (version 1) codes seen at an angle; Kin's links
-  are far larger.
+  are far larger. Opening a computer sign-in QR in the system Camera app while
+  Kin is locked can lose the explanatory handoff after recovery unlock; open
+  Kin and use People & devices → Add a computer instead.
 
 ### Push notifications (#85)
 
