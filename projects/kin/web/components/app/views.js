@@ -100,7 +100,7 @@ export class ViewBuilder {
     this.app.segmentNavs.set("routines", routinesNav);
     routines.append(routinesNav, this.app.routines);
 
-    const updates = page("updates", "Updates", "Handoffs pass context to someone; Talk keeps topics for a calm moment.");
+    const updates = page("updates", "Updates", "Handoffs pass context to someone; Talk keeps topics for a calm moment; Chat is for quick back-and-forth.");
     const updatesNav = segmentNav("updates", "Updates");
     this.app.segmentNavs.set("updates", updatesNav);
     const handoffPanel = document.createElement("section");
@@ -109,10 +109,14 @@ export class ViewBuilder {
     const talkPanel = document.createElement("section");
     talkPanel.id = "talk-panel";
     talkPanel.setAttribute("aria-label", "Talk");
+    const chatPanel = document.createElement("section");
+    chatPanel.id = "chat-panel";
+    chatPanel.setAttribute("aria-label", "Chat");
     handoffPanel.append(this.app.handoffs);
     talkPanel.append(this.app.talks);
-    updates.append(updatesNav, handoffPanel, talkPanel);
-    this.app.segmentPanels.set("updates", new Map([["handoffs", handoffPanel], ["talk", talkPanel]]));
+    chatPanel.append(this.app.chat);
+    updates.append(updatesNav, handoffPanel, talkPanel, chatPanel);
+    this.app.segmentPanels.set("updates", new Map([["handoffs", handoffPanel], ["talk", talkPanel], ["chat", chatPanel]]));
 
     // Household: an overview plus secondary destinations. Appearance remains
     // personal while the five primary destinations stay unchanged.

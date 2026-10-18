@@ -27,6 +27,7 @@ import { ChatBlobStore } from "./chat-blob-store.js";
 import { ChatBlobs } from "./chat-blobs.js";
 import { ChatLogError, ChatLogStore } from "./chat-log-store.js";
 import { ChatRecords } from "./chat-records.js";
+import { memberLabels } from "../components/household/member-labels.js";
 
 /** Most events one push sends (the relay's batch bound). */
 export const MAX_CHAT_PUSH = 20;
@@ -77,6 +78,35 @@ export function chatAdmins(devices, now = Date.now()) {
       (device.memberExpiresAt === undefined || device.memberExpiresAt > now))
     .map((device) => device.memberId))].sort().slice(0, 16);
 }
+
+/** What of the device directory decides member labels (each member's kind
+ * and whether they're active): when it changes, the room asks the service
+ * for the household's member list again. */
+export function chatMembershipSignature(devices) {
+  const members = new Map();
+  for (const device of devices)
+    members.set(device.memberId, `${device.memberKind ?? "adult"}:${device.memberActive !== false}`);
+  return [...members].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)).map((entry) => entry.join("=")).join(",");
+}
+
+/** Most characters one message holds (the engine's rule, chat.rs). */
+export const MAX_CHAT_TEXT_CHARS = 4_000;
+
+/** Why `text` can't be sent, or null: the engine's text rule (rust/src/chat.rs
+ * check_text), checked here so a message never goes out that every device
+ * would then refuse to show. */
+export function chatTextProblem(text) {
+  if (typeof text !== "string" || !text.isWellFormed()) return "That message can't be sent.";
+  if (!text.trim()) return "Write a message first.";
+  let characters = 0;
+  for (const character of text) {
+    characters += 1;
+    if (/\p{Cc}/u.test(character) && character !== "\n" && character !== "\t") return "That message has characters Kin can't send.";
+  }
+  if (characters > MAX_CHAT_TEXT_CHARS) return `That's too long for one message. Keep it to ${MAX_CHAT_TEXT_CHARS.toLocaleString("en-US")} characters.`;
+  return null;
+}
+
 
 /** The chat room for a browser page, with its blob store and client, or
  * null where there is no IndexedDB (Node tests of the coordinator). */
@@ -135,6 +165,8 @@ export class ChatRoom {
     this.currentEpoch = null;
     this.admins = [];
     this.pending = new Set();
+    // Messages with an event still waiting to send, for "Waiting to send".
+    this.pendingMessages = new Set();
     this.retiredThrough = 0;
     this.retiredApplied = new Set();
     this.refused = [];
@@ -236,9 +268,11 @@ export class ChatRoom {
       changed = true;
       if (rows.length < LOAD_BATCH) break;
     }
-    const pending = new Set((await this.store.outbox()).map((row) => row.eventId));
+    const outbox = await this.store.outbox();
+    const pending = new Set(outbox.map((row) => row.eventId));
     if (pending.size !== this.pending.size || [...pending].some((id) => !this.pending.has(id))) changed = true;
     this.pending = pending;
+    this.pendingMessages = new Set(outbox.map((row) => row.messageId).filter(Boolean));
     if (changed) this.notify();
     return changed;
   }
@@ -248,8 +282,55 @@ export class ChatRoom {
   async loadState() {
     const state = await this.store.state();
     this.admins = state.admins ?? [];
+    this.members = state.members ?? [];
+    this.membersSignature = state.membersSignature ?? null;
+    this.labels = memberLabels(this.members, this.identity.memberId);
     this.retiredThrough = state.retiredThrough ?? 0;
     this.refused = state.refused ?? [];
+  }
+
+  /** How the view names a message's author: "You", or the member's kind and
+   * number ("Adult 2") exactly as Household access lists them
+   * (member-labels.js); a member no longer listed is a "Former member". */
+  authorLabel(memberId) {
+    if (memberId === this.identity.memberId) return "You";
+    return this.labels.get(memberId) ?? (this.members.some((member) => member.id === memberId) ? "Former member" : "Household member");
+  }
+
+  /** Whether this member may remove others' messages. */
+  get isAdmin() {
+    return this.admins.includes(this.identity.memberId);
+  }
+
+  /**
+   * Opens the text of each page message the engine doesn't hold yet (from
+   * this device's blob store, else the service) and hands it to the engine,
+   * which checks it. Resolves with a Map of messageId to { text },
+   * { deleted: true }, { pending: true } (not uploaded yet) or
+   * { failed: true } (couldn't be opened).
+   */
+  async loadTexts(messages) {
+    this.assertOpen();
+    const wanted = messages.filter((message) => message.contentKind === "text" && message.blobRef && message.text === null);
+    const results = new Map();
+    const kept = [];
+    for (let start = 0; start < wanted.length; start += 8) {
+      const chunk = wanted.slice(start, start + 8);
+      const opened = await Promise.all(chunk.map((message) =>
+        this.blobs.openText({ ref: message.blobRef, key: message.blobKey }).catch(() => ({ failed: true }))));
+      chunk.forEach((message, index) => {
+        results.set(message.messageId, opened[index]);
+        if (typeof opened[index].text === "string") kept.push({ message, text: opened[index].text });
+      });
+    }
+    this.assertOpen();
+    for (let start = 0; start < kept.length; start += 500) {
+      const chunk = kept.slice(start, start + 500);
+      const accepted = this.engine.putChatTexts(chunk.map(({ message, text }) => ({ blobRef: message.blobRef, text })));
+      // A text the engine refuses (control characters, too long) isn't shown.
+      chunk.forEach(({ message }, index) => { if (!accepted[index]) results.set(message.messageId, { failed: true }); });
+    }
+    return results;
   }
 
   /** Whether this device's event `eventId` is still waiting to send. */
@@ -280,6 +361,8 @@ export class ChatRoom {
   /** Seals text into a kept blob; the key goes into the event as hex. */
   async sealText(text) {
     this.assertOpen();
+    const problem = chatTextProblem(text);
+    if (problem) throw new ChatRoomError(problem, "chat_text_invalid");
     const { ref, key } = await this.blobs.seal(text);
     const hex = refHex(key);
     key.fill(0);
@@ -335,7 +418,7 @@ export class ChatRoom {
         result.encodedEvent.fill(0);
       }
       this.assertOpen();
-      await this.store.addLocal(envelope, { blobRef, retireRef });
+      await this.store.addLocal(envelope, { blobRef, retireRef, messageId: command.messageId });
       await this.refresh();
       return eventId;
     };
@@ -362,12 +445,32 @@ export class ChatRoom {
     if (deviceKeys) this.deviceKeys = deviceKeys;
     this.currentEpoch = status.currentEpoch;
     const admins = chatAdmins(devices, this.now());
-    if (admins.join() !== this.admins.join()) {
-      await this.store.saveAdmins(admins);
+    const adminsChanged = admins.join() !== this.admins.join();
+    const signature = chatMembershipSignature(devices);
+    let members = this.members, membersSignature = this.membersSignature;
+    if (signature !== this.membersSignature) {
+      // The household's member list, in the service's order, for labels.
+      // Without it (offline, a service error) the labels wait for a later
+      // pass.
+      try {
+        const household = await this.request("/api/household");
+        members = (household.members ?? []).map(({ id, kind, active }) => ({ id, kind, active: active !== false }));
+        membersSignature = signature;
+      } catch (error) {
+        // Labels are a nicety: keep the old ones and try again next pass,
+        // rather than hold up sending and receiving.
+        if (error?.code === "chat_locked") throw error;
+      }
+    }
+    if (adminsChanged || membersSignature !== this.membersSignature) {
+      await this.store.saveDirectory({ admins, members, membersSignature });
       this.admins = admins;
+      this.members = members;
+      this.membersSignature = membersSignature;
+      this.labels = memberLabels(members, this.identity.memberId);
       // Different admins can make an existing removal count, retiring its
       // blob: look at the retired list again this pass.
-      this.retiredThrough = 0;
+      if (adminsChanged) this.retiredThrough = 0;
       this.notify();
     }
     await this.refresh();
@@ -494,7 +597,7 @@ export class ChatRoom {
       } finally {
         plaintext.fill(0);
       }
-      entries.push({ order: index + 1, previousSequence: row.deviceSequence, envelope, blobRef: row.blobRef ?? null, retireRef: row.retireRef ?? null });
+      entries.push({ order: index + 1, previousSequence: row.deviceSequence, envelope, blobRef: row.blobRef ?? null, retireRef: row.retireRef ?? null, messageId: row.messageId ?? null });
     }
     await this.store.replacePending(entries, { expectedDeviceSequence, deviceSequence });
   }
@@ -608,6 +711,7 @@ export class ChatRoom {
     this.indexById.clear();
     this.epochKeys.clear();
     this.pending.clear();
+    this.pendingMessages.clear();
     this.retiredApplied.clear();
     this.listeners.clear();
     this.deviceKeys = null;

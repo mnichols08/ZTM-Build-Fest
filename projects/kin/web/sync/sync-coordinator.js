@@ -144,7 +144,7 @@ function browserLiveChannel(options) {
 }
 
 export class SyncCoordinator {
-  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom }) {
+  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {} }) {
     this.store = store;
     this.engine = engine;
     this.identity = identity;
@@ -179,6 +179,8 @@ export class SyncCoordinator {
     this.chat = null;
     this.chatOpening = null;
     this.chatOpenError = null;
+    // Told the chat room once it opens, and null when it closes (the view).
+    this.onChatRoom = onChatRoom;
   }
 
   async start() {
@@ -319,6 +321,9 @@ export class SyncCoordinator {
       .catch(async (error) => {
         if (this.stopped) return;
         this.lastSyncOk = false;
+        // Chat syncs after a full household pass, so a failed pass pauses
+        // chat too: tell the chat room why (offline, say).
+        if (!["sync_rate_limited", "sync_client_rate_budget"].includes(error.code)) this.chat?.reportSync(error);
         let message = error.message || "Device sync is paused.";
         let code = error.code;
         // This session can't hold a socket either: stop reconnecting (an
@@ -653,6 +658,9 @@ export class SyncCoordinator {
       if (!room) this.openChatRoom = null;
       this.chat = room;
       this.chatOpenError = null;
+      if (room) {
+        try { this.onChatRoom(room); } catch { /* the view's trouble isn't sync's */ }
+      }
       return room;
     }, (error) => {
       // Kept for the chat view to explain (a missing key epoch, say); the
@@ -1396,7 +1404,10 @@ export class SyncCoordinator {
     this.timer = null;
     clearTimeout(this.continuationTimer);
     this.continuationTimer = null;
-    this.chat?.close();
+    if (this.chat) {
+      this.chat.close();
+      try { this.onChatRoom(null); } catch { /* the view's trouble isn't sync's */ }
+    }
     this.chat = null;
     this.keyStore?.close();
     this.keyStore = null;

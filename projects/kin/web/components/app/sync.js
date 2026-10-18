@@ -80,6 +80,13 @@ export class SyncController {
         )
           this.ctx.sync.handleSyncState(value);
       },
+      // The household chat room (#111, #112), for Updates → Chat.
+      onChatRoom: (room) => {
+        if (!this.app.chat) return;
+        if (room && !(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
+        if (!room && this.app.chat.room !== coordinator.chat && this.app.chat.room) return;
+        this.app.chat.room = room;
+      },
     });
     this.app.syncCoordinator = coordinator;
     this.updateSyncChip();

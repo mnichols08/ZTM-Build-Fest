@@ -220,6 +220,51 @@ User-authorized follow-up patch: a failed canonical refresh retains the original
 
 kin-talk-list owns the single labeled input and semantic Open/Resolved lists. Bubbling/composed commands: kin:add-talk { text }, kin:resolve-talk { talkId }, kin:reopen-talk { talkId }, kin:archive-talk { talkId }. KinApp validates through Rust and persists; the component only renders and dispatches intent. See [V0.4.0](V0.4.0.md).
 
+## v1.1 Chat (#112)
+
+`<kin-chat>` (`web/components/kin-chat.js`) is Updates → Chat. Its `room`
+property takes the household chat room (`web/chat/chat-room.js`), which the
+sync coordinator hands the app once it opens (`onChatRoom`) and takes back on
+stop; without one the element explains that chat needs sync and turns its
+composer off. The room owns the chat log, sending and sync; the element
+renders a window of at most 240 rows of `room.page()` (one engine page per
+render, plus a check of the newest 50 while reading older history), loads older pages as the list scrolls up and newer ones as it
+scrolls down (keeping the rows on screen in place) and trims the far end,
+and shows "Jump to latest" when the latest message isn't in view. Rows are
+reconciled by message ID, so an unchanged row (with its focus or selection)
+survives new messages. Opened while its panel is hidden, it scrolls to the
+latest once shown. Texts the engine doesn't hold yet are opened through
+`room.loadTexts()` outside the render queue and painted when they arrive; one
+that isn't there yet or couldn't be opened is retried on the room's next
+change. Every text goes in through `textContent`; links stay plain text.
+
+- **Composer:** a labelled `<textarea>`; on a keyboard device Enter sends and
+  Shift+Enter adds a line, on touch Enter adds a line; a Send button on every
+  device. The draft lives only in the element, which locking replaces; Edit
+  keeps it aside and Cancel (or Escape) brings it back. Text is checked
+  against the engine's rule (`chatTextProblem`) before sending. The app
+  disables the workspace briefly while it refreshes, so the element puts
+  focus and the caret back afterwards (`deferFocusedControl` /
+  `settleDeferredFocus`, like the item detail).
+- **Rows:** author ("You", or the member's kind and number exactly as
+  Household access lists them, from the shared `member-labels.js`: Kin keeps
+  no member names; "Former member" once someone's access ended), time (with
+  the date when it isn't today), text, "Edited",
+  "Waiting to send" while the room's outbox holds the message, and "Message
+  deleted" or "Removed by an admin". Consecutive messages from one author
+  within five minutes are grouped; the hidden author stays for screen
+  readers. A disclosure button per row shows Copy text, Edit and Delete for
+  everyone on your own messages and Remove as admin on others' for household
+  admins; Escape or tabbing away closes it, and focus returns to the button.
+- **Accessibility:** the list is a focusable `role="log"` region with
+  `aria-live="off"`; a separate polite live region announces only new
+  messages from others: among the newest 50, ones this view hasn't seen
+  before, by message ID ("Adult 2: …", once each, after their text opens;
+  "New message from Adult 2." while you're reading older history). History
+  brought in by paging, your own messages and what's there when the room
+  opens are never announced. Controls are 48px targets;
+  rows wrap at 320px; colours follow the theme tokens and forced colours.
+
 ## v0.5.0 Pulse
 
 kin-pulse provides native Current capacity/For selects and Set pulse/Change/Clear buttons. kin:set-pulse {value,hours} and kin:clear-pulse bubble/composed. KinApp freezes SET timestamp/expiry and owns persistence, time refresh and retry. Component renders Rust status only. See [V0.5.0](V0.5.0.md).

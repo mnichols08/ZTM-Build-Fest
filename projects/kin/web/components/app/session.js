@@ -233,6 +233,7 @@ export class SessionController {
         ["compose", "kin-compose"],
         ["handoffs", "kin-handoff-list"],
         ["talks", "kin-talk-list"],
+        ["chat", "kin-chat"],
         ["search", "kin-search"],
         ["pulse", "kin-pulse"],
         ["routines", "kin-routines"],

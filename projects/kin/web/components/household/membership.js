@@ -2,6 +2,7 @@
 // invitations, device replacement, recovery, removal and admin changes.
 // Part of <kin-household>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
+import { MEMBER_KIND_LABELS, memberLabels } from "./member-labels.js";
 import { authenticationOptions, credentialJson } from "./auth.js";
 
 const MAX_ACTIVE_ADULTS = 4;
@@ -295,6 +296,7 @@ export class HouseholdMembership {
           : "Only adults can manage household access. Removing a member blocks future access, but cannot erase information already copied.",
       );
       const activeMembers = household.members.filter((value) => value.active);
+      const labels = memberLabels(household.members, household.members.find((value) => value.current)?.id);
       const me = household.members.find((value) => value.current);
       const canManage = household.canManageMembers === true;
       for (const kind of ["adult", "limited", "temporary"]) {
@@ -309,7 +311,7 @@ export class HouseholdMembership {
         const list = document.createElement("ul");
         for (const [index, member] of sectionMembers.entries()) {
         const item = document.createElement("li");
-        const memberLabel = member.current ? "You" : `${kind === "adult" ? "Adult" : kind === "limited" ? "Limited member" : "Temporary member"} ${index + 1}`;
+        const memberLabel = labels.get(member.id) ?? (member.current ? "You" : `${MEMBER_KIND_LABELS[kind]} ${index + 1}`);
         const expiryText = kind === "temporary" && member.expiresAt ? ` — ends ${new Date(member.expiresAt).toLocaleString()}` : "";
         item.textContent = `${memberLabel}${member.admin ? " — Household admin" : ""}${expiryText}${member.active ? "" : " — access ended"}`;
         if (member.current && kind === "temporary") item.textContent = `Temporary household access — ends ${new Date(member.expiresAt).toLocaleString()}`;

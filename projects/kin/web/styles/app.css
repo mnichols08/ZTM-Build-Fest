@@ -791,6 +791,42 @@ kin-household, kin-security, kin-areas, kin-notes, kin-search, kin-item, kin-att
 
 /* ---------- Updates: handoffs and talk ---------- */
 .handoff-form, .talk-form { grid-template-columns: minmax(0, 1fr) auto; margin-top: 12px; }
+/* Updates → Chat (#112). The list scrolls inside the section; rows wrap
+   long words at 320px; every control keeps a 48px target. */
+.chat-section { display: grid; gap: 10px; min-width: 0; }
+.chat-notice { margin: 0; color: var(--ink-muted); font-size: 14px; }
+.chat-notice:empty, .chat-notice[hidden] { display: none; }
+.chat-scroll { height: min(62vh, 640px); min-height: 240px; overflow-y: auto; overscroll-behavior: contain; padding: 8px 4px; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); }
+.chat-scroll:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.chat-older { display: block; min-height: var(--tap); margin: 0 auto 8px; padding-inline: 14px; border: 1px solid var(--line); border-radius: var(--r-control); background: var(--surface-secondary); color: var(--ink); font: inherit; font-size: 14px; }
+.chat-older[hidden] { display: none; }
+.chat-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.chat-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 6px; max-width: min(100%, 640px); padding: 6px 10px; border-radius: var(--r-row); }
+.chat-row:not(.grouped) { margin-top: 8px; }
+.chat-row.own { justify-self: end; background: var(--accent-soft); }
+.chat-row > :not(.chat-menu-wrap) { grid-column: 1; }
+.chat-meta { margin: 0; color: var(--ink-muted); font-size: 13px; }
+.chat-author { color: var(--ink); font-weight: 650; }
+.chat-text { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-text.chat-gone { color: var(--ink-muted); font-style: italic; }
+.chat-note { margin: 2px 0 0; color: var(--ink-muted); font-size: 12px; }
+.chat-menu-wrap { grid-column: 2; grid-row: 1 / span 3; align-self: start; position: relative; }
+.chat-menu-button { min-width: var(--tap); min-height: var(--tap); border: 0; border-radius: var(--r-control); background: transparent; color: var(--ink-muted); font: inherit; font-size: 18px; }
+.chat-menu-button:hover, .chat-menu-button[aria-expanded="true"] { background: var(--surface-secondary); color: var(--ink); }
+.chat-menu { position: absolute; z-index: 2; right: 0; top: calc(100% + 2px); display: grid; min-width: 190px; padding: 4px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); box-shadow: 0 6px 20px rgb(0 0 0 / .16); }
+.chat-menu button { min-height: var(--tap); padding-inline: 12px; border: 0; border-radius: var(--r-control); background: transparent; color: var(--ink); font: inherit; text-align: start; }
+.chat-menu button:hover, .chat-menu button:focus-visible { background: var(--surface-secondary); }
+.chat-jump { justify-self: center; min-height: var(--tap); padding-inline: 16px; border: 1px solid var(--accent); border-radius: 999px; background: var(--surface); color: var(--accent); font: inherit; font-weight: 650; }
+.chat-jump[hidden] { display: none; }
+.chat-form { grid-template-columns: minmax(0, 1fr); }
+.chat-form textarea { min-height: calc(var(--tap) * 1.5); max-height: 40vh; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; resize: vertical; }
+.chat-form-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.chat-cancel { min-height: var(--tap); padding-inline: 14px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
+.chat-cancel[hidden] { display: none; }
+@media (forced-colors: active) {
+  .chat-scroll, .chat-menu, .chat-row.own { border: 1px solid CanvasText; }
+  .chat-older, .chat-jump, .chat-cancel, .chat-menu-button { border: 1px solid ButtonText; }
+}
 .handoff-row, .talk-row { grid-template-columns: minmax(0, 1fr); grid-template-areas: "body" "actions"; }
 .handoff-row .item-text, .talk-row .item-text { grid-area: body; }
 .handoff-row .item-action, .talk-row .item-action { grid-area: actions; justify-content: flex-start; }

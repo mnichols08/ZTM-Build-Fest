@@ -53,6 +53,8 @@ test("routeHash produces the short form for page defaults and the segment form o
   assert.equal(routeHash("household", "privacy"), "#household/privacy");
   assert.equal(routeHash("lists"), "#lists/todo");
   assert.equal(routeHash("updates", "talk"), "#updates/talk");
+  assert.equal(routeHash("updates", "chat"), "#updates/chat");
+  assert.equal(resolveRoute({ hash: "#updates/chat" }).canonical, "updates/chat");
   assert.equal(routeHash("routines"), "#routines");
   assert.equal(routeHash("routines", "checklists"), "#routines/checklists");
   assert.equal(routeHash("search"), "#search");

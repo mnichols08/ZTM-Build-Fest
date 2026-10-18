@@ -9,6 +9,7 @@ import "./kin-item-detail.js";
 import "./kin-today.js";
 import "./kin-handoff-list.js";
 import "./kin-talk-list.js";
+import "./kin-chat.js";
 import "./kin-search.js";
 import "./kin-segment-nav.js";
 import "./kin-sync-status.js";
