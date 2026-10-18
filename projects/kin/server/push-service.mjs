@@ -18,7 +18,11 @@ const RETRY_DELAYS_MS = [5_000, 30_000];
 const MAX_RETRY_AFTER_MS = 60_000;
 // The push service says this subscription will never work: forget it, so the
 // device shows notifications as off instead of silently getting nothing.
-const GONE_STATUSES = new Set([400, 401, 403, 404, 410, 413]);
+const GONE_STATUSES = new Set([400, 404, 410, 413]);
+// These usually mean the push service rejected the server's own VAPID
+// signature (a wrong subject or restored keys), not the subscription:
+// deleting would turn every device off at once. Logged for the operator.
+const REJECTED_STATUSES = new Set([401, 403]);
 
 /** A short fingerprint of an endpoint, so a device can tell whether the
  * service still holds its current subscription without reading it back. */
@@ -233,6 +237,8 @@ export class PushService {
       this.storage.deleteGonePushSubscription(deviceId, row.endpoint);
       this.forget([deviceId]);
       this.log({ event: "push_subscription_removed", status: result.status });
+    } else if (REJECTED_STATUSES.has(result.status)) {
+      this.log({ event: "push_rejected_by_service", status: result.status, host: new URL(row.endpoint).hostname });
     } else if ((result.status === 429 || result.status >= 500 || result.status === 0) && attempt < RETRY_DELAYS_MS.length) {
       // Bounded backoff, then the push is dropped: no unbounded queue. A
       // Retry-After (seconds) is honoured up to a minute.

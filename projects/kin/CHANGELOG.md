@@ -22,7 +22,10 @@ documentation only.
 - **Server schema 11** stores subscriptions and the VAPID key pair. Revoking a
   device, removing a member, signing out of that browser or deleting the
   household deletes subscriptions, and so does a push service reporting one
-  will never work (400, 401, 403, 404, 410, 413).
+  will never work (400, 404, 410, 413). A 401 or 403 (the service's own VAPID
+  signature refused) is logged as `push_rejected_by_service` and keeps them.
+  Development databases created from an early build of this branch, before
+  `muted_indefinitely` was added to schema 11, need to be recreated.
 - **Needs a VAPID subject.** The server's `https` origin or `KIN_PUSH_SUBJECT`
   (`mailto:` or `https:`); without one (a development server on
   `http://localhost`) the section says notifications aren't set up.

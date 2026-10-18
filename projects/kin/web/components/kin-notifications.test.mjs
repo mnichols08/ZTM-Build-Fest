@@ -5,7 +5,15 @@ import test from "node:test";
 
 globalThis.HTMLElement = class {};
 globalThis.customElements = { define() {} };
-const { applicationServerKey, endpointTag, MUTE_CHOICES, notificationSupport } = await import("./kin-notifications.js");
+const { applicationServerKey, endpointTag, MUTE_CHOICES, notificationSupport, sameServerKey } = await import("./kin-notifications.js");
+
+test("a browser subscription made for other server keys is recognised", () => {
+  const key = Uint8Array.from([4, 1, 2, 3]);
+  assert.equal(sameServerKey({ options: { applicationServerKey: key.slice().buffer } }, key), true);
+  assert.equal(sameServerKey({ options: { applicationServerKey: Uint8Array.from([4, 1, 2, 9]).buffer } }, key), false);
+  assert.equal(sameServerKey({ options: { applicationServerKey: Uint8Array.from([4, 1, 2]).buffer } }, key), false);
+  assert.equal(sameServerKey({ options: {} }, key), false);
+});
 
 test("each unsupported situation gets its own state", () => {
   const base = { hasServiceWorker: true, hasPushManager: true, hasNotification: true, permission: "default", platform: { ios: false, standalone: false } };

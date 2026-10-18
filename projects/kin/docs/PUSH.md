@@ -28,7 +28,8 @@ collected, and a wrong device clock can't break it); "until I turn them back
 on" is stored as such and never ends by itself. Signing out of a browser turns
 its notifications off (a shared computer stops getting them). Each time the
 section loads it checks the service still holds this browser's current
-subscription and quietly updates it if the browser replaced it.
+subscription, made for the service's current keys, and quietly updates it if
+not.
 
 The notification reads "Something new in Kin", or "Something new in <name>"
 when the household published a home-screen name ([#78](HOUSEHOLD-IDENTITY-DEFAULTS.md#published-install-identity)).
@@ -66,9 +67,12 @@ it serves Kin over `https`, or `KIN_PUSH_SUBJECT` (a `mailto:` address or an
   sent without blocking the response, at most four at a time, with a
   10-second timeout. 429, 5xx and network failures are retried twice (after 5 and
   30 seconds, or a `Retry-After` of up to a minute) and then dropped. 400,
-  401, 403, 404, 410 and 413 mean the subscription will never work: it is
-  deleted, so the device shows notifications as off instead of silently
-  getting nothing. Only the status is logged.
+  404, 410 and 413 mean the subscription will never work: it is deleted, so
+  the device shows notifications as off instead of silently getting nothing.
+  401 and 403 usually mean the push service refused the server's own VAPID
+  signature (a wrong subject, or keys restored from an old backup), so they
+  are logged as `push_rejected_by_service` and every subscription is kept.
+  Only the status and the push service's host are logged.
 - **Sender, no dependencies** (`server/web-push.mjs`). VAPID (RFC 8292): an
   ES256 JWT for the endpoint's origin, at most 12 hours, with the deployment's
   origin (or `KIN_PUSH_SUBJECT`) as `sub`. Payload encryption (RFC 8291,

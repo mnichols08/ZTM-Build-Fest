@@ -705,7 +705,12 @@ async function api(request, response, url, context) {
   }
   if (request.method === "POST" && url.pathname === "/api/logout") {
     // Signing out stops this browser's notifications (#85).
-    try { context.pushService.signedOut(service.authorize(session).device.id); } catch { /* not signed in */ }
+    // An expired session still names the browser through its device cookie.
+    let signedOutDevice = null;
+    try { signedOutDevice = service.authorize(session).device.id; } catch {
+      try { signedOutDevice = service.trustedDevice(deviceToken).device.id; } catch { /* no device */ }
+    }
+    if (signedOutDevice) context.pushService.signedOut(signedOutDevice);
     service.logout(session);
     clearCookie(response, "kin_session", secureCookies);
     json(response, 200, { loggedOut: true });

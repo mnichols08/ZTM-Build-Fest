@@ -223,7 +223,7 @@ test("permanent refusals delete the subscription; failures retry a bounded numbe
   const h = household();
   const partner = h.join("partner");
   h.subscribe(partner);
-  for (const status of [410, 404, 403, 400]) {
+  for (const status of [410, 404, 413, 400]) {
     h.subscribe(partner);
     h.setRespond(() => Promise.resolve({ status }));
     await h.advance(PUSH_COALESCE_MS);
@@ -240,6 +240,13 @@ test("permanent refusals delete the subscription; failures retry a bounded numbe
   for (let i = 0; i < 5; i++) await h.advance(60_000);
   assert.equal(h.sent.length - sentBefore, 3, "the first attempt and two retries, then dropped");
   assert.ok(h.push.storage.getPushSubscription(partner.deviceId), "a failing push service keeps the subscription");
+  for (const status of [401, 403]) {
+    h.setRespond(() => Promise.resolve({ status }));
+    await h.advance(PUSH_COALESCE_MS);
+    h.push.eventsAccepted(h.adult.householdId, h.adult.memberId);
+    await h.settle();
+    assert.ok(h.push.storage.getPushSubscription(partner.deviceId), `${status} (a rejected VAPID signature) keeps every device's subscription`);
+  }
 });
 
 test("Retry-After is honoured up to a minute", async () => {
@@ -329,4 +336,10 @@ test("the push API requires a trusted session and serves the VAPID public key", 
   await call("/api/push/subscription", { method: "PUT", body: JSON.stringify({ endpoint: "https://fcm.googleapis.com/fcm/send/x", keys: { p256dh: ua.getPublicKey().toString("base64url"), auth: Buffer.alloc(16, 1).toString("base64url") } }) });
   assert.equal((await call("/api/logout", { method: "POST", body: "{}" })).status, 200);
   assert.equal(app.pushService.storage.getPushSubscription(adult.deviceId), null, "signing out stops this browser's notifications");
+  // Signing out after the session expired: the device cookie still names it.
+  app.pushService.storage.putPushSubscription({ deviceId: adult.deviceId, householdId: adult.householdId, memberId: adult.memberId,
+    endpoint: "https://fcm.googleapis.com/fcm/send/x", p256dh: ua.getPublicKey(), auth: Buffer.alloc(16, 1), createdAt: Date.now() });
+  const expired = await fetch(`${url}/api/logout`, { method: "POST", body: "{}", headers: { cookie: `kin_device=${adult.deviceToken}`, "content-type": "application/json" } });
+  assert.equal(expired.status, 200);
+  assert.equal(app.pushService.storage.getPushSubscription(adult.deviceId), null, "an expired session's sign-out still stops notifications");
 });

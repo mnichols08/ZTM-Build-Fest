@@ -34,6 +34,14 @@ export async function endpointTag(endpoint) {
   return btoa(String.fromCharCode(...digest)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "").slice(0, 16);
 }
 
+/** Whether a browser subscription was made for these server key bytes. */
+export function sameServerKey(subscription, key) {
+  const current = subscription?.options?.applicationServerKey;
+  if (!current) return false;
+  const bytes = new Uint8Array(current);
+  return bytes.length === key.length && bytes.every((byte, index) => byte === key[index]);
+}
+
 async function api(path, init = {}) {
   const response = await fetch(path, { credentials: "same-origin", ...init, headers: { "Content-Type": "application/json", ...(init.headers ?? {}) } });
   const value = await response.json().catch(() => ({}));
@@ -113,10 +121,11 @@ export class KinNotifications extends HTMLElement {
       const registration = await navigator.serviceWorker.ready;
       let subscription = await registration.pushManager.getSubscription();
       if (subscription && (await endpointTag(subscription.endpoint)) === status.endpointTag) return;
-      if (!subscription) {
-        const { publicKey } = await api("/api/push/vapid-public-key");
-        subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: applicationServerKey(publicKey) });
-      }
+      const { publicKey } = await api("/api/push/vapid-public-key");
+      const key = applicationServerKey(publicKey);
+      // A subscription made for other server keys would only be refused.
+      if (subscription && !sameServerKey(subscription, key)) { await subscription.unsubscribe(); subscription = null; }
+      subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
       const { endpoint, keys } = subscription.toJSON();
       const updated = await api("/api/push/subscription", { method: "PUT", body: JSON.stringify({ endpoint, keys }) });
       if (generation === this.generation) { this.status = updated; this.render(); }
@@ -148,7 +157,12 @@ export class KinNotifications extends HTMLElement {
       this.actions.append(this.button("Turn on notifications", () => this.turnOn(), "primary-action"));
       return;
     }
-    const muted = status.mutedIndefinitely || Boolean(status.mutedUntil);
+    // A timed mute that has ended shows as On, and the page re-renders when
+    // it ends rather than leaving "Muted until" on screen.
+    clearTimeout(this.unmuteTimer);
+    const remaining = status.mutedUntil ? status.mutedUntil - Date.now() : 0;
+    if (remaining > 0 && remaining < 2 ** 31 - 1) this.unmuteTimer = setTimeout(() => { if (this.isConnected && !this.busy) this.render(); }, remaining + 500);
+    const muted = status.mutedIndefinitely || remaining > 0;
     this.state.textContent = !muted ? "On."
       : status.mutedIndefinitely ? "Muted until you turn them back on."
       : `Muted until ${new Date(status.mutedUntil).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}.`;
@@ -197,9 +211,7 @@ export class KinNotifications extends HTMLElement {
     const { publicKey } = await api("/api/push/vapid-public-key");
     const key = applicationServerKey(publicKey);
     let subscription = await registration.pushManager.getSubscription();
-    const sameKey = subscription?.options?.applicationServerKey &&
-      new Uint8Array(subscription.options.applicationServerKey).every((byte, index) => byte === key[index]);
-    if (subscription && !sameKey) { await subscription.unsubscribe(); subscription = null; }
+    if (subscription && !sameServerKey(subscription, key)) { await subscription.unsubscribe(); subscription = null; }
     subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
     const { endpoint, keys } = subscription.toJSON();
     try {
