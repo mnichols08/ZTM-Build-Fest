@@ -36,24 +36,46 @@ export class HouseholdMembership {
       } catch {
         names = [];
       }
+      // Preferred names are encrypted household projection data supplied by
+      // the app. Keep this optional so an older/offline projection still has
+      // stable member-ID grouping and useful fallback labels. The seam is
+      // [{ memberId, preferredName }]; names are presentation, never keys.
+      let memberNames = [];
+      try {
+        memberNames = (await this.host.memberNames?.load()) ?? [];
+      } catch {
+        memberNames = [];
+      }
       const named = new Map(names.map((entry) => [entry.deviceId, entry]));
+      const preferredNameByMember = new Map(
+        memberNames
+          .filter((entry) => typeof entry?.memberId === "string" && typeof entry?.preferredName === "string" && entry.preferredName.trim())
+          .map((entry) => [entry.memberId, entry.preferredName.trim()]),
+      );
       this.host.replaceChildren();
       const heading = document.createElement("h2");
-      heading.textContent = "Trusted devices";
+      heading.textContent = "People & devices";
       this.host.append(heading);
       this.host.text(
-        "Each device is named after its browser and system. Give your own devices a nickname; only household members can see it.",
+        "People have their own household identity. Devices belong to a person, and a device name never changes who it belongs to or what it can access.",
       );
       // Yours first, then each other member's, in the order the server lists them.
       const members = [...new Set([this.host.identity.memberId, ...devices.map((device) => device.memberId)])];
       const lists = new Map();
+      let otherMemberIndex = 0;
       for (const [index, memberId] of members.entries()) {
         if (!devices.some((device) => device.memberId === memberId)) continue;
+        const isYou = memberId === this.host.identity.memberId;
+        if (!isYou) otherMemberIndex += 1;
         const section = document.createElement("section");
         section.className = "device-group";
+        section.dataset.memberId = memberId;
         const title = document.createElement("h3");
-        title.id = `device-group-${memberId}`;
-        title.textContent = memberId === this.host.identity.memberId ? "Your devices" : `Household member ${index}`;
+        title.id = `device-group-${index}`;
+        const preferredName = preferredNameByMember.get(memberId);
+        title.textContent = preferredName
+          ? `${preferredName}${isYou ? " (You)" : ""}`
+          : isYou ? "You" : `Household member ${otherMemberIndex}`;
         const list = document.createElement("ul");
         list.className = "device-list";
         list.setAttribute("aria-labelledby", title.id);
@@ -74,6 +96,11 @@ export class HouseholdMembership {
         const displayName = name?.nickname ?? automatic ??
           (fingerprint ? `New device · ${fingerprint.slice(0, 4).toUpperCase()}` : "New device");
         const isThisDevice = device.id === this.host.identity.deviceId;
+        const pinned = !syncDevice?.publicKeys || isThisDevice ||
+          (await this.host.syncKeyStore.getPinnedDevice(
+            this.host.identity.householdId,
+            device.id,
+          ));
         const text = document.createElement("span");
         text.className = "device-name-line";
         const strong = document.createElement("strong");
@@ -82,7 +109,7 @@ export class HouseholdMembership {
         const details = [
           ...(name?.nickname && automatic ? [automatic] : []),
           ...(isThisDevice ? ["This device"] : []),
-          device.revokedAt ? "Revoked" : "Trusted",
+          device.revokedAt ? "Revoked" : pinned ? "Trusted" : "Untrusted",
         ];
         text.append(` — ${details.join(" · ")}`);
         item.append(text);
@@ -112,12 +139,6 @@ export class HouseholdMembership {
             `Device sync code ${keyCode.textContent}`,
           );
           item.append(keyCode);
-          const pinned =
-            device.id === this.host.identity.deviceId ||
-            (await this.host.syncKeyStore.getPinnedDevice(
-              this.host.identity.householdId,
-              device.id,
-            ));
           if (!pinned && syncDevice.publicKeys) {
             const verify = this.host.makeButton("Verify device", () => {
               verify.hidden = true;
@@ -211,6 +232,20 @@ export class HouseholdMembership {
         }
         list.append(item);
       }
+      const actions = document.createElement("section");
+      actions.className = "people-device-actions";
+      const actionsHeading = document.createElement("h3");
+      actionsHeading.textContent = "Add someone or another device";
+      actions.append(actionsHeading);
+      if (canManageMembers === true) {
+        const inviteCopy = document.createElement("p");
+        inviteCopy.textContent = "Invite person gives them their own household member identity and access for their role.";
+        actions.append(inviteCopy, this.host.makeButton("Invite person", () => this.host.createPairing("adult")));
+      }
+      const deviceCopy = document.createElement("p");
+      deviceCopy.textContent = "Add my device keeps you under this same member identity on another phone or computer.";
+      actions.append(deviceCopy, this.host.makeButton("Add my device", () => this.host.createDevicePairing(), "secondary"));
+      this.host.append(actions);
       this.host.append(
         this.host.makeButton("Back", () => this.host.render(), "secondary"),
       );
