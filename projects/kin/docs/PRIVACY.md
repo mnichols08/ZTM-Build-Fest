@@ -40,6 +40,15 @@ Household information can be highly personal. Sync remains disabled until an aut
 
 ## Intended principles
 
+Future preferred member names and member/device groupings must be presentation
+carried in encrypted household events; they must not become relay authorization
+metadata. The existing automatic technical device name remains the narrow
+exception needed to identify a device before provisioning. Typed nicknames are
+not sent to the relay, and a preferred-member-name implementation must preserve
+that boundary. See
+[Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md) for
+the migration and cross-platform privacy checks.
+
 - **Local-first:** Begin with data stored and processed on the user's device where practical.
 - **Minimum server knowledge:** If a service is introduced, design it to know as little household content as reasonably possible.
 - **No advertising and no sale of data:** These are product commitments for the intended direction.

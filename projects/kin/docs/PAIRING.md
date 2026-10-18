@@ -6,6 +6,13 @@
 
 Inviting another household member changes household membership. Adding a device authorizes another installation for an existing member. They are separate operations with different confirmation and recovery requirements.
 
+Before either QR or manual-code UI appears, Kin names the choices **Invite a
+person** and **Add my device** and states whether a new member ID will be
+created. The same explanation remains visible through approval and completion;
+Back or Cancel grants nothing. Platform, offline, migration and accessibility
+evidence is tracked in
+[Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md).
+
 ## Invite a household member
 
 ```text

@@ -1,5 +1,14 @@
 # Accessibility Contract
 
+Identity setup must expose **Invite a person** and **Add my device** as native,
+keyboard-operable controls with persistent text explaining whether the result
+is a new member or another device for the same member. “You”, “This device”,
+notification state and errors must not rely on color alone. Focus returns to
+the initiating control after Cancel and moves to the outcome heading after a
+completed ceremony. The 320 px, 200% zoom, forced-colors, reduced-motion and
+assistive-technology checks are recorded in
+[Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md).
+
 ## Household workspace shell (unversioned candidate)
 
 The five primary destinations are links in a `nav` labelled "Main": a sticky
