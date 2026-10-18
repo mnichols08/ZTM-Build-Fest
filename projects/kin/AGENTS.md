@@ -106,14 +106,16 @@ If an unrelated parent-repository file was modified accidentally, revert that ch
 
 # Current Development Stage
 
-Kin is at **v1.1.1 — Member and Notification Clarity**, released as
-`kin-v1.1.1` on 2026-10-18. It follows v1.1.0 — Connected Household Devices
-and Kin's first stable release,
+Kin is at **v1.1.2 — Private Household Branding**, released as
+`kin-v1.1.2` on 2026-10-18. It follows v1.1.1 — Member and Notification
+Clarity, v1.1.0 — Connected Household Devices, and Kin's first stable release,
 `kin-v1.0.0` (with `kin-v1.0.0-rc.1` on the same commit), released on
 2026-10-17. Create, move or push tags only with the owner's explicit approval.
 
-v1.1.1 clarifies member/device identity, pairing choices and device trust, and push
-recipients and diagnostics without changing persistent formats. v1.1.0 adds
+v1.1.2 keeps the unlocked shell and installed-app identity synchronized with the
+private household name and icon across session transitions. v1.1.1 clarifies
+member/device identity, pairing choices and device trust, and push recipients
+and diagnostics without changing persistent formats. v1.1.0 adds
 device names, household home-screen identity, opt-in content-free push
 notifications, service sandboxing, and QR pairing/phone-approved computer
 sign-in. v1.0.0 includes everything since the preceding release, v0.10.3: the
@@ -1186,6 +1188,7 @@ kin-v0.17.0
 kin-v1.0.0
 kin-v1.1.0
 kin-v1.1.1
+kin-v1.1.2
 ```
 
 Never use ambiguous repository-wide tags such as `v0.0.1` or `v1.0.0`.

@@ -1,8 +1,8 @@
 # Contributing to Kin
 
 Thanks for considering a contribution. Kin is an open-source project for
-lightweight household coordination. The current release is v1.1.1 — Member and
-Notification Clarity. Contributions should preserve the established local-first,
+lightweight household coordination. The current release is v1.1.2 — Private
+Household Branding. Contributions should preserve the established local-first,
 encrypted, accessible architecture and the
 [v1.0 compatibility commitment](docs/V1.0-COMPATIBILITY.md).
 
@@ -53,7 +53,7 @@ Accessibility is a baseline, not a polish task. Preserve semantic HTML, keyboard
 
 Planning through v0.0.12 was documentation/community-readiness work, and v0.1.0
 was the first functional implementation. v1.0.0 was the first stable release;
-v1.1.1 is not independently audited or production-certified. Read [AGENTS.md](AGENTS.md),
+v1.1.2 is not independently audited or production-certified. Read [AGENTS.md](AGENTS.md),
 [the changelog](CHANGELOG.md), and the current release documents before changing
 scope; historical contracts describe their own release lines rather than the
 current product boundary.
