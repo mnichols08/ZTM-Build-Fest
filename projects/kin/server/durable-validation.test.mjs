@@ -9,6 +9,7 @@ import { PairingService } from "./pairing-service.mjs";
 import { EncryptedSyncService } from "./sync-service.mjs";
 import { createKinServer } from "./server.mjs";
 import { openTestDatabase, sqlitePragma } from "./sqlite-test-utils.mjs";
+import { permissionFlags } from "./permissions.mjs";
 
 function fixture(t, count = 3) {
   const directory = mkdtempSync(join(tmpdir(), "kin-semantic-validation-"));
@@ -159,7 +160,7 @@ test("production startup never announces ready for semantic corruption", (t) => 
   store.db.exec("UPDATE sync_device_sequences SET last_sequence = 99");
   store.close();
   assert.throws(() => createKinServer({ databasePath: path }), DurableStoreError);
-  const child = spawnSync(process.execPath, [join(import.meta.dirname, "server.mjs")], {
+  const child = spawnSync(process.execPath, [...permissionFlags(path), join(import.meta.dirname, "server.mjs")], {
     env: { ...process.env, KIN_DATABASE_PATH: path, KIN_PORT: "0", KIN_HOST: "127.0.0.1", KIN_ORIGIN: "http://localhost:8000" },
     encoding: "utf8", timeout: 10_000, windowsHide: true,
   });

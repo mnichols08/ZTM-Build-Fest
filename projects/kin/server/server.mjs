@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { PairingError, PairingService, parseHouseholdPolicy, requireTrustAuthority } from "./pairing-service.mjs";
 import { deviceLabel } from "./pairing-service/device-label.mjs";
+import { configuredDatabasePath, permissionProblem } from "./permissions.mjs";
 import { builtInManifest, etagMatches, INSTALL_ICONS, publishedManifest } from "./install-identity.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
@@ -25,7 +26,7 @@ import {
   MAX_CIPHERTEXT_BYTES,
   RECORD_FIXED,
 } from "../web/sync/envelope-wire.js";
-import { isInsideRoot, resolveDurablePath, webRoot } from "./path-safety.mjs";
+import { isInsideRoot, webRoot } from "./path-safety.mjs";
 import { clientKey, parseTrustedProxies } from "./client-key.mjs";
 
 const FLOW_TTL_MS = 2 * 60_000;
@@ -49,15 +50,7 @@ export function createKinServer(options = {}) {
   // A passed-in service keeps its own policy unless a setting is given here.
   const householdPolicyConfigured = [householdSettings.allowNewHouseholds, householdSettings.maxHouseholds]
     .some((value) => value !== undefined && value !== null && value !== "");
-  const configuredDataDirectory =
-    options.dataDirectory ??
-    process.env.KIN_DATA_DIR ??
-    join(import.meta.dirname, "..", ".kin-data");
-  const databasePath = resolveDurablePath(
-    options.databasePath ??
-      process.env.KIN_DATABASE_PATH ??
-      join(configuredDataDirectory, "kin.sqlite"),
-  );
+  const databasePath = configuredDatabasePath({ databasePath: options.databasePath, dataDirectory: options.dataDirectory });
   const store =
     options.store === false
       ? null
@@ -146,9 +139,9 @@ export function createKinServer(options = {}) {
           serveManifest(request, response, context);
           return;
         }
-        const icon = /^\/install-icon\/([a-z0-9-]+\.png)$/.exec(url.pathname);
+        const icon = INSTALL_ICON_ROUTE.exec({ pathname: url.pathname });
         if (icon) {
-          serveInstallIcon(request, response, url, icon[1], context);
+          serveInstallIcon(request, response, url, icon.pathname.groups.file, context);
           return;
         }
       }
@@ -234,6 +227,19 @@ if (
 ) {
   let application;
   try {
+    // The sandbox (#106): refuse to serve without it, except for explicit
+    // local development (`npm run dev`), which Node's --watch needs.
+    const unrestricted = process.argv.includes("--unrestricted");
+    const problem = permissionProblem(configuredDatabasePath());
+    if (problem && !unrestricted) {
+      const error = new Error(problem);
+      error.code = "permission_model_required";
+      throw error;
+    }
+    if (unrestricted && process.permission)
+      throw Object.assign(new Error("--unrestricted cannot be combined with Node's permission model."), { code: "permission_model_required" });
+    if (unrestricted)
+      console.warn(JSON.stringify({ event: "permission_model_disabled", message: "Running without Node's permission model. Use this only for local development." }));
     const port = Number(process.env.KIN_PORT ?? 8000);
     const host = process.env.KIN_HOST ?? "127.0.0.1";
     const origin = process.env.KIN_ORIGIN ?? `http://localhost:${port}`;
@@ -281,10 +287,10 @@ if (
       JSON.stringify({
         event: "startup_failed",
         outcome:
-          error.code === "durable_lock_exists"
-            ? "durable_lock_exists"
+          error.code === "durable_lock_exists" || error.code === "permission_model_required"
+            ? error.code
             : "configuration_or_storage",
-        ...(["durable_lock_exists", "trusted_proxies_invalid", "household_policy_invalid"].includes(error.code) ? { message: error.message } : {}),
+        ...(["durable_lock_exists", "trusted_proxies_invalid", "household_policy_invalid", "permission_model_required"].includes(error.code) ? { message: error.message } : {}),
       }),
     );
     process.exitCode = 1;
@@ -1399,6 +1405,9 @@ export function fingerprintedShell(html, fingerprint) {
     (_, prefix, quote) => `${prefix}+${fingerprint}${quote}`,
   );
 }
+
+// New routes match with URLPattern (#106) rather than hand-written parsing.
+const INSTALL_ICON_ROUTE = new URLPattern({ pathname: "/install-icon/:file([a-z0-9\\-]+[.]png)" });
 
 // The install identity (#78) a trusted device's kin_device cookie resolves
 // to, or the built-in Kin manifest and icon. Always private to the browser

@@ -40,7 +40,10 @@ export function acquireExclusiveLock(lockPath, operation) {
       }),
       "utf8",
     );
-    fsyncSync(descriptor);
+    // The exclusive create ("wx") is the lock; its content only helps a person
+    // inspect it, so durability is best effort. Node's permission model, which
+    // the service runs under (server/permissions.mjs), disables fsync.
+    if (!process.permission) fsyncSync(descriptor);
   } catch (error) {
     if (descriptor !== undefined) {
       closeSync(descriptor);
@@ -66,7 +69,7 @@ export function acquireExclusiveLock(lockPath, operation) {
     });
   }
   closeSync(descriptor);
-  return () => {
+  const release = () => {
     try {
       const lock = JSON.parse(readFileSync(lockPath, "utf8"));
       if (lock.token === token) unlinkSync(lockPath);
@@ -77,6 +80,9 @@ export function acquireExclusiveLock(lockPath, operation) {
         });
     }
   };
+  // `using lock = acquire…()` releases it at the end of the block (#106).
+  release[Symbol.dispose] = release;
+  return release;
 }
 
 export function databaseLockPath(databasePath) {

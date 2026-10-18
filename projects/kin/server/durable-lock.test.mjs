@@ -25,6 +25,7 @@ import {
 } from "./durable-store.mjs";
 import { PairingService } from "./pairing-service.mjs";
 import { openTestDatabase, sqlitePragma } from "./sqlite-test-utils.mjs";
+import { permissionFlags } from "./permissions.mjs";
 
 function temporaryDatabase(t) {
   const directory = mkdtempSync(join(tmpdir(), "kin-durable-lock-"));
@@ -50,7 +51,7 @@ test("another service process refuses an owned lock and starts after release", (
   try {
     const refused = spawnSync(
       process.execPath,
-      [fileURLToPath(new URL("./server.mjs", import.meta.url))],
+      [...permissionFlags(databasePath), fileURLToPath(new URL("./server.mjs", import.meta.url))],
       {
         encoding: "utf8",
         timeout: 10_000,
