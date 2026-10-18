@@ -93,6 +93,8 @@ export class KinNotifications extends HTMLElement {
    * is a trusted device of a household (the API refuses otherwise). */
   async refresh({ identity = true } = {}) {
     if (!this.firstElementChild) this.build();
+    // A press in progress owns the state; refresh once it has finished.
+    if (this.busy) { this.refreshPending = { identity }; return; }
     const generation = (this.generation = (this.generation ?? 0) + 1);
     // Only a household device has anything to ask the service about.
     if (!identity) { this.hidden = true; return; }
@@ -107,13 +109,18 @@ export class KinNotifications extends HTMLElement {
     this.status = status;
     this.hidden = false;
     this.render();
-    void this.repair(generation);
+    // Kept so a press can wait for a repair's request to land first.
+    const repair = this.repair(generation);
+    (this.repairs ??= new Set()).add(repair);
+    void repair.finally(() => this.repairs.delete(repair));
   }
 
   /** Keeps the service's copy in step with this browser's subscription,
    * without a prompt: a browser may replace its subscription while Kin is
    * closed (the service worker's own update can fail once the session has
-   * expired), or lose it when site data is cleared. */
+   * expired). A subscription the browser no longer holds (site data cleared)
+   * is never revived silently: the service forgets it and the section shows
+   * Off, so turning notifications back on is always the person's choice. */
   async repair(generation) {
     const status = this.status;
     if (!status?.subscribed || this.support() !== "available" || Notification.permission !== "granted") return;
@@ -127,12 +134,20 @@ export class KinNotifications extends HTMLElement {
       const key = applicationServerKey(publicKey);
       let subscription = await registration.pushManager.getSubscription();
       if (stale()) return;
+      if (!subscription) {
+        const updated = await api("/api/push/subscription", { method: "DELETE", body: "{}" });
+        if (!stale()) { this.status = updated; this.render(); }
+        return;
+      }
       // A subscription made for other server keys would only be refused,
-      // even when the service holds the same endpoint.
-      if (subscription && !sameServerKey(subscription, key)) { await subscription.unsubscribe(); subscription = null; }
-      if (subscription && (await endpointTag(subscription.endpoint)) === status.endpointTag) return;
-      if (stale()) return;
-      subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      // even when the service holds the same endpoint. The browser still
+      // holds one, so the person's "on" stands: replace it.
+      if (!sameServerKey(subscription, key)) {
+        await subscription.unsubscribe();
+        if (stale()) return;
+        subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+        if (stale()) { await subscription.unsubscribe().catch(() => {}); return; }
+      } else if ((await endpointTag(subscription.endpoint)) === status.endpointTag) return;
       if (stale()) return;
       const { endpoint, keys } = subscription.toJSON();
       const updated = await api("/api/push/subscription", { method: "PUT", body: JSON.stringify({ endpoint, keys }) });
@@ -196,18 +211,27 @@ export class KinNotifications extends HTMLElement {
   async run(action) {
     if (this.busy) return;
     this.busy = true;
-    // Supersedes any refresh or repair still in flight.
+    // Supersedes any refresh or repair still in flight, and lets a repair's
+    // request in flight land first so this press's request comes after it.
     this.generation = (this.generation ?? 0) + 1;
     for (const control of this.querySelectorAll("button")) control.disabled = true;
     this.error.textContent = "";
     try {
+      // Awaited only while one is running: "Turn on" must reach the
+      // permission prompt without an await, or some browsers drop the press.
+      if (this.repairs?.size) await Promise.allSettled([...this.repairs]);
       await action();
     } catch (error) {
       this.render();
       this.error.textContent = error.message || "Kin couldn't change notifications.";
     } finally {
       this.busy = false;
+      // Anything started during the press is discarded.
+      this.generation += 1;
       for (const control of this.querySelectorAll("button")) control.disabled = false;
+      const pending = this.refreshPending;
+      this.refreshPending = null;
+      if (pending) void this.refresh(pending);
     }
   }
 

@@ -5,7 +5,7 @@ import test from "node:test";
 
 globalThis.HTMLElement = class {};
 globalThis.customElements = { define() {} };
-const { applicationServerKey, endpointTag, MUTE_CHOICES, notificationSupport, sameServerKey } = await import("./kin-notifications.js");
+const { applicationServerKey, endpointTag, KinNotifications, MUTE_CHOICES, notificationSupport, sameServerKey } = await import("./kin-notifications.js");
 
 test("a browser subscription made for other server keys is recognised", () => {
   const key = Uint8Array.from([4, 1, 2, 3]);
@@ -40,4 +40,72 @@ test("the endpoint fingerprint matches the service's", async () => {
   const { endpointTag: serverTag } = await import("../../server/push-service.mjs");
   const endpoint = "https://fcm.googleapis.com/fcm/send/abc";
   assert.equal(await endpointTag(endpoint), serverTag(endpoint));
+});
+
+// A panel without a DOM: render and support are stubbed, requests recorded.
+async function harness({ browserSubscription }) {
+  const requests = [];
+  let releasePut;
+  const putHeld = new Promise((resolve) => { releasePut = resolve; });
+  const key = new Uint8Array(65).fill(4);
+  const publicKey = btoa(String.fromCharCode(...key)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  let current = browserSubscription ? { endpoint: "https://fcm.googleapis.com/fcm/send/new", options: { applicationServerKey: key },
+    unsubscribe: async () => { current = null; return true; }, toJSON: () => ({ endpoint: "https://fcm.googleapis.com/fcm/send/new", keys: {} }) } : null;
+  const pushManager = { getSubscription: async () => current, subscribe: async () => { requests.push("subscribe"); return current; } };
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { serviceWorker: { ready: Promise.resolve({ pushManager }) } } });
+  globalThis.Notification = { permission: "granted" };
+  globalThis.fetch = async (path, init = {}) => {
+    const method = init.method ?? "GET";
+    requests.push(`${method} ${path}`);
+    if (path.endsWith("vapid-public-key")) return Response.json({ publicKey });
+    if (method === "PUT") { await putHeld; return Response.json({ available: true, subscribed: true }); }
+    if (method === "DELETE") return Response.json({ available: true, subscribed: false });
+    return Response.json({ available: true, subscribed: true, endpointTag: "old-endpoint" });
+  };
+  const panel = new KinNotifications();
+  panel.firstElementChild = true;
+  panel.render = () => {};
+  panel.support = () => "available";
+  panel.querySelectorAll = () => [];
+  panel.querySelector = () => null;
+  panel.error = {};
+  panel.feedback = {};
+  return { panel, requests, releasePut };
+}
+const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+test("a subscription the browser lost is forgotten, never silently revived", async () => {
+  const { panel, requests } = await harness({ browserSubscription: false });
+  await panel.refresh();
+  await settle();
+  assert.ok(requests.includes("DELETE /api/push/subscription"));
+  assert.ok(!requests.includes("subscribe") && !requests.some((entry) => entry.startsWith("PUT")));
+  assert.equal(panel.status.subscribed, false);
+});
+
+test("a press waits for a repair's request in flight, so its own request comes after", async () => {
+  const { panel, requests, releasePut } = await harness({ browserSubscription: true });
+  await panel.refresh();
+  await settle();
+  assert.equal(requests.at(-1), "PUT /api/push/subscription", "the repair is sending the replaced endpoint");
+  const press = panel.run(() => panel.turnOff());
+  await settle();
+  assert.ok(!requests.includes("DELETE /api/push/subscription"), "turning off waits for the PUT");
+  releasePut();
+  await press;
+  assert.equal(requests.at(-1), "DELETE /api/push/subscription");
+  assert.equal(panel.status.subscribed, false);
+});
+
+test("a refresh during a press runs after it", async () => {
+  const { panel, requests, releasePut } = await harness({ browserSubscription: false });
+  releasePut();
+  let finish;
+  const press = panel.run(() => new Promise((resolve) => { finish = resolve; }));
+  await panel.refresh();
+  assert.ok(!requests.includes("GET /api/push/subscription"), "deferred while the press runs");
+  finish();
+  await press;
+  await settle();
+  assert.ok(requests.includes("GET /api/push/subscription"));
 });

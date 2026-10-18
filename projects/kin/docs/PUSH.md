@@ -29,7 +29,9 @@ on" is stored as such and never ends by itself. Signing out of a browser turns
 its notifications off (a shared computer stops getting them). Each time the
 section loads it checks the service still holds this browser's current
 subscription, made for the service's current keys, and quietly updates it if
-not.
+not. If the browser no longer has one (site data cleared), the service forgets
+it and the section shows Off: notifications are never turned back on without a
+press.
 
 The notification reads "Something new in Kin", or "Something new in <name>"
 when the household published a home-screen name ([#78](HOUSEHOLD-IDENTITY-DEFAULTS.md#published-install-identity)).
