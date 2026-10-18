@@ -8,7 +8,8 @@ import test from "node:test";
 import { createDeviceAuthorizationCertificate, deviceKeyFingerprint } from "../web/sync/crypto.js";
 import { DurableStore } from "./durable-store.mjs";
 import {
-  LINK_CODE_ATTEMPTS, LINK_CODE_TTL_MS, LINK_REQUEST_TTL_MS, MAX_TRUSTED_DEVICES, PairingError, PairingService, RATE_LIMIT,
+  LINK_CODE_ATTEMPTS, LINK_CODE_TTL_MS, LINK_REQUEST_TTL_MS, MAX_LINK_REQUESTS_PER_CLIENT, MAX_TRUSTED_DEVICES, PairingError,
+  PairingService, RATE_LIMIT,
 } from "./pairing-service.mjs";
 import { createKinServer } from "./server.mjs";
 
@@ -244,10 +245,70 @@ test("either side can cancel", async () => {
 test("requests are rate-limited per client, whether or not they succeed", async () => {
   const h = await household();
   const keys = await keyPair();
-  for (let index = 0; index < RATE_LIMIT; index += 1)
-    h.service.createLinkRequest({ syncPublicKeys: keys.publicKeys, rateKey: "203.0.113.9" });
+  for (let index = 0; index < RATE_LIMIT; index += 1) {
+    const request = h.service.createLinkRequest({ syncPublicKeys: keys.publicKeys, rateKey: "203.0.113.9" });
+    h.service.cancelLinkRequest(request.requestId, request.secret); // cancelled ones count too
+  }
   assert.throws(() => h.service.createLinkRequest({ syncPublicKeys: keys.publicKeys, rateKey: "203.0.113.9" }), refused("rate_limited"));
   h.service.createLinkRequest({ syncPublicKeys: keys.publicKeys, rateKey: "198.51.100.2" }); // another client is unaffected
+});
+
+test("a client holds only a few live requests, and ended ones don't count against anyone", async () => {
+  const h = await household();
+  const keys = await keyPair();
+  const make = (rateKey = "203.0.113.20") => h.service.createLinkRequest({ syncPublicKeys: keys.publicKeys, rateKey });
+  const held = Array.from({ length: MAX_LINK_REQUESTS_PER_CLIENT }, () => make());
+  assert.throws(() => make(), refused("rate_limited"));
+  make("198.51.100.20"); // another client is unaffected
+  h.service.cancelLinkRequest(held[0].requestId, held[0].secret);
+  make(); // a cancelled request frees its place at once
+});
+
+test("link limits keep their own buckets, so they can't crowd out pairing-code limits", async () => {
+  let clock = 1_000_000;
+  const service = new PairingService({ now: () => clock, maxRateBuckets: 2 });
+  const keys = await keyPair();
+  service.createLinkRequest({ syncPublicKeys: keys.publicKeys, rateKey: "a" });
+  service.createLinkRequest({ syncPublicKeys: keys.publicKeys, rateKey: "b" });
+  assert.equal(service.rateBuckets.size, 0, "the pairing-code table is untouched");
+  assert.equal(service.linkRateBuckets.size, 2);
+  assert.throws(() => service.createLinkRequest({ syncPublicKeys: keys.publicKeys, rateKey: "c" }), refused("rate_limited"));
+  assert.equal(service.events.at(-1).type, "device_link_rate_limited");
+});
+
+test("a returning computer is told so only when its cookie names the device with those keys", async () => {
+  const h = await household();
+  const first = await approved(h);
+  const done = h.service.completeLinkRequest({ requestId: first.request.requestId, secret: first.request.secret, code: first.approval.code, rateKey: first.rateKey });
+  const ask = (syncPublicKeys, deviceToken) => h.service.createLinkRequest({ syncPublicKeys, deviceToken, rateKey: "198.51.100.30" });
+  assert.equal(ask(first.keys.publicKeys, done.deviceToken).returning, true);
+  assert.equal(ask(first.keys.publicKeys).returning, false, "no cookie");
+  assert.equal(ask((await keyPair()).publicKeys, done.deviceToken).returning, false, "other keys");
+});
+
+test("a computer set up for one account can't be signed in to another, and keys are never shared", async () => {
+  const h = await household();
+  const first = await approved(h);
+  const done = h.service.completeLinkRequest({ requestId: first.request.requestId, secret: first.request.secret, code: first.approval.code, rateKey: first.rateKey });
+  // An Adult of another household scans this computer's code.
+  const otherKeys = await keyPair();
+  const other = { service: h.service, phoneKeys: otherKeys,
+    phone: h.service.bootstrap({ credential: credential("other-phone"), syncPublicKeys: otherKeys.publicKeys }) };
+  for (const deviceToken of [done.deviceToken, undefined]) {
+    const request = h.service.createLinkRequest({ syncPublicKeys: first.keys.publicKeys, deviceToken, rateKey: "198.51.100.31" });
+    assert.throws(
+      () => other.service.linkRequestForApprover(other.phone.sessionToken, request.requestId, { secret: request.secret, fingerprint: request.fingerprint }),
+      refused("link_device_taken"),
+    );
+    assert.equal(h.service.linkStatus(request.requestId, request.secret).state, "ended", "the request ends");
+  }
+  // The same member, without the cookie, can't make a second device of those keys either.
+  const bare = h.service.createLinkRequest({ syncPublicKeys: first.keys.publicKeys, rateKey: "198.51.100.32" });
+  assert.throws(
+    () => h.service.linkRequestForApprover(h.phone.sessionToken, bare.requestId, { secret: bare.secret, fingerprint: bare.fingerprint }),
+    refused("link_device_taken"),
+  );
+  assert.equal([...h.service.devices.values()].filter((device) => device.syncKeyFingerprint === first.request.fingerprint).length, 1);
 });
 
 test("no secret or code is kept or audited", async () => {
@@ -331,6 +392,14 @@ test("over HTTP: request, approve with a passkey, complete with the code, and si
     assert.equal(status.body.identity.deviceId, view.deviceId, "the computer is signed in as the new device");
     assert.equal(status.body.identity.memberId, phone.body.memberId);
     assert.ok(s.requests.every((url) => !url.includes(secret) && !url.includes(finish.body.code)), "the secret and code never appear in a URL");
+    const saved = s.application.store.db.prepare("SELECT event_type, details_json FROM security_audit").all();
+    const types = saved.map((row) => row.event_type);
+    for (const type of ["device_link_approved", "device_trusted", "device_link_completed"])
+      assert.ok(types.includes(type), `${type} is saved with the household at once`);
+    assert.ok(saved.every((row) => !row.details_json.includes(secret) && !row.details_json.includes(finish.body.code)));
+    const directory = await s.call("GET", "/api/sync/devices", undefined, complete.cookies);
+    const added = directory.body.devices.find((device) => device.deviceId === view.deviceId);
+    assert.equal(added?.historyFromEpoch, 1, "the new computer receives the retained history");
   } finally {
     await s.close();
   }

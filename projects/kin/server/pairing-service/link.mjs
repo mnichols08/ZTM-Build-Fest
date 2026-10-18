@@ -23,7 +23,20 @@
 // - Either side can cancel with the secret. Requests are process-local and
 //   end on restart, like pairings. Errors about a request are generic: an
 //   unknown, expired, cancelled or mismatched request looks the same.
-// - Audit events hold IDs and outcomes only.
+// - Audit events hold IDs and outcomes only. Approval, completion and any
+//   end after approval are saved with the household at once. A request that
+//   was never approved belongs to no household, so its requested and failed
+//   events stay in the in-memory log only.
+// - Limits: request creation per client (every request counts) and live
+//   requests per client and in all; approval failures per member; wrong codes
+//   per client. Link limits keep their own buckets, apart from pairing codes.
+//   Behind a proxy, set KIN_TRUSTED_PROXIES, or every client shares one key.
+// - A returning computer offers its existing device's keys. If its device
+//   cookie names that device, `returning` is true and approval by the same
+//   member signs that device back in. Approval as anyone else, or of keys any
+//   device already has, is refused: a device's keys are never shared by two
+//   devices. Only Adults approve, as for adding a device, so Limited and
+//   Temporary members sign back in with their own passkey instead.
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { MAX_TRUSTED_DEVICES } from "../identity-limits.mjs";
 import { deviceLabel } from "./device-label.mjs";
@@ -36,11 +49,16 @@ export const LINK_REQUEST_TTL_MS = 2 * 60_000;
 export const LINK_CODE_TTL_MS = 2 * 60_000;
 /** Wrong codes allowed before the request ends. */
 export const LINK_CODE_ATTEMPTS = 3;
-/** Requests held at once, across all clients. */
+/** Live (waiting or approved) requests at once, across all clients. */
 export const MAX_LINK_REQUESTS = 512;
+/** Live requests at once from one client. */
+export const MAX_LINK_REQUESTS_PER_CLIENT = 4;
 /** A finished or ended request is remembered this long, so the computer's
  * poll can see how it ended. */
 const LINK_RETENTION_MS = 60_000;
+
+const LIMITS = Object.freeze({ event: "device_link_rate_limited" });
+const live = (request) => ["pending", "approved"].includes(request.state);
 
 const digest = (value) => createHash("sha256").update(String(value)).digest();
 const matches = (expected, value) => Boolean(expected) && timingSafeEqual(expected, digest(value));
@@ -79,6 +97,7 @@ export const linkMethods = {
       ...(request.approval ? { householdId: request.approval.householdId, memberId: request.approval.memberId } : {}),
       reason,
     });
+    if (request.approval) this.persistHousehold(request.approval.householdId);
   },
 
   /** The request for `requestId` if `secret` is its secret; otherwise the
@@ -94,16 +113,28 @@ export const linkMethods = {
    * client's limit, whether or not it is ever approved. */
   createLinkRequest({ syncPublicKeys, deviceLabel: label, deviceToken, rateKey = "unknown" } = {}) {
     const key = `link-create:${rateKey}`;
-    this.assertRateAvailable(key);
-    this.recordFailedAttempt(key);
+    this.assertRateAvailable(key, { ...LIMITS, table: this.linkRateBuckets });
+    this.recordFailedAttempt(key, { ...LIMITS, table: this.linkRateBuckets });
     this.pruneLinkRequests();
-    if (this.linkRequests.size >= MAX_LINK_REQUESTS)
+    let total = 0;
+    let fromClient = 0;
+    for (const request of this.linkRequests.values()) {
+      if (!live(request)) continue;
+      total += 1;
+      if (request.rateKey === rateKey) fromClient += 1;
+    }
+    if (fromClient >= MAX_LINK_REQUESTS_PER_CLIENT)
+      throw new PairingError("rate_limited", "Too many sign-in requests from here. Cancel one, or wait a minute.", 429);
+    if (total >= MAX_LINK_REQUESTS)
       throw new PairingError("link_capacity", "Too many sign-in requests right now. Try again in a minute.", 503);
     const keys = validateSyncPublicKeys(syncPublicKeys);
+    // The computer's existing device, when its cookie names a trusted device
+    // with the keys it offers: a returning computer.
     let existingDeviceId = null;
     if (deviceToken) {
       try {
-        existingDeviceId = this.trustedDevice(deviceToken).device.id;
+        const { device } = this.trustedDevice(deviceToken);
+        if (device.syncKeyFingerprint === keys.syncKeyFingerprint) existingDeviceId = device.id;
       } catch {
         // Not a trusted device (or no longer one): the computer is new.
       }
@@ -119,6 +150,7 @@ export const linkMethods = {
       deviceLabel: deviceLabel(label),
       deviceId: id(),
       existingDeviceId,
+      rateKey,
       createdAt: now,
       expiresAt: now + LINK_REQUEST_TTL_MS,
       state: "pending",
@@ -128,7 +160,10 @@ export const linkMethods = {
       endedAt: null,
     });
     this.audit("device_link_requested", { requestId });
-    return { requestId, secret, fingerprint: keys.syncKeyFingerprint, expiresAt: now + LINK_REQUEST_TTL_MS };
+    return {
+      requestId, secret, fingerprint: keys.syncKeyFingerprint, expiresAt: now + LINK_REQUEST_TTL_MS,
+      returning: Boolean(existingDeviceId),
+    };
   },
 
   /** What the computer may learn while it waits: only the state. */
@@ -140,6 +175,7 @@ export const linkMethods = {
   /** The device this request signs back in: the computer's existing trusted
    * device, when it belongs to `member` and has the same keys. */
   linkExistingDevice(request, member) {
+    if (!request.existingDeviceId) return null;
     const device = request.existingDeviceId && this.devices.get(request.existingDeviceId);
     if (!device || device.revokedAt || device.memberId !== member.id) return null;
     return device.syncKeyFingerprint === request.syncKeyFingerprint ? device : null;
@@ -163,6 +199,16 @@ export const linkMethods = {
         );
       }
       const existing = this.linkExistingDevice(request, member);
+      if (!existing && this.deviceWithKeys(request.syncKeyFingerprint)) {
+        // These keys are another device's: someone else's computer, or a
+        // device removed since. Signing it in as a new device would share them.
+        this.endLinkRequest(request, "device_taken");
+        throw new PairingError(
+          "link_device_taken",
+          "This computer is already set up for another Kin account. Sign in there with that account's phone or passkey, or remove this computer from that account first.",
+          409,
+        );
+      }
       if (!existing && this.activeTrustedDeviceCount(household) >= MAX_TRUSTED_DEVICES)
         throw new PairingError("device_limit", "This household reached its trusted-device limit.", 409);
       return {
@@ -176,7 +222,13 @@ export const linkMethods = {
         existingDevice: Boolean(existing),
         expiresAt: request.expiresAt,
       };
-    });
+    }, { ...LIMITS, table: this.linkRateBuckets });
+  },
+
+  /** Any device, in any household and revoked or not, with these keys. */
+  deviceWithKeys(fingerprint) {
+    for (const device of this.devices.values()) if (device.syncKeyFingerprint === fingerprint) return device;
+    return null;
   },
 
   /** The phone approves, after the route has verified a fresh passkey
@@ -213,6 +265,7 @@ export const linkMethods = {
       memberId: member.id,
       approverDeviceId: approverDevice.id,
     });
+    this.persistHousehold(household.id);
     return { code, expiresAt: request.expiresAt, deviceLabel: request.deviceLabel, existingDevice: view.existingDevice };
   },
 
@@ -278,7 +331,6 @@ export const linkMethods = {
       request.state = "done";
       request.endedAt = this.now();
       request.codeVerifier = null;
-      this.persistHousehold(household.id);
       this.audit("device_link_completed", {
         householdId: household.id,
         requestId: request.id,
@@ -286,8 +338,9 @@ export const linkMethods = {
         deviceId: device.id,
         newDevice,
       });
+      this.persistHousehold(household.id);
       return { sessionToken, deviceToken, householdId: household.id, memberId: member.id, deviceId: device.id, newDevice };
-    });
+    }, { ...LIMITS, table: this.linkRateBuckets });
   },
 
   /** Either side ends the request: the computer that made it, or the phone
