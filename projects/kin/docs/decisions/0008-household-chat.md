@@ -41,6 +41,11 @@ because they are visible and switchable, not hidden.
   log; deleting or editing a message deletes the old blob on the relay and on
   every device. The log keeps the message event (who sent it, when, and that
   it was edited or deleted) but not its content.
+- **Who deletes a blob on the service** (recorded in #110). The service
+  deletes a message's content blob for the member who uploaded it, from any
+  of their devices, or for a household admin. #110 said "the same device";
+  tying it to the member lets an author who sent from a phone delete from a
+  laptop, and a revoked device can't authenticate anyway.
 - **Still open:** whether a mention may make the push notification say "You
   were mentioned", which would tell the service who was mentioned (not the
   text). Decided in the Mentions story.

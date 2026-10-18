@@ -15,10 +15,14 @@ export const MAX_HOUSEHOLD_ATTACHMENTS = 64;
 // 12-byte AES-GCM nonce and the sealed content with its 16-byte tag.
 export const MIN_CHAT_BLOB_BYTES = 29;
 export const MAX_CHAT_BLOB_BYTES = 4 * 1024 * 1024 + 4096;
-// Per household: live blob bytes, and rows (live plus retired tombstones).
-// #125 revisits both with measured chat volume.
+// Per household: live blob bytes and live blobs, which uploads must fit in;
+// and retired tombstones and pre-upload claims, which never block anything:
+// past their bound the oldest go. #125 revisits all four with measured chat
+// volume.
 export const MAX_HOUSEHOLD_CHAT_BLOB_BYTES = 256 * 1024 * 1024;
-export const MAX_HOUSEHOLD_CHAT_BLOB_ROWS = 500_000;
+export const MAX_HOUSEHOLD_CHAT_BLOBS = 250_000;
+export const MAX_HOUSEHOLD_CHAT_TOMBSTONES = 500_000;
+export const MAX_HOUSEHOLD_CHAT_CLAIMS = 100_000;
 
 export const MAX_AUDIT_ROWS = 10_000;
 

@@ -25,6 +25,7 @@ const SOURCES = {
   "sync-transport": [["web/sync/envelope-wire.js", /view\.setUint16\(4, (\d+), true\);/]],
   "household-settings": [["web/appearance/household.js", /value\.version !== (\d+)/]],
   "server-schema": [["server/durable-store/shared.mjs", /export const SERVER_SCHEMA_VERSION = (\d+);/]],
+  "chat-blob": [["web/chat/chat-blob-crypto.js", /const VERSION = (\d+);/]],
 };
 
 async function frozenVersions() {
@@ -72,6 +73,7 @@ test("the table in the compatibility document agrees with the machine-readable b
     "sync-transport": "Binary sync transport (KSEV/KSEP)",
     "household-settings": "Household settings record",
     "server-schema": "Server database schema",
+    "chat-blob": "Chat content blob",
   };
   for (const [name, label] of Object.entries(rows)) {
     const row = doc.split("\n").find((line) => line.startsWith(`| ${label} |`));

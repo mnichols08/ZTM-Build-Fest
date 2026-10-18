@@ -89,7 +89,12 @@ export async function openChatBlob(ciphertext, { ref, key }) {
 /** A text message's blob: the text as UTF-8 (Rust checks the text rules). */
 export async function sealChatText(text) {
   if (typeof text !== "string" || !text.isWellFormed()) throw new ChatBlobError("That message can't be sent.");
-  return sealChatBlob(new TextEncoder().encode(text));
+  const bytes = new TextEncoder().encode(text);
+  try {
+    return await sealChatBlob(bytes);
+  } finally {
+    bytes.fill(0);
+  }
 }
 
 export async function openChatText(ciphertext, { ref, key }) {

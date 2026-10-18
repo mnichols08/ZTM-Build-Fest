@@ -45,7 +45,11 @@ export class ChatBlobStore {
       if (!db.objectStoreNames.contains(BLOBS)) db.createObjectStore(BLOBS, { keyPath: "ref" });
       if (!db.objectStoreNames.contains(RETIRED)) db.createObjectStore(RETIRED, { keyPath: "ref" });
     };
-    return new ChatBlobStore(await settle(request), { householdId, indexedDB, now });
+    const db = await settle(request);
+    // Another tab deleting or upgrading the database: let it, rather than
+    // hold it open and block it.
+    db.onversionchange = () => db.close();
+    return new ChatBlobStore(db, { householdId, indexedDB, now });
   }
 
   constructor(db, { householdId, indexedDB, now }) {
@@ -73,7 +77,15 @@ export class ChatBlobStore {
     if (!isRef(ref) || !(ciphertext instanceof Uint8Array)) throw unavailable();
     const transaction = this.db.transaction([BLOBS, RETIRED], "readwrite");
     const finished = done(transaction);
-    const retired = await settle(transaction.objectStore(RETIRED).get(ref));
+    // If the read fails, `finished` rejects too; it is awaited (or its
+    // rejection handled) on every path, so nothing goes unhandled.
+    let retired;
+    try {
+      retired = await settle(transaction.objectStore(RETIRED).get(ref));
+    } catch (error) {
+      await finished.catch(() => {});
+      throw error;
+    }
     if (!retired) transaction.objectStore(BLOBS).put({ ref, ciphertext: ciphertext.slice(), storedAt: this.now() });
     await finished;
     return !retired;
@@ -99,9 +111,20 @@ export class ChatBlobStore {
     this.db.close();
   }
 
-  /** Removes the household's whole chat blob database from this device. */
+  /** Removes the household's whole chat blob database from this device.
+   * Other tabs close their connections when asked; one that doesn't (an
+   * old version still open) blocks the deletion, which then fails rather
+   * than wait forever. */
   async destroy() {
     this.close();
-    await settle(this.indexedDB.deleteDatabase(chatBlobDatabaseName(this.householdId)));
+    const request = this.indexedDB.deleteDatabase(chatBlobDatabaseName(this.householdId));
+    await new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(unavailable(request.error));
+      request.onblocked = () => {
+        const error = new ChatBlobError("Close Kin in your other tabs to finish removing this household's chat from this device.", "chat_storage_blocked");
+        reject(error);
+      };
+    });
   }
 }

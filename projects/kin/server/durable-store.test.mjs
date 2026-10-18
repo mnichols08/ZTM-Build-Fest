@@ -115,6 +115,8 @@ test("server schema v1 upgrades transactionally through chat blob schema v12", (
     try {
       legacy.exec(`
         DROP TABLE chat_blobs;
+        DROP TABLE chat_blob_claims;
+        DROP TABLE chat_blob_usage;
         DELETE FROM server_migrations WHERE version = 12;
         DROP TABLE push_subscriptions;
         DROP TABLE push_vapid_keys;
@@ -476,6 +478,8 @@ test("household admins persist across restart and the v8 migration promotes only
     try {
       legacy.exec(`
         DROP TABLE chat_blobs;
+        DROP TABLE chat_blob_claims;
+        DROP TABLE chat_blob_usage;
         DELETE FROM server_migrations WHERE version = 12;
         DROP TABLE push_subscriptions;
         DROP TABLE push_vapid_keys;

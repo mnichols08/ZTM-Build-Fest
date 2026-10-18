@@ -231,8 +231,11 @@ frozen event database schema. Each household has its own database,
 A blob is fetched when its message is first shown and kept afterwards; a
 blob from the service is checked against its reference before it is kept.
 Deleting a blob removes its bytes and adds its tombstone in one transaction.
-Removing the household from the device deletes the whole database. Keeping
-only recent blobs (#125) is not done yet.
+`ChatBlobStore.destroy()` deletes the whole database; a tab holding it open
+closes its connection when asked, and an old tab that doesn't blocks the
+deletion with a "close other tabs" error. Calling it when the household
+leaves the device, and keeping only recent blobs (#125), come with the chat
+room (#111); today local household data stays on the device as before.
 
 ## Handoff storage
 

@@ -27,11 +27,22 @@ export class ChatBlobs {
     return { ref, key };
   }
 
-  /** Uploads a kept blob. A blob deleted meanwhile is not uploaded. */
+  /** Uploads a kept blob. A blob deleted meanwhile is not uploaded; one
+   * deleted while its upload was in flight is retired at once after it. */
   async upload(ref) {
     const ciphertext = await this.store.get(ref);
     if (!ciphertext) return { uploaded: false };
-    await this.client.upload(ref, ciphertext);
+    try {
+      await this.client.upload(ref, ciphertext);
+    } catch (error) {
+      // The service already has a deletion for it: nothing to send.
+      if (error?.code === "chat_blob_deleted") return { uploaded: false };
+      throw error;
+    }
+    if (await this.store.isRetired(ref)) {
+      await this.client.retire([ref]);
+      return { uploaded: false };
+    }
     return { uploaded: true };
   }
 

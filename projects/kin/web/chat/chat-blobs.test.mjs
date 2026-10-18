@@ -138,6 +138,58 @@ test("deleting retires the blob on the author's device, the service, and later a
   assert.equal(service.deleted.has(later.ref), true);
 });
 
+test("another tab's connection closes for a deletion; one that won't blocks it with a clear error", async () => {
+  const indexedDB = fakeIndexedDB();
+  const tab = await ChatBlobStore.open(HOUSEHOLD, { indexedDB });
+  const other = await ChatBlobStore.open(HOUSEHOLD, { indexedDB });
+  await tab.destroy();
+  assert.equal(indexedDB.databases.size, 0, "the other tab let go when asked");
+  assert.equal(other.db.closed, true);
+  const again = await ChatBlobStore.open(HOUSEHOLD, { indexedDB });
+  const stubborn = await ChatBlobStore.open(HOUSEHOLD, { indexedDB });
+  stubborn.db.onversionchange = () => {}; // an old version that doesn't listen
+  await assert.rejects(again.destroy(), (error) => error.code === "chat_storage_blocked");
+});
+
+test("a failing read inside put rejects once, with nothing left unhandled", async () => {
+  const indexedDB = fakeIndexedDB();
+  const store = await ChatBlobStore.open(HOUSEHOLD, { indexedDB });
+  const unhandled = [];
+  const listener = (reason) => unhandled.push(reason);
+  process.on("unhandledRejection", listener);
+  try {
+    const sealed = await sealChatText("x");
+    indexedDB.failNext = true;
+    await assert.rejects(store.put(sealed.ref, sealed.ciphertext), (error) => error.code === "chat_storage_unavailable");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(unhandled, []);
+    assert.equal(await store.put(sealed.ref, sealed.ciphertext), true, "the store still works");
+  } finally {
+    process.off("unhandledRejection", listener);
+  }
+});
+
+test("a blob deleted while its upload was in flight is retired right after", async () => {
+  const service = fakeService();
+  const store = await ChatBlobStore.open(HOUSEHOLD, { indexedDB: fakeIndexedDB() });
+  const blobs = new ChatBlobs({ store, client: service.client });
+  const message = await blobs.seal("Typo");
+  // The user deletes while the upload is on the wire.
+  const upload = service.client.upload.bind(service.client);
+  service.client.upload = async (ref, bytes) => {
+    const result = await upload(ref, bytes);
+    await store.retire([ref]);
+    return result;
+  };
+  assert.deepEqual(await blobs.upload(message.ref), { uploaded: false });
+  assert.equal(service.deleted.has(message.ref), true, "the service was told at once");
+  // An upload the service refuses as already deleted is not an error.
+  const refused = await blobs.seal("Gone already");
+  service.deleted.add(refused.ref);
+  service.client.upload = async () => { throw Object.assign(new ChatBlobError("This message was deleted."), { code: "chat_blob_deleted" }); };
+  assert.deepEqual(await blobs.upload(refused.ref), { uploaded: false });
+});
+
 test("the client talks to the real service: upload, download, deletion and refusal", { timeout: 30_000 }, async (t) => {
   const app = createKinServer({ store: false, origin: "https://kin.example.org", host: "127.0.0.1" });
   await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));

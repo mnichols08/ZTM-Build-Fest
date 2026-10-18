@@ -375,6 +375,10 @@ async function api(request, response, url, context) {
   });
   for (const householdId of service.finalizeExpiredDeletions(context.now()))
     syncService.forgetHousehold(householdId);
+  // A chat blob upload is authorized before its body is read, so nobody
+  // without a session can make the service buffer 4 MiB.
+  if (request.method === "PUT" && /^\/api\/chat\/blobs\/[a-f0-9]{64}$/.test(url.pathname))
+    syncService.authorize(cookies(request).kin_session);
   const binaryUpload = (request.method === "POST" && /^\/api\/sync\/attachments\/[a-f0-9]{32}$/.test(url.pathname)) ||
     (request.method === "PUT" && /^\/api\/chat\/blobs\/[a-f0-9]{64}$/.test(url.pathname)) ||
     (request.method === "PUT" && url.pathname === "/api/household/settings");
@@ -869,7 +873,9 @@ async function api(request, response, url, context) {
   }
   if (request.method === "POST" && url.pathname === "/api/chat/blobs/retire") {
     const auth = syncService.authorize(session);
-    json(response, 200, withTransaction(context, () => context.chatBlobService.retire(auth, body.refs)));
+    // Not in an outer transaction: the store zeroes freed pages and then
+    // checkpoints the WAL, which needs no transaction open.
+    json(response, 200, context.chatBlobService.retire(auth, body?.refs));
     return;
   }
   if (url.pathname.startsWith("/api/push/")) {

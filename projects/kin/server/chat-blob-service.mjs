@@ -10,16 +10,22 @@
 // events, so the author's device (or an admin's, for a removal) names the
 // blobs to retire once the event is stored. Only the member who uploaded a
 // blob or a household admin may retire it. A retired blob keeps a tombstone
-// row without bytes: it is never served or accepted again, and a read of it
-// answers "deleted" (410) rather than "missing" (404), so clients can show a
-// deleted message instead of an error. Household deletion removes every
-// blob and tombstone.
+// row without bytes, so it is never served or accepted again; a read of it
+// answers "deleted" (410) rather than "missing" (404), and clients show a
+// deleted message instead of an error. A retire that arrives before the
+// upload (an offline outbox, a slow upload) is kept as a claim: the upload is
+// refused when it comes from the claiming member, or when an admin claimed
+// it. A claim by anyone else can't stop another member's upload. Household
+// deletion removes every blob, tombstone and claim. Tombstones and claims are
+// bounded and the oldest go first, so retiring never fails for space.
 import { createHash } from "node:crypto";
 import { PairingError, canParticipate, isHouseholdAdmin } from "./pairing-service.mjs";
 import {
   MAX_CHAT_BLOB_BYTES,
   MAX_HOUSEHOLD_CHAT_BLOB_BYTES,
-  MAX_HOUSEHOLD_CHAT_BLOB_ROWS,
+  MAX_HOUSEHOLD_CHAT_BLOBS,
+  MAX_HOUSEHOLD_CHAT_CLAIMS,
+  MAX_HOUSEHOLD_CHAT_TOMBSTONES,
   MIN_CHAT_BLOB_BYTES,
 } from "./durable-store.mjs";
 
@@ -28,49 +34,98 @@ export const MAX_RETIRE_REFS = 64;
 
 const isRef = (value) => typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 const invalid = () => new PairingError("chat_blob_invalid", "That chat content could not be verified.", 400);
+const deleted = () => new PairingError("chat_blob_deleted", "This message was deleted.", 410);
 
-/** Storage when the service has no durable store (tests, in-memory mode). */
+/**
+ * Storage when the service has no durable store (tests, in-memory mode),
+ * with the same decisions as durable-store/chat-blobs.mjs.
+ */
 class MemoryChatBlobStore {
-  constructor() { this.rows = new Map(); }
+  constructor() {
+    this.blobs = new Map();
+    this.claims = new Map();
+    this.chatBlobLimits = {};
+  }
+  get limits() {
+    return {
+      blobs: MAX_HOUSEHOLD_CHAT_BLOBS, bytes: MAX_HOUSEHOLD_CHAT_BLOB_BYTES,
+      tombstones: MAX_HOUSEHOLD_CHAT_TOMBSTONES, claims: MAX_HOUSEHOLD_CHAT_CLAIMS,
+      ...this.chatBlobLimits,
+    };
+  }
   key(householdId, ref) { return `${householdId}:${ref}`; }
-  getChatBlob(householdId, ref) {
-    const row = this.rows.get(this.key(householdId, ref));
-    return row ? { ...row, ciphertext: row.ciphertext && Buffer.from(row.ciphertext) } : null;
+  rows(map, householdId) { return [...map].filter(([key]) => key.startsWith(`${householdId}:`)); }
+  chatBlobMeta(householdId, ref) {
+    const row = this.blobs.get(this.key(householdId, ref));
+    if (!row) return null;
+    const { ciphertext, ...rest } = row;
+    return rest;
+  }
+  chatBlobBytes(householdId, ref) {
+    const row = this.blobs.get(this.key(householdId, ref));
+    return row && !row.retired ? Buffer.from(row.ciphertext) : null;
   }
   chatBlobUsage(householdId) {
-    let rows = 0, bytes = 0;
-    for (const [key, row] of this.rows) {
-      if (!key.startsWith(`${householdId}:`)) continue;
-      rows += 1;
-      if (row.retiredAt === null) bytes += row.size;
-    }
-    return { rows, bytes };
+    const blobs = this.rows(this.blobs, householdId).map(([, row]) => row);
+    const live = blobs.filter((row) => !row.retired);
+    return {
+      liveBlobs: live.length,
+      liveBytes: live.reduce((sum, row) => sum + row.size, 0),
+      tombstones: blobs.length - live.length,
+      claims: this.rows(this.claims, householdId).reduce((sum, [, members]) => sum + members.size, 0),
+    };
   }
   putChatBlob(householdId, ref, ciphertext, { memberId, deviceId, now }) {
-    if (this.rows.has(this.key(householdId, ref))) return false;
+    const key = this.key(householdId, ref);
+    const existing = this.blobs.get(key);
+    if (existing) return existing.retired ? "deleted" : "exists";
+    const claims = this.claims.get(key);
+    if (claims && [...claims].some(([member, byAdmin]) => member === memberId || byAdmin)) return "deleted";
     const usage = this.chatBlobUsage(householdId);
-    if (usage.rows >= MAX_HOUSEHOLD_CHAT_BLOB_ROWS || usage.bytes + ciphertext.length > MAX_HOUSEHOLD_CHAT_BLOB_BYTES)
-      throw new PairingError("chat_storage_full", "This household's chat storage is full.", 409);
-    this.rows.set(this.key(householdId, ref), {
-      ref, ciphertext: Buffer.from(ciphertext), size: ciphertext.length,
-      uploaderMemberId: memberId, uploaderDeviceId: deviceId, createdAt: now, retiredAt: null,
+    if (usage.liveBlobs >= this.limits.blobs || usage.liveBytes + ciphertext.length > this.limits.bytes) return "full";
+    this.claims.delete(key);
+    this.blobs.set(key, {
+      ref, retired: false, size: ciphertext.length, uploaderMemberId: memberId, uploaderDeviceId: deviceId,
+      createdAt: now, retiredAt: null, ciphertext: Buffer.from(ciphertext),
     });
-    return true;
+    return "accepted";
   }
-  retireChatBlobs(householdId, refs, now) {
-    let count = 0;
-    for (const ref of refs) {
-      const row = this.rows.get(this.key(householdId, ref));
-      if (row && row.retiredAt === null) {
-        row.ciphertext = null;
-        row.retiredAt = now;
-        count += 1;
+  retireChatBlobs(householdId, refs, { memberId, admin, now }) {
+    const rows = refs.map((ref) => [ref, this.blobs.get(this.key(householdId, ref))]);
+    if (!admin && rows.some(([, row]) => row && !row.retired && row.uploaderMemberId !== memberId)) return "forbidden";
+    let retired = 0, claimed = 0, othersRetired = 0;
+    for (const [ref, row] of rows) {
+      if (row?.retired) continue;
+      if (row) {
+        row.ciphertext.fill(0);
+        Object.assign(row, { retired: true, retiredAt: now, ciphertext: null });
+        retired += 1;
+        if (row.uploaderMemberId !== memberId) othersRetired += 1;
+      } else {
+        const key = this.key(householdId, ref);
+        if (!this.claims.has(key)) this.claims.set(key, new Map());
+        const members = this.claims.get(key);
+        if (!members.has(memberId)) claimed += 1;
+        members.set(memberId, members.get(memberId) || admin);
       }
     }
-    return count;
+    this.prune(householdId);
+    return { retired, claimed, othersRetired };
+  }
+  prune(householdId) {
+    const tombstones = this.rows(this.blobs, householdId).filter(([, row]) => row.retired)
+      .sort(([, a], [, b]) => a.retiredAt - b.retiredAt || a.ref.localeCompare(b.ref));
+    for (const [key] of tombstones.slice(0, Math.max(0, tombstones.length - this.limits.tombstones))) this.blobs.delete(key);
+    let excess = this.chatBlobUsage(householdId).claims - this.limits.claims;
+    for (const [key] of this.rows(this.claims, householdId)) {
+      if (excess <= 0) break;
+      excess -= this.claims.get(key).size;
+      this.claims.delete(key);
+    }
   }
   forgetHousehold(householdId) {
-    for (const key of [...this.rows.keys()]) if (key.startsWith(`${householdId}:`)) this.rows.delete(key);
+    for (const [key] of this.rows(this.blobs, householdId)) this.blobs.delete(key);
+    for (const [key] of this.rows(this.claims, householdId)) this.claims.delete(key);
   }
 }
 
@@ -94,35 +149,32 @@ export class ChatBlobService {
     if (!isRef(ref) || !Buffer.isBuffer(ciphertext) || ciphertext.length < MIN_CHAT_BLOB_BYTES ||
       ciphertext.length > MAX_CHAT_BLOB_BYTES || createHash("sha256").update(ciphertext).digest("hex") !== ref)
       throw invalid();
-    const householdId = auth.household.id;
-    const existing = this.storage.getChatBlob(householdId, ref);
-    if (existing?.retiredAt != null) throw deleted();
-    if (existing) return { accepted: false, size: existing.size };
-    const accepted = this.storage.putChatBlob(householdId, ref, ciphertext, {
+    const outcome = this.storage.putChatBlob(auth.household.id, ref, ciphertext, {
       memberId: auth.member.id, deviceId: auth.device.id, now: this.now(),
     });
-    // A concurrent upload of the same bytes won the race: same content.
-    if (!accepted && this.storage.getChatBlob(householdId, ref)?.retiredAt != null) throw deleted();
-    return { accepted, size: ciphertext.length };
+    if (outcome === "deleted") throw deleted();
+    if (outcome === "full") throw new PairingError("chat_storage_full", "This household's chat storage is full.", 409);
+    return { accepted: outcome === "accepted", size: ciphertext.length };
   }
 
   /** A blob's bytes, re-checked against its reference. */
   get(auth, ref) {
     this.assertCanChat(auth);
     if (!isRef(ref)) throw invalid();
-    const row = this.storage.getChatBlob(auth.household.id, ref);
+    const row = this.storage.chatBlobMeta(auth.household.id, ref);
     if (!row) throw new PairingError("chat_blob_missing", "This chat content isn't on the server yet.", 404);
-    if (row.retiredAt != null) throw deleted();
-    if (row.ciphertext.length !== row.size || createHash("sha256").update(row.ciphertext).digest("hex") !== ref)
+    if (row.retired) throw deleted();
+    const bytes = this.storage.chatBlobBytes(auth.household.id, ref);
+    if (!bytes || bytes.length !== row.size || createHash("sha256").update(bytes).digest("hex") !== ref)
       throw new PairingError("chat_blob_corrupt", "This chat content could not be verified.", 410);
-    return row.ciphertext;
+    return bytes;
   }
 
   /**
-   * Retires blobs: all of them or none. Each must have been uploaded by this
-   * member, unless the member is a household admin (removing someone else's
-   * message). Unknown and already-retired references are skipped: a blob
-   * whose upload never reached the service has nothing to delete.
+   * Retires blobs, all of them or none: each live one must have been
+   * uploaded by this member, unless the member is a household admin
+   * (removing someone else's message). Blobs not uploaded yet are claimed
+   * (see above); already-retired ones are skipped.
    */
   retire(auth, refs) {
     this.assertCanChat(auth);
@@ -130,31 +182,22 @@ export class ChatBlobService {
       new Set(refs).size !== refs.length)
       throw invalid();
     const householdId = auth.household.id;
-    const admin = isHouseholdAdmin(auth.member, this.now());
-    let othersRetired = 0;
-    for (const ref of refs) {
-      const row = this.storage.getChatBlob(householdId, ref);
-      if (!row || row.retiredAt != null || row.uploaderMemberId === auth.member.id) continue;
-      if (!admin)
-        throw new PairingError("chat_blob_retire_forbidden", "Only the person who sent a message or a household admin can delete its content.", 403);
-      othersRetired += 1;
-    }
-    const retired = this.storage.retireChatBlobs(householdId, refs, this.now());
+    const result = this.storage.retireChatBlobs(householdId, refs, {
+      memberId: auth.member.id, admin: isHouseholdAdmin(auth.member, this.now()), now: this.now(),
+    });
+    if (result === "forbidden")
+      throw new PairingError("chat_blob_retire_forbidden", "Only the person who sent a message or a household admin can delete its content.", 403);
     // Admin removals are visible to everyone in the chat; the audit records
     // that one happened, never what it was.
-    if (othersRetired) {
-      this.pairingService.audit("chat_content_removed_by_admin", { householdId, memberId: auth.member.id, deviceId: auth.device.id, count: othersRetired });
+    if (result.othersRetired) {
+      this.pairingService.audit("chat_content_removed_by_admin", { householdId, memberId: auth.member.id, deviceId: auth.device.id, count: result.othersRetired });
       this.pairingService.persistHousehold(householdId);
     }
-    return { retired };
+    return { retired: result.retired, claimed: result.claimed };
   }
 
   /** In-memory mode only: the durable store purges with the household. */
   forgetHousehold(householdId) {
     this.storage.forgetHousehold?.(householdId);
   }
-}
-
-function deleted() {
-  return new PairingError("chat_blob_deleted", "This message was deleted.", 410);
 }

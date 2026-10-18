@@ -381,16 +381,32 @@ deleting the blob deletes the content.
   lists blobs as retired (an edit replaced one, its author deleted the
   message, an admin removed it), every device deletes its local copy, and the
   author's device (an admin's, for a removal) asks the service to retire
-  them. The service retires a blob only for the member who uploaded it or a
-  household admin, all of a request or none of it. Unknown and already
-  retired blobs are skipped. A retired blob keeps a tombstone (its reference,
-  size, uploader and times, no bytes), so it is never served or accepted
-  again. A device that was offline deletes its copy when it next syncs and
-  reads a page.
-- **Bounds.** Per household, 256 MiB of live blobs and 500,000 rows (live
-  blobs and tombstones); beyond either, uploads fail with
-  `chat_storage_full` until content is retired. #125 revisits these with
-  measured chat volume.
+  them. The service retires a live blob only for the member who uploaded it
+  (from any of their devices) or a household admin, all of a request or none
+  of it; already retired blobs are skipped. A retired blob keeps a tombstone
+  (its reference, size, uploader and times, no bytes), so it is not served
+  or accepted again. A device that was offline deletes its copy when it next
+  syncs and reads a page.
+- **Deleted before uploaded.** A retire that names a blob the service
+  doesn't have yet (an outbox still holding the upload, an upload in
+  flight) is kept as a claim for that member. The upload is refused (410)
+  when it comes from the claiming member or when an admin claimed it; a
+  claim by anyone else can't stop another member's upload, and it is
+  dropped when the upload is stored. A device whose own blob is deleted
+  while its upload is in flight also retires it right after the upload.
+- **Erasure on the service.** Retiring drops a blob's bytes with SQLite's
+  `secure_delete`, so freed pages are zeroed, and then checkpoints the WAL;
+  household purge zeroes chat pages the same way. Backups taken earlier
+  still hold the bytes, and restoring one brings those blobs back as they
+  were at the backup, tombstones included or not; devices that already
+  deleted their copies keep their own record of the deletion.
+- **Bounds.** Per household: 256 MiB of live blobs and 250,000 live blobs;
+  beyond either, uploads fail with `chat_storage_full` until content is
+  retired. Running counts keep every upload's check constant-time.
+  Tombstones (at most 500,000) and claims (at most 100,000) never block
+  retiring: past their bound the oldest are dropped, after which a very old
+  retired blob could be uploaded again by someone who kept its bytes. #125
+  revisits all four with measured chat volume.
 - **On the device,** blobs live in their own IndexedDB database per
   household ([STORAGE](STORAGE.md#chat-content-blobs-v11-110)).
 - Household deletion purges every blob and tombstone at finalization. An

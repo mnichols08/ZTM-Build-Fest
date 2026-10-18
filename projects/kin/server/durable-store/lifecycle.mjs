@@ -9,7 +9,17 @@ export function purgeHouseholdData(database, householdId) {
   database.prepare("DELETE FROM household_install_identity_revisions WHERE household_id = ?").run(householdId);
   database.prepare("DELETE FROM push_subscriptions WHERE household_id = ?").run(householdId);
   database.prepare("DELETE FROM sync_attachments WHERE household_id = ?").run(householdId);
-  database.prepare("DELETE FROM chat_blobs WHERE household_id = ?").run(householdId);
+  // Chat content: freed pages are zeroed, so deleted messages' ciphertext
+  // doesn't linger in the database file (the WAL is checkpointed later).
+  const secureDelete = database.prepare("PRAGMA secure_delete").get().secure_delete;
+  database.exec("PRAGMA secure_delete = ON");
+  try {
+    database.prepare("DELETE FROM chat_blobs WHERE household_id = ?").run(householdId);
+    database.prepare("DELETE FROM chat_blob_claims WHERE household_id = ?").run(householdId);
+    database.prepare("DELETE FROM chat_blob_usage WHERE household_id = ?").run(householdId);
+  } finally {
+    database.exec(`PRAGMA secure_delete = ${secureDelete ? "ON" : "OFF"}`);
+  }
   database
     .prepare("DELETE FROM provisioning_grants WHERE household_id = ?")
     .run(householdId);
@@ -86,7 +96,7 @@ export const lifecycleMethods = {
         "SELECT COUNT(*) AS count FROM sync_attachments WHERE household_id = ?",
       ),
       chatBlobs: count(
-        "SELECT COUNT(*) AS count FROM chat_blobs WHERE household_id = ?",
+        "SELECT (SELECT COUNT(*) FROM chat_blobs WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_blob_claims WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_blob_usage WHERE household_id = ?1) AS count",
       ),
       events: count(
         "SELECT COUNT(*) AS count FROM sync_events WHERE household_id = ?",
