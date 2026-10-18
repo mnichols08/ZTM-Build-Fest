@@ -4,6 +4,7 @@ import { OperationGuard } from "./shared/operation.js";
 import { HouseholdApi } from "./household/api.js";
 import { HouseholdAuth } from "./household/auth.js";
 import { HouseholdLifecycle } from "./household/lifecycle.js";
+import { HouseholdLink } from "./household/link.js";
 import { HouseholdMembership } from "./household/membership.js";
 import { HouseholdPairing } from "./household/pairing.js";
 import { HouseholdViews } from "./household/views.js";
@@ -15,6 +16,7 @@ const PARTS = {
   api: HouseholdApi,
   auth: HouseholdAuth,
   pairing: HouseholdPairing,
+  link: HouseholdLink,
   membership: HouseholdMembership,
   lifecycle: HouseholdLifecycle,
   views: HouseholdViews,
@@ -55,6 +57,11 @@ class KinHousehold extends HTMLElement {
   }
 
   startIntent(kind) {
+    if (kind === "phone" && !this.claim) {
+      // Signing in with a phone (#100) starts a request at once.
+      this.intent = "phone";
+      return this.ctx.link.begin();
+    }
     this.intent = ["create", "join", "device"].includes(kind) ? kind : null;
     this.render();
     requestAnimationFrame(() => {
@@ -92,6 +99,7 @@ class KinHousehold extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this.ctx.link.abandon();
     this.connectionAbort.abort();
     clearInterval(this.timer);
     clearTimeout(this.poll);

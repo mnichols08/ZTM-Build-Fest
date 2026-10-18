@@ -3,6 +3,7 @@
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
 import { currentPlatform, householdDeviceName } from "../../platform.js";
 import { invitationCode, invitationLink } from "../../pairing-link.js";
+import { consumeOpenedSignInLink } from "../../device-link.js";
 import "../kin-qr.js";
 import "../kin-qr-scanner.js";
 
@@ -46,9 +47,13 @@ export class HouseholdViews {
         "Passkeys are unavailable in this browser. Use a current browser with a configured screen lock.",
         true,
       );
+    if (this.host.intent === "phone" && !this.host.identity && !this.host.claim)
+      return this.ctx.link.render();
     if (location.pathname === "/pair" && !this.host.identity)
       return this.renderJoin();
     if (!this.host.identity) return this.renderSetup();
+    if (consumeOpenedSignInLink())
+      this.host.message("That was a computer's sign-in code. To approve it, choose Add a computer below and scan it there.");
     if (this.host.prefilledCode) {
       // An invitation opened on a device that is already a member: say so,
       // and don't keep the code (#97).
@@ -72,8 +77,9 @@ export class HouseholdViews {
     for (const [label, description, action, className] of [
       ["Create a household", "Start a brand-new household on this device. Only one person in a household does this.", () => this.host.startIntent("create"), "primary-action"],
       ["Join an existing household", "Someone in your household sends you an invitation code and approves this device.", () => this.host.startIntent("join"), ""],
+      ["Sign in with your phone", "You're already signed in to Kin on a phone. Scan this computer's code with it, then type the 6-digit code it shows.", () => this.host.startIntent("phone"), ""],
       ["Add this device to my existing membership", "You already use Kin on another device and want this one too.", () => this.host.startIntent("device"), ""],
-    ]) {
+    ].filter(([label]) => label !== "Sign in with your phone" || !this.host.claim)) {
       const choice = document.createElement("div");
       choice.className = "household-choice";
       const button = this.host.makeButton(label, action, className);
@@ -272,6 +278,11 @@ export class HouseholdViews {
       this.host.register("claim", { code: code.value, deviceLabel: device.value() });
     });
     this.host.append(form);
+    // Someone already in the household can sign this computer in with
+    // their phone instead of a code (#100).
+    const phone = this.host.text("Already signed in to Kin on your phone?");
+    phone.className = "household-choice-hint";
+    this.host.button("Sign in with your phone", () => this.host.startIntent("phone"), "secondary");
     if (this.host.intent && location.pathname !== "/pair")
       this.host.button("Back", () => this.host.startIntent(null), "secondary");
     requestAnimationFrame(() => code.focus());

@@ -154,6 +154,103 @@ async function pageInvitationQr() {
   return { value: qr.value, readBack, label: canvas.getAttribute("aria-label"), codeShown: h.querySelector(".pairing-code")?.textContent ?? null };
 }
 
+// Sign in with your phone (#100). The computer's QR code is read back from
+// its canvas by the real engine. The phone's approval is stubbed: profile A
+// makes the same calls the phone's approval screen makes (#101), with a real
+// passkey and its real device key, but without that screen.
+async function pageStartPhoneSignIn() {
+  const app = document.querySelector("kin-app");
+  const h = app.household;
+  // On People & devices, as a person would be: focus can't move into a
+  // hidden view.
+  location.hash = "#household/people";
+  app.ctx.navigation.showPageFromLocation();
+  const choice = [...h.querySelectorAll("button")].find((button) => button.textContent === "Sign in with your phone");
+  if (!choice) throw new Error("The signed-out screen offers no Sign in with your phone: " + h.textContent.slice(0, 300));
+  choice.click();
+  for (let i = 0; i < 400 && !h.querySelector("kin-qr.sign-in-qr"); i++) await new Promise((r) => setTimeout(r, 25));
+  const qr = h.querySelector("kin-qr.sign-in-qr");
+  if (!qr) throw new Error("The sign-in screen shows no QR code: " + h.textContent.slice(0, 300));
+  for (let i = 0; i < 400 && qr.querySelector(".kin-qr-frame")?.hidden !== false; i++) await new Promise((r) => setTimeout(r, 25));
+  const canvas = qr.querySelector("canvas");
+  if (!canvas || qr.querySelector(".kin-qr-frame").hidden) throw new Error("The sign-in QR was not drawn: " + qr.textContent);
+  const { qrCodec } = await import("/wasm/kin-qr.js");
+  const codec = await qrCodec();
+  const { width, height } = canvas;
+  const rgba = canvas.getContext("2d").getImageData(0, 0, width, height).data;
+  const readBack = codec.decodeFrame(width, height, (target) => {
+    for (let pixel = 0, byte = 0; pixel < target.length; pixel += 1, byte += 4)
+      target[pixel] = (rgba[byte] * 77 + rgba[byte + 1] * 150 + rgba[byte + 2] * 29) >> 8;
+  });
+  const request = h.ctx.link.request;
+  return {
+    value: qr.value, readBack, label: canvas.getAttribute("aria-label"), keys: request?.keys ?? null,
+    steps: h.textContent.includes("On your phone, open Kin → People & devices → Add a computer → Scan."),
+    countdown: h.querySelector(".sign-in-countdown")?.textContent ?? "",
+    countdownLive: h.querySelector(".sign-in-countdown")?.hasAttribute("role") ?? true,
+    focused: document.activeElement === h.querySelector(".sign-in-heading"),
+  };
+}
+
+async function pagePhoneApprove(link) {
+  const h = document.querySelector("kin-app").household;
+  const { linkTag, newLinkCode, signInRequest } = await import("/device-link.js");
+  const scanned = signInRequest(link, location.origin);
+  if (!scanned) throw new Error("Not a sign-in link: " + link);
+  const { authenticationOptions, credentialJson } = await import("/components/household/auth.js");
+  const { createDeviceAuthorizationCertificate, deviceKeyFingerprint } = await import("/sync/crypto.js");
+  const body = { secret: scanned.secret, fingerprint: scanned.fingerprint };
+  const started = await h.api(`/api/link/requests/${scanned.requestId}/approve/options`, { method: "POST", body: JSON.stringify(body) });
+  const credential = await navigator.credentials.get({ publicKey: authenticationOptions(started.publicKey) });
+  const view = started.request;
+  let deviceCertificate;
+  if (!view.existingDevice) {
+    const own = await h.syncKeyStore.getDevice(h.identity.deviceId);
+    deviceCertificate = await createDeviceAuthorizationCertificate({
+      householdId: view.householdId, memberId: view.memberId, deviceId: view.deviceId,
+      issuerDeviceId: h.identity.deviceId, issuerFingerprint: await deviceKeyFingerprint(own.publicKeys),
+      publicKeys: view.syncPublicKeys, signingKey: own.keys.signingPrivateKey,
+    });
+  }
+  // A random code, and the tag binding this phone to it and the QR nonce.
+  const code = newLinkCode();
+  const tag = await linkTag({ nonce: scanned.nonce, code, requestId: scanned.requestId, approverDeviceId: h.identity.deviceId,
+    approverFingerprint: h.localFingerprint, computerFingerprint: scanned.fingerprint });
+  await h.api(`/api/link/requests/${scanned.requestId}/approve/finish`, {
+    method: "POST", body: JSON.stringify({ ...body, flow: started.flow, credential: credentialJson(credential), deviceCertificate, code, tag }),
+  });
+  return { code, existingDevice: view.existingDevice, deviceId: view.deviceId, deviceLabel: view.deviceLabel, secret: scanned.secret, nonce: scanned.nonce };
+}
+
+async function pageSignInCodeField() {
+  const h = document.querySelector("kin-app").household;
+  for (let i = 0; i < 400 && !h.querySelector(".sign-in-code input"); i++) await new Promise((r) => setTimeout(r, 25));
+  const field = h.querySelector(".sign-in-code input");
+  if (!field) throw new Error("The computer never asked for the code: " + h.textContent.slice(0, 300));
+  // The status is announced just after the field appears, so the region
+  // exists first and screen readers hear it change.
+  for (let i = 0; i < 80 && !h.querySelector(".sign-in-status")?.textContent; i++) await new Promise((r) => setTimeout(r, 25));
+  return {
+    inputMode: field.inputMode, autocomplete: field.autocomplete, focused: document.activeElement === field,
+    qrGone: !h.querySelector("kin-qr"), status: h.querySelector(".sign-in-status")?.textContent ?? "",
+  };
+}
+
+async function pageTypeSignInCode({ code, navigates }) {
+  const h = document.querySelector("kin-app").household;
+  const field = h.querySelector(".sign-in-code input");
+  field.value = code;
+  if (navigates) {
+    // A new device starts Kin afresh: submit after returning, as pageActivate does.
+    setTimeout(() => field.form.requestSubmit(), 100);
+    return { submitted: true };
+  }
+  field.form.requestSubmit();
+  for (let i = 0; i < 400 && (h.busy || !h.identity); i++) await new Promise((r) => setTimeout(r, 25));
+  if (!h.identity) throw new Error("The computer was not signed in: " + h.textContent.slice(0, 300));
+  return { identity: h.identity, path: location.pathname };
+}
+
 async function pageJoinField() {
   const h = document.querySelector("kin-app").household;
   for (let i = 0; i < 400 && !h.querySelector('input[name="code"]'); i++) await new Promise((r) => setTimeout(r, 25));
@@ -1278,6 +1375,57 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       "repeated syncs do not duplicate items");
     check(relayEvents(aRelay).length === relayTotal + 3, "relay gained exactly the two concurrent events");
     pass(`${checks} two-client reconciliation assertions (profiles A and D)`);
+    // ---- Profile E: a computer signed in with A's phone (#100) ------------
+    const e = await launch("computer-e");
+    const requestsBefore = requests.length;
+    const shownSignIn = await e.call(pageStartPhoneSignIn);
+    check(shownSignIn.readBack === shownSignIn.value && /^http:\/\/localhost:\d+\/link#r=[a-f0-9]{32}&s=[A-Za-z0-9_-]{43}&f=[A-Za-z0-9_-]{43}&c=[A-Za-z0-9_-]{22}$/.test(shownSignIn.value),
+      "the computer shows a QR code that reads back as its fragment sign-in link: " + shownSignIn.value);
+    check(shownSignIn.steps && /QR code to sign in on this computer/.test(shownSignIn.label ?? "") && shownSignIn.keys === "pending",
+      "the sign-in screen tells the person what to do on the phone, and a new computer offers fresh keys");
+    check(/^This code changes in 0[12]:\d\d$/.test(shownSignIn.countdown) && !shownSignIn.countdownLive && shownSignIn.focused,
+      "the countdown is visible but not a live region, and focus moves to the screen: " + JSON.stringify(shownSignIn));
+    const firstApproval = await a.call(pagePhoneApprove, shownSignIn.value);
+    check(/^\d{6}$/.test(firstApproval.code) && !firstApproval.existingDevice, "A's phone approves the new computer with a passkey and gets a 6-digit code");
+    const codeField = await e.call(pageSignInCodeField);
+    check(codeField.inputMode === "numeric" && codeField.autocomplete === "one-time-code" && codeField.focused && codeField.qrGone &&
+      /approved this computer/.test(codeField.status),
+      "the computer notices the approval and asks for the code in a focused numeric field: " + JSON.stringify(codeField));
+    await e.call(pageTypeSignInCode, { code: firstApproval.code, navigates: true });
+    const eLoaded = await e.waitForReloadAndUnlock();
+    check(eLoaded.identity?.memberId === aBoot.identity.memberId && eLoaded.identity?.deviceId === firstApproval.deviceId,
+      "the computer is signed in as a new device of A's membership");
+    const aDevices = await a.call(pageFetch, { path: "/api/devices" });
+    check(aDevices.body?.devices?.some((device) => device.id === firstApproval.deviceId && device.label === firstApproval.deviceLabel),
+      "A's trusted devices list the computer under its automatic name");
+    result = await a.call(pageSync); // provisioning for the computer
+    check(result.last?.state !== "paused", "A provisions the computer: " + JSON.stringify(result.last));
+    result = await e.call(pageSync);
+    if (result.last?.state === "paused") result = await e.call(pageSync);
+    const eLocal = await e.callStable(pageLocal);
+    check(result.last?.state !== "paused" && eLocal.items.includes("A4 offline concurrent") && eLocal.items.includes("A3 after export"),
+      "the computer receives the household's retained history: " + JSON.stringify(result.last));
+
+    // The session ends; the same computer signs back in as the same device.
+    await e.call(pageFetch, { path: "/api/logout", method: "POST", body: {} });
+    await e.send("Page.reload", {});
+    const eSignedOut = await e.waitForReloadAndUnlock();
+    check(!eSignedOut.identity, "after signing out, the computer has no session");
+    const again = await e.call(pageStartPhoneSignIn);
+    check(again.keys === "existing", "a returning computer offers its own device's keys");
+    const secondApproval = await a.call(pagePhoneApprove, again.value);
+    check(secondApproval.existingDevice && secondApproval.deviceId === firstApproval.deviceId, "A's phone sees the computer as A's existing device");
+    await e.call(pageSignInCodeField);
+    const back = await e.call(pageTypeSignInCode, { code: secondApproval.code, navigates: false });
+    check(back.identity.deviceId === firstApproval.deviceId && back.path === "/", "the computer is signed back in as the same device, without a restart");
+    const devicesAfter = await a.call(pageFetch, { path: "/api/devices" });
+    check(devicesAfter.body.devices.filter((device) => device.id === firstApproval.deviceId).length === 1 &&
+      devicesAfter.body.devices.length === aDevices.body.devices.length, "signing back in adds no device");
+    const secrets = [firstApproval.secret, secondApproval.secret, firstApproval.code, secondApproval.code, firstApproval.nonce, secondApproval.nonce];
+    check(requests.slice(requestsBefore).every(({ url, referer }) => secrets.every((value) => !url.includes(value) && !referer.includes(value))),
+      "no sign-in secret or code ever reaches a request URL or Referer");
+    pass(`${checks} phone sign-in assertions (profile E with A's phone)`);
+    await retire(e);
     console.log(`PASS ${checks} live household authority and recovery assertions across independent browser profiles`);
     return checks;
   } finally {
