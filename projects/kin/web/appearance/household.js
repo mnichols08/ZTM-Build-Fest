@@ -1,6 +1,8 @@
 import { DEFAULT_APPEARANCE, validateAppearance } from "./store.js";
+import { MAX_INSTALL_ICON_BYTES, pngSize } from "./install-icons.js";
 
 export const DEFAULT_HOUSEHOLD_NAME = "Our Home";
+export const DEFAULT_HOUSEHOLD_BRAND = Object.freeze({ version: 1, iconSource: "letter", icon: null });
 export const MAX_HOUSEHOLD_NAME_CODE_POINTS = 80;
 export const MAX_HOUSEHOLD_NAME_BYTES = 240;
 
@@ -17,7 +19,22 @@ export function validateHouseholdSettings(value) {
   if (!value || value.version !== 1 || !Number.isSafeInteger(value.revision) || value.revision < 0) throw new Error("Kin found invalid household settings.");
   const name = normalizeHouseholdName(value.name);
   const appearance = validateAppearance({ ...value.appearance, owner: "household" }, "household");
-  return { version: 1, revision: value.revision, name, appearance };
+  const brand = validateHouseholdBrand(value.brand);
+  return { version: 1, revision: value.revision, name, appearance, brand };
+}
+
+export function validateHouseholdBrand(value = DEFAULT_HOUSEHOLD_BRAND) {
+  if (!value || value.version !== 1 || !["letter", "upload"].includes(value.iconSource))
+    throw new Error("Kin found an invalid household icon.");
+  if (value.iconSource === "letter") return { ...DEFAULT_HOUSEHOLD_BRAND };
+  const icon = value.icon;
+  if (!icon || icon.type !== "image/png" || !(icon.bytes instanceof Uint8Array) ||
+      icon.bytes.length < 24 || icon.bytes.length > MAX_INSTALL_ICON_BYTES)
+    throw new Error("Kin found an invalid household icon.");
+  const size = pngSize(icon.bytes);
+  if (size?.width !== 512 || size.height !== 512)
+    throw new Error("Kin found an invalid household icon.");
+  return { version: 1, iconSource: "upload", icon: { type: "image/png", width: 512, height: 512, bytes: icon.bytes.slice() } };
 }
 
 // Undefined means inherit. Null for image means an explicit no-background override.
@@ -71,7 +88,8 @@ function sameImage(left, right) {
 export async function encryptHouseholdSettings(value, { householdId, keyEpoch, householdKey }) {
   const checked = validateHouseholdSettings(value);
   const serializable = { ...checked, appearance: { ...checked.appearance, owner: undefined,
-    image: checked.appearance.image ? { ...checked.appearance.image, bytes: bytesToBase64(checked.appearance.image.bytes) } : null } };
+    image: checked.appearance.image ? { ...checked.appearance.image, bytes: bytesToBase64(checked.appearance.image.bytes) } : null },
+    brand: { ...checked.brand, icon: checked.brand.icon ? { ...checked.brand.icon, bytes: bytesToBase64(checked.brand.icon.bytes) } : null } };
   const plaintext = new TextEncoder().encode(JSON.stringify(serializable));
   const nonce = crypto.getRandomValues(new Uint8Array(12));
   const aad = new TextEncoder().encode(`kin-household-settings-v1:${householdId}:${keyEpoch}:${checked.revision + 1}`);
@@ -91,6 +109,7 @@ export async function decryptHouseholdSettings(record, { householdId, householdK
   const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes.slice(0, 12), additionalData: aad }, householdKey, bytes.slice(12));
   const parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(plaintext));
   if (parsed?.appearance?.image) parsed.appearance.image.bytes = base64ToBytes(parsed.appearance.image.bytes);
+  if (parsed?.brand?.icon) parsed.brand.icon.bytes = base64ToBytes(parsed.brand.icon.bytes);
   return validateHouseholdSettings({ ...parsed, revision: record.revision });
 }
 

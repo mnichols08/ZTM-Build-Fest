@@ -6,7 +6,7 @@
 // confirm. Only <kin-household-defaults> creates this element, and only for
 // an admin, so non-admins never have it in the DOM.
 import { bytesToBase64Url, letterIcons, uploadIcons } from "../appearance/install-icons.js";
-import { DEFAULT_HOUSEHOLD_NAME } from "../appearance/household.js";
+import { DEFAULT_HOUSEHOLD_BRAND, DEFAULT_HOUSEHOLD_NAME } from "../appearance/household.js";
 
 const PRIVACY_TEXT = "Your household name and icon will be stored by the Kin service without encryption so devices can show them on the home screen. Everything else stays encrypted.";
 const PLATFORM_TEXT = "Computers and Android phones pick up changes on their own, usually within a day. On iPhone and iPad, remove Kin from the Home Screen and add it again to see a change.";
@@ -26,10 +26,10 @@ export class KinInstallIdentity extends HTMLElement {
     this.setAttribute("aria-labelledby", `${id}-heading`);
     const heading = document.createElement("h3");
     heading.id = `${id}-heading`;
-    heading.textContent = "Home screen";
+    heading.textContent = "Household icon & home screen";
     const lead = document.createElement("p");
     lead.className = "section-hint";
-    lead.textContent = "When Kin is installed, it can show your household's name and icon instead of “Kin”, so it's easy to tell apart from another Kin.";
+    lead.textContent = "Choose the household icon shown inside unlocked Kin. You can also publish a copy for installed home screens.";
 
     const toggleLabel = document.createElement("label");
     toggleLabel.className = "install-toggle";
@@ -94,7 +94,7 @@ export class KinInstallIdentity extends HTMLElement {
     platform.className = "section-hint";
     platform.textContent = PLATFORM_TEXT;
 
-    this.save = button("Save home screen", () => this.publish(), "primary-action");
+    this.save = button("Save icon", () => this.publish(), "primary-action");
     this.withdraw = button("Stop showing", () => this.stopShowing());
     const actions = document.createElement("div");
     actions.className = "appearance-actions";
@@ -117,7 +117,7 @@ export class KinInstallIdentity extends HTMLElement {
       choice.addEventListener("change", () => { this.dirty = true; this.file.hidden = !this.uploadChoice.input.checked; void this.regenerate(); });
     this.file.addEventListener("change", () => { this.dirty = true; void this.regenerate(); });
     this.confirm.addEventListener("change", () => this.updateControls());
-    this.state = { published: null, householdName: DEFAULT_HOUSEHOLD_NAME, seed: undefined };
+    this.state = { published: null, householdName: DEFAULT_HOUSEHOLD_NAME, seed: undefined, brand: DEFAULT_HOUSEHOLD_BRAND };
     this.render();
   }
 
@@ -142,12 +142,12 @@ export class KinInstallIdentity extends HTMLElement {
     return { wrapper, image };
   }
 
-  /** { published, householdName, seed } from the app; published is the
+  /** { published, householdName, seed, brand } from the app; published is the
    * service's copy (without icon bytes) or null. A draft in progress is kept. */
-  initialize({ published, householdName, seed }) {
+  initialize({ published, householdName, seed, brand = DEFAULT_HOUSEHOLD_BRAND }) {
     if (!this.firstElementChild) this.build();
     const changed = (published?.rev ?? 0) !== (this.state.published?.rev ?? 0);
-    this.state = { published: published ?? null, householdName: householdName || DEFAULT_HOUSEHOLD_NAME, seed };
+    this.state = { published: published ?? null, householdName: householdName || DEFAULT_HOUSEHOLD_NAME, seed, brand };
     if (this.dirty && !changed && !this.writing) { this.renderPreview(); return; }
     const otherAdmin = this.dirty && changed && !this.writing;
     this.dirty = false;
@@ -158,10 +158,10 @@ export class KinInstallIdentity extends HTMLElement {
   render() {
     const { published, householdName } = this.state;
     this.toggle.checked = Boolean(published);
-    this.form.hidden = !published;
+    this.form.hidden = false;
     this.shortName.value = published?.shortName ?? graphemes(householdName).slice(0, MAX_SHORT_NAME).join("").trim();
     this.description.value = published?.description ?? "";
-    const upload = published?.iconSource === "upload";
+    const upload = this.state.brand?.iconSource === "upload" || (!this.state.brand && published?.iconSource === "upload");
     this.letterChoice.input.checked = !upload;
     this.uploadChoice.input.checked = upload;
     this.file.hidden = !upload;
@@ -169,8 +169,10 @@ export class KinInstallIdentity extends HTMLElement {
     this.confirm.checked = false;
     this.error.textContent = "";
     this.icons = null;
-    this.showIcons(published ? { any: published.icons.icon512, maskable: published.icons.maskable512 } : null);
-    if (!published || !upload) void this.regenerate();
+    const privateIcon = upload ? this.state.brand?.icon?.bytes : null;
+    this.showIcons(privateIcon ? { any: privateIcon, maskable: privateIcon }
+      : published ? { any: published.icons.icon512, maskable: published.icons.maskable512 } : null);
+    void this.regenerate();
     this.status.textContent = published && published.name !== householdName
       ? `Home screens still show “${published.name}”. Save to show the new household name.`
       : "";
@@ -180,7 +182,6 @@ export class KinInstallIdentity extends HTMLElement {
   onToggle() {
     this.error.textContent = "";
     if (this.toggle.checked) {
-      this.form.hidden = false;
       this.dirty = true;
       void this.regenerate();
       this.shortName.focus();
@@ -188,7 +189,6 @@ export class KinInstallIdentity extends HTMLElement {
       this.toggle.checked = true;
       this.stopShowing();
     } else {
-      this.form.hidden = true;
       this.dirty = false;
     }
     this.updateControls();
@@ -203,7 +203,8 @@ export class KinInstallIdentity extends HTMLElement {
     try {
       let icons;
       if (this.uploadChoice.input.checked) {
-        const file = this.file.files?.[0];
+        const file = this.file.files?.[0] ?? (this.state.brand?.icon
+          ? new Blob([this.state.brand.icon.bytes], { type: this.state.brand.icon.type }) : null);
         if (!file) { this.icons = null; this.updateControls(); return; }
         icons = await uploadIcons(file, { seed: this.state.seed });
       } else {
@@ -245,12 +246,14 @@ export class KinInstallIdentity extends HTMLElement {
 
   updateControls() {
     const firstPublish = !this.state.published;
-    this.privacy.hidden = this.confirmLabel.hidden = !firstPublish;
+    const publishing = this.toggle.checked;
+    this.privacy.hidden = this.confirmLabel.hidden = !firstPublish || !publishing;
     this.withdraw.hidden = firstPublish;
     // Saving an uploaded source with no new file republishes the stored icons
     // only when nothing about the icon changed; otherwise a file is needed.
     const reusing = !this.icons && !this.iconProblem && this.uploadChoice.input.checked && this.state.published?.iconSource === "upload";
-    this.save.disabled = this.busy || this.writing || (firstPublish && !this.confirm.checked) || (!this.icons && !reusing);
+    this.save.textContent = publishing ? "Save icon and home screen" : "Save household icon";
+    this.save.disabled = this.busy || this.writing || (publishing && firstPublish && !this.confirm.checked) || (!this.icons && !reusing);
     for (const control of this.querySelectorAll("input, textarea")) control.disabled = this.busy || this.writing;
     this.withdraw.disabled = this.busy || this.writing;
   }
@@ -264,8 +267,9 @@ export class KinInstallIdentity extends HTMLElement {
   async publish() {
     if (this.writing) return;
     this.error.textContent = "";
+    const publishing = this.toggle.checked;
     const shortName = this.shortName.value.trim();
-    if (!shortName || graphemes(shortName).length > MAX_SHORT_NAME) {
+    if (publishing && (!shortName || graphemes(shortName).length > MAX_SHORT_NAME)) {
       this.error.textContent = "Use 1 to 12 characters for the short name.";
       this.shortName.focus();
       return;
@@ -291,17 +295,20 @@ export class KinInstallIdentity extends HTMLElement {
       (this.file.hidden ? this.letterChoice.input : this.file).focus();
       return;
     }
-    const value = {
+    const value = publishing ? {
       expectedRev: this.state.published?.rev ?? 0,
       name: this.state.householdName,
       shortName,
       description: this.description.value.trim(),
       iconSource: this.uploadChoice.input.checked ? "upload" : "letter",
       icons: Object.fromEntries(Object.entries(icons).map(([key, bytes]) => [key, bytesToBase64Url(bytes)])),
-    };
+    } : null;
+    const brand = this.uploadChoice.input.checked
+      ? { version: 1, iconSource: "upload", icon: { type: "image/png", width: 512, height: 512, bytes: icons.icon512.slice() } }
+      : { ...DEFAULT_HOUSEHOLD_BRAND };
     this.status.textContent = "Saving…";
     this.setWriting(true);
-    this.dispatchEvent(new CustomEvent("kin:publish-install-identity", { bubbles: true, detail: { value, complete: (result, error) => {
+    this.dispatchEvent(new CustomEvent("kin:publish-install-identity", { bubbles: true, detail: { value, brand, publish: publishing, complete: (result, error) => {
       this.setWriting(false);
       if (error) {
         this.status.textContent = "";
@@ -313,10 +320,13 @@ export class KinInstallIdentity extends HTMLElement {
       this.dirty = false;
       // The app reloads the published copy; if that failed, at least the
       // next save must not conflict with this one.
-      if (result?.rev && (this.state.published?.rev ?? 0) < result.rev)
+      if (publishing && result?.rev && (this.state.published?.rev ?? 0) < result.rev)
         this.state.published = { ...(this.state.published ?? {}), ...value, icons: this.state.published?.icons ?? {}, rev: result.rev };
+      this.state.brand = brand;
       this.updateControls();
-      this.status.textContent = "Saved. Installed apps show it the next time they check for changes.";
+      this.status.textContent = publishing
+        ? "Saved. Unlocked Kin uses this icon now; installed apps show it the next time they check for changes."
+        : "Saved. Unlocked household members use this icon; nothing was published for home screens.";
     } } }));
   }
 
