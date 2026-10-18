@@ -154,6 +154,26 @@ pub enum HouseholdCommand {
         device_id: DeviceId,
         nickname: Option<String>,
     },
+    /// Posts a chat message whose content is the blob `blob_ref` (its
+    /// SHA-256), encrypted with `blob_key` (#109, #110).
+    PostChatMessage {
+        id: ChatMessageId,
+        content_kind: ChatContentKind,
+        blob_ref: [u8; 32],
+        blob_key: [u8; 32],
+    },
+    /// The author replaces a text message's content blob.
+    EditChatMessage {
+        id: ChatMessageId,
+        blob_ref: [u8; 32],
+        blob_key: [u8; 32],
+    },
+    /// The author deletes for everyone (`by_admin` false), or an admin
+    /// removes another member's message (`by_admin` true).
+    DeleteChatMessage {
+        id: ChatMessageId,
+        by_admin: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -375,6 +395,30 @@ pub fn create_event(
                 .map(crate::state::normalize_device_nickname)
                 .transpose()?,
         },
+        PostChatMessage {
+            id,
+            content_kind,
+            blob_ref,
+            blob_key,
+        } => EventKind::ChatMessagePosted {
+            message_id: *id,
+            content_kind: *content_kind,
+            blob_ref: *blob_ref,
+            blob_key: *blob_key,
+        },
+        EditChatMessage {
+            id,
+            blob_ref,
+            blob_key,
+        } => EventKind::ChatMessageEdited {
+            message_id: *id,
+            blob_ref: *blob_ref,
+            blob_key: *blob_key,
+        },
+        DeleteChatMessage { id, by_admin } => EventKind::ChatMessageDeleted {
+            message_id: *id,
+            by_admin: *by_admin,
+        },
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -397,6 +441,8 @@ pub fn create_event(
 #[derive(Debug)]
 pub struct CommandResult {
     pub event: EventEnvelope,
+    /// The household with the event applied. For a chat command against the
+    /// chat log: the state before it, and `encoded_projection` is empty.
     pub projection: HouseholdState,
     pub encoded_projection: Vec<u8>,
 }
@@ -409,6 +455,15 @@ pub trait CommandHistory {
     fn context(&self) -> &DecodedRequest;
     /// How many events the history holds.
     fn event_count(&self) -> usize;
+    /// Most events it may hold.
+    fn limit(&self) -> usize {
+        MAX_EVENT_COUNT
+    }
+    /// Whether it is the chat log, which takes chat commands only; every
+    /// other history takes every other command.
+    fn is_chat(&self) -> bool {
+        false
+    }
     /// Whether some event rules out a new event with `context`: it belongs to
     /// another household, is not earlier, or has the same event ID.
     fn conflicts_with(&self, context: &CommandContext) -> bool;
@@ -477,6 +532,12 @@ impl CommandHistory for HeldHistory<'_> {
     fn event_count(&self) -> usize {
         self.history.len()
     }
+    fn limit(&self) -> usize {
+        self.history.limit()
+    }
+    fn is_chat(&self) -> bool {
+        self.history.log() == crate::history::Log::Chat
+    }
     // Every applied event shares the replay's household, its last logical
     // time is the greatest, and it knows every applied event ID.
     fn conflicts_with(&self, context: &CommandContext) -> bool {
@@ -493,6 +554,13 @@ impl CommandHistory for HeldHistory<'_> {
             .finalize(self.context.as_of, self.context.civil_date)
     }
     fn with_event(&mut self, event: &EventEnvelope) -> Result<(HouseholdState, Vec<u8>), KinError> {
+        if self.is_chat() {
+            // A chat event changes no projection. Applying it to a copy would
+            // copy the whole chat (copy-on-write), so the result carries the
+            // state before the event and no KINS bytes; the host reads the
+            // chat through a page once it has stored the event.
+            return Ok((self.current()?, Vec::new()));
+        }
         let mut candidate = self.replay()?.clone();
         candidate.note_archives(std::slice::from_ref(event));
         candidate.apply(event)?;
@@ -521,7 +589,14 @@ pub fn execute_with(
     context: CommandContext,
     history: &mut dyn CommandHistory,
 ) -> Result<CommandResult, KinError> {
-    if history.event_count() >= MAX_EVENT_COUNT
+    let chat_command = matches!(
+        command,
+        HouseholdCommand::PostChatMessage { .. }
+            | HouseholdCommand::EditChatMessage { .. }
+            | HouseholdCommand::DeleteChatMessage { .. }
+    );
+    if history.event_count() >= history.limit()
+        || chat_command != history.is_chat()
         || !valid_timestamp(context.timestamp)
         || context.logical_time == 0
         || context.logical_time > crate::state::MAX_LOGICAL_TIME
@@ -602,6 +677,43 @@ pub fn execute_with(
                     && device.member_id == context.actor_id
                     && device.nickname != nickname
             }) {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        _ => {}
+    }
+    // Chat: a command must change the chat, under the rules replay applies
+    // (replay/chat.rs). Whether a remover is an admin is the service's to
+    // say; the host offers removal only to admins, and a page counts a
+    // removal only while its claimant is one.
+    match command {
+        HouseholdCommand::PostChatMessage { id, .. } => {
+            if current.chat.get(id).is_some() {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::EditChatMessage { id, blob_ref, .. } => {
+            if !current.chat.get(id).is_some_and(|message| {
+                message.author == context.actor_id
+                    && message.status != crate::chat::ChatMessageStatus::Deleted
+                    && message.content_kind == ChatContentKind::Text
+                    && message.blob_ref != *blob_ref
+            }) {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::DeleteChatMessage { id, by_admin } => {
+            let message = current.chat.get(id).ok_or(KinError::InvalidEvent)?;
+            let own = message.author == context.actor_id;
+            if message.status == crate::chat::ChatMessageStatus::Deleted
+                || *by_admin == own
+                || *by_admin
+                    && current
+                        .chat
+                        .admin_claims
+                        .get(id)
+                        .is_some_and(|claims| claims.contains(&context.actor_id))
+            {
                 return Err(KinError::InvalidEvent);
             }
         }
@@ -911,7 +1023,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
     if bytes.len() != 128 + text_length {
         return Err(KinError::MalformedProtocol);
     }
-    let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41) {
+    let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41 | 44..=46) {
         String::new()
     } else {
         std::str::from_utf8(&bytes[128..])
@@ -923,10 +1035,11 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || matches!(kind, 22 | 23) && text_length >= 24
         || kind == 25 && (17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
         || kind == 39 && text_length == 16
-        || kind == 41 && text_length == 16;
+        || kind == 41 && text_length == 16
+        || matches!(kind, 44 | 45) && text_length == 64;
     if !text.is_empty() && !accepts_payload
         || !matches!(kind, 14..=16 | 30) && date != 0
-        || !matches!(kind, 1 | 12 | 14 | 29 | 31 | 32 | 39 | 41) && option != 0
+        || !matches!(kind, 1 | 12 | 14 | 29 | 31 | 32 | 39 | 41 | 44 | 46) && option != 0
         || kind != 12 && expires != 0
         || matches!(kind, 12 | 13 | 29) && id != [0; 16]
         || kind == 21 && text_length != 16
@@ -943,6 +1056,11 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 42 && (id != [0; 16] || text.is_empty())
         || kind == 43 && id == [0; 16]
         || matches!(kind, 42 | 43) && text_length > crate::state::MAX_DEVICE_NAME_BYTES
+        || matches!(kind, 44..=46) && id == [0; 16]
+        || matches!(kind, 44 | 45) && text_length != 64
+        || kind == 44 && !matches!(option, 1 | 2)
+        || kind == 46 && (text_length != 0 || option > 1)
+        || matches!(kind, 44 | 45) && (bytes[128..160] == [0; 32] || bytes[160..192] == [0; 32])
     {
         return Err(KinError::MalformedProtocol);
     }
@@ -1282,6 +1400,32 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         43 => NicknameDevice {
             device_id: DeviceId(id),
             nickname: (!text.is_empty()).then_some(text),
+        },
+        44 | 45 => {
+            let blob_ref = field(bytes, 128)?;
+            let blob_key = field(bytes, 160)?;
+            if kind == 44 {
+                PostChatMessage {
+                    id: ChatMessageId(id),
+                    content_kind: if option == 1 {
+                        ChatContentKind::Text
+                    } else {
+                        ChatContentKind::Attachment
+                    },
+                    blob_ref,
+                    blob_key,
+                }
+            } else {
+                EditChatMessage {
+                    id: ChatMessageId(id),
+                    blob_ref,
+                    blob_key,
+                }
+            }
+        }
+        46 => DeleteChatMessage {
+            id: ChatMessageId(id),
+            by_admin: option == 1,
         },
         _ => return Err(KinError::UnsupportedVersion),
     };

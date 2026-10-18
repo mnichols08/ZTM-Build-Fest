@@ -49,6 +49,9 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::ResponsibilityChanged { .. } => 41,
         EventKind::DeviceDescribed { .. } => 42,
         EventKind::DeviceNicknamed { .. } => 43,
+        EventKind::ChatMessagePosted { .. } => 44,
+        EventKind::ChatMessageEdited { .. } => 45,
+        EventKind::ChatMessageDeleted { .. } => 46,
     }
 }
 
@@ -301,6 +304,43 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
                 }
                 None => payload.extend_from_slice(&0u32.to_le_bytes()),
             }
+        }
+        // Chat (#109): message ID, then the blob reference and key.
+        EventKind::ChatMessagePosted {
+            message_id,
+            content_kind,
+            blob_ref,
+            blob_key,
+        } => {
+            if message_id.0 == [0; 16] || *blob_ref == [0; 32] || *blob_key == [0; 32] {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            payload.extend_from_slice(&[*content_kind as u8, 0, 0, 0]);
+            payload.extend_from_slice(blob_ref);
+            payload.extend_from_slice(blob_key);
+        }
+        EventKind::ChatMessageEdited {
+            message_id,
+            blob_ref,
+            blob_key,
+        } => {
+            if message_id.0 == [0; 16] || *blob_ref == [0; 32] || *blob_key == [0; 32] {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            payload.extend_from_slice(blob_ref);
+            payload.extend_from_slice(blob_key);
+        }
+        EventKind::ChatMessageDeleted {
+            message_id,
+            by_admin,
+        } => {
+            if message_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            payload.extend_from_slice(&[u8::from(*by_admin), 0, 0, 0]);
         }
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());

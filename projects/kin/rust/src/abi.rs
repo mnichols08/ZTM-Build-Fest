@@ -68,6 +68,10 @@ struct AbiState {
     allocations: Allocations,
     /// The canonical history this instance replays (history.rs).
     history: History,
+    /// The chat log, apart from the household history (history.rs).
+    chat_history: History,
+    /// Decrypted chat texts, while unlocked (chat.rs).
+    chat_texts: crate::chat::ChatTexts,
     result: Vec<u8>,
     error: Vec<u8>,
     /// Where `result` holds a projection, when it does.
@@ -84,6 +88,8 @@ impl AbiState {
         Self {
             allocations: Allocations::new(),
             history: History::new(),
+            chat_history: History::chat(),
+            chat_texts: crate::chat::ChatTexts::new(),
             result: Vec::new(),
             error: Vec::new(),
             projection: None,
@@ -127,6 +133,8 @@ impl AbiState {
     fn clear(&mut self) {
         self.allocations.clear();
         self.history.clear();
+        self.chat_history.clear();
+        self.chat_texts.clear();
         self.result = Vec::new();
         self.error = Vec::new();
         self.projection = None;
@@ -301,6 +309,60 @@ pub extern "C" fn kin_device_names(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::device_names, None)
 }
 
+/// Empties the instance's chat log. Always succeeds.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_history_reset() -> i32 {
+    let mut state = lock_state();
+    state.chat_history.clear();
+    state.chat_texts.clear();
+    0
+}
+
+/// Appends a batch of chat records to the chat log, as
+/// `kin_history_append` does for the household history. Either log refuses
+/// the other's events.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_history_append(pointer: u32, length: u32) -> i32 {
+    run_chat(pointer, length, |input, chat, _| {
+        chat.append(input).map(|()| Vec::new())
+    })
+}
+
+/// Keeps the chat log's first `count` records, as `kin_history_truncate`.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_history_truncate(count: u32) -> i32 {
+    match lock_state().chat_history.truncate(count as usize) {
+        Ok(()) => 0,
+        Err(error) => error.code(),
+    }
+}
+
+/// Validates a chat command against the chat log (the `kin_execute`
+/// layout) and publishes KCMT with an empty projection. The log is not
+/// changed.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_execute(pointer: u32, length: u32) -> i32 {
+    run_chat(pointer, length, |input, chat, _| {
+        crate::command::execute_history(input, chat)
+    })
+}
+
+/// A chat page: a KCHQ request with its record-less KINE context, against
+/// the chat log and the chat-text arena; publishes KCHP (chat.rs).
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_page(pointer: u32, length: u32) -> i32 {
+    run_chat(pointer, length, crate::core::chat_page)
+}
+
+/// Stores decrypted chat texts (KCHT) in the instance's arena; publishes
+/// the per-text KCHS statuses (chat.rs).
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_text(pointer: u32, length: u32) -> i32 {
+    run_chat(pointer, length, |input, _, texts| {
+        crate::chat::put_texts(input, texts)
+    })
+}
+
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
 pub extern "C" fn kin_event_metadata(pointer: u32, length: u32) -> i32 {
     operate(pointer, length, crate::codec::encode_metadata)
@@ -372,12 +434,53 @@ fn run(
     operation: impl FnOnce(&[u8], &mut History) -> Result<Vec<u8>, KinError>,
     locate: Option<Locate>,
 ) -> i32 {
+    run_parts(
+        pointer,
+        length,
+        |input, parts| operation(input, parts.history),
+        locate,
+    )
+}
+
+/// `run` for an operation on the chat log and the chat-text arena.
+fn run_chat(
+    pointer: u32,
+    length: u32,
+    operation: impl FnOnce(
+        &[u8],
+        &mut History,
+        &mut crate::chat::ChatTexts,
+    ) -> Result<Vec<u8>, KinError>,
+) -> i32 {
+    run_parts(
+        pointer,
+        length,
+        |input, parts| operation(input, parts.chat_history, parts.chat_texts),
+        None,
+    )
+}
+
+/// The instance's logs and arena, borrowed for one operation.
+struct Parts<'a> {
+    history: &'a mut History,
+    chat_history: &'a mut History,
+    chat_texts: &'a mut crate::chat::ChatTexts,
+}
+
+fn run_parts(
+    pointer: u32,
+    length: u32,
+    operation: impl FnOnce(&[u8], Parts<'_>) -> Result<Vec<u8>, KinError>,
+    locate: Option<Locate>,
+) -> i32 {
     // Keep inputs and published buffers stable against concurrent free, clear, or calls.
     let mut state = lock_state();
     state.begin();
     let AbiState {
         allocations,
         history,
+        chat_history,
+        chat_texts,
         ..
     } = &mut *state;
     let outcome = if !request_length_is_supported(length) {
@@ -391,7 +494,14 @@ fn run(
                 if input.len() != length as usize {
                     Err(KinError::InvalidAbi)
                 } else {
-                    operation(input, history)
+                    operation(
+                        input,
+                        Parts {
+                            history,
+                            chat_history,
+                            chat_texts,
+                        },
+                    )
                 }
             })
     };
