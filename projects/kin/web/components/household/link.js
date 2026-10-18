@@ -309,12 +309,20 @@ export class HouseholdLink {
       });
       const matches = tagged &&
         (result.newDevice ? request.keys === "pending" : request.keys === "existing" && result.deviceId === request.deviceId);
-      if (!matches) return this.signOut(UNVERIFIED);
+      if (!matches) {
+        // The service now trusts those pending keys as a device; never offer
+        // them again, or every later attempt would look like a return.
+        if (result.newDevice) await this.host.syncKeyStore.discardPendingDevice().catch(() => {});
+        return this.signOut(UNVERIFIED);
+      }
       if (result.newDevice)
         await this.host.syncKeyStore.bindPendingDevice({
           deviceId: result.deviceId, householdId: result.householdId, memberId: result.memberId,
         });
-      if (!(await this.pinApprover(request, result))) return this.signOut(UNVERIFIED);
+      // Any failure to pin (the directory unreachable, say) signs out too:
+      // a computer without the pin couldn't sync.
+      const pinned = await this.pinApprover(request, result).catch(() => false);
+      if (!pinned) return this.signOut(UNVERIFIED);
       if (result.newDevice) {
         // A new device starts Kin afresh, as after joining with a code.
         location.href = "/";

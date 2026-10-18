@@ -69,6 +69,8 @@ function rig({ bound = null, routes = {}, pendingFingerprint } = {}) {
     getOrCreatePendingDevice: async () => ({ ...FRESH }),
     getDevice: async (id) => (id === "pending" ? { fingerprint: pendingFingerprint ?? FRESH.fingerprint } : null),
     bindPendingDevice: async (identity) => { bindings.push(identity); return identity; },
+    discards: 0,
+    discardPendingDevice: async () => { store.discards += 1; return true; },
     getPinnedDevice: async () => null,
     pinTrustedDevice: async (pin) => { pins.push(pin); return pin; },
   };
@@ -264,6 +266,7 @@ test("a service that names a device of its own can't produce the phone's tag", a
   assert.equal(r.bindings.length, 0, "the keys aren't bound");
   assert.equal(r.pins.length, 0, "and nothing is pinned");
   assert.equal(logouts().length, 1, "the computer signs itself out");
+  assert.equal(r.store.discards, 1, "and throws its pending keys away, so the next try uses fresh ones");
   assert.match(r.host.errors[0]?.message ?? "", /couldn't verify the phone/);
 });
 
@@ -310,6 +313,14 @@ test("a directory whose phone key isn't the one behind the code signs the comput
   assert.equal(logouts().length, 1);
   assert.match(host.errors[0]?.message ?? "", /couldn't verify the phone/);
   assert.equal(where.href, `${ORIGIN}/`, "no restart");
+});
+
+test("a directory that can't be reached signs the computer out rather than leaving it unpinned", async () => {
+  const { link, host, pins } = await approvedRig({ directory: () => { throw new Error("offline"); } });
+  await link.complete(CODE);
+  assert.equal(pins.length, 0);
+  assert.equal(logouts().length, 1);
+  assert.match(host.errors[0]?.message ?? "", /couldn't verify the phone/);
 });
 
 test("keys replaced while signing in (another tab) stop the sign-in before it finishes", async () => {

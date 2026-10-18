@@ -125,6 +125,18 @@ export class SyncKeyStore {
     });
   }
 
+  /** Throws away this browser's unbound pending device keys, so the next
+   * request generates fresh ones. Used when a sign-in with a phone couldn't
+   * be verified after the service had already trusted those keys (#100). */
+  discardPendingDevice() {
+    const transaction = this.database.transaction(DEVICE_STORE, "readwrite");
+    const request = transaction.objectStore(DEVICE_STORE).delete(PENDING_DEVICE_ID);
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => finish(true);
+      request.onerror = () => abortWith(transaction, request.error);
+    });
+  }
+
   async pinTrustedDevice({
     householdId,
     deviceId,
