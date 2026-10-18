@@ -14,12 +14,13 @@
 //   fingerprint must match the stored keys, so the server can't swap them.
 //   After a fresh passkey assertion bound to the request, it approves: for a
 //   new computer it signs the device certificate (existing certificate path).
-//   The phone chooses the 6-digit code: it derives it from a nonce that only
-//   the QR code carries (never sent here) and both devices' key
-//   fingerprints. The service keeps only its hash, and tells the computer
-//   which device approved; the computer derives the same code from that
-//   device's fingerprint, so a service that names another approver can't
-//   produce a code that matches what the person types (web/device-link.js).
+//   The phone picks the 6-digit code at random and sends it with a tag: an
+//   HMAC binding its own device ID and key to the request, keyed by the code
+//   and a nonce only the QR code carries (never sent here). The service keeps
+//   only the code's hash and the tag. A correct code from the computer
+//   releases which device approved, its fingerprint and the tag; the computer
+//   checks the tag with the nonce and the typed code before trusting that
+//   device's key (web/device-link.js).
 // - The computer completes with the code: three tries, then the request ends.
 //   A new computer becomes a trusted device of the approving member and
 //   receives retained history; a computer already trusted for that member,
@@ -197,13 +198,8 @@ export const linkMethods = {
   /** What the computer may learn while it waits: only the state. */
   linkStatus(requestId, secret) {
     const request = this.linkRequestFor(requestId, secret);
-    const state = this.linkState(request);
-    // Once approved, which device approved, so the computer can check the
-    // code against that device's key (and pin it) before finishing.
-    return state === "approved"
-      ? { state, expiresAt: request.expiresAt, approverDeviceId: request.approval.approverDeviceId,
-          approverFingerprint: request.approval.approverFingerprint }
-      : { state, expiresAt: request.expiresAt };
+    // Nothing about the approver: that is released only by a correct code.
+    return { state: this.linkState(request), expiresAt: request.expiresAt };
   },
 
   /** The device this request signs back in: the computer's existing trusted
@@ -271,8 +267,8 @@ export const linkMethods = {
 
   /** The phone approves, after the route has verified a fresh passkey
    * assertion bound to this request, with the code the phone derived. */
-  approveLinkRequest(sessionToken, requestId, { secret, fingerprint, deviceCertificate, code } = {}) {
-    if (typeof code !== "string" || !/^[0-9]{6}$/.test(code))
+  approveLinkRequest(sessionToken, requestId, { secret, fingerprint, deviceCertificate, code, tag } = {}) {
+    if (typeof code !== "string" || !/^[0-9]{6}$/.test(code) || typeof tag !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(tag))
       throw new PairingError("invalid_request", "Kin could not understand that request.", 400);
     const view = this.linkRequestForApprover(sessionToken, requestId, { secret, fingerprint });
     const { member, household, device: approverDevice } = this.authorize(sessionToken);
@@ -298,6 +294,7 @@ export const linkMethods = {
       memberId: member.id,
       approverDeviceId: approverDevice.id,
       approverFingerprint: approverDevice.syncKeyFingerprint,
+      tag,
       existingDeviceId: view.existingDevice ? view.deviceId : null,
       certificate,
     };
@@ -384,6 +381,8 @@ export const linkMethods = {
       return {
         sessionToken, deviceToken, householdId: household.id, memberId: member.id, deviceId: device.id, newDevice,
         approverDeviceId: approverDevice.id,
+        approverFingerprint: approval.approverFingerprint,
+        tag: approval.tag,
       };
     }, { ...LIMITS, table: this.linkRateBuckets });
   },

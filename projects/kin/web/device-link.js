@@ -5,13 +5,20 @@
 // fingerprint to the service in request bodies. The nonce never leaves the
 // two devices: it travels only through the camera.
 //
-// The 6-digit code. The phone derives it from the nonce, the request, its own
-// key fingerprint and the computer's (signInCode), and tells the service only
-// so it can check what the computer types. The service tells the computer
-// which device approved and that device's fingerprint; the computer derives
-// the same code from them. A service that named a different approver (to get
-// its own key pinned) would need a code it can't compute without the nonce,
-// so what the person types wouldn't match, and the computer stops.
+// The 6-digit code and its tag. The phone picks the code at random and
+// shows it. It also sends the service a tag: an HMAC over the request, its
+// own device ID and key fingerprint, and the computer's fingerprint, keyed by
+// a hash of the nonce and the code (linkTag). The service checks the code the
+// computer types (three tries) and only then hands over which device
+// approved, its fingerprint and the tag. The computer recomputes the tag from
+// the nonce and the code the person typed, and pins that phone's key only if
+// it matches.
+// - Someone holding only the QR code has the nonce but not the code, and gets
+//   nothing back without the right code: three tries in a million.
+// - The service has the code but not the nonce, so it can't make a tag for a
+//   device of its own.
+// - Only the service and a QR holder working together could; comparing
+//   fingerprints by eye is the only defence against that (THREAT-MODEL).
 //
 // The secret and nonce are base64url and case-sensitive, so these helpers read
 // the link as given and never through the router, which lower-cases
@@ -83,16 +90,43 @@ export function signInRequest(link, origin) {
   return { requestId, secret, fingerprint, nonce };
 }
 
-/** The 6-digit code for a request: SHA-256 over a label, the request ID, the
- * nonce, the approving device's fingerprint and the computer's, read as a
- * 32-bit number and reduced to six digits (the bias is below one in 4000). */
-export async function signInCode({ requestId, nonce, approverFingerprint, computerFingerprint }) {
-  if (!REQUEST_ID.test(requestId ?? "") || !NONCE.test(nonce ?? "") ||
-      !FINGERPRINT.test(approverFingerprint ?? "") || !FINGERPRINT.test(computerFingerprint ?? ""))
-    throw new Error("Kin could not derive the sign-in code.");
-  const input = new TextEncoder().encode(`kin-link-code-v1|${requestId}|${nonce}|${approverFingerprint}|${computerFingerprint}`);
-  const hash = new DataView(await globalThis.crypto.subtle.digest("SHA-256", input));
-  return String(hash.getUint32(0) % 1_000_000).padStart(LINK_CODE_LENGTH, "0");
+/** A random 6-digit code, without bias (values past the last whole million
+ * are drawn again). */
+export function newLinkCode(random = globalThis.crypto) {
+  const limit = 4_294_000_000; // 4294 × 10^6, the largest multiple below 2^32
+  const value = new Uint32Array(1);
+  do random.getRandomValues(value); while (value[0] >= limit);
+  return String(value[0] % 1_000_000).padStart(LINK_CODE_LENGTH, "0");
+}
+
+/** The tag binding the approving device to the code and the QR code's nonce:
+ * HMAC-SHA-256 keyed by SHA-256(label | nonce | code), over the request ID,
+ * the approving device's ID and fingerprint, and the computer's fingerprint,
+ * as base64url. */
+export async function linkTag({ nonce, code, requestId, approverDeviceId, approverFingerprint, computerFingerprint }) {
+  if (!NONCE.test(nonce ?? "") || !/^[0-9]{6}$/.test(code ?? "") || !REQUEST_ID.test(requestId ?? "") ||
+      !REQUEST_ID.test(approverDeviceId ?? "") || !FINGERPRINT.test(approverFingerprint ?? "") || !FINGERPRINT.test(computerFingerprint ?? ""))
+    throw new Error("Kin could not check the sign-in.");
+  const encoder = new TextEncoder();
+  const subtle = globalThis.crypto.subtle;
+  const keyBytes = await subtle.digest("SHA-256", encoder.encode(`kin-link-key-v1|${nonce}|${code}`));
+  const key = await subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const tag = await subtle.sign("HMAC", key, encoder.encode(`kin-link-tag-v1|${requestId}|${approverDeviceId}|${approverFingerprint}|${computerFingerprint}`));
+  return base64url(new Uint8Array(tag));
+}
+
+/** Whether `tag` is the tag for these values (compared in full). */
+export async function linkTagMatches(tag, values) {
+  let expected;
+  try {
+    expected = await linkTag(values);
+  } catch {
+    return false;
+  }
+  if (typeof tag !== "string" || tag.length !== expected.length) return false;
+  let difference = 0;
+  for (let index = 0; index < tag.length; index += 1) difference |= tag.charCodeAt(index) ^ expected.charCodeAt(index);
+  return difference === 0;
 }
 
 let openedLink = false;

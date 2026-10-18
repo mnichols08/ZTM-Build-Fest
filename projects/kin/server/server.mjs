@@ -614,6 +614,7 @@ async function api(request, response, url, context) {
           fingerprint: body.fingerprint,
           deviceCertificate: body.deviceCertificate,
           code: body.code,
+          tag: body.tag,
         }),
       ));
       json(response, 200, approved);

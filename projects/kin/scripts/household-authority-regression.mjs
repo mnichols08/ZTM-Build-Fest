@@ -189,7 +189,7 @@ async function pageStartPhoneSignIn() {
 
 async function pagePhoneApprove(link) {
   const h = document.querySelector("kin-app").household;
-  const { signInCode, signInRequest } = await import("/device-link.js");
+  const { linkTag, newLinkCode, signInRequest } = await import("/device-link.js");
   const scanned = signInRequest(link, location.origin);
   if (!scanned) throw new Error("Not a sign-in link: " + link);
   const { authenticationOptions, credentialJson } = await import("/components/household/auth.js");
@@ -207,10 +207,12 @@ async function pagePhoneApprove(link) {
       publicKeys: view.syncPublicKeys, signingKey: own.keys.signingPrivateKey,
     });
   }
-  // The phone derives the code from the QR code's nonce and both keys.
-  const code = await signInCode({ requestId: scanned.requestId, nonce: scanned.nonce, approverFingerprint: h.localFingerprint, computerFingerprint: scanned.fingerprint });
+  // A random code, and the tag binding this phone to it and the QR nonce.
+  const code = newLinkCode();
+  const tag = await linkTag({ nonce: scanned.nonce, code, requestId: scanned.requestId, approverDeviceId: h.identity.deviceId,
+    approverFingerprint: h.localFingerprint, computerFingerprint: scanned.fingerprint });
   await h.api(`/api/link/requests/${scanned.requestId}/approve/finish`, {
-    method: "POST", body: JSON.stringify({ ...body, flow: started.flow, credential: credentialJson(credential), deviceCertificate, code }),
+    method: "POST", body: JSON.stringify({ ...body, flow: started.flow, credential: credentialJson(credential), deviceCertificate, code, tag }),
   });
   return { code, existingDevice: view.existingDevice, deviceId: view.deviceId, deviceLabel: view.deviceLabel, secret: scanned.secret, nonce: scanned.nonce };
 }

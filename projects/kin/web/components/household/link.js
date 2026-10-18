@@ -8,12 +8,12 @@
 // somewhere else can't be completed.
 //
 // - The QR code also carries a nonce the service never sees. The phone
-//   derives the code from it and both devices' key fingerprints
-//   (web/device-link.js). Before sending the code, the computer derives it
-//   too, from the approving device the service names; a mismatch means a
-//   typo or a service naming the wrong approver, and nothing is sent. After
-//   signing in, the computer pins that approving device's key, checked
-//   against the same fingerprint, so its first sync can verify the household.
+//   sends, with its random code, a tag binding its own device and key to the
+//   request, keyed by the nonce and the code (web/device-link.js). A correct
+//   code releases the approving device and the tag; the computer checks the
+//   tag with the nonce and the code the person typed, then pins that
+//   device's key, so its first sync can verify the household. A tag that
+//   doesn't check signs the computer out again.
 // - A computer that already has a device in a household offers that
 //   device's keys, so a returning computer keeps its device and its history.
 //   The service says whether its device cookie names that device; if not,
@@ -29,14 +29,12 @@
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
 import { currentPlatform, householdDeviceName } from "../../platform.js";
 import { deviceKeyFingerprint } from "../../sync/crypto.js";
-import { cleanLinkCode, isLinkCode, LINK_CODE_LENGTH, linkNonce, signInCode, signInLink } from "../../device-link.js";
+import { cleanLinkCode, isLinkCode, LINK_CODE_LENGTH, linkNonce, linkTagMatches, signInLink } from "../../device-link.js";
 
 /** How often the computer asks whether the phone has approved. */
 export const SIGN_IN_POLL_MS = 2_000;
 /** Replacement QR codes shown before the screen stops and asks. */
 export const MAX_SIGN_IN_REFRESHES = 4;
-/** Codes that don't match, checked here, before the request ends. */
-export const MAX_LOCAL_MISSES = 3;
 /** An expired request the QR code hasn't replaced in this long has ended. */
 const STALE_MS = 15_000;
 
@@ -56,7 +54,7 @@ export class HouseholdLink {
     this.host = ctx.host;
     /** The request on screen: { requestId, secret, fingerprint, nonce,
      * expiresAt, state, keys: "existing" | "pending", deviceId, fresh,
-     * refreshes, misses, approverDeviceId, approverFingerprint }. */
+     * refreshes }. */
     this.request = null;
     this.ended = null;
     this.lastKeys = null;
@@ -131,7 +129,6 @@ export class HouseholdLink {
       deviceId: keys === "existing" ? returning.deviceId : null,
       fresh,
       refreshes,
-      misses: 0,
     };
   }
 
@@ -248,8 +245,6 @@ export class HouseholdLink {
   approved(request, status) {
     request.state = "approved";
     request.expiresAt = status.expiresAt;
-    request.approverDeviceId = status.approverDeviceId;
-    request.approverFingerprint = status.approverFingerprint;
     this.focusNext = "code";
     this.host.render();
     this.announce("Your phone approved this computer. Type the 6-digit code it shows.");
@@ -283,18 +278,6 @@ export class HouseholdLink {
       return;
     }
     await this.host.run(async () => {
-      // The code must come from the approving device the service names.
-      const expected = await signInCode({
-        requestId: request.requestId, nonce: request.nonce,
-        approverFingerprint: request.approverFingerprint, computerFingerprint: request.fingerprint,
-      });
-      if (this.request !== request) return;
-      if (digits !== expected) {
-        request.misses += 1;
-        if (request.misses >= MAX_LOCAL_MISSES)
-          return this.end("That code didn't match three times, so the sign-in request ended. Nothing was signed in. If you typed it correctly, something between your phone and this computer may be interfering.");
-        return this.wrongCode("That code doesn't match. Check the code on your phone and type it again.");
-      }
       if (request.keys === "pending") {
         const local = await this.host.syncKeyStore.getDevice("pending");
         if (local?.fingerprint !== request.fingerprint)
@@ -308,14 +291,23 @@ export class HouseholdLink {
         });
       } catch (error) {
         if (this.request !== request) return;
-        if (error.code === "link_code_mismatch") return this.wrongCode(error.message);
-        if (["link_unavailable", "link_code_attempts"].includes(error.code)) return this.end(ENDED_NOTICE);
+        if (error.code === "link_code_mismatch") return this.wrongCode(`${error.message} Check the code on your phone and type it again.`);
+        if (error.code === "link_code_attempts")
+          return this.end("That code was wrong too many times, so the sign-in request ended. Nothing was signed in.");
+        if (error.code === "link_unavailable") return this.end(ENDED_NOTICE);
         throw error;
       }
       this.stop();
       this.request = null;
       globalThis.removeEventListener?.("pagehide", this.onPageHide);
-      const matches = result.approverDeviceId === request.approverDeviceId &&
+      // The approving device the service names must be the one the phone's
+      // tag binds to this code and this QR code's nonce.
+      const tagged = await linkTagMatches(result.tag, {
+        nonce: request.nonce, code: digits, requestId: request.requestId,
+        approverDeviceId: result.approverDeviceId, approverFingerprint: result.approverFingerprint,
+        computerFingerprint: request.fingerprint,
+      });
+      const matches = tagged &&
         (result.newDevice ? request.keys === "pending" : request.keys === "existing" && result.deviceId === request.deviceId);
       if (!matches) return this.signOut(UNVERIFIED);
       if (result.newDevice)
@@ -335,13 +327,13 @@ export class HouseholdLink {
   }
 
   /** Pins the approving phone's key, after checking that the directory's
-   * copy is the key whose fingerprint produced the code. Sync then verifies
-   * the household from it. */
+   * copy is the key the phone's tag named. Sync then verifies the household
+   * from it. */
   async pinApprover(request, result) {
     const { devices } = await this.host.api("/api/sync/devices");
-    const approver = devices.find((device) => device.deviceId === request.approverDeviceId);
+    const approver = devices.find((device) => device.deviceId === result.approverDeviceId);
     if (!approver?.publicKeys || approver.memberId !== result.memberId ||
-        (await deviceKeyFingerprint(approver.publicKeys)) !== request.approverFingerprint)
+        (await deviceKeyFingerprint(approver.publicKeys)) !== result.approverFingerprint)
       return false;
     const store = this.host.syncKeyStore;
     // A returning computer may have pinned it before, perhaps under an
@@ -352,7 +344,7 @@ export class HouseholdLink {
       memberId: approver.memberId,
       deviceId: approver.deviceId,
       publicKeys: approver.publicKeys,
-      fingerprint: request.approverFingerprint,
+      fingerprint: result.approverFingerprint,
     });
     return true;
   }

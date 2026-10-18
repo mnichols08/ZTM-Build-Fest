@@ -8,7 +8,7 @@ import test from "node:test";
 import { installDom, settle } from "../qr-test-dom.mjs";
 import { deviceKeyFingerprint } from "../../sync/crypto.js";
 import {
-  cleanLinkCode, consumeOpenedSignInLink, isLinkCode, linkNonce, signInCode, signInLink, signInRequest, takeSignInLink,
+  cleanLinkCode, consumeOpenedSignInLink, isLinkCode, linkNonce, linkTag, linkTagMatches, newLinkCode, signInLink, signInRequest, takeSignInLink,
 } from "../../device-link.js";
 
 globalThis.crypto ??= webcrypto;
@@ -55,7 +55,9 @@ const created = (keys, extra = {}) => {
     ...extra,
   };
 };
-const approvedStatus = () => ({ state: "approved", expiresAt: Date.now() + 120_000, approverDeviceId: PHONE_ID, approverFingerprint: PHONE.fingerprint });
+const approvedStatus = () => ({ state: "approved", expiresAt: Date.now() + 120_000 });
+/** The code A's phone shows in these tests. */
+const CODE = "482915";
 
 /** A household element stand-in around the link part, with a scripted API. */
 function rig({ bound = null, routes = {}, pendingFingerprint } = {}) {
@@ -198,7 +200,6 @@ test("once the phone approves, the screen asks for the 6-digit code with a numer
   assert.equal(document.activeElement, input, "focus moves to the field");
   assert.match(host.byClass("sign-in-status").textContent, /approved this computer/);
   assert.match(host.byClass("sign-in-countdown").textContent, /^The code works for/);
-  assert.equal(link.request.approverFingerprint, PHONE.fingerprint);
 });
 
 test("a request the phone approved at the last moment is kept, never replaced", async () => {
@@ -213,53 +214,70 @@ test("a request the phone approved at the last moment is kept, never replaced", 
   assert.ok(host.byClass("sign-in-code"));
 });
 
+/** The phone's tag for the request on screen (what the real phone sends). */
+const phoneTag = (request, { code = CODE, nonce = request.nonce, deviceId = PHONE_ID, fingerprint = PHONE.fingerprint } = {}) =>
+  linkTag({ nonce, code, requestId: request.requestId, approverDeviceId: deviceId, approverFingerprint: fingerprint, computerFingerprint: request.fingerprint });
+
 async function approvedRig({ keys = "pending", completion, directory, pendingFingerprint } = {}) {
   const bound = keys === "existing" ? { deviceId: hex(32, "d"), householdId: HOUSEHOLD, memberId: MEMBER, ...BOUND } : null;
+  let rigged;
   const r = rig({ bound, pendingFingerprint, routes: {
     "/api/link/requests": () => created(keys === "existing" ? BOUND : FRESH, { returning: keys === "existing" }),
     "/status": approvedStatus,
-    "/complete": completion ?? (() => ({ householdId: HOUSEHOLD, memberId: MEMBER, deviceId: keys === "existing" ? bound.deviceId : hex(32, "c"), newDevice: keys !== "existing", approverDeviceId: PHONE_ID })),
+    "/complete": async (body) => (completion ? completion(body, rigged) : {
+      householdId: HOUSEHOLD, memberId: MEMBER, deviceId: keys === "existing" ? bound.deviceId : hex(32, "c"), newDevice: keys !== "existing",
+      approverDeviceId: PHONE_ID, approverFingerprint: PHONE.fingerprint, tag: await phoneTag(rigged.link.request ?? rigged.request),
+    }),
     "/api/sync/devices": directory ?? (() => ({ devices: [{ deviceId: PHONE_ID, memberId: MEMBER, publicKeys: PHONE.publicKeys, fingerprint: PHONE.fingerprint }] })),
   } });
+  rigged = r;
   await r.link.begin();
   await r.link.poll();
   r.link.stop();
-  const request = r.link.request;
-  const code = await signInCode({ requestId: request.requestId, nonce: request.nonce, approverFingerprint: PHONE.fingerprint, computerFingerprint: request.fingerprint });
-  return { ...r, request, bound, code };
+  r.request = r.link.request;
+  return { ...r, bound };
 }
 
-test("a code that doesn't come from the approving device is never sent", async () => {
-  const { host, link, calls, code } = await approvedRig();
-  const wrong = code === "000000" ? "000001" : "000000";
-  link.field.value = wrong;
-  await link.complete(wrong);
-  assert.equal(calls.some((call) => call.path.endsWith("/complete")), false);
+test("a wrong code is checked by the service and says how many tries are left", async () => {
+  const { host, link } = await approvedRig({ completion: () => { throw Object.assign(new Error("That code didn't match. 2 tries left."), { code: "link_code_mismatch" }); } });
+  link.field.value = "111111";
+  await link.complete("111111");
   assert.equal(link.field.value, "");
   assert.equal(document.activeElement, link.field);
-  assert.match(host.byClass("sign-in-status").textContent, /doesn't match/);
-  await link.complete(wrong);
-  await link.complete(wrong);
-  assert.equal(link.request, null, "three misses end the request");
-  assert.ok(texts(host).some((value) => /didn't match three times/.test(value)));
-  assert.equal(releases().length, 1);
+  assert.match(host.byClass("sign-in-status").textContent, /2 tries left/);
+  assert.ok(link.request, "the request stays open");
 });
 
-test("a service that names another approver can't make the typed code match", async () => {
+test("a service that names a device of its own can't produce the phone's tag", async () => {
   const impostor = await publicKeys();
-  const r = rig({ routes: {
-    "/api/link/requests": () => created(FRESH),
-    "/status": () => ({ ...approvedStatus(), approverFingerprint: impostor.fingerprint }),
-    "/complete": () => { throw new Error("must not be called"); },
-  } });
-  await r.link.begin();
-  await r.link.poll();
-  r.link.stop();
-  // What the real phone shows: derived from its own fingerprint.
-  const shown = await signInCode({ requestId: r.link.request.requestId, nonce: r.link.request.nonce, approverFingerprint: PHONE.fingerprint, computerFingerprint: FRESH.fingerprint });
-  await r.link.complete(shown);
-  assert.equal(r.calls.some((call) => call.path.endsWith("/complete")), false);
-  assert.match(r.host.byClass("sign-in-status").textContent, /doesn't match/);
+  const impostorId = hex(32, "7");
+  const r = await approvedRig({
+    completion: async (body, rigged) => ({
+      householdId: HOUSEHOLD, memberId: MEMBER, deviceId: hex(32, "c"), newDevice: true,
+      // The service knows the code but not the QR code's nonce.
+      approverDeviceId: impostorId, approverFingerprint: impostor.fingerprint,
+      tag: await phoneTag(rigged.request, { nonce: linkNonce(), deviceId: impostorId, fingerprint: impostor.fingerprint, code: body.code }),
+    }),
+    directory: () => ({ devices: [{ deviceId: impostorId, memberId: MEMBER, publicKeys: impostor.publicKeys, fingerprint: impostor.fingerprint }] }),
+  });
+  await r.link.complete(CODE);
+  assert.equal(r.bindings.length, 0, "the keys aren't bound");
+  assert.equal(r.pins.length, 0, "and nothing is pinned");
+  assert.equal(logouts().length, 1, "the computer signs itself out");
+  assert.match(r.host.errors[0]?.message ?? "", /couldn't verify the phone/);
+});
+
+test("the real phone's tag doesn't vouch for another device, even with the right code", async () => {
+  const impostor = await publicKeys();
+  const r = await approvedRig({
+    completion: async (body, rigged) => ({
+      householdId: HOUSEHOLD, memberId: MEMBER, deviceId: hex(32, "c"), newDevice: true,
+      approverDeviceId: PHONE_ID, approverFingerprint: impostor.fingerprint, tag: await phoneTag(rigged.request),
+    }),
+  });
+  await r.link.complete(CODE);
+  assert.equal(r.pins.length, 0);
+  assert.equal(logouts().length, 1);
 });
 
 test("a short code is caught before anything is checked", async () => {
@@ -270,10 +288,11 @@ test("a short code is caught before anything is checked", async () => {
 });
 
 test("a new computer binds its fresh keys, pins the approving phone's checked key, then starts Kin afresh", async () => {
-  const { link, bindings, pins, calls, code, request } = await approvedRig();
-  await link.complete(code.replace(/(...)/, "$1-"));
+  const { link, bindings, pins, calls, request } = await approvedRig();
+  await link.complete("482-915");
   const sent = calls.find((call) => call.path.endsWith("/complete"));
-  assert.deepEqual(sent.body, { secret: request.secret, code }, "the secret and code go only in the body");
+  assert.deepEqual(sent.body, { secret: request.secret, code: CODE }, "the secret and code go only in the body");
+  assert.equal(JSON.stringify(calls).includes(request.nonce), false, "the nonce never reaches the service");
   assert.deepEqual(bindings, [{ deviceId: hex(32, "c"), householdId: HOUSEHOLD, memberId: MEMBER }]);
   assert.deepEqual(pins, [{ householdId: HOUSEHOLD, memberId: MEMBER, deviceId: PHONE_ID, publicKeys: PHONE.publicKeys, fingerprint: PHONE.fingerprint }]);
   assert.equal(where.href, "/");
@@ -283,10 +302,10 @@ test("a new computer binds its fresh keys, pins the approving phone's checked ke
 
 test("a directory whose phone key isn't the one behind the code signs the computer out", async () => {
   const other = await publicKeys();
-  const { link, host, pins, code } = await approvedRig({
+  const { link, host, pins } = await approvedRig({
     directory: () => ({ devices: [{ deviceId: PHONE_ID, memberId: MEMBER, publicKeys: other.publicKeys, fingerprint: PHONE.fingerprint }] }),
   });
-  await link.complete(code);
+  await link.complete(CODE);
   assert.equal(pins.length, 0);
   assert.equal(logouts().length, 1);
   assert.match(host.errors[0]?.message ?? "", /couldn't verify the phone/);
@@ -294,15 +313,15 @@ test("a directory whose phone key isn't the one behind the code signs the comput
 });
 
 test("keys replaced while signing in (another tab) stop the sign-in before it finishes", async () => {
-  const { link, calls, code } = await approvedRig({ pendingFingerprint: hex(64, "0") });
-  await link.complete(code);
+  const { link, calls } = await approvedRig({ pendingFingerprint: hex(64, "0") });
+  await link.complete(CODE);
   assert.equal(calls.some((call) => call.path.endsWith("/complete")), false);
   assert.equal(link.request, null);
 });
 
 test("a returning computer is signed back in, and pins the phone unless it already has", async () => {
   const r = await approvedRig({ keys: "existing" });
-  await r.link.complete(r.code);
+  await r.link.complete(CODE);
   assert.deepEqual(r.bindings, [], "its keys are already its own");
   assert.equal(r.pins.length, 1);
   assert.equal(r.host.loads, 1);
@@ -311,16 +330,17 @@ test("a returning computer is signed back in, and pins the phone unless it alrea
 
   const again = await approvedRig({ keys: "existing" });
   again.store.getPinnedDevice = async () => ({ fingerprint: "earlier" });
-  await again.link.complete(again.code);
+  await again.link.complete(CODE);
   assert.equal(again.pins.length, 0, "an existing pin is kept; sync checks it against the key history");
   assert.equal(again.host.loads, 1);
 });
 
 test("an answer that doesn't fit the request is refused and signed out", async () => {
-  const { link, host, bindings, code } = await approvedRig({
-    completion: () => ({ householdId: HOUSEHOLD, memberId: MEMBER, deviceId: "d", newDevice: false, approverDeviceId: PHONE_ID }),
+  const { link, host, bindings } = await approvedRig({
+    completion: async (body, rigged) => ({ householdId: HOUSEHOLD, memberId: MEMBER, deviceId: "d", newDevice: false,
+      approverDeviceId: PHONE_ID, approverFingerprint: PHONE.fingerprint, tag: await phoneTag(rigged.request) }),
   });
-  await link.complete(code);
+  await link.complete(CODE);
   assert.equal(bindings.length, 0);
   assert.equal(logouts().length, 1);
   assert.match(host.errors[0]?.message ?? "", /couldn't verify/);
@@ -330,9 +350,9 @@ test("an answer that doesn't fit the request is refused and signed out", async (
 for (const code of ["link_code_attempts", "link_unavailable"]) {
   test(`${code} from the service ends the screen with a way to start again`, async () => {
     const r = await approvedRig({ completion: () => { throw Object.assign(new Error("x"), { code }); } });
-    await r.link.complete(r.code);
+    await r.link.complete(CODE);
     assert.equal(r.link.request, null);
-    assert.ok(texts(r.host).some((value) => /ended\. Nothing was signed in/.test(value)));
+    assert.ok(texts(r.host).some((value) => /Nothing was signed in/.test(value)));
     assert.ok(r.host.byText("Show a new code"));
     assert.equal(r.host.byText("Sign in as someone else"), null, "fresh keys were already offered");
     assert.equal(document.activeElement, r.host.byClass("sign-in-heading"));
@@ -437,16 +457,18 @@ test("anything but an exact sign-in link for this origin is refused", () => {
   ]) assert.equal(signInRequest(bad, ORIGIN), null, bad);
 });
 
-test("the code depends on the request, the nonce and both devices' keys", async () => {
-  const base = { requestId: sample.requestId, nonce: sample.nonce, approverFingerprint: PHONE.fingerprint, computerFingerprint: FRESH.fingerprint };
-  const code = await signInCode(base);
-  assert.match(code, /^\d{6}$/);
-  assert.equal(await signInCode(base), code, "the same on both devices");
-  const changes = [{ nonce: linkNonce() }, { approverFingerprint: BOUND.fingerprint }, { computerFingerprint: BOUND.fingerprint }, { requestId: hex(32, "b") }];
-  let differing = 0;
-  for (const change of changes) if ((await signInCode({ ...base, ...change })) !== code) differing += 1;
-  assert.equal(differing, changes.length);
-  await assert.rejects(signInCode({ ...base, nonce: "short" }));
+test("codes are six random digits, and the tag needs the nonce, the code and the right device", async () => {
+  const codes = new Set(Array.from({ length: 50 }, () => newLinkCode()));
+  for (const code of codes) assert.match(code, /^\d{6}$/);
+  assert.ok(codes.size > 45, "random");
+  const values = { nonce: sample.nonce, code: CODE, requestId: sample.requestId, approverDeviceId: PHONE_ID, approverFingerprint: PHONE.fingerprint, computerFingerprint: FRESH.fingerprint };
+  const tag = await linkTag(values);
+  assert.match(tag, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(await linkTagMatches(tag, values), true);
+  for (const change of [{ nonce: linkNonce() }, { code: "482916" }, { approverDeviceId: hex(32, "7") }, { approverFingerprint: BOUND.fingerprint }, { computerFingerprint: BOUND.fingerprint }, { requestId: hex(32, "b") }])
+    assert.equal(await linkTagMatches(tag, { ...values, ...change }), false, JSON.stringify(change));
+  assert.equal(await linkTagMatches(undefined, values), false);
+  assert.equal(await linkTagMatches(tag, { ...values, nonce: "short" }), false);
 });
 
 test("typed codes ignore spaces and dashes, and must be six digits", () => {
