@@ -368,16 +368,35 @@ test("another member's device revocation control fails closed unless the server 
   }
 });
 
-test("trusted devices group by member and show synced names, nicknames and placeholders (#71)", async () => {
+test("People & devices groups by stable member ID and labels people and device states (#226)", async () => {
   const component = new KinHousehold();
   component.identity = { memberId: "me", deviceId: "phone" };
-  component.syncKeyError = "skip sync-key access";
+  component.localFingerprint = "SELF";
   component.run = async (action) => action();
-  component.api = async () => ({ canManageMembers: false, devices: [
-    { id: "phone", memberId: "me", label: "Chrome on iPhone", revokedAt: null },
-    { id: "partner-mac", memberId: "partner", label: "Device", revokedAt: null, syncKeyFingerprint: "abcd1234" },
-    { id: "laptop", memberId: "me", label: "Firefox on Windows", revokedAt: null },
-  ] });
+  component.ctx.api.openSyncKeyStore = async () => component.syncKeyStore;
+  component.api = async (path) => path === "/api/devices"
+    ? { canManageMembers: true, devices: [
+      { id: "phone", memberId: "me", label: "Chrome on iPhone", revokedAt: null },
+      { id: "partner-mac", memberId: "partner-a", label: "Device", revokedAt: null, syncKeyFingerprint: "abcd1234" },
+      { id: "partner-tablet", memberId: "partner-b", label: "Safari on iPad", revokedAt: "now" },
+      { id: "laptop", memberId: "me", label: "Firefox on Windows", revokedAt: null },
+    ] }
+    : { devices: [
+      { deviceId: "phone", memberId: "me", fingerprint: "SELF", publicKeys: {} },
+      { deviceId: "partner-mac", memberId: "partner-a", fingerprint: "ABCD1234", publicKeys: {} },
+    ] };
+  component.syncKeyStore = {
+    getPinnedDevice: async (_householdId, deviceId) => deviceId === "phone",
+  };
+  const pairingActions = [];
+  component.createPairing = (kind) => pairingActions.push(["person", kind]);
+  component.createDevicePairing = () => pairingActions.push(["device"]);
+  component.memberNames = { load: async () => [
+    { memberId: "me", preferredName: "Alex" },
+    { memberId: "partner-a", preferredName: "Alex" },
+    { memberId: "partner-b", preferredName: "Riley" },
+    { memberId: "pending", preferredName: "Pending person" },
+  ] };
   const renamed = [];
   component.deviceNames = {
     load: async () => [
@@ -389,14 +408,23 @@ test("trusted devices group by member and show synced names, nicknames and place
   await component.showDevices();
   const descendants = (items) => items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
   const groups = component.children.filter((child) => child.className === "device-group");
-  assert.deepEqual(groups.map((group) => group.children[0].textContent), ["Your devices", "Household member 1"]);
+  assert.deepEqual(groups.map((group) => group.children[0].textContent), ["Alex (You)", "Alex", "Riley"]);
+  assert.deepEqual(groups.map((group) => group.dataset.memberId), ["me", "partner-a", "partner-b"],
+    "same display names never merge member groups and pending names do not create empty groups");
   const line = (id) => {
     const row = descendants(component.children).find((child) => child.dataset?.deviceId === id);
     return row.children.find((child) => child.className === "device-name-line").children.map((part) => part.textContent ?? part).join("");
   };
   assert.equal(line("phone"), "Kitchen phone — Chrome on iPhone · This device · Trusted");
   assert.equal(line("laptop"), "Firefox on Windows — Trusted");
-  assert.equal(line("partner-mac"), "New device · ABCD — Trusted");
+  assert.equal(line("partner-mac"), "New device · ABCD — Untrusted");
+  assert.equal(line("partner-tablet"), "Safari on iPad — Revoked");
+  const buttons = descendants(component.children).filter((child) => child.tagName === "button");
+  await buttons.find((button) => button.textContent === "Invite person").listeners.click();
+  await buttons.find((button) => button.textContent === "Add my device").listeners.click();
+  assert.deepEqual(pairingActions, [["person", "adult"], ["device"]]);
+  assert.ok(descendants(component.children).some((child) => child.textContent?.includes("own household member identity")));
+  assert.ok(descendants(component.children).some((child) => child.textContent?.includes("same member identity")));
   const renameButtons = descendants(component.children).filter((child) => child.textContent === "Rename");
   assert.deepEqual(renameButtons.map((button) => button.attributes["aria-label"]), ["Rename Kitchen phone", "Rename Firefox on Windows"],
     "only your own named devices can be renamed");
@@ -410,6 +438,34 @@ test("trusted devices group by member and show synced names, nicknames and place
   const remove = descendants(forms[0].children).find((child) => child.textContent === "Remove nickname");
   await remove.listeners.click();
   assert.deepEqual(renamed.at(-1), ["phone", ""]);
+});
+
+test("People & devices remains useful offline when encrypted names are unavailable (#226)", async () => {
+  const component = new KinHousehold();
+  component.identity = { memberId: "me", deviceId: "phone" };
+  component.syncKeyError = "offline";
+  component.run = async (action) => action();
+  component.api = async () => ({ canManageMembers: false, devices: [
+    { id: "phone", memberId: "me", label: "Chrome on Android", revokedAt: null },
+    { id: "tablet", memberId: "other", label: "Device", revokedAt: null },
+  ] });
+  component.memberNames = { load: async () => { throw new Error("offline"); } };
+  component.deviceNames = { load: async () => { throw new Error("offline"); } };
+
+  await component.showDevices();
+
+  const descendants = (items) => items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
+  const groups = component.children.filter((child) => child.className === "device-group");
+  assert.deepEqual(groups.map((group) => group.children[0].textContent), ["You", "Household member 1"]);
+  const buttons = descendants(component.children).filter((child) => child.tagName === "button");
+  assert.equal(buttons.some((button) => button.textContent === "Invite person"), false,
+    "inviting another person remains limited to server-authorized managers");
+  assert.equal(buttons.some((button) => button.textContent === "Add my device"), true);
+  const deviceLines = descendants(component.children).filter((child) => child.className === "device-name-line");
+  assert.deepEqual(deviceLines.map((line) => line.children.map((part) => part.textContent ?? part).join("")), [
+    "Chrome on Android — This device · Trusted",
+    "New device — Trusted",
+  ]);
 });
 
 test("an invitation code arriving after connection fills the join screen (#97)", async () => {
