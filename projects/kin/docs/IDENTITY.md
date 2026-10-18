@@ -85,6 +85,34 @@ An open browser checks authorization on focus/return and every 30 seconds while 
 
 Historical key entitlement is explicit: a new device for an existing member can receive retained history; a newly joined/replacement adult starts at its membership-time/current epoch and later epochs. v0.9.x does not grant pre-join epoch keys. Kin has no encrypted snapshots, so earlier shared history remains unavailable rather than being reconstructed from plaintext server state.
 
+## Signing in with a phone
+
+Since v1.1 (#98) a member signed in on a phone can sign a computer in by
+scanning its QR code ([Pairing](PAIRING.md#sign-in-on-a-computer-with-your-phone-v11-98)
+has the flow and its gates). The result depends on what the computer already
+is:
+
+- **A new device.** A computer the service doesn't know, or one whose device
+  cookie doesn't name a trusted device with the keys it offers, becomes a new
+  trusted device of the approving member. Its keys were generated on it; the
+  phone signs its certificate and pins its key, and it pins the phone's key,
+  checked through the tag that comes with the 6-digit code. It receives the member's
+  retained history, as a same-member device added with a code does. It has
+  no passkey of its own: it signs in again with a phone, or with a passkey
+  the member can use on it.
+- **A new session.** A computer whose cookie names one of the approving
+  member's trusted devices, with the same keys, keeps that device. It gets a
+  new session and a rotated device token, exactly what a passkey login gives
+  it. Its keys and history are unchanged.
+
+Signing in with a phone is a second way to reach the same states as a passkey
+login and adding a device; it grants nothing either of them couldn't. The
+approving phone's fresh passkey assertion stands in for the computer's own,
+and the 6-digit code ties the approval to the computer in front of the person.
+Only Adults approve, because only Adults add devices. Two devices never share
+keys: a computer set up for another account, or offering keys any device has
+had, is refused; "Sign in as someone else" then starts again with fresh keys.
+
 ## Device names
 
 Since v1.1 (#71) nobody types a device name. Each device is known by two names:

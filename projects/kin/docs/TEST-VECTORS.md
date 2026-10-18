@@ -219,3 +219,27 @@ all of them.
 The V4 and V6 grids in `tests.rs` come from the same reference. Their masks
 differ from the encoder's lowest-penalty choice, which is still a valid
 symbol.
+
+### Decoder frames (#95)
+
+The decoder is checked on synthetic camera frames built in the Rust tests
+from encoded symbols, not on stored images, so the corpus is code and can't
+drift from the encoder:
+
+- every version 1–10 with every mask, round-tripped (80 frames);
+- rotation at every 15° (24 angles), a mild perspective tilt for versions
+  2–10 (version 1 has no alignment pattern: the documented limit), and
+  perspective with rotation and noise together;
+- scale from 3 to 8 pixels per module;
+- Gaussian sensor noise (an Irwin–Hall approximation), blur of radius 1 at
+  6 pixels per module and radius 2 at 8, and light-on-dark symbols;
+- damage up to the Reed–Solomon budget is read, and beyond it is refused or
+  detected, never misread;
+- adversarial frames: a symbol among finder-like decoys is still read, and
+  too many decoys are refused rather than misread;
+- the work budget: a clean symbol given too small a budget ends the search
+  instead of running on.
+
+[QR-ACCEPTANCE](QR-ACCEPTANCE.md) lists each test by name.
+`scripts/qr-regression.mjs` reads a QR code through a real browser camera
+(a fake video device) and the engine.
