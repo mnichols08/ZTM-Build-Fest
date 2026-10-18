@@ -815,7 +815,10 @@ fn texts_are_checked() {
     let at_limit = family.repeat(MAX_CHAT_TEXT_CHARS / 5);
     assert!(check_text(at_limit.as_bytes()).is_ok());
     let past_limit = format!("{at_limit}a");
-    assert_eq!(check_text(past_limit.as_bytes()), Err(KinError::InvalidEvent));
+    assert_eq!(
+        check_text(past_limit.as_bytes()),
+        Err(KinError::InvalidEvent)
+    );
 }
 
 fn kcht(entries: &[([u8; 32], &[u8])]) -> Vec<u8> {
