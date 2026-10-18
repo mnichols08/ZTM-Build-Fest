@@ -1,0 +1,243 @@
+// Updates → Chat (#112) in a real browser: windowed rendering and paging,
+// receiving (a stub room stands in for the chat relay and its live socket),
+// sending with Enter and the Send button, offline queueing, editing,
+// deleting, inert text, and the live region. All fixtures are synthetic.
+//
+// Serialized into the isolated browser: everything it uses is defined
+// inside the function.
+export async function chatRegressions() {
+  const check = (value, message) => {
+    if (!value) throw new Error(`chat: ${message}`);
+  };
+  const settle = async () => {
+    for (let i = 0; i < 6; i += 1) await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+  };
+  const app = document.querySelector("kin-app");
+  let chat = app?.chat;
+  if (!chat) {
+    chat = document.createElement("kin-chat");
+    document.body.append(chat);
+  }
+  const hex = (value, length = 32) => value.toString(16).padStart(length, "0");
+  const me = "a1".repeat(16), other = "b2".repeat(16);
+  const listeners = new Set();
+  const log = [];
+  const held = new Map();
+  const sources = new Map();
+  const start = Date.UTC(2026, 9, 18, 8, 0, 0);
+  let clock = 0;
+  const add = (authorId, text, { incoming = false } = {}) => {
+    const messageId = hex(log.length + 1);
+    const blobRef = hex(log.length + 1, 64);
+    log.push({ messageId, authorId, deviceId: hex(9), postedAt: start + (clock += 60_000), editedAt: null, status: "live", contentKind: "text", blobRef, blobKey: new Uint8Array(32).fill(1) });
+    // Incoming text isn't in the engine yet: the view must load it.
+    if (incoming) sources.set(blobRef, text);
+    else held.set(blobRef, text);
+    return messageId;
+  };
+  const notify = () => { for (const listener of listeners) listener(); };
+  const calls = { send: [], edit: [], remove: [] };
+  const room = {
+    identity: { memberId: me, householdId: "c3".repeat(16), deviceId: "d4".repeat(16) },
+    admins: [me],
+    pendingMessages: new Set(),
+    syncError: null,
+    refused: [],
+    retireRefusal: null,
+    get isAdmin() { return true; },
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+    authorLabel(id) { return id === me ? "You" : "Adult 2"; },
+    page({ before = null, limit = 50 } = {}) {
+      const end = before ?? log.length;
+      const first = Math.max(0, end - limit);
+      return {
+        total: log.length,
+        start: first,
+        messages: log.slice(first, end).map((message, offset) => ({
+          ...message,
+          index: first + offset,
+          text: message.blobRef ? held.get(message.blobRef) ?? null : null,
+        })),
+        retired: [],
+      };
+    },
+    async loadTexts(messages) {
+      const results = new Map();
+      for (const message of messages) {
+        const text = sources.get(message.blobRef);
+        if (text === undefined) results.set(message.messageId, { pending: true });
+        else { held.set(message.blobRef, text); results.set(message.messageId, { text }); }
+      }
+      return results;
+    },
+    async send(text) {
+      calls.send.push(text);
+      const messageId = add(me, text);
+      this.pendingMessages.add(messageId);
+      notify();
+      return { messageId };
+    },
+    async edit(message, text) {
+      calls.edit.push([message.messageId, text]);
+      const entry = log.find((row) => row.messageId === message.messageId);
+      entry.status = "edited";
+      entry.blobRef = hex(1000 + log.length, 64);
+      held.set(entry.blobRef, text);
+      notify();
+    },
+    async remove(message, { byAdmin = false } = {}) {
+      calls.remove.push([message.messageId, byAdmin]);
+      const entry = log.find((row) => row.messageId === message.messageId);
+      Object.assign(entry, { status: byAdmin ? "removed-by-admin" : "deleted", blobRef: null, blobKey: null });
+      notify();
+    },
+  };
+  const rows = () => [...chat.querySelectorAll(".chat-row")];
+  const textOf = (row) => row.querySelector(".chat-text").textContent;
+  const scroller = chat.querySelector(".chat-scroll");
+
+  // No room: nothing to show, and the composer is off.
+  chat.room = null;
+  await settle();
+  check(chat.querySelector(".chat-notice").textContent.includes("syncs with your household"), "explains chat needs sync");
+  check(chat.querySelector("textarea").disabled, "no composer without a room");
+  check(scroller.getAttribute("role") === "log" && scroller.getAttribute("aria-live") === "off", "a quiet log region");
+
+  // A long history renders only a window, newest at the bottom.
+  for (let index = 0; index < 500; index += 1) add(index % 3 ? other : me, `Message ${index}`);
+  chat.room = room;
+  await settle();
+  check(rows().length === 60, `renders a window, not the history (${rows().length})`);
+  check(textOf(rows().at(-1)) === "Message 499", "newest at the bottom");
+  check(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 2, "starts at the latest message");
+  check(!chat.querySelector("textarea").disabled, "composer on");
+  // Grouping: consecutive messages from one author show the author once.
+  const grouped = rows().filter((row) => row.classList.contains("grouped"));
+  check(grouped.length > 0 && grouped.every((row) => row.querySelector(".chat-meta.visually-hidden")), "grouped rows keep their author for screen readers");
+
+  // Scrolling up loads older messages and keeps the rows on screen in place.
+  const anchorRow = rows()[3];
+  const anchorId = anchorRow.dataset.messageId;
+  scroller.scrollTop = anchorRow.offsetTop - scroller.offsetTop - 0;
+  const before = anchorRow.getBoundingClientRect().top;
+  chat.querySelector(".chat-older").click();
+  await settle();
+  check(rows().length === 120, `an older page joins the window (${rows().length})`);
+  const after = chat.querySelector(`[data-message-id="${anchorId}"]`).getBoundingClientRect().top;
+  check(Math.abs(after - before) < 3, `position kept while paging (${before} → ${after})`);
+  for (let i = 0; i < 5; i += 1) {
+    chat.querySelector(".chat-older").click();
+    await settle();
+  }
+  check(rows().length <= 240, `the window stays bounded (${rows().length})`);
+  check(!chat.querySelector(".chat-jump").hidden, "jump to latest when the latest is out of the window");
+  chat.querySelector(".chat-jump").click();
+  await settle();
+  check(textOf(rows().at(-1)) === "Message 499" && chat.querySelector(".chat-jump").hidden, "jumped back to the latest");
+
+  // Receiving (what the live socket's hint brings): appended, its text
+  // loaded, announced politely, and shown as text only.
+  const announcer = chat.querySelector('[aria-live="polite"]');
+  add(other, '<img src=x onerror="window.chatXss=1"> Dinner at 6', { incoming: true });
+  notify();
+  await settle();
+  await settle();
+  check(textOf(rows().at(-1)) === '<img src=x onerror="window.chatXss=1"> Dinner at 6', "incoming text shown as text");
+  check(!chat.querySelector(".chat-list img") && !window.chatXss, "inert text");
+  check(announcer.textContent.startsWith("Adult 2: <img"), `incoming announced (${announcer.textContent})`);
+  check(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 2, "followed while at the bottom");
+  // Scrolled up, a new message doesn't move the view; jump appears.
+  scroller.scrollTop = 0;
+  await settle();
+  const top = scroller.scrollTop;
+  add(other, "Bring bread", { incoming: true });
+  notify();
+  await settle();
+  check(!chat.querySelector(".chat-jump").hidden, "jump appears for new messages while scrolled up");
+  check(Math.abs(scroller.scrollTop - top) < 400, "the view wasn't yanked to the bottom");
+  chat.querySelector(".chat-jump").click();
+  await settle();
+
+  // Sending: Enter sends, Shift+Enter doesn't; offline it waits.
+  const input = chat.querySelector("textarea");
+  input.value = "Line one";
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", shiftKey: true, bubbles: true, cancelable: true }));
+  await settle();
+  check(calls.send.length === 0, "Shift+Enter adds a line");
+  input.value = "On my way";
+  if (chat.enterSends()) input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  else chat.querySelector('.chat-form button[type="submit"]').click();
+  await settle();
+  check(calls.send.at(-1) === "On my way", "sent");
+  check(input.value === "", "composer cleared");
+  const mine = rows().at(-1);
+  check(textOf(mine) === "On my way" && mine.classList.contains("own"), "own message at the bottom");
+  check(mine.querySelector(".chat-note")?.textContent.includes("Waiting to send"), "offline: waiting to send");
+  room.pendingMessages.clear();
+  notify();
+  await settle();
+  check(!rows().at(-1).querySelector(".chat-note"), "reconnected: sent");
+  // The Send button sends too; a too-long message is refused before sending.
+  input.value = "x".repeat(4001);
+  chat.querySelector('.chat-form button[type="submit"]').click();
+  await settle();
+  check(calls.send.length === 1 && chat.querySelector("#chat-message").textContent.includes("too long"), "too long refused");
+  check(input.value.length === 4001, "the draft stays");
+  input.value = "Send button";
+  chat.querySelector('.chat-form button[type="submit"]').click();
+  await settle();
+  check(calls.send.at(-1) === "Send button", "Send button sends");
+
+  // Editing and deleting through the row menu.
+  const ownRow = rows().at(-1);
+  ownRow.querySelector(".chat-menu-button").click();
+  await settle();
+  const menu = chat.querySelector(`[data-message-id="${ownRow.dataset.messageId}"] .chat-menu`);
+  check(menu && document.activeElement === menu.querySelector("button"), "menu opens with focus");
+  check([...menu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,edit,delete", "own message actions");
+  menu.querySelector('[data-action="edit"]').click();
+  await settle();
+  check(input.value === "Send button" && chat.querySelector(".chat-cancel").hidden === false, "editing in the composer");
+  input.value = "Send button (fixed)";
+  chat.querySelector('.chat-form button[type="submit"]').click();
+  await settle();
+  check(calls.edit.at(-1)?.[1] === "Send button (fixed)", "edit saved");
+  check(textOf(rows().at(-1)) === "Send button (fixed)" && rows().at(-1).querySelector(".chat-note").textContent.startsWith("Edited"), "edited shown");
+  const theirs = rows().findLast((row) => !row.classList.contains("own"));
+  theirs.querySelector(".chat-menu-button").click();
+  await settle();
+  const theirMenu = chat.querySelector(`[data-message-id="${theirs.dataset.messageId}"] .chat-menu`);
+  check([...theirMenu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,remove", "an admin may remove others' messages");
+  const realConfirm = window.confirm;
+  window.confirm = () => true;
+  try {
+    theirMenu.querySelector('[data-action="remove"]').click();
+    await settle();
+  } finally {
+    window.confirm = realConfirm;
+  }
+  check(calls.remove.at(-1)?.[1] === true, "removed as admin");
+  check(textOf(chat.querySelector(`[data-message-id="${theirs.dataset.messageId}"]`)) === "Removed by an admin", "removal shown to everyone");
+  // Escape closes a menu and returns focus to its button.
+  const escapeRow = rows().at(-1);
+  escapeRow.querySelector(".chat-menu-button").click();
+  await settle();
+  chat.querySelector(".chat-menu button").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await settle();
+  check(!chat.querySelector(".chat-menu") && document.activeElement?.classList.contains("chat-menu-button"), "Escape closes the menu");
+
+  // Offline notice.
+  room.syncError = Object.assign(new Error("offline"), { code: "connection_unavailable" });
+  notify();
+  await settle();
+  check(chat.querySelector(".chat-notice").textContent.startsWith("Offline"), "offline explained");
+  room.syncError = null;
+
+  // Narrow screens reflow without sideways scrolling.
+  check(scroller.scrollWidth <= scroller.clientWidth + 1, "no sideways scrolling");
+  chat.room = null;
+  await settle();
+  check(!rows().length, "rows dropped without a room");
+  if (!app) chat.remove();
+  return "chat regressions passed";
+}

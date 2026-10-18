@@ -100,6 +100,7 @@ export class ShellBuilder {
     this.app.compose = document.createElement("kin-compose");
     this.app.handoffs = document.createElement("kin-handoff-list");
     this.app.talks = document.createElement("kin-talk-list");
+    this.app.chat = document.createElement("kin-chat");
     this.app.search = document.createElement("kin-search");
     this.app.pulse = document.createElement("kin-pulse");
     this.app.routines = document.createElement("kin-routines");

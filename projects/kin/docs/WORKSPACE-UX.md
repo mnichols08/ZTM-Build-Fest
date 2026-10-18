@@ -20,7 +20,7 @@ and on any screen size:
 | Question | Where the answer lives |
 | --- | --- |
 | What needs attention now? | **Today**: task counts, plans still open from earlier, planned-for-today items, plans coming up, routines due in the current period, handoffs waiting, catch-up |
-| Where do things live? | **Lists** (To do · Shopping · Staples), **Routines**, **Updates** (Handoffs · Talk; Chat planned, #104), **Household** |
+| Where do things live? | **Lists** (To do · Shopping · Staples), **Routines**, **Updates** (Handoffs · Talk · Chat), **Household** |
 | How do I add something? | A capture field at the top of Today and of every list, each fixed to where it lands |
 | How do I open its details? | The item text or its `Details` control opens one shared detail view |
 | Did it save, and is it syncing? | Inline result next to the capture field; a header status chip for device/sync state |
@@ -43,7 +43,7 @@ tracks):
 | 1 | Today | `#today` | Today composition (§3) |
 | 2 | Lists | `#lists/todo` · `#lists/shopping` · `#lists/staples` | One list at a time with its own quick-add |
 | 3 | Routines | `#routines` · `#routines/checklists` | Existing routines first; `Add routine` opens creation; reusable checklists in their own segment |
-| 4 | Updates | `#updates/handoffs` · `#updates/talk` | Handoffs (acknowledge) and Talk (topics to discuss, resolve) |
+| 4 | Updates | `#updates/handoffs` · `#updates/talk` · `#updates/chat` | Handoffs (acknowledge), Talk (topics to discuss, resolve) and Chat (the household's one chat room, #112) |
 | 5 | Household | `#household` and its secondary destinations (§2.3) | Notes & reference, Areas & status, People & devices, Privacy & recovery |
 
 Presentation labels map to unchanged canonical values:
@@ -53,7 +53,7 @@ Presentation labels map to unchanged canonical values:
 | To do | `need` classification (plus legacy `today` items, see §3.2) |
 | Shopping | `shopping` |
 | Staples | `staple` |
-| Updates | the former Handoff page (`kin-handoff-list`, `kin-talk-list`) |
+| Updates | the former Handoff page (`kin-handoff-list`, `kin-talk-list`), plus `kin-chat` |
 | Household | the former More page |
 | Reusable checklists | playbooks (`save-playbook`, `archive-playbook`, `instantiate-playbook`) |
 

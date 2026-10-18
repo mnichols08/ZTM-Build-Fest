@@ -78,6 +78,36 @@ export function chatAdmins(devices, now = Date.now()) {
     .map((device) => device.memberId))].sort().slice(0, 16);
 }
 
+/** Members in the order the device directory lists them, with their kind,
+ * for labelling authors ("Adult 2"): Kin keeps no member names. */
+export function chatMembers(devices) {
+  const members = [];
+  for (const device of devices)
+    if (!members.some((member) => member.memberId === device.memberId))
+      members.push({ memberId: device.memberId, kind: device.memberKind ?? "adult" });
+  return members;
+}
+
+/** Most characters one message holds (the engine's rule, chat.rs). */
+export const MAX_CHAT_TEXT_CHARS = 4_000;
+
+/** Why `text` can't be sent, or null: the engine's text rule (rust/src/chat.rs
+ * check_text), checked here so a message never goes out that every device
+ * would then refuse to show. */
+export function chatTextProblem(text) {
+  if (typeof text !== "string" || !text.isWellFormed()) return "That message can't be sent.";
+  if (!text.trim()) return "Write a message first.";
+  let characters = 0;
+  for (const character of text) {
+    characters += 1;
+    if (/\p{Cc}/u.test(character) && character !== "\n" && character !== "\t") return "That message has characters Kin can't send.";
+  }
+  if (characters > MAX_CHAT_TEXT_CHARS) return `That's too long for one message. Keep it to ${MAX_CHAT_TEXT_CHARS.toLocaleString("en-US")} characters.`;
+  return null;
+}
+
+const KIND_LABELS = { adult: "Adult", limited: "Limited member", temporary: "Temporary member" };
+
 /** The chat room for a browser page, with its blob store and client, or
  * null where there is no IndexedDB (Node tests of the coordinator). */
 export async function openBrowserChatRoom({ blobFetch, ...options }) {
@@ -135,6 +165,8 @@ export class ChatRoom {
     this.currentEpoch = null;
     this.admins = [];
     this.pending = new Set();
+    // Messages with an event still waiting to send, for "Waiting to send".
+    this.pendingMessages = new Set();
     this.retiredThrough = 0;
     this.retiredApplied = new Set();
     this.refused = [];
@@ -236,9 +268,11 @@ export class ChatRoom {
       changed = true;
       if (rows.length < LOAD_BATCH) break;
     }
-    const pending = new Set((await this.store.outbox()).map((row) => row.eventId));
+    const outbox = await this.store.outbox();
+    const pending = new Set(outbox.map((row) => row.eventId));
     if (pending.size !== this.pending.size || [...pending].some((id) => !this.pending.has(id))) changed = true;
     this.pending = pending;
+    this.pendingMessages = new Set(outbox.map((row) => row.messageId).filter(Boolean));
     if (changed) this.notify();
     return changed;
   }
@@ -248,8 +282,55 @@ export class ChatRoom {
   async loadState() {
     const state = await this.store.state();
     this.admins = state.admins ?? [];
+    this.members = state.members ?? [];
     this.retiredThrough = state.retiredThrough ?? 0;
     this.refused = state.refused ?? [];
+  }
+
+  /** How the view names a message's author: "You", or the member's kind and
+   * place among members of that kind ("Adult 2"), as People & devices does. */
+  authorLabel(memberId) {
+    if (memberId === this.identity.memberId) return "You";
+    const member = this.members.find((entry) => entry.memberId === memberId);
+    if (!member) return "Household member";
+    const others = this.members.filter((entry) => entry.kind === member.kind && entry.memberId !== this.identity.memberId);
+    return `${KIND_LABELS[member.kind] ?? "Member"} ${others.indexOf(member) + 1}`;
+  }
+
+  /** Whether this member may remove others' messages. */
+  get isAdmin() {
+    return this.admins.includes(this.identity.memberId);
+  }
+
+  /**
+   * Opens the text of each page message the engine doesn't hold yet (from
+   * this device's blob store, else the service) and hands it to the engine,
+   * which checks it. Resolves with a Map of messageId to { text },
+   * { deleted: true }, { pending: true } (not uploaded yet) or
+   * { failed: true } (couldn't be opened).
+   */
+  async loadTexts(messages) {
+    this.assertOpen();
+    const wanted = messages.filter((message) => message.contentKind === "text" && message.blobRef && message.text === null);
+    const results = new Map();
+    const kept = [];
+    for (let start = 0; start < wanted.length; start += 8) {
+      const chunk = wanted.slice(start, start + 8);
+      const opened = await Promise.all(chunk.map((message) =>
+        this.blobs.openText({ ref: message.blobRef, key: message.blobKey }).catch(() => ({ failed: true }))));
+      chunk.forEach((message, index) => {
+        results.set(message.messageId, opened[index]);
+        if (typeof opened[index].text === "string") kept.push({ message, text: opened[index].text });
+      });
+    }
+    this.assertOpen();
+    for (let start = 0; start < kept.length; start += 500) {
+      const chunk = kept.slice(start, start + 500);
+      const accepted = this.engine.putChatTexts(chunk.map(({ message, text }) => ({ blobRef: message.blobRef, text })));
+      // A text the engine refuses (control characters, too long) isn't shown.
+      chunk.forEach(({ message }, index) => { if (!accepted[index]) results.set(message.messageId, { failed: true }); });
+    }
+    return results;
   }
 
   /** Whether this device's event `eventId` is still waiting to send. */
@@ -280,6 +361,8 @@ export class ChatRoom {
   /** Seals text into a kept blob; the key goes into the event as hex. */
   async sealText(text) {
     this.assertOpen();
+    const problem = chatTextProblem(text);
+    if (problem) throw new ChatRoomError(problem, "chat_text_invalid");
     const { ref, key } = await this.blobs.seal(text);
     const hex = refHex(key);
     key.fill(0);
@@ -335,7 +418,7 @@ export class ChatRoom {
         result.encodedEvent.fill(0);
       }
       this.assertOpen();
-      await this.store.addLocal(envelope, { blobRef, retireRef });
+      await this.store.addLocal(envelope, { blobRef, retireRef, messageId: command.messageId });
       await this.refresh();
       return eventId;
     };
@@ -362,12 +445,15 @@ export class ChatRoom {
     if (deviceKeys) this.deviceKeys = deviceKeys;
     this.currentEpoch = status.currentEpoch;
     const admins = chatAdmins(devices, this.now());
-    if (admins.join() !== this.admins.join()) {
-      await this.store.saveAdmins(admins);
+    const members = chatMembers(devices);
+    const adminsChanged = admins.join() !== this.admins.join();
+    if (adminsChanged || JSON.stringify(members) !== JSON.stringify(this.members)) {
+      await this.store.saveDirectory({ admins, members });
       this.admins = admins;
+      this.members = members;
       // Different admins can make an existing removal count, retiring its
       // blob: look at the retired list again this pass.
-      this.retiredThrough = 0;
+      if (adminsChanged) this.retiredThrough = 0;
       this.notify();
     }
     await this.refresh();
@@ -494,7 +580,7 @@ export class ChatRoom {
       } finally {
         plaintext.fill(0);
       }
-      entries.push({ order: index + 1, previousSequence: row.deviceSequence, envelope, blobRef: row.blobRef ?? null, retireRef: row.retireRef ?? null });
+      entries.push({ order: index + 1, previousSequence: row.deviceSequence, envelope, blobRef: row.blobRef ?? null, retireRef: row.retireRef ?? null, messageId: row.messageId ?? null });
     }
     await this.store.replacePending(entries, { expectedDeviceSequence, deviceSequence });
   }
@@ -608,6 +694,7 @@ export class ChatRoom {
     this.indexById.clear();
     this.epochKeys.clear();
     this.pending.clear();
+    this.pendingMessages.clear();
     this.retiredApplied.clear();
     this.listeners.clear();
     this.deviceKeys = null;

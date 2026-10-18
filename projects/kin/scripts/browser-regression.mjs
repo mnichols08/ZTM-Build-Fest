@@ -8,6 +8,7 @@ import {
   pulseKeyboardRegressions,
 } from "./pulse-regression.mjs";
 import { talkRegressions, talkPeerRegressions } from "./talk-regression.mjs";
+import { chatRegressions } from "./chat-regression.mjs";
 import assert from "node:assert/strict";
 import {
   routineRegressions,
@@ -1319,6 +1320,12 @@ try {
       app.talks.querySelector('.talk-hint').textContent.includes('Topics to discuss');
   })()`), true, "Handoffs/Talk segments switch by route and keep the concepts distinct");
   console.log(await first.evaluate(`(${talkRegressions.toString()})()`));
+  await visit(first, "updates/chat");
+  assert.equal(await first.evaluate(`(()=>{const app=document.querySelector('kin-app');const links=[...app.segmentNavs.get('updates').querySelectorAll('.segment-link')];
+    return location.hash==='#updates/chat' && links[2]?.getAttribute('aria-current')==='true' && !document.querySelector('#chat-panel').hidden &&
+      document.querySelector('#talk-panel').hidden && Boolean(document.querySelector('kin-chat .chat-scroll'));
+  })()`), true, "Updates → Chat is the third segment");
+  console.log(await first.evaluate(`(${chatRegressions.toString()})()`));
   await visit(first, "household/areas");
   console.log(await first.evaluate(`(${pulseRegressions.toString()})()`));
   console.log(

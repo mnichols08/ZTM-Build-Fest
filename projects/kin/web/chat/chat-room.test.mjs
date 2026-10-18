@@ -15,7 +15,7 @@ import { ChatBlobStore } from "./chat-blob-store.js";
 import { ChatBlobs } from "./chat-blobs.js";
 import { ChatLogStore, chatLogDatabaseName } from "./chat-log-store.js";
 import { ChatRecords } from "./chat-records.js";
-import { chatAdmins, ChatRoom, MAX_CHAT_PULL } from "./chat-room.js";
+import { chatAdmins, chatTextProblem, ChatRoom, MAX_CHAT_PULL } from "./chat-room.js";
 import { fakeIndexedDB, fakeKeyRange } from "./fake-indexeddb.test-support.mjs";
 import { loadKinEngine } from "../wasm/kin-engine.js";
 
@@ -40,6 +40,14 @@ function fakeEngine() {
     .sort((left, right) => Number(BigInt(left.logicalTime) - BigInt(right.logicalTime)) || (left.eventId < right.eventId ? -1 : 1));
   return {
     calls: { page: 0, execute: 0 },
+    texts: new Map(),
+    putChatTexts(entries) {
+      return entries.map(({ blobRef, text }) => {
+        const ok = text.length > 0 && !/[\u0000-\u0008]/.test(text);
+        if (ok) this.texts.set(blobRef, text);
+        return ok;
+      });
+    },
     eventMetadata: metadata,
     eventMetadataBatch: (records) => records.map(metadata),
     executeChatCommand(command, identity, source) {
@@ -62,7 +70,10 @@ function fakeEngine() {
           else Object.assign(message, { status: command.byAdmin ? "removed-by-admin" : "deleted", blobRef: null, blobKey: null });
         }
       }
-      const list = [...messages.values()];
+      const list = [...messages.values()].map((message, index) => ({
+        ...message, index, contentKind: "text",
+        text: options.includeText === false ? null : this.texts.get(message.blobRef) ?? null,
+      }));
       const shown = new Set(list.map((message) => message.blobRef));
       return { total: list.length, start: 0, messages: list, retired: options.includeRetired ? retired.filter((ref) => !shown.has(ref)) : [] };
     },
@@ -157,6 +168,7 @@ test("a message written offline waits, then reaches the other device through the
   const first = await a.room.send("Dinner at 6 🍝");
   const second = await a.room.send("Bring bread");
   assert.ok(a.room.isPending(first.eventId) && a.room.isPending(second.eventId), "shown as waiting to send");
+  assert.ok(a.room.pendingMessages.has(first.messageId) && a.room.pendingMessages.has(second.messageId), "by message, for the view");
   assert.deepEqual(await texts(a), ["Dinner at 6 🍝", "Bring bread"], "the sender sees them at once");
   assert.ok(changes.length >= 2);
   await assert.rejects(a.room.sync({ status: STATUS, devices }), (error) => error.code === "connection_unavailable");
@@ -165,11 +177,22 @@ test("a message written offline waits, then reaches the other device through the
   a.request.offline = false;
   assert.deepEqual(await a.room.sync({ status: STATUS, devices }), { hasMore: false });
   assert.equal(a.room.pending.size, 0, "sent");
+  assert.equal(a.room.pendingMessages.size, 0);
   assert.ok(a.request.paths.includes("GET /api/chat/status"), "a new log asks the relay where it stands");
   assert.deepEqual(a.request.paths.filter((path) => path.startsWith("PUT /api/chat/blobs/")).length, 2, "content uploads before its event");
 
   await b.room.sync({ status: STATUS, devices });
   assert.deepEqual(await texts(b), ["Dinner at 6 🍝", "Bring bread"]);
+  // The view opens texts through the room: fetched, checked, handed to the
+  // engine, then paged with the text in place.
+  const unopened = b.room.page().messages;
+  assert.deepEqual(unopened.map((message) => message.text), [null, null]);
+  const opened = await b.room.loadTexts(unopened);
+  assert.deepEqual([...opened.values()].map((result) => result.text), ["Dinner at 6 🍝", "Bring bread"]);
+  assert.deepEqual(b.room.page().messages.map((message) => message.text), ["Dinner at 6 🍝", "Bring bread"]);
+  assert.equal(b.room.authorLabel(s.admin.memberId), "Adult 1", "named as People & devices names members");
+  assert.equal(b.room.authorLabel(s.partner.memberId), "You");
+  assert.equal(b.room.authorLabel("ee".repeat(16)), "Household member");
   assert.equal(b.request.paths.filter((path) => path === "GET /api/chat/status").length, 1, "a new log settles its sequence once");
   assert.equal(b.room.records.length, 2);
   // Pulling again finds nothing new and stores nothing twice.
@@ -475,7 +498,7 @@ test("the chat log store keeps each event once and one sequence per send", async
   const one = await ChatLogStore.open(householdId, { indexedDB, keyRange: fakeKeyRange });
   const two = await ChatLogStore.open(householdId, { indexedDB, keyRange: fakeKeyRange });
   const envelope = (eventId, deviceSequence) => ({ eventId, deviceSequence });
-  assert.deepEqual(await one.state(), { key: "state", nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], retiredThrough: 0, refused: [] });
+  assert.deepEqual(await one.state(), { key: "state", nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], members: [], retiredThrough: 0, refused: [] });
   await one.addLocal(envelope("01".repeat(16), 1), { blobRef: "ab".repeat(32) });
   // Another tab sending with the same sequence loses and retries.
   await assert.rejects(two.addLocal(envelope("02".repeat(16), 1)), (error) => error.code === "chat_sequence_taken");
@@ -497,6 +520,22 @@ test("the chat log store keeps each event once and one sequence per send", async
   assert.equal(state.refused.at(-1).eventId, "119");
   assert.ok(indexedDB.databases.has(chatLogDatabaseName(householdId)));
   await assert.rejects(ChatLogStore.open("nope", { indexedDB, keyRange: fakeKeyRange }), (error) => error.code === "chat_log_unavailable");
+});
+
+test("a message must follow the engine's text rule before it is sent", async () => {
+  assert.equal(chatTextProblem("Dinner at 6\nBring bread\t🍞"), null);
+  assert.match(chatTextProblem("   \n"), /Write a message/);
+  assert.match(chatTextProblem("bell \u0007"), /characters/);
+  assert.match(chatTextProblem("lone \ud800"), /can't be sent/);
+  assert.equal(chatTextProblem("😀".repeat(4_000)), null, "counted in characters, not bytes");
+  assert.match(chatTextProblem("x".repeat(4_001)), /too long/);
+  const householdId = "aa".repeat(16);
+  const phone = await device({ memberId: "bb".repeat(16), deviceId: "cc".repeat(16) }, { householdId, epochs: new Map([[1, await generateHouseholdKey()]]) });
+  const offline = async () => { throw Object.assign(new Error("offline"), { code: "connection_unavailable" }); };
+  offline.fetch = offline;
+  const { room } = await openRoom(phone, { householdId, request: offline });
+  await assert.rejects(room.send(" "), (error) => error.code === "chat_text_invalid");
+  assert.equal(room.records.length, 0, "nothing stored");
 });
 
 test("the in-memory chat log grows in place and gives the engine views of it", () => {
@@ -522,9 +561,9 @@ test("the coordinator runs a chat pass after each full pass and keeps chat troub
   const room = { syncs: 0, closed: false, result: { hasMore: true }, failure: null,
     async sync(context) { this.syncs += 1; this.context = context; if (this.failure) throw this.failure; return this.result; },
     reportSync(error) { reports.push(error?.code ?? null); }, close() { this.closed = true; } };
-  const opened = [];
+  const opened = [], told = [];
   const coordinator = new SyncCoordinator({ store: {}, engine: {}, identity: { householdId: "aa".repeat(16), memberId: "bb".repeat(16), deviceId: "cc".repeat(16) }, liveChannel: () => null,
-    chatRoom: async (options) => { opened.push(options); return room; } });
+    chatRoom: async (options) => { opened.push(options); return room; }, onChatRoom: (value) => told.push(value) });
   coordinator.deviceKeys = { keys: {} };
   coordinator.keyStore = { close() {} };
   const context = { status: STATUS, devices: [] };
@@ -540,8 +579,10 @@ test("the coordinator runs a chat pass after each full pass and keeps chat troub
   room.failure = Object.assign(new Error("Signed out"), { code: "authentication_required" });
   await assert.rejects(coordinator.syncChat(context), (error) => error.code === "authentication_required");
   assert.deepEqual(reports, [null, null, "chat_unavailable"]);
+  assert.deepEqual(told, [room], "the view hears when the room opens");
   coordinator.stop();
   assert.equal(room.closed, true, "stopping (on lock) closes the room");
+  assert.deepEqual(told, [room, null], "and when it closes");
   assert.equal(coordinator.chat, null);
 
   // A pass that leaves chat to read continues soon, like a household catch-up.

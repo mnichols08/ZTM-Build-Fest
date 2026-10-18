@@ -14,20 +14,21 @@
 //   ids     { eventId, order }             one row per event: the log
 //                                          stores each event once, even when
 //                                          two tabs store it at the same time
-//   outbox  { deviceSequence, eventId, blobRef, retireRef }
+//   outbox  { deviceSequence, eventId, blobRef, retireRef, messageId }
 //                                          this device's events not yet
 //                                          accepted by the relay, the content
 //                                          blob each must upload first, and
 //                                          the blob it replaced, which the
-//                                          service deletes once it's accepted
+//                                          service deletes once it's accepted,
+//                                          and the message it concerns
 //   meta    { key: "state", nextOrder, cursor, deviceSequence, provisional,
-//             admins, retiredThrough, refused }
+//             admins, members, retiredThrough, refused }
 //
 // `cursor` is the relay position read up to. `deviceSequence` is the last
 // chat sequence this device used. It starts provisional when the log is new
 // and the relay hasn't been asked yet (an offline first message); the first
 // sync then renumbers those events after the relay's count (chat-room.js).
-// `admins` are the household admins last known, `retiredThrough` how many
+// `admins` and `members` are the household admins and members last known, `retiredThrough` how many
 // events' replaced blobs this device already deleted, and `refused` the
 // relay events it skipped because they failed authentication.
 // Removing the household from the device deletes the whole database.
@@ -88,7 +89,7 @@ function transact(db, names, mode, work) {
 /** Refused relay events remembered for the view to report. */
 const MAX_REFUSED = 100;
 
-const freshState = () => ({ key: STATE_KEY, nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], retiredThrough: 0, refused: [] });
+const freshState = () => ({ key: STATE_KEY, nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], members: [], retiredThrough: 0, refused: [] });
 
 export class ChatLogStore {
   /** Opens (creating if needed) a household's chat log database. */
@@ -170,7 +171,7 @@ export class ChatLogStore {
    * sequence must follow the last one this device used, so two tabs sending
    * at once can't both take the same one; the loser retries.
    */
-  async addLocal(envelope, { blobRef = null, retireRef = null } = {}) {
+  async addLocal(envelope, { blobRef = null, retireRef = null, messageId = null } = {}) {
     return transact(this.db, [EVENTS, IDS, OUTBOX, META], "readwrite", async ({ events, ids, outbox, meta }) => {
       const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
       if (envelope.deviceSequence !== state.deviceSequence + 1)
@@ -180,7 +181,7 @@ export class ChatLogStore {
       const order = state.nextOrder++;
       events.put({ order, eventId: envelope.eventId, envelope });
       ids.put({ eventId: envelope.eventId, order });
-      outbox.put({ deviceSequence: envelope.deviceSequence, eventId: envelope.eventId, blobRef, retireRef });
+      outbox.put({ deviceSequence: envelope.deviceSequence, eventId: envelope.eventId, blobRef, retireRef, messageId });
       state.deviceSequence = envelope.deviceSequence;
       await settle(meta.put(state));
       return order;
@@ -204,9 +205,9 @@ export class ChatLogStore {
         if (!(await settle(outbox.get(previousSequence))))
           throw new ChatLogError("Chat changed meanwhile; retry.", "chat_outbox_changed");
       for (const { previousSequence } of entries) outbox.delete(previousSequence);
-      for (const { order, envelope, blobRef, retireRef } of entries) {
+      for (const { order, envelope, blobRef, retireRef, messageId = null } of entries) {
         events.put({ order, eventId: envelope.eventId, envelope });
-        outbox.put({ deviceSequence: envelope.deviceSequence, eventId: envelope.eventId, blobRef, retireRef });
+        outbox.put({ deviceSequence: envelope.deviceSequence, eventId: envelope.eventId, blobRef, retireRef, messageId });
       }
       state.deviceSequence = deviceSequence;
       state.provisional = provisional;
@@ -224,12 +225,14 @@ export class ChatLogStore {
     });
   }
 
-  /** Records the household admins last known (from the verified device
-   * directory), so admin removals show while offline. */
-  async saveAdmins(admins) {
+  /** Records the household admins and members last known (from the
+   * verified device directory), so admin removals and author labels show
+   * while offline. */
+  async saveDirectory({ admins, members }) {
     return transact(this.db, [META], "readwrite", async ({ meta }) => {
       const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
       state.admins = [...admins];
+      state.members = members.map(({ memberId, kind }) => ({ memberId, kind }));
       await settle(meta.put(state));
     });
   }
