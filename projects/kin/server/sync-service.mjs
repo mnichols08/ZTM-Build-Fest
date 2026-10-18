@@ -53,6 +53,7 @@ export class EncryptedSyncService {
     this.households.delete(householdId);
     this.pushService?.removeUntrusted(householdId);
     this.chatBlobService?.forgetHousehold(householdId);
+    this.chatRelayService?.forgetHousehold(householdId);
     this.liveService?.revalidate(householdId);
   }
 
@@ -86,6 +87,9 @@ export class EncryptedSyncService {
           memberKind: member?.kind ?? "adult",
           memberActive: canParticipate(member, this.now()),
           ...(member?.expiresAt == null ? {} : { memberExpiresAt: member.expiresAt }),
+          // Chat (#111): whose removals count as an admin's, by the same
+          // rule the service uses to let them delete others' content.
+          householdAdmin: Boolean(member && isHouseholdAdmin(member, this.now())),
           publicKeys: device.syncPublicKeys ?? null,
           fingerprint: device.syncKeyFingerprint ?? null,
           certificate: device.deviceAuthorizationCertificate ?? null,
@@ -1045,7 +1049,7 @@ function portableMemberStatus(member, now) {
   return status;
 }
 
-function validateEventEnvelope(envelope, auth, currentEpoch) {
+export function validateEventEnvelope(envelope, auth, currentEpoch) {
   const invalid = () =>
     new PairingError(
       "event_envelope_invalid",
@@ -1087,13 +1091,13 @@ function publicGrant(grant) {
   };
 }
 
-function encodeCursor(sequence) {
+export function encodeCursor(sequence) {
   const bytes = Buffer.alloc(8);
   bytes.writeBigUInt64BE(BigInt(sequence));
   return bytes.toString("base64url");
 }
 
-function decodeCursor(value) {
+export function decodeCursor(value) {
   if (value === "") return 0;
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]{11}$/.test(value))
     throw new PairingError(

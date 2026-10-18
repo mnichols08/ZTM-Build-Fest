@@ -2,7 +2,7 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const SERVER_SCHEMA_VERSION = 12;
+export const SERVER_SCHEMA_VERSION = 13;
 
 export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024 + 4096;
 
@@ -26,6 +26,10 @@ export const MAX_HOUSEHOLD_CHAT_TOMBSTONES = 500_000;
 // member's own oldest claims, so nobody's flood pushes out another
 // member's (or an admin's) claim.
 export const MAX_MEMBER_CHAT_CLAIMS = 20_000;
+
+// The chat relay (#111): at most this many chat events per household, the
+// engine's chat log bound (rust/src/chat.rs MAX_CHAT_EVENT_COUNT).
+export const MAX_HOUSEHOLD_CHAT_EVENTS = 250_000;
 
 export const MAX_AUDIT_ROWS = 10_000;
 

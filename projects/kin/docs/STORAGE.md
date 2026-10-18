@@ -234,8 +234,42 @@ Deleting a blob removes its bytes and adds its tombstone in one transaction.
 `ChatBlobStore.destroy()` deletes the whole database; a tab holding it open
 closes its connection when asked, and an old tab that doesn't blocks the
 deletion with a "close other tabs" error. Calling it when the household
-leaves the device, and keeping only recent blobs (#125), come with the chat
-room (#111); today local household data stays on the device as before.
+leaves the device, and keeping only recent blobs (#125), are still to come;
+today local household data stays on the device as before.
+
+## Chat log (v1.1, #111)
+
+The chat log is kept apart from the frozen event database, in its own
+database per household, `kin-chat-log:<householdId>`, version 1
+(`web/chat/chat-log-store.js`):
+
+- `events`: `{ order, eventId, envelope }`, every chat event as the signed,
+  encrypted envelope it travelled in, keyed by the order this device stored
+  it. Envelopes are encrypted under a household key epoch held in the key
+  database, so the log needs no sealing of its own and root rotation doesn't
+  touch it. Signatures are checked once, when an event arrives; reopening the
+  log only decrypts.
+- `ids`: `{ eventId, order }`, so each event is stored once even when two
+  tabs store it together.
+- `outbox`: `{ deviceSequence, eventId, blobRef, retireRef }`, this device's
+  events the relay hasn't accepted, the blob each uploads first and the blob
+  it replaced. A message in the outbox shows as waiting to send.
+- `meta`: `{ key: "state", nextOrder, cursor, deviceSequence, provisional,
+  admins, retiredThrough, refused }`: the relay position read up to, this
+  device's last chat sequence ([SYNC](SYNC.md#chat-relay-v11-111)), the
+  household admins last seen (so removals show offline), how many events'
+  replaced blobs were already deleted here, and the last 100 relay events
+  skipped because they failed authentication.
+
+While Kin is unlocked the decrypted log is held in memory as one growing
+buffer (`web/chat/chat-records.js`) that the engine's chat log mirrors
+incrementally; locking zeroes and drops it. Opening reads and decrypts the
+log in chunks of 500, alongside the first household sync rather than before
+it, and reads of newly stored events run one at a time per tab. Sending and
+renumbering take a Web Lock per household, and the store writes that add or
+renumber pending events check the sequence they started from, so two tabs
+can't take the same sequence even without Web Locks. Deleting the log with the household, like the blob database,
+is still to come.
 
 ## Handoff storage
 

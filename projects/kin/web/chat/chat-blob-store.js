@@ -71,6 +71,14 @@ export class ChatBlobStore {
     return Boolean(await settle(transaction.objectStore(RETIRED).get(ref)));
   }
 
+  /** The references in `refs` this device hasn't deleted yet, in one read. */
+  async unretired(refs) {
+    const transaction = this.db.transaction([RETIRED], "readonly");
+    const store = transaction.objectStore(RETIRED);
+    const rows = await Promise.all(refs.map((ref) => settle(store.get(ref))));
+    return refs.filter((_, index) => !rows[index]);
+  }
+
   /** Keeps a sealed blob, unless this device already deleted it. The
    * caller has checked it against its reference (openChatBlob does). */
   async put(ref, ciphertext) {

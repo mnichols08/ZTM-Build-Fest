@@ -191,8 +191,8 @@ test("blobs, tombstones and claims persist; retired bytes leave the database fil
   t.after(() => { store?.close(); rmSync(directory, { recursive: true, force: true }); });
   const path = join(directory, "kin.sqlite");
   store = new DurableStore(path);
-  assert.equal(SERVER_SCHEMA_VERSION, 12);
-  assert.equal(sqlitePragma(store.db, "user_version", { simple: true }), 12);
+  assert.ok(SERVER_SCHEMA_VERSION >= 12);
+  assert.equal(sqlitePragma(store.db, "user_version", { simple: true }), SERVER_SCHEMA_VERSION);
   const h = household({ store });
   const kept = blob(), early = blob();
   // A recognizable blob, to look for in the raw files after retiring it.

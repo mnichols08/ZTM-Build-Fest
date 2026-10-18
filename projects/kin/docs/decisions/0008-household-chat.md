@@ -53,6 +53,13 @@ because they are visible and switchable, not hidden.
   only members allowed to chat hold, and chat never enters the household
   projection. The chat log has its own cap (250,000 events), its own replay
   checkpoint, and each log refuses the other's events.
+- **Chat events travel in their own relay stream** (recorded in #111). They
+  use the household relay's envelopes and rules but their own cursor,
+  per-device sequence, logical clock bound and quota, so chat never counts
+  against household limits and the service can enforce who may chat (#123)
+  without reading anything. Until the chat key exists (#123), chat events
+  are encrypted under the household key epoch; the chat key story moves
+  them to it.
 - **Still open:** whether a mention may make the push notification say "You
   were mentioned", which would tell the service who was mentioned (not the
   text). Decided in the Mentions story.

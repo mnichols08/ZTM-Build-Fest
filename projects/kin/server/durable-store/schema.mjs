@@ -580,6 +580,44 @@ export const schemaMethods = {
         throw new DurableStoreError("Kin could not complete the chat blob migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 12) {
+      try {
+        this.transaction(() => {
+          // v1.1 (#111): the chat relay, a second encrypted event stream with
+          // its own relay sequence, per-device sequences and clock bound.
+          this.db.exec(`
+            CREATE TABLE chat_relay_state (
+              household_id TEXT PRIMARY KEY REFERENCES households(id),
+              next_sequence INTEGER NOT NULL CHECK (next_sequence >= 1),
+              max_logical_time TEXT NOT NULL
+            );
+            CREATE TABLE chat_events (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              relay_sequence INTEGER NOT NULL CHECK (relay_sequence >= 1),
+              event_id TEXT NOT NULL,
+              device_id TEXT NOT NULL,
+              device_sequence INTEGER NOT NULL CHECK (device_sequence >= 1),
+              key_epoch INTEGER NOT NULL CHECK (key_epoch BETWEEN 1 AND 128),
+              canonical_envelope TEXT NOT NULL,
+              PRIMARY KEY (household_id, relay_sequence),
+              UNIQUE (household_id, event_id)
+            );
+            CREATE TABLE chat_device_sequences (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              device_id TEXT NOT NULL,
+              last_sequence INTEGER NOT NULL CHECK (last_sequence >= 1),
+              PRIMARY KEY (household_id, device_id)
+            );
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(13, Date.now());
+          sqlitePragma(this.db, "user_version = 13");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the chat relay migration.", { cause: error });
+      }
+    }
   },
 
   verify() {
