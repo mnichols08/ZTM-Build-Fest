@@ -35,6 +35,11 @@ import { cleanLinkCode, isLinkCode, LINK_CODE_LENGTH, linkNonce, linkTagMatches,
 export const SIGN_IN_POLL_MS = 2_000;
 /** Replacement QR codes shown before the screen stops and asks. */
 export const MAX_SIGN_IN_REFRESHES = 4;
+/** How long a request waits, and how long the code works once approved, as
+ * the service sets them (LINK_REQUEST_TTL_MS, LINK_CODE_TTL_MS). The screen
+ * counts down from when it heard, not from the service's clock, which may
+ * not agree with this one; the service still decides what has expired. */
+export const SIGN_IN_TTL_MS = 2 * 60_000;
 /** An expired request the QR code hasn't replaced in this long has ended. */
 const STALE_MS = 15_000;
 
@@ -123,7 +128,7 @@ export class HouseholdLink {
       secret: created.secret,
       fingerprint: created.fingerprint,
       nonce: linkNonce(),
-      expiresAt: created.expiresAt,
+      expiresAt: Date.now() + SIGN_IN_TTL_MS,
       state: "pending",
       keys,
       deviceId: keys === "existing" ? returning.deviceId : null,
@@ -244,7 +249,7 @@ export class HouseholdLink {
   /** The phone approved: ask for the code. */
   approved(request, status) {
     request.state = "approved";
-    request.expiresAt = status.expiresAt;
+    request.expiresAt = Date.now() + SIGN_IN_TTL_MS;
     this.focusNext = "code";
     this.host.render();
     this.announce("Your phone approved this computer. Type the 6-digit code it shows.");

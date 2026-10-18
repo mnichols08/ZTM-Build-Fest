@@ -134,7 +134,7 @@ test("the screen asks with fresh keys and shows the request, with a nonce, as a 
   assert.equal(JSON.stringify(calls).includes(link.request.nonce), false, "and never reaches the service");
   assert.equal(qr.value.includes("?"), false, "nothing in the query");
   assert.ok(qr.value.length - ORIGIN.length <= 157, "the link fits the QR limit for origins up to 56 bytes");
-  assert.equal(qr.expiresAt, answer.expiresAt);
+  assert.ok(Math.abs(qr.expiresAt - (Date.now() + 120_000)) < 2_000, "two minutes from when the computer heard");
   assert.equal(qr.code, "", "there's nothing to type on this screen");
   assert.ok(texts(host).includes(SIGN_IN_STEPS));
   assert.equal(SIGN_IN_STEPS, "On your phone, open Kin → People & devices → Add a computer → Scan.");
@@ -144,6 +144,13 @@ test("the screen asks with fresh keys and shows the request, with a nonce, as a 
   assert.equal(host.byClass("sign-in-status").getAttribute("role"), "status");
   assert.ok(host.byText("Cancel"));
   assert.equal(document.activeElement, host.byClass("sign-in-heading"), "focus moves to the screen's heading at once");
+});
+
+test("the countdown runs on this computer's clock, whatever the service's says", async () => {
+  const { host, link } = rig({ routes: { "/api/link/requests": () => created(FRESH, { expiresAt: Date.now() + 6 * 60_000 }) } });
+  await link.begin();
+  link.stop();
+  assert.match(host.byClass("sign-in-countdown").textContent, /^This code changes in 0(1:5\d|2:00)$/);
 });
 
 test("an answer for keys the computer didn't offer is refused", async () => {
@@ -380,8 +387,9 @@ test("a request the phone cancelled ends the screen at the next poll", async () 
 });
 
 test("an expired request with no QR code to replace it ends instead of polling forever", async () => {
-  const { link } = rig({ routes: { "/api/link/requests": () => created(FRESH, { expiresAt: Date.now() - 20_000 }), "/status": () => ({ state: "ended" }) } });
+  const { link } = rig({ routes: { "/api/link/requests": () => created(FRESH), "/status": () => ({ state: "ended" }) } });
   await link.begin();
+  link.request.expiresAt = Date.now() - 20_000;
   await link.poll();
   link.stop();
   assert.equal(link.request, null);

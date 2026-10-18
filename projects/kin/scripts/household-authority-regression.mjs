@@ -159,7 +159,12 @@ async function pageInvitationQr() {
 // makes the same calls the phone's approval screen makes (#101), with a real
 // passkey and its real device key, but without that screen.
 async function pageStartPhoneSignIn() {
-  const h = document.querySelector("kin-app").household;
+  const app = document.querySelector("kin-app");
+  const h = app.household;
+  // On People & devices, as a person would be: focus can't move into a
+  // hidden view.
+  location.hash = "#household/people";
+  app.ctx.navigation.showPageFromLocation();
   const choice = [...h.querySelectorAll("button")].find((button) => button.textContent === "Sign in with your phone");
   if (!choice) throw new Error("The signed-out screen offers no Sign in with your phone: " + h.textContent.slice(0, 300));
   choice.click();
