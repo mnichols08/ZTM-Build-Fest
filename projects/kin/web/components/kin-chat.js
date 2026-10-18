@@ -208,19 +208,14 @@ class KinChat extends HTMLElement {
     });
     // Photos and files (#114): chosen with the file dialog, then listed here
     // until sent. The caption is whatever is in the message box.
-    this.fileInput = document.createElement("input");
-    this.fileInput.type = "file";
-    this.fileInput.multiple = true;
-    this.fileInput.className = "visually-hidden";
-    this.fileInput.tabIndex = -1;
-    this.fileInput.setAttribute("aria-hidden", "true");
-    this.fileInput.addEventListener("change", () => this.addFiles([...this.fileInput.files]));
+    // No file input is kept in the page: one is made when Attach is pressed
+    // and removed after the choice (see chooseFiles).
     this.attach = document.createElement("button");
     this.attach.type = "button";
     this.attach.className = "chat-attach";
     this.attach.textContent = "Attach";
     this.attach.setAttribute("aria-label", `Attach photos or files (up to ${MAX_ATTACHMENT_FILES})`);
-    this.attach.addEventListener("click", () => this.fileInput.click());
+    this.attach.addEventListener("click", () => this.chooseFiles());
     this.pendingList = document.createElement("ul");
     this.pendingList.className = "chat-pending";
     this.pendingList.setAttribute("aria-label", "Photos and files to send");
@@ -228,7 +223,7 @@ class KinChat extends HTMLElement {
     const buttons = document.createElement("div");
     buttons.className = "chat-form-buttons";
     buttons.append(this.attach, this.emoji, this.send, this.cancel);
-    form.append(this.label, this.input, this.pendingList, panelSlot, buttons, this.message, this.fileInput);
+    form.append(this.label, this.input, this.pendingList, panelSlot, buttons, this.message);
 
     // A viewer for one photo, shown modally; its URL is released on close.
     this.viewer = document.createElement("dialog");
@@ -772,9 +767,22 @@ class KinChat extends HTMLElement {
     return "Kin couldn't open that attachment.";
   }
 
+  /** Opens the file dialog once; the input is removed after the choice (or
+   * a cancel), so the page never holds a file input between sends. */
+  chooseFiles() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.hidden = true;
+    const done = () => input.remove();
+    input.addEventListener("change", () => { done(); this.addFiles([...input.files]); });
+    input.addEventListener("cancel", done);
+    document.body.append(input);
+    input.click();
+  }
+
   /** Adds photos and files to the ones to send, within the limits. */
   addFiles(incoming) {
-    this.fileInput.value = "";
     if (!incoming.length) return;
     const next = [...this.files, ...incoming];
     const problem = attachmentProblem(next);

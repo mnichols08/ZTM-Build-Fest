@@ -502,13 +502,24 @@ export async function chatRegressions() {
   // its name and size and downloads. Refusals are plain.
   chat.room = room;
   await settle();
-  const fileInput = chat.querySelector('input[type="file"]');
+  // The attach button makes a file input for one choice; capture it here
+  // rather than let the dialog open.
   const choose = async (files) => {
+    let fileInput = null;
+    const click = HTMLInputElement.prototype.click;
+    HTMLInputElement.prototype.click = function captured() { if (this.type === "file") fileInput = this; else click.call(this); };
+    try {
+      chat.querySelector(".chat-attach").click();
+    } finally {
+      HTMLInputElement.prototype.click = click;
+    }
+    check(fileInput !== null, "attach opens a file input for one choice");
     const transfer = new DataTransfer();
     for (const file of files) transfer.items.add(file);
     fileInput.files = transfer.files;
     fileInput.dispatchEvent(new Event("change"));
     await settle();
+    check(!fileInput.isConnected, "the file input is removed after the choice");
   };
   const pdf = new File([new Uint8Array(2048)], "Permission slip.pdf", { type: "application/pdf" });
   const photo = new File([new Uint8Array(512)], "IMG_2041.jpg", { type: "image/jpeg" });
