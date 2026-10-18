@@ -2,7 +2,7 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const SERVER_SCHEMA_VERSION = 13;
+export const SERVER_SCHEMA_VERSION = 14;
 
 export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024 + 4096;
 
@@ -30,6 +30,10 @@ export const MAX_MEMBER_CHAT_CLAIMS = 20_000;
 // The chat relay (#111): at most this many chat events per household, the
 // engine's chat log bound (rust/src/chat.rs MAX_CHAT_EVENT_COUNT).
 export const MAX_HOUSEHOLD_CHAT_EVENTS = 250_000;
+
+// "Delete for me" (#119): the most one member's sealed hidden-messages record
+// may hold (about 10,000 message IDs, sealed and base64url-encoded).
+export const MAX_CHAT_HIDDEN_RECORD_BYTES = 256 * 1024;
 
 export const MAX_AUDIT_ROWS = 10_000;
 

@@ -38,7 +38,7 @@ export async function chatRegressions() {
     return messageId;
   };
   const notify = () => { for (const listener of listeners) listener(); };
-  const calls = { send: [], edit: [], remove: [] };
+  const calls = { send: [], edit: [], remove: [], hide: [] };
   const room = {
     identity: { memberId: me, householdId: "c3".repeat(16), deviceId: "d4".repeat(16) },
     admins: [me],
@@ -85,6 +85,13 @@ export async function chatRegressions() {
       entry.status = "edited";
       entry.blobRef = hex(1000 + log.length, 64);
       held.set(entry.blobRef, text);
+      notify();
+    },
+    hidden: new Set(),
+    isHidden(messageId) { return this.hidden.has(messageId); },
+    async hide(message) {
+      calls.hide.push(message.messageId);
+      this.hidden.add(message.messageId);
       notify();
     },
     async remove(message, { byAdmin = false } = {}) {
@@ -220,22 +227,29 @@ export async function chatRegressions() {
   await settle();
   const menu = chat.querySelector(`[data-message-id="${ownRow.dataset.messageId}"] .chat-menu`);
   check(menu && document.activeElement === menu.querySelector("button"), "menu opens with focus");
-  check([...menu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,edit,delete", "own message actions");
+  check([...menu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,edit,delete", "own message actions (not Delete for me while it waits to send)");
   menu.querySelector('[data-action="edit"]').click();
   await settle();
   check(input.value === "Send button" && chat.querySelector(".chat-cancel").hidden === false, "editing in the composer");
+  check(chat.querySelector(".chat-form").classList.contains("chat-editing") && chat.querySelector(".chat-form label").textContent === "Editing message", "a clear editing bar");
   input.value = "Send button (fixed)";
   chat.querySelector('.chat-form button[type="submit"]').click();
   await settle();
   check(calls.edit.at(-1)?.[1] === "Send button (fixed)", "edit saved");
-  check(textOf(rows().at(-1)) === "Send button (fixed)" && rows().at(-1).querySelector(".chat-note").textContent.startsWith("Edited"), "edited shown");
+  const editedRow = rows().at(-1);
+  check(textOf(editedRow) === "Send button (fixed)", "edited text shown");
+  check(editedRow.classList.contains("grouped")
+    ? editedRow.querySelector(".chat-note").textContent.startsWith("Edited") && editedRow.querySelector(".chat-meta").textContent.includes("edited")
+    : editedRow.querySelector(".chat-meta .chat-edited")?.textContent.includes("edited"), "\"edited\" by the time, in the row's text");
+  check(!chat.querySelector(".chat-form").classList.contains("chat-editing"), "the editing bar goes");
   const theirs = rows().findLast((row) => !row.classList.contains("own"));
   theirs.querySelector(".chat-menu-button").click();
   await settle();
   const theirMenu = chat.querySelector(`[data-message-id="${theirs.dataset.messageId}"] .chat-menu`);
-  check([...theirMenu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,remove", "an admin may remove others' messages");
+  check([...theirMenu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,remove,hide", "an admin may remove others' messages");
   const realConfirm = window.confirm;
-  window.confirm = () => true;
+  const questions = [];
+  window.confirm = (question) => { questions.push(question); return true; };
   try {
     theirMenu.querySelector('[data-action="remove"]').click();
     await settle();
@@ -244,6 +258,26 @@ export async function chatRegressions() {
   }
   check(calls.remove.at(-1)?.[1] === true, "removed as admin");
   check(textOf(chat.querySelector(`[data-message-id="${theirs.dataset.messageId}"]`)) === "Removed by an admin", "removal shown to everyone");
+  check(questions.at(-1).includes("can't be recalled"), "the confirmation says copies can't be recalled");
+  // Delete for everyone on your own: the placeholder keeps author and time.
+  window.confirm = (question) => { questions.push(question); return true; };
+  const ownForDelete = rows().findLast((row) => row.classList.contains("own") && row.querySelector(".chat-menu-button"));
+  ownForDelete.querySelector(".chat-menu-button").click();
+  await settle();
+  chat.querySelector(`[data-message-id="${ownForDelete.dataset.messageId}"] [data-action="delete"]`).click();
+  await settle();
+  const deletedRow = chat.querySelector(`[data-message-id="${ownForDelete.dataset.messageId}"]`);
+  check(textOf(deletedRow) === "This message was deleted" && deletedRow.querySelector("time"), "deleted placeholder with author and time");
+  check(questions.at(-1).startsWith("Delete this message for everyone?") && questions.at(-1).includes("can't be recalled"), "delete-for-everyone confirmation");
+  // Delete for me: gone from this view only.
+  const forMe = rows().findLast((row) => !row.classList.contains("own"));
+  forMe.querySelector(".chat-menu-button").click();
+  await settle();
+  chat.querySelector(`[data-message-id="${forMe.dataset.messageId}"] [data-action="hide"]`).click();
+  await settle();
+  check(calls.hide.at(-1) === forMe.dataset.messageId && !chat.querySelector(`[data-message-id="${forMe.dataset.messageId}"]`), "deleted for me: hidden here");
+  check(questions.at(-1).includes("Nobody else sees any change"), "delete-for-me confirmation");
+  window.confirm = realConfirm;
   // Escape closes a menu and returns focus to its button.
   const escapeRow = rows().at(-1);
   escapeRow.querySelector(".chat-menu-button").click();

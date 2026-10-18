@@ -108,6 +108,41 @@ bothStores("members who can't take part can't use the chat relay", (h) => {
   assert.throws(() => h.relay.pull(removed, "", "20"), rejects("chat_unavailable", 403));
 });
 
+/** A sealed "delete for me" record as the service sees it: routing fields
+ * it checks, ciphertext it can't read. */
+function hiddenRecord(who, revision, extra = {}) {
+  return {
+    version: 1, householdId: who.householdId, memberId: who.memberId, senderDeviceId: who.deviceId, revision,
+    nonce: "AAAAAAAAAAAAAAAA", ciphertext: "c2VhbGVk", signature: "c2lnbmVk",
+    recipients: [{ deviceId: who.deviceId, fingerprint: "f", ephemeralPublicKey: {}, salt: "s", nonce: "n", wrappedKey: "w" }],
+    ...extra,
+  };
+}
+
+bothStores("each member's delete-for-me record is theirs, compare-and-set", (h) => {
+  const auth = h.auth(h.adult);
+  assert.deepEqual(h.relay.hidden(auth), { revision: 0, record: null });
+  assert.deepEqual(h.relay.putHidden(auth, { expectedRevision: 0, record: hiddenRecord(h.adult, 1) }), { revision: 1 });
+  assert.equal(h.relay.hidden(auth).record.ciphertext, "c2VhbGVk");
+  // A stale revision loses; the next one wins.
+  assert.throws(() => h.relay.putHidden(auth, { expectedRevision: 0, record: hiddenRecord(h.adult, 1) }), rejects("chat_hidden_stale", 409));
+  assert.deepEqual(h.relay.putHidden(auth, { expectedRevision: 1, record: hiddenRecord(h.adult, 2) }), { revision: 2 });
+  // The record must name this member, this device and the next revision.
+  for (const record of [
+    hiddenRecord(h.adult, 4),
+    hiddenRecord(h.adult, 3, { memberId: "ee".repeat(16) }),
+    hiddenRecord(h.adult, 3, { senderDeviceId: h.laptop.deviceId }),
+    hiddenRecord(h.adult, 3, { recipients: [] }),
+    hiddenRecord(h.adult, 3, { ciphertext: "x".repeat(300_000) }),
+    null,
+  ])
+    assert.throws(() => h.relay.putHidden(auth, { expectedRevision: 2, record }), rejects("chat_hidden_invalid", 400));
+  // The same member's other device shares it; others never reach it.
+  assert.equal(h.relay.hidden(h.auth(h.laptop)).revision, 2);
+  const removed = { ...auth, member: { ...auth.member, active: false } };
+  assert.throws(() => h.relay.hidden(removed), rejects("chat_unavailable", 403));
+});
+
 test("the chat relay persists and household deletion purges it", () => {
   const store = new DurableStore(":memory:");
   try {
@@ -116,6 +151,8 @@ test("the chat relay persists and household deletion purges it", () => {
     const reopened = new ChatRelayService({ syncService: h.sync, store });
     assert.equal(reopened.pull(h.auth(h.laptop), "", "20").events.length, 1);
     assert.deepEqual(store.chatRelayState(h.adult.householdId), { nextSequence: 2, eventCount: 1, maxLogicalTime: "1" });
+    h.relay.putHidden(h.auth(h.adult), { expectedRevision: 0, record: hiddenRecord(h.adult, 1) });
+    assert.equal(new ChatRelayService({ syncService: h.sync, store }).hidden(h.auth(h.adult)).revision, 1, "kept across restarts");
     assert.ok(store.householdPurgeStatus(h.adult.householdId).counts.chatEvents > 0);
     store.forcePurgeHousehold(h.adult.householdId, Date.now());
     assert.equal(store.householdPurgeStatus(h.adult.householdId).counts.chatEvents, 0);
@@ -149,6 +186,13 @@ test("the chat event routes move binary batches and pages", { timeout: 30_000 },
   assert.equal(pull.status, 200);
   const page = decodeEventPage(new Uint8Array(await pull.arrayBuffer()));
   assert.deepEqual(page.events.map((row) => row.envelope.eventId), [hex(7)]);
+  const put = await fetch(`${url}/api/chat/hidden`, {
+    method: "PUT", headers: { cookie, "content-type": "application/json" },
+    body: JSON.stringify({ expectedRevision: 0, record: hiddenRecord(adult, 1) }),
+  });
+  assert.equal(put.status, 200);
+  assert.deepEqual(await put.json(), { revision: 1 });
+  assert.equal((await (await fetch(`${url}/api/chat/hidden`, { headers: { cookie } })).json()).revision, 1);
   const household = await fetch(`${url}/api/sync/events?cursor=&limit=20`, { headers: { cookie } });
   assert.equal(decodeEventPage(new Uint8Array(await household.arrayBuffer())).events.length, 0);
 });

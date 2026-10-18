@@ -17,7 +17,8 @@
 import { PairingError, canParticipate } from "./pairing-service.mjs";
 import { canonicalEventEnvelope, MAX_LOGICAL_TIME_ADVANCE } from "./sync-contract.mjs";
 import { decodeCursor, encodeCursor, MAX_EVENTS_PER_BATCH, validateEventEnvelope } from "./sync-service.mjs";
-import { DurableConflictError, MAX_HOUSEHOLD_CHAT_EVENTS } from "./durable-store.mjs";
+import { DurableConflictError, MAX_CHAT_HIDDEN_RECORD_BYTES, MAX_HOUSEHOLD_CHAT_EVENTS } from "./durable-store.mjs";
+import { isSyncId } from "./sync-contract.mjs";
 
 const MAX_REQUEST_BYTES = 200_000;
 /** Most chat events one pull returns. Chat is far busier than household
@@ -64,7 +65,31 @@ class MemoryChatRelayStore {
       hasMore: lastScanned < state.records.length,
     };
   }
+  chatHiddenRecord(householdId, memberId) {
+    const row = this.state(householdId).hidden?.get(memberId);
+    return row ? structuredClone(row) : null;
+  }
+  putChatHiddenRecord(householdId, memberId, { expectedRevision, record }) {
+    const state = this.state(householdId);
+    state.hidden ??= new Map();
+    if ((state.hidden.get(memberId)?.revision ?? 0) !== expectedRevision)
+      throw new DurableConflictError("chat_hidden_stale", "Changed on another device meanwhile.");
+    state.hidden.set(memberId, { revision: expectedRevision + 1, record: structuredClone(record) });
+    return expectedRevision + 1;
+  }
   forgetHousehold(householdId) { this.households.delete(householdId); }
+}
+
+/** A sealed "delete for me" record's routing fields, which the service can
+ * check without reading it (web/chat/chat-hidden.js has the format). */
+export function isHiddenRecordValid(record, { householdId, memberId, deviceId, revision }) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return false;
+  if (Buffer.byteLength(JSON.stringify(record)) > MAX_CHAT_HIDDEN_RECORD_BYTES) return false;
+  return record.version === 1 && record.householdId === householdId && record.memberId === memberId &&
+    record.senderDeviceId === deviceId && record.revision === revision &&
+    typeof record.ciphertext === "string" && typeof record.nonce === "string" && typeof record.signature === "string" &&
+    Array.isArray(record.recipients) && record.recipients.length >= 1 && record.recipients.length <= 64 &&
+    record.recipients.every((entry) => entry && isSyncId(entry.deviceId) && typeof entry.wrappedKey === "string");
 }
 
 export class ChatRelayService {
@@ -162,6 +187,35 @@ export class ChatRelayService {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_CHAT_PULL || cursor > relay.nextSequence - 1)
       throw new PairingError("sync_cursor_invalid", "Kin could not continue from that chat position.", 400);
     return this.storage.readChatEvents(householdId, cursor, limit, auth.device.syncHistoryFromEpoch ?? 1);
+  }
+
+  /**
+   * This member's sealed "delete for me" record (#119), or a revision of 0
+   * when there is none. Only the member's own devices can open it.
+   */
+  hidden(auth, since = null) {
+    this.assertCanChat(auth);
+    const row = this.storage.chatHiddenRecord(auth.household.id, auth.member.id);
+    const revision = row?.revision ?? 0;
+    // A device that already has this revision gets just the revision.
+    if (since !== null && String(revision) === String(since)) return { revision, unchanged: true };
+    return { revision, record: row?.record ?? null };
+  }
+
+  /** Replaces the record compare-and-set: `expectedRevision` must be the
+   * stored one (409 with the current otherwise), the record names the next. */
+  putHidden(auth, body) {
+    this.assertCanChat(auth);
+    const expectedRevision = body?.expectedRevision;
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 ||
+        !isHiddenRecordValid(body.record, { householdId: auth.household.id, memberId: auth.member.id, deviceId: auth.device.id, revision: expectedRevision + 1 }))
+      throw new PairingError("chat_hidden_invalid", "That chat change is invalid.", 400);
+    try {
+      return { revision: this.storage.putChatHiddenRecord(auth.household.id, auth.member.id, { expectedRevision, record: body.record }) };
+    } catch (error) {
+      if (!(error instanceof DurableConflictError)) throw error;
+      throw new PairingError("chat_hidden_stale", "Changed on another device meanwhile; try again.", 409);
+    }
   }
 
   /** In-memory mode only: the durable store purges with the household. */

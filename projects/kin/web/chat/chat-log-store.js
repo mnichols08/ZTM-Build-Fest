@@ -22,7 +22,8 @@
 //                                          service deletes once it's accepted,
 //                                          and the message it concerns
 //   meta    { key: "state", nextOrder, cursor, deviceSequence, provisional,
-//             admins, members, membersSignature, retiredThrough, refused }
+//             admins, members, membersSignature, retiredThrough, refused,
+//             hidden, hiddenRevision, hiddenDirty, hiddenSealedFor }
 //
 // `cursor` is the relay position read up to. `deviceSequence` is the last
 // chat sequence this device used. It starts provisional when the log is new
@@ -30,7 +31,8 @@
 // sync then renumbers those events after the relay's count (chat-room.js).
 // `admins` and `members` are the household admins and members last known, `retiredThrough` how many
 // events' replaced blobs this device already deleted, and `refused` the
-// relay events it skipped because they failed authentication.
+// relay events it skipped because they failed authentication. `hidden` are
+// the messages this member hid for themselves (#119; chat-hidden.js).
 // Removing the household from the device deletes the whole database.
 
 const DATABASE_VERSION = 1;
@@ -89,7 +91,7 @@ function transact(db, names, mode, work) {
 /** Refused relay events remembered for the view to report. */
 const MAX_REFUSED = 100;
 
-const freshState = () => ({ key: STATE_KEY, nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], members: [], membersSignature: null, retiredThrough: 0, refused: [] });
+const freshState = () => ({ key: STATE_KEY, nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], members: [], membersSignature: null, retiredThrough: 0, refused: [], hidden: [], hiddenRevision: 0, hiddenDirty: false, hiddenSealedFor: [] });
 
 export class ChatLogStore {
   /** Opens (creating if needed) a household's chat log database. */
@@ -245,6 +247,40 @@ export class ChatLogStore {
       const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
       state.retiredThrough = count;
       await settle(meta.put(state));
+    });
+  }
+
+  /** Hides messages here ("delete for me", #119), to be written to the
+   * member's record on the next pass. */
+  async addHidden(ids) {
+    return transact(this.db, [META], "readwrite", async ({ meta }) => {
+      const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
+      state.hidden = [...new Set([...(state.hidden ?? []), ...ids])].sort();
+      state.hiddenDirty = true;
+      await settle(meta.put(state));
+      return state.hidden;
+    });
+  }
+
+  /**
+   * After a pass read (and maybe wrote) the member's record at `revision`:
+   * keeps `ids` plus anything hidden here meanwhile (hiding only adds, so a
+   * union never undoes one), minus `dropped` (messages since deleted for
+   * everyone). Still due for writing when something hidden here isn't in
+   * `ids` (or `dirty` says so).
+   */
+  async settleHidden({ ids, revision, dirty = false, dropped = [], sealedFor = null }) {
+    return transact(this.db, [META], "readwrite", async ({ meta }) => {
+      const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
+      const gone = new Set(dropped);
+      const written = new Set(ids);
+      const merged = [...new Set([...(state.hidden ?? []), ...ids])].filter((id) => !gone.has(id)).sort();
+      state.hidden = merged;
+      state.hiddenRevision = revision;
+      state.hiddenDirty = dirty || merged.some((id) => !written.has(id));
+      if (sealedFor) state.hiddenSealedFor = sealedFor;
+      await settle(meta.put(state));
+      return { ids: state.hidden, revision, dirty: state.hiddenDirty };
     });
   }
 

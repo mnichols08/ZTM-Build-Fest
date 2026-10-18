@@ -437,6 +437,18 @@ send events other devices refuse, but can't block the room. The device keeps
 chat events as those encrypted envelopes; the decrypted log lives in memory
 only while unlocked.
 
+**Edit and delete (#117, in place).** Editing replaces a message's content
+blob and retires the old one; earlier versions aren't kept. Deleting for
+everyone keeps the event (author and time) and retires the content
+everywhere as devices sync; a delete wins over a concurrent edit. Deleting
+"for me" is kept in a record sealed to the member's own devices and signed
+by one of them: other members, and the service, can't read which messages a
+member hid. That rests on the device directory: whoever can make a device
+trusted for a member (an Adult approving it, a service that forges what the
+directory says about revocation) can make it a recipient of later revisions,
+as with household key rotation. The service learns that a member's record
+changed, its size and when. A member's device that never syncs again keeps showing what it showed.
+
 **Planned.** Each chat story records its own detail here as it lands.
 
 ### v1.0 was not tested across every browser and device
