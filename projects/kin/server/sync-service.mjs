@@ -36,6 +36,19 @@ export class EncryptedSyncService {
     this.attachments = new Map();
   }
 
+  /**
+   * Tells a household's connected devices (but `exceptDeviceId`) to sync now
+   * over the live channel (#107/#108), for changes that aren't events: keys,
+   * provisioning grants, bindings and rotations. Deferred past the current
+   * request, so it never runs before the change it announces commits.
+   */
+  hintHousehold(householdId, exceptDeviceId = null) {
+    if (!this.liveService) return;
+    setImmediate(() => {
+      try { this.liveService?.eventsAccepted(householdId, exceptDeviceId); } catch { /* best effort */ }
+    });
+  }
+
   forgetHousehold(householdId) {
     this.households.delete(householdId);
     this.pushService?.removeUntrusted(householdId);
@@ -527,6 +540,7 @@ export class EncryptedSyncService {
     for (const [eventId, binding] of staged)
       state.bindings.set(eventId, binding);
     this.persistState(auth.household.id, state);
+    if (staged.size) this.hintHousehold(auth.household.id, auth.device.id);
     return { accepted: envelopes.length, durable: Boolean(this.store) };
   }
 
@@ -681,6 +695,7 @@ export class EncryptedSyncService {
     grant.package ??= structuredClone(keyPackage);
     grant.canonicalPackage ??= canonicalPackage;
     this.persistState(auth.household.id, state);
+    this.hintHousehold(auth.household.id, auth.device.id);
     return { accepted: true, grantId, durable: Boolean(this.store) };
   }
 
@@ -856,6 +871,7 @@ export class EncryptedSyncService {
       });
     }
     this.persistState(auth.household.id, state);
+    this.hintHousehold(auth.household.id, auth.device.id);
     return {
       currentEpoch: nextEpoch,
       rotationPending: false,
@@ -887,6 +903,9 @@ export class EncryptedSyncService {
     this.pushService?.removeUntrusted(householdId, excludedDeviceIds);
     // Live sockets of devices that lost access close at once (#107).
     this.liveService?.revalidate(householdId);
+    // The remaining devices have a rotation (and maybe a new device's keys)
+    // to act on.
+    this.hintHousehold(householdId);
     const state = this.state(householdId);
     state.rotationPending = true;
     // Keep committed packages only for recipients who still hold trust.

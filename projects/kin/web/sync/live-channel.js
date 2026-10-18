@@ -27,6 +27,9 @@ export const LIVE_CLOSE = Object.freeze({
   REPLACED: 4409,
   SLOW_CONSUMER: 4429,
 });
+// A close code the WebSocket API lets a client send (1000 or 3000-4999):
+// "this isn't a Kin live channel".
+export const CLOSE_NOT_KIN = 4000;
 export const MIN_RECONNECT_MS = 1_000;
 export const MAX_RECONNECT_MS = 30_000;
 const RECORD_HEADER = 8;
@@ -83,12 +86,32 @@ export class LiveChannel {
     this.stopped = true;
     this.ended = false;
     this.releaseLock = null;
+    this.lockAbort = null;
     this.online = () => {
       if (this.stopped || this.ended || this.socket) return;
       this.clearTimer(this.timer);
       this.timer = null;
       this.connect();
     };
+    // A socket can stay "open" across a silent network drop until TCP gives
+    // up; going offline closes it, so polling resumes and coming back online
+    // reconnects at once.
+    this.offline = () => {
+      if (this.stopped || !this.socket) return;
+      this.drop(this.socket);
+    };
+  }
+
+  /** Abandons `socket` as though it had closed, then reconnects later. */
+  drop(socket) {
+    socket.onopen = socket.onmessage = socket.onclose = socket.onerror = null;
+    try { socket.close(CLOSE_NOT_KIN, ""); } catch { /* already closing */ }
+    if (this.socket !== socket) return;
+    this.socket = null;
+    const wasUp = this.up;
+    this.up = false;
+    if (wasUp) this.onDown();
+    this.retry();
   }
 
   /** Starts holding the socket (once this tab holds the lock). */
@@ -97,14 +120,17 @@ export class LiveChannel {
     this.stopped = false;
     this.ended = false;
     this.events.addEventListener?.("online", this.online);
+    this.events.addEventListener?.("offline", this.offline);
     if (!this.locks || !this.lockName) {
       this.connect();
       return;
     }
     // The lock is held until stop() resolves this promise. A tab waiting
-    // for it connects when the holder lets go.
-    this.locks.request(this.lockName, () => new Promise((release) => {
-      if (this.stopped) return release();
+    // for it connects when the holder lets go; stop() withdraws the wait.
+    const abort = typeof AbortController === "function" ? new AbortController() : null;
+    this.lockAbort = abort;
+    this.locks.request(this.lockName, abort ? { signal: abort.signal } : {}, () => new Promise((release) => {
+      if (this.stopped || this.lockAbort !== abort) return release();
       this.releaseLock = release;
       this.connect();
     })).catch(() => {});
@@ -115,6 +141,9 @@ export class LiveChannel {
     if (this.stopped) return;
     this.stopped = true;
     this.events.removeEventListener?.("online", this.online);
+    this.events.removeEventListener?.("offline", this.offline);
+    this.lockAbort?.abort();
+    this.lockAbort = null;
     this.clearTimer(this.timer);
     this.timer = null;
     const socket = this.socket;
@@ -145,7 +174,7 @@ export class LiveChannel {
       // The service only sends well-formed records; anything else means
       // this isn't a Kin live channel, so give it up and poll.
       if (!record) {
-        socket.close(1002, "");
+        this.drop(socket);
         return;
       }
       if (record.type === LIVE_TYPE.HELLO) {
@@ -179,14 +208,15 @@ export class LiveChannel {
     socket.onerror = () => {};
   }
 
-  /** Waits a jittered, doubling delay (1 s to 30 s), then reconnects. */
+  /** Waits a jittered, doubling delay (1-2 s at first, at most 30 s),
+   * then reconnects. */
   retry() {
     if (this.stopped || this.ended || this.timer !== null) return;
-    const ceiling = Math.min(MAX_RECONNECT_MS, MIN_RECONNECT_MS * 2 ** this.attempts);
+    const base = MIN_RECONNECT_MS * 2 ** Math.min(this.attempts, 5);
     this.attempts += 1;
-    // Between half and all of the ceiling, so devices that lost the service
-    // together don't all come back in the same instant.
-    const delay = Math.max(MIN_RECONNECT_MS, Math.round(ceiling * (0.5 + this.random() / 2)));
+    // Between the base and twice it, so devices that lost the service
+    // together (a restart) don't all come back in the same instant.
+    const delay = Math.min(MAX_RECONNECT_MS, Math.round(base * (1 + this.random())));
     this.timer = this.setTimer(() => {
       this.timer = null;
       this.connect();

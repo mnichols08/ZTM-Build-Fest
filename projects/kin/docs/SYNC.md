@@ -360,18 +360,25 @@ the fallback whenever the socket is closed.
   the socket after its first sync and closes it on lock or sign-out. One
   tab per device holds it (a Web Lock named for the device); another tab
   takes over when that one closes or locks. `HELLO` and every `SYNC_HINT`
-  make the coordinator sync now over HTTP, so a reconnect resumes from the
+  make the coordinator sync over HTTP, so a reconnect resumes from the
   stored transport cursor, any gap is filled by the pull, and events the
-  outbox kept while offline go out. While the socket is up the coordinator
-  polls every 30 s as a safety net instead of every 5 s. A dropped socket
-  reconnects after a jittered, doubling wait from 1 s to 30 s (at once when
-  the browser comes back online; the longest wait after being replaced by
-  another socket for the device). Close 4401 or 4403 stops reconnecting, and
-  the next HTTP sync meets the same refusal and shows the signed-out or
-  deleted state. The client sends nothing on the socket, so no plaintext or
-  envelope ever travels on it; events go up and down over HTTP only (a
-  deliberate narrowing of #108's "upload over the socket", keeping one data
-  path that #107 already secures). A browser whose content security policy
+  outbox kept while offline go out. A hint during a sync runs one more
+  sync after it, at most once a second. The service hints when events are
+  accepted and when keys, provisioning grants, identity bindings or a key
+  rotation change. While the socket is up and the last sync succeeded, the
+  coordinator polls every 30 s as a safety net; otherwise (no socket, or a
+  sync paused on an error, missing keys or a rotation) every 5 s. A dropped
+  socket reconnects after a jittered, doubling wait (1-2 s at first, at most
+  30 s; at once when the browser comes back online; the longest after being
+  replaced by another socket for the device). Going offline drops the
+  socket, since one can stay open across a silent network drop. Close 4401
+  or 4403 ends the channel, and so does an HTTP sync refused for the
+  session or device (an upgrade refused with 401/403 reaches the browser
+  only as close 1006); the next successful sync starts it again. The client
+  sends nothing on the socket, so no plaintext or envelope ever travels on
+  it; events go up and down over HTTP only. That is a deliberate narrowing
+  of #108's socket upload and inline envelope delivery, keeping one data
+  path that #107 already secures. A browser whose content security policy
   doesn't let `connect-src 'self'` cover WebSockets simply keeps polling.
 
 ## Privacy boundary

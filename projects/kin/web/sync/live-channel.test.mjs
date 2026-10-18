@@ -1,12 +1,14 @@
 // The client live channel (#108): records, reconnecting with backoff,
-// losing access, one tab per device, and the real service end to end.
+// losing access, going offline, one tab per device, the coordinator's use of
+// it, and the real service end to end.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { DurableStore } from "../../server/durable-store.mjs";
 import { PairingService } from "../../server/pairing-service.mjs";
 import { createKinServer } from "../../server/server.mjs";
-import { LIVE_CLOSE, LIVE_TYPE, LiveChannel, liveUrl, MAX_RECONNECT_MS, parseLiveRecord } from "./live-channel.js";
-import { LIVE_POLL_MS, POLL_MS, SyncCoordinator } from "./sync-coordinator.js";
+import { exportDevicePublicKeys, generateDeviceKeys } from "./crypto.js";
+import { CLOSE_NOT_KIN, LIVE_CLOSE, LIVE_TYPE, LiveChannel, liveUrl, MAX_RECONNECT_MS, parseLiveRecord } from "./live-channel.js";
+import { LIVE_POLL_MS, MIN_HINT_GAP_MS, POLL_MS, SyncCoordinator } from "./sync-coordinator.js";
 
 const record = (type, payload = new Uint8Array()) => {
   const bytes = new Uint8Array(8 + payload.length);
@@ -16,12 +18,16 @@ const record = (type, payload = new Uint8Array()) => {
   return bytes.buffer;
 };
 
-/** A scripted stand-in for the browser's WebSocket. */
+/** A scripted stand-in for the browser's WebSocket; like a browser, it
+ * refuses close codes other than 1000 and 3000-4999. */
 function fakeSockets() {
   const sockets = [];
   class FakeSocket {
     constructor(url) { this.url = url; this.closed = null; sockets.push(this); }
-    close(code, reason) { this.closed = { code, reason }; }
+    close(code, reason) {
+      if (code !== undefined && code !== 1000 && (code < 3000 || code > 4999)) throw new DOMException("invalid code", "InvalidAccessError");
+      this.closed = { code, reason };
+    }
     receive(data) { this.onmessage?.({ data }); }
     end(code) { this.onclose?.({ code }); }
   }
@@ -81,32 +87,29 @@ test("HELLO brings the channel up and hints sync; a drop reconnects with doublin
   assert.deepEqual(calls, [], "no hint before HELLO");
   sockets[0].receive(record(LIVE_TYPE.HELLO));
   sockets[0].receive(record(LIVE_TYPE.SYNC_HINT));
-  sockets[0].receive(record(LIVE_TYPE.SYNC_HINT));
   sockets[0].receive(record(77)); // a newer record type: ignored
-  assert.deepEqual(calls, ["up", "hint", "hint"]);
+  assert.deepEqual(calls, ["up", "hint"]);
   sockets[0].end(1006);
-  assert.deepEqual(calls.slice(3), ["down"]);
-  // Each failed attempt doubles the wait, up to 30 s.
+  assert.deepEqual(calls.slice(2), ["down"]);
+  // With the most jitter, each wait is twice its doubling base, capped at 30 s.
   const waits = [];
   for (let attempt = 0; attempt < 7; attempt += 1) {
     waits.push(timers.fire());
     sockets.at(-1).end(1006);
   }
-  assert.deepEqual(waits, [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]);
+  assert.deepEqual(waits, [2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000]);
   // A HELLO resets the backoff.
   timers.fire();
   sockets.at(-1).receive(record(LIVE_TYPE.HELLO));
   sockets.at(-1).end(1011);
-  assert.equal(timers.fire(), 1_000);
-  // Jitter: between half and all of the ceiling.
+  assert.equal(timers.fire(), 2_000);
+  // With no jitter the waits are the base: even the first retry spreads
+  // over 1-2 s, so a restarted service isn't hit all at once.
   const low = channel({ random: () => 0 });
   low.live.start();
   low.sockets[0].end(1006);
-  low.timers.fire();
+  assert.equal(low.timers.fire(), 1_000);
   low.sockets[1].end(1006);
-  assert.equal(low.timers.pending[0].ms, 1_000, "never below a second");
-  low.timers.fire();
-  low.sockets[2].end(1006);
   assert.equal(low.timers.pending[0].ms, 2_000);
 });
 
@@ -129,21 +132,36 @@ test("losing access ends the channel; being replaced waits the longest", () => {
   // A slow consumer reconnects as usual and catches up over HTTP.
   timers.fire();
   sockets[1].end(LIVE_CLOSE.SLOW_CONSUMER);
-  assert.ok(timers.pending.length === 1);
+  assert.equal(timers.pending.length, 1);
 });
 
-test("a malformed message gives up that socket; coming back online reconnects at once", () => {
-  const { live, sockets, timers, events } = channel();
+test("a malformed message gives up that socket with a code browsers allow; online reconnects at once", () => {
+  const { live, sockets, timers, events, calls } = channel();
   live.start();
+  sockets[0].receive(record(LIVE_TYPE.HELLO));
   sockets[0].receive(new ArrayBuffer(3));
-  assert.deepEqual(sockets[0].closed, { code: 1002, reason: "" });
-  sockets[0].end(1002);
+  assert.deepEqual(sockets[0].closed, { code: CLOSE_NOT_KIN, reason: "" });
+  assert.deepEqual(calls, ["up", "down"], "polling resumes at once");
+  assert.equal(timers.pending.length, 1);
+  sockets[0].end(CLOSE_NOT_KIN); // handlers are detached: nothing more happens
   assert.equal(timers.pending.length, 1);
   events.dispatchEvent(new Event("online"));
   assert.equal(timers.pending.length, 0, "the wait is cancelled");
   assert.equal(sockets.length, 2);
   events.dispatchEvent(new Event("online"));
   assert.equal(sockets.length, 2, "not while a socket is open");
+});
+
+test("going offline drops a socket that may be half-open; coming back reconnects", () => {
+  const { live, sockets, timers, events, calls } = channel();
+  live.start();
+  sockets[0].receive(record(LIVE_TYPE.HELLO));
+  events.dispatchEvent(new Event("offline"));
+  assert.deepEqual(calls, ["up", "down"]);
+  assert.ok(sockets[0].closed);
+  events.dispatchEvent(new Event("online"));
+  assert.equal(sockets.length, 2);
+  assert.equal(timers.pending.length, 0);
 });
 
 test("stopping closes the socket, releases the lock and never reconnects", () => {
@@ -163,87 +181,166 @@ test("stopping closes the socket, releases the lock and never reconnects", () =>
   assert.equal(none.sockets.length, 0);
 });
 
-test("one tab per device holds the socket; the next takes over when it lets go", async () => {
-  // A minimal Web Locks manager: one holder per name, others queue.
-  const held = new Map();
-  const locks = {
-    request(name, callback) {
+/** A minimal Web Locks manager: one holder per name, others queue; an
+ * aborted request leaves the queue. */
+function fakeLocks() {
+  const held = new Set(), queue = new Map();
+  return {
+    queue,
+    request(name, options, callback) {
       const run = () => {
-        held.set(name, true);
+        held.add(name);
         return Promise.resolve(callback()).finally(() => {
           held.delete(name);
           queue.get(name)?.shift()?.();
         });
       };
       if (!held.has(name)) return run();
-      return new Promise((resolve) => {
+      return new Promise((resolve, reject) => {
         if (!queue.has(name)) queue.set(name, []);
-        queue.get(name).push(() => resolve(run()));
+        const waiter = () => resolve(run());
+        queue.get(name).push(waiter);
+        options.signal?.addEventListener("abort", () => {
+          queue.set(name, queue.get(name).filter((entry) => entry !== waiter));
+          reject(new DOMException("aborted", "AbortError"));
+        });
       });
     },
   };
-  const queue = new Map();
+}
+
+test("one tab per device holds the socket; the next takes over; a stopped waiter leaves the queue", async () => {
+  const locks = fakeLocks();
   const { sockets, FakeSocket } = fakeSockets();
   const make = () => new LiveChannel({ url: "wss://kin.example/api/live", lockName: "kin-live:device", WebSocket: FakeSocket, locks, events: new EventTarget() });
-  const first = make(), second = make();
+  const first = make(), second = make(), third = make();
   first.start();
   second.start();
+  third.start();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sockets.length, 1, "only the lock holder connects");
+  third.stop();
+  assert.equal(locks.queue.get("kin-live:device").length, 1, "a stopped tab withdraws its wait");
   first.stop();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(sockets.length, 2, "the waiting tab takes over");
   second.stop();
 });
 
-test("the coordinator polls less while the channel is up and syncs on hints", async () => {
-  let made;
+/** A coordinator whose sync passes are scripted: `finish(ok)` ends the
+ * running one. Its live channel is a recorder. */
+function coordinatorRig() {
+  let made = null, created = 0;
+  let now = 0;
   const coordinator = new SyncCoordinator({
-    store: {}, engine: {}, identity: { deviceId: "d1" },
-    liveChannel: (options) => (made = { options, started: false, stopped: false, start() { this.started = true; }, stop() { this.stopped = true; } }),
+    store: {}, engine: {}, identity: { deviceId: "d1" }, now: () => now,
+    liveChannel: (options) => {
+      created += 1;
+      made = { options, started: false, stopped: false, start() { this.started = true; }, stop() { this.stopped = true; } };
+      return made;
+    },
   });
-  let syncs = 0;
-  coordinator.syncNow = () => { syncs += 1; return Promise.resolve(); };
+  const runs = [];
+  coordinator.runOnce = () => new Promise((resolve, reject) => runs.push({ resolve, reject }));
   coordinator.timer = setInterval(() => {}, POLL_MS);
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  const finish = async (error = null) => {
+    const run = runs.at(-1);
+    if (error) run.reject(error); else run.resolve({ hasMore: false });
+    await settle(); await settle();
+  };
+  return {
+    coordinator, runs, finish, settle,
+    get made() { return made; }, get created() { return created; },
+    advance: (ms) => { now += ms; },
+    done: () => { clearInterval(coordinator.timer); coordinator.stop(); },
+  };
+}
+
+test("the coordinator polls less only while the channel is up and sync is healthy", async () => {
+  const rig = coordinatorRig();
   try {
-    coordinator.startLive();
-    assert.equal(made.started, true);
-    assert.equal(made.options.lockName, "kin-live:d1");
-    made.options.onUp();
-    assert.equal(coordinator.pollMs, LIVE_POLL_MS);
-    made.options.onHint();
-    assert.equal(syncs, 2, "a sync on coming up (catch up, drain the outbox) and one per hint");
-    made.options.onDown();
-    assert.equal(coordinator.pollMs, POLL_MS);
-    made.options.onEnd({ code: LIVE_CLOSE.SESSION_ENDED });
-    assert.equal(syncs, 3, "lost access: the HTTP sync reports the signed-out state");
-    coordinator.stop();
-    assert.equal(made.stopped, true);
+    rig.coordinator.startLive();
+    assert.equal(rig.made.started, true);
+    assert.equal(rig.made.options.lockName, "kin-live:d1");
+    rig.advance(10_000);
+    rig.made.options.onUp();
+    assert.equal(rig.runs.length, 1, "HELLO syncs: catch up and drain the outbox");
+    assert.equal(rig.coordinator.pollMs, POLL_MS, "not yet: no sync has succeeded");
+    await rig.finish();
+    assert.equal(rig.coordinator.pollMs, LIVE_POLL_MS);
+    // A paused sync (waiting on keys, a rotation, an error) polls every 5 s.
+    rig.advance(10_000);
+    rig.made.options.onHint();
+    await rig.finish(Object.assign(new Error("paused"), { code: "sync_epoch_missing" }));
+    assert.equal(rig.coordinator.pollMs, POLL_MS);
+    rig.advance(10_000);
+    rig.made.options.onHint();
+    await rig.finish();
+    assert.equal(rig.coordinator.pollMs, LIVE_POLL_MS);
+    rig.made.options.onDown();
+    assert.equal(rig.coordinator.pollMs, POLL_MS);
+    // A HELLO right after a sync doesn't sync again.
+    rig.made.options.onUp();
+    assert.equal(rig.runs.length, 3);
   } finally {
-    clearInterval(coordinator.timer);
+    rig.done();
   }
 });
 
-test("hints that arrive during a sync join it instead of starting another", async () => {
-  let made;
-  const coordinator = new SyncCoordinator({
-    store: {}, engine: {}, identity: { deviceId: "d1" },
-    liveChannel: (options) => (made = { options, start() {}, stop() {} }),
-  });
-  let runs = 0, finish;
-  coordinator.runOnce = () => { runs += 1; return new Promise((resolve) => { finish = resolve; }); };
-  coordinator.startLive();
-  for (let index = 0; index < 5; index += 1) made.options.onHint();
-  assert.equal(runs, 1);
-  finish({ hasMore: false });
-  await coordinator.running;
-  made.options.onHint();
-  assert.equal(runs, 2, "a hint after it finished syncs again");
-  finish({ hasMore: false });
-  coordinator.stop();
+test("a hint during a sync runs one more sync after it, at most once a second", async () => {
+  const rig = coordinatorRig();
+  try {
+    rig.coordinator.startLive();
+    rig.advance(10_000);
+    rig.made.options.onHint();
+    for (let index = 0; index < 5; index += 1) rig.made.options.onHint();
+    assert.equal(rig.runs.length, 1);
+    rig.advance(MIN_HINT_GAP_MS);
+    await rig.finish();
+    assert.equal(rig.runs.length, 2, "the hints during it lead to exactly one more");
+    await rig.finish();
+    assert.equal(rig.runs.length, 2, "and no further one without a new hint");
+    // Soon after a sync started, a hint waits out the gap.
+    rig.made.options.onHint();
+    assert.equal(rig.runs.length, 2);
+    await new Promise((resolve) => setTimeout(resolve, MIN_HINT_GAP_MS + 50));
+    assert.equal(rig.runs.length, 3);
+    await rig.finish();
+  } finally {
+    rig.done();
+  }
 });
 
-test("end to end: the real service's HELLO, hints and access loss reach the channel", { timeout: 30_000 }, async (t) => {
+test("lost access stops the channel; the next successful sync starts a new one", async () => {
+  const rig = coordinatorRig();
+  try {
+    rig.coordinator.startLive();
+    const first = rig.made;
+    // An upgrade refused with 401 shows the browser only 1006, so the HTTP
+    // sync's refusal is what stops reconnecting.
+    rig.advance(10_000);
+    void rig.coordinator.syncNow();
+    await rig.finish(Object.assign(new Error("signed out"), { code: "authentication_required" }));
+    assert.equal(first.stopped, true);
+    assert.equal(rig.coordinator.live, null);
+    // Signed in again (a new session): sync works, and the channel returns.
+    rig.advance(10_000);
+    void rig.coordinator.syncNow();
+    await rig.finish();
+    assert.equal(rig.created, 2);
+    assert.equal(rig.made.started, true);
+    // A channel ended by 4401 also comes back after a good sync.
+    rig.made.options.onEnd({ code: LIVE_CLOSE.SESSION_ENDED });
+    assert.equal(rig.runs.length, 3, "the end itself triggers a sync");
+    await rig.finish();
+    assert.equal(rig.created, 3);
+  } finally {
+    rig.done();
+  }
+});
+
+test("end to end: the real service's HELLO, event and key hints, and sign-out reach the channel", { timeout: 30_000 }, async (t) => {
   const service = new PairingService();
   const adult = service.bootstrap({ credential: { id: "phone", publicKey: "key-phone", algorithm: -7 }, deviceLabel: "Phone" });
   const pairing = service.createDevicePairing(adult.sessionToken);
@@ -253,7 +350,11 @@ test("end to end: the real service's HELLO, hints and access loss reach the chan
   const app = createKinServer({ store: new DurableStore(":memory:"), service, origin: "http://localhost" });
   await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => app.server.close(resolve)).finally(() => app.store.close()));
-  const port = app.server.address().port;
+  const base = `http://127.0.0.1:${app.server.address().port}`;
+  const post = async (who, path, body) => fetch(base + path, {
+    method: "POST", headers: { "Content-Type": "application/json", Origin: "http://localhost", Cookie: `kin_session=${who.sessionToken}; kin_device=${who.deviceToken}` },
+    body: JSON.stringify(body),
+  });
   // Node's WebSocket, carrying what a browser would: the page's origin and
   // the session cookie.
   const socketFor = (who) => class extends WebSocket {
@@ -261,18 +362,23 @@ test("end to end: the real service's HELLO, hints and access loss reach the chan
   };
   const seen = [];
   const live = new LiveChannel({
-    url: `ws://127.0.0.1:${port}/api/live`, WebSocket: socketFor(adult), locks: null, events: new EventTarget(),
+    url: `${base.replace("http", "ws")}/api/live`, WebSocket: socketFor(adult), locks: null, events: new EventTarget(),
     onUp: () => seen.push("up"), onHint: () => seen.push("hint"), onEnd: ({ code }) => seen.push(`end ${code}`),
   });
-  const until = async (condition) => { for (let index = 0; index < 200 && !condition(); index += 1) await new Promise((resolve) => setTimeout(resolve, 10)); };
+  const until = async (condition) => { for (let index = 0; index < 300 && !condition(); index += 1) await new Promise((resolve) => setTimeout(resolve, 10)); };
   live.start();
   await until(() => seen.includes("up"));
   // The laptop's events were accepted: the phone hears about it.
   app.liveService.eventsAccepted(adult.householdId, laptop.deviceId);
-  await until(() => seen.includes("hint"));
+  await until(() => seen.filter((entry) => entry === "hint").length === 1);
+  // A change that isn't an event hints too: the phone registers its keys,
+  // then the laptop does, which makes the household provision it.
+  assert.equal((await post(adult, "/api/sync/device-keys", { publicKeys: await exportDevicePublicKeys(await generateDeviceKeys()) })).status, 200);
+  assert.equal((await post(laptop, "/api/sync/device-keys", { publicKeys: await exportDevicePublicKeys(await generateDeviceKeys()) })).status, 200);
+  await until(() => seen.filter((entry) => entry === "hint").length === 2);
   // Signing out ends the session: the channel stops for good.
-  await fetch(`http://127.0.0.1:${port}/api/logout`, { method: "POST", headers: { "Content-Type": "application/json", Cookie: `kin_session=${adult.sessionToken}` }, body: "{}" });
+  await post(adult, "/api/logout", {});
   await until(() => seen.some((entry) => entry.startsWith("end")));
-  assert.deepEqual(seen, ["up", "hint", `end ${LIVE_CLOSE.SESSION_ENDED}`]);
+  assert.deepEqual(seen, ["up", "hint", "hint", `end ${LIVE_CLOSE.SESSION_ENDED}`]);
   live.stop();
 });

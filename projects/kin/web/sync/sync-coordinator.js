@@ -127,6 +127,13 @@ const KEY_GRANT_TTL_MS = 10 * 60_000;
 // once and polling is only a safety net; otherwise every five seconds.
 export const POLL_MS = 5_000;
 export const LIVE_POLL_MS = 30_000;
+// Hint-driven syncs run at most this often: a hint during a sync runs one
+// more after it, no sooner than this after the last one started.
+export const MIN_HINT_GAP_MS = 1_000;
+// HELLO syncs only if the last sync finished longer ago than this.
+const HELLO_SYNC_AFTER_MS = 3_000;
+// Sync errors that mean this session can't hold a live channel.
+const ACCESS_ERRORS = new Set(["authentication_required", "device_not_trusted", "membership_removed"]);
 
 /** The live channel for a browser page, or null elsewhere (tests, workers). */
 function browserLiveChannel(options) {
@@ -158,6 +165,12 @@ export class SyncCoordinator {
     this.createLiveChannel = liveChannel;
     this.live = null;
     this.pollMs = POLL_MS;
+    this.liveUp = false;
+    this.lastSyncOk = false;
+    this.lastSyncStartedAt = -Infinity;
+    this.lastSyncEndedAt = -Infinity;
+    this.syncAgain = false;
+    this.hintTimer = null;
   }
 
   async start() {
@@ -196,22 +209,63 @@ export class SyncCoordinator {
     if (this.live || this.stopped || this.terminal) return;
     this.live = this.createLiveChannel?.({
       lockName: `kin-live:${this.identity.deviceId}`,
-      onHint: () => void this.syncNow(),
+      onHint: () => this.hinted(),
       onUp: () => {
-        this.setPollInterval(LIVE_POLL_MS);
+        this.liveUp = true;
+        this.updatePollInterval();
         // Catch up on anything missed while disconnected, and send what the
-        // outbox kept meanwhile.
-        void this.syncNow();
+        // outbox kept meanwhile, unless a sync (unlock's own) just ended.
+        if (this.now() - this.lastSyncEndedAt > HELLO_SYNC_AFTER_MS) this.hinted();
       },
-      onDown: () => this.setPollInterval(POLL_MS),
+      onDown: () => {
+        this.liveUp = false;
+        this.updatePollInterval();
+      },
       // Access was lost: the next HTTP sync meets the same refusal and
-      // reports the signed-out or deleted state.
+      // reports the signed-out or deleted state. A later successful sync
+      // starts a new channel.
       onEnd: () => {
-        this.setPollInterval(POLL_MS);
+        this.liveUp = false;
+        this.live = null;
+        this.updatePollInterval();
         void this.syncNow();
       },
     }) ?? null;
     this.live?.start();
+  }
+
+  stopLive() {
+    this.live?.stop();
+    this.live = null;
+    this.liveUp = false;
+    clearTimeout(this.hintTimer);
+    this.hintTimer = null;
+  }
+
+  /** A hint (or HELLO): sync now, or once more after the running sync,
+   * never sooner than MIN_HINT_GAP_MS after the last one started. */
+  hinted() {
+    if (this.stopped || this.terminal) return;
+    if (this.running) {
+      this.syncAgain = true;
+      return;
+    }
+    if (this.hintTimer !== null) return;
+    const wait = this.lastSyncStartedAt + MIN_HINT_GAP_MS - this.now();
+    if (wait <= 0) {
+      void this.syncNow();
+      return;
+    }
+    this.hintTimer = setTimeout(() => {
+      this.hintTimer = null;
+      void this.syncNow();
+    }, wait);
+  }
+
+  /** Polling slows only while the channel is up and sync is healthy: a
+   * paused sync, or one waiting on keys, keeps polling every 5 s. */
+  updatePollInterval() {
+    this.setPollInterval(this.liveUp && this.lastSyncOk ? LIVE_POLL_MS : POLL_MS);
   }
 
   setPollInterval(ms) {
@@ -225,8 +279,14 @@ export class SyncCoordinator {
   async syncNow() {
     if (this.stopped || this.terminal || !this.identity) return;
     if (this.running) return this.running;
+    this.lastSyncStartedAt = this.now();
+    this.syncAgain = false;
     this.running = this.runOnce()
       .then((result) => {
+        this.lastSyncOk = true;
+        // A channel that ended on lost access comes back once this session
+        // syncs again (a new session after signing in elsewhere, say).
+        if (!this.live && !this.terminal) this.startLive();
         const hasMore = typeof result === "object" ? result.hasMore : result;
         const advanced = typeof result === "object" ? result.advanced : hasMore;
         if (hasMore && advanced) this.scheduleContinuation();
@@ -241,8 +301,12 @@ export class SyncCoordinator {
       })
       .catch(async (error) => {
         if (this.stopped) return;
+        this.lastSyncOk = false;
         let message = error.message || "Device sync is paused.";
         let code = error.code;
+        // This session can't hold a socket either: stop reconnecting (an
+        // upgrade refused with 401/403 reaches the browser only as 1006).
+        if (ACCESS_ERRORS.has(code)) this.stopLive();
         if (["sync_rate_limited", "sync_client_rate_budget"].includes(code)) {
           clearTimeout(this.continuationTimer);
           this.continuationTimer = null;
@@ -297,8 +361,7 @@ export class SyncCoordinator {
           this.continuationTimer = null;
           clearInterval(this.timer);
           this.timer = null;
-          this.live?.stop();
-          this.live = null;
+          this.stopLive();
           this.onState({
             state: "deleted",
             lifecycleState: lifecycle.state,
@@ -314,6 +377,12 @@ export class SyncCoordinator {
       })
       .finally(() => {
         this.running = null;
+        this.lastSyncEndedAt = this.now();
+        this.updatePollInterval();
+        if (this.syncAgain) {
+          this.syncAgain = false;
+          this.hinted();
+        }
       });
     return this.running;
   }
@@ -1233,8 +1302,7 @@ export class SyncCoordinator {
 
   stop() {
     this.stopped = true;
-    this.live?.stop();
-    this.live = null;
+    this.stopLive();
     this.abortController.abort();
     clearInterval(this.timer);
     this.timer = null;
