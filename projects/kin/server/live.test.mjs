@@ -529,6 +529,29 @@ test("the connection limit counts every socket; a wrong version gets 426", async
   }
 });
 
+test("a device reconnecting in a loop holds at most two sockets", async () => {
+  const r = await rig({ maxConnections: 4 });
+  const held = [];
+  try {
+    for (let index = 0; index < 12; index += 1) {
+      // A client that ignores close frames and never ends its side.
+      const socket = connect({ port: r.port, host: "127.0.0.1", allowHalfOpen: true });
+      await once(socket, "connect");
+      socket.on("error", () => {});
+      socket.write(`GET /api/live HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
+        `Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: ${randomBytes(16).toString("base64")}\r\nOrigin: http://localhost\r\n` +
+        `Cookie: kin_session=${r.adult.sessionToken}\r\n\r\n`);
+      await once(socket, "data");
+      held.push(socket);
+    }
+    assert.ok(r.application.liveService.sockets.size <= 2, `held ${r.application.liveService.sockets.size}`);
+    assert.equal((await open(r.port, { session: r.laptop.sessionToken })).status, 101, "another device still gets in");
+  } finally {
+    for (const socket of held) socket.destroy();
+    await r.close();
+  }
+});
+
 test("sync hints waiting behind a full socket are queued once", async () => {
   const r = await rig();
   try {

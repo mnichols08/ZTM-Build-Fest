@@ -346,7 +346,9 @@ the fallback whenever the socket is closed.
 - **Backpressure.** Messages queue while the socket can't take more (a sync
   hint already waiting isn't queued again); past 1 MiB the socket closes
   with 4429 and the device catches up over HTTP.
-- **Limits.** At most 4,096 sockets at once, counting those still closing.
+- **Limits.** At most 4,096 sockets at once, counting those still closing;
+  a device holds at most two (one open, one closing), so a device that
+  reconnects in a loop can't crowd others out.
   Stopping the service closes every socket within a quarter of a second.
 - **Messages.** Each binary message carries one record,
   `[u8 type][u8 flags][u16 reserved][u32 length][payload]`, little-endian.

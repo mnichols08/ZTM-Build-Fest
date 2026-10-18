@@ -123,6 +123,7 @@ class LiveConnection {
     this.queue = [];
     this.queuedBytes = 0;
     this.live.forget(this, { socket: true });
+    if (this.live.closingByDevice.get(this.deviceId) === this) this.live.closingByDevice.delete(this.deviceId);
     this.resources.dispose();
   }
 
@@ -192,7 +193,7 @@ class LiveConnection {
       this.queuedBytes += frame.length;
       if (this.queuedBytes > this.live.maxQueued) {
         // The client isn't reading; it can catch up over HTTP.
-        this.close(CLOSE.SLOW_CONSUMER, "Too slow", { grace: 1_000, force: true });
+        this.close(CLOSE.SLOW_CONSUMER, "Too slow", { grace: 1_000 });
         return false;
       }
       return true;
@@ -212,8 +213,8 @@ class LiveConnection {
   }
 
   /** Starts the closing handshake; the socket ends once the close frame is
-   * written, and at the latest after `grace`. `force` drops anything queued
-   * and writes the close frame past it. */
+   * written, and at the latest after `grace`. Anything still queued is
+   * dropped; the close frame goes out past it. */
   close(code, reason = "", { echo = false, grace = CLOSE_GRACE_MS } = {}) {
     if (this.closing || this.disposed) {
       if (echo) this.dispose();
@@ -224,6 +225,12 @@ class LiveConnection {
     this.queuedBytes = 0;
     this.blocked = false;
     this.live.forget(this);
+    // A device holds at most one closing socket: an earlier one still
+    // waiting out its grace goes now, so a device reconnecting in a loop
+    // can't pile up sockets against the limit.
+    const earlier = this.live.closingByDevice.get(this.deviceId);
+    this.live.closingByDevice.set(this.deviceId, this);
+    earlier?.dispose();
     if (!this.socket.writableEnded && !this.socket.destroyed) {
       this.socket.write(encodeFrame(OPCODE.CLOSE, closePayload(code, reason)));
       this.socket.end();
@@ -261,6 +268,8 @@ export class LiveService {
     this.households = new Map();
     /** Every socket still held, open or closing (the connection limit). */
     this.sockets = new Set();
+    /** deviceId → its connection still closing, if any (at most one). */
+    this.closingByDevice = new Map();
     /** Kin record type → handler(connection, record), for client messages. */
     this.handlers = new Map();
   }
