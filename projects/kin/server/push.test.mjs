@@ -121,6 +121,13 @@ function household({ store = null } = {}) {
     pairing.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
     return pairing.activateClaim(claim.claimToken);
   };
+  const addDevice = (who, id) => {
+    now += 60_001;
+    const invitation = pairing.createDevicePairing(who.sessionToken);
+    const claim = pairing.claimPairing({ code: invitation.code, credential: credential(id), deviceLabel: "Chrome on Desktop" });
+    pairing.approvePairing(who.sessionToken, invitation.pairingId, claim.version);
+    return pairing.activateClaim(claim.claimToken);
+  };
   const auth = (who) => pairing.authorize(who.sessionToken);
   const keys = () => { const ua = createECDH("prime256v1"); ua.generateKeys(); return { p256dh: ua.getPublicKey().toString("base64url"), auth: Buffer.alloc(16, 5).toString("base64url") }; };
   const subscribe = (who, endpoint = `https://fcm.googleapis.com/fcm/send/${who.deviceId}`) => push.subscribe(auth(who), { endpoint, keys: keys() });
@@ -130,7 +137,7 @@ function household({ store = null } = {}) {
     await new Promise((resolve) => setImmediate(resolve));
   };
   const settle = () => new Promise((resolve) => setImmediate(resolve));
-  return { pairing, sync, push, sent, adult, join, auth, subscribe, advance, settle, setRespond: (value) => { respond = value; }, now: () => now };
+  return { pairing, sync, push, sent, adult, join, addDevice, auth, subscribe, advance, settle, setRespond: (value) => { respond = value; }, now: () => now };
 }
 
 test("a device manages only its own validated subscription and mute", () => {
@@ -166,11 +173,13 @@ test("a device manages only its own validated subscription and mute", () => {
   assert.equal(h.push.status(h.auth(h.adult)).subscribed, false, "another device's state is its own");
 });
 
-test("an accepted batch notifies other members' unmuted devices once, content-free", async () => {
+test("an accepted batch notifies other members' devices but every author-member device is excluded", async () => {
   const h = household();
+  const adultSecondDevice = h.addDevice(h.adult, "adult-second-device");
   const partner = h.join("partner");
   const third = h.join("third");
   h.subscribe(h.adult);
+  h.subscribe(adultSecondDevice);
   h.subscribe(partner);
   h.subscribe(third);
   h.push.mute(h.auth(third), "indefinite");

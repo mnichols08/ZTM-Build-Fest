@@ -959,6 +959,19 @@ Not:
 
 ## 8.4 Pairing
 
+People & devices starts with two explicit actions before any scanner or code:
+
+- **Invite a person** explains that Kin creates a separate household member
+  identity with role-based access.
+- **Add my device** explains that this remains the same person and member ID on
+  another phone or computer, and that a member is not notified of their own
+  changes on another device.
+
+The chosen outcome remains visible during QR and manual entry. A generic
+“Pair” action must not make the member/device result implicit. The complete
+onboarding and platform checks are in
+[Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md).
+
 Pairing should make the sequence understandable:
 
 ```text

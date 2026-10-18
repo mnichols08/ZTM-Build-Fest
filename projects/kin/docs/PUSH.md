@@ -8,6 +8,14 @@ delivered, shown or tapped (no read receipts; [PRODUCT-BOUNDARIES](PRODUCT-BOUND
 
 ## What a member sees
 
+The section first explains that Kin notifies this device only about changes
+from other active household members. Changes made on any device belonging to
+the signed-in member are excluded by stable author member ID. Preferred names
+and device labels never decide recipients. Opt-in and mute remain per device;
+there is no direct-send control, delivery/read receipt or presence indicator.
+The two-member diagnostic and platform checks are in
+[Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md).
+
 People & devices → **Notifications on this device**:
 
 | State | Copy |
