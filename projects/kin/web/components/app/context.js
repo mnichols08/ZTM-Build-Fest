@@ -119,7 +119,7 @@ export function initializeAppState(app) {
     app.pendingScheduleChange = null;
     app.householdStatus = null;
     app.passkeyPromptDismissed = false;
-    app.onHouseholdStatus = (event) => { app.householdStatus = event.detail; app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); };
+    app.onHouseholdStatus = (event) => { app.householdStatus = event.detail; app.ctx.status.renderOnboarding(); app.ctx.sync.updateSyncChip(); void app.notifications?.refresh?.({ identity: event.detail?.identity === true }); };
     app.onSecurityChanged = () => app.ctx.status.renderOnboarding();
     app.autoLockMinutes = readAutoLockPreference();
     app.autoLockTimer = null;
@@ -307,6 +307,8 @@ export function initializeAppState(app) {
     app.onHouseholdDefaultsPreview = (event) => { app.ctx.appearance.setHouseholdIdentity(event.detail.name); app.ctx.appearance.applyAppearance(event.detail.appearance); };
     app.onHouseholdDefaultsCancel = () => app.ctx.appearance.applyEffectiveAppearance();
     app.onSaveHouseholdDefaults = (event) => app.ctx.appearance.handleSaveHouseholdDefaults(event);
+    app.onPublishInstallIdentity = (event) => app.ctx.appearance.handleInstallIdentity(event, false);
+    app.onWithdrawInstallIdentity = (event) => app.ctx.appearance.handleInstallIdentity(event, true);
     app.systemAppearance = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : null;
     app.onSystemAppearance = () => { if (app.currentAppearance?.mode === "system") app.ctx.appearance.applyAppearance(app.currentAppearance); };
     app.onPageHide = () => app.ctx.session.lockHousehold(false);

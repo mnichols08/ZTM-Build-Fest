@@ -267,6 +267,18 @@ pub enum EventKind {
         target_id: [u8; 16],
         member_id: Option<ActorId>,
     },
+    /// A device announces its own automatic name ("Chrome on iPhone"). The
+    /// device named is the event's header device; the name is canonical
+    /// (`state::normalize_device_name`).
+    DeviceDescribed {
+        auto_name: String,
+    },
+    /// Sets (Some) or clears (None) a device's nickname. Only the member the
+    /// device belongs to may name it (replay/devices.rs).
+    DeviceNicknamed {
+        device_id: DeviceId,
+        nickname: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

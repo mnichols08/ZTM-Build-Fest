@@ -118,3 +118,38 @@ No capability was added. Browser validation covers quota/abort rollback and retr
 ## v0.6.3 Summary Hardening & Polish
 
 No capability was added. Real-WASM tests validate all truncated v6 summary/result boundaries, malformed counts/kinds/entity/classification/reserved/UTF-8/length fields, trailing bytes, combined entity-plus-summary output, a 10,000-event v6 replay, actual memory growth, and copied-result lifetime. The privacy and polish audit remains limited to the frozen product contract.
+
+## v1.1.0 Device names and nicknames (#71)
+
+| Requirement | Specification authority | v1.1.0 validation |
+| --- | --- | --- |
+| Device names are encrypted household events; the server keeps only automatic names | [IDENTITY](IDENTITY.md#device-names), [PRIVACY](PRIVACY.md), [EVENTS](EVENTS.md#v110-device-names) | `server/device-label.test.mjs`: typed labels stored as "Device", v1.0 labels reset in storage at start, server and client name lists equal. |
+| Only a device's member names it; latest description and nickname win | [EVENTS](EVENTS.md#v110-device-names), [ABI](ABI.md) | `rust/src/device_name_tests.rs` (vectors 024–025) and the real-WASM test in `web/wasm/kin-engine.test.mjs`. |
+| Names are canonical and cannot hide characters | [ABI](ABI.md), [TEST-VECTORS](TEST-VECTORS.md#device-names-v11) | Vector 026; KCMD bounds in `device_name_tests.rs`. |
+| Device names stay out of KINS; replay protocol stays 24 | [ABI](ABI.md), [V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md) | Vector 027; unchanged golden fixtures; `scripts/v1-compatibility.test.mjs`. |
+| KDEV export decodes exactly | [ABI](ABI.md) | Vector 028; KDEV decode and broken-table tests in `web/wasm/abi-ownership.test.mjs`. |
+| Nobody types a device name; Trusted devices groups, marks and renames | [UX](UX.md) §8.1–8.2, [ACCESSIBILITY](ACCESSIBILITY.md) | `web/components/kin-household.test.mjs`; `scripts/mobile-ux-regression.mjs`; `scripts/household-authority-regression.mjs` (relay counts include each device's name). |
+
+## v1.1.0 Household app name and icon on home screens (#78)
+
+| Requirement | Specification authority | v1.1.0 validation |
+| --- | --- | --- |
+| Opt-in plaintext install identity, admin-only writes, stale revisions conflict, legacy households fail closed | [HOUSEHOLD-IDENTITY-DEFAULTS](HOUSEHOLD-IDENTITY-DEFAULTS.md#published-install-identity) | `server/install-identity.test.mjs` (authority, stale, validation, audit). |
+| Icons are PNGs of exact sizes checked by framing only | same | `server/install-identity.test.mjs` (signature, IHDR, depth, IEND, size cap). |
+| Per-device manifest and icons; others get Kin's; stable id; ETag and versioned icon URLs change on update | same, [V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md#additions-since-v10) | `server/install-identity.test.mjs` (default vs published, revoked device, other household, ETag/304, JSON escaping). |
+| Withdrawal and household deletion delete the copy | [PRIVACY](PRIVACY.md), [THREAT-MODEL](THREAT-MODEL.md) | Withdrawal, purge-status and forced-purge tests; schema 10 migration tests in `server/durable-store.test.mjs`. |
+| The service worker never caches the manifest or install icons | [HOUSEHOLD-IDENTITY-DEFAULTS](HOUSEHOLD-IDENTITY-DEFAULTS.md#published-install-identity) | `web/service-worker.test.mjs`; browser check in `scripts/household-authority-regression.mjs`. |
+| Icons drawn in the browser (first letter or upload) | same | `web/appearance/install-icons.test.mjs`; real 512-pixel PNG in the browser regression. |
+| Admin-only Home screen controls state what is stored before the first publish | [UX](UX.md) §8.7 | `web/components/kin-household-defaults.test.mjs`; `scripts/household-authority-regression.mjs`. |
+
+## v1.1.0 Push notifications (#85)
+
+| Requirement | Specification authority | v1.1.0 validation |
+| --- | --- | --- |
+| Dependency-free VAPID and RFC 8291 sender | [PUSH](PUSH.md), [TEST-VECTORS](TEST-VECTORS.md#push-payload-rfc-8291) | `server/push.test.mjs`: RFC vector byte for byte, ES256 JWT verified, headers. |
+| Only allowlisted push services | [PUSH](PUSH.md) | Allowlist and refusal cases in `server/push.test.mjs`. |
+| Per-device subscription, mute and API authority | [PUSH](PUSH.md) | Subscription, mute and HTTP API tests in `server/push.test.mjs`. |
+| Other members only, unmuted, coalesced, never delaying sync | [PUSH](PUSH.md), [SYNC](SYNC.md) | Author exclusion, mute, coalescing with trailing send, hanging push service tests. |
+| Access loss and deletion remove subscriptions | [PUSH](PUSH.md), [PRIVACY](PRIVACY.md) | Revocation/access-change, pending deletion and purge tests; schema 11 migration tests. |
+| Content-free notification, focus or open on tap | [PUSH](PUSH.md) | `web/service-worker.test.mjs`. |
+| Per-device controls, prompt only on press, honest states | [UX](UX.md) §8.8 | `web/components/kin-notifications.test.mjs`; `scripts/household-authority-regression.mjs` with a stubbed PushManager. |

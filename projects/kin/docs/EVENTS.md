@@ -74,6 +74,8 @@ Use uppercase entity/action-past-tense names consistently. The milestone column 
 | `MAINTENANCE_EVENT_ARCHIVED`      | v0.31.0           | Archive a maintenance event while retaining its history.       |
 | `HOUSEHOLD_MODE_CHANGED`        | v0.21.0           | Set the explicit household-wide mode.                         |
 | `ITEM_PLANNING_DATE_CHANGED`    | v0.22.0           | Set or clear an Item's optional fixed civil planning date.     |
+| `DEVICE_DESCRIBED`              | v1.1.0            | Record the automatic name a device reports for itself.         |
+| `DEVICE_NICKNAMED`              | v1.1.0            | Set or clear the nickname a member gives one of their devices. |
 | `HOUSEHOLD_CREATED`            | v0.8.0            | Establish a household identity when pairing is introduced.   |
 | `MEMBER_INVITED`               | v0.8.0            | Record a member invitation.                                  |
 | `MEMBER_JOINED`                | v0.8.0            | Record accepted household membership.                        |
@@ -190,6 +192,42 @@ so repeated or stale intents (a second tab, a bulk action, its undo) append
 nothing. Replay is unchanged: historical duplicate `ITEM_COMPLETED` or
 `ITEM_REOPENED` facts from older clients or other devices remain idempotent
 no-ops. No event layout, protocol version, or storage format changes.
+
+## v1.1.0 Device names
+
+`DEVICE_DESCRIBED` (kind 42) and `DEVICE_NICKNAMED` (kind 43) are schema 1
+and were added without changing replay protocol 24 ([ABI](ABI.md) has the
+payloads). They keep device names inside the encrypted household history, so
+the server never learns a name anyone typed ([PRIVACY](PRIVACY.md),
+[IDENTITY](IDENTITY.md#device-names)).
+
+- Names are cosmetic, so a decoded device-name event never fails replay. An
+  event that conflicts with what a history knows is kept and changes nothing;
+  commands enforce the rules below when the event is created.
+- A description names the event's own header device. The device belongs to
+  the member who first described it; a later description of it by another
+  member changes nothing. A device describes itself again when its automatic
+  name changes (a browser update, an installed app), and the latest
+  description wins.
+- A nickname targets a device by ID, and only that device's member may set
+  it, from any of their devices. An empty nickname clears it, and the latest
+  nickname wins. Within one history the naming device has seen the
+  description, so the nickname replays after it. But a member who joined
+  later never receives descriptions made before they joined, so their history
+  can hold a nickname for a device it has never seen described. Replay keeps
+  that as a nickname-only entry owned by its author (clearing that nickname
+  removes the entry, and clearing an unknown device's nickname changes
+  nothing). A later description by
+  the same member completes it; one by another member wins and drops the
+  nickname.
+- Names are canonical in the event: trimmed, at most 48 characters for an
+  automatic name and 32 for a nickname, with no control characters and no
+  disguising format characters. Anything else is a malformed event.
+- Device names never appear in the KINS projection or the catch-up summary.
+  Hosts read them with `kin_device_names`.
+- A v1.0 engine does not know these kinds. It stops at the first one with the
+  unsupported-event error above and syncs again once updated
+  ([V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md)).
 
 ## v0.22.0 Lightweight Planning Dates
 

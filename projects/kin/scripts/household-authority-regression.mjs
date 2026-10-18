@@ -237,9 +237,10 @@ async function pageTrustDevice(deviceLabel) {
   const device = listed.devices.find((entry) => entry.label === deviceLabel);
   if (!device) throw new Error(`Trusted-device list is missing ${deviceLabel}`);
   await h.showDevices();
-  const item = [...h.querySelectorAll("li")].find((entry) =>
-    entry.textContent.includes(`${deviceLabel} — Trusted`),
-  );
+  // The row shows the device's synced name (#71), which can differ from the
+  // server label, so it is found by device ID.
+  const item = h.querySelector(`li[data-device-id="${device.id}"]`);
+  if (!item?.textContent.includes("Trusted")) throw new Error(`Trusted-device row is missing for ${deviceLabel}`);
   const verify = [...(item?.querySelectorAll("button") ?? [])].find(
     (button) => button.textContent === "Verify device",
   );
@@ -356,6 +357,9 @@ async function pageSync() {
   };
   try {
     await coordinator.syncNow();
+    // A device records its automatic name after a successful sync (#71);
+    // send it now so relay counts and event sets settle within this call.
+    if (await app.deviceDescription) await coordinator.syncNow();
   } finally {
     coordinator.onState = original;
   }
@@ -403,21 +407,112 @@ async function pageRevokeDeviceButton(label) {
   const originalConfirm = globalThis.confirm;
   globalThis.confirm = () => true;
   try {
+    // Rows show synced device names (#71), so the row is found by the ID
+    // behind the server label.
+    const device = (await h.api("/api/devices")).devices.find((entry) => entry.label === label);
+    if (!device) throw new Error("No trusted device labelled " + label);
+    const row = () => h.querySelector(`li[data-device-id="${device.id}"]`);
     await h.showDevices();
-    const button = [...h.querySelectorAll("button")].find((b) => b.textContent === `Revoke ${label}`);
+    const button = [...(row()?.querySelectorAll("button") ?? [])].find((b) => b.textContent.startsWith("Revoke "));
     if (!button) throw new Error("No revoke control for " + label + ": " + h.textContent);
     button.click();
     for (let i = 0; i < 400; i++) {
       await new Promise((r) => setTimeout(r, 25));
-      if (!h.busy && h.textContent.includes(`${label} — Revoked`)) break;
+      if (!h.busy && row()?.textContent.includes("Revoked")) break;
       const alert = h.querySelector(".household-message");
       if (!h.busy && alert?.getAttribute("role") === "alert") throw new Error("Revocation failed: " + alert.textContent);
     }
-    if (!h.textContent.includes(`${label} — Revoked`)) throw new Error("Device not shown revoked: " + h.textContent);
+    if (!row()?.textContent.includes("Revoked")) throw new Error("Device not shown revoked: " + h.textContent);
     return h.textContent;
   } finally {
     globalThis.confirm = originalConfirm;
   }
+}
+
+// #78: Adult A publishes the household's home-screen identity through the
+// admin-only Home screen section; the manifest and icons then follow A's
+// device cookie. Non-admins have no section and the service refuses them.
+async function pagePublishInstallIdentity({ shortName }) {
+  const app = document.querySelector("kin-app");
+  await app.ctx.appearance.refreshHouseholdDefaults();
+  await app.ctx.appearance.refreshInstallIdentity();
+  const panel = app.householdDefaults.install;
+  if (!panel) return { section: false };
+  const wait = async (predicate, label) => {
+    for (let i = 0; i < 400; i++) { if (predicate()) return; await new Promise((r) => setTimeout(r, 25)); }
+    throw new Error("Timed out waiting for " + label + ": " + panel.textContent);
+  };
+  panel.toggle.click();
+  await wait(() => panel.icons, "first-letter icons");
+  const privacyShown = !panel.privacy.hidden && panel.privacy.textContent.includes("without encryption");
+  const gatedBeforeConfirm = panel.save.disabled;
+  panel.shortName.value = shortName;
+  panel.shortName.dispatchEvent(new Event("input"));
+  panel.confirm.click();
+  panel.save.click();
+  await wait(() => panel.status.textContent.startsWith("Saved"), "the publish");
+  const manifest = await (await fetch("/manifest.webmanifest", { credentials: "same-origin", cache: "no-store" })).json();
+  const icon = new Uint8Array(await (await fetch(manifest.icons[1].src, { credentials: "same-origin" })).arrayBuffer());
+  const view = new DataView(icon.buffer);
+  return {
+    section: true, privacyShown, gatedBeforeConfirm,
+    shortName: manifest.short_name, name: manifest.name, id: manifest.id, iconSrc: manifest.icons[1].src,
+    iconSize: [view.getUint32(16), view.getUint32(20)], withdrawShown: !panel.withdraw.hidden,
+    cached: (await caches.keys()).length ? await Promise.all((await caches.keys()).map(async (key) => Boolean(await (await caches.open(key)).match("/manifest.webmanifest")))) : [],
+  };
+}
+
+async function pageInstallIdentityAsMember() {
+  const app = document.querySelector("kin-app");
+  await app.ctx.appearance.refreshHouseholdDefaults();
+  await app.ctx.appearance.refreshInstallIdentity();
+  const put = await fetch("/api/household/install-identity", { method: "PUT", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const manifest = await (await fetch("/manifest.webmanifest", { credentials: "same-origin", cache: "no-store" })).json();
+  return { section: Boolean(app.householdDefaults.install || document.querySelector("kin-install-identity")), putStatus: put.status, shortName: manifest.short_name };
+}
+
+// #85: turn notifications on and off through the real panel, with the
+// browser's permission prompt and PushManager stubbed (no push service).
+async function pageNotifications(action) {
+  const app = document.querySelector("kin-app");
+  const panel = app.notifications;
+  if (!window.__kinPushStub) {
+    const pair = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+    const raw = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
+    const b64 = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    let current = null;
+    const stub = { prompts: 0, unsubscribed: 0 };
+    window.__kinPushStub = stub;
+    window.Notification = { permission: "default", requestPermission: async () => { stub.prompts += 1; window.Notification.permission = "granted"; return "granted"; } };
+    window.PushManager ??= function PushManager() {};
+    const pushManager = {
+      getSubscription: async () => current,
+      subscribe: async ({ applicationServerKey, userVisibleOnly }) => {
+        stub.userVisibleOnly = userVisibleOnly;
+        current = { options: { applicationServerKey }, unsubscribe: async () => { stub.unsubscribed += 1; current = null; return true; },
+          toJSON: () => ({ endpoint: "https://fcm.googleapis.com/fcm/send/kin-drill", keys: { p256dh: b64(raw), auth: b64(crypto.getRandomValues(new Uint8Array(16))) } }) };
+        return current;
+      },
+    };
+    Object.defineProperty(navigator, "serviceWorker", { configurable: true, value: { ready: Promise.resolve({ pushManager }), controller: null } });
+  }
+  const stub = window.__kinPushStub;
+  await panel.refresh();
+  const wait = async (predicate, label) => {
+    for (let i = 0; i < 200; i++) { if (predicate()) return; await new Promise((r) => setTimeout(r, 25)); }
+    throw new Error("Timed out waiting for " + label + ": " + panel.textContent);
+  };
+  const button = (text) => [...panel.querySelectorAll("button")].find((entry) => entry.textContent === text);
+  if (action === "on") {
+    const promptsBefore = stub.prompts;
+    button("Turn on notifications").click();
+    await wait(() => panel.state.textContent === "On.", "notifications on");
+    return { state: panel.state.textContent, promptedOnlyOnPress: stub.prompts === promptsBefore + 1, userVisibleOnly: stub.userVisibleOnly,
+      status: await (await fetch("/api/push/subscription")).json(), explained: panel.textContent.includes("never include what it is") };
+  }
+  button("Turn off notifications").click();
+  await wait(() => panel.state.textContent === "Off.", "notifications off");
+  return { state: panel.state.textContent, unsubscribed: stub.unsubscribed, status: await (await fetch("/api/push/subscription")).json() };
 }
 
 async function pageRemoveMemberButton(buttonText) {
@@ -705,7 +800,7 @@ async function launchProfile(executable, label, origin) {
 // The drill.
 // ---------------------------------------------------------------------------
 
-export async function householdAuthorityDrill({ executable, origin, service, syncService, clock }) {
+export async function householdAuthorityDrill({ executable, origin, service, syncService, clock, pushes = [] }) {
   let checks = 0;
   const check = (condition, message) => {
     assert.ok(condition, message);
@@ -771,7 +866,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
   try {
     // ---- Profile A: first Adult, household creator -----------------------
     const a = await launch("adult-a");
-    const aBoot = await a.call(pageBootstrap, "Client A");
+    const aBoot = await a.call(pageBootstrap, "Chrome on Windows");
     check(aBoot.identity && aBoot.prf, "Adult A registers with a real virtual passkey and PRF wrapper");
     await a.call(pageAddItem, "A1 before anyone joins");
     const aSync = await a.call(pageEnableSync);
@@ -779,12 +874,12 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     let result = await a.call(pageSync);
     check(result.last?.state !== "paused", "Adult A completes the first relay sync: " + JSON.stringify(result.last));
     const aRelay = relaySession(aBoot.identity.memberId, aBoot.identity.deviceId);
-    check(relayEvents(aRelay).length === 1, "relay holds A1 as one opaque envelope");
+    check(relayEvents(aRelay).length === 2, "relay holds A1 and A's device name (#71) as two opaque envelopes");
     pass(`${checks} household creation assertions (profile A)`);
 
     // ---- Profile B: second Adult -----------------------------------------
     const b = await launch("adult-b");
-    const bIdentity = await join({ inviter: a, invitee: b, kind: "adult", deviceLabel: "Client B" });
+    const bIdentity = await join({ inviter: a, invitee: b, kind: "adult", deviceLabel: "Edge on Windows" });
     let household = await b.callStable(pageHousehold);
     const bMember = household.members.find((member) => member.current);
     check(bMember?.kind === "adult" && bMember.active, "Adult B is an active Adult in the server household view");
@@ -796,17 +891,38 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       "non-admin Adult B cannot create invitations: " + JSON.stringify(bPairing));
     result = await a.call(pageSync); // A commits the rotation and provisions B's epoch keys.
     check(result.last?.state !== "paused", "Adult A rotates and provisions after B joins: " + JSON.stringify(result.last));
+    const notificationsOn = await b.call(pageNotifications, "on");
+    check(notificationsOn.state === "On." && notificationsOn.promptedOnlyOnPress && notificationsOn.userVisibleOnly === true &&
+      notificationsOn.status.subscribed && notificationsOn.explained,
+      "Adult B turns notifications on: one permission prompt after pressing Turn on, a visible-only subscription, the content-free promise stated");
+    const pushesBefore = pushes.length;
     await a.call(pageAddItem, "A2 after B joined");
     result = await a.call(pageSync);
     result = await b.call(pageSync);
     check(result.started && result.items.includes("A2 after B joined"), "Adult B receives A2 through the relay: " + JSON.stringify(result));
+    check(pushes.slice(pushesBefore).includes(bIdentity.deviceId) && !pushes.slice(pushesBefore).includes(aBoot.identity.deviceId),
+      "A's synced change notifies B's device, never the author's own: " + JSON.stringify(pushes.slice(pushesBefore)));
+    const notificationsOff = await b.call(pageNotifications, "off");
+    check(notificationsOff.state === "Off." && notificationsOff.unsubscribed === 1 && !notificationsOff.status.subscribed,
+      "Adult B turns notifications off: the browser subscription and the service's copy are both removed");
     check(!result.items.includes("A1 before anyone joins"),
       "new Adult B receives current and later epochs only; pre-join A1 is not provisioned (PAIRING contract)");
+    const published = await a.call(pagePublishInstallIdentity, { shortName: "Nichols" });
+    check(published.section && published.privacyShown && published.gatedBeforeConfirm,
+      "admin A's Home screen section states what the service will store and requires confirmation before the first publish");
+    check(published.shortName === "Nichols" && published.id === "/" && /^\/install-icon\/512\.png\?v=[a-f0-9]{16}$/.test(published.iconSrc),
+      "A's device receives the published manifest with a stable id and content-versioned icons: " + JSON.stringify(published));
+    check(published.iconSize[0] === 512 && published.iconSize[1] === 512, "the first-letter icon is a real 512x512 PNG drawn in the browser");
+    check(published.withdrawShown && !published.cached.some(Boolean), "Stop showing is offered and the service worker never caches the manifest");
+    const memberView = await b.call(pageInstallIdentityAsMember);
+    check(!memberView.section && memberView.putStatus === 403,
+      "non-admin B has no Home screen section and the service refuses B's publish");
+    check(memberView.shortName === "Nichols", "B's device in the same household receives the published manifest");
     pass(`${checks} Adult admission assertions (profiles A and B)`);
 
     // ---- Profile C: Limited member ---------------------------------------
     let c = await launch("limited-c");
-    await join({ inviter: a, invitee: c, kind: "limited", deviceLabel: "Client C" });
+    await join({ inviter: a, invitee: c, kind: "limited", deviceLabel: "Firefox on Linux" });
     household = await c.callStable(pageHousehold);
     const cMember = household.members.find((member) => member.current);
     check(cMember?.kind === "limited" && cMember.active, "Limited C is an active Limited member");
@@ -826,7 +942,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     result = await a.call(pageSync);
     result = await c.call(pageSync);
     check(result.started && result.last?.state !== "paused", "Limited C syncs after Adult A provisions it: " + JSON.stringify(result.last));
-    const bTrustsC = await b.call(pageTrustDevice, "Client C");
+    const bTrustsC = await b.call(pageTrustDevice, "Firefox on Linux");
     check(bTrustsC.visuallyGated && bTrustsC.gateSurvivedBusyCycle,
       "Adult B's Trust this device control stays disabled through a busy cycle until code confirmation");
     check(bTrustsC.refusedBeforeConfirmation && bTrustsC.unpinnedBeforeConfirmation,
@@ -868,8 +984,8 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     result = await a.call(pageSync);
     check(result.items.includes("C1 limited member item") && !result.items.includes("C2 written offline before removal"),
       "Adult A keeps C1 history and never receives C's post-removal offline event");
-    check(relayEvents(aRelay).filter((row) => row.envelope.deviceId === cDevice.id).length === 1,
-      "relay holds exactly C's single pre-removal envelope from C's device");
+    check(relayEvents(aRelay).filter((row) => row.envelope.deviceId === cDevice.id).length === 2,
+      "relay holds exactly C's two pre-removal envelopes (its device name and C1) from C's device");
     pass(`${checks} member removal during disconnection assertions (profile C)`);
     await retire(c);
 
@@ -877,7 +993,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     const c2 = await launch("temporary-c2");
     // Short real expiry: the server clock is advanced for instant enforcement.
     const temporaryExpiry = clock.now() + 20_000;
-    const c2Identity = await join({ inviter: a, invitee: c2, kind: "temporary", expiresAt: temporaryExpiry, deviceLabel: "Client C2" });
+    const c2Identity = await join({ inviter: a, invitee: c2, kind: "temporary", expiresAt: temporaryExpiry, deviceLabel: "Opera on Linux" });
     household = await c2.callStable(pageHousehold);
     const c2Member = household.members.find((member) => member.current);
     check(c2Member?.kind === "temporary" && c2Member.active && c2Member.expiresAt === temporaryExpiry,
@@ -934,9 +1050,11 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     await b.setOffline(true);
     await b.call(pageAddItem, "B1 written offline before revocation");
     const bBefore = await b.callStable(pageLocal);
+    const bRelayBefore = relayEvents(aRelay).filter((row) => row.envelope.deviceId === bIdentity.deviceId).length;
+    check(bRelayBefore === 1, "before revocation the relay holds only B's device name from B's device");
     check(bBefore.pendingOutbox >= 1, "Adult B holds an unsent outbox entry while offline");
     await a.setOffline(false);
-    await a.call(pageRevokeDeviceButton, "Client B");
+    await a.call(pageRevokeDeviceButton, "Edge on Windows");
     check(Boolean(service.devices.get(bIdentity.deviceId).revokedAt), "Adult A revokes B's device with a fresh passkey through the UI");
     check(service.members.get(bIdentity.memberId).active === true, "device revocation keeps B's membership (device ≠ member)");
     check(syncService.state(aBoot.identity.householdId).grants.has(waitingForA.grantId),
@@ -967,8 +1085,8 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       "revocation leaves B's local history and unsent outbox intact");
     result = await a.call(pageSync);
     check(!result.items.includes("B1 written offline before revocation"), "Adult A never receives B's post-revocation offline event");
-    check(!relayEvents(aRelay).some((row) => row.envelope.deviceId === bIdentity.deviceId),
-      "relay holds no envelope from B's device");
+    check(relayEvents(aRelay).filter((row) => row.envelope.deviceId === bIdentity.deviceId).length === bRelayBefore,
+      "relay holds no envelope B wrote after its revocation");
     pass(`${checks} device revocation during disconnection assertions (profile B)`);
     await retire(b);
 
@@ -1016,7 +1134,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     });
     await d.callStable(pageWaitHousehold);
     const { approved: dApproved, approverKey: dApproverKey } =
-      await verifyAndApprove({ inviter: a, invitee: d, invitation, deviceLabel: "Client D" });
+      await verifyAndApprove({ inviter: a, invitee: d, invitation, deviceLabel: "Safari on Mac" });
     check(dApproved.memberId === aBoot.identity.memberId, "device pairing binds D to Adult A's membership");
     const dActivation = await d.call(pageActivate, { approvingKey: dApproverKey });
     check(dActivation.visuallyGated && dActivation.gateSurvivedBusyCycle,
@@ -1028,12 +1146,14 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     result = await d.call(pageSync);
     if (result.last?.state === "paused") result = await d.call(pageSync);
     check(result.last?.state !== "paused", "restored D syncs after approval: " + JSON.stringify(result.last));
+    result = await a.call(pageSync); // A receives D's device name (#71).
     const dLocal = await d.callStable(pageLocal);
     const aLocal = await a.callStable(pageLocal);
     check(dLocal.items.includes("A3 after export"), "D catches up with history created after the export");
     check(dLocal.events === aLocal.events && JSON.stringify(dLocal.eventIds) === JSON.stringify(aLocal.eventIds),
       `D and A hold identical event sets without duplication (${dLocal.events} events)`);
-    check(relayEvents(aRelay).length === relayTotal, "re-authorizing a restored device adds no duplicate relay events");
+    check(relayEvents(aRelay).length === relayTotal + 1,
+      "re-authorizing a restored device adds only its device name (#71), no duplicate relay events");
     pass(`${checks} clean-profile restore and re-authorization assertions (profile D)`);
 
     // ---- Two authorized clients reconnect after concurrent offline edits ------
@@ -1058,7 +1178,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(aFinal.items.filter((text) => text === "A4 offline concurrent").length === 1 &&
       dFinal.items.filter((text) => text === "D1 offline concurrent").length === 1,
       "repeated syncs do not duplicate items");
-    check(relayEvents(aRelay).length === relayTotal + 2, "relay gained exactly the two concurrent events");
+    check(relayEvents(aRelay).length === relayTotal + 3, "relay gained exactly the two concurrent events");
     pass(`${checks} two-client reconciliation assertions (profiles A and D)`);
     console.log(`PASS ${checks} live household authority and recovery assertions across independent browser profiles`);
     return checks;
@@ -1076,7 +1196,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   await new Promise((resolveClose) => reservation.close(resolveClose));
   const origin = `http://localhost:${applicationPort}`;
   const clock = { offset: 0, now() { return Date.now() + this.offset; } };
-  const { server, store, service, syncService } = createKinServer({
+  const { server, store, service, syncService, pushService } = createKinServer({
     port: applicationPort,
     host: "127.0.0.1",
     origin,
@@ -1084,8 +1204,14 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     now: () => clock.now(),
   });
   await new Promise((resolveListen) => server.listen(applicationPort, "127.0.0.1", resolveListen));
+  // Push services are not reachable from the drill: record what would be sent.
+  const pushes = [];
+  pushService.send = (row) => { pushes.push(row.deviceId); return Promise.resolve({ status: 201 }); };
+  // The drill serves http://127.0.0.1, which push services won't take as a
+  // VAPID subject; name one as an operator would (KIN_PUSH_SUBJECT).
+  pushService.subject = "mailto:drill@example.org";
   try {
-    await householdAuthorityDrill({ executable, origin, service, syncService, clock });
+    await householdAuthorityDrill({ executable, origin, service, syncService, clock, pushes });
   } finally {
     server.closeAllConnections();
     try {

@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { DurableConflictError, MAX_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "./durable-store.mjs";
 import { canManageTrust, canParticipate, isHouseholdAdmin, PairingError, requireTrustAuthority } from "./pairing-service.mjs";
+import { INSTALL_ICONS, installContentTag, installIconUrl, validateInstallIdentity } from "./install-identity.mjs";
 import {
   canonicalEventEnvelope,
   canonicalJson,
@@ -37,6 +38,7 @@ export class EncryptedSyncService {
 
   forgetHousehold(householdId) {
     this.households.delete(householdId);
+    this.pushService?.removeUntrusted(householdId);
   }
 
   status(sessionToken) {
@@ -126,6 +128,103 @@ export class EncryptedSyncService {
     this.pairingService.audit("household_settings_updated", { householdId: auth.household.id, memberId: auth.member.id, deviceId: auth.device.id, revision });
     this.pairingService.persistHousehold(auth.household.id);
     return { revision, accepted: true };
+  }
+
+  // ---- Install identity (#78): published, unencrypted, admin-only --------
+
+  /** The published install identity for this member's household, without
+   * icon bytes, and whether this member may change it. */
+  installIdentity(sessionToken) {
+    const auth = this.authorize(sessionToken);
+    const identity = this.publishedInstallIdentity(auth.household);
+    return {
+      admin: isHouseholdAdmin(auth.member, this.now()),
+      published: identity ? {
+        rev: identity.rev, name: identity.name, shortName: identity.shortName, description: identity.description,
+        iconSource: identity.iconSource, updatedAt: identity.updatedAt,
+        icons: Object.fromEntries(INSTALL_ICONS.map(({ key, file }) => [key, installIconUrl(file, identity)])),
+      } : null,
+    };
+  }
+
+  /** Session, trusted device and active member (authorize), then admin.
+   * A legacy household with no recorded admin has nobody who passes. */
+  installIdentityWriter(sessionToken) {
+    const auth = this.authorize(sessionToken);
+    if (!isHouseholdAdmin(auth.member, this.now()))
+      throw new PairingError("household_admin_required", "Only household admins can change what home screens show.", 403);
+    return auth;
+  }
+
+  publishInstallIdentity(sessionToken, value) {
+    const auth = this.installIdentityWriter(sessionToken);
+    const checked = validateInstallIdentity(value);
+    const record = { ...checked, contentTag: installContentTag(checked), memberId: auth.member.id, deviceId: auth.device.id, updatedAt: this.now() };
+    let rev;
+    if (this.store) {
+      try { rev = this.store.putInstallIdentity(auth.household.id, checked.expectedRev, record); }
+      catch (error) { throw staleInstallIdentity(error); }
+    } else {
+      if ((auth.household.installIdentity?.rev ?? 0) !== checked.expectedRev) throw staleInstallIdentity();
+      rev = Math.max(auth.household.installIdentityLastRev ?? 0, checked.expectedRev) + 1;
+      auth.household.installIdentity = { ...record, rev };
+      auth.household.installIdentityLastRev = rev;
+    }
+    this.pairingService.audit("install_identity_published", { householdId: auth.household.id, memberId: auth.member.id, deviceId: auth.device.id, revision: rev });
+    this.pairingService.persistHousehold(auth.household.id);
+    return { rev, accepted: true };
+  }
+
+  withdrawInstallIdentity(sessionToken, expectedRev) {
+    const auth = this.installIdentityWriter(sessionToken);
+    if (!Number.isSafeInteger(expectedRev) || expectedRev < 1)
+      throw new PairingError("install_identity_invalid", "Those home screen details are invalid.", 400);
+    let withdrawn;
+    if (this.store) {
+      try { withdrawn = this.store.deleteInstallIdentity(auth.household.id, expectedRev); }
+      catch (error) { throw staleInstallIdentity(error); }
+    } else {
+      const current = auth.household.installIdentity;
+      if (current && current.rev !== expectedRev) throw staleInstallIdentity();
+      withdrawn = Boolean(current);
+      delete auth.household.installIdentity;
+    }
+    if (withdrawn) {
+      this.pairingService.audit("install_identity_withdrawn", { householdId: auth.household.id, memberId: auth.member.id, deviceId: auth.device.id, revision: expectedRev });
+      this.pairingService.persistHousehold(auth.household.id);
+    }
+    return { withdrawn };
+  }
+
+  /** The published identity's metadata (no icon bytes), or null. */
+  publishedInstallIdentity(household) {
+    if (!household || household.lifecycleState === "deleted") return null;
+    if (this.store) return this.store.getInstallIdentity(household.id);
+    const { icons, ...identity } = household.installIdentity ?? {};
+    return icons ? identity : null;
+  }
+
+  /** One published icon's bytes for the household, or null. */
+  publishedInstallIcon(householdId, key) {
+    if (this.store) return this.store.getInstallIcon(householdId, key);
+    return this.pairingService.households.get(householdId)?.installIdentity?.icons?.[key] ?? null;
+  }
+
+  /** The identity a browser's kin_device cookie may see: only a trusted,
+   * active device of an active household that published one. Any failure is
+   * null, so the caller serves the built-in Kin manifest and icons. Not rate
+   * limited per device: it never reveals more than the device already has. */
+  installIdentityForDevice(deviceToken) {
+    if (typeof deviceToken !== "string" || !deviceToken) return null;
+    try {
+      const { device } = this.pairingService.trustedDevice(deviceToken);
+      const household = this.pairingService.households.get(device.householdId);
+      const identity = this.publishedInstallIdentity(household);
+      return identity ? { householdId: household.id, identity } : null;
+    } catch (error) {
+      if (error instanceof PairingError) return null;
+      throw error;
+    }
   }
 
   settingsWriteState(auth, keyEpoch) {
@@ -258,6 +357,11 @@ export class EncryptedSyncService {
     // Keep the cached clock serializable: household state is also inspected by
     // diagnostics and tests that JSON-encode it.
     state.maxLogicalTime = maxLogicalTime.toString();
+    // After the commit: tell other members' devices that something is new.
+    // It runs in the background and can never fail or delay this response.
+    if (staged.length) {
+      try { this.pushService?.eventsAccepted(auth.household.id, auth.member.id); } catch { /* best effort */ }
+    }
     return {
       accepted: envelopes.length,
       latestCursor: encodeCursor(state.nextSequence - 1),
@@ -776,6 +880,8 @@ export class EncryptedSyncService {
   }
 
   onAccessChange(householdId, excludedDeviceIds = []) {
+    // Devices that lost access stop getting notifications at once (#85).
+    this.pushService?.removeUntrusted(householdId, excludedDeviceIds);
     const state = this.state(householdId);
     state.rotationPending = true;
     // Keep committed packages only for recipients who still hold trust.
@@ -985,4 +1091,9 @@ function decodeCursor(value) {
       400,
     );
   return cursor;
+}
+
+function staleInstallIdentity(error) {
+  if (error && !(error instanceof DurableConflictError)) return error;
+  return new PairingError("install_identity_stale", "The home screen details changed on another device. Reload and try again.", 409);
 }

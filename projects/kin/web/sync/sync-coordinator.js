@@ -1164,6 +1164,22 @@ export class SyncCoordinator {
     return { ...value, revision: result.revision };
   }
 
+  // The published install identity (#78) is plaintext by design: the admin
+  // chose to show it on home screens, so nothing here is encrypted.
+  loadInstallIdentity() {
+    return this.request("/api/household/install-identity");
+  }
+
+  publishInstallIdentity(value) {
+    if (navigator.onLine === false) throw new Error("Connect to the household before changing what home screens show.");
+    return this.request("/api/household/install-identity", { method: "PUT", body: JSON.stringify(value) });
+  }
+
+  withdrawInstallIdentity(expectedRev) {
+    if (navigator.onLine === false) throw new Error("Connect to the household before changing what home screens show.");
+    return this.request("/api/household/install-identity", { method: "DELETE", body: JSON.stringify({ expectedRev }) });
+  }
+
   stop() {
     this.stopped = true;
     this.abortController.abort();

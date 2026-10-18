@@ -5,6 +5,90 @@ development candidates that never received a release tag; their changes
 ship in v1.0.0. The project's planning releases v0.0.1–v0.0.12 are
 documentation only.
 
+## Unreleased — v1.1.0
+
+### Push notifications (#85)
+
+- **Per device, opt-in.** People & devices → Notifications on this device:
+  turn on (the browser asks only then), mute for 1 hour, 8 hours or until
+  turned back on, or turn off. Clear messages for unsupported browsers,
+  iPhone/iPad outside the Home Screen, and notifications blocked in settings.
+- **Content-free and calm.** "Something new in Kin" (or the household's
+  published name), to other members' devices only, at most one per device
+  every two minutes. Nothing about delivery or reading is recorded.
+- **No dependencies.** Web Push with VAPID (RFC 8292) and RFC 8291 encryption
+  on `node:crypto`, checked against the RFC's test vector. Only the major push
+  services are contacted.
+- **Server schema 11** stores subscriptions and the VAPID key pair. Revoking a
+  device, removing a member, signing out of that browser or deleting the
+  household deletes subscriptions, and so does a push service reporting one
+  will never work (400, 404, 410, 413). A 401 or 403 (the service's own VAPID
+  signature refused) is logged as `push_rejected_by_service` and keeps them.
+  Development databases created from an early build of this branch, before
+  `muted_indefinitely` was added to schema 11, need to be recreated.
+- **Needs a VAPID subject.** The server's `https` origin or `KIN_PUSH_SUBJECT`
+  (`mailto:` or `https:`); without one (a development server on
+  `http://localhost`) the section says notifications aren't set up.
+
+### Service sandbox (#106)
+
+- **Node's permission model.** The service now runs with `--permission`: it can
+  read the app directory and read and write only its data directory, and
+  cannot start processes or workers or load addons. `server/start.mjs` starts
+  it that way (`npm start`, `run.sh`, `run.ps1`, the container and Railway),
+  and the service refuses to start otherwise. `npm run dev` stays unsandboxed
+  because Node's watch mode needs a child process.
+- **If you start Kin your own way** (a systemd unit, a script running
+  `node server/server.mjs`), switch it to `node server/start.mjs`: the service
+  now refuses to start outside the sandbox.
+- `node:sqlite`'s own busy timeout replaces the pragma, and every transaction
+  checks SQLite agrees about whether one is open.
+- New routes use `URLPattern`; locks and stores support `using`.
+- The verification gate gives every Node test a two-minute timeout.
+
+### Household name and icon on home screens (#78)
+
+- **Opt-in.** In Identity & defaults → Home screen, a household admin can show
+  the household's name and icon on installed apps instead of "Kin": a short
+  name, an optional description, and an icon that is the household name's
+  first letter on the household colour or an uploaded image.
+- **Plainly stated.** Before the first publish the panel explains that the name
+  and icon are stored by the Kin service without encryption, and asks the admin
+  to confirm. Everything else stays encrypted; the encrypted household settings
+  are unchanged.
+- **Only your devices.** The manifest and icons are served per device, from the
+  household's trusted devices' cookie; everyone else gets Kin's. "Stop showing"
+  deletes the copy, as does deleting the household.
+- **Updates in place.** The app's identity (`id`, start URL, scope) never
+  changes. Computers and Android pick up changes on their own; iPhone and iPad
+  need the app added again.
+- **Server schema 10.** New tables with a forward migration from 9. A v1.0
+  server can't open a schema-10 database, so keep the pre-upgrade backup if you
+  might roll back.
+- The service worker no longer caches the manifest.
+
+### Device names and nicknames (#71)
+
+- **Nobody types a device name.** Creating or joining a household names the
+  device after its browser and system ("Chrome on iPhone"; "iPhone" in the
+  installed app) and says so in one line.
+- **Nicknames.** Trusted devices now groups devices by member, marks the
+  device you're holding, and lets you rename your own devices inline (up to
+  32 characters, or remove the nickname). A device that hasn't synced a name
+  yet shows as "New device" with the start of its sync code.
+- **Private by design.** Device names are encrypted household events: new
+  event kinds 42 `DEVICE_DESCRIBED` and 43 `DEVICE_NICKNAMED`, read through
+  the new `kin_device_names` export (KDEV v1). Names that could hide
+  characters are rejected. The replay protocol stays 24 and no frozen format
+  changes ([compatibility](docs/V1.0-COMPATIBILITY.md#additions-since-v10)).
+- **The server keeps only automatic names.** Any other label is stored as
+  "Device", and labels typed before v1.1 are reset to "Device" when the
+  service starts.
+- **Update prompt.** A device that receives changes from a newer Kin now says
+  to update Kin on that device; its saved information stays.
+- **Mixed versions.** As soon as a v1.1 device syncs, a v1.0 device in the
+  same household pauses sync until it updates; its data stays.
+
 ## v1.0.0 — Stable Kin Platform
 
 Released 2026-10-17 as `kin-v1.0.0`, with the release candidate

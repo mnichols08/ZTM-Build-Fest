@@ -120,6 +120,9 @@ export const lifecycleMethods = {
           this.members.delete(memberId);
         }
       household.members.clear();
+      // The published install identity is plaintext (#78): erase it too.
+      delete household.installIdentity;
+      delete household.installIdentityLastRev;
       household.lifecycleState = "deleted";
       household.deletionRequestedAt = null;
       household.deletionFinalizeAt = null;

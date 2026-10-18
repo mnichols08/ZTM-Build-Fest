@@ -7,6 +7,7 @@ class ElementStub {
     this.children = [];
     this.attributes = {};
     this.listeners = {};
+    this.dataset = {};
     this.isConnected = true;
     this.textContent = "";
   }
@@ -299,7 +300,10 @@ test("device revocation refreshes the trusted-device list after the passkey oper
     "/api/devices",
   ]);
   const labels = descendants(component.children).map((child) => child.textContent);
-  assert.ok(labels.includes("Kitchen tablet — Revoked"), "list shows the revoked device after refresh");
+  const row = descendants(component.children).find((child) => child.dataset?.deviceId === "other");
+  const line = row.children.find((child) => child.className === "device-name-line");
+  assert.equal(line.children.map((part) => part.textContent ?? part).join(""), "Kitchen tablet — Revoked",
+    "list shows the revoked device after refresh");
   assert.equal(labels.some((label) => label === "Revoke Kitchen tablet"), false, "revoked device offers no further revoke control");
   assert.equal(component.busy, false);
 });
@@ -362,4 +366,48 @@ test("another member's device revocation control fails closed unless the server 
     assert.equal(labels.includes("Revoke Partner phone"), othersVisible, `${name}: another member's device`);
     assert.equal(labels.includes("Revoke Adult phone"), false, `${name}: the current device is never offered`);
   }
+});
+
+test("trusted devices group by member and show synced names, nicknames and placeholders (#71)", async () => {
+  const component = new KinHousehold();
+  component.identity = { memberId: "me", deviceId: "phone" };
+  component.syncKeyError = "skip sync-key access";
+  component.run = async (action) => action();
+  component.api = async () => ({ canManageMembers: false, devices: [
+    { id: "phone", memberId: "me", label: "Chrome on iPhone", revokedAt: null },
+    { id: "partner-mac", memberId: "partner", label: "Device", revokedAt: null, syncKeyFingerprint: "abcd1234" },
+    { id: "laptop", memberId: "me", label: "Firefox on Windows", revokedAt: null },
+  ] });
+  const renamed = [];
+  component.deviceNames = {
+    load: async () => [
+      { deviceId: "phone", memberId: "me", autoName: "Chrome on iPhone", nickname: "Kitchen phone" },
+      { deviceId: "laptop", memberId: "me", autoName: "Firefox on Windows", nickname: null },
+    ],
+    rename: async (deviceId, nickname) => renamed.push([deviceId, nickname]),
+  };
+  await component.showDevices();
+  const descendants = (items) => items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
+  const groups = component.children.filter((child) => child.className === "device-group");
+  assert.deepEqual(groups.map((group) => group.children[0].textContent), ["Your devices", "Household member 1"]);
+  const line = (id) => {
+    const row = descendants(component.children).find((child) => child.dataset?.deviceId === id);
+    return row.children.find((child) => child.className === "device-name-line").children.map((part) => part.textContent ?? part).join("");
+  };
+  assert.equal(line("phone"), "Kitchen phone — Chrome on iPhone · This device · Trusted");
+  assert.equal(line("laptop"), "Firefox on Windows — Trusted");
+  assert.equal(line("partner-mac"), "New device · ABCD — Trusted");
+  const renameButtons = descendants(component.children).filter((child) => child.textContent === "Rename");
+  assert.deepEqual(renameButtons.map((button) => button.attributes["aria-label"]), ["Rename Kitchen phone", "Rename Firefox on Windows"],
+    "only your own named devices can be renamed");
+  const forms = descendants(component.children).filter((child) => child.className === "device-rename-form");
+  const laptopForm = forms[1];
+  const laptopInput = descendants(laptopForm.children).find((child) => child.tagName === "input");
+  laptopInput.value = "  Office laptop ";
+  laptopForm.listeners.submit({ preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(renamed, [["laptop", "Office laptop"]]);
+  const remove = descendants(forms[0].children).find((child) => child.textContent === "Remove nickname");
+  await remove.listeners.click();
+  assert.deepEqual(renamed.at(-1), ["phone", ""]);
 });

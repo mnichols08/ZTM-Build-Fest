@@ -858,6 +858,23 @@ kin-household-defaults { display: grid; gap: 14px; margin-bottom: 32px; padding-
 kin-household-defaults > fieldset { margin: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--r-card); background: color-mix(in srgb, var(--surface) 94%, transparent); }
 kin-household-defaults > fieldset label { display: grid; gap: 6px; font-weight: 650; }
 kin-household-defaults > fieldset input { width: min(100%, 34rem); min-height: var(--tap); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
+kin-install-identity { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: var(--r-card); background: color-mix(in srgb, var(--surface) 94%, transparent); }
+kin-install-identity h3 { margin: 0; font-size: 17px; font-weight: 650; }
+kin-install-identity .install-toggle { display: flex; align-items: center; gap: 10px; min-height: var(--tap); font-weight: 650; }
+kin-install-identity .install-form { display: grid; gap: 12px; }
+kin-install-identity .install-form > label { display: grid; gap: 6px; font-weight: 650; }
+kin-install-identity .install-form input:not([type]), kin-install-identity textarea { width: min(100%, 34rem); min-height: var(--tap); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; font-weight: 400; }
+kin-install-identity small { font-weight: 400; color: var(--ink-muted); }
+kin-install-identity fieldset { display: grid; gap: 6px; margin: 0; padding: 0; border: 0; }
+kin-install-identity fieldset label { display: flex; align-items: center; gap: 10px; min-height: var(--tap); }
+kin-install-identity input[type="checkbox"], kin-install-identity input[type="radio"] { width: 20px; height: 20px; flex: none; }
+kin-install-identity .install-preview { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+kin-install-identity .install-preview-icon img { display: block; width: 72px; height: 72px; border-radius: 22%; box-shadow: 0 1px 3px rgb(0 0 0 / .18); }
+kin-install-identity .install-preview-maskable img { border-radius: 50%; }
+kin-install-identity .install-preview-name { font-size: 13px; color: var(--ink-muted); }
+kin-install-identity .field-error, kin-household-defaults .field-error { margin: 0; color: var(--danger); font-size: 14px; }
+kin-install-identity .field-error:empty, kin-household-defaults .field-error:empty { display: none; }
+kin-install-identity .install-privacy { margin: 0; padding: 10px 12px; border-inline-start: 3px solid var(--accent); background: var(--accent-soft); }
 kin-household-defaults kin-appearance > h2, kin-household-defaults kin-appearance > .section-hint,
 kin-household-defaults kin-appearance .appearance-actions,
 kin-household-defaults kin-appearance .appearance-follow { display: none; }
@@ -986,12 +1003,13 @@ kin-app > .security-panel {
 .recovery-form .security-note { margin: -4px 0 0; }
 .recovery-saved { display: flex; gap: 10px; align-items: flex-start; font-weight: 560; }
 .recovery-saved input { flex: none; margin-top: 1px; }
-.device-name { margin: 2px 0 4px; }
-.device-name summary { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-height: var(--tap); cursor: pointer; color: var(--ink-muted); list-style: none; }
+.device-name { margin: 2px 0 4px; color: var(--ink-muted); }
 .install-disclosure > summary { display: flex; align-items: center; min-height: var(--tap); cursor: pointer; font-weight: 640; list-style: none; }
-.device-name-change { color: var(--accent); text-decoration: underline; }
-.device-name label { display: grid; gap: 6px; margin-top: 4px; font-size: 14px; font-weight: 650; }
-.device-name input { font-weight: 400; }
+.device-group h3 { margin: 16px 0 4px; font-size: 16px; font-weight: 650; }
+.device-rename { display: inline-flex; flex-wrap: wrap; gap: 8px; margin-inline-start: 8px; }
+.device-rename-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.device-rename-form label { display: grid; gap: 6px; font-size: 14px; font-weight: 650; }
+.device-rename-form input { font-weight: 400; }
 .install-help { margin: 12px 0 16px; padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); border-radius: var(--r-card); background: var(--accent-soft); }
 .install-help h3 { margin: 0 0 6px; font-size: 16px; font-weight: 650; }
 .install-help ol { margin: 6px 0 8px; padding-inline-start: 22px; display: grid; gap: 6px; }
@@ -1223,3 +1241,10 @@ kin-app > .security-panel {
   button:focus-visible, input:focus-visible, select:focus-visible,
   a:focus-visible, main:focus-visible { outline: 3px solid Highlight; }
 }
+kin-notifications { display: grid; gap: 10px; margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+kin-notifications h2 { margin: 0; font-size: 18px; font-weight: 650; }
+kin-notifications .notification-state { margin: 0; font-weight: 650; }
+kin-notifications label { display: grid; gap: 6px; font-weight: 650; }
+kin-notifications select { min-height: var(--tap); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; font-weight: 400; }
+kin-notifications .field-error { margin: 0; color: var(--danger); font-size: 14px; }
+kin-notifications .field-error:empty { display: none; }

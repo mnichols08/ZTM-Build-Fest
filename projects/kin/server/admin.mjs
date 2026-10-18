@@ -76,28 +76,18 @@ export async function runAdminCommand(args) {
   ) {
     const householdId = parameters[0];
     const databasePath = resolveDurablePath(defaultDatabasePath);
-    const releaseMaintenanceLock = acquireDatabaseMaintenanceLock(
-      databasePath,
-      "household-purge",
+    // Disposed in reverse: the store closes, then the lock is released,
+    // whatever the purge throws (#106).
+    using _maintenance = acquireDatabaseMaintenanceLock(databasePath, "household-purge");
+    using store = new DurableStore(databasePath);
+    const status = store.forcePurgeHousehold(householdId, Date.now());
+    console.log(
+      [
+        `Kin household ${householdId} was purged and its deletion tombstone was verified.`,
+        JSON.stringify(status, null, 2),
+        "This does not erase browser storage, offline devices, exports, or separately retained backups.",
+      ].join("\n"),
     );
-    let store;
-    try {
-      store = new DurableStore(databasePath);
-      const status = store.forcePurgeHousehold(householdId, Date.now());
-      console.log(
-        [
-          `Kin household ${householdId} was purged and its deletion tombstone was verified.`,
-          JSON.stringify(status, null, 2),
-          "This does not erase browser storage, offline devices, exports, or separately retained backups.",
-        ].join("\n"),
-      );
-    } finally {
-      try {
-        store?.close();
-      } finally {
-        releaseMaintenanceLock();
-      }
-    }
     return;
   }
   throw new DurableStoreError(

@@ -77,7 +77,7 @@ export class SessionController {
       this.app.main.hidden = false;
       this.app.nav.hidden = false;
       this.app.siteTools.hidden = false;
-      this.app.peoplePage.append(this.app.household);
+      this.app.peoplePage.append(this.app.household, this.app.notifications);
       this.app.privacyPage.append(this.app.security);
       this.ctx.navigation.showPageFromLocation();
       this.ctx.status.setStatus("Ready.");

@@ -4,7 +4,7 @@
 //! in replay order, `(logical_time, device_id, event_id)`, through `apply`,
 //! which checks what every event must satisfy and hands the event to its
 //! domain's reducer (items.rs, conversations.rs, routines.rs, records.rs,
-//! household.rs). `finalize` then produces the `HouseholdState` for one
+//! household.rs, devices.rs). `finalize` then produces the `HouseholdState` for one
 //! evaluation time and civil date without changing the replay, so the same
 //! replay can be finalized again later or extended with newer events.
 //!
@@ -31,6 +31,7 @@ use crate::recurrence::CivilDate;
 use crate::state::*;
 
 mod conversations;
+mod devices;
 mod household;
 mod items;
 mod records;
@@ -96,6 +97,8 @@ pub struct Replay {
     pub(super) pins: Vec<PinState>,
     pub(super) playbooks: Vec<PlaybookState>,
     pub(super) playbook_archive_events: BTreeMap<PlaybookId, BTreeSet<(u64, DeviceId)>>,
+    /// Named devices by ID (replay/devices.rs).
+    pub(super) devices: BTreeMap<DeviceId, DeviceNameState>,
     /// Canonical bytes per applied event: an exact duplicate is skipped, a conflicting one fails. Shared, so cloning a Replay does not copy them.
     pub(super) event_bytes: BTreeMap<EventId, Arc<[u8]>>,
     /// Logical time of the last applied event; replay order never goes back.
@@ -268,6 +271,7 @@ impl Replay {
             | K::PinAdded { .. }
             | K::PinRemoved { .. }
             | K::ResponsibilityChanged { .. } => household::apply(self, event)?,
+            K::DeviceDescribed { .. } | K::DeviceNicknamed { .. } => devices::apply(self, event)?,
         }
         self.last_logical_time = event.logical_time;
         self.event_bytes
@@ -344,6 +348,7 @@ impl Replay {
             maintenance_events: self.maintenance_events.clone(),
             attachments: self.attachments.clone(),
             responsibilities: self.responsibilities.clone(),
+            devices: self.devices.values().cloned().collect(),
         })
     }
 }

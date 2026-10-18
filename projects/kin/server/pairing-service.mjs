@@ -13,6 +13,7 @@ import { approveMethods } from "./pairing-service/approve.mjs";
 import { bootstrapLimitMethods, parseHouseholdPolicy } from "./pairing-service/bootstrap-limits.mjs";
 import { claimMethods } from "./pairing-service/claim.mjs";
 import { createMethods } from "./pairing-service/create.mjs";
+import { deviceLabel } from "./pairing-service/device-label.mjs";
 import { deviceMethods } from "./pairing-service/devices.mjs";
 import { lifecycleMethods } from "./pairing-service/lifecycle.mjs";
 import { membershipMethods } from "./pairing-service/membership.mjs";
@@ -67,6 +68,7 @@ export class PairingService {
     this.maxRateBuckets = maxRateBuckets;
     this.store = store;
     store?.finalizeExpiredDeletions(now());
+    store?.resetDeviceLabels(deviceLabel);
     const identity = store?.loadIdentity();
     this.households = identity?.households ?? new Map();
     this.members = identity?.members ?? new Map();

@@ -902,10 +902,10 @@ Testers on real phones found three setup snags:
   (Instagram, the Google app…) can't add to the Home Screen, so it's told to
   open the page in Safari. More has the same steps under Install Kin. Inside
   the installed app, nothing is shown.
-- **Automatic device name.** Create and join fill in the device name from the
+- **Automatic device name.** Create and join name the device from the
   browser and platform ("Chrome on iPhone"; just "iPhone" in the installed
-  app), shown as one line with an optional Change. Encrypted names and
-  nicknames remain issue #71.
+  app) and say so in one line. Nobody types a name; a nickname comes later
+  (§8.2).
 
 ---
 
@@ -924,6 +924,24 @@ Where trust matters, explain the consequence.
 Example:
 
 > Removing this device stops it from syncing new household changes.
+
+Trusted devices (v1.1, #71):
+
+- Devices are grouped by member: "Your devices" first, then one group per
+  other member. Each group is a labelled list.
+- Each row leads with the device's name: its nickname, else its automatic
+  name, else "New device · " and the first four characters of its sync code
+  when it hasn't synced a name yet. After the name come the automatic name (when
+  a nickname hides it), "This device" for the device in your hand, and
+  Trusted or Revoked.
+- Your own devices have **Rename**, which opens an inline Nickname field
+  (at most 32 characters) with Save nickname, Cancel and, when one is set,
+  Remove nickname. Escape cancels and returns focus to Rename. Rename's
+  accessible name includes the device ("Rename Kitchen tablet").
+- Other members' devices can't be renamed. Revoke and the other controls
+  name the device by the same displayed name.
+- The page says why names are safe to set: only household members can see a
+  nickname.
 
 ---
 
@@ -990,6 +1008,44 @@ If a recovery window exists, show it plainly.
 If deletion is final, say so.
 
 Old backups and stale devices must not be presented as legitimate ways to bypass deletion.
+
+---
+
+## 8.8 Notifications on this device (v1.1, #85)
+
+Copy for every state, the Home Screen requirement on iPhone and iPad, and the
+one-line promise are in [PUSH](PUSH.md#what-a-member-sees). Native buttons and
+a native select, 48px targets, a polite status after each change, alert
+semantics on errors, and focus returning to the section's first control.
+
+## 8.7 Home screen name and icon (v1.1, #78)
+
+In Identity & defaults, admins only (the section isn't in the DOM for anyone
+else):
+
+- **Toggle:** "Show our name and icon on home screens", off by default.
+  Turning it on opens the form; nothing is published until Save.
+- **Fields:** Short name (prefilled from the household name, up to 12
+  characters, "Shown under the icon"), Description (optional, up to 200).
+- **Icon:** "First letter of the household name" (default) or "Upload an
+  image", with a preview of the icon and of the round crop some Android
+  launchers use, labelled for screen readers. Save and Stop showing are
+  disabled while a save is in flight, and while an uploaded image can't be
+  used.
+- **Before the first publish:** "Your household name and icon will be stored
+  by the Kin service without encryption so devices can show them on the home
+  screen. Everything else stays encrypted." Save stays disabled until "I
+  understand the name and icon are not encrypted" is checked.
+- **Platforms:** "Computers and Android phones pick up changes on their own,
+  usually within a day. On iPhone and iPad, remove Kin from the Home Screen
+  and add it again to see a change."
+- **Save home screen** reports in a polite status ("Saved. Installed apps show
+  it the next time they check for changes."). Errors use alert semantics. A
+  conflict reloads the latest and says another admin changed it.
+- **Stop showing** (or unchecking the toggle) asks for confirmation, deletes
+  the service's copy and returns focus to the toggle.
+- After a household rename, the status says home screens still show the old
+  name until Save.
 
 ---
 

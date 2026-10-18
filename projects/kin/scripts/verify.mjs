@@ -5,6 +5,10 @@ import { access, readdir, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// No single Node test may hang the gate (#106): network and process tests
+// that stall fail after this long instead of blocking CI until its timeout.
+const NODE_TEST_TIMEOUT_MS = 120_000;
+
 export const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TOOLCHAIN_FILE = join(PROJECT_ROOT, "rust-toolchain.toml");
 const BROWSER_RUNNERS = [
@@ -245,7 +249,7 @@ export async function runVerification({ browser = false, browserExecutable, env 
     } else {
       const testFiles = await collectNodeTests();
       const testResults = [];
-      const nodeTest = await commandResult(`Complete Node server and web suites (${testFiles.length} files)`, process.execPath, ["--test", ...testFiles], { env: { ...env, NODE_NO_WARNINGS: "1" } });
+      const nodeTest = await commandResult(`Complete Node server and web suites (${testFiles.length} files)`, process.execPath, ["--test", `--test-timeout=${NODE_TEST_TIMEOUT_MS}`, ...testFiles], { env: { ...env, NODE_NO_WARNINGS: "1" } });
       testResults.push(nodeTest);
       if (nodeTest.status === "FAIL") testResults.push({ label: `Rust unit tests: skipped after failure in ${nodeTest.label}`, status: "NOT RUN" });
       else testResults.push(await commandResult("Rust unit tests", "cargo", ["test", "--manifest-path", join(PROJECT_ROOT, "Cargo.toml")]));

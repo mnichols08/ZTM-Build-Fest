@@ -5,6 +5,10 @@ import { pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { PairingError, PairingService, parseHouseholdPolicy, requireTrustAuthority } from "./pairing-service.mjs";
+import { deviceLabel } from "./pairing-service/device-label.mjs";
+import { configuredDatabasePath, permissionProblem } from "./permissions.mjs";
+import { builtInManifest, etagMatches, INSTALL_ICONS, publishedManifest } from "./install-identity.mjs";
+import { PushService } from "./push-service.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
 import {
@@ -23,7 +27,7 @@ import {
   MAX_CIPHERTEXT_BYTES,
   RECORD_FIXED,
 } from "../web/sync/envelope-wire.js";
-import { isInsideRoot, resolveDurablePath, webRoot } from "./path-safety.mjs";
+import { isInsideRoot, webRoot } from "./path-safety.mjs";
 import { clientKey, parseTrustedProxies } from "./client-key.mjs";
 
 const FLOW_TTL_MS = 2 * 60_000;
@@ -47,15 +51,7 @@ export function createKinServer(options = {}) {
   // A passed-in service keeps its own policy unless a setting is given here.
   const householdPolicyConfigured = [householdSettings.allowNewHouseholds, householdSettings.maxHouseholds]
     .some((value) => value !== undefined && value !== null && value !== "");
-  const configuredDataDirectory =
-    options.dataDirectory ??
-    process.env.KIN_DATA_DIR ??
-    join(import.meta.dirname, "..", ".kin-data");
-  const databasePath = resolveDurablePath(
-    options.databasePath ??
-      process.env.KIN_DATABASE_PATH ??
-      join(configuredDataDirectory, "kin.sqlite"),
-  );
+  const databasePath = configuredDatabasePath({ databasePath: options.databasePath, dataDirectory: options.dataDirectory });
   const store =
     options.store === false
       ? null
@@ -80,6 +76,12 @@ export function createKinServer(options = {}) {
     for (const [householdId, state] of syncService.households)
       store.saveSyncState(householdId, state, service);
   }
+  // Push notifications (#85). Subscriptions belong to this service's store.
+  // VAPID's subject must be a mailto: or https: URL the push services accept;
+  // the deployment's own origin is one unless KIN_PUSH_SUBJECT says otherwise.
+  const pushService = options.pushService ?? new PushService({ pairingService: service, store, now: options.now ?? (() => Date.now()),
+    subject: process.env.KIN_PUSH_SUBJECT || origin });
+  syncService.pushService = pushService;
   const webauthn =
     options.webauthn ??
     new WebAuthn({
@@ -93,6 +95,7 @@ export function createKinServer(options = {}) {
   const context = {
     service,
     syncService,
+    pushService,
     store,
     webauthn,
     flows: new Map(),
@@ -138,6 +141,17 @@ export function createKinServer(options = {}) {
         store?.assertAvailable();
         await api(request, response, url, context);
         return;
+      }
+      if (request.method === "GET" || request.method === "HEAD") {
+        if (url.pathname === "/manifest.webmanifest") {
+          serveManifest(request, response, context);
+          return;
+        }
+        const icon = INSTALL_ICON_ROUTE.exec({ pathname: url.pathname });
+        if (icon) {
+          serveInstallIcon(request, response, url, icon.pathname.groups.file, context);
+          return;
+        }
       }
       serve(response, url.pathname);
     } catch (error) {
@@ -208,6 +222,7 @@ export function createKinServer(options = {}) {
     server,
     service,
     syncService,
+    pushService,
     webauthn,
     store,
     flows: context.flows,
@@ -221,6 +236,19 @@ if (
 ) {
   let application;
   try {
+    // The sandbox (#106): refuse to serve without it, except for explicit
+    // local development (`npm run dev`), which Node's --watch needs.
+    const unrestricted = process.argv.includes("--unrestricted");
+    const problem = permissionProblem(configuredDatabasePath());
+    if (problem && !unrestricted) {
+      const error = new Error(problem);
+      error.code = "permission_model_required";
+      throw error;
+    }
+    if (unrestricted && process.permission)
+      throw Object.assign(new Error("--unrestricted cannot be combined with Node's permission model."), { code: "permission_model_required" });
+    if (unrestricted)
+      console.warn(JSON.stringify({ event: "permission_model_disabled", message: "Running without Node's permission model. Use this only for local development." }));
     const port = Number(process.env.KIN_PORT ?? 8000);
     const host = process.env.KIN_HOST ?? "127.0.0.1";
     const origin = process.env.KIN_ORIGIN ?? `http://localhost:${port}`;
@@ -268,10 +296,11 @@ if (
       JSON.stringify({
         event: "startup_failed",
         outcome:
-          error.code === "durable_lock_exists"
-            ? "durable_lock_exists"
+          error.code === "durable_lock_exists" || error.code === "permission_model_required"
+            ? error.code
             : "configuration_or_storage",
-        ...(["durable_lock_exists", "trusted_proxies_invalid", "household_policy_invalid"].includes(error.code) ? { message: error.message } : {}),
+        ...(["durable_lock_exists", "trusted_proxies_invalid", "household_policy_invalid", "permission_model_required"].includes(error.code) ? { message: error.message } : {}),
+        ...(error.code === "ERR_ACCESS_DENIED" || error.cause?.code === "ERR_ACCESS_DENIED" ? { message: "Node's permission model denied access to a path the service needs. Start Kin with server/start.mjs, which allows the app and data directories." } : {}),
       }),
     );
     process.exitCode = 1;
@@ -327,6 +356,8 @@ async function api(request, response, url, context) {
     ? await readEnvelopeBatch(request, response)
     : binaryUpload
     ? await readBinary(request, response)
+    : request.method === "PUT" && url.pathname === "/api/household/install-identity"
+    ? await readJsonBody(request, response, MAX_INSTALL_IDENTITY_BODY_BYTES)
     : ["POST", "PUT", "DELETE"].includes(request.method)
     ? await readJsonBody(request, response, MAX_JSON_BODY_BYTES)
     : {};
@@ -441,7 +472,8 @@ async function api(request, response, url, context) {
       {
         purpose: flowPurpose,
         code: body.code,
-        deviceLabel: body.deviceLabel,
+        // Only an automatic name is kept, even in memory (#71).
+        deviceLabel: deviceLabel(body.deviceLabel),
       },
       context,
       { anonymous: body.purpose === "bootstrap" },
@@ -672,6 +704,13 @@ async function api(request, response, url, context) {
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/logout") {
+    // Signing out stops this browser's notifications (#85).
+    // An expired session still names the browser through its device cookie.
+    let signedOutDevice = null;
+    try { signedOutDevice = service.authorize(session).device.id; } catch {
+      try { signedOutDevice = service.trustedDevice(deviceToken, { allowDeletionPending: true }).device.id; } catch { /* no device */ }
+    }
+    if (signedOutDevice) context.pushService.signedOut(signedOutDevice);
     service.logout(session);
     clearCookie(response, "kin_session", secureCookies);
     json(response, 200, { loggedOut: true });
@@ -770,6 +809,37 @@ async function api(request, response, url, context) {
     if (!/^\d+$/.test(expectedRevision ?? "") || !/^[1-9]\d{0,2}$/.test(keyEpoch ?? "") || typeof digest !== "string") throw badRequest();
     json(response, 200, syncService.updateHouseholdSettings(session, { expectedRevision: Number(expectedRevision), keyEpoch: Number(keyEpoch), digest, ciphertext: body }));
     return;
+  }
+  if (url.pathname === "/api/household/install-identity") {
+    if (request.method === "GET") {
+      json(response, 200, syncService.installIdentity(session));
+      return;
+    }
+    if (request.method === "PUT") {
+      json(response, 200, withTransaction(context, () => syncService.publishInstallIdentity(session, body)));
+      return;
+    }
+    if (request.method === "DELETE") {
+      json(response, 200, withTransaction(context, () => syncService.withdrawInstallIdentity(session, body.expectedRev)));
+      return;
+    }
+  }
+  if (url.pathname.startsWith("/api/push/")) {
+    const auth = syncService.authorize(session);
+    const { pushService } = context;
+    if (request.method === "GET" && url.pathname === "/api/push/vapid-public-key") {
+      json(response, 200, { publicKey: pushService.publicKey() });
+      return;
+    }
+    if (url.pathname === "/api/push/subscription") {
+      if (request.method === "GET") { json(response, 200, pushService.status(auth)); return; }
+      if (request.method === "PUT") { json(response, 200, withTransaction(context, () => pushService.subscribe(auth, body))); return; }
+      if (request.method === "DELETE") { json(response, 200, withTransaction(context, () => pushService.unsubscribe(auth))); return; }
+    }
+    if (request.method === "PUT" && url.pathname === "/api/push/mute") {
+      json(response, 200, withTransaction(context, () => pushService.mute(auth, body.choice ?? null)));
+      return;
+    }
   }
   if (request.method === "POST" && url.pathname === "/api/sync/enable") {
     json(response, 200, syncService.enable(session));
@@ -1152,8 +1222,11 @@ function installShutdown({ server, store }) {
       store?.close();
     });
   };
-  process.once("SIGINT", () => shutdown("SIGINT"));
-  process.once("SIGTERM", () => shutdown("SIGTERM"));
+  // `on`, not `once`: a terminal's Ctrl+C reaches the service and its
+  // launcher together, and the launcher forwards a stop too. A repeated
+  // signal must not kill the service before it closes the store and its lock.
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 function defaultAnonymousCapacity(maximum) {
@@ -1269,6 +1342,8 @@ function cookies(request) {
 // JSON request bodies are small control messages; attachments and settings
 // are binary and bounded by the attachment limit (http-body.mjs).
 const MAX_JSON_BODY_BYTES = 256_000;
+// Four base64url PNGs of at most 512 KB each, plus the names.
+const MAX_INSTALL_IDENTITY_BODY_BYTES = 2_850_000;
 
 // Header 8 + 20 * (fixed record 148 + max ciphertext 6,144) = 125,848 bytes.
 const MAX_ENVELOPE_PUSH_BYTES = 8 + MAX_EVENTS_PER_BATCH * (RECORD_FIXED + MAX_CIPHERTEXT_BYTES);
@@ -1366,6 +1441,61 @@ export function fingerprintedShell(html, fingerprint) {
     /(<meta name="kin-version" content="\d+\.\d+\.\d+)(")/,
     (_, prefix, quote) => `${prefix}+${fingerprint}${quote}`,
   );
+}
+
+// New routes match with URLPattern (#106) rather than hand-written parsing.
+const INSTALL_ICON_ROUTE = new URLPattern({ pathname: "/install-icon/:file([a-z0-9\\-]+[.]png)" });
+
+// The install identity (#78) a trusted device's kin_device cookie resolves
+// to, or the built-in Kin manifest and icon. Always private to the browser
+// and never cached by the service worker (web/service-worker.js).
+function serveManifest(request, response, context) {
+  const resolved = context.syncService.installIdentityForDevice(cookies(request).kin_device);
+  const { body, etag } = resolved ? publishedManifest(resolved.householdId, resolved.identity) : builtInManifest();
+  const headers = {
+    "Content-Type": "application/manifest+json",
+    "Cache-Control": "private, no-cache",
+    Vary: "Cookie",
+    ETag: etag,
+  };
+  if (etagMatches(request.headers["if-none-match"], etag)) {
+    response.writeHead(304, headers);
+    response.end();
+    return;
+  }
+  response.writeHead(200, { ...headers, "Content-Length": body.length });
+  response.end(request.method === "HEAD" ? undefined : body);
+}
+
+function serveInstallIcon(request, response, url, file, context) {
+  const icon = INSTALL_ICONS.find((entry) => entry.file === file);
+  const resolved = icon && context.syncService.installIdentityForDevice(cookies(request).kin_device);
+  const published = resolved && context.syncService.publishedInstallIcon(resolved.householdId, icon.key);
+  if (!published) {
+    // Kin has no PNG icon, and iOS ignores an SVG touch icon. A 404 keeps
+    // iOS's own behaviour from before (a screenshot), as it was until #78.
+    if (file === "apple-180.png") {
+      response.writeHead(404, { "Cache-Control": "private, no-cache", Vary: "Cookie" });
+      response.end();
+      return;
+    }
+    // The built-in Kin icon stands in for the other sizes.
+    const body = readFileSync(join(webRoot, "icon.svg"));
+    response.writeHead(200, { "Content-Type": "image/svg+xml", "Cache-Control": "private, no-cache", Vary: "Cookie", "Content-Length": body.length });
+    response.end(request.method === "HEAD" ? undefined : body);
+    return;
+  }
+  const body = published;
+  // A URL naming the current content never changes; any other (the
+  // unversioned apple-touch-icon link, earlier content) is revalidated.
+  const current = url.searchParams.get("v") === resolved.identity.contentTag;
+  response.writeHead(200, {
+    "Content-Type": "image/png",
+    "Cache-Control": current ? "private, max-age=31536000, immutable" : "private, no-cache",
+    Vary: "Cookie",
+    "Content-Length": body.length,
+  });
+  response.end(request.method === "HEAD" ? undefined : body);
 }
 
 function serve(response, pathname) {

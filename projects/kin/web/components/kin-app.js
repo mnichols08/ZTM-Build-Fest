@@ -15,6 +15,7 @@ import "./kin-sync-status.js";
 import "./kin-pulse.js";
 import "./kin-catch-up.js";
 import "./kin-household.js";
+import "./kin-notifications.js";
 import "./kin-security.js";
 import "./kin-appearance.js";
 import "./kin-household-defaults.js";
@@ -59,6 +60,7 @@ const ELEMENT_EVENTS = [
   ["kin:save-appearance", "onSaveAppearance"], ["kin:use-household-appearance", "onUseHouseholdAppearance"],
   ["kin:inherit-appearance-property", "onInheritAppearanceProperty"], ["kin:household-defaults-preview", "onHouseholdDefaultsPreview"],
   ["kin:household-defaults-cancel", "onHouseholdDefaultsCancel"], ["kin:save-household-defaults", "onSaveHouseholdDefaults"],
+  ["kin:publish-install-identity", "onPublishInstallIdentity"], ["kin:withdraw-install-identity", "onWithdrawInstallIdentity"],
   ["keydown", "onDetailKeydown"], ["kin:change-routine-schedule", "onChangeRoutineSchedule"],
   ["kin:open-routine-schedule", "onOpenRoutineSchedule"],
 ];

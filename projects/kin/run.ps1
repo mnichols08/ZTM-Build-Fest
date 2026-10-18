@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$serverPath = Join-Path $projectRoot 'server/server.mjs'
+# server/start.mjs starts the service inside Node's permission model.
+$serverPath = Join-Path $projectRoot 'server/start.mjs'
 $minimumNodeVersion = [version]'24.16.0'
 $nodeVersionText = $null
 $nodeVersion = $null

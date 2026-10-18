@@ -2,7 +2,7 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const SERVER_SCHEMA_VERSION = 9;
+export const SERVER_SCHEMA_VERSION = 11;
 
 export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024 + 4096;
 

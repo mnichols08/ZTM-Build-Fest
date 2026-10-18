@@ -141,3 +141,48 @@ household, or bindings on a local (zero-target) request fail with code 4.
 **023 — Terminal archive.** An archive and a completion of the same Item at the
 same logical time from different devices: the Item is archived in every input
 order.
+
+## Device names (v1.1)
+
+These vectors are written out by hand in `rust/src/device_name_tests.rs`;
+none comes from the production encoders.
+
+**024 — Descriptions and nicknames.** Member 1 describes devices 0x12 and
+0x11, member 2 describes 0x21. Device 0x11 nicknames itself "Kitchen phone",
+then device 0x12 renames it "Mikey’s phone 📱"; 0x11 describes itself again
+as "Chrome on iPhone 17"; member 2 sets and clears a nickname. Expected KDEV
+order 0x11, 0x12, 0x21 with 0x11 keeping its newer automatic name and the
+later nickname, and no nickname on 0x12 or 0x21.
+
+**025 — Authority without poisoning.** After member 1 describes 0x11, member 2
+nicknaming 0x11 or describing 0x11 replays and changes nothing. A history that
+starts with member 1 nicknaming an undescribed 0x11 (a member who joined later)
+replays with a nickname-only entry owned by member 1; a later description by
+member 1 keeps the nickname, one by member 2 replaces the entry. Member 1 can
+still rename it by command; member 2 cannot (code 4).
+
+**026 — Canonical names.** An empty name, surrounding whitespace, a newline,
+U+202E, U+200B, a leading U+FEFF, a 49-character automatic name and a
+33-character nickname all fail decoding with code 2. Forty-eight four-byte
+characters (192 bytes) decode; so does a nickname with a zero-width joiner
+inside an emoji sequence. A zero target device, a short length field, invalid
+UTF-8 and a missing nickname length fail with code 2.
+
+**027 — Not projected.** Replaying an Item with and without a description and
+nickname gives identical KINS bytes except the summary's through event ID.
+
+**028 — KDEV layout.** Two devices encode as `"KDEV"`, version 1, reserved 0,
+count 2, then for each the device ID, member ID, the two u16 lengths and the
+names; the empty table is the 12-byte header with count 0. Held history with
+an identity binding names the bound device and member.
+
+## Push payload (RFC 8291)
+
+**029 — RFC 8291 Appendix A.** Plaintext "When I grow up, I want to be a
+watermelon", application-server private key
+`yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw`, user-agent public key
+`BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4`,
+auth secret `BTBZMqHH6r4Tts7J_aSIgg`, salt `DGv6ra1nlYgDCS1FRnbzlw`.
+`encryptPushPayload` must produce the RFC's message exactly, and decrypting
+it with the user-agent private key `q1dXpw3UpT5VOmu_cf_v6ih07Aems3njxI-JWgLcM94`
+must give the plaintext (`server/push.test.mjs`).
