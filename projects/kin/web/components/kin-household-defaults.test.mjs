@@ -154,7 +154,8 @@ test("the Home screen section exists only for admins and follows the saved house
   const published = { rev: 2, shortName: "Willow" };
   panel.initializeInstall({ published });
   assert.equal(panel.install.tagName, "kin-install-identity");
-  assert.deepEqual(panel.install.state, { published, householdName: "Willow", seed: "#397052" });
+  assert.deepEqual(panel.install.state, { published, householdName: "Willow", seed: "#397052",
+    brand: { version: 1, iconSource: "letter", icon: null } });
   panel.initialize({ admin: false, adminRecorded: true, value: null });
   assert.equal(panel.install, null, "withdrawn authority removes the section");
 });

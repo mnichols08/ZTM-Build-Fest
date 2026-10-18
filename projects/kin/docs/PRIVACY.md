@@ -142,8 +142,9 @@ household name, a short name, an optional description and the icons without
 encryption, so it can build the installed app's manifest. Only the household's
 own trusted devices can fetch them. Withdrawing deletes the copy, as does
 deleting the household; backups taken while it was published still contain
-it. Everything else, including the encrypted household settings, is
-unchanged. See
+it. The unlocked app uses the name and icon from encrypted household settings,
+not this plaintext copy, so withdrawing publication does not remove internal
+branding. See
 [Household identity](HOUSEHOLD-IDENTITY-DEFAULTS.md#published-install-identity).
 
 Device names (v1.1, #71): the server keeps only each device's automatic name

@@ -636,7 +636,7 @@ async function pageRevokeDeviceButton(label) {
 // #78: Adult A publishes the household's home-screen identity through the
 // admin-only Home screen section; the manifest and icons then follow A's
 // device cookie. Non-admins have no section and the service refuses them.
-async function pagePublishInstallIdentity({ shortName }) {
+async function pagePublishInstallIdentity({ shortName, upload = false }) {
   const app = document.querySelector("kin-app");
   await app.ctx.appearance.refreshHouseholdDefaults();
   await app.ctx.appearance.refreshInstallIdentity();
@@ -648,6 +648,15 @@ async function pagePublishInstallIdentity({ shortName }) {
   };
   panel.toggle.click();
   await wait(() => panel.icons, "first-letter icons");
+  if (upload) {
+    const source = panel.icons.icon512;
+    panel.uploadChoice.input.click();
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([source], "household-icon.png", { type: "image/png" }));
+    panel.file.files = transfer.files;
+    panel.file.dispatchEvent(new Event("change"));
+    await wait(() => panel.icons && panel.uploadChoice.input.checked, "uploaded icons");
+  }
   const privacyShown = !panel.privacy.hidden && panel.privacy.textContent.includes("without encryption");
   const gatedBeforeConfirm = panel.save.disabled;
   panel.shortName.value = shortName;
@@ -655,6 +664,7 @@ async function pagePublishInstallIdentity({ shortName }) {
   panel.confirm.click();
   panel.save.click();
   await wait(() => panel.status.textContent.startsWith("Saved"), "the publish");
+  await wait(() => !app.brandUploadedMark.hidden, "the private uploaded header icon");
   const manifest = await (await fetch("/manifest.webmanifest", { credentials: "same-origin", cache: "no-store" })).json();
   const icon = new Uint8Array(await (await fetch(manifest.icons[1].src, { credentials: "same-origin" })).arrayBuffer());
   const view = new DataView(icon.buffer);
@@ -662,6 +672,9 @@ async function pagePublishInstallIdentity({ shortName }) {
     section: true, privacyShown, gatedBeforeConfirm,
     shortName: manifest.short_name, name: manifest.name, id: manifest.id, iconSrc: manifest.icons[1].src,
     iconSize: [view.getUint32(16), view.getUint32(20)], withdrawShown: !panel.withdraw.hidden,
+    privateBrand: app.householdSettings?.brand?.iconSource,
+    header: { name: app.brandTitle.textContent, label: app.brandLink.getAttribute("aria-label"), genericHidden: app.brandGenericMark.hidden,
+      letterHidden: app.brandLetterMark.hidden, uploadHidden: app.brandUploadedMark.hidden },
     cached: (await caches.keys()).length ? await Promise.all((await caches.keys()).map(async (key) => Boolean(await (await caches.open(key)).match("/manifest.webmanifest")))) : [],
   };
 }
@@ -672,7 +685,43 @@ async function pageInstallIdentityAsMember() {
   await app.ctx.appearance.refreshInstallIdentity();
   const put = await fetch("/api/household/install-identity", { method: "PUT", headers: { "Content-Type": "application/json" }, body: "{}" });
   const manifest = await (await fetch("/manifest.webmanifest", { credentials: "same-origin", cache: "no-store" })).json();
-  return { section: Boolean(app.householdDefaults.install || document.querySelector("kin-install-identity")), putStatus: put.status, shortName: manifest.short_name };
+  for (let i = 0; i < 400 && app.brandUploadedMark.hidden; i++) await new Promise((resolve) => setTimeout(resolve, 25));
+  return { section: Boolean(app.householdDefaults.install || document.querySelector("kin-install-identity")), putStatus: put.status, shortName: manifest.short_name,
+    privateBrand: app.householdSettings?.brand?.iconSource,
+    header: { name: app.brandTitle.textContent, label: app.brandLink.getAttribute("aria-label"), genericHidden: app.brandGenericMark.hidden,
+      letterHidden: app.brandLetterMark.hidden, uploadHidden: app.brandUploadedMark.hidden } };
+}
+
+async function pageWithdrawInstallIdentity() {
+  const app = document.querySelector("kin-app");
+  const panel = app.householdDefaults.install;
+  const originalConfirm = globalThis.confirm;
+  globalThis.confirm = () => true;
+  try {
+    panel.stopShowing();
+    for (let i = 0; i < 400 && panel.state.published; i++) await new Promise((resolve) => setTimeout(resolve, 25));
+  } finally { globalThis.confirm = originalConfirm; }
+  const manifest = await (await fetch("/manifest.webmanifest", { credentials: "same-origin", cache: "no-store" })).json();
+  return { published: Boolean(panel.state.published), shortName: manifest.short_name, privateBrand: app.householdSettings?.brand?.iconSource,
+    header: { name: app.brandTitle.textContent, genericHidden: app.brandGenericMark.hidden,
+      letterHidden: app.brandLetterMark.hidden, uploadHidden: app.brandUploadedMark.hidden } };
+}
+
+async function pageHeaderBrandModes() {
+  const app = document.querySelector("kin-app");
+  const previous = structuredClone(app.currentAppearance);
+  const results = [];
+  for (const mode of ["light", "dark"]) {
+    app.ctx.appearance.applyAppearance({ ...previous, mode });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const mark = app.brandMark.getBoundingClientRect();
+    const header = app.header.getBoundingClientRect();
+    results.push({ mode, width: innerWidth, mark: [mark.width, mark.height], headerFits: header.right <= innerWidth,
+      uploadVisible: !app.brandUploadedMark.hidden, genericHidden: app.brandGenericMark.hidden,
+      background: getComputedStyle(app.header).backgroundColor, color: getComputedStyle(app.header).color });
+  }
+  app.ctx.appearance.applyAppearance(previous);
+  return results;
 }
 
 // #85, #90, #227: turn notifications on and off through the real panel, with the
@@ -1159,17 +1208,41 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       "Adult B turns notifications off: the browser subscription and the service's copy are both removed");
     check(!result.items.includes("A1 before anyone joins"),
       "new Adult B receives current and later epochs only; pre-join A1 is not provisioned (PAIRING contract)");
-    const published = await a.call(pagePublishInstallIdentity, { shortName: "Nichols" });
+    await setViewport(a, { width: 320, height: 720, deviceScaleFactor: 1, mobile: true });
+    const published = await a.call(pagePublishInstallIdentity, { shortName: "Nichols", upload: true });
     check(published.section && published.privacyShown && published.gatedBeforeConfirm,
       "admin A's Home screen section states what the service will store and requires confirmation before the first publish");
     check(published.shortName === "Nichols" && published.id === "/" && /^\/install-icon\/512\.png\?v=[a-f0-9]{16}$/.test(published.iconSrc),
       "A's device receives the published manifest with a stable id and content-versioned icons: " + JSON.stringify(published));
-    check(published.iconSize[0] === 512 && published.iconSize[1] === 512, "the first-letter icon is a real 512x512 PNG drawn in the browser");
+    check(published.iconSize[0] === 512 && published.iconSize[1] === 512, "the uploaded icon is a real 512x512 PNG redrawn in the browser");
+    check(published.privateBrand === "upload" && published.header.name && published.header.label === `${published.header.name} — Today` &&
+      published.header.genericHidden && published.header.letterHidden && !published.header.uploadHidden,
+      "admin A's unlocked header uses the uploaded icon from encrypted household settings: " + JSON.stringify(published.header));
+    const mobileBrandModes = await a.call(pageHeaderBrandModes);
+    check(mobileBrandModes.every((entry) => entry.width === 320 && entry.mark[0] === 32 && entry.mark[1] === 32 && entry.headerFits &&
+      entry.uploadVisible && entry.genericHidden && entry.background !== entry.color),
+      "the private brand fits the 320px header in light and dark modes: " + JSON.stringify(mobileBrandModes));
+    await setViewport(a, { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    const desktopBrandModes = await a.call(pageHeaderBrandModes);
+    check(desktopBrandModes.every((entry) => entry.width === 1280 && entry.mark[0] === 32 && entry.mark[1] === 32 && entry.headerFits &&
+      entry.uploadVisible && entry.genericHidden && entry.background !== entry.color),
+      "the private brand fits the desktop header in light and dark modes: " + JSON.stringify(desktopBrandModes));
     check(published.withdrawShown && !published.cached.some(Boolean), "Stop showing is offered and the service worker never caches the manifest");
     const memberView = await b.call(pageInstallIdentityAsMember);
     check(!memberView.section && memberView.putStatus === 403,
       "non-admin B has no Home screen section and the service refuses B's publish");
     check(memberView.shortName === "Nichols", "B's device in the same household receives the published manifest");
+    check(memberView.privateBrand === "upload" && memberView.header.name === published.header.name && memberView.header.label === published.header.label &&
+      memberView.header.genericHidden && memberView.header.letterHidden && !memberView.header.uploadHidden,
+      "non-admin B's unlocked header receives the private household icon and accessible name: " + JSON.stringify(memberView.header));
+    const withdrawn = await a.call(pageWithdrawInstallIdentity);
+    check(!withdrawn.published && withdrawn.shortName === "Kin" && withdrawn.privateBrand === "upload" &&
+      withdrawn.header.genericHidden && withdrawn.header.letterHidden && !withdrawn.header.uploadHidden,
+      "withdrawing plaintext home-screen identity leaves A's encrypted in-app icon intact: " + JSON.stringify(withdrawn));
+    const memberAfterWithdrawal = await b.call(pageInstallIdentityAsMember);
+    check(memberAfterWithdrawal.shortName === "Kin" && memberAfterWithdrawal.privateBrand === "upload" &&
+      memberAfterWithdrawal.header.genericHidden && memberAfterWithdrawal.header.letterHidden && !memberAfterWithdrawal.header.uploadHidden,
+      "B keeps the private in-app icon after normal refresh while the manifest returns to Kin: " + JSON.stringify(memberAfterWithdrawal));
     pass(`${checks} Adult admission assertions (profiles A and B)`);
 
     // ---- Profile C: Limited member ---------------------------------------
