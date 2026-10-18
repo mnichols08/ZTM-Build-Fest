@@ -5,7 +5,7 @@
 // sessions.mjs (bootstrap, sessions, reauthentication), create.mjs (stage 1:
 // an adult creates a pairing), claim.mjs (stage 2: the new device claims it),
 // approve.mjs (stage 3: approval or revocation), then devices.mjs,
-// membership.mjs and lifecycle.mjs. shared.mjs holds the constants, errors
+// membership.mjs, lifecycle.mjs and link.mjs (phone-approved sign-in, #99). shared.mjs holds the constants, errors
 // and member-kind rules; its public names are re-exported here.
 import { createHmac, randomBytes } from "node:crypto";
 import { addMethods } from "./mixins.mjs";
@@ -16,6 +16,7 @@ import { createMethods } from "./pairing-service/create.mjs";
 import { deviceLabel } from "./pairing-service/device-label.mjs";
 import { deviceMethods } from "./pairing-service/devices.mjs";
 import { lifecycleMethods } from "./pairing-service/lifecycle.mjs";
+import { linkMethods } from "./pairing-service/link.mjs";
 import { membershipMethods } from "./pairing-service/membership.mjs";
 import { sessionMethods } from "./pairing-service/sessions.mjs";
 import {
@@ -48,6 +49,7 @@ export {
   TERMINAL_PAIRING_RETENTION_MS,
 } from "./pairing-service/shared.mjs";
 export { MAX_ACTIVE_MEMBERS, MAX_TRUSTED_DEVICES } from "./identity-limits.mjs";
+export { LINK_CODE_ATTEMPTS, LINK_CODE_TTL_MS, LINK_REQUEST_TTL_MS, MAX_LINK_REQUESTS } from "./pairing-service/link.mjs";
 export {
   BOOTSTRAP_LIMIT,
   BOOTSTRAP_WINDOW_MS,
@@ -84,6 +86,8 @@ export class PairingService {
     this.codeIndex = new Map();
     this.sessions = new Map();
     this.claimTokens = new Map();
+    // Phone-approved sign-in requests (#99): process-local, like pairings.
+    this.linkRequests = new Map();
     this.rateBuckets = new Map();
     this.bootstrapBuckets = new Map();
     this.householdPolicy = householdPolicy;
@@ -186,4 +190,4 @@ export class PairingService {
 
 }
 
-addMethods(PairingService, bootstrapLimitMethods, sessionMethods, createMethods, claimMethods, approveMethods, deviceMethods, membershipMethods, lifecycleMethods);
+addMethods(PairingService, bootstrapLimitMethods, sessionMethods, createMethods, claimMethods, approveMethods, deviceMethods, membershipMethods, lifecycleMethods, linkMethods);
