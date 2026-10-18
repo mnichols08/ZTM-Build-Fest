@@ -5,15 +5,19 @@
 // a message: every text goes in through textContent, and links stay plain
 // text (no previews, which would make requests).
 //
-// The message list renders only a window of the log (at most WINDOW_MAX
-// rows): scrolling near the top loads older messages into it and trims the
-// newest, scrolling back down does the reverse, and the position on screen
-// is kept across each change. While the window ends at the latest message
-// new ones are added and, if the list was scrolled to the bottom, scrolled
-// into view; otherwise "Jump to latest" appears.
+// Window: the list renders at most WINDOW_MAX rows of the log. Scrolling near
+// the top (or "Show earlier messages") brings older messages in and trims the
+// newest; scrolling back down does the reverse. While the window ends at the
+// latest message it "follows": new messages join it and, if the list was at
+// the bottom, scroll into view; otherwise "Jump to latest" appears. Paging
+// keeps the rows on screen where they are.
+//
+// Rows are reconciled by message ID: a row whose content didn't change is
+// kept as it is, so focus, selection and an open menu survive new messages.
 //
 // The list is a role="log" region kept quiet (aria-live="off"); a separate
-// polite live region announces only new incoming messages, never paging.
+// polite live region announces only messages from others this view hasn't
+// seen before (by message ID), never paging or the history shown on opening.
 // The draft lives in this element only: locking replaces the element.
 import { chatTextProblem, MAX_CHAT_TEXT_CHARS } from "../chat/chat-room.js";
 
@@ -21,44 +25,71 @@ import { chatTextProblem, MAX_CHAT_TEXT_CHARS } from "../chat/chat-room.js";
 const PAGE = 60;
 /** Most rows kept rendered at once. */
 const WINDOW_MAX = 240;
+/** Newest messages checked for arrivals while the window shows older ones. */
+const ARRIVAL_CHECK = 50;
 /** Pixels from an edge that count as "near" it. */
 const EDGE = 160;
 /** Messages from one author this close together are grouped. */
 const GROUP_MS = 5 * 60_000;
 
 const STATUS_TEXT = { deleted: "Message deleted", "removed-by-admin": "Removed by an admin" };
+const TIME = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+const DATE_TIME = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const FULL = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "short" });
+const ACTION_LABELS = { copy: "Copy text", edit: "Edit", delete: "Delete for everyone", remove: "Remove as admin" };
+
+const visible = (message) => message.status === "live" || message.status === "edited";
 
 class KinChat extends HTMLElement {
   constructor() {
     super();
     this.chatRoom = null;
     this.unsubscribe = null;
-    // The window of the log on screen: indexes [start, end), and whether it
-    // follows the latest message.
-    this.start = 0;
-    this.end = 0;
-    this.following = true;
-    this.total = 0;
-    this.messages = [];
-    this.texts = new Map();
+    this.resetView();
     this.editing = null;
-    this.menuFor = null;
-    this.announcedThrough = null;
+    this.stashedDraft = null;
     this.renderQueued = false;
+    this.pendingMode = null;
     this.rendering = Promise.resolve();
     this.isDisabled = false;
+    this.onDocumentClick = (event) => {
+      if (this.menuFor && !event.composedPath().some((node) => node?.classList?.contains?.("chat-menu-wrap"))) this.closeMenu();
+    };
+  }
+
+  /** Forgets everything about the room on screen. */
+  resetView() {
+    this.start = 0;
+    this.end = 0;
+    this.total = 0;
+    this.following = true;
+    this.messages = [];
+    this.rows = new Map();
+    this.menuFor = null;
+    // Per message: { deleted } is final; { pending } and { failed } are
+    // retried on the room's next change; { loading } while a load runs.
+    this.textStatus = new Map();
+    this.seen = new Set();
+    this.toAnnounce = [];
+    this.wasAtBottom = true;
+    // Until the first render of a room, what's there is history, not news.
+    this.primed = false;
+    this.list?.replaceChildren();
   }
 
   connectedCallback() {
-    if (this.list) return;
+    document.addEventListener("click", this.onDocumentClick);
+    if (this.list) {
+      this.resizeObserver?.observe(this.scroller);
+      return;
+    }
     const section = document.createElement("section");
     section.className = "today-section chat-section";
     const heading = document.createElement("h2");
     heading.id = "chat-heading";
-    heading.textContent = "Chat";
+    heading.textContent = "Household chat";
     this.notice = document.createElement("p");
     this.notice.className = "chat-notice";
-    this.notice.id = "chat-notice";
 
     this.scroller = document.createElement("div");
     this.scroller.className = "chat-scroll";
@@ -70,18 +101,29 @@ class KinChat extends HTMLElement {
     this.older.type = "button";
     this.older.className = "chat-older";
     this.older.textContent = "Show earlier messages";
-    this.older.addEventListener("click", () => this.loadOlder());
+    this.older.addEventListener("click", () => void this.loadOlder({ fromButton: true }));
     this.list = document.createElement("ol");
     this.list.className = "chat-list";
     this.scroller.append(this.older, this.list);
     this.scroller.addEventListener("scroll", () => this.onScroll(), { passive: true });
+    // A hidden panel has no size, so "scroll to the latest" does nothing
+    // there; do it once the list is shown (or resized) while following.
+    if (typeof ResizeObserver === "function") {
+      let height = 0;
+      this.resizeObserver = new ResizeObserver(() => {
+        const next = this.scroller.clientHeight;
+        if (next && (!height || this.wasAtBottom) && this.following) this.scrollToBottom();
+        height = next;
+      });
+      this.resizeObserver.observe(this.scroller);
+    }
 
     this.jump = document.createElement("button");
     this.jump.type = "button";
     this.jump.className = "chat-jump";
     this.jump.textContent = "Jump to latest";
     this.jump.hidden = true;
-    this.jump.addEventListener("click", () => this.jumpToLatest());
+    this.jump.addEventListener("click", () => void this.jumpToLatest());
 
     this.announcer = document.createElement("div");
     this.announcer.className = "visually-hidden";
@@ -98,6 +140,11 @@ class KinChat extends HTMLElement {
     this.input.autocomplete = "off";
     this.input.setAttribute("aria-describedby", "chat-message");
     this.input.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && this.editing) {
+        event.preventDefault();
+        this.stopEditing({ restoreDraft: true });
+        return;
+      }
       // Enter sends and Shift+Enter adds a line on a keyboard device; on a
       // touch screen Enter adds a line and the Send button sends.
       if (event.key !== "Enter" || event.shiftKey || event.isComposing || !this.enterSends()) return;
@@ -113,7 +160,10 @@ class KinChat extends HTMLElement {
     this.cancel.className = "chat-cancel";
     this.cancel.textContent = "Cancel edit";
     this.cancel.hidden = true;
-    this.cancel.addEventListener("click", () => this.stopEditing());
+    this.cancel.addEventListener("click", () => {
+      this.stopEditing({ restoreDraft: true });
+      this.input.focus();
+    });
     this.message = document.createElement("p");
     this.message.id = "chat-message";
     this.message.className = "compose-message";
@@ -126,18 +176,15 @@ class KinChat extends HTMLElement {
     buttons.className = "chat-form-buttons";
     buttons.append(this.send, this.cancel);
     form.append(this.label, this.input, buttons, this.message);
-    this.form = form;
 
     section.append(heading, this.notice, this.scroller, this.jump, form, this.announcer);
     this.replaceChildren(section);
-    document.addEventListener("click", this.closeMenuOnOutside = (event) => {
-      if (this.menuFor && !event.composedPath().some((node) => node?.classList?.contains?.("chat-menu-wrap"))) this.closeMenu();
-    });
-    this.queueRender({ reset: true });
+    this.queueRender("reset");
   }
 
   disconnectedCallback() {
-    if (this.closeMenuOnOutside) document.removeEventListener("click", this.closeMenuOnOutside);
+    document.removeEventListener("click", this.onDocumentClick);
+    this.resizeObserver?.disconnect();
   }
 
   /** The chat room, or null while there is none (sync not set up, locked). */
@@ -146,12 +193,10 @@ class KinChat extends HTMLElement {
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.chatRoom = value ?? null;
-    this.texts.clear();
-    this.announcedThrough = null;
-    this.following = true;
-    this.stopEditing();
-    if (this.chatRoom) this.unsubscribe = this.chatRoom.subscribe(() => this.queueRender());
-    this.queueRender({ reset: true });
+    this.resetView();
+    this.stopEditing({ restoreDraft: true });
+    if (this.chatRoom) this.unsubscribe = this.chatRoom.subscribe(() => this.roomChanged());
+    this.queueRender("reset");
   }
 
   get room() {
@@ -167,24 +212,55 @@ class KinChat extends HTMLElement {
     if (!this.input) return;
     const off = this.isDisabled || !this.chatRoom;
     this.input.disabled = off;
-    this.send.disabled = off;
+    this.send.disabled = off || Boolean(this.sending);
   }
 
   enterSends() {
     return typeof matchMedia !== "function" || matchMedia("(hover: hover) and (pointer: fine)").matches;
   }
 
-  /** Coalesces renders: the room may notify several times in a row. */
-  queueRender(options = {}) {
-    this.pendingReset ||= Boolean(options.reset);
+  /**
+   * The app disables the workspace briefly while it refreshes household
+   * state, which would drop focus from the composer mid-typing; it calls
+   * these around that (app/status.js) so focus and the caret come back.
+   */
+  deferFocusedControl() {
+    if (document.activeElement !== this.input) return;
+    this.deferred = { start: this.input.selectionStart, end: this.input.selectionEnd };
+  }
+
+  settleDeferredFocus() {
+    const deferred = this.deferred;
+    this.deferred = null;
+    if (!deferred || !this.input || this.input.disabled || !this.isConnected) return;
+    this.input.focus({ preventScroll: true });
+    this.input.setSelectionRange(deferred.start, deferred.end);
+  }
+
+  roomChanged() {
+    // Texts that weren't there yet, or couldn't be opened, get another try.
+    for (const [messageId, status] of this.textStatus)
+      if (status.pending || status.failed) this.textStatus.delete(messageId);
+    this.queueRender("update");
+  }
+
+  /**
+   * Coalesces renders: the room may notify several times in a row. A mode
+   * says how the view moves: "reset" (to the latest), "page" (keep the rows
+   * on screen in place), "update" (follow if following at the bottom, else
+   * keep in place).
+   */
+  queueRender(mode = "update") {
+    const rank = { update: 0, page: 1, reset: 2 };
+    if (!this.pendingMode || rank[mode] > rank[this.pendingMode]) this.pendingMode = mode;
     if (this.renderQueued) return this.rendering;
     this.renderQueued = true;
-    this.rendering = this.rendering.then(() => new Promise((resolve) => queueMicrotask(resolve))).then(async () => {
+    this.rendering = this.rendering.then(() => new Promise((resolve) => queueMicrotask(resolve))).then(() => {
       this.renderQueued = false;
-      const reset = this.pendingReset;
-      this.pendingReset = false;
+      const next = this.pendingMode;
+      this.pendingMode = null;
       try {
-        await this.render({ reset });
+        this.render(next);
       } catch (error) {
         this.showNotice(error?.code === "chat_locked" ? "" : "Kin couldn't show the chat right now.");
       }
@@ -193,6 +269,7 @@ class KinChat extends HTMLElement {
   }
 
   showNotice(text) {
+    if (!this.notice) return;
     this.notice.textContent = text;
     this.notice.hidden = !text;
   }
@@ -201,123 +278,210 @@ class KinChat extends HTMLElement {
     const room = this.chatRoom;
     if (!room) return "Chat works once this device syncs with your household. Turn on sync under Household → People & devices.";
     if (room.syncError?.code === "connection_unavailable") return "Offline. Messages you send wait on this device and go out when you reconnect.";
-    if (room.syncError) return `Chat is paused: ${room.syncError.message}`;
+    if (room.syncError) return "Chat is paused until household sync can continue. Messages you send wait on this device.";
     if (room.retireRefusal) return "A message was deleted here, but Kin couldn't delete its content on the household service.";
     if (room.refused?.length) return "Kin skipped a chat message it couldn't verify.";
     return "";
   }
 
-  async render({ reset = false } = {}) {
+  render(mode) {
     if (!this.list) return;
     this.applyDisabled();
     this.showNotice(this.noticeText());
     const room = this.chatRoom;
     if (!room) {
       this.list.replaceChildren();
+      this.rows.clear();
       this.messages = [];
       this.older.hidden = true;
       this.jump.hidden = true;
       return;
     }
-    const wasAtBottom = this.atBottom();
-    const anchor = reset ? null : this.captureAnchor();
-    const probe = room.page({ limit: 1, includeText: false });
-    const previousTotal = this.total;
-    this.total = probe.total;
-    if (reset || this.following) {
-      this.end = this.total;
-      this.start = Math.max(0, this.end - Math.max(PAGE, reset ? PAGE : this.end - this.start));
-      if (this.end - this.start > WINDOW_MAX) this.start = this.end - WINDOW_MAX;
-      this.following = true;
+    const measured = this.scroller.clientHeight > 0;
+    const atBottom = measured ? this.atBottom() : this.wasAtBottom;
+    const wasFollowing = this.following;
+    const anchor = mode === "reset" ? null : this.captureAnchor();
+    const firstRender = !this.primed;
+    this.primed = true;
+
+    // One engine page per render: the newest messages while following,
+    // otherwise the window as it stands.
+    let page;
+    if (mode === "reset") {
+      page = room.page({ limit: PAGE });
+    } else if (this.following) {
+      // The window as it stands plus room for what arrived since, then
+      // trimmed back to where the window starts (and to its size).
+      const wide = room.page({ limit: Math.min(WINDOW_MAX + ARRIVAL_CHECK, this.end - this.start + ARRIVAL_CHECK) });
+      const from = Math.max(this.start, wide.total - WINDOW_MAX);
+      const messages = wide.messages.filter((message) => message.index >= from);
+      page = { ...wide, start: messages[0]?.index ?? wide.total, messages };
+    } else {
+      page = room.page({ before: this.end, limit: Math.max(1, this.end - this.start) });
     }
-    this.start = Math.min(this.start, this.end);
-    const page = this.end > this.start ? room.page({ before: this.end, limit: this.end - this.start }) : { messages: [], start: this.end };
+    this.total = page.total;
     this.messages = page.messages;
     this.start = page.start;
-    this.paint();
+    this.end = page.start + page.messages.length;
+    if (this.end === this.total) this.following = true;
+
+    // Arrivals: messages from others this view hasn't seen. The history
+    // shown on opening (a reset) is seen, not announced.
+    const newest = this.following ? page.messages : room.page({ limit: ARRIVAL_CHECK }).messages;
+    const arrived = [];
+    for (const message of [...page.messages, ...newest]) {
+      if (this.seen.has(message.messageId)) continue;
+      this.seen.add(message.messageId);
+      if (mode !== "reset" && !firstRender && message.authorId !== room.identity.memberId && visible(message)) arrived.push(message);
+    }
+
+    this.reconcile();
     this.older.hidden = this.start === 0;
-    const grew = this.total > previousTotal && previousTotal > 0;
-    if (reset || (this.following && wasAtBottom)) {
+    if (mode === "reset" || (wasFollowing && atBottom && mode !== "page")) {
       this.scrollToBottom();
       this.jump.hidden = true;
     } else {
       if (anchor) this.restoreAnchor(anchor);
-      // Scrolled up, or looking at older messages: offer the way back.
-      if (!this.following || grew) this.jump.hidden = false;
+      if (!this.following || (arrived.length && !atBottom)) this.jump.hidden = false;
+      else if (this.atBottom()) this.jump.hidden = true;
     }
-    if (grew) this.announceNew(previousTotal);
-    else if (this.announcedThrough === null) this.announcedThrough = this.total;
-    // Texts the engine doesn't hold yet: open them, then paint again.
-    const missing = this.messages.filter((message) => message.text === null && message.blobRef && !this.texts.has(message.messageId));
-    if (missing.length) {
-      for (const message of missing) this.texts.set(message.messageId, { loading: true });
-      const results = await room.loadTexts(missing);
-      if (room !== this.chatRoom) return;
-      for (const [messageId, result] of results) this.texts.set(messageId, result);
-      const retry = [...results.values()].some((result) => typeof result.text === "string");
-      if (retry) {
-        const keep = this.captureAnchor();
-        const bottom = this.atBottom();
-        const fresh = room.page({ before: this.end, limit: Math.max(1, this.end - this.start) });
-        this.messages = fresh.messages;
-        this.paint();
-        if (bottom) this.scrollToBottom();
-        else if (keep) this.restoreAnchor(keep);
-      } else this.paint();
-      if (grew) this.announceNew(previousTotal, true);
-    }
+    this.wasAtBottom = measured ? this.atBottom() : atBottom;
+    if (arrived.length) this.toAnnounce.push(...arrived.map((message) => message.messageId));
+    this.flushAnnouncements(newest);
+    this.loadMissingTexts();
   }
 
-  /** Builds the rows of the current window. */
-  paint() {
+  /** Opens texts the engine doesn't hold yet, outside the render queue, and
+   * repaints once they're in. */
+  loadMissingTexts() {
     const room = this.chatRoom;
-    const rows = [];
+    const missing = this.messages.filter((message) => message.text === null && message.blobRef && message.contentKind === "text" && !this.textStatus.has(message.messageId));
+    if (!missing.length) return;
+    for (const message of missing) this.textStatus.set(message.messageId, { loading: true });
+    room.loadTexts(missing).then((results) => {
+      if (room !== this.chatRoom) return;
+      for (const message of missing) {
+        const result = results.get(message.messageId) ?? { failed: true };
+        // Opened text goes to the engine, not here: the next page has it.
+        if (typeof result.text === "string") this.textStatus.delete(message.messageId);
+        else this.textStatus.set(message.messageId, result);
+      }
+      this.queueRender("update");
+    }, () => {
+      if (room !== this.chatRoom) return;
+      for (const message of missing) this.textStatus.set(message.messageId, { failed: true });
+      this.queueRender("update");
+    });
+  }
+
+  /** Announces arrivals once their text is in (or that it can't be). */
+  flushAnnouncements(newest) {
+    const room = this.chatRoom;
+    if (!this.toAnnounce.length || !room) return;
+    const byId = new Map([...this.messages, ...newest].map((message) => [message.messageId, message]));
+    const ready = [], waiting = [];
+    for (const messageId of this.toAnnounce) {
+      const message = byId.get(messageId);
+      if (!message) continue;
+      const status = this.textStatus.get(messageId);
+      if (message.text !== null || !message.blobRef || (status && !status.loading)) ready.push(message);
+      else waiting.push(messageId);
+    }
+    this.toAnnounce = waiting;
+    if (!ready.length) return;
+    const last = ready.at(-1);
+    const more = ready.length > 1 ? `${ready.length} new messages. ` : "";
+    this.say(`${more}${room.authorLabel(last.authorId)}: ${last.text ?? "new message"}`);
+  }
+
+  /** Brings the list in line with this.messages, reusing unchanged rows. */
+  reconcile() {
+    const room = this.chatRoom;
+    const keep = new Map();
     let previous = null;
+    let cursor = this.list.firstElementChild;
     for (const message of this.messages) {
-      rows.push(this.row(message, previous, room));
+      const grouped = Boolean(previous && previous.authorId === message.authorId &&
+        message.postedAt - previous.postedAt < GROUP_MS && visible(previous));
+      const signature = this.signature(message, grouped, room);
+      let entry = this.rows.get(message.messageId);
+      if (!entry || entry.signature !== signature) {
+        const focus = entry ? this.focusIn(entry.row) : null;
+        const row = this.row(message, grouped, room);
+        if (entry) {
+          if (cursor === entry.row) cursor = row;
+          entry.row.replaceWith(row);
+        }
+        entry = { row, signature };
+        if (focus) this.restoreFocus(row, focus);
+      }
+      keep.set(message.messageId, entry);
+      if (entry.row !== cursor) this.list.insertBefore(entry.row, cursor);
+      else cursor = cursor.nextElementSibling;
       previous = message;
     }
-    this.list.replaceChildren(...rows);
+    for (const [messageId, entry] of this.rows) if (!keep.has(messageId)) entry.row.remove();
+    this.rows = keep;
   }
 
-  row(message, previous, room) {
+  signature(message, grouped, room) {
+    const status = this.textStatus.get(message.messageId);
+    return [
+      message.status, message.text ?? "", message.editedAt ?? "", message.blobRef ?? "", grouped,
+      room.pendingMessages?.has(message.messageId) ?? false, status ? Object.keys(status)[0] : "",
+      room.authorLabel(message.authorId), this.menuFor === message.messageId, this.actionsFor(message, room).join(),
+    ].join("\u0000");
+  }
+
+  /** What in `row` has focus, to put it back on its replacement. */
+  focusIn(row) {
+    const active = document.activeElement;
+    if (!active || !row.contains(active)) return null;
+    return active.dataset.action ? { action: active.dataset.action } : { toggle: true };
+  }
+
+  restoreFocus(row, focus) {
+    const target = (focus.action && row.querySelector(`[data-action="${focus.action}"]`)) || row.querySelector(".chat-menu-button");
+    if (target) target.focus({ preventScroll: true });
+    else this.scroller.focus({ preventScroll: true });
+  }
+
+  row(message, grouped, room) {
     const item = document.createElement("li");
     item.className = "chat-row";
     item.dataset.messageId = message.messageId;
-    const own = message.authorId === room.identity.memberId;
-    if (own) item.classList.add("own");
-    const grouped = previous && previous.authorId === message.authorId &&
-      message.postedAt - previous.postedAt < GROUP_MS && previous.status !== "removed-by-admin";
-    const author = room.authorLabel(message.authorId);
+    if (message.authorId === room.identity.memberId) item.classList.add("own");
     if (grouped) item.classList.add("grouped");
+    const author = room.authorLabel(message.authorId);
     const header = document.createElement("p");
-    header.className = "chat-meta";
+    // A grouped row keeps its author and time for screen readers.
+    header.className = grouped ? "chat-meta visually-hidden" : "chat-meta";
     const name = document.createElement("span");
     name.className = "chat-author";
     name.textContent = author;
     const time = document.createElement("time");
     const posted = new Date(message.postedAt);
     time.dateTime = posted.toISOString();
-    time.textContent = posted.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    time.title = posted.toLocaleString();
+    const sameDay = posted.toDateString() === new Date().toDateString();
+    time.textContent = (sameDay ? TIME : DATE_TIME).format(posted);
+    time.title = FULL.format(posted);
     header.append(name, " · ", time);
-    // A grouped row keeps its author and time for screen readers.
-    if (grouped) header.className = "chat-meta visually-hidden";
     item.append(header);
 
     const body = document.createElement("p");
     body.className = "chat-text";
-    const visible = message.status === "live" || message.status === "edited";
-    if (!visible) {
+    if (!visible(message)) {
       body.classList.add("chat-gone");
       body.textContent = STATUS_TEXT[message.status];
+    } else if (message.text !== null) {
+      body.textContent = message.text;
     } else {
-      const loaded = this.texts.get(message.messageId);
-      if (message.text !== null) body.textContent = message.text;
-      else if (loaded?.deleted) { body.classList.add("chat-gone"); body.textContent = "Message deleted"; }
-      else if (loaded?.pending) { body.classList.add("chat-gone"); body.textContent = "Waiting for this message to arrive…"; }
-      else if (loaded?.failed) { body.classList.add("chat-gone"); body.textContent = "This message couldn't be opened."; }
-      else { body.classList.add("chat-gone"); body.textContent = "Loading…"; }
+      const status = this.textStatus.get(message.messageId);
+      body.classList.add("chat-gone");
+      body.textContent = status?.deleted ? "Message deleted"
+        : status?.pending ? "Waiting for this message to arrive…"
+        : status?.failed ? "This message couldn't be opened yet."
+        : "Loading…";
     }
     item.append(body);
 
@@ -330,22 +494,23 @@ class KinChat extends HTMLElement {
       note.textContent = notes.join(" · ");
       item.append(note);
     }
-    const actions = this.actionsFor(message, own, room);
+    const actions = this.actionsFor(message, room);
     if (actions.length) item.append(this.menu(message, actions, author));
     return item;
   }
 
-  actionsFor(message, own, room) {
-    const visible = message.status === "live" || message.status === "edited";
-    if (!visible) return [];
+  actionsFor(message, room) {
+    if (!visible(message)) return [];
+    const own = message.authorId === room.identity.memberId;
     const actions = [];
-    if (message.text !== null) actions.push(["copy", "Copy"]);
-    if (own && message.text !== null) actions.push(["edit", "Edit"]);
-    if (own) actions.push(["delete", "Delete for everyone"]);
-    else if (room.isAdmin) actions.push(["remove", "Remove as admin"]);
+    if (message.text !== null) actions.push("copy");
+    if (own && message.text !== null) actions.push("edit");
+    if (own) actions.push("delete");
+    else if (room.isAdmin) actions.push("remove");
     return actions;
   }
 
+  /** A disclosure: the ⋯ button shows or hides the row's action buttons. */
   menu(message, actions, author) {
     const wrap = document.createElement("div");
     wrap.className = "chat-menu-wrap";
@@ -354,58 +519,74 @@ class KinChat extends HTMLElement {
     toggle.className = "chat-menu-button";
     toggle.textContent = "⋯";
     toggle.setAttribute("aria-label", `Actions for ${author === "You" ? "your" : `${author}'s`} message`);
-    toggle.setAttribute("aria-haspopup", "true");
     const open = this.menuFor === message.messageId;
+    const menuId = `chat-menu-${message.messageId}`;
     toggle.setAttribute("aria-expanded", String(open));
+    toggle.setAttribute("aria-controls", menuId);
     toggle.addEventListener("click", () => {
-      if (this.menuFor === message.messageId) this.closeMenu();
+      if (this.menuFor === message.messageId) this.closeMenu({ focusToggle: true });
       else this.openMenu(message.messageId);
+    });
+    wrap.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || this.menuFor !== message.messageId) return;
+      event.preventDefault();
+      this.closeMenu({ focusToggle: true });
+    });
+    // Tabbing out of the menu closes it.
+    wrap.addEventListener("focusout", (event) => {
+      if (this.menuFor === message.messageId && event.relatedTarget && !wrap.contains(event.relatedTarget)) this.closeMenu();
     });
     wrap.append(toggle);
     if (open) {
       const list = document.createElement("div");
       list.className = "chat-menu";
+      list.id = menuId;
       list.setAttribute("role", "group");
       list.setAttribute("aria-label", "Message actions");
-      for (const [action, label] of actions) {
+      for (const action of actions) {
         const button = document.createElement("button");
         button.type = "button";
         button.dataset.action = action;
-        button.textContent = label;
+        button.textContent = ACTION_LABELS[action];
         button.addEventListener("click", () => void this.act(action, message));
         list.append(button);
       }
-      list.addEventListener("keydown", (event) => {
-        if (event.key !== "Escape") return;
-        this.closeMenu();
-        this.list.querySelector(`[data-message-id="${message.messageId}"] .chat-menu-button`)?.focus();
-      });
       wrap.append(list);
     }
     return wrap;
   }
 
-  openMenu(messageId) {
-    this.menuFor = messageId;
-    this.paint();
-    this.list.querySelector(`[data-message-id="${messageId}"] .chat-menu button`)?.focus();
+  rowFor(messageId) {
+    return this.rows.get(messageId)?.row ?? null;
   }
 
-  closeMenu() {
-    if (!this.menuFor) return;
+  openMenu(messageId) {
+    this.menuFor = messageId;
+    this.reconcile();
+    const menu = this.rowFor(messageId)?.querySelector(".chat-menu");
+    // Bring the whole menu into view (the bottom rows' menus).
+    menu?.scrollIntoView({ block: "nearest" });
+    menu?.querySelector("button")?.focus({ preventScroll: true });
+  }
+
+  closeMenu({ focusToggle = false } = {}) {
+    const messageId = this.menuFor;
+    if (!messageId) return;
     this.menuFor = null;
-    this.paint();
+    this.reconcile();
+    if (focusToggle) this.rowFor(messageId)?.querySelector(".chat-menu-button")?.focus({ preventScroll: true });
   }
 
   async act(action, message) {
     const room = this.chatRoom;
-    this.closeMenu();
+    this.closeMenu({ focusToggle: action === "copy" });
     if (!room) return;
     try {
       if (action === "copy") {
         await navigator.clipboard.writeText(message.text);
         this.say("Copied.");
       } else if (action === "edit") {
+        if (!this.editing) this.stashedDraft = this.input.value;
         this.editing = message;
         this.input.value = message.text;
         this.label.textContent = "Edit message";
@@ -416,18 +597,29 @@ class KinChat extends HTMLElement {
         const question = action === "delete"
           ? "Delete this message for everyone? Its text is deleted from every device when they next sync."
           : "Remove this message for everyone? Everyone will see \"Removed by an admin\".";
-        if (!confirm(question)) return;
+        if (!confirm(question)) {
+          this.rowFor(message.messageId)?.querySelector(".chat-menu-button")?.focus();
+          return;
+        }
         await room.remove(message, { byAdmin: action === "remove" });
         this.say(action === "delete" ? "Message deleted." : "Message removed.");
+        await this.queueRender("update");
+        // The row stays (now "Message deleted") without its actions.
+        this.input.focus();
       }
     } catch (error) {
-      this.message.textContent = error?.message || "Kin couldn't do that right now.";
+      this.message.textContent = action === "copy"
+        ? "Kin couldn't copy that text."
+        : error?.code === "chat_text_invalid" ? error.message : "Kin couldn't do that right now. Try again.";
     }
   }
 
-  stopEditing() {
+  stopEditing({ restoreDraft = false } = {}) {
+    const wasEditing = Boolean(this.editing);
     this.editing = null;
     if (!this.input) return;
+    if (wasEditing && restoreDraft) this.input.value = this.stashedDraft ?? "";
+    this.stashedDraft = null;
     this.label.textContent = "Message";
     this.send.textContent = "Send";
     this.cancel.hidden = true;
@@ -445,50 +637,32 @@ class KinChat extends HTMLElement {
     }
     this.message.textContent = "";
     this.sending = true;
-    this.send.disabled = true;
+    this.applyDisabled();
+    const editing = this.editing;
     try {
-      if (this.editing) await room.edit(this.editing, text);
+      if (editing) await room.edit(editing, text);
       else await room.send(text);
-      // Only clear what was sent: typing that continued meanwhile stays.
-      if (this.input.value === text) this.input.value = "";
-      this.stopEditing();
-      this.following = true;
-      await this.queueRender();
-      this.scrollToBottom();
-      this.jump.hidden = true;
+      if (editing) {
+        // Back to whatever draft was there before editing.
+        this.stopEditing({ restoreDraft: this.input.value === text });
+        await this.queueRender("update");
+      } else {
+        // Only clear what was sent: typing that continued meanwhile stays.
+        if (this.input.value === text) this.input.value = "";
+        await this.queueRender("reset");
+      }
     } catch (error) {
-      this.message.textContent = error?.message || "Kin couldn't send that. Your text is still here.";
+      this.message.textContent = error?.code === "chat_text_invalid" ? error.message : "Kin couldn't send that. Your text is still here.";
     } finally {
       this.sending = false;
       this.applyDisabled();
-      this.input.focus();
+      if (!this.input.disabled) this.input.focus();
     }
   }
 
   say(text) {
     this.announcer.textContent = "";
-    queueMicrotask(() => { this.announcer.textContent = text; });
-  }
-
-  /** Announces messages that arrived from others since the last count. */
-  announceNew(previousTotal, textsLoaded = false) {
-    const room = this.chatRoom;
-    const from = Math.max(this.announcedThrough ?? previousTotal, previousTotal);
-    const incoming = this.messages.filter((message) => message.index >= from &&
-      message.authorId !== room.identity.memberId && (message.status === "live" || message.status === "edited"));
-    if (!textsLoaded) this.announcedThrough = this.total;
-    if (!incoming.length) return;
-    const last = incoming.at(-1);
-    const text = last.text ?? this.texts.get(last.messageId)?.text;
-    if (!text && !textsLoaded && last.text === null) {
-      // Announce once its text is open (render() calls back with it).
-      this.announcedThrough = from;
-      return;
-    }
-    const who = room.authorLabel(last.authorId);
-    const more = incoming.length > 1 ? `${incoming.length} new messages. ` : "";
-    this.say(`${more}${who}: ${text ?? "new message"}`);
-    this.announcedThrough = this.total;
+    setTimeout(() => { this.announcer.textContent = text; }, 50);
   }
 
   atBottom() {
@@ -498,10 +672,12 @@ class KinChat extends HTMLElement {
 
   scrollToBottom() {
     this.scroller.scrollTop = this.scroller.scrollHeight;
+    this.wasAtBottom = true;
   }
 
   /** The first row at or below the top of the view, and where it sits. */
   captureAnchor() {
+    if (!this.scroller.clientHeight) return null;
     const top = this.scroller.getBoundingClientRect().top;
     for (const row of this.list.children) {
       const box = row.getBoundingClientRect();
@@ -511,44 +687,44 @@ class KinChat extends HTMLElement {
   }
 
   restoreAnchor(anchor) {
-    const row = this.list.querySelector(`[data-message-id="${anchor.messageId}"]`);
+    const row = this.rowFor(anchor.messageId);
     if (!row) return;
     const top = this.scroller.getBoundingClientRect().top;
     this.scroller.scrollTop += row.getBoundingClientRect().top - top - anchor.offset;
   }
 
   onScroll() {
-    if (!this.chatRoom || this.paging) return;
+    if (!this.chatRoom || this.paging || !this.scroller.clientHeight) return;
+    this.wasAtBottom = this.atBottom();
     if (this.scroller.scrollTop < EDGE && this.start > 0) void this.loadOlder();
-    else if (this.atBottom() && this.end < this.total) void this.loadNewer();
-    if (this.following && this.atBottom()) this.jump.hidden = true;
+    else if (this.wasAtBottom && !this.following) void this.loadNewer();
+    if (this.following && this.wasAtBottom) this.jump.hidden = true;
   }
 
   /** Brings older messages into the window, trimming the newest past the
    * window's size; the rows on screen stay where they are. */
-  async loadOlder() {
-    if (!this.chatRoom || this.start === 0) return;
+  async loadOlder({ fromButton = false } = {}) {
+    if (!this.chatRoom || this.start === 0 || this.paging) return;
     this.paging = true;
     try {
       this.start = Math.max(0, this.start - PAGE);
-      if (this.end - this.start > WINDOW_MAX) {
-        this.end = this.start + WINDOW_MAX;
-        this.following = false;
-      }
-      await this.queueRender();
+      if (this.end - this.start > WINDOW_MAX) this.end = this.start + WINDOW_MAX;
+      if (this.end < this.total) this.following = false;
+      await this.queueRender("page");
+      // The button hides at the start of history: keep focus in the list.
+      if (fromButton && this.older.hidden) this.scroller.focus({ preventScroll: true });
     } finally {
       this.paging = false;
     }
   }
 
   async loadNewer() {
-    if (!this.chatRoom) return;
+    if (!this.chatRoom || this.paging) return;
     this.paging = true;
     try {
       this.end = Math.min(this.total, this.end + PAGE);
       if (this.end - this.start > WINDOW_MAX) this.start = this.end - WINDOW_MAX;
-      if (this.end === this.total) this.following = true;
-      await this.queueRender();
+      await this.queueRender("page");
     } finally {
       this.paging = false;
     }
@@ -556,7 +732,7 @@ class KinChat extends HTMLElement {
 
   async jumpToLatest() {
     this.following = true;
-    await this.queueRender({ reset: true });
+    await this.queueRender("reset");
     this.jump.hidden = true;
     this.input?.focus();
   }

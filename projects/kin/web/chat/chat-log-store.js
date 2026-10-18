@@ -22,7 +22,7 @@
 //                                          service deletes once it's accepted,
 //                                          and the message it concerns
 //   meta    { key: "state", nextOrder, cursor, deviceSequence, provisional,
-//             admins, members, retiredThrough, refused }
+//             admins, members, membersSignature, retiredThrough, refused }
 //
 // `cursor` is the relay position read up to. `deviceSequence` is the last
 // chat sequence this device used. It starts provisional when the log is new
@@ -89,7 +89,7 @@ function transact(db, names, mode, work) {
 /** Refused relay events remembered for the view to report. */
 const MAX_REFUSED = 100;
 
-const freshState = () => ({ key: STATE_KEY, nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], members: [], retiredThrough: 0, refused: [] });
+const freshState = () => ({ key: STATE_KEY, nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], members: [], membersSignature: null, retiredThrough: 0, refused: [] });
 
 export class ChatLogStore {
   /** Opens (creating if needed) a household's chat log database. */
@@ -228,11 +228,12 @@ export class ChatLogStore {
   /** Records the household admins and members last known (from the
    * verified device directory), so admin removals and author labels show
    * while offline. */
-  async saveDirectory({ admins, members }) {
+  async saveDirectory({ admins, members, membersSignature = null }) {
     return transact(this.db, [META], "readwrite", async ({ meta }) => {
       const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
       state.admins = [...admins];
-      state.members = members.map(({ memberId, kind }) => ({ memberId, kind }));
+      state.members = members.map(({ id, kind, active }) => ({ id, kind, active }));
+      state.membersSignature = membersSignature;
       await settle(meta.put(state));
     });
   }

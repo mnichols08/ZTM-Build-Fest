@@ -26,10 +26,12 @@ export async function chatRegressions() {
   const sources = new Map();
   const start = Date.UTC(2026, 9, 18, 8, 0, 0);
   let clock = 0;
-  const add = (authorId, text, { incoming = false } = {}) => {
-    const messageId = hex(log.length + 1);
-    const blobRef = hex(log.length + 1, 64);
-    log.push({ messageId, authorId, deviceId: hex(9), postedAt: start + (clock += 60_000), editedAt: null, status: "live", contentKind: "text", blobRef, blobKey: new Uint8Array(32).fill(1) });
+  let ids = 0;
+  const add = (authorId, text, { incoming = false, at = log.length } = {}) => {
+    ids += 1;
+    const messageId = hex(ids);
+    const blobRef = hex(ids, 64);
+    log.splice(at, 0, { messageId, authorId, deviceId: hex(9), postedAt: start + (clock += 60_000), editedAt: null, status: "live", contentKind: "text", blobRef, blobKey: new Uint8Array(32).fill(1) });
     // Incoming text isn't in the engine yet: the view must load it.
     if (incoming) sources.set(blobRef, text);
     else held.set(blobRef, text);
@@ -226,6 +228,70 @@ export async function chatRegressions() {
   await settle();
   check(!chat.querySelector(".chat-menu") && document.activeElement?.classList.contains("chat-menu-button"), "Escape closes the menu");
 
+  // Announcements: only others' new messages, once each, never paging.
+  const said = [];
+  const watcher = new MutationObserver(() => { if (announcer.textContent) said.push(announcer.textContent); });
+  watcher.observe(announcer, { childList: true, characterData: true, subtree: true });
+  const quiet = async () => { await settle(); await new Promise((resolve) => setTimeout(resolve, 120)); };
+  said.length = 0;
+  await chat.loadOlder();
+  await quiet();
+  check(said.length === 0, `paging announces nothing (${said})`);
+  await chat.jumpToLatest();
+  await room.send("mine, not announced");
+  await quiet();
+  check(!said.some((text) => text.includes("mine, not announced")), "own messages aren't announced");
+  // A message written offline earlier lands mid-log: still announced as itself.
+  add(other, "late from the train", { incoming: true, at: log.length - 3 });
+  notify();
+  await quiet();
+  check(said.filter((text) => text.includes("late from the train")).length === 1, `a late message is announced once (${said})`);
+  notify();
+  await quiet();
+  check(said.filter((text) => text.includes("late from the train")).length === 1, "and not again");
+  // Focus on a row's button survives a new message.
+  const focusRow = rows().at(-2);
+  focusRow.querySelector(".chat-menu-button").focus();
+  add(other, "while focused", { incoming: true });
+  notify();
+  await quiet();
+  check(document.activeElement === chat.querySelector(`[data-message-id="${focusRow.dataset.messageId}"] .chat-menu-button`), "focus kept across a new message");
+  // A text that couldn't be opened is retried on the next change.
+  const flaky = add(other, "eventually", { incoming: true });
+  const realLoad = room.loadTexts;
+  room.loadTexts = async (messages) => new Map(messages.map((message) => [message.messageId, { failed: true }]));
+  notify();
+  await quiet();
+  check(textOf(chat.querySelector(`[data-message-id="${flaky}"]`)).includes("couldn't be opened"), "failed text shown as such");
+  room.loadTexts = realLoad;
+  notify();
+  await quiet();
+  check(textOf(chat.querySelector(`[data-message-id="${flaky}"]`)) === "eventually", "and retried");
+  // Editing keeps the unsent draft; Cancel (or Escape) brings it back.
+  input.value = "half-written";
+  const editable = rows().findLast((row) => row.classList.contains("own") && row.querySelector(".chat-menu-button"));
+  editable.querySelector(".chat-menu-button").click();
+  await settle();
+  chat.querySelector('.chat-menu [data-action="edit"]').click();
+  await settle();
+  check(input.value !== "half-written", "editing shows the message");
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  check(input.value === "half-written" && chat.querySelector(".chat-cancel").hidden, "Escape cancels the edit and restores the draft");
+  input.value = "";
+  // Scrolling down into the newest page keeps the reader's place.
+  for (let i = 0; i < 6; i += 1) { chat.querySelector(".chat-older").click(); await settle(); }
+  check(!chat.following, "reading older history");
+  while (chat.end < chat.total - 60) await chat.loadNewer();
+  const last = rows().at(-1);
+  scroller.scrollTop = last.offsetTop - scroller.offsetTop - scroller.clientHeight + last.offsetHeight;
+  const lastId = last.dataset.messageId;
+  const lastTop = last.getBoundingClientRect().top;
+  await chat.loadNewer();
+  await settle();
+  const after2 = chat.querySelector(`[data-message-id="${lastId}"]`)?.getBoundingClientRect().top;
+  check(after2 !== undefined && Math.abs(after2 - lastTop) < 3, `reaching the newest page keeps the place (${lastTop} → ${after2})`);
+  watcher.disconnect();
+
   // Offline notice.
   room.syncError = Object.assign(new Error("offline"), { code: "connection_unavailable" });
   notify();
@@ -234,10 +300,47 @@ export async function chatRegressions() {
   room.syncError = null;
 
   // Narrow screens reflow without sideways scrolling.
-  check(scroller.scrollWidth <= scroller.clientWidth + 1, "no sideways scrolling");
+  const width = chat.style.width;
+  chat.style.width = "320px";
+  await settle();
+  check(scroller.scrollWidth <= scroller.clientWidth + 1 && chat.scrollWidth <= 321, "no sideways scrolling at 320px");
+  chat.style.width = width;
+
+  // Opened while hidden (unlock lands on Today): shown, it's at the latest.
   chat.room = null;
   await settle();
   check(!rows().length, "rows dropped without a room");
+  const panel = chat.parentElement;
+  const wasHidden = panel.hidden;
+  panel.hidden = true;
+  const said2 = [];
+  const watcher2 = new MutationObserver(() => { if (announcer.textContent) said2.push(announcer.textContent); });
+  watcher2.observe(announcer, { childList: true, characterData: true, subtree: true });
+  chat.room = room;
+  await settle();
+  panel.hidden = false;
+  await settle();
+  check(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 2, "shown later, the list is at the latest");
+  check(chat.querySelector(".chat-jump").hidden, "no jump needed");
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  check(said2.length === 0, "a new room's history isn't announced");
+  watcher2.disconnect();
+  panel.hidden = wasHidden;
+
+  // An empty room's first message from someone else is announced.
+  const empty = { ...room, page: () => ({ total: 0, start: 0, messages: [], retired: [] }) };
+  const listeners2 = new Set();
+  empty.subscribe = (listener) => { listeners2.add(listener); return () => listeners2.delete(listener); };
+  chat.room = empty;
+  await settle();
+  const first = { messageId: hex(99_999), authorId: other, deviceId: hex(9), postedAt: Date.now(), editedAt: null, status: "live", contentKind: "text", blobRef: null, blobKey: null, text: "hello?", index: 0 };
+  empty.page = () => ({ total: 1, start: 0, messages: [first], retired: [] });
+  for (const listener of listeners2) listener();
+  await settle();
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  check(announcer.textContent === "Adult 2: hello?", `the first message is announced (${announcer.textContent})`);
+  chat.room = null;
+  await settle();
   if (!app) chat.remove();
   return "chat regressions passed";
 }

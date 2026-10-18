@@ -255,10 +255,12 @@ database per household, `kin-chat-log:<householdId>`, version 1
   events the relay hasn't accepted, the blob each uploads first and the blob
   it replaced. A message in the outbox shows as waiting to send.
 - `meta`: `{ key: "state", nextOrder, cursor, deviceSequence, provisional,
-  admins, members, retiredThrough, refused }`: the relay position read up
-  to, this device's last chat sequence ([SYNC](SYNC.md#chat-relay-v11-111)),
-  the household admins and members (ID and kind) last seen (so removals and
-  author labels show offline), how many events'
+  admins, members, membersSignature, retiredThrough, refused }`: the relay
+  position read up to, this device's last chat sequence
+  ([SYNC](SYNC.md#chat-relay-v11-111)), the household admins last seen and
+  the household's member list (ID, kind, active, in the service's order, with
+  the directory state it was fetched for) so removals and author labels show
+  offline, how many events'
   replaced blobs were already deleted here, and the last 100 relay events
   skipped because they failed authentication.
 

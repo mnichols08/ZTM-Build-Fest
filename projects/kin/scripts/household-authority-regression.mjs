@@ -356,6 +356,10 @@ async function pageSync() {
     original(value);
   };
   try {
+    // A pass already running (a live hint's, or chat's) may have started
+    // before the change this call wants to see: let it finish, then run one
+    // of our own.
+    await coordinator.running;
     await coordinator.syncNow();
     // A device records its automatic name after a successful sync (#71);
     // send it now so relay counts and event sets settle within this call.

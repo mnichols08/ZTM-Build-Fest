@@ -27,6 +27,7 @@ import { ChatBlobStore } from "./chat-blob-store.js";
 import { ChatBlobs } from "./chat-blobs.js";
 import { ChatLogError, ChatLogStore } from "./chat-log-store.js";
 import { ChatRecords } from "./chat-records.js";
+import { memberLabels } from "../components/household/member-labels.js";
 
 /** Most events one push sends (the relay's batch bound). */
 export const MAX_CHAT_PUSH = 20;
@@ -78,14 +79,14 @@ export function chatAdmins(devices, now = Date.now()) {
     .map((device) => device.memberId))].sort().slice(0, 16);
 }
 
-/** Members in the order the device directory lists them, with their kind,
- * for labelling authors ("Adult 2"): Kin keeps no member names. */
-export function chatMembers(devices) {
-  const members = [];
+/** What of the device directory decides member labels (each member's kind
+ * and whether they're active): when it changes, the room asks the service
+ * for the household's member list again. */
+export function chatMembershipSignature(devices) {
+  const members = new Map();
   for (const device of devices)
-    if (!members.some((member) => member.memberId === device.memberId))
-      members.push({ memberId: device.memberId, kind: device.memberKind ?? "adult" });
-  return members;
+    members.set(device.memberId, `${device.memberKind ?? "adult"}:${device.memberActive !== false}`);
+  return [...members].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)).map((entry) => entry.join("=")).join(",");
 }
 
 /** Most characters one message holds (the engine's rule, chat.rs). */
@@ -106,7 +107,6 @@ export function chatTextProblem(text) {
   return null;
 }
 
-const KIND_LABELS = { adult: "Adult", limited: "Limited member", temporary: "Temporary member" };
 
 /** The chat room for a browser page, with its blob store and client, or
  * null where there is no IndexedDB (Node tests of the coordinator). */
@@ -283,18 +283,18 @@ export class ChatRoom {
     const state = await this.store.state();
     this.admins = state.admins ?? [];
     this.members = state.members ?? [];
+    this.membersSignature = state.membersSignature ?? null;
+    this.labels = memberLabels(this.members, this.identity.memberId);
     this.retiredThrough = state.retiredThrough ?? 0;
     this.refused = state.refused ?? [];
   }
 
   /** How the view names a message's author: "You", or the member's kind and
-   * place among members of that kind ("Adult 2"), as People & devices does. */
+   * number ("Adult 2") exactly as Household access lists them
+   * (member-labels.js); a member no longer listed is a "Former member". */
   authorLabel(memberId) {
     if (memberId === this.identity.memberId) return "You";
-    const member = this.members.find((entry) => entry.memberId === memberId);
-    if (!member) return "Household member";
-    const others = this.members.filter((entry) => entry.kind === member.kind && entry.memberId !== this.identity.memberId);
-    return `${KIND_LABELS[member.kind] ?? "Member"} ${others.indexOf(member) + 1}`;
+    return this.labels.get(memberId) ?? (this.members.some((member) => member.id === memberId) ? "Former member" : "Household member");
   }
 
   /** Whether this member may remove others' messages. */
@@ -445,12 +445,26 @@ export class ChatRoom {
     if (deviceKeys) this.deviceKeys = deviceKeys;
     this.currentEpoch = status.currentEpoch;
     const admins = chatAdmins(devices, this.now());
-    const members = chatMembers(devices);
     const adminsChanged = admins.join() !== this.admins.join();
-    if (adminsChanged || JSON.stringify(members) !== JSON.stringify(this.members)) {
-      await this.store.saveDirectory({ admins, members });
+    const signature = chatMembershipSignature(devices);
+    let members = this.members, membersSignature = this.membersSignature;
+    if (signature !== this.membersSignature) {
+      // The household's member list, in the service's order, for labels.
+      // Without it (offline, say) the labels wait for a later pass.
+      try {
+        const household = await this.request("/api/household");
+        members = (household.members ?? []).map(({ id, kind, active }) => ({ id, kind, active: active !== false }));
+        membersSignature = signature;
+      } catch (error) {
+        if (error?.code !== "connection_unavailable" && error?.code !== "sync_client_rate_budget") throw error;
+      }
+    }
+    if (adminsChanged || membersSignature !== this.membersSignature) {
+      await this.store.saveDirectory({ admins, members, membersSignature });
       this.admins = admins;
       this.members = members;
+      this.membersSignature = membersSignature;
+      this.labels = memberLabels(members, this.identity.memberId);
       // Different admins can make an existing removal count, retiring its
       // blob: look at the retired list again this pass.
       if (adminsChanged) this.retiredThrough = 0;

@@ -17,6 +17,7 @@ import { ChatLogStore, chatLogDatabaseName } from "./chat-log-store.js";
 import { ChatRecords } from "./chat-records.js";
 import { chatAdmins, chatTextProblem, ChatRoom, MAX_CHAT_PULL } from "./chat-room.js";
 import { fakeIndexedDB, fakeKeyRange } from "./fake-indexeddb.test-support.mjs";
+import { memberLabels } from "../components/household/member-labels.js";
 import { loadKinEngine } from "../wasm/kin-engine.js";
 
 const WASM = new URL("../wasm/kin_engine.wasm", import.meta.url);
@@ -193,6 +194,7 @@ test("a message written offline waits, then reaches the other device through the
   assert.equal(b.room.authorLabel(s.admin.memberId), "Adult 1", "named as People & devices names members");
   assert.equal(b.room.authorLabel(s.partner.memberId), "You");
   assert.equal(b.room.authorLabel("ee".repeat(16)), "Household member");
+  assert.equal(a.room.authorLabel(s.partner.memberId), "Adult 2", "the founder sees the partner as Household access does");
   assert.equal(b.request.paths.filter((path) => path === "GET /api/chat/status").length, 1, "a new log settles its sequence once");
   assert.equal(b.room.records.length, 2);
   // Pulling again finds nothing new and stores nothing twice.
@@ -459,6 +461,7 @@ test("pending events sealed under an older key epoch are sealed again before the
   const request = async (path, options = {}) => {
     if (request.offline) throw Object.assign(new Error("offline"), { code: "connection_unavailable" });
     if (path === "/api/chat/status") return { deviceSequence: relaySequence };
+    if (path === "/api/household") return { members: [{ id: "bb".repeat(16), kind: "adult", active: true }] };
     if (path.startsWith("/api/chat/events") && options.method === "POST") {
       const batch = decodeEnvelopeBatch(options.body);
       pushed.push(...batch);
@@ -498,7 +501,7 @@ test("the chat log store keeps each event once and one sequence per send", async
   const one = await ChatLogStore.open(householdId, { indexedDB, keyRange: fakeKeyRange });
   const two = await ChatLogStore.open(householdId, { indexedDB, keyRange: fakeKeyRange });
   const envelope = (eventId, deviceSequence) => ({ eventId, deviceSequence });
-  assert.deepEqual(await one.state(), { key: "state", nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], members: [], retiredThrough: 0, refused: [] });
+  assert.deepEqual(await one.state(), { key: "state", nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], members: [], membersSignature: null, retiredThrough: 0, refused: [] });
   await one.addLocal(envelope("01".repeat(16), 1), { blobRef: "ab".repeat(32) });
   // Another tab sending with the same sequence loses and retries.
   await assert.rejects(two.addLocal(envelope("02".repeat(16), 1)), (error) => error.code === "chat_sequence_taken");
@@ -520,6 +523,20 @@ test("the chat log store keeps each event once and one sequence per send", async
   assert.equal(state.refused.at(-1).eventId, "119");
   assert.ok(indexedDB.databases.has(chatLogDatabaseName(householdId)));
   await assert.rejects(ChatLogStore.open("nope", { indexedDB, keyRange: fakeKeyRange }), (error) => error.code === "chat_log_unavailable");
+});
+
+test("members are labelled as Household access lists them", () => {
+  const members = [
+    { id: "a", kind: "adult", active: true },
+    { id: "b", kind: "adult", active: false },
+    { id: "c", kind: "limited", active: true },
+    { id: "d", kind: "adult", active: true },
+    { id: "e", kind: "temporary", active: false },
+    { id: "f", kind: "temporary", active: true },
+  ];
+  assert.deepEqual([...memberLabels(members, "d")], [
+    ["a", "Adult 1"], ["d", "You"], ["c", "Limited member 1"], ["e", "Temporary member 1"], ["f", "Temporary member 2"],
+  ]);
 });
 
 test("a message must follow the engine's text rule before it is sent", async () => {

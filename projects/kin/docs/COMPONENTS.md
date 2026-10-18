@@ -227,28 +227,40 @@ property takes the household chat room (`web/chat/chat-room.js`), which the
 sync coordinator hands the app once it opens (`onChatRoom`) and takes back on
 stop; without one the element explains that chat needs sync and turns its
 composer off. The room owns the chat log, sending and sync; the element
-renders a window of at most 240 rows of `room.page()`, loads older pages as
-the list scrolls up (keeping the rows on screen in place) and trims the
-newest, and shows "Jump to latest" when the latest message isn't in view.
-Texts the engine doesn't hold yet are opened through `room.loadTexts()` and
-painted when they arrive. Every text goes in through `textContent`; links stay
-plain text.
+renders a window of at most 240 rows of `room.page()` (one engine page per
+render), loads older pages as the list scrolls up and newer ones as it
+scrolls down (keeping the rows on screen in place) and trims the far end,
+and shows "Jump to latest" when the latest message isn't in view. Rows are
+reconciled by message ID, so an unchanged row (with its focus or selection)
+survives new messages. Opened while its panel is hidden, it scrolls to the
+latest once shown. Texts the engine doesn't hold yet are opened through
+`room.loadTexts()` outside the render queue and painted when they arrive; one
+that isn't there yet or couldn't be opened is retried on the room's next
+change. Every text goes in through `textContent`; links stay plain text.
 
 - **Composer:** a labelled `<textarea>`; on a keyboard device Enter sends and
   Shift+Enter adds a line, on touch Enter adds a line; a Send button on every
-  device. The draft lives only in the element, which locking replaces. Text
-  is checked against the engine's rule (`chatTextProblem`) before sending.
-- **Rows:** author ("You", or the member's kind and number, as People &
-  devices names members: Kin keeps no member names), time, text, "Edited",
+  device. The draft lives only in the element, which locking replaces; Edit
+  keeps it aside and Cancel (or Escape) brings it back. Text is checked
+  against the engine's rule (`chatTextProblem`) before sending. The app
+  disables the workspace briefly while it refreshes, so the element puts
+  focus and the caret back afterwards (`deferFocusedControl` /
+  `settleDeferredFocus`, like the item detail).
+- **Rows:** author ("You", or the member's kind and number exactly as
+  Household access lists them, from the shared `member-labels.js`: Kin keeps
+  no member names; "Former member" once someone's access ended), time (with
+  the date when it isn't today), text, "Edited",
   "Waiting to send" while the room's outbox holds the message, and "Message
   deleted" or "Removed by an admin". Consecutive messages from one author
   within five minutes are grouped; the hidden author stays for screen
-  readers. A menu button per row offers Copy, Edit and Delete for everyone on
-  your own messages and Remove as admin on others' for household admins;
-  Escape closes it and returns focus.
+  readers. A disclosure button per row shows Copy text, Edit and Delete for
+  everyone on your own messages and Remove as admin on others' for household
+  admins; Escape or tabbing away closes it, and focus returns to the button.
 - **Accessibility:** the list is a focusable `role="log"` region with
-  `aria-live="off"`; a separate polite live region announces only new
-  incoming messages ("Adult 2: …"), never paging. Controls are 48px targets;
+  `aria-live="off"`; a separate polite live region announces only messages
+  from others this view hasn't seen before, by message ID ("Adult 2: …"),
+  once each and after their text opens: never paging, your own messages or
+  the history shown on opening. Controls are 48px targets;
   rows wrap at 320px; colours follow the theme tokens and forced colours.
 
 ## v0.5.0 Pulse

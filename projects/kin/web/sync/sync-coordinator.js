@@ -321,6 +321,9 @@ export class SyncCoordinator {
       .catch(async (error) => {
         if (this.stopped) return;
         this.lastSyncOk = false;
+        // Chat syncs after a full household pass, so a failed pass pauses
+        // chat too: tell the chat room why (offline, say).
+        if (!["sync_rate_limited", "sync_client_rate_budget"].includes(error.code)) this.chat?.reportSync(error);
         let message = error.message || "Device sync is paused.";
         let code = error.code;
         // This session can't hold a socket either: stop reconnecting (an
