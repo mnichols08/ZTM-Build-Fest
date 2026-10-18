@@ -22,7 +22,10 @@ export const MAX_CHAT_BLOB_BYTES = 4 * 1024 * 1024 + 4096;
 export const MAX_HOUSEHOLD_CHAT_BLOB_BYTES = 256 * 1024 * 1024;
 export const MAX_HOUSEHOLD_CHAT_BLOBS = 250_000;
 export const MAX_HOUSEHOLD_CHAT_TOMBSTONES = 500_000;
-export const MAX_HOUSEHOLD_CHAT_CLAIMS = 100_000;
+// Claims are bounded per member, and pruning only ever drops the claiming
+// member's own oldest claims, so nobody's flood pushes out another
+// member's (or an admin's) claim.
+export const MAX_MEMBER_CHAT_CLAIMS = 20_000;
 
 export const MAX_AUDIT_ROWS = 10_000;
 

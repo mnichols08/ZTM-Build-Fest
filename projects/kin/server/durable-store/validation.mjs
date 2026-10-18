@@ -113,6 +113,8 @@ export const validationMethods = {
       )
         throw new DurableStoreError("Kin security audit data is invalid.");
     }
+    if (!this.chatBlobUsageMatches())
+      throw new DurableStoreError("Kin chat storage counts are invalid.");
     return true;
   },
 };

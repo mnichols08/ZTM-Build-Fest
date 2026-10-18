@@ -165,6 +165,18 @@ bothStores("quotas count live blobs only; tombstones and claims never block reti
   assert.equal(h.service.storage.chatBlobUsage(id).claims, 2);
 });
 
+bothStores("a flood of one member's claims never pushes out another member's claim", (h) => {
+  h.service.storage.chatBlobLimits = { claims: 2 };
+  const early = blob();
+  h.service.retire(h.auth(h.partner), [early.ref]);
+  for (let index = 0; index < 10; index += 1) {
+    clock.now += 1;
+    h.service.retire(h.auth(h.other), [blob().ref]);
+  }
+  assert.equal(h.service.storage.chatBlobUsage(h.admin.householdId).claims, 3, "two of the flooder's, one of the author's");
+  assert.throws(() => h.service.put(h.auth(h.partner), early.ref, early.bytes), rejects("chat_blob_deleted", 410));
+});
+
 bothStores("members who can't take part can't use chat blobs", (h) => {
   const content = blob();
   const auth = h.auth(h.partner);
@@ -208,6 +220,20 @@ test("blobs, tombstones and claims persist; retired bytes leave the database fil
   assert.equal(store.householdPurgeStatus(h.admin.householdId).counts.chatBlobs, 0);
   assert.equal(store.chatBlobMeta(h.admin.householdId, kept.ref), null);
   assert.equal(store.validate(), true);
+});
+
+test("validation notices running counts that drifted from the rows", () => {
+  const store = new DurableStore(":memory:");
+  try {
+    const h = household({ store });
+    const content = blob();
+    h.service.put(h.auth(h.partner), content.ref, content.bytes);
+    assert.equal(store.validate(), true);
+    store.db.prepare("UPDATE chat_blob_usage SET live_bytes = live_bytes + 1").run();
+    assert.throws(() => store.validate(), /chat storage counts/);
+  } finally {
+    store.close();
+  }
 });
 
 test("the chat blob routes need a trusted session and move raw bytes", { timeout: 30_000 }, async (t) => {

@@ -377,10 +377,12 @@ async function api(request, response, url, context) {
     syncService.forgetHousehold(householdId);
   // A chat blob upload is authorized before its body is read, so nobody
   // without a session can make the service buffer 4 MiB.
-  if (request.method === "PUT" && /^\/api\/chat\/blobs\/[a-f0-9]{64}$/.test(url.pathname))
-    syncService.authorize(cookies(request).kin_session);
+  const chatBlobRoute = CHAT_BLOB_ROUTE.exec({ pathname: url.pathname })?.pathname.groups.ref ?? null;
+  const chatUploadAuth = request.method === "PUT" && chatBlobRoute
+    ? syncService.authorize(cookies(request).kin_session)
+    : null;
   const binaryUpload = (request.method === "POST" && /^\/api\/sync\/attachments\/[a-f0-9]{32}$/.test(url.pathname)) ||
-    (request.method === "PUT" && /^\/api\/chat\/blobs\/[a-f0-9]{64}$/.test(url.pathname)) ||
+    chatUploadAuth !== null ||
     (request.method === "PUT" && url.pathname === "/api/household/settings");
   // Event envelopes travel as binary batches (web/sync/envelope-wire.js).
   const envelopePush = request.method === "POST" && url.pathname === "/api/sync/events";
@@ -859,14 +861,13 @@ async function api(request, response, url, context) {
       return;
     }
   }
-  const chatBlobRoute = url.pathname.match(/^\/api\/chat\/blobs\/([a-f0-9]{64})$/);
-  if (chatBlobRoute && request.method === "PUT") {
-    const auth = syncService.authorize(session);
-    json(response, 200, withTransaction(context, () => context.chatBlobService.put(auth, chatBlobRoute[1], body)));
+  if (chatUploadAuth) {
+    // Authorized (and rate-limited) once, before the body was read.
+    json(response, 200, withTransaction(context, () => context.chatBlobService.put(chatUploadAuth, chatBlobRoute, body)));
     return;
   }
   if (chatBlobRoute && request.method === "GET") {
-    const bytes = context.chatBlobService.get(syncService.authorize(session), chatBlobRoute[1]);
+    const bytes = context.chatBlobService.get(syncService.authorize(session), chatBlobRoute);
     response.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": bytes.length, "Cache-Control": "no-store" });
     response.end(bytes);
     return;
@@ -1500,6 +1501,7 @@ export function fingerprintedShell(html, fingerprint) {
 
 // New routes match with URLPattern (#106) rather than hand-written parsing.
 const INSTALL_ICON_ROUTE = new URLPattern({ pathname: "/install-icon/:file([a-z0-9\\-]+[.]png)" });
+const CHAT_BLOB_ROUTE = new URLPattern({ pathname: "/api/chat/blobs/:ref([a-f0-9]{64})" });
 
 // The install identity (#78) a trusted device's kin_device cookie resolves
 // to, or the built-in Kin manifest and icon. Always private to the browser

@@ -63,6 +63,13 @@ export const lifecycleMethods = {
     };
   },
 
+  /** Purge zeroes freed pages; checkpointing the WAL afterwards carries the
+   * zeroed pages into the main file at once (outside a transaction only). */
+  checkpointAfterPurge(result) {
+    if (!this.db.isTransaction) this.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+    return result;
+  },
+
   householdPurgeStatus(householdId) {
     this.assertAvailable();
     if (!isId(householdId))
@@ -138,7 +145,7 @@ export const lifecycleMethods = {
       throw new DurableStoreError(
         "Kin forced household deletion metadata is invalid.",
       );
-    return this.transaction(() => {
+    return this.checkpointAfterPurge(this.transaction(() => {
       const lifecycle = this.lifecycleInfo(householdId);
       if (!lifecycle)
         throw new DurableStoreError("The Kin household does not exist.");
@@ -159,7 +166,7 @@ export const lifecycleMethods = {
       if (!status.purged)
         throw new DurableStoreError("Kin could not verify the household purge.");
       return status;
-    });
+    }));
   },
 
   requestHouseholdDeletion(householdId, requestedAt, finalizeAt) {
@@ -211,7 +218,7 @@ export const lifecycleMethods = {
   finalizeExpiredDeletions(now) {
     if (!isTimestamp(now))
       throw new DurableStoreError("Kin household deletion time is invalid.");
-    return this.transaction(() => {
+    return this.checkpointAfterPurge(this.transaction(() => {
       const rows = this.db
         .prepare(
           `SELECT id FROM households
@@ -234,7 +241,7 @@ export const lifecycleMethods = {
           .run(now, householdId);
       }
       return rows.map(({ id }) => id);
-    });
+    }));
   },
 
   loadNonActiveHouseholds() {

@@ -563,7 +563,7 @@ export const schemaMethods = {
               created_at INTEGER NOT NULL,
               PRIMARY KEY (household_id, blob_ref, member_id)
             );
-            CREATE INDEX chat_blob_claims_by_age ON chat_blob_claims(household_id, created_at);
+            CREATE INDEX chat_blob_claims_by_member ON chat_blob_claims(household_id, member_id, created_at);
             CREATE TABLE chat_blob_usage (
               household_id TEXT PRIMARY KEY REFERENCES households(id),
               live_blobs INTEGER NOT NULL DEFAULT 0 CHECK (live_blobs >= 0),

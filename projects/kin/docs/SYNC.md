@@ -396,17 +396,19 @@ deleting the blob deletes the content.
   while its upload is in flight also retires it right after the upload.
 - **Erasure on the service.** Retiring drops a blob's bytes with SQLite's
   `secure_delete`, so freed pages are zeroed, and then checkpoints the WAL;
-  household purge zeroes chat pages the same way. Backups taken earlier
+  household purge zeroes chat pages the same way and checkpoints after it
+  commits. An admin removal's audit row commits together with the retire. Backups taken earlier
   still hold the bytes, and restoring one brings those blobs back as they
   were at the backup, tombstones included or not; devices that already
   deleted their copies keep their own record of the deletion.
 - **Bounds.** Per household: 256 MiB of live blobs and 250,000 live blobs;
   beyond either, uploads fail with `chat_storage_full` until content is
   retired. Running counts keep every upload's check constant-time.
-  Tombstones (at most 500,000) and claims (at most 100,000) never block
-  retiring: past their bound the oldest are dropped, after which a very old
+  Tombstones (at most 500,000 per household) and claims (at most 20,000 per
+  member) never block retiring: past their bound the oldest are dropped
+  (for claims, only the claiming member's own), after which a very old
   retired blob could be uploaded again by someone who kept its bytes. #125
-  revisits all four with measured chat volume.
+  revisits these bounds with measured chat volume.
 - **On the device,** blobs live in their own IndexedDB database per
   household ([STORAGE](STORAGE.md#chat-content-blobs-v11-110)).
 - Household deletion purges every blob and tombstone at finalization. An

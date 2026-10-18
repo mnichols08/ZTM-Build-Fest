@@ -24,7 +24,7 @@ import {
   MAX_CHAT_BLOB_BYTES,
   MAX_HOUSEHOLD_CHAT_BLOB_BYTES,
   MAX_HOUSEHOLD_CHAT_BLOBS,
-  MAX_HOUSEHOLD_CHAT_CLAIMS,
+  MAX_MEMBER_CHAT_CLAIMS,
   MAX_HOUSEHOLD_CHAT_TOMBSTONES,
   MIN_CHAT_BLOB_BYTES,
 } from "./durable-store.mjs";
@@ -45,11 +45,12 @@ class MemoryChatBlobStore {
     this.blobs = new Map();
     this.claims = new Map();
     this.chatBlobLimits = {};
+    this.order = 0;
   }
   get limits() {
     return {
       blobs: MAX_HOUSEHOLD_CHAT_BLOBS, bytes: MAX_HOUSEHOLD_CHAT_BLOB_BYTES,
-      tombstones: MAX_HOUSEHOLD_CHAT_TOMBSTONES, claims: MAX_HOUSEHOLD_CHAT_CLAIMS,
+      tombstones: MAX_HOUSEHOLD_CHAT_TOMBSTONES, claims: MAX_MEMBER_CHAT_CLAIMS,
       ...this.chatBlobLimits,
     };
   }
@@ -80,7 +81,7 @@ class MemoryChatBlobStore {
     const existing = this.blobs.get(key);
     if (existing) return existing.retired ? "deleted" : "exists";
     const claims = this.claims.get(key);
-    if (claims && [...claims].some(([member, byAdmin]) => member === memberId || byAdmin)) return "deleted";
+    if (claims && [...claims].some(([member, claim]) => member === memberId || claim.byAdmin)) return "deleted";
     const usage = this.chatBlobUsage(householdId);
     if (usage.liveBlobs >= this.limits.blobs || usage.liveBytes + ciphertext.length > this.limits.bytes) return "full";
     this.claims.delete(key);
@@ -90,7 +91,7 @@ class MemoryChatBlobStore {
     });
     return "accepted";
   }
-  retireChatBlobs(householdId, refs, { memberId, admin, now }) {
+  retireChatBlobs(householdId, refs, { memberId, admin, now, within = () => {} }) {
     const rows = refs.map((ref) => [ref, this.blobs.get(this.key(householdId, ref))]);
     if (!admin && rows.some(([, row]) => row && !row.retired && row.uploaderMemberId !== memberId)) return "forbidden";
     let retired = 0, claimed = 0, othersRetired = 0;
@@ -106,21 +107,24 @@ class MemoryChatBlobStore {
         if (!this.claims.has(key)) this.claims.set(key, new Map());
         const members = this.claims.get(key);
         if (!members.has(memberId)) claimed += 1;
-        members.set(memberId, members.get(memberId) || admin);
+        members.set(memberId, { byAdmin: members.get(memberId)?.byAdmin || admin, at: now, order: this.order += 1 });
       }
     }
-    this.prune(householdId);
-    return { retired, claimed, othersRetired };
+    this.prune(householdId, memberId);
+    const result = { retired, claimed, othersRetired };
+    within(result);
+    return result;
   }
-  prune(householdId) {
+  prune(householdId, memberId) {
     const tombstones = this.rows(this.blobs, householdId).filter(([, row]) => row.retired)
       .sort(([, a], [, b]) => a.retiredAt - b.retiredAt || a.ref.localeCompare(b.ref));
     for (const [key] of tombstones.slice(0, Math.max(0, tombstones.length - this.limits.tombstones))) this.blobs.delete(key);
-    let excess = this.chatBlobUsage(householdId).claims - this.limits.claims;
-    for (const [key] of this.rows(this.claims, householdId)) {
-      if (excess <= 0) break;
-      excess -= this.claims.get(key).size;
-      this.claims.delete(key);
+    const own = this.rows(this.claims, householdId)
+      .filter(([, members]) => members.has(memberId))
+      .sort(([, a], [, b]) => a.get(memberId).order - b.get(memberId).order);
+    for (const [key, members] of own.slice(0, Math.max(0, own.length - this.limits.claims))) {
+      members.delete(memberId);
+      if (!members.size) this.claims.delete(key);
     }
   }
   forgetHousehold(householdId) {
@@ -184,15 +188,17 @@ export class ChatBlobService {
     const householdId = auth.household.id;
     const result = this.storage.retireChatBlobs(householdId, refs, {
       memberId: auth.member.id, admin: isHouseholdAdmin(auth.member, this.now()), now: this.now(),
+      // Admin removals are visible to everyone in the chat; the audit
+      // records that one happened, never what it was. It is written in the
+      // retire's transaction: both happen or neither does.
+      within: ({ othersRetired }) => {
+        if (!othersRetired) return;
+        this.pairingService.audit("chat_content_removed_by_admin", { householdId, memberId: auth.member.id, deviceId: auth.device.id, count: othersRetired });
+        this.pairingService.persistHousehold(householdId);
+      },
     });
     if (result === "forbidden")
       throw new PairingError("chat_blob_retire_forbidden", "Only the person who sent a message or a household admin can delete its content.", 403);
-    // Admin removals are visible to everyone in the chat; the audit records
-    // that one happened, never what it was.
-    if (result.othersRetired) {
-      this.pairingService.audit("chat_content_removed_by_admin", { householdId, memberId: auth.member.id, deviceId: auth.device.id, count: result.othersRetired });
-      this.pairingService.persistHousehold(householdId);
-    }
     return { retired: result.retired, claimed: result.claimed };
   }
 

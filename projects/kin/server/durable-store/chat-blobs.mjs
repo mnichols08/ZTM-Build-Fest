@@ -8,7 +8,7 @@
 import {
   MAX_HOUSEHOLD_CHAT_BLOB_BYTES,
   MAX_HOUSEHOLD_CHAT_BLOBS,
-  MAX_HOUSEHOLD_CHAT_CLAIMS,
+  MAX_MEMBER_CHAT_CLAIMS,
   MAX_HOUSEHOLD_CHAT_TOMBSTONES,
 } from "./shared.mjs";
 
@@ -16,7 +16,7 @@ import {
 function limits(store) {
   return {
     blobs: MAX_HOUSEHOLD_CHAT_BLOBS, bytes: MAX_HOUSEHOLD_CHAT_BLOB_BYTES,
-    tombstones: MAX_HOUSEHOLD_CHAT_TOMBSTONES, claims: MAX_HOUSEHOLD_CHAT_CLAIMS,
+    tombstones: MAX_HOUSEHOLD_CHAT_TOMBSTONES, claims: MAX_MEMBER_CHAT_CLAIMS,
     ...store.chatBlobLimits,
   };
 }
@@ -89,7 +89,7 @@ export const chatBlobMethods = {
    * so the bytes don't linger in the database files (backups keep them).
    * Returns { retired, claimed, othersRetired }.
    */
-  retireChatBlobs(householdId, refs, { memberId, admin, now }) {
+  retireChatBlobs(householdId, refs, { memberId, admin, now, within = () => {} }) {
     this.assertAvailable();
     const secureDelete = this.db.prepare("PRAGMA secure_delete").get().secure_delete;
     this.db.exec("PRAGMA secure_delete = ON");
@@ -116,8 +116,11 @@ export const chatBlobMethods = {
           }
         }
         this.adjustChatBlobUsage(householdId, { liveBlobs: -retired, liveBytes: -freedBytes, tombstones: retired, claims: claimed });
-        this.pruneChatBlobTombstones(householdId);
-        return { retired, claimed, othersRetired };
+        this.pruneChatBlobTombstones(householdId, memberId);
+        const result = { retired, claimed, othersRetired };
+        // The caller's audit commits with the retire, or neither does.
+        within(result);
+        return result;
       });
       if (result !== "forbidden" && result.retired && !this.db.isTransaction)
         this.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
@@ -127,8 +130,9 @@ export const chatBlobMethods = {
     }
   },
 
-  /** Keeps tombstones and claims within their bounds, oldest first. */
-  pruneChatBlobTombstones(householdId) {
+  /** Keeps tombstones within their household bound and `memberId`'s claims
+   * within the per-member bound, oldest first. */
+  pruneChatBlobTombstones(householdId, memberId) {
     const usage = this.chatBlobUsage(householdId);
     const bound = limits(this);
     const tombstones = usage.tombstones - bound.tombstones;
@@ -136,14 +140,33 @@ export const chatBlobMethods = {
       this.db.prepare(`DELETE FROM chat_blobs WHERE rowid IN (SELECT rowid FROM chat_blobs
         WHERE household_id = ? AND retired = 1 ORDER BY retired_at, blob_ref LIMIT ?)`).run(householdId, tombstones);
     }
-    const claims = usage.claims - bound.claims;
+    const own = this.db.prepare("SELECT COUNT(*) AS count FROM chat_blob_claims WHERE household_id = ? AND member_id = ?").get(householdId, memberId).count;
+    const claims = own - bound.claims;
     if (claims > 0) {
       this.db.prepare(`DELETE FROM chat_blob_claims WHERE rowid IN (SELECT rowid FROM chat_blob_claims
-        WHERE household_id = ? ORDER BY created_at, blob_ref, member_id LIMIT ?)`).run(householdId, claims);
+        WHERE household_id = ? AND member_id = ? ORDER BY created_at, blob_ref LIMIT ?)`).run(householdId, memberId, claims);
     }
     if (tombstones > 0 || claims > 0)
       this.adjustChatBlobUsage(householdId, { tombstones: -Math.max(0, tombstones), claims: -Math.max(0, claims) });
   },
+
+  /** Whether the running counts match the rows (validate). */
+  chatBlobUsageMatches() {
+    const drift = this.db.prepare(`SELECT COUNT(*) AS count FROM (
+      SELECT h.household_id,
+        (SELECT COUNT(*) FROM chat_blobs b WHERE b.household_id = h.household_id AND b.retired = 0) AS actual_live_blobs,
+        (SELECT COALESCE(SUM(b.size_bytes), 0) FROM chat_blobs b WHERE b.household_id = h.household_id AND b.retired = 0) AS actual_live_bytes,
+        (SELECT COUNT(*) FROM chat_blobs b WHERE b.household_id = h.household_id AND b.retired = 1) AS actual_tombstones,
+        (SELECT COUNT(*) FROM chat_blob_claims c WHERE c.household_id = h.household_id) AS actual_claims,
+        COALESCE(u.live_blobs, 0) AS counted_live_blobs, COALESCE(u.live_bytes, 0) AS counted_live_bytes,
+        COALESCE(u.tombstones, 0) AS counted_tombstones, COALESCE(u.claims, 0) AS counted_claims
+      FROM (SELECT household_id FROM chat_blobs UNION SELECT household_id FROM chat_blob_claims UNION SELECT household_id FROM chat_blob_usage) h
+      LEFT JOIN chat_blob_usage u ON u.household_id = h.household_id)
+      WHERE counted_live_blobs <> actual_live_blobs OR counted_live_bytes <> actual_live_bytes
+        OR counted_tombstones <> actual_tombstones OR counted_claims <> actual_claims`).get().count;
+    return drift === 0;
+  },
+
 
   adjustChatBlobUsage(householdId, { liveBlobs = 0, liveBytes = 0, tombstones = 0, claims = 0 }) {
     if (!liveBlobs && !liveBytes && !tombstones && !claims) return;
