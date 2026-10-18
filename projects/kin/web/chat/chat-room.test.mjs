@@ -688,14 +688,15 @@ test("delete for me keeps syncing when one of my devices changes its key, and re
   assert.equal(a2.room.hiddenError, null);
   assert.equal(a2.room.hiddenWaiting, false);
   assert.ok(a2.room.isHidden("01".repeat(16)));
-  // A service that serves an older revision than this device saw: refused.
+  // The service goes back to an older (here: empty) record, as after a
+  // restored backup: the device writes back what it holds.
   const auth = s.app.syncService.authorize(s.admin.sessionToken);
-  const real = s.app.chatRelayService.hidden.bind(s.app.chatRelayService);
-  s.app.chatRelayService.hidden = () => ({ revision: 1, record: null });
+  s.app.chatRelayService.storage.forgetHousehold(s.householdId);
+  assert.equal(s.app.chatRelayService.hidden(auth).revision, 0);
   await a2.room.sync({ status: STATUS, devices });
-  assert.equal(a2.room.hiddenError?.code, "chat_hidden_rollback");
-  s.app.chatRelayService.hidden = real;
-  assert.ok(real(auth).revision > 1);
+  assert.equal(a2.room.hiddenError, null);
+  assert.ok(a2.room.isHidden("01".repeat(16)) && a2.room.isHidden("02".repeat(16)));
+  assert.equal(s.app.chatRelayService.hidden(auth).revision, 1, "written back");
 });
 
 test("the in-memory chat log grows in place and gives the engine views of it", () => {

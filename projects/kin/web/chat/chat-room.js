@@ -334,10 +334,12 @@ export class ChatRoom {
     const current = await this.request(`/api/chat/hidden?since=${known}`);
     const { revision } = current;
     if (!Number.isSafeInteger(revision) || revision < 0) throw new ChatRoomError("Chat received an invalid record.", "chat_hidden_invalid");
-    // The service may not serve an older record than this device saw.
-    if (revision < known) throw new ChatRoomError("The household service returned older hidden messages than this device saw.", "chat_hidden_rollback");
+    // An older record than this device saw (a restored backup, or a service
+    // withholding a write): never trusted to drop anything, since this
+    // device writes back what it holds on top of it.
+    const rolledBack = revision < known;
     const sameDevices = (state.hiddenSealedFor ?? []).join() === sealFor.join();
-    if (current.unchanged && !state.hiddenDirty && sameDevices) {
+    if (current.unchanged && !state.hiddenDirty && sameDevices && !rolledBack) {
       this.hiddenWaiting = false;
       return;
     }
@@ -368,6 +370,7 @@ export class ChatRoom {
       if (sealedFor.join() !== sealFor.join()) rewrite = true;
     }
     this.hiddenWaiting = false;
+    if (rolledBack) rewrite = true;
     const remoteSet = new Set(remote);
     const merged = [...new Set([...remote, ...(state.hidden ?? [])])];
     if (merged.length > MAX_HIDDEN_MESSAGES)

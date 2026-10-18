@@ -553,6 +553,11 @@ alive:
   or its writer is no longer trusted (revoked, removed, rekeyed), a device
   writes it afresh from what it holds. Hides that only a device which is
   gone held are lost; every remaining device keeps its own.
+- A device waiting on another that never syncs again (abandoned but not
+  revoked) waits until that device is revoked.
+- A record older than one a device already saw (a server restored from a
+  backup, or one withholding a write) is never trusted to drop anything: the
+  device writes back what it holds on top of it.
 
 The record isn't compacted: messages deleted for everyone stay listed (they
 show as "This message was deleted", which can itself be hidden), so the
@@ -560,9 +565,8 @@ show as "This message was deleted", which can itself be hidden), so the
 where old ones can go. A removed member's record stays on the service, sealed
 to their now-untrusted devices, until the household is deleted. The service
 sees only the record's size, timing and revision. It can't read, forge or
-move one; it could withhold one (shown fewer hidden messages on a device that
-hasn't kept them) or keep serving an old one to a device that hasn't seen a
-newer.
+move one; it could withhold one (fewer hidden messages on a device that
+hasn't kept them, until a device that has writes again).
 
 ## Privacy boundary
 

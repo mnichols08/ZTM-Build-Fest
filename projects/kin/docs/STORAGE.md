@@ -266,7 +266,7 @@ database per household, `kin-chat-log:<householdId>`, version 1
   skipped because they failed authentication; and `hidden`, `hiddenRevision`,
   `hiddenDirty` and `hiddenSealedFor`: the messages this member deleted for
   themselves, the record revision last read or written (a lower one served
-  later is refused), whether one hidden here still has to be written, and
+  later is written over with what the device holds), whether one hidden here still has to be written, and
   the devices the record was last sealed to
   ([SYNC](SYNC.md#delete-for-me-v11-119)).
 

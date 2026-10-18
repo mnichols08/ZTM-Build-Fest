@@ -131,9 +131,12 @@ export const LIVE_POLL_MS = 30_000;
 // Hint-driven syncs run at most this often: a hint during a sync runs one
 // more after it, no sooner than this after the last one started.
 export const MIN_HINT_GAP_MS = 1_000;
-// Requests a chat pass may make (status, a few pulls and pushes, member
-// list, hidden-messages record); a pass waits when fewer remain.
-const CHAT_PASS_REQUESTS = 24;
+// Requests a chat pass may make at most: status, 2 push batches of 20 blob
+// uploads and a post each (42), blob retires (2), 5 pulls, the member list,
+// and up to 6 for the hidden-messages record (two rounds of read, read and
+// write). A pass waits when fewer remain: it schedules nothing itself, and
+// the next hint or poll runs chat again.
+const CHAT_PASS_REQUESTS = 60;
 // And what a household pass needs, kept free for the next one.
 const HOUSEHOLD_PASS_RESERVE = 30;
 // Sync errors that mean this session can't hold a live channel.
