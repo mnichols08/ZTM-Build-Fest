@@ -334,7 +334,7 @@ fn refuses_a_frame_without_a_symbol() {
     );
     let mut checker = vec![0u8; 320 * 240];
     for (i, px) in checker.iter_mut().enumerate() {
-        *px = if (i / 320 / 8 + i % 320 / 8) % 2 == 0 {
+        *px = if (i / 320 / 8 + i % 320 / 8).is_multiple_of(2) {
             255
         } else {
             0

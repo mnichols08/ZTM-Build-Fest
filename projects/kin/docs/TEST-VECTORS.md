@@ -203,12 +203,18 @@ all of them.
 - `https://kin.example.org/#join=7kq4-zpm2-hr9t-vxb6`, version 4 (side 33).
 - `https://kin.example.org/#sign-in=q7tk-2mzp-vx8r-3hdn-4wjb-9cfl-6ygs-zt5m`,
   version 5 (side 37).
+- `https://kin.example.org/#v7=` followed by `0123456789abcdef` five times,
+  version 7 (side 45), which carries version information.
+- `https://kin.example.org/#v10=` followed by `0123456789abcdef` eleven
+  times, version 10 (side 57).
 
 | Text | Mask | FNV-1a 64 |
 |---|---|---|
 | `01234567` | 0–7 | `6ca855685a57b68d` `d3a2a295bf82e0c3` `03266a2fbe5602a3` `e2cffb098f25ae39` `fef5e643e723249b` `e20213afa4307655` `4c91aab4c8c01f95` `ef39ad586b7ebd8f` |
 | join link | 0–7 | `92424d5f7ff9a791` `5e761cb029f507e3` `21f4527da7335d8a` `18e017e9e3e71022` `c01aac4b6d43773f` `2aff60efa4dc7421` `9eedae69d11331e6` `31ab0d471c819530` |
 | sign-in link | 0–7 | `9050850d9fab18d5` `077723bf125628f3` `76bb94d44063b69f` `7c55179d943c7a85` `532d25518e3545cf` `12bc4b76d93e24be` `524efe1360e99449` `aee5e630353e1e1f` |
+| version 7 text | 0–7 | `5b34cdaec1d9bd61` `0e6a1f274c02af4a` `d237884cd26ca547` `8da5669b736d8525` `08a6e8a98fd7136b` `cd1d4ccbeab9f7a9` `7a10146e7cc5a345` `97941fff7077a7d7` |
+| version 10 text | 0–7 | `1bf516d39bd37249` `f77dc892ed145b02` `f3d2907f803b734f` `ce259b63f00e8839` `4dedc77efa96692b` `234fcb9d1fb8814d` `2ce91836c8b2447d` `01e5eb08f87c65ab` |
 
 The V4 and V6 grids in `tests.rs` come from the same reference. Their masks
 differ from the encoder's lowest-penalty choice, which is still a valid

@@ -11,9 +11,13 @@
 //! Resource limits, enforced here rather than by callers:
 //! - frames are at most [`MAX_WIDTH`] × [`MAX_HEIGHT`] and [`MAX_PIXELS`] in
 //!   total, which is what a camera delivers at 720p;
-//! - each pass has a pixel-read budget ([`PIXEL_BUDGET`]), so a noisy frame
-//!   stops scanning instead of running on;
-//! - at most [`MAX_FINDERS`] finder candidates are kept;
+//! - each pass has a work budget ([`PIXEL_BUDGET`]) charged for axis scans,
+//!   alignment template checks and finder merges, so a noisy frame stops
+//!   searching instead of running on. Fixed linear passes over the frame
+//!   (binarizing, building row runs, sampling the grid) are not charged:
+//!   their cost is bounded by the frame limits;
+//! - at most [`MAX_FINDERS`] finder candidates are kept; when the table is
+//!   full, a candidate seen on one row only is evicted first;
 //! - working memory lives in a [`Scratch`] that the caller reuses, and every
 //!   other buffer is a fixed-size array sized for version 10.
 //!
@@ -35,12 +39,16 @@ pub const MAX_PIXELS: usize = 1280 * 720;
 // per pixel over MAX_PIXELS pixels.
 const _: () = assert!(MAX_PIXELS * 255 <= u32::MAX as usize);
 
-/// Pixel reads allowed per decoding pass. A clean 720p symbol needs a small
-/// fraction of this; a frame that exhausts it reports no symbol.
+/// Work allowed per decoding pass, in units of one pixel read or one finder
+/// comparison. A clean 720p symbol needs a small fraction of this; a frame
+/// that exhausts it reports no symbol.
 pub const PIXEL_BUDGET: usize = 4_000_000;
 
-/// Finder candidates kept per pass; further distinct detections are dropped.
-pub const MAX_FINDERS: usize = 64;
+/// Finder candidates kept per pass. When full, a candidate seen on a single
+/// row is replaced; if every candidate has been confirmed on several rows,
+/// new ones are dropped. A frame with more than this many finder-like
+/// patterns ahead of the symbol in raster order can therefore lose it.
+pub const MAX_FINDERS: usize = 256;
 
 /// A grayscale frame, one byte per pixel, row-major.
 pub struct Frame<'a> {
@@ -90,36 +98,92 @@ pub fn decode(frame: &Frame) -> Result<Vec<u8>, QrError> {
 
 /// Like [`decode`], reusing `scratch` for the frame's working memory.
 pub fn decode_in(frame: &Frame, scratch: &mut Scratch) -> Result<Vec<u8>, QrError> {
+    decode_with_budget(frame, scratch, PIXEL_BUDGET)
+}
+
+/// [`decode_in`] with an explicit per-pass work budget. Tests use a small one
+/// to show that exhausting it ends the search with `NotFound`.
+pub(crate) fn decode_with_budget(
+    frame: &Frame,
+    scratch: &mut Scratch,
+    budget: usize,
+) -> Result<Vec<u8>, QrError> {
     let (w, h) = (frame.width, frame.height);
-    if w == 0 || h == 0 || frame.luma.len() != w * h {
+    if w == 0 || h == 0 {
         return Err(QrError::BadFrame);
     }
+    // Bounds first, so the product below can't overflow a 32-bit usize.
     if w > MAX_WIDTH || h > MAX_HEIGHT || w * h > MAX_PIXELS {
         return Err(QrError::FrameTooLarge);
     }
+    if frame.luma.len() != w * h {
+        return Err(QrError::BadFrame);
+    }
     binarize(frame, &mut scratch.integral, &mut scratch.binary);
-    match read_binary(w, h, scratch) {
+    match read_binary(w, h, scratch, budget) {
         Ok(payload) => Ok(payload),
         Err(first) => {
             // Light-on-dark symbols: retry with the modules inverted.
             invert(&mut scratch.binary);
-            read_binary(w, h, scratch).map_err(|_| first)
+            read_binary(w, h, scratch, budget).map_err(|_| first)
         }
     }
 }
 
 /// One decoding pass over the binarized frame in `scratch`.
-fn read_binary(w: usize, h: usize, scratch: &mut Scratch) -> Result<Vec<u8>, QrError> {
+fn read_binary(
+    w: usize,
+    h: usize,
+    scratch: &mut Scratch,
+    limit: usize,
+) -> Result<Vec<u8>, QrError> {
     let Scratch {
         binary,
         runs,
         finders,
         ..
     } = scratch;
-    let mut budget = Budget::default();
+    let mut budget = Budget { used: 0, limit };
     find_finders(binary, w, h, runs, finders, &mut budget);
-    let triangle = pick_triangle(finders).ok_or(QrError::NotFound)?;
-    let geometry = Geometry::from_triangle(&triangle, binary, w, h, &mut budget)?;
+    let (triangles, count) = rank_triangles(finders, binary, w, h, &mut budget);
+    // Finder-like patterns elsewhere in the frame can form triangles as
+    // plausible as the symbol's own, so the best few are tried in turn; only
+    // the format and Reed–Solomon checks tell them apart.
+    let mut first_error = None;
+    for triangle in &triangles[..count] {
+        if budget.exhausted() {
+            break;
+        }
+        budget.charge(ATTEMPT_COST);
+        match read_triangle(triangle, binary, w, h, &mut budget) {
+            Ok(payload) => return Ok(payload),
+            Err(error) => {
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    Err(first_error.unwrap_or(QrError::NotFound))
+}
+
+/// Triangles tried per pass, best first.
+pub const MAX_TRIANGLE_TRIES: usize = 12;
+
+/// Finders considered when forming triangles: the strongest by row count.
+const TRIANGLE_POOL: usize = 32;
+
+/// Budget charged per triangle attempt: sampling the grid and fitting the
+/// fourth corner read up to about this many pixels.
+const ATTEMPT_COST: usize = 32_000;
+
+/// Reads the symbol framed by one finder triangle.
+fn read_triangle(
+    triangle: &Triangle,
+    binary: &[u8],
+    w: usize,
+    h: usize,
+    budget: &mut Budget,
+) -> Result<Vec<u8>, QrError> {
+    let geometry = Geometry::from_triangle(triangle, binary, w, h, budget)?;
     let version = geometry.version;
     let transform = geometry.transform()?;
     let mut dark = [0u8; MAX_MODULES];
@@ -131,10 +195,21 @@ fn read_binary(w: usize, h: usize, scratch: &mut Scratch) -> Result<Vec<u8>, QrE
     parse_byte_mode(&data[..data_length], version)
 }
 
-/// Pixel reads spent in the current pass, against [`PIXEL_BUDGET`].
-#[derive(Default)]
+/// Work spent in the current pass, against its limit ([`PIXEL_BUDGET`] in
+/// production).
 struct Budget {
     used: usize,
+    limit: usize,
+}
+
+impl Budget {
+    fn exhausted(&self) -> bool {
+        self.used >= self.limit
+    }
+
+    fn charge(&mut self, cost: usize) {
+        self.used = self.used.saturating_add(cost);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -223,10 +298,10 @@ fn scan_axis(
     budget: &mut Budget,
 ) -> Option<Axis> {
     let mut pixel = |t: isize| -> Option<bool> {
-        if budget.used >= PIXEL_BUDGET {
+        if budget.exhausted() {
             return None;
         }
-        budget.used += 1;
+        budget.charge(1);
         let (px, py) = if horizontal {
             (x as isize + t, y as isize)
         } else {
@@ -307,6 +382,9 @@ fn find_finders(
 ) {
     found.clear();
     for y in 0..h {
+        if budget.exhausted() {
+            break;
+        }
         runs.clear();
         let row = &binary[y * w..(y + 1) * w];
         let mut x = 0;
@@ -352,15 +430,16 @@ fn find_finders(
             };
             let cy = y as f64 + vertical.mid;
             let candidate_unit = (unit + vertical_unit) / 2.0;
-            merge(found, cx, cy, candidate_unit);
+            merge(found, cx, cy, candidate_unit, budget);
         }
     }
 }
 
 /// Adds a detection, or folds it into a nearby one: a finder is seen on many
-/// rows, and each row's measurement is averaged in. Distinct detections past
-/// [`MAX_FINDERS`] are dropped.
-fn merge(found: &mut Vec<Finder>, x: f64, y: f64, unit: f64) {
+/// rows, and each row's measurement is averaged in. Each comparison is charged
+/// to the budget. When the table is full, a single-row candidate makes room.
+fn merge(found: &mut Vec<Finder>, x: f64, y: f64, unit: f64, budget: &mut Budget) {
+    budget.charge(found.len());
     for finder in found.iter_mut() {
         let reach = 1.5 * finder.unit.max(unit);
         if (finder.x - x).hypot(finder.y - y) < reach {
@@ -372,13 +451,17 @@ fn merge(found: &mut Vec<Finder>, x: f64, y: f64, unit: f64) {
             return;
         }
     }
+    let candidate = Finder {
+        x,
+        y,
+        unit,
+        hits: 1,
+    };
     if found.len() < MAX_FINDERS {
-        found.push(Finder {
-            x,
-            y,
-            unit,
-            hits: 1,
-        });
+        found.push(candidate);
+    } else if let Some(slot) = found.iter_mut().find(|finder| finder.hits == 1) {
+        // Seen on one row only: most likely noise, so it gives way.
+        *slot = candidate;
     }
 }
 
@@ -390,34 +473,159 @@ struct Triangle {
     bottom_left: Finder,
 }
 
-/// The triple of finders to read. A real symbol's finders are seen on many
-/// rows, while stray matches in the data are seen on few, so the strongest
-/// triple that forms a plausible triangle wins; its shape only breaks ties.
-/// Perspective bends the triangle a lot, so the shape test is loose.
-fn pick_triangle(finders: &mut [Finder]) -> Option<Triangle> {
+/// The most plausible finder triples, best first, in fixed storage. Triples
+/// rank first by how well the timing patterns between their finders alternate
+/// (only a real symbol has them), then by their weakest finder's row count
+/// (stray matches in data are seen on few rows), then by shape. Perspective
+/// bends the triangle a lot, so the shape test is loose.
+fn rank_triangles(
+    finders: &mut [Finder],
+    binary: &[u8],
+    w: usize,
+    h: usize,
+    budget: &mut Budget,
+) -> ([Triangle; MAX_TRIANGLE_TRIES], usize) {
     // Unstable sort: in place, so no allocation.
     finders.sort_unstable_by_key(|f| std::cmp::Reverse(f.hits));
-    let candidates = &finders[..finders.len().min(8)];
-    let mut best: Option<((u32, f64), Triangle)> = None;
+    let candidates = &finders[..finders.len().min(TRIANGLE_POOL)];
+    let empty = Finder {
+        x: 0.0,
+        y: 0.0,
+        unit: 0.0,
+        hits: 0,
+    };
+    let blank = Triangle {
+        top_left: empty,
+        top_right: empty,
+        bottom_left: empty,
+    };
+    let mut ranked = [((0u32, 0u32, f64::NEG_INFINITY), blank); MAX_TRIANGLE_TRIES];
+    let mut count = 0;
     for a in 0..candidates.len() {
         for b in a + 1..candidates.len() {
             for c in b + 1..candidates.len() {
                 let trio = [candidates[a], candidates[b], candidates[c]];
                 let weakest = trio.iter().map(|f| f.hits).min().unwrap_or(0);
-                if let Some((shape, triangle)) = score_triangle(trio) {
-                    // Higher weakest-hit count first, then the better shape.
-                    let key = (weakest, -shape);
-                    let better = best.as_ref().is_none_or(|(current, _)| {
-                        key.0 > current.0 || (key.0 == current.0 && key.1 > current.1)
-                    });
-                    if better {
-                        best = Some((key, triangle));
-                    }
+                let Some((shape, triangle)) = score_triangle(trio) else {
+                    continue;
+                };
+                if budget.exhausted() {
+                    break;
+                }
+                // Timing agreement in twentieths, so near-equal fractions tie
+                // and the row count and shape decide.
+                let timing =
+                    (timing_fraction(&triangle, binary, w, h, budget) * 20.0).round() as u32;
+                let key = (timing, weakest, -shape);
+                let better = |other: &(u32, u32, f64)| {
+                    (key.0, key.1) > (other.0, other.1)
+                        || ((key.0, key.1) == (other.0, other.1) && key.2 > other.2)
+                };
+                // Insert into the sorted top list, dropping the last if full.
+                let mut at = count;
+                while at > 0 && better(&ranked[at - 1].0) {
+                    at -= 1;
+                }
+                if at < MAX_TRIANGLE_TRIES {
+                    let end = count.min(MAX_TRIANGLE_TRIES - 1);
+                    ranked.copy_within(at..end, at + 1);
+                    ranked[at] = (key, triangle);
+                    count = (count + 1).min(MAX_TRIANGLE_TRIES);
                 }
             }
         }
     }
-    best.map(|(_, triangle)| triangle)
+    (ranked.map(|(_, triangle)| triangle), count)
+}
+
+/// The fraction of timing modules (row 6 and column 6 between the finders)
+/// that alternate as they should, sampled through the affine frame the
+/// triangle implies. Near 1 for a real symbol; about one half for finder-like
+/// patterns with no symbol between them. Each sample is charged to `budget`.
+fn timing_fraction(t: &Triangle, binary: &[u8], w: usize, h: usize, budget: &mut Budget) -> f64 {
+    let Some(ModuleFrame {
+        dim,
+        module_x,
+        module_y,
+        ..
+    }) = module_frame(t)
+    else {
+        return 0.0;
+    };
+    let origin = (
+        t.top_left.x - 3.5 * (module_x.0 + module_y.0),
+        t.top_left.y - 3.5 * (module_x.1 + module_y.1),
+    );
+    let at = |mx: f64, my: f64| {
+        (
+            origin.0 + mx * module_x.0 + my * module_y.0,
+            origin.1 + mx * module_x.1 + my * module_y.1,
+        )
+    };
+    let (mut agreed, mut total) = (0usize, 0usize);
+    for i in 8..dim - 8 {
+        let want = u8::from(i.is_multiple_of(2));
+        for (px, py) in [at(i as f64 + 0.5, 6.5), at(6.5, i as f64 + 0.5)] {
+            total += 1;
+            let (x, y) = (px.floor(), py.floor());
+            if x >= 0.0
+                && y >= 0.0
+                && (x as usize) < w
+                && (y as usize) < h
+                && binary[y as usize * w + x as usize] == want
+            {
+                agreed += 1;
+            }
+        }
+    }
+    budget.charge(total);
+    if total == 0 {
+        0.0
+    } else {
+        agreed as f64 / total as f64
+    }
+}
+
+/// The symbol size a finder triangle implies, and the pixel step of one
+/// module along the symbol's own x and y axes.
+struct ModuleFrame {
+    version: usize,
+    dim: usize,
+    module_x: (f64, f64),
+    module_y: (f64, f64),
+}
+
+/// The module frame of a triangle, or `None` when its size is outside versions
+/// 1–10.
+fn module_frame(t: &Triangle) -> Option<ModuleFrame> {
+    let leg = |a: Finder, b: Finder| (a.x - b.x).hypot(a.y - b.y);
+    // A finder's runs are measured along rows and columns. At angle θ to the
+    // symbol's axes, a run of one module measures m / max(|cos θ|, |sin θ|)
+    // pixels, so the module size is the measured unit scaled by that factor.
+    // θ comes from the top edge of the triangle.
+    let (edge_x, edge_y) = (t.top_right.x - t.top_left.x, t.top_right.y - t.top_left.y);
+    let edge = edge_x.hypot(edge_y).max(1e-9);
+    let angle_factor = edge_x.abs().max(edge_y.abs()) / edge;
+    let unit = (t.top_left.unit + t.top_right.unit + t.bottom_left.unit) / 3.0 * angle_factor;
+    let modules = (leg(t.top_left, t.top_right) + leg(t.top_left, t.bottom_left)) / 2.0 / unit;
+    // Centre-to-centre distance is dim - 7 modules. Sizes step by four, so the
+    // estimate snaps to the nearest valid version; a module count off by one
+    // at high versions is common and harmless.
+    let version = ((modules + 7.0 - 17.0) / 4.0).round() as i64;
+    if !(1..=10).contains(&version) {
+        return None;
+    }
+    let dim = (17 + 4 * version) as usize;
+    let span = (dim - 7) as f64;
+    Some(ModuleFrame {
+        version: version as usize,
+        dim,
+        module_x: (edge_x / span, edge_y / span),
+        module_y: (
+            (t.bottom_left.x - t.top_left.x) / span,
+            (t.bottom_left.y - t.top_left.y) / span,
+        ),
+    })
 }
 
 /// A right triangle of similar-sized finders; lower error is better.
@@ -505,45 +713,24 @@ impl Geometry {
         h: usize,
         budget: &mut Budget,
     ) -> Result<Geometry, QrError> {
-        let leg = |a: Finder, b: Finder| (a.x - b.x).hypot(a.y - b.y);
-        // A finder's runs are measured along rows and columns. At angle θ to
-        // the symbol's axes, a run of one module measures m / max(|cos θ|,
-        // |sin θ|) pixels, so the module size is the measured unit scaled by
-        // that factor. θ comes from the top edge of the triangle.
-        let (edge_x, edge_y) = (t.top_right.x - t.top_left.x, t.top_right.y - t.top_left.y);
-        let edge = edge_x.hypot(edge_y).max(1e-9);
-        let angle_factor = edge_x.abs().max(edge_y.abs()) / edge;
-        let unit = (t.top_left.unit + t.top_right.unit + t.bottom_left.unit) / 3.0 * angle_factor;
-        let modules = (leg(t.top_left, t.top_right) + leg(t.top_left, t.bottom_left)) / 2.0 / unit;
-        // Centre-to-centre distance is dim - 7 modules. Sizes step by four, so
-        // the estimate snaps to the nearest valid version; a module count off
-        // by one at high versions is common and harmless.
-        let estimate = modules + 7.0;
-        let version = ((estimate - 17.0) / 4.0).round() as i64;
-        if !(1..=10).contains(&version) {
-            return Err(QrError::Unsupported);
-        }
-        let dim = 17 + 4 * version;
+        let frame = module_frame(t).ok_or(QrError::Unsupported)?;
+        let dim = frame.dim;
         let tl = (t.top_left.x, t.top_left.y);
         let tr = (t.top_right.x, t.top_right.y);
         let bl = (t.bottom_left.x, t.bottom_left.y);
         // Where the bottom-right alignment centre (module dim-6.5) falls if the
         // symbol is an affine image of the finder triangle. Its centre is
         // (dim-6.5)-3.5 = dim-10 modules along an axis that is dim-7 long.
-        let span = (dim - 7) as f64;
-        let fraction = (dim as f64 - 10.0) / span;
+        let fraction = (dim as f64 - 10.0) / (dim - 7) as f64;
         let expected = (
             tl.0 + fraction * (tr.0 - tl.0) + fraction * (bl.0 - tl.0),
             tl.1 + fraction * (tr.1 - tl.1) + fraction * (bl.1 - tl.1),
         );
-        let per_module = span;
-        let module_x = ((tr.0 - tl.0) / per_module, (tr.1 - tl.1) / per_module);
-        let module_y = ((bl.0 - tl.0) / per_module, (bl.1 - tl.1) / per_module);
         let mut geometry = Geometry {
-            version: version as usize,
-            dim: dim as usize,
-            module_x,
-            module_y,
+            version: frame.version,
+            dim,
+            module_x: frame.module_x,
+            module_y: frame.module_y,
             top_left: tl,
             top_right: tr,
             bottom_left: bl,
@@ -625,7 +812,7 @@ fn timing_agreement(
     };
     let mut agreed = 0;
     for i in 8..geometry.dim - 8 {
-        let want = u8::from(i % 2 == 0);
+        let want = u8::from(i.is_multiple_of(2));
         for (mx, my) in [(i as f64 + 0.5, 6.5), (6.5, i as f64 + 0.5)] {
             let (px, py) = project(&transform, mx, my);
             let (x, y) = (px.floor(), py.floor());
@@ -697,10 +884,10 @@ fn find_alignment(
             if binary[uy * w + ux] != 1 {
                 continue;
             }
-            if budget.used >= PIXEL_BUDGET {
+            if budget.exhausted() {
                 return best.map(|(_, centre)| centre);
             }
-            budget.used += TEMPLATE_COST;
+            budget.charge(TEMPLATE_COST);
             let centre = (x as f64, y as f64);
             let mismatches = alignment_mismatches(binary, w, h, centre, axes);
             if mismatches > 3 {

@@ -347,10 +347,18 @@ fragment, so the payload never reaches a server log or `Referer`.
   - A frame with no symbol Kin can read is `7`.
   - Light-on-dark symbols are read: the decoder retries the frame inverted when
     the first pass fails.
-  - Each pass has a budget of 4 000 000 pixel reads, so a noisy frame stops
-    instead of scanning on. At most 64 finder candidates are kept.
-  - The working memory (about 4.7 MB at 720p) is kept between calls, so frames
-    of the same size don't allocate. `kin_clear` releases it.
+  - Each pass has a work budget of 4 000 000 units, charged for scan pixel
+    reads, alignment template checks, finder comparisons, timing samples and
+    triangle attempts, so a noisy frame stops instead of searching on. Fixed
+    linear passes over the frame are bounded by the frame limits instead.
+  - At most 256 finder candidates are kept. Triangles from the 32 strongest
+    are ranked by timing-pattern agreement, and up to 12 are tried. A frame
+    with 30 or more finder-like patterns as strong as the symbol's own can
+    lose the symbol; it is then refused, not misread.
+  - The decoder's working memory (about 4.7 MB at 720p) is kept between calls,
+    so its scratch doesn't grow for frames of the same size. Each call still
+    allocates its input and result buffers. `kin_clear` frees the scratch for
+    reuse; WASM linear memory itself never shrinks.
 
 Limits of the decoder: version 1 symbols (up to 14 bytes) can fail on
 perspective frames, because the fourth corner cannot be pinned without an

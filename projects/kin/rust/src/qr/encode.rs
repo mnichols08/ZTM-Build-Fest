@@ -103,7 +103,7 @@ fn codewords(data: &[u8], version: usize, out: &mut [u8; tables::MAX_CODEWORDS])
     bits.pad_to_byte();
     let filled = bits.bits / 8;
     for (offset, slot) in stream[filled..capacity].iter_mut().enumerate() {
-        *slot = if offset % 2 == 0 { 0xEC } else { 0x11 };
+        *slot = if offset.is_multiple_of(2) { 0xEC } else { 0x11 };
     }
 
     // Split into blocks, compute each block's check codewords.

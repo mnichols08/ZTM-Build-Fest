@@ -8,8 +8,11 @@
 
 use super::tests::{code_from, render, warp};
 use super::{
-    decode::{decode, decode_in, project, solve_homography, Frame, Scratch, MAX_PIXELS},
-    encode::{encode, encode_with_mask, MAX_BYTES},
+    decode::{
+        decode, decode_in, decode_with_budget, project, solve_homography, Frame, Scratch,
+        MAX_PIXELS, PIXEL_BUDGET,
+    },
+    encode::{encode, encode_with_mask, Code, MAX_BYTES},
     layout::{format_modules, Grid, MAX_MODULES},
     tables, QrError,
 };
@@ -96,6 +99,46 @@ fn tilt(
     ])
     .expect("a non-degenerate quadrilateral");
     warp(source, forward, (canvas, canvas), 5)
+}
+
+/// A 1280 × 720 frame: `decoys` finder-like bullseyes (7 × 7 modules, the
+/// symbol's own module size) in the upper part, and the symbol bottom-centre.
+fn decoy_frame(code: &Code, decoys: usize, jitter: bool) -> (usize, usize, Vec<u8>) {
+    let (w, h, scale) = (1280usize, 720usize, 5usize);
+    let mut luma = vec![255u8; w * h];
+    let symbol = render(code, scale);
+    let (x0, y0) = ((w - symbol.0) / 2, h - symbol.1);
+    for y in 0..symbol.1 {
+        luma[(y0 + y) * w + x0..(y0 + y) * w + x0 + symbol.0]
+            .copy_from_slice(&symbol.2[y * symbol.0..(y + 1) * symbol.0]);
+    }
+    let pitch = 50usize;
+    let columns = w / pitch;
+    let mut rng = Rng(0x5EED);
+    for index in 0..decoys {
+        let (column, row) = (index % columns, index / columns);
+        let (mut left, mut top) = (column * pitch + 6, row * pitch + 6);
+        if jitter {
+            left += rng.below(8);
+            top += rng.below(8);
+        }
+        if top + 7 * scale >= y0 {
+            break;
+        }
+        for my in 0..7usize {
+            for mx in 0..7usize {
+                let ring = (mx as isize - 3).abs().max((my as isize - 3).abs());
+                let dark = ring != 2;
+                for py in 0..scale {
+                    for px in 0..scale {
+                        let at = (top + my * scale + py) * w + left + mx * scale + px;
+                        luma[at] = if dark { 0 } else { 255 };
+                    }
+                }
+            }
+        }
+    }
+    (w, h, luma)
 }
 
 #[test]
@@ -193,8 +236,9 @@ fn reads_damage_up_to_the_correction_budget() {
 
 #[test]
 fn damage_beyond_the_budget_is_refused_or_detected() {
-    // Destroy every codeword of the first block. A decoder may refuse, but it
-    // must never report a different payload as if it were correct.
+    // Damage the first 43 codewords in placement order (about 22 and 21 in
+    // version 4's two blocks, which correct 9 each). A decoder may refuse, but
+    // it must never report a different payload as if it were correct.
     let text = text_of(capacity_bytes(4), 33);
     let mut code = encode(&text).expect("encodes");
     let grid = Grid::with_function_patterns(4);
@@ -271,14 +315,61 @@ fn a_symbol_fits_a_full_720p_frame() {
 }
 
 #[test]
-fn stripes_exhaust_the_budget_and_are_refused() {
-    // Vertical stripes match the finder ratio on every row. The search must
-    // stop on its budget and report no symbol, not scan the frame forever.
-    let (w, h) = (1280usize, 720usize);
-    let luma: Vec<u8> = (0..w * h)
-        .map(|i| if (i % w / 3) % 2 == 0 { 0 } else { 255 })
-        .collect();
-    assert_eq!(decode_luma(w, h, &luma), Err(QrError::NotFound));
+fn exhausting_the_work_budget_ends_the_search() {
+    // The same clean symbol reads with the production budget and is refused,
+    // not scanned further, when the budget is too small to find it.
+    let text = b"https://kin.example.org/#join=budget";
+    let code = encode(text).expect("encodes");
+    let (w, h, luma) = render(&code, 6);
+    let frame = Frame {
+        width: w,
+        height: h,
+        luma: &luma,
+    };
+    let mut scratch = Scratch::new();
+    assert_eq!(
+        decode_with_budget(&frame, &mut scratch, PIXEL_BUDGET).as_deref(),
+        Ok(&text[..])
+    );
+    for budget in [0usize, 1, 100, 1_000] {
+        assert_eq!(
+            decode_with_budget(&frame, &mut scratch, budget),
+            Err(QrError::NotFound),
+            "budget {budget}"
+        );
+    }
+}
+
+#[test]
+fn reads_a_symbol_among_finder_like_decoys() {
+    // Up to 29 bullseyes as strong as a real finder, above the symbol. The
+    // decoder tries several triangles and ranks them by their timing patterns.
+    let text = b"https://kin.example.org/#join=7kq4-zpm2-hr9t-vxb6";
+    let code = encode(text).expect("encodes");
+    for jitter in [false, true] {
+        for decoys in [1usize, 10, 29] {
+            let (w, h, luma) = decoy_frame(&code, decoys, jitter);
+            assert_eq!(
+                decode_luma(w, h, &luma).as_deref(),
+                Ok(&text[..]),
+                "{decoys} decoys, jitter {jitter}"
+            );
+        }
+    }
+}
+
+#[test]
+fn too_many_decoys_are_refused_not_misread() {
+    // Past the triangle pool (32 finders, so 29 decoys plus the symbol's three),
+    // the symbol may be missed. It must be refused, never misread.
+    let text = b"https://kin.example.org/#join=7kq4-zpm2-hr9t-vxb6";
+    let code = encode(text).expect("encodes");
+    for decoys in [30usize, 60, 200] {
+        let (w, h, luma) = decoy_frame(&code, decoys, true);
+        if let Ok(payload) = decode_luma(w, h, &luma) {
+            assert_eq!(payload, text, "{decoys} decoys: wrong payload");
+        }
+    }
 }
 
 #[test]
@@ -327,7 +418,7 @@ fn data_modules_match_the_codeword_capacity_of_every_version() {
 }
 
 #[test]
-fn code_storage_is_fixed_at_the_version_ten_maximum() {
+fn fixed_limits_match_the_specification() {
     assert_eq!(
         MAX_MODULES,
         57 * 57,
@@ -352,8 +443,9 @@ fn fnv1a64(modules: &[u8]) -> u64 {
 /// Reference matrices from python-qrcode 8.x, forced to byte mode and to each
 /// mask in turn: the module grid is pinned by its FNV-1a 64 hash, per mask.
 /// The first text is the ISO/IEC 18004 Annex I example in byte mode (the
-/// annex's own example is numeric, so this is its byte-mode equivalent).
-const GOLDEN: [(&str, usize, [u64; 8]); 3] = [
+/// annex's own example is numeric, so this is its byte-mode equivalent). The
+/// last two are versions 7 and 10, which also carry version information.
+const GOLDEN: [(&str, usize, [u64; 8]); 5] = [
     (
         "01234567",
         21,
@@ -396,6 +488,34 @@ const GOLDEN: [(&str, usize, [u64; 8]); 3] = [
             0xaee5_e630_353e_1e1f,
         ],
     ),
+    (
+        "https://kin.example.org/#v7=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        45,
+        [
+            0x5b34_cdae_c1d9_bd61,
+            0x0e6a_1f27_4c02_af4a,
+            0xd237_884c_d26c_a547,
+            0x8da5_669b_736d_8525,
+            0x08a6_e8a9_8fd7_136b,
+            0xcd1d_4ccb_eab9_f7a9,
+            0x7a10_146e_7cc5_a345,
+            0x9794_1fff_7077_a7d7,
+        ],
+    ),
+    (
+        "https://kin.example.org/#v10=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        57,
+        [
+            0x1bf5_16d3_9bd3_7249,
+            0xf77d_c892_ed14_5b02,
+            0xf3d2_907f_803b_734f,
+            0xce25_9b63_f00e_8839,
+            0x4ded_c77e_fa96_692b,
+            0x234f_cb9d_1fb8_814d,
+            0x2ce9_1836_c8b2_447d,
+            0x01e5_eb08_f87c_65ab,
+        ],
+    ),
 ];
 
 #[test]
@@ -432,7 +552,7 @@ fn gaussian(frame: &(usize, usize, Vec<u8>), sigma: f64, seed: u64) -> (usize, u
 }
 
 #[test]
-fn reads_at_every_quarter_turn_of_rotation() {
+fn reads_at_every_fifteen_degrees_of_rotation() {
     // A symbol turned through a full circle, in 15° steps, on a square canvas.
     let text = b"https://kin.example.org/#join=rotate-me";
     let code = encode(text).expect("encodes");
@@ -553,7 +673,7 @@ fn long_fuzz_run() {
 
 /// Timing for the decoder on this machine, for the performance budget in
 /// issue #95. Run it in release: `cargo test --release qr::coverage::bench
-/// -- --ignored --nocapture`. The WASM figure comes from scripts/qr-bench.mjs.
+/// -- --ignored --nocapture`. The WASM figure comes from scripts/qr-performance.mjs.
 #[test]
 #[ignore]
 fn bench_decode_native() {
