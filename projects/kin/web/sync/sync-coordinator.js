@@ -178,6 +178,7 @@ export class SyncCoordinator {
     this.openChatRoom = chatRoom;
     this.chat = null;
     this.chatOpening = null;
+    this.chatOpenError = null;
   }
 
   async start() {
@@ -202,10 +203,10 @@ export class SyncCoordinator {
       });
     }
     if (this.stopped) return;
-    // Chat opens before the first sync, so messages kept on this device show
-    // (and can be written) while offline.
-    await this.openChat().catch(() => {});
-    if (this.stopped) return;
+    // Chat opens alongside the first sync (not before it: decrypting a long
+    // chat log mustn't hold up household sync), so messages kept on this
+    // device show, and can be written, while offline.
+    void this.openChat().catch(() => {});
     await this.syncNow();
     if (this.stopped) return;
     if (!this.terminal) {
@@ -638,21 +639,49 @@ export class SyncCoordinator {
    * available. A failure leaves it closed for the next pass to retry. */
   async openChat() {
     if (this.chat || !this.openChatRoom || this.stopped) return this.chat;
-    this.chatOpening ??= Promise.resolve(this.openChatRoom({
+    this.chatOpening ??= Promise.resolve().then(() => this.openChatRoom({
       identity: this.identity,
       keyStore: this.keyStore,
       deviceKeys: this.deviceKeys,
       engine: this.engine,
       request: (path, options) => this.request(path, options),
+      blobFetch: (path, init) => this.blobFetch(path, init),
       // A message sent here goes out at once, like a hint.
       onLocalChange: () => this.hinted(),
     })).then((room) => {
       if (this.stopped) { room?.close(); return null; }
       if (!room) this.openChatRoom = null;
       this.chat = room;
+      this.chatOpenError = null;
       return room;
+    }, (error) => {
+      // Kept for the chat view to explain (a missing key epoch, say); the
+      // next pass tries again.
+      this.chatOpenError = error;
+      throw error;
     }).finally(() => { this.chatOpening = null; });
     return this.chatOpening;
+  }
+
+  /** Chat blob requests (#110), held to the same rules as request(): only
+   * while unlocked and running, within the request budget, and aborted when
+   * sync stops. */
+  async blobFetch(path, init = {}) {
+    if (this.stopped) throw new Error("Device sync was stopped.");
+    const budgetDelay = this.requestBudgetDelay();
+    if (budgetDelay > 0) {
+      const error = new Error("Catching up after a short wait.");
+      error.code = "sync_client_rate_budget";
+      error.retryAfterMs = budgetDelay;
+      throw error;
+    }
+    this.keyStore?.vault.assertUnlocked();
+    await this.keyStore?.vault.checkSecurityEpoch?.();
+    this.recordRequest();
+    const response = await fetch(path, { ...init, signal: this.abortController.signal });
+    if (this.stopped) throw new Error("Device sync was stopped.");
+    this.keyStore?.vault.assertUnlocked();
+    return response;
   }
 
   /** One chat pass after a full household pass. Chat trouble pauses chat,

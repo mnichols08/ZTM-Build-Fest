@@ -113,13 +113,13 @@ function requester(base, who) {
 }
 
 /** One device: its keys, its directory entry, its chat storage. */
-async function device(who, { householdId, epochs, memberKind = "adult" }) {
+async function device(who, { householdId, epochs, memberKind = "adult", householdAdmin = false }) {
   const keys = await generateDeviceKeys();
   const publicKeys = await exportDevicePublicKeys(keys);
   return {
     who,
     deviceKeys: { keys },
-    entry: { deviceId: who.deviceId, memberId: who.memberId, publicKeys, verifiedKeyHistory: [{ publicKeys }], historyFromEpoch: 1, memberKind, memberActive: true },
+    entry: { deviceId: who.deviceId, memberId: who.memberId, publicKeys, verifiedKeyHistory: [{ publicKeys }], historyFromEpoch: 1, memberKind, memberActive: true, householdAdmin },
     keyStore: {
       vault: { assertUnlocked() {} },
       getEpoch: async (household, keyEpoch) => (household === householdId && epochs.has(keyEpoch) ? { keyEpoch, householdKey: epochs.get(keyEpoch) } : null),
@@ -190,35 +190,57 @@ test("a message written offline waits, then reaches the other device through the
   await assert.rejects(b.room.send("after lock"), (error) => error.code === "chat_locked");
 });
 
-test("only authenticated chat events from this household's trusted devices are stored", { timeout: 30_000 }, async (t) => {
+test("only authenticated chat events are stored; one that can never pass is skipped, not a wall", { timeout: 30_000 }, async (t) => {
   const s = await service(t);
   const epochs = new Map([[1, await generateHouseholdKey()]]);
   const phone = await device(s.admin, { householdId: s.householdId, epochs });
   const laptop = await device(s.partner, { householdId: s.householdId, epochs });
-  const a = await openRoom(phone, s), b = await openRoom(laptop, s);
+  const a = await openRoom(phone, s);
   await a.room.send("hello");
   await a.room.sync({ status: STATUS, devices: [phone.entry, laptop.entry] });
+  await a.room.send("again");
+  await a.room.sync({ status: STATUS, devices: [phone.entry, laptop.entry] });
 
-  const refused = (error) => error.code === "chat_event_refused";
-  // An unknown device; a device revoked before this epoch; history from
-  // before the device's grant; a key that doesn't match its signature.
-  await assert.rejects(b.room.sync({ status: STATUS, devices: [laptop.entry] }), refused);
-  await assert.rejects(b.room.sync({ status: STATUS, devices: [{ ...phone.entry, revokedAt: 1 }, laptop.entry] }), refused);
-  await assert.rejects(b.room.sync({ status: STATUS, devices: [{ ...phone.entry, historyFromEpoch: 2 }, laptop.entry] }), refused);
-  await assert.rejects(b.room.sync({ status: STATUS, devices: [{ ...phone.entry, verifiedKeyHistory: laptop.entry.verifiedKeyHistory }, laptop.entry] }),
-    (error) => error.code === "event_signature_invalid");
-  // A member's device claiming another member as author.
-  await assert.rejects(b.room.sync({ status: STATUS, devices: [{ ...phone.entry, memberId: s.partner.memberId }, laptop.entry] }), refused);
-  assert.equal(b.room.records.length, 0, "nothing refused was kept");
-  assert.equal((await b.room.store.state()).cursor, "", "nor read past");
-
-  // A missing key epoch pauses chat rather than skipping the event.
+  // A device this one doesn't know yet (paired after it read the directory)
+  // pauses chat: nothing is stored or read past, and the next pass retries.
+  const b = await openRoom(laptop, s);
+  await assert.rejects(b.room.sync({ status: STATUS, devices: [laptop.entry] }), (error) => error.code === "chat_device_unknown");
+  assert.equal(b.room.records.length, 0);
+  assert.equal((await b.room.store.state()).cursor, "", "not read past");
+  // So does a missing key epoch.
   const forgetful = await device(s.partner, { householdId: s.householdId, epochs: new Map() });
   const c = await openRoom(forgetful, s);
   await assert.rejects(c.room.sync({ status: STATUS, devices: [phone.entry, laptop.entry] }), (error) => error.code === "chat_key_missing");
-
   await b.room.sync({ status: STATUS, devices: [phone.entry, laptop.entry] });
-  assert.equal(b.room.records.length, 1);
+  assert.equal(b.room.records.length, 2);
+
+  // What no retry can fix is skipped and remembered: a device revoked before
+  // this epoch, history from before the device's grant, a key that doesn't
+  // match the signature, an author who isn't the signing device's member.
+  let phoneEvents = 2;
+  for (const [signer, code] of [
+    [{ ...phone.entry, revokedAt: 1 }, "chat_event_refused"],
+    [{ ...phone.entry, historyFromEpoch: 2 }, "chat_event_refused"],
+    [{ ...phone.entry, verifiedKeyHistory: laptop.entry.verifiedKeyHistory }, "event_signature_invalid"],
+    [{ ...phone.entry, memberId: s.partner.memberId }, "chat_event_refused"],
+  ]) {
+    const fresh = await openRoom({ ...laptop, indexedDB: fakeIndexedDB() }, s);
+    const seen = [];
+    fresh.room.subscribe(() => seen.push(fresh.room.refused.length));
+    assert.deepEqual(await fresh.room.sync({ status: STATUS, devices: [signer, laptop.entry] }), { hasMore: false });
+    assert.equal(fresh.room.records.length, 0, "nothing refused is kept");
+    assert.deepEqual(fresh.room.refused.map((entry) => entry.code), new Array(phoneEvents).fill(code));
+    assert.ok(seen.includes(phoneEvents), "the view hears about it");
+    const state = await fresh.room.store.state();
+    assert.notEqual(state.cursor, "", "read past, so chat goes on");
+    assert.equal(state.refused.length, phoneEvents, "remembered across unlocks");
+    // Later events from good devices still arrive.
+    await a.room.send(`after ${code}`);
+    phoneEvents += 1;
+    await a.room.sync({ status: STATUS, devices: [phone.entry, laptop.entry] });
+    await fresh.room.sync({ status: STATUS, devices: [phone.entry, laptop.entry] });
+    assert.equal(fresh.room.records.length, 1);
+  }
 });
 
 test("a device that lost its chat log continues its sequence; a lost acknowledgement isn't sent twice", { timeout: 30_000 }, async (t) => {
@@ -271,13 +293,29 @@ test("a device that lost its chat log continues its sequence; a lost acknowledge
   assert.deepEqual((await texts(b)).sort(), ["four", "one", "three", "two"]);
 });
 
-test("editing and deleting delete the replaced content on the service and on every device", { timeout: 30_000 }, async (t) => {
+test("a long outbox goes out over several passes, five batches at a time", { timeout: 30_000 }, async (t) => {
   const s = await service(t);
   const epochs = new Map([[1, await generateHouseholdKey()]]);
   const phone = await device(s.admin, { householdId: s.householdId, epochs });
+  const a = await openRoom(phone, s);
+  a.request.offline = true;
+  for (let index = 0; index < 101; index += 1) await a.room.send(`message ${index}`);
+  a.request.offline = false;
+  assert.deepEqual(await a.room.sync({ status: STATUS, devices: [phone.entry] }), { hasMore: true });
+  assert.equal(a.room.pending.size, 1);
+  assert.equal(a.request.paths.filter((path) => path === "POST /api/chat/events").length, 5);
+  assert.deepEqual(await a.room.sync({ status: STATUS, devices: [phone.entry] }), { hasMore: false });
+  assert.equal(a.room.pending.size, 0);
+});
+
+test("editing and deleting delete the replaced content on the service and on every device", { timeout: 30_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs, householdAdmin: true });
   const laptop = await device(s.partner, { householdId: s.householdId, epochs, memberKind: "limited" });
   const devices = [phone.entry, laptop.entry];
-  assert.deepEqual(chatAdmins(devices), [s.admin.memberId], "admins are active adults");
+  assert.deepEqual(chatAdmins(devices), [s.admin.memberId], "admins are the service's household admins");
+  assert.deepEqual(chatAdmins([{ ...phone.entry, memberActive: false }]), []);
   const a = await openRoom(phone, s), b = await openRoom(laptop, s);
   await b.room.send("typo");
   await b.room.send("rude");
@@ -301,6 +339,71 @@ test("editing and deleting delete the replaced content on the service and on eve
     assert.equal(await b.blobs.store.get(ref), null);
     assert.equal(await b.blobs.store.isRetired(ref), true);
   }
+
+  // The admins last known are kept, so a removal still shows offline and
+  // after reopening, before any sync.
+  b.room.close();
+  const reopened = await openRoom(laptop, s);
+  assert.deepEqual(reopened.room.admins, [s.admin.memberId]);
+  assert.deepEqual(await texts(reopened), ["fixed", "removed-by-admin"]);
+  assert.equal(reopened.room.retiredThrough, reopened.room.records.length, "replaced blobs aren't deleted again after reopening");
+});
+
+test("a deletion the service refuses outright doesn't hold back later messages", { timeout: 30_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs, householdAdmin: true });
+  // The partner's device wrongly believes the partner is an admin (demoted
+  // meanwhile, say); the service, which keeps the record, refuses.
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs, householdAdmin: true });
+  const devices = [phone.entry, laptop.entry];
+  const a = await openRoom(phone, s), b = await openRoom(laptop, s);
+  await a.room.send("mine");
+  await a.room.sync({ status: STATUS, devices });
+  await b.room.sync({ status: STATUS, devices });
+  const [mine] = b.room.page().messages;
+  await b.room.remove(mine, { byAdmin: true });
+  assert.deepEqual(await b.room.sync({ status: STATUS, devices }), { hasMore: false });
+  assert.equal(b.room.retireRefusal?.code, "chat_blob_retire_forbidden", "reported");
+  assert.equal(b.room.pending.size, 0, "sent anyway");
+  await b.room.send("still sending");
+  await b.room.sync({ status: STATUS, devices });
+  assert.equal(b.room.pending.size, 0);
+  // The admin's own content stays on the service.
+  assert.ok((await a.blobs.client.download(mine.blobRef)).ciphertext);
+});
+
+test("sending while a pull is storing events loads every event exactly once", { timeout: 30_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs });
+  const devices = [phone.entry, laptop.entry];
+  const a = await openRoom(phone, s), b = await openRoom(laptop, s);
+  for (let index = 0; index < 3; index += 1) await a.room.send(`from phone ${index}`);
+  await a.room.sync({ status: STATUS, devices });
+  // Overlapping reads, sends and a pass, in one tab and a second tab.
+  const other = await openRoom(laptop, s);
+  await Promise.all([
+    b.room.sync({ status: STATUS, devices }),
+    b.room.send("from laptop 1"),
+    b.room.refresh(),
+    b.room.send("from laptop 2"),
+    other.room.send("from the other tab"),
+    b.room.refresh(),
+  ]);
+  await b.room.refresh();
+  await b.room.sync({ status: STATUS, devices });
+  await other.room.refresh();
+  for (const { room } of [b, other]) {
+    const ids = [...room.indexById.keys()];
+    assert.equal(room.records.length, 6);
+    assert.equal(new Set(ids).size, 6, "no event twice");
+    assert.equal(room.loadedOrder, 6);
+  }
+  assert.equal(b.room.pending.size, 0, "the outbox isn't stuck");
+  await a.room.sync({ status: STATUS, devices });
+  assert.equal(a.room.records.length, 6);
 });
 
 test("pending events sealed under an older key epoch are sealed again before they leave", async () => {
@@ -308,32 +411,41 @@ test("pending events sealed under an older key epoch are sealed again before the
   const epochs = new Map([[1, await generateHouseholdKey()]]);
   const phone = await device({ memberId: "bb".repeat(16), deviceId: "cc".repeat(16) }, { householdId, epochs });
   const pushed = [];
+  let relaySequence = 0;
   const request = async (path, options = {}) => {
-    if (path === "/api/chat/status") return { deviceSequence: 0 };
+    if (request.offline) throw Object.assign(new Error("offline"), { code: "connection_unavailable" });
+    if (path === "/api/chat/status") return { deviceSequence: relaySequence };
     if (path.startsWith("/api/chat/events") && options.method === "POST") {
-      pushed.push(...decodeEnvelopeBatch(options.body));
-      return { accepted: 1 };
+      const batch = decodeEnvelopeBatch(options.body);
+      pushed.push(...batch);
+      relaySequence = batch.at(-1).deviceSequence;
+      return { accepted: batch.length };
     }
-    if (path.startsWith("/api/chat/events")) return encodeEventPage({ events: [], nextCursor: "", hasMore: false });
+    if (path.startsWith("/api/chat/events")) return encodeEventPage({ events: [], nextCursor: "AAAAAAAAAAA", hasMore: false });
     throw new Error(`unexpected ${path}`);
   };
   request.fetch = async () => new Response("{}", { status: 200 });
   const { room } = await openRoom(phone, { householdId, request });
-  room.request = async () => { throw Object.assign(new Error("offline"), { code: "connection_unavailable" }); };
+  // A first message goes out under epoch 1, settling the sequence.
+  await room.send("first");
+  await room.sync({ status: STATUS, devices: [phone.entry] });
+  assert.deepEqual(pushed.map((envelope) => [envelope.deviceSequence, envelope.keyEpoch]), [[1, 1]]);
+  // Written offline under epoch 1; the household rotates to 2 meanwhile.
+  request.offline = true;
   await room.send("before the rotation");
-  await room.sync({ status: STATUS, devices: [phone.entry] }).catch(() => {});
-  room.request = request;
-  // Settle the provisional count first, still under epoch 1.
-  await room.store.settleSequence(0);
+  request.offline = false;
   epochs.set(2, await generateHouseholdKey());
-  await room.sync({ status: { currentEpoch: 2, rotationPending: false }, devices: [phone.entry] }).catch(() => {});
+  // While the rotation is pending, nothing is pushed.
+  assert.deepEqual(await room.sync({ status: { currentEpoch: 2, rotationPending: true }, devices: [phone.entry] }), { hasMore: false });
   assert.equal(pushed.length, 1);
-  assert.equal(pushed[0].keyEpoch, 2);
-  assert.equal(pushed[0].deviceSequence, 1);
-  // While a rotation is pending, nothing is pushed.
-  await room.send("during the rotation");
-  await room.sync({ status: { currentEpoch: 2, rotationPending: true }, devices: [phone.entry] }).catch(() => {});
-  assert.equal(pushed.length, 1);
+  assert.equal(room.pending.size, 1);
+  await room.sync({ status: { currentEpoch: 2, rotationPending: false }, devices: [phone.entry] });
+  assert.deepEqual(pushed.map((envelope) => [envelope.deviceSequence, envelope.keyEpoch]), [[1, 1], [2, 2]]);
+  assert.equal(room.pending.size, 0);
+  // Reopened, the resealed event decrypts under its new epoch.
+  room.close();
+  const again = await openRoom(phone, { householdId, request });
+  assert.equal(again.room.records.length, 2);
 });
 
 test("the chat log store keeps each event once and one sequence per send", async () => {
@@ -342,18 +454,26 @@ test("the chat log store keeps each event once and one sequence per send", async
   const one = await ChatLogStore.open(householdId, { indexedDB, keyRange: fakeKeyRange });
   const two = await ChatLogStore.open(householdId, { indexedDB, keyRange: fakeKeyRange });
   const envelope = (eventId, deviceSequence) => ({ eventId, deviceSequence });
-  assert.deepEqual(await one.state(), { key: "state", nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true });
+  assert.deepEqual(await one.state(), { key: "state", nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], retiredThrough: 0, refused: [] });
   await one.addLocal(envelope("01".repeat(16), 1), { blobRef: "ab".repeat(32) });
   // Another tab sending with the same sequence loses and retries.
   await assert.rejects(two.addLocal(envelope("02".repeat(16), 1)), (error) => error.code === "chat_sequence_taken");
   assert.equal(await two.addReceived([envelope("01".repeat(16), 1), envelope("03".repeat(16), 4), envelope("03".repeat(16), 4)], "AAAAAAAAAAE"), 1);
   assert.deepEqual((await one.eventsFrom(1)).map((row) => [row.order, row.eventId]), [[1, "01".repeat(16)], [2, "03".repeat(16)]]);
   assert.deepEqual((await one.eventsFrom(2)).map((row) => row.order), [2]);
+  assert.deepEqual((await one.eventsFrom(1, 1)).map((row) => row.order), [1], "in chunks");
   assert.deepEqual((await one.outbox()).map((row) => [row.deviceSequence, row.blobRef]), [[1, "ab".repeat(32)]]);
+  // Renumbering refuses when a send took a sequence meanwhile.
+  await assert.rejects(one.replacePending([{ order: 1, previousSequence: 1, envelope: envelope("01".repeat(16), 5) }], { expectedDeviceSequence: 0, deviceSequence: 5 }),
+    (error) => error.code === "chat_outbox_changed");
   await one.markSent([1]);
   assert.deepEqual(await one.outbox(), []);
-  await assert.rejects(one.replacePending([{ order: 1, previousSequence: 1, envelope: envelope("01".repeat(16), 1) }], { deviceSequence: 1 }), (error) => error.code === "chat_outbox_changed");
-  assert.equal((await one.state()).cursor, "AAAAAAAAAAE");
+  await assert.rejects(one.replacePending([{ order: 1, previousSequence: 1, envelope: envelope("01".repeat(16), 1) }], { expectedDeviceSequence: 1, deviceSequence: 1 }), (error) => error.code === "chat_outbox_changed");
+  await one.addReceived([], "AAAAAAAAAAI", { refused: Array.from({ length: 120 }, (_, index) => ({ eventId: String(index) })) });
+  const state = await one.state();
+  assert.equal(state.cursor, "AAAAAAAAAAI");
+  assert.equal(state.refused.length, 100, "bounded");
+  assert.equal(state.refused.at(-1).eventId, "119");
   assert.ok(indexedDB.databases.has(chatLogDatabaseName(householdId)));
   await assert.rejects(ChatLogStore.open("nope", { indexedDB, keyRange: fakeKeyRange }), (error) => error.code === "chat_log_unavailable");
 });
@@ -402,6 +522,30 @@ test("the coordinator runs a chat pass after each full pass and keeps chat troub
   coordinator.stop();
   assert.equal(room.closed, true, "stopping (on lock) closes the room");
   assert.equal(coordinator.chat, null);
+
+  // A pass that leaves chat to read continues soon, like a household catch-up.
+  const continuing = new SyncCoordinator({ store: {}, engine: {}, identity: { householdId: "aa".repeat(16) }, liveChannel: () => null, chatRoom: async () => null });
+  const continued = [];
+  continuing.runOnce = async () => ({ hasMore: false, advanced: true, chatMore: true });
+  continuing.scheduleContinuation = () => continued.push(true);
+  continuing.updatePollInterval = () => {};
+  await continuing.syncNow();
+  assert.deepEqual(continued, [true]);
+  continuing.runOnce = async () => ({ hasMore: false, advanced: true, chatMore: false });
+  await continuing.syncNow();
+  assert.deepEqual(continued, [true]);
+  // Blob requests stop with sync.
+  continuing.stop();
+  await assert.rejects(continuing.blobFetch("/api/chat/blobs/x"), /stopped/);
+
+  // A room that fails to open is remembered for the view and retried.
+  let attempts = 0;
+  const failing = new SyncCoordinator({ store: {}, engine: {}, identity: { householdId: "aa".repeat(16) }, liveChannel: () => null,
+    chatRoom: async () => { attempts += 1; throw Object.assign(new Error("missing key"), { code: "chat_key_missing" }); } });
+  assert.deepEqual(await failing.syncChat(context), { hasMore: false });
+  assert.equal(failing.chatOpenError.code, "chat_key_missing");
+  await failing.syncChat(context);
+  assert.equal(attempts, 2);
 
   // Where chat storage is missing, the coordinator stops trying.
   const none = new SyncCoordinator({ store: {}, engine: {}, identity: { householdId: "aa".repeat(16) }, liveChannel: () => null, chatRoom: async () => null });

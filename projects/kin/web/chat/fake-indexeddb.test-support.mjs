@@ -1,7 +1,7 @@
 // A small in-memory IndexedDB for Node tests of chat storage (not shipped).
 // It models only what chat storage uses: open with an upgrade, object
 // stores with a key path, get/getAll (in key order, from a lower
-// bound)/put/delete, transactions that stay active
+// bound, up to a count)/put/delete, transactions that stay active
 // while microtasks run and commit once no request is pending, failing
 // requests (`failNext`), and deleteDatabase, which asks open connections to
 // close (versionchange) and is blocked by one that doesn't. Values are
@@ -58,9 +58,10 @@ class Transaction {
     };
     return {
       get: (key) => request(() => (rows.has(key) ? structuredClone(rows.get(key)) : undefined)),
-      getAll: (range) => request(() => [...rows.keys()]
-        .filter((key) => range === undefined || compareKeys(key, range.lower) >= 0)
+      getAll: (range, count) => request(() => [...rows.keys()]
+        .filter((key) => range == null || compareKeys(key, range.lower) >= 0)
         .sort(compareKeys)
+        .slice(0, count || undefined)
         .map((key) => structuredClone(rows.get(key)))),
       put: (value) => write(() => { rows.set(value[keyPath], structuredClone(value)); return value[keyPath]; }),
       delete: (key) => write(() => { rows.delete(key); }),

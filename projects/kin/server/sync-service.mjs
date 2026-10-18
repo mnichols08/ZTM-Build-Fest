@@ -87,6 +87,9 @@ export class EncryptedSyncService {
           memberKind: member?.kind ?? "adult",
           memberActive: canParticipate(member, this.now()),
           ...(member?.expiresAt == null ? {} : { memberExpiresAt: member.expiresAt }),
+          // Chat (#111): whose removals count as an admin's, by the same
+          // rule the service uses to let them delete others' content.
+          householdAdmin: Boolean(member && isHouseholdAdmin(member, this.now())),
           publicKeys: device.syncPublicKeys ?? null,
           fingerprint: device.syncKeyFingerprint ?? null,
           certificate: device.deviceAuthorizationCertificate ?? null,

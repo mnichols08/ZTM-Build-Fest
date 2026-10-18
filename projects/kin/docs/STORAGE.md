@@ -254,15 +254,21 @@ database per household, `kin-chat-log:<householdId>`, version 1
 - `outbox`: `{ deviceSequence, eventId, blobRef, retireRef }`, this device's
   events the relay hasn't accepted, the blob each uploads first and the blob
   it replaced. A message in the outbox shows as waiting to send.
-- `meta`: `{ key: "state", nextOrder, cursor, deviceSequence, provisional }`,
-  the relay position read up to and this device's last chat sequence
-  ([SYNC](SYNC.md#chat-relay-v11-111)).
+- `meta`: `{ key: "state", nextOrder, cursor, deviceSequence, provisional,
+  admins, retiredThrough, refused }`: the relay position read up to, this
+  device's last chat sequence ([SYNC](SYNC.md#chat-relay-v11-111)), the
+  household admins last seen (so removals show offline), how many events'
+  replaced blobs were already deleted here, and the last 100 relay events
+  skipped because they failed authentication.
 
 While Kin is unlocked the decrypted log is held in memory as one growing
 buffer (`web/chat/chat-records.js`) that the engine's chat log mirrors
-incrementally; locking zeroes and drops it. Sending takes a Web Lock per
-household, and a store write checks the sequence, so two tabs can't take the
-same sequence. Deleting the log with the household, like the blob database,
+incrementally; locking zeroes and drops it. Opening reads and decrypts the
+log in chunks of 500, alongside the first household sync rather than before
+it, and reads of newly stored events run one at a time per tab. Sending and
+renumbering take a Web Lock per household, and the store writes that add or
+renumber pending events check the sequence they started from, so two tabs
+can't take the same sequence even without Web Locks. Deleting the log with the household, like the blob database,
 is still to come.
 
 ## Handoff storage

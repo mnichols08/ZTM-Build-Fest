@@ -20,12 +20,16 @@
 //                                          blob each must upload first, and
 //                                          the blob it replaced, which the
 //                                          service deletes once it's accepted
-//   meta    { key: "state", nextOrder, cursor, deviceSequence, provisional }
+//   meta    { key: "state", nextOrder, cursor, deviceSequence, provisional,
+//             admins, retiredThrough, refused }
 //
 // `cursor` is the relay position read up to. `deviceSequence` is the last
 // chat sequence this device used. It starts provisional when the log is new
 // and the relay hasn't been asked yet (an offline first message); the first
 // sync then renumbers those events after the relay's count (chat-room.js).
+// `admins` are the household admins last known, `retiredThrough` how many
+// events' replaced blobs this device already deleted, and `refused` the
+// relay events it skipped because they failed authentication.
 // Removing the household from the device deletes the whole database.
 
 const DATABASE_VERSION = 1;
@@ -81,7 +85,10 @@ function transact(db, names, mode, work) {
   });
 }
 
-const freshState = () => ({ key: STATE_KEY, nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true });
+/** Refused relay events remembered for the view to report. */
+const MAX_REFUSED = 100;
+
+const freshState = () => ({ key: STATE_KEY, nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], retiredThrough: 0, refused: [] });
 
 export class ChatLogStore {
   /** Opens (creating if needed) a household's chat log database. */
@@ -114,15 +121,19 @@ export class ChatLogStore {
       (await settle(meta.get(STATE_KEY))) ?? freshState());
   }
 
-  /** The events stored at or after `fromOrder`, in stored order. */
-  async eventsFrom(fromOrder = 1) {
+  /** Up to `limit` events stored at or after `fromOrder`, in stored order
+   * (all of them when `limit` is 0). */
+  async eventsFrom(fromOrder = 1, limit = 0) {
     return transact(this.db, [EVENTS], "readonly", ({ events }) =>
-      settle(events.getAll(this.keyRange.lowerBound(fromOrder))));
+      settle(events.getAll(this.keyRange.lowerBound(fromOrder), limit || undefined)));
   }
 
-  /** One stored event by its order, or null. */
-  async event(order) {
-    return transact(this.db, [EVENTS], "readonly", async ({ events }) => (await settle(events.get(order))) ?? null);
+  /** One stored event by its event ID, or null. */
+  async eventById(eventId) {
+    return transact(this.db, [EVENTS, IDS], "readonly", async ({ events, ids }) => {
+      const id = await settle(ids.get(eventId));
+      return id ? (await settle(events.get(id.order))) ?? null : null;
+    });
   }
 
   /** This device's events the relay hasn't accepted, in sequence order. */
@@ -135,10 +146,11 @@ export class ChatLogStore {
    * they were read up to. Events already stored are skipped. Resolves with
    * how many were new.
    */
-  async addReceived(envelopes, cursor) {
+  async addReceived(envelopes, cursor, { refused = [] } = {}) {
     if (typeof cursor !== "string") throw unavailable();
     return transact(this.db, [EVENTS, IDS, META], "readwrite", async ({ events, ids, meta }) => {
       const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
+      if (refused.length) state.refused = [...(state.refused ?? []), ...refused].slice(-MAX_REFUSED);
       let added = 0;
       for (const envelope of envelopes) {
         if (await settle(ids.get(envelope.eventId))) continue;
@@ -181,9 +193,13 @@ export class ChatLogStore {
    * is { order, previousSequence, envelope, blobRef, retireRef }. Only events still in
    * the outbox may be replaced: the relay has never accepted them.
    */
-  async replacePending(entries, { deviceSequence, provisional = false }) {
+  async replacePending(entries, { expectedDeviceSequence, deviceSequence, provisional = false }) {
     return transact(this.db, [EVENTS, OUTBOX, META], "readwrite", async ({ events, outbox, meta }) => {
       const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
+      // A message stored meanwhile (a tab without Web Locks) took a sequence
+      // this renumbering didn't account for.
+      if (state.deviceSequence !== expectedDeviceSequence)
+        throw new ChatLogError("Chat changed meanwhile; retry.", "chat_outbox_changed");
       for (const { previousSequence } of entries)
         if (!(await settle(outbox.get(previousSequence))))
           throw new ChatLogError("Chat changed meanwhile; retry.", "chat_outbox_changed");
@@ -204,6 +220,26 @@ export class ChatLogStore {
       const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
       state.deviceSequence = Math.max(state.deviceSequence, deviceSequence);
       state.provisional = false;
+      await settle(meta.put(state));
+    });
+  }
+
+  /** Records the household admins last known (from the verified device
+   * directory), so admin removals show while offline. */
+  async saveAdmins(admins) {
+    return transact(this.db, [META], "readwrite", async ({ meta }) => {
+      const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
+      state.admins = [...admins];
+      await settle(meta.put(state));
+    });
+  }
+
+  /** Records that every blob retired by the first `count` events was
+   * deleted on this device, so reopening doesn't delete them again. */
+  async saveRetiredThrough(count) {
+    return transact(this.db, [META], "readwrite", async ({ meta }) => {
+      const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
+      state.retiredThrough = count;
       await settle(meta.put(state));
     });
   }

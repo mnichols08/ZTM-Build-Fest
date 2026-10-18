@@ -930,7 +930,7 @@ async function api(request, response, url, context) {
     const auth = syncService.authorize(session);
     let page;
     try {
-      page = context.chatRelayService.pull(auth, url.searchParams.get("cursor") ?? "", url.searchParams.get("limit") ?? "20");
+      page = context.chatRelayService.pull(auth, url.searchParams.get("cursor") ?? "", url.searchParams.get("limit") ?? undefined);
       binary(response, encodeEventPage(page));
     } catch (error) {
       if (!(error instanceof EnvelopeWireError) &&

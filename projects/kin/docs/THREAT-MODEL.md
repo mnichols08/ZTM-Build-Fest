@@ -424,10 +424,18 @@ The service learns each chat event's size, time, sending device and order,
 and counts chat apart from household events, so it can tell chat activity
 from other household activity. Devices accept a chat event only from a
 verified household device, signed by it, with the same identity inside as
-outside, so the service can't forge, alter or misattribute one; it can still
-withhold or delay events, as for household sync. The device keeps chat
-events as those encrypted envelopes; the decrypted log lives in memory only
-while unlocked.
+outside, so the service can't forge, alter or misattribute who wrote one; it
+can still withhold or delay events, as for household sync. Two limits:
+whether a deletion counts as an admin's removal rests on the service's
+record of who is a household admin (the device directory's `householdAdmin`,
+not signed by any device), applied when a page is read, so the service could
+make a member's deletion show as an admin removal or hide a real one, and a
+removal stops showing as one once its author is no longer an admin (its
+content is gone either way). And an event that fails authentication is
+skipped and reported rather than stopping chat, so a member's device can
+send events other devices refuse, but can't block the room. The device keeps
+chat events as those encrypted envelopes; the decrypted log lives in memory
+only while unlocked.
 
 **Planned.** Each chat story records its own detail here as it lands.
 

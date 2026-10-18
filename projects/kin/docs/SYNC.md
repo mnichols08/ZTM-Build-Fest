@@ -447,7 +447,10 @@ household events (protocol 1, envelope 1), but they travel in a stream of
 their own (`server/chat-relay-service.mjs`) and land in the device's chat log
 rather than the household history ([ADR 0008](decisions/0008-household-chat.md)).
 Until the chat key exists (#123) they are encrypted under the household key
-epoch, like household events.
+epoch, like household events. Chat and household envelopes share one signature and AAD
+domain; the client tells them apart by kind (the household history refuses
+chat kinds and the chat pass accepts only them). The chat key story (#123)
+should also separate the two domains.
 
 - **Routes.** `POST /api/chat/events` takes a KSEV batch (at most 20
   envelopes); `GET /api/chat/events?cursor=&limit=` returns a KSEP page of at
@@ -463,18 +466,34 @@ epoch, like household events.
   reading device may read. Its own cursor, sequence and quota (250,000 chat
   events per household) keep chat from counting against household limits.
   Accepted chat sends the same push and live hints as household events.
-- **The client** (`web/chat/chat-room.js`) runs one chat pass after each full
-  household pass of the sync coordinator, and a message sent hints the
-  coordinator at once. A pass uploads each pending event's content blob, then
-  pushes the events in batches of 20, then asks the service to retire the
-  blobs those events replaced (an edit's old text, a deleted message's), then
-  pulls up to five pages. Each pulled event is checked as household events
-  are: from a device in the verified directory, not revoked before the
-  current epoch, not from before its device's history, signed by one of that
-  device's keys, and carrying the same event ID, household, author (the
-  signing device's member), device and logical time inside as outside; its
-  kind must be a chat kind. Anything else pauses chat (not household sync)
-  and is not stored.
+- **The client** (`web/chat/chat-room.js`) runs one chat pass after each
+  successful full household pass of the sync coordinator (a household pass
+  that pauses holds chat back too), and a message sent hints the coordinator
+  at once. A pass uploads each pending event's content blob, then pushes the
+  events in batches of 20 (at most five batches), then asks the service to
+  retire the blobs those events replaced (an edit's old text, a deleted
+  message's), then pulls up to five pages; a pass that leaves more continues
+  on the coordinator's normal continuation schedule. Each pulled event is
+  checked as household events are: from a device in the verified directory,
+  not revoked before the current epoch, not from before its device's
+  history, signed by one of that device's keys, and carrying the same event
+  ID, household, author (the signing device's member), device and logical
+  time inside as outside; its kind must be a chat kind.
+- **Refused events.** An event from a device this one doesn't know yet (paired
+  after the pass read the directory) or under a key epoch it lacks pauses
+  chat until a later pass. An event that can never pass (a bad signature, a
+  mismatched identity, not a chat event, a revoked or not-yet-granted device)
+  is skipped and remembered (the last 100) for the chat view to report, so
+  one bad event from a member's device can't stop the household's chat.
+- **Admins.** Whose removals count comes from the service's own record: the
+  device directory (`/api/sync/devices`) marks each device's member
+  `householdAdmin`, the rule the service uses to let a member delete others'
+  blobs. Devices keep the last list they saw, so removals show offline. The
+  engine applies the list when it reads a page, so a removal counts while its
+  author is an admin. If the service refuses a blob deletion outright (the
+  member isn't an admin by its record), the event is sent anyway, the blob
+  stays on the service, and the refusal is reported; a deletion that fails
+  for now is retried with the event.
 - **Sequences.** A device's chat log starts with a provisional sequence. The
   first pass asks `/api/chat/status`: events written before then (offline,
   on a fresh device) are renumbered after the relay's count and sealed again.
@@ -484,8 +503,10 @@ epoch, like household events.
   is sealed again under the current one before it leaves the device.
 - **Failure handling.** Chat trouble is reported to the chat room and the
   household pass still finishes; only lost access or a deleted household
-  stops the whole pass. A backlog larger than one pass continues on the
-  coordinator's normal continuation schedule.
+  stops the whole pass. Blob requests go through the coordinator's guard
+  (unlocked only, within its request budget, aborted when sync stops).
+- **Quota.** At 250,000 chat events a household's pushes fail with
+  `chat_limit` and outboxes wait; retention (#125) is what frees room.
 
 ## Privacy boundary
 
