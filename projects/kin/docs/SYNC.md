@@ -518,32 +518,51 @@ Deleting a message "for me" hides it on all of the member's devices and
 changes nothing for anyone else, so it can't be a household or chat event:
 every member's devices hold those keys. Each member instead has one record on
 the service (`GET`/`PUT /api/chat/hidden`, compare-and-set on its revision,
-at most 256 KiB, about 10,000 messages) holding the IDs they hid, sealed by
-`web/chat/chat-hidden.js`:
+at most 256 KiB) holding the IDs they hid, sealed by `web/chat/chat-hidden.js`
+(format 1):
 
-- A new random AES-256-GCM key per revision encrypts the sorted ID list; the
-  additional data binds household, member, revision and the writing device.
+- The IDs, 16 bytes each, sorted and packed, are encrypted with a new random
+  AES-256-GCM key per revision (at most 10,000 IDs: 160 KB, about 213 KB in
+  base64url, with room for 64 recipients). The additional data binds
+  household, member, revision and the writing device.
 - That key is wrapped to each of the member's trusted devices from the
-  verified directory: an ephemeral ECDH P-256 key and HKDF-SHA-256 to the
-  device's agreement key. Other members' devices are never recipients. This
-  stands in for a member-wide key provisioned to the member's devices (#119
-  suggested one): the record itself is the only thing such a key would
-  protect, and sealing each revision to the member's current devices needs
-  no new provisioning path.
-- The writing device signs every field; a device accepts a record only from a
-  trusted, unrevoked device of the same member, for this household, member
-  and the revision the service gave.
+  verified directory, by device and key fingerprint: an ephemeral ECDH P-256
+  key and HKDF-SHA-256 to the device's agreement key. Other members' devices
+  are never recipients. This stands in for a member-wide key provisioned to
+  the member's devices (#119 suggested one): the record is the only thing such
+  a key would protect, and sealing each revision to the member's current
+  devices needs no new provisioning path; a revoked device simply isn't
+  sealed to again.
+- The writing device signs every field with its current key. A device opens
+  a record only from a trusted, unrevoked device of the same member, for this
+  household, member and the revision the service gave, and refuses a revision
+  older than one it already saw.
 
-Hiding works offline: the ID is kept on the device and the next chat pass
-reads the record, adds it, and writes the result. Hiding only adds, so two
-of the member's devices writing at once merge on the next pass (the loser of
-the compare-and-set reads and writes again). A device the member adds can't
-open the record until one of their other devices writes it again, which a
-pass does whenever the member's devices changed; meanwhile its own hides
-wait. Past 5,000 IDs a pass drops those since deleted for everyone. The
-service sees only the record's size, timing and revision. It could serve an
-older revision, which shows fewer hidden messages on a device that hasn't
-kept them, until a device writes again; it can't read, forge or move one.
+Each chat pass asks only for the revision unless something changed (a hide
+here, or the member's devices). Hiding works offline: the ID is kept on the
+device and the next pass reads the record, adds it, and writes the result.
+Hiding only adds, so two of the member's devices writing at once merge (the
+loser of the compare-and-set reads and writes again). Keeping the record
+alive:
+
+- A device added or rekeyed since the last write can't open it. If another of
+  the member's current devices can, that one writes it again on its next
+  pass, sealed to the newcomer too; meanwhile the newcomer's own hides wait
+  ("arrive once one of your other devices syncs").
+- If none of the member's current devices can open it (all new or rekeyed),
+  or its writer is no longer trusted (revoked, removed, rekeyed), a device
+  writes it afresh from what it holds. Hides that only a device which is
+  gone held are lost; every remaining device keeps its own.
+
+The record isn't compacted: messages deleted for everyone stay listed (they
+show as "This message was deleted", which can itself be hidden), so the
+10,000 limit counts every message a member ever hid; retention (#125) is
+where old ones can go. A removed member's record stays on the service, sealed
+to their now-untrusted devices, until the household is deleted. The service
+sees only the record's size, timing and revision. It can't read, forge or
+move one; it could withhold one (shown fewer hidden messages on a device that
+hasn't kept them) or keep serving an old one to a device that hasn't seen a
+newer.
 
 ## Privacy boundary
 

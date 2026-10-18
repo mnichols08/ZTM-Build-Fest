@@ -7,7 +7,8 @@
 // (server/chat-relay-service.mjs). Format 1:
 //
 //   { version: 1, householdId, memberId, revision, senderDeviceId,
-//     nonce, ciphertext,            the hidden message IDs, AES-256-GCM
+//     nonce, ciphertext,            the hidden message IDs (16 bytes each,
+//                                   sorted, back to back), AES-256-GCM
 //     recipients: [{ deviceId, fingerprint, ephemeralPublicKey, salt,
 //                    nonce, wrappedKey }],   the content key for each of
 //                                            the member's devices
@@ -26,8 +27,8 @@ import { importDevicePublicKeys } from "../sync/crypto.js";
 
 const VERSION = 1;
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-/** Most IDs one record holds (the service's 256 KiB bound, with room). */
+/** Most IDs one record holds: 160 KB packed, about 213 KB in base64url,
+ * inside the service's 256 KiB bound with room for 64 recipients. */
 export const MAX_HIDDEN_MESSAGES = 10_000;
 
 export class ChatHiddenError extends Error {
@@ -97,8 +98,12 @@ export async function sealHiddenRecord({ ids, householdId, memberId, revision, s
   try {
     const contentKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt"]);
     const nonce = crypto.getRandomValues(new Uint8Array(12));
+    const packed = new Uint8Array(list.length * 16);
+    list.forEach((value, index) => {
+      for (let byte = 0; byte < 16; byte += 1) packed[index * 16 + byte] = Number.parseInt(value.slice(byte * 2, byte * 2 + 2), 16);
+    });
     const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv: nonce, additionalData: contentAad(header) }, contentKey, encoder.encode(JSON.stringify({ ids: list }))));
+      { name: "AES-GCM", iv: nonce, additionalData: contentAad(header) }, contentKey, packed));
     const wrapped = [];
     for (const recipient of recipients) {
       const keys = await importDevicePublicKeys(recipient.publicKeys);
@@ -128,29 +133,35 @@ export async function sealHiddenRecord({ ids, householdId, memberId, revision, s
 /**
  * Opens a record for this device and returns its message IDs. `senders` are
  * the member's trusted devices from the verified directory: the record must
- * be signed by one of them (any key in its verified history), and name this
- * household, member and the revision the service gave. A record not sealed
- * to this device (written before it joined) throws `chat_hidden_not_for_me`.
+ * be signed by one of them with its current key, and name this household,
+ * member and the revision the service gave.
+ *
+ * Errors a pass can act on: `chat_hidden_untrusted_sender` (the writer was
+ * revoked, removed or changed its key since: nobody can trust it, so the
+ * member's devices write it afresh), and `chat_hidden_not_for_me` (not
+ * sealed to this device's current key: added, or rekeyed, since).
  */
-export async function openHiddenRecord({ record, householdId, memberId, revision, deviceId, agreementPrivateKey, senders }) {
+export async function openHiddenRecord({ record, householdId, memberId, revision, deviceId, deviceFingerprint = "", agreementPrivateKey, senders }) {
   if (!record || record.version !== VERSION || record.householdId !== householdId || record.memberId !== memberId ||
       record.revision !== revision || !Array.isArray(record.recipients)) throw invalid();
+  const untrusted = () => new ChatHiddenError("The device that saved the hidden messages is no longer trusted.", "chat_hidden_untrusted_sender");
   const sender = senders.find((device) => device.deviceId === record.senderDeviceId);
-  if (!sender || sender.memberId !== memberId || sender.revokedAt) throw invalid();
+  if (!sender || sender.memberId !== memberId || sender.revokedAt) throw untrusted();
   const { signature, ...signed } = record;
-  const signatureBytes = fromBase64Url(signature);
-  const message = fields(["kin.chat.hidden.signature.v1", canonical(signed)]);
-  let verified = false;
-  for (const entry of sender.verifiedKeyHistory ?? [{ publicKeys: sender.publicKeys }]) {
-    const keys = await importDevicePublicKeys(entry.publicKeys);
-    if (await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, keys.signing, signatureBytes, message)) {
-      verified = true;
-      break;
+  const keys = await importDevicePublicKeys(sender.publicKeys);
+  if (!(await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, keys.signing, fromBase64Url(signature),
+    fields(["kin.chat.hidden.signature.v1", canonical(signed)])))) {
+    // A record its sender signed with an earlier key is the sender's, but
+    // stale: write it afresh. Anything else is forged.
+    for (const entry of sender.verifiedKeyHistory ?? []) {
+      const old = await importDevicePublicKeys(entry.publicKeys);
+      if (await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, old.signing, fromBase64Url(signature),
+        fields(["kin.chat.hidden.signature.v1", canonical(signed)]))) throw untrusted();
     }
+    throw invalid();
   }
-  if (!verified) throw invalid();
-  const mine = record.recipients.find((entry) => entry.deviceId === deviceId);
-  if (!mine) throw new ChatHiddenError("This device was added after the hidden messages were saved.", "chat_hidden_not_for_me");
+  const mine = record.recipients.find((entry) => entry.deviceId === deviceId && (entry.fingerprint ?? "") === deviceFingerprint);
+  if (!mine) throw new ChatHiddenError("This device's hidden messages arrive once another of your devices syncs.", "chat_hidden_not_for_me");
   const header = { householdId, memberId, revision, senderDeviceId: record.senderDeviceId };
   try {
     const ephemeral = await crypto.subtle.importKey("jwk", mine.ephemeralPublicKey, { name: "ECDH", namedCurve: "P-256" }, false, []);
@@ -165,9 +176,11 @@ export async function openHiddenRecord({ record, householdId, memberId, revision
     }
     try {
       const contentKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["decrypt"]);
-      const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64Url(record.nonce), additionalData: contentAad(header) }, contentKey, fromBase64Url(record.ciphertext));
-      const { ids } = JSON.parse(decoder.decode(plain));
-      if (!Array.isArray(ids) || ids.length > MAX_HIDDEN_MESSAGES || !ids.every(isId)) throw invalid();
+      const plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64Url(record.nonce), additionalData: contentAad(header) }, contentKey, fromBase64Url(record.ciphertext)));
+      if (plain.length % 16 || plain.length / 16 > MAX_HIDDEN_MESSAGES) throw invalid();
+      const ids = [];
+      for (let at = 0; at < plain.length; at += 16)
+        ids.push([...plain.subarray(at, at + 16)].map((byte) => byte.toString(16).padStart(2, "0")).join(""));
       return ids;
     } finally {
       rawKey.fill(0);

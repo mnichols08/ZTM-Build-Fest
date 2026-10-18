@@ -926,7 +926,7 @@ async function api(request, response, url, context) {
     return;
   }
   if (url.pathname === "/api/chat/hidden" && request.method === "GET") {
-    json(response, 200, context.chatRelayService.hidden(syncService.authorize(session)));
+    json(response, 200, context.chatRelayService.hidden(syncService.authorize(session), url.searchParams.get("since")));
     return;
   }
   if (url.pathname === "/api/chat/hidden" && request.method === "PUT") {

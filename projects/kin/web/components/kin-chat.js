@@ -299,6 +299,9 @@ class KinChat extends HTMLElement {
     if (room.syncError) return "Chat is paused until household sync can continue. Messages you send wait on this device.";
     if (room.retireRefusal) return "A message was deleted here, but Kin couldn't delete its content on the household service.";
     if (room.refused?.length) return "Kin skipped a chat message it couldn't verify.";
+    if (room.hiddenError?.code === "chat_hidden_full") return room.hiddenError.message;
+    if (room.hiddenError) return "Messages you deleted for yourself aren't syncing with your other devices right now.";
+    if (room.hiddenWaiting) return "Messages you deleted for yourself on your other devices arrive once one of them syncs.";
     return "";
   }
 
@@ -528,6 +531,9 @@ class KinChat extends HTMLElement {
       const note = document.createElement("p");
       note.className = "chat-note";
       note.textContent = notes.join(" · ");
+      // A grouped row's hidden header already says "edited" to screen
+      // readers: don't say it twice.
+      if (notes.length === 1 && notes[0] === "Edited") note.setAttribute("aria-hidden", "true");
       item.append(note);
     }
     const actions = this.actionsFor(message, room);
@@ -544,7 +550,8 @@ class KinChat extends HTMLElement {
     if (own && message.text !== null && message.contentKind === "text") actions.push("edit");
     if (own) actions.push("delete");
     else if (room.isAdmin) actions.push("remove");
-    actions.push("hide");
+    // Your own message still waiting to send would go out anyway.
+    if (!(own && room.pendingMessages?.has(message.messageId))) actions.push("hide");
     return actions;
   }
 
@@ -633,7 +640,7 @@ class KinChat extends HTMLElement {
         this.cancel.hidden = false;
         this.input.focus();
       } else if (action === "hide") {
-        if (!confirm("Delete this message for you? It disappears on all your devices. Nobody else sees any change.")) {
+        if (!confirm("Delete this message for you? It disappears here now and on your other devices as they sync. Nobody else sees any change.")) {
           this.rowFor(message.messageId)?.querySelector(".chat-menu-button")?.focus();
           return;
         }

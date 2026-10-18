@@ -227,7 +227,7 @@ export async function chatRegressions() {
   await settle();
   const menu = chat.querySelector(`[data-message-id="${ownRow.dataset.messageId}"] .chat-menu`);
   check(menu && document.activeElement === menu.querySelector("button"), "menu opens with focus");
-  check([...menu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,edit,delete,hide", "own message actions");
+  check([...menu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,edit,delete", "own message actions (not Delete for me while it waits to send)");
   menu.querySelector('[data-action="edit"]').click();
   await settle();
   check(input.value === "Send button" && chat.querySelector(".chat-cancel").hidden === false, "editing in the composer");

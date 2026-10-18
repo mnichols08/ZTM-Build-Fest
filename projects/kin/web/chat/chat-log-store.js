@@ -23,7 +23,7 @@
 //                                          and the message it concerns
 //   meta    { key: "state", nextOrder, cursor, deviceSequence, provisional,
 //             admins, members, membersSignature, retiredThrough, refused,
-//             hidden, hiddenRevision, hiddenDirty }
+//             hidden, hiddenRevision, hiddenDirty, hiddenSealedFor }
 //
 // `cursor` is the relay position read up to. `deviceSequence` is the last
 // chat sequence this device used. It starts provisional when the log is new
@@ -91,7 +91,7 @@ function transact(db, names, mode, work) {
 /** Refused relay events remembered for the view to report. */
 const MAX_REFUSED = 100;
 
-const freshState = () => ({ key: STATE_KEY, nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], members: [], membersSignature: null, retiredThrough: 0, refused: [], hidden: [], hiddenRevision: 0, hiddenDirty: false });
+const freshState = () => ({ key: STATE_KEY, nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], members: [], membersSignature: null, retiredThrough: 0, refused: [], hidden: [], hiddenRevision: 0, hiddenDirty: false, hiddenSealedFor: [] });
 
 export class ChatLogStore {
   /** Opens (creating if needed) a household's chat log database. */
@@ -269,7 +269,7 @@ export class ChatLogStore {
    * everyone). Still due for writing when something hidden here isn't in
    * `ids` (or `dirty` says so).
    */
-  async settleHidden({ ids, revision, dirty = false, dropped = [] }) {
+  async settleHidden({ ids, revision, dirty = false, dropped = [], sealedFor = null }) {
     return transact(this.db, [META], "readwrite", async ({ meta }) => {
       const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
       const gone = new Set(dropped);
@@ -278,6 +278,7 @@ export class ChatLogStore {
       state.hidden = merged;
       state.hiddenRevision = revision;
       state.hiddenDirty = dirty || merged.some((id) => !written.has(id));
+      if (sealedFor) state.hiddenSealedFor = sealedFor;
       await settle(meta.put(state));
       return { ids: state.hidden, revision, dirty: state.hiddenDirty };
     });

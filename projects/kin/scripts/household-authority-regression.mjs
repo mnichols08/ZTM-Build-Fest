@@ -364,10 +364,17 @@ async function pageSync() {
     // A device records its automatic name after a successful sync (#71);
     // send it now so relay counts and event sets settle within this call.
     if (await app.deviceDescription) await coordinator.syncNow();
+    // A pass cut short to stay within the request budget ("Catching up…")
+    // continues shortly: let it, so the call sees a whole sync.
+    for (let i = 0; i < 3 && states.at(-1)?.state === "syncing"; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      await coordinator.running;
+      await coordinator.syncNow();
+    }
   } finally {
     coordinator.onState = original;
   }
-  for (let i = 0; i < 200 && app.busy; i++) await new Promise((r) => setTimeout(r, 25));
+  for (let i = 0; i < 200 && (app.busy || app.refreshing || app.pendingRefresh); i++) await new Promise((r) => setTimeout(r, 25));
   return {
     started: true,
     states,

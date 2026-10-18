@@ -82,7 +82,7 @@ class MemoryChatRelayStore {
 
 /** A sealed "delete for me" record's routing fields, which the service can
  * check without reading it (web/chat/chat-hidden.js has the format). */
-function isHiddenRecordValid(record, { householdId, memberId, deviceId, revision }) {
+export function isHiddenRecordValid(record, { householdId, memberId, deviceId, revision }) {
   if (!record || typeof record !== "object" || Array.isArray(record)) return false;
   if (Buffer.byteLength(JSON.stringify(record)) > MAX_CHAT_HIDDEN_RECORD_BYTES) return false;
   return record.version === 1 && record.householdId === householdId && record.memberId === memberId &&
@@ -193,10 +193,13 @@ export class ChatRelayService {
    * This member's sealed "delete for me" record (#119), or a revision of 0
    * when there is none. Only the member's own devices can open it.
    */
-  hidden(auth) {
+  hidden(auth, since = null) {
     this.assertCanChat(auth);
     const row = this.storage.chatHiddenRecord(auth.household.id, auth.member.id);
-    return row ? { revision: row.revision, record: row.record } : { revision: 0, record: null };
+    const revision = row?.revision ?? 0;
+    // A device that already has this revision gets just the revision.
+    if (since !== null && String(revision) === String(since)) return { revision, unchanged: true };
+    return { revision, record: row?.record ?? null };
   }
 
   /** Replaces the record compare-and-set: `expectedRevision` must be the

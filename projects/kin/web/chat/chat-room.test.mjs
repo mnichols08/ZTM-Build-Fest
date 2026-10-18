@@ -511,7 +511,7 @@ test("the chat log store keeps each event once and one sequence per send", async
   const one = await ChatLogStore.open(householdId, { indexedDB, keyRange: fakeKeyRange });
   const two = await ChatLogStore.open(householdId, { indexedDB, keyRange: fakeKeyRange });
   const envelope = (eventId, deviceSequence) => ({ eventId, deviceSequence });
-  assert.deepEqual(await one.state(), { key: "state", nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], members: [], membersSignature: null, retiredThrough: 0, refused: [], hidden: [], hiddenRevision: 0, hiddenDirty: false });
+  assert.deepEqual(await one.state(), { key: "state", nextOrder: 1, cursor: "", deviceSequence: 0, provisional: true, admins: [], members: [], membersSignature: null, retiredThrough: 0, refused: [], hidden: [], hiddenRevision: 0, hiddenDirty: false, hiddenSealedFor: [] });
   await one.addLocal(envelope("01".repeat(16), 1), { blobRef: "ab".repeat(32) });
   // Another tab sending with the same sequence loses and retries.
   await assert.rejects(two.addLocal(envelope("02".repeat(16), 1)), (error) => error.code === "chat_sequence_taken");
@@ -597,6 +597,11 @@ test("delete for me hides a message on all of my devices and nowhere else (#119)
   const stored = s.app.chatRelayService.hidden(s.app.syncService.authorize(s.admin.sessionToken));
   assert.equal(stored.revision, 1);
   assert.equal(JSON.stringify(stored.record).includes(surprise.messageId), false, "the service can't read which");
+  assert.deepEqual(stored.record.recipients.map((entry) => entry.deviceId).sort(), [s.admin.deviceId, tablet.who.deviceId].sort(), "sealed to my devices only");
+  // A pass with nothing new asks only for the revision.
+  const before = a.request.paths.length;
+  await a.room.sync({ status: STATUS, devices });
+  assert.ok(!a.request.paths.slice(before).some((path) => path === "PUT /api/chat/hidden"));
 
   // Both of my devices hide something offline: the record ends with both.
   a.request.offline = true;
@@ -626,6 +631,71 @@ test("delete for me hides a message on all of my devices and nowhere else (#119)
   await d.room.sync({ status: STATUS, devices });
   assert.equal(d.room.hiddenWaiting, false);
   assert.ok(d.room.isHidden(surprise.messageId) && d.room.isHidden(dinner.messageId));
+
+  // The device that wrote last is revoked: my other devices write afresh
+  // from what they hold, and keep syncing.
+  const lastWriter = s.app.chatRelayService.hidden(s.app.syncService.authorize(s.admin.sessionToken)).record.senderDeviceId;
+  const writerRoom = [reopened, b, d].find(({ room }) => room.identity.deviceId === lastWriter) ?? reopened;
+  devices = devices.map((entry) => (entry.deviceId === lastWriter ? { ...entry, revokedAt: Date.now() } : entry));
+  const others = [reopened, b, d].filter((room) => room !== writerRoom);
+  await others[0].room.hide({ messageId: "cd".repeat(16) });
+  for (const { room } of others) await room.sync({ status: STATUS, devices });
+  for (const { room } of others) await room.sync({ status: STATUS, devices });
+  for (const { room } of others) {
+    assert.equal(room.hiddenError, null, String(room.hiddenError?.code));
+    assert.ok(room.isHidden("cd".repeat(16)) && room.isHidden(surprise.messageId), "kept and still syncing");
+  }
+  const after = s.app.chatRelayService.hidden(s.app.syncService.authorize(s.admin.sessionToken)).record;
+  assert.ok(!after.recipients.some((entry) => entry.deviceId === lastWriter), "the revoked device isn't sealed to");
+});
+
+test("delete for me keeps syncing when one of my devices changes its key, and refuses a rollback", { timeout: 60_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs, householdAdmin: true });
+  const tablet = await device(s.pairDevice(s.admin), { householdId: s.householdId, epochs, householdAdmin: true });
+  phone.entry.fingerprint = "phone-1";
+  tablet.entry.fingerprint = "tablet-1";
+  let devices = [phone.entry, tablet.entry];
+  const a = await openRoom(phone, s), b = await openRoom(tablet, s);
+  await a.room.hide({ messageId: "01".repeat(16) });
+  await a.room.sync({ status: STATUS, devices });
+  await b.room.sync({ status: STATUS, devices });
+  assert.ok(b.room.isHidden("01".repeat(16)));
+  // The tablet rekeys: its old key can't open what was sealed to it.
+  const rekeyed = await device(tablet.who, { householdId: s.householdId, epochs, householdAdmin: true });
+  rekeyed.entry.fingerprint = "tablet-2";
+  rekeyed.indexedDB = tablet.indexedDB;
+  devices = [phone.entry, rekeyed.entry];
+  b.room.close();
+  const b2 = await openRoom(rekeyed, s);
+  await b2.room.hide({ messageId: "02".repeat(16) });
+  await b2.room.sync({ status: STATUS, devices });
+  assert.equal(b2.room.hiddenWaiting, true, "waits for the phone, which can read it");
+  await a.room.sync({ status: STATUS, devices });
+  await b2.room.sync({ status: STATUS, devices });
+  await a.room.sync({ status: STATUS, devices });
+  for (const { room } of [a, b2]) assert.deepEqual([...room.hidden].sort(), ["01".repeat(16), "02".repeat(16)]);
+  // Every device of mine rekeyed or new: the record can't be read by any of
+  // them, so one writes it afresh from what it holds.
+  const fresh = await device(s.admin, { householdId: s.householdId, epochs, householdAdmin: true });
+  fresh.entry.fingerprint = "phone-2";
+  fresh.indexedDB = phone.indexedDB;
+  devices = [fresh.entry];
+  a.room.close();
+  const a2 = await openRoom(fresh, s);
+  await a2.room.sync({ status: STATUS, devices });
+  assert.equal(a2.room.hiddenError, null);
+  assert.equal(a2.room.hiddenWaiting, false);
+  assert.ok(a2.room.isHidden("01".repeat(16)));
+  // A service that serves an older revision than this device saw: refused.
+  const auth = s.app.syncService.authorize(s.admin.sessionToken);
+  const real = s.app.chatRelayService.hidden.bind(s.app.chatRelayService);
+  s.app.chatRelayService.hidden = () => ({ revision: 1, record: null });
+  await a2.room.sync({ status: STATUS, devices });
+  assert.equal(a2.room.hiddenError?.code, "chat_hidden_rollback");
+  s.app.chatRelayService.hidden = real;
+  assert.ok(real(auth).revision > 1);
 });
 
 test("the in-memory chat log grows in place and gives the engine views of it", () => {

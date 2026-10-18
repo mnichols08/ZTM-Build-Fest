@@ -443,8 +443,11 @@ everyone keeps the event (author and time) and retires the content
 everywhere as devices sync; a delete wins over a concurrent edit. Deleting
 "for me" is kept in a record sealed to the member's own devices and signed
 by one of them: other members, and the service, can't read which messages a
-member hid. The service learns that a member's record changed, its size and
-when. A member's device that never syncs again keeps showing what it showed.
+member hid. That rests on the device directory: whoever can make a device
+trusted for a member (an Adult approving it, a service that forges what the
+directory says about revocation) can make it a recipient of later revisions,
+as with household key rotation. The service learns that a member's record
+changed, its size and when. A member's device that never syncs again keeps showing what it showed.
 
 **Planned.** Each chat story records its own detail here as it lands.
 
