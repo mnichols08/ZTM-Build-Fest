@@ -91,3 +91,29 @@ test('the manifest and install icons are never cached and always come from the n
     assert.equal(handled, false, `${path} passes through to the network`);
   }
 });
+
+test('a push always shows one content-free notification and never touches caches or keys (#85)', async () => {
+  const listeners = new Map(); const shown = []; const fetched = [];
+  const self = {
+    registration: { active: true, async showNotification(title, options) { shown.push({ title, options }); } },
+    clients: { async matchAll() { return []; }, async claim() {}, async openWindow(url) { return { url }; } },
+    location: { origin: 'https://kin.test', href: 'https://kin.test/service-worker.js?v=0.38.2' },
+    addEventListener(type, callback) { listeners.set(type, callback); }, async skipWaiting() {},
+  };
+  const manifests = [
+    new Response(JSON.stringify({ short_name: 'Nest', icons: [{ src: '/install-icon/192.png?v=a', type: 'image/png', purpose: 'any' }] })),
+    new Response('nope', { status: 500 }),
+  ];
+  const caches = { async open() { throw new Error('the push path must not open caches'); }, async keys() { return []; } };
+  const context = { self, caches, URL, Response, Promise, AbortController, setTimeout, clearTimeout, indexedDB: undefined,
+    fetch: async (path, options) => { fetched.push([path, options?.credentials]); return manifests.shift(); } };
+  vm.runInNewContext(await readFile(new URL('./service-worker.js', import.meta.url), 'utf8'), context);
+  for (let i = 0; i < 2; i++) { let done; listeners.get('push')({ data: { text: () => '{"v":1,"kind":"new"}' }, waitUntil(value) { done = value; } }); await done; }
+  assert.deepEqual(shown.map(({ title, options }) => [title, options.body, options.tag, options.icon]), [
+    ['Nest', 'Something new in Nest', 'kin-new', '/install-icon/192.png?v=a'],
+    ['Kin', 'Something new in Kin', 'kin-new', '/icon.svg'],
+  ]);
+  assert.deepEqual(fetched, [['/manifest.webmanifest', 'include'], ['/manifest.webmanifest', 'include']]);
+  let opened; listeners.get('notificationclick')({ notification: { close() {} }, waitUntil(value) { opened = value; } });
+  assert.deepEqual(await opened, { url: '/' }, 'with no Kin window open, tapping opens Kin');
+});

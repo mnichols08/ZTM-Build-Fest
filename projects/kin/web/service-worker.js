@@ -20,7 +20,7 @@ const SHELL = [
   "/security/local-vault.js", "/security/passkey-unlock.js", "/security/archive.js", "/security/archive-stream.js", "/security/key-label.js",
   "/appearance/palette.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js", "/appearance/install-icons.js",
   "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js", "/sync/envelope-wire.js",
-  ...["app", "appearance", "household-defaults", "install-identity", "security", "household", "quick-add", "command-palette", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility", "bulk-bar", "playbook-editor", "routine-schedule"].map((name) => `/components/kin-${name}.js`),
+  ...["app", "appearance", "household-defaults", "install-identity", "notifications", "security", "household", "quick-add", "command-palette", "compose", "item", "item-detail", "today", "handoff-list", "talk-list", "search", "segment-nav", "sync-status", "reminder", "pulse", "catch-up", "routines", "areas", "notes", "attachments", "responsibility", "bulk-bar", "playbook-editor", "routine-schedule"].map((name) => `/components/kin-${name}.js`),
   "/components/app/appearance.js", "/components/app/attachments.js", "/components/app/commands/append.js", "/components/app/commands/bulk.js", "/components/app/commands/conversations.js", "/components/app/commands/items.js", "/components/app/commands/records.js", "/components/app/commands/routines.js", "/components/app/constants.js", "/components/app/context.js", "/components/app/detail.js", "/components/app/navigation.js", "/components/app/peer-channel.js", "/components/app/refresh.js", "/components/app/render.js", "/components/app/session.js", "/components/app/shell.js", "/components/app/status.js", "/components/app/sync.js", "/components/app/views.js",
   ...["dom", "focus", "icons", "operation", "props", "session-guard"].map((name) => `/components/shared/${name}.js`),
   ...["api", "auth", "lifecycle", "membership", "pairing", "views"].map((name) => `/components/household/${name}.js`),
@@ -81,4 +81,69 @@ self.addEventListener("fetch", (event) => {
       return fetch(event.request);
     }));
   }
+});
+
+// ---- Push notifications (#85) ----------------------------------------------
+// A push says only that something is new: the payload is fixed and carries no
+// household content, and this worker never opens the key stores or decrypts
+// anything. It always shows a notification (browsers require one for every
+// push). Nothing here is cached.
+
+// The installed app's own name (#78), if the household published one, so the
+// notification matches the home-screen icon. Kin otherwise.
+async function notificationIdentity() {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2_000);
+    const response = await fetch("/manifest.webmanifest", { credentials: "include", cache: "no-store", signal: controller.signal });
+    clearTimeout(timer);
+    if (!response.ok) throw new Error("no manifest");
+    const manifest = await response.json();
+    const name = typeof manifest.short_name === "string" && manifest.short_name.trim() ? manifest.short_name.trim().slice(0, 48) : "Kin";
+    const icon = manifest.icons?.find((entry) => entry.type === "image/png" && entry.purpose !== "maskable")?.src;
+    return { name, icon: typeof icon === "string" && icon.startsWith("/") ? icon : "/icon.svg" };
+  } catch {
+    return { name: "Kin", icon: "/icon.svg" };
+  }
+}
+
+self.addEventListener("push", (event) => {
+  event.waitUntil((async () => {
+    const { name, icon } = await notificationIdentity();
+    await self.registration.showNotification(name === "Kin" ? "Kin" : name, {
+      body: name === "Kin" ? "Something new in Kin" : `Something new in ${name}`,
+      tag: "kin-new",
+      renotify: false,
+      icon,
+      badge: icon,
+      data: { url: "/" },
+    });
+  })());
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    // Focus an open Kin window, else open one. Kin's own lock applies.
+    const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    const existing = windows.find((client) => new URL(client.url).origin === self.location.origin);
+    if (existing) return existing.focus();
+    return self.clients.openWindow("/");
+  })());
+});
+
+self.addEventListener("pushsubscriptionchange", (event) => {
+  event.waitUntil((async () => {
+    const applicationServerKey = event.oldSubscription?.options?.applicationServerKey;
+    if (!applicationServerKey) return;
+    const subscription = event.newSubscription ??
+      await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
+    const json = subscription.toJSON();
+    await fetch("/api/push/subscription", {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys }),
+    }).catch(() => {});
+  })());
 });

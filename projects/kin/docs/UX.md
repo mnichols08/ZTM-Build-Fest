@@ -1011,6 +1011,13 @@ Old backups and stale devices must not be presented as legitimate ways to bypass
 
 ---
 
+## 8.8 Notifications on this device (v1.1, #85)
+
+Copy for every state, the Home Screen requirement on iPhone and iPad, and the
+one-line promise are in [PUSH](PUSH.md#what-a-member-sees). Native buttons and
+a native select, 48px targets, a polite status after each change, alert
+semantics on errors, and focus returning to the section's first control.
+
 ## 8.7 Home screen name and icon (v1.1, #78)
 
 In Identity & defaults, admins only (the section isn't in the DOM for anyone

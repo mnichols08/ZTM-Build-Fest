@@ -1241,3 +1241,10 @@ kin-app > .security-panel {
   button:focus-visible, input:focus-visible, select:focus-visible,
   a:focus-visible, main:focus-visible { outline: 3px solid Highlight; }
 }
+kin-notifications { display: grid; gap: 10px; margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+kin-notifications h2 { margin: 0; font-size: 18px; font-weight: 650; }
+kin-notifications .notification-state { margin: 0; font-weight: 650; }
+kin-notifications label { display: grid; gap: 6px; font-weight: 650; }
+kin-notifications select { min-height: var(--tap); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; font-weight: 400; }
+kin-notifications .field-error { margin: 0; color: var(--danger); font-size: 14px; }
+kin-notifications .field-error:empty { display: none; }

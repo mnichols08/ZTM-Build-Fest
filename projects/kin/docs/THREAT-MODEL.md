@@ -335,6 +335,23 @@ server schema 9).
 **Planned.** Carry member roles into replay, or move removal behind an
 Adult-signed record.
 
+### Push notifications reveal timing to push services (v1.1)
+
+**What it is.** A device that turns on notifications (#85) gives the Kin
+service a push endpoint run by its browser's vendor.
+
+**Who and what.** The push service operator (Google, Mozilla, Apple or
+Microsoft) learns when that device receives a push, which roughly tracks when
+other members change something. The Kin service stores the endpoint and keys;
+it already knew when the household had new events. Neither learns any content:
+the payload is a fixed "something is new", encrypted to the device (RFC 8291).
+
+**Detail.** Pushes are coalesced to at most one per device per two minutes.
+Endpoints are allowlisted, so a subscription can't make the service contact
+other hosts. Subscriptions are deleted when a device loses access.
+
+**Planned.** Nothing further; notifications are opt-in per device.
+
 ### A published install identity is not encrypted (v1.1)
 
 **What it is.** A household admin can choose to show the household's name and

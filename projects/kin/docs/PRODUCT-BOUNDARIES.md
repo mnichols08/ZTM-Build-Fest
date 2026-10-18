@@ -26,7 +26,7 @@ Every feature should answer:
 
 - AI interpretation or recommendations;
 - points, streaks, scores, rankings;
-- hidden read receipts, location, presence, activity monitoring;
+- hidden read receipts, location, presence, activity monitoring (push notifications record nothing about delivery or reading, and are coalesced so they stay calm: [PUSH](PUSH.md));
 - generic project-management/workflow systems;
 - public social features;
 - architecture added mainly because it is technically interesting.

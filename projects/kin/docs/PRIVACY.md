@@ -118,6 +118,15 @@ pre-join epoch keys in v0.9; missing history may be unavailable. All
 trusted-device/key loss can make content unrecoverable. See [V0.11.0](V0.11.0.md)
 and the [Threat Model](THREAT-MODEL.md).
 
+Push notifications (v1.1, #85): off by default, per device. The service
+stores each subscribed device's push endpoint and keys, and already knows
+from the relay when a household accepts an encrypted event. A push carries a
+fixed payload with no content, event type, author or count, and nothing about
+delivery or clicks is recorded. The push service a browser uses (Google,
+Mozilla, Apple or Microsoft) sees its own endpoint and when pushes arrive.
+Revocation, removal and household deletion delete subscriptions. See
+[Push notifications](PUSH.md).
+
 Published install identity (v1.1, #78): off by default. If a household admin
 turns on "Show our name and icon on home screens", the service stores the
 household name, a short name, an optional description and the icons without

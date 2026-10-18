@@ -231,6 +231,9 @@ export class ViewBuilder {
       rename: (deviceId, nickname) => this.ctx.sync.renameDevice(deviceId, nickname),
     };
     this.app.peoplePage = peoplePage;
+    // Per-device notification settings (#85), shown once this browser is a
+    // trusted household device.
+    this.app.notifications = document.createElement("kin-notifications");
 
     const privacyPage = document.createElement("section");
     privacyPage.className = "household-subpage";

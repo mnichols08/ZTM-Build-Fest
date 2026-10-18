@@ -38,6 +38,7 @@ export class EncryptedSyncService {
 
   forgetHousehold(householdId) {
     this.households.delete(householdId);
+    this.pushService?.removeUntrusted(householdId);
   }
 
   status(sessionToken) {
@@ -356,6 +357,11 @@ export class EncryptedSyncService {
     // Keep the cached clock serializable: household state is also inspected by
     // diagnostics and tests that JSON-encode it.
     state.maxLogicalTime = maxLogicalTime.toString();
+    // After the commit: tell other members' devices that something is new.
+    // It runs in the background and can never fail or delay this response.
+    if (staged.length) {
+      try { this.pushService?.eventsAccepted(auth.household.id, auth.member.id); } catch { /* best effort */ }
+    }
     return {
       accepted: envelopes.length,
       latestCursor: encodeCursor(state.nextSequence - 1),
@@ -874,6 +880,8 @@ export class EncryptedSyncService {
   }
 
   onAccessChange(householdId, excludedDeviceIds = []) {
+    // Devices that lost access stop getting notifications at once (#85).
+    this.pushService?.removeUntrusted(householdId, excludedDeviceIds);
     const state = this.state(householdId);
     state.rotationPending = true;
     // Keep committed packages only for recipients who still hold trust.
