@@ -220,8 +220,12 @@ message can delete its content without touching the immutable log or the
 frozen event database schema. Each household has its own database,
 `kin-chat-blobs:<householdId>`, version 1 (`web/chat/chat-blob-store.js`):
 
-- `blobs`: `{ ref, ciphertext, storedAt }`, sealed content by the SHA-256 of
-  its bytes ([SYNC](SYNC.md#chat-content-blobs-v11-110)). Blobs are already
+- `blobs`: `{ ref, ciphertext, storedAt, parts }`, sealed content by the
+  SHA-256 of its bytes ([SYNC](SYNC.md#chat-content-blobs-v11-110)). `parts`
+  is set on an attachment's manifest only: the references of its parts and
+  thumbnails, so deleting the manifest deletes them too, and so that the
+  outbox uploads them first ([SYNC](SYNC.md#photos-and-files-v11-114)). No
+  index changes: the database is still version 1. Blobs are already
   ciphertext and their keys live only in the encrypted chat events, so the
   store holds nothing readable on its own; it is not wrapped in the
   encrypted record format.
@@ -251,9 +255,10 @@ database per household, `kin-chat-log:<householdId>`, version 1
   log only decrypts.
 - `ids`: `{ eventId, order }`, so each event is stored once even when two
   tabs store it together.
-- `outbox`: `{ deviceSequence, eventId, blobRef, retireRef }`, this device's
+- `outbox`: `{ deviceSequence, eventId, blobRef, retireRef, retireParts }`, this device's
   events the relay hasn't accepted, the blob each uploads first and the blob
   it replaced. A message in the outbox shows as waiting to send.
+  `retireParts` lists the parts of an attachment the event deletes (#114).
 - `meta`: `{ key: "state", nextOrder, cursor, deviceSequence, provisional,
   admins, members, membersSignature, retiredThrough, refused, hidden,
   hiddenRevision, hiddenDirty, hiddenSealedFor }`: the relay

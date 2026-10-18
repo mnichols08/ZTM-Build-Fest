@@ -64,7 +64,7 @@ function fakeEngine() {
       for (const { command, actorId, deviceId, timestamp } of events(source)) {
         const message = messages.get(command.messageId);
         if (command.type === "post-chat-message" && !message)
-          messages.set(command.messageId, { messageId: command.messageId, authorId: actorId, deviceId, postedAt: timestamp, status: "live", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey) });
+          messages.set(command.messageId, { messageId: command.messageId, authorId: actorId, deviceId, postedAt: timestamp, status: "live", contentKind: command.contentKind ?? "text", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey) });
         else if (message && message.status !== "deleted" && (actorId === message.authorId || (command.byAdmin && options.admins.includes(actorId)))) {
           retired.push(message.blobRef);
           if (command.type === "edit-chat-message") Object.assign(message, { status: "edited", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey) });
@@ -72,7 +72,7 @@ function fakeEngine() {
         }
       }
       const list = [...messages.values()].map((message, index) => ({
-        ...message, index, contentKind: "text",
+        ...message, index,
         text: options.includeText === false ? null : this.texts.get(message.blobRef) ?? null,
       }));
       const shown = new Set(list.map((message) => message.blobRef));
@@ -149,12 +149,12 @@ async function device(who, { householdId, epochs, memberKind = "adult", househol
   };
 }
 
-async function openRoom(phone, { base, householdId, engine = fakeEngine(), request = requester(base, phone.who), indexedDB = phone.indexedDB, locks } = {}) {
+async function openRoom(phone, { base, householdId, engine = fakeEngine(), request = requester(base, phone.who), indexedDB = phone.indexedDB, locks, preparePhoto } = {}) {
   const blobs = new ChatBlobs({ store: await ChatBlobStore.open(householdId, { indexedDB }), client: new ChatBlobClient({ fetch: request.fetch }) });
   const room = await ChatRoom.open({
     identity: { householdId, memberId: phone.who.memberId, deviceId: phone.who.deviceId },
     keyStore: phone.keyStore, deviceKeys: phone.deviceKeys, engine, request, blobs,
-    indexedDB, keyRange: fakeKeyRange, locks,
+    indexedDB, keyRange: fakeKeyRange, locks, ...(preparePhoto ? { preparePhoto } : {}),
   });
   return { room, request, blobs, engine };
 }
@@ -801,4 +801,55 @@ test("the room drives the real chat engine: send, edit, delete and page (#109, #
   const again = await openRoom(phone, { householdId, engine, request: offline });
   assert.deepEqual(again.room.page().messages.map((message) => message.status), ["edited", "deleted"]);
   assert.equal(again.room.pending.size, 4, "all four wait to send");
+});
+
+test("photos and files go to the other device in parts, and deleting the message deletes every part", { timeout: 60_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs });
+  const devices = [phone.entry, laptop.entry];
+  // A stand-in for the browser's photo preparation: the photo is "drawn
+  // again" as different bytes, with a thumbnail.
+  const preparePhoto = async (photo) => ({
+    blob: new Blob([new Uint8Array(3000).fill(7)], { type: photo.type }),
+    thumbnail: new Blob([new Uint8Array(200).fill(9)], { type: "image/jpeg" }),
+  });
+  const a = await openRoom(phone, { ...s, preparePhoto }), b = await openRoom(laptop, s);
+  const slip = new Uint8Array(2.5 * 1024 * 1024);
+  for (let index = 0; index < slip.length; index += 1) slip[index] = (index * 31 + 7) & 0xff;
+  const slipFile = new File([slip], "Permission slip.pdf", { type: "application/pdf" });
+  const photoFile = new File([new Uint8Array([0xff, 0xd8, 0xff, 0xe1, ...new Array(36).fill(0)])], "IMG_2041.heic.jpg", { type: "image/jpeg" });
+
+  await a.room.sendAttachments({ text: "Sign by Friday", files: [slipFile, photoFile] });
+  await a.room.sync({ status: STATUS, devices });
+  // Three parts of the slip, the photo and its thumbnail, then the manifest
+  // (the last of them), all before the event that names them.
+  const paths = a.request.paths;
+  const uploads = paths.map((path, index) => (path.startsWith("PUT /api/chat/blobs/") ? index : -1)).filter((index) => index >= 0);
+  assert.equal(uploads.length, 3 + 1 + 1 + 1, "parts, thumbnail, then manifest");
+  assert.ok(uploads.at(-1) < paths.indexOf("POST /api/chat/events"), "the event goes after its content");
+  await b.room.sync({ status: STATUS, devices });
+  const message = b.room.page().messages.find((entry) => entry.contentKind === "attachment");
+  assert.ok(message && message.text === null, "shown as an attachment, its content not in the engine");
+  const opened = await b.room.openAttachment(message);
+  assert.equal(opened.text, "Sign by Friday");
+  assert.deepEqual(opened.files.map((file) => [file.name, file.size, file.photo]), [["Permission slip.pdf", slip.length, false], ["IMG_2041.heic.jpg", 3000, true]]);
+  const back = new Uint8Array(await (await b.room.attachmentFile(message, 0)).arrayBuffer());
+  assert.equal(back.length, slip.length);
+  assert.ok(back.every((byte, index) => byte === slip[index]), "the file's bytes arrive whole");
+  assert.equal(await b.room.attachmentThumbnail(message, 0), null, "a file has no thumbnail");
+  assert.equal((await b.room.attachmentThumbnail(message, 1)).size, 200);
+  assert.equal((await b.room.attachmentFile(message, 1)).size, 3000, "the photo is the drawn-again copy");
+
+  // Deleting for everyone: the author's device names the parts; the service
+  // deletes them, and the other device deletes its copies.
+  const parts = (await b.room.manifestOf(message)).files.flatMap((file) => [...file.parts, file.thumbnail].filter(Boolean)).map((part) => part.ref);
+  assert.equal(parts.length, 3 + 1 + 1 + 0, "the slip's parts, the photo part and the thumbnail");
+  await a.room.remove(a.room.page().messages.find((entry) => entry.messageId === message.messageId));
+  await a.room.sync({ status: STATUS, devices });
+  for (const ref of parts) assert.deepEqual(await a.blobs.client.download(ref), { deleted: true }, "deleted on the service");
+  await b.room.sync({ status: STATUS, devices });
+  await assert.rejects(b.room.openAttachment(message), (error) => error.code === "chat_attachment_deleted");
+  for (const ref of parts) assert.equal(await b.blobs.store.get(ref), null, "and on the other device");
 });

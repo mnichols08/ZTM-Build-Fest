@@ -38,7 +38,8 @@ export async function chatRegressions() {
     return messageId;
   };
   const notify = () => { for (const listener of listeners) listener(); };
-  const calls = { send: [], edit: [], remove: [], hide: [] };
+  const calls = { send: [], edit: [], remove: [], hide: [], attach: [] };
+  const attachments = new Map();
   const room = {
     identity: { memberId: me, householdId: "c3".repeat(16), deviceId: "d4".repeat(16) },
     admins: [me],
@@ -71,6 +72,28 @@ export async function chatRegressions() {
         else { held.set(message.blobRef, text); results.set(message.messageId, { text }); }
       }
       return results;
+    },
+    async openAttachment(message) {
+      const found = attachments.get(message.blobRef);
+      if (!found) throw Object.assign(new Error("gone"), { code: "chat_attachment_deleted" });
+      return { text: found.text, files: found.files.map((file) => ({ name: file.name, type: file.type, size: file.size, photo: file.type.startsWith("image/") })) };
+    },
+    async attachmentFile(message, index) {
+      return attachments.get(message.blobRef).files[index];
+    },
+    async attachmentThumbnail(message, index) {
+      const file = attachments.get(message.blobRef).files[index];
+      return file.type.startsWith("image/") ? new Blob([file], { type: "image/jpeg" }) : null;
+    },
+    async sendAttachments({ text, files }) {
+      calls.attach.push([text, files.map((file) => file.name)]);
+      ids += 1;
+      const messageId = hex(ids);
+      const blobRef = hex(ids, 64);
+      log.push({ messageId, authorId: me, deviceId: hex(9), postedAt: start + (clock += 60_000), editedAt: null, status: "live", contentKind: "attachment", blobRef, blobKey: new Uint8Array(32).fill(2) });
+      attachments.set(blobRef, { text, files });
+      notify();
+      return { messageId };
     },
     async send(text) {
       calls.send.push(text);
@@ -474,6 +497,66 @@ export async function chatRegressions() {
   await settle();
   await new Promise((resolve) => setTimeout(resolve, 120));
   check(announcer.textContent === "Adult 2: hello?", `the first message is announced (${announcer.textContent})`);
+  // Photos and files (#114): chosen in the file dialog, listed, sent with a
+  // caption; a photo shows a thumbnail and opens in the viewer; a file shows
+  // its name and size and downloads. Refusals are plain.
+  chat.room = room;
+  await settle();
+  // The attach button makes a file input for one choice; capture it here
+  // rather than let the dialog open.
+  const choose = async (files) => {
+    let fileInput = null;
+    const click = HTMLInputElement.prototype.click;
+    HTMLInputElement.prototype.click = function captured() { if (this.type === "file") fileInput = this; else click.call(this); };
+    try {
+      chat.querySelector(".chat-attach").click();
+    } finally {
+      HTMLInputElement.prototype.click = click;
+    }
+    check(fileInput !== null, "attach opens a file input for one choice");
+    const transfer = new DataTransfer();
+    for (const file of files) transfer.items.add(file);
+    fileInput.files = transfer.files;
+    fileInput.dispatchEvent(new Event("change"));
+    await settle();
+    check(!fileInput.isConnected, "the file input is removed after the choice");
+  };
+  const pdf = new File([new Uint8Array(2048)], "Permission slip.pdf", { type: "application/pdf" });
+  const photo = new File([new Uint8Array(512)], "IMG_2041.jpg", { type: "image/jpeg" });
+  await choose([pdf]);
+  check(!chat.querySelector(".chat-pending").hidden && chat.querySelector(".chat-pending").textContent.includes("Permission slip.pdf"), "a chosen file is listed to send");
+  await choose([new File([new Uint8Array(4)], "scan.heic", { type: "image/heic" })]);
+  check(chat.querySelector(".compose-message").textContent.includes("can't be sent as a photo"), `a HEIC photo is refused plainly (${chat.querySelector(".compose-message").textContent})`);
+  check(chat.querySelector(".chat-pending").textContent.includes("Permission slip.pdf") && !chat.querySelector(".chat-pending").textContent.includes("scan.heic"), "a refused file isn't listed");
+  await choose([photo]);
+  const pendingRemove = [...chat.querySelectorAll(".chat-pending-remove")].find((button) => button.getAttribute("aria-label") === "Remove IMG_2041.jpg");
+  check(Boolean(pendingRemove), "each chosen file can be removed");
+  pendingRemove.click();
+  await settle();
+  check(!chat.querySelector(".chat-pending").textContent.includes("IMG_2041.jpg"), "removing a chosen file unlists it");
+  await choose([photo]);
+  const textBox = chat.querySelector("textarea");
+  textBox.value = "Sign by Friday";
+  chat.querySelector("form").requestSubmit();
+  await settle();
+  check(calls.attach.length === 1 && calls.attach[0][0] === "Sign by Friday" && calls.attach[0][1].join() === "Permission slip.pdf,IMG_2041.jpg", "sent with its caption and files");
+  check(chat.querySelector(".chat-pending").hidden && textBox.value === "", "the composer clears after sending");
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  await settle();
+  const sent = rows().at(-1);
+  check(sent.querySelector(".chat-text").textContent === "Sign by Friday", "the caption shows");
+  check(sent.querySelector(".chat-file")?.getAttribute("aria-label")?.startsWith("Download Permission slip.pdf, PDF, "), "a file shows its name, type and size");
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  await settle();
+  const thumb = sent.querySelector(".chat-photo img");
+  check(Boolean(thumb?.src?.startsWith("blob:")), "a photo shows a thumbnail");
+  sent.querySelector(".chat-photo").click();
+  await settle();
+  const viewer = chat.querySelector("dialog.chat-viewer");
+  check(viewer.open && viewer.querySelector("img").alt === "Photo: IMG_2041.jpg", "a photo opens in the viewer");
+  viewer.querySelector(".chat-viewer-actions button:last-child").click();
+  await settle();
+  check(!viewer.open, "the viewer closes");
   chat.room = null;
   await settle();
   if (!app) chat.remove();

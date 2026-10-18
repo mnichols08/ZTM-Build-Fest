@@ -440,6 +440,44 @@ deleting the blob deletes the content.
   admin removal adds a `chat_content_removed_by_admin` audit row with a count,
   never what was removed.
 
+## Photos and files (v1.1, #114)
+
+An attachment message is a chat event of kind 44 with content kind 2
+(`attachment`, already in the engine). Its content blob is the **chat
+attachment manifest** (format 1, `web/chat/chat-attachments.js`): JSON
+sealed like any message, holding the caption and, per file, its name, type,
+size, an optional thumbnail and its ordered parts. Each part, and each
+thumbnail, is a content blob of at most 1 MiB of the file, sealed under its
+own key. Limits: 10 files per message, 25 MB per file, names up to 200
+characters, captions up to 4,000, a manifest up to 256 KiB.
+
+- **Sending.** Each file is read and sealed in parts as it goes (no whole
+  file in memory), then the manifest. Parts and thumbnails are uploaded
+  first, the manifest last, and the event after all of them, so a receiver
+  that sees the message finds every part. A send that fails while sealing
+  drops the parts kept on this device. If the event itself can't be stored,
+  the sealed parts stay in this device's blob store, as ciphertext that is
+  never uploaded; nothing cleans them up yet, a known local leak of storage
+  (not of content).
+- **Photos** (recognized by their first bytes: JPEG, PNG, WebP, whatever
+  their declared type) are drawn again on a canvas before sealing,
+  which removes EXIF, GPS and camera metadata; a 320-pixel JPEG thumbnail is
+  made from the same pixels. A photo over 40 megapixels, or in another format
+  (HEIC, say), is refused with a message saying what to export.
+- **Opening.** The manifest is opened once per room (checked for shape and
+  sizes), then each part is fetched, checked against its reference and kept.
+  A file's parts are joined into a Blob for a download or the viewer; nothing
+  decrypted is stored.
+- **Deleting.** Only deletion (for everyone, or an admin's removal) applies;
+  attachments aren't edited. The deleting device names the manifest and its
+  parts when it sends the delete, from its kept copy or by opening the
+  manifest; the service retires them all in batches of 64, and each device
+  deletes the parts it kept with the manifest. A device that never fetched a
+  manifest has no parts to delete.
+- **Limits by the service:** a household holds 256 MiB of live blobs, so a
+  message of ten 25 MB files can fill a small household's chat storage;
+  uploads then fail with `chat_storage_full` and say so.
+
 ## Chat relay (v1.1, #111)
 
 Chat events are canonical events in the same signed, encrypted envelopes as

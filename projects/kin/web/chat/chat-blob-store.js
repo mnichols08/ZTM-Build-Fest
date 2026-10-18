@@ -3,7 +3,9 @@
 //
 // One IndexedDB database per household ("kin-chat-blobs:<householdId>"),
 // separate from the event store, whose schema stays frozen. It holds:
-//   blobs    { ref, ciphertext, storedAt }  sealed bytes, by content hash
+//   blobs    { ref, ciphertext, storedAt, parts }  sealed bytes, by content
+//                                           hash; parts: an attachment
+//                                           manifest's part references (#114)
 //   retired  { ref, retiredAt }             blobs this device deleted: never
 //                                           stored or fetched again
 // Blobs are ciphertext; their keys live only in the encrypted chat events,
@@ -79,22 +81,53 @@ export class ChatBlobStore {
     return refs.filter((_, index) => !rows[index]);
   }
 
+  /** The parts an attachment's manifest names, by manifest reference (only
+   * for blobs kept with them). */
+  async partsOf(refs) {
+    const found = new Map();
+    const valid = refs.filter(isRef);
+    if (!valid.length) return found;
+    const transaction = this.db.transaction([BLOBS], "readonly");
+    const store = transaction.objectStore(BLOBS);
+    const rows = await Promise.all(valid.map((ref) => settle(store.get(ref))));
+    rows.forEach((row, index) => { if (Array.isArray(row?.parts)) found.set(valid[index], row.parts); });
+    return found;
+  }
+
+  /** Records the parts a kept manifest names (a manifest opened here). */
+  async keepParts(ref, parts) {
+    if (!isRef(ref)) throw unavailable();
+    const transaction = this.db.transaction([BLOBS], "readwrite");
+    const finished = done(transaction);
+    const store = transaction.objectStore(BLOBS);
+    const row = await settle(store.get(ref)).catch(async (error) => { await finished.catch(() => {}); throw error; });
+    if (row) store.put({ ...row, parts: [...parts] });
+    await finished;
+  }
+
   /** Keeps a sealed blob, unless this device already deleted it. The
-   * caller has checked it against its reference (openChatBlob does). */
-  async put(ref, ciphertext) {
+   * caller has checked it against its reference (openChatBlob does). `parts`
+   * (an attachment manifest's blob references) is kept with it; without
+   * it, a blob kept before keeps its parts. */
+  async put(ref, ciphertext, { parts = null } = {}) {
     if (!isRef(ref) || !(ciphertext instanceof Uint8Array)) throw unavailable();
     const transaction = this.db.transaction([BLOBS, RETIRED], "readwrite");
     const finished = done(transaction);
-    // If the read fails, `finished` rejects too; it is awaited (or its
+    // If a read fails, `finished` rejects too; it is awaited (or its
     // rejection handled) on every path, so nothing goes unhandled.
-    let retired;
+    let retired, existing;
     try {
-      retired = await settle(transaction.objectStore(RETIRED).get(ref));
+      [retired, existing] = await Promise.all([
+        settle(transaction.objectStore(RETIRED).get(ref)),
+        settle(transaction.objectStore(BLOBS).get(ref)),
+      ]);
     } catch (error) {
       await finished.catch(() => {});
       throw error;
     }
-    if (!retired) transaction.objectStore(BLOBS).put({ ref, ciphertext: ciphertext.slice(), storedAt: this.now() });
+    if (!retired) {
+      transaction.objectStore(BLOBS).put({ ref, ciphertext: ciphertext.slice(), storedAt: this.now(), parts: parts ?? existing?.parts ?? null });
+    }
     await finished;
     return !retired;
   }

@@ -21,6 +21,9 @@
 // The draft lives in this element only: locking replaces the element.
 import { chatTextProblem, MAX_CHAT_TEXT_CHARS } from "../chat/chat-room.js";
 import { emojiOnlyCount } from "../chat/emoji.js";
+import { attachmentProblem, MAX_ATTACHMENT_FILES, safeAttachmentName } from "../chat/chat-attachments.js";
+import { attachmentKindLabel, formatAttachmentSize } from "../attachments/attachment-preview.js";
+import { ObjectUrlRegistry } from "../attachments/object-urls.js";
 import "./kin-emoji-picker.js";
 
 /** Rows rendered at first and added per page. */
@@ -35,6 +38,14 @@ const EDGE = 160;
 const GROUP_MS = 5 * 60_000;
 
 const STATUS_TEXT = { deleted: "This message was deleted", "removed-by-admin": "Removed by an admin" };
+const ATTACHMENT_TEXT = { loading: "Loading…", pending: "Waiting for these to arrive…", deleted: "This message was deleted", failed: "These couldn't be opened yet." };
+/** Blob URLs for photos and downloads last until the room is left (or the
+ * page locks): a long lifetime, revoked explicitly. */
+const URL_LIFETIME_MS = 2 ** 31 - 1;
+// (Blob URLs for photos are also revoked when the room is left, which the
+// registry's revokeAll does on resetView and on disconnect.)
+/** How long a downloaded file's blob URL lives after the click that saved it. */
+const DOWNLOAD_URL_MS = 60_000;
 const TIME = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 const DATE_TIME = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const FULL = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "short" });
@@ -48,6 +59,7 @@ class KinChat extends HTMLElement {
     super();
     this.chatRoom = null;
     this.unsubscribe = null;
+    this.urls = new ObjectUrlRegistry({ lifetimeMs: URL_LIFETIME_MS });
     this.resetView();
     this.editing = null;
     this.stashedDraft = null;
@@ -72,6 +84,11 @@ class KinChat extends HTMLElement {
     // Per message: { deleted } is final; { pending } and { failed } are
     // retried on the room's next change; { loading } while a load runs.
     this.textStatus = new Map();
+    // Per attachment message (#114): { status, text, files, thumbs }.
+    this.attachments = new Map();
+    // Photos and files chosen to send, not yet sent.
+    this.files = [];
+    this.urls?.revokeAll();
     this.seen = new Set();
     this.toAnnounce = [];
     this.wasAtBottom = true;
@@ -189,12 +206,32 @@ class KinChat extends HTMLElement {
     this.emoji.addEventListener("kin:emoji-inserted", () => {
       if (this.message.textContent === tooLong) this.message.textContent = "";
     });
+    // Photos and files (#114): chosen with the file dialog, then listed here
+    // until sent. The caption is whatever is in the message box.
+    // No file input is kept in the page: one is made when Attach is pressed
+    // and removed after the choice (see chooseFiles).
+    this.attach = document.createElement("button");
+    this.attach.type = "button";
+    this.attach.className = "chat-attach";
+    this.attach.textContent = "Attach";
+    this.attach.setAttribute("aria-label", `Attach photos or files (up to ${MAX_ATTACHMENT_FILES})`);
+    this.attach.addEventListener("click", () => this.chooseFiles());
+    this.pendingList = document.createElement("ul");
+    this.pendingList.className = "chat-pending";
+    this.pendingList.setAttribute("aria-label", "Photos and files to send");
+    this.pendingList.hidden = true;
     const buttons = document.createElement("div");
     buttons.className = "chat-form-buttons";
-    buttons.append(this.emoji, this.send, this.cancel);
-    form.append(this.label, this.input, panelSlot, buttons, this.message);
+    buttons.append(this.attach, this.emoji, this.send, this.cancel);
+    form.append(this.label, this.input, this.pendingList, panelSlot, buttons, this.message);
 
-    section.append(heading, this.notice, this.scroller, this.jump, form, this.announcer);
+    // A viewer for one photo, shown modally; its URL is released on close.
+    this.viewer = document.createElement("dialog");
+    this.viewer.className = "chat-viewer";
+    this.viewer.setAttribute("aria-labelledby", "chat-viewer-name");
+    this.viewer.addEventListener("close", () => this.closeViewer());
+
+    section.append(heading, this.notice, this.scroller, this.jump, form, this.announcer, this.viewer);
     this.replaceChildren(section);
     this.queueRender("reset");
   }
@@ -202,6 +239,7 @@ class KinChat extends HTMLElement {
   disconnectedCallback() {
     document.removeEventListener("click", this.onDocumentClick);
     this.resizeObserver?.disconnect();
+    this.urls.revokeAll();
   }
 
   /** The chat room, or null while there is none (sync not set up, locked). */
@@ -231,6 +269,8 @@ class KinChat extends HTMLElement {
     this.input.disabled = off;
     this.send.disabled = off || Boolean(this.sending);
     this.emoji.disabled = off;
+    // Attachments aren't edited: no attaching while editing a message.
+    this.attach.disabled = off || Boolean(this.sending) || Boolean(this.editing);
   }
 
   enterSends() {
@@ -259,6 +299,8 @@ class KinChat extends HTMLElement {
     // Texts that weren't there yet, or couldn't be opened, get another try.
     for (const [messageId, status] of this.textStatus)
       if (status.pending || status.failed) this.textStatus.delete(messageId);
+    for (const [messageId, state] of this.attachments)
+      if (state.status === "pending" || state.status === "failed") this.attachments.delete(messageId);
     this.queueRender("update");
   }
 
@@ -374,6 +416,7 @@ class KinChat extends HTMLElement {
     if (arrived.length) this.toAnnounce.push(...arrived.map((message) => message.messageId));
     this.flushAnnouncements(newest);
     this.loadMissingTexts();
+    this.loadMissingAttachments();
   }
 
   /** Opens texts the engine doesn't hold yet, outside the render queue, and
@@ -411,7 +454,12 @@ class KinChat extends HTMLElement {
       const status = this.textStatus.get(messageId);
       // Outside the window its text isn't being opened: say who wrote.
       const shown = this.rows.has(messageId);
-      if (message.text !== null || !message.blobRef || !shown || (status && !status.loading)) ready.push(message);
+      // An attachment's caption and files are settled once its load is done.
+      const attachment = message.contentKind === "attachment" && visible(message);
+      const settled = attachment
+        ? this.attachments.get(messageId)?.status !== undefined && this.attachments.get(messageId).status !== "loading"
+        : message.text !== null || !message.blobRef || (status && !status.loading);
+      if (!shown || settled) ready.push(message);
       else waiting.push(messageId);
     }
     this.toAnnounce = waiting;
@@ -420,6 +468,44 @@ class KinChat extends HTMLElement {
     const more = ready.length > 1 ? `${ready.length} new messages. ` : "";
     const who = room.authorLabel(last.authorId);
     this.say(last.text !== null ? `${more}${who}: ${last.text}` : `${more}New message from ${who}.`);
+  }
+
+  /** Opens the captions and file lists of attachment messages on screen,
+   * then their photo thumbnails, outside the render queue. */
+  loadMissingAttachments() {
+    const room = this.chatRoom;
+    if (!room) return;
+    const missing = this.messages.filter((message) => visible(message) && message.contentKind === "attachment" && message.blobRef && !this.attachments.has(message.messageId));
+    for (const message of missing) this.attachments.set(message.messageId, { status: "loading", text: "", files: [], thumbs: new Map() });
+    for (const message of missing) void this.loadAttachment(room, message);
+  }
+
+  async loadAttachment(room, message) {
+    let opened;
+    try {
+      opened = await room.openAttachment(message);
+    } catch (error) {
+      if (room !== this.chatRoom) return;
+      const status = error?.code === "chat_attachment_deleted" ? "deleted" : error?.code === "chat_attachment_pending" ? "pending" : "failed";
+      this.attachments.set(message.messageId, { status, text: "", files: [], thumbs: new Map() });
+      this.queueRender("update");
+      return;
+    }
+    if (room !== this.chatRoom) return;
+    const state = { status: "ready", text: opened.text, files: opened.files, thumbs: new Map() };
+    this.attachments.set(message.messageId, state);
+    this.queueRender("update");
+    for (let index = 0; index < opened.files.length; index += 1) {
+      if (!opened.files[index].photo) continue;
+      try {
+        const blob = await room.attachmentThumbnail(message, index);
+        if (!blob || room !== this.chatRoom || this.attachments.get(message.messageId) !== state) continue;
+        state.thumbs.set(index, this.urls.create(blob));
+        this.queueRender("update");
+      } catch {
+        // No thumbnail: the photo still opens from its button.
+      }
+    }
   }
 
   /** Brings the list in line with this.messages, reusing unchanged rows. */
@@ -454,9 +540,11 @@ class KinChat extends HTMLElement {
 
   signature(message, grouped, room) {
     const status = this.textStatus.get(message.messageId);
+    const attachment = this.attachments.get(message.messageId);
     return [
       message.status, message.text ?? "", message.editedAt ?? "", message.blobRef ?? "", grouped,
       room.pendingMessages?.has(message.messageId) ?? false, status ? Object.keys(status)[0] : "",
+      attachment ? [attachment.status, attachment.text, attachment.files.length, attachment.thumbs.size].join("\u0001") : "",
       room.authorLabel(message.authorId), this.menuFor === message.messageId, this.actionsFor(message, room).join(),
     ].join("\u0000");
   }
@@ -508,6 +596,15 @@ class KinChat extends HTMLElement {
     if (!visible(message)) {
       body.classList.add("chat-gone");
       body.textContent = STATUS_TEXT[message.status];
+    } else if (message.contentKind === "attachment") {
+      // The caption, once its manifest is open; a message of files alone has none.
+      const state = this.attachments.get(message.messageId);
+      if (state?.status === "ready" && state.text) body.textContent = state.text;
+      else if (state?.status === "ready") body.hidden = true;
+      else {
+        body.classList.add("chat-gone");
+        body.textContent = ATTACHMENT_TEXT[state?.status ?? "loading"];
+      }
     } else if (message.text !== null) {
       body.textContent = message.text;
       // A message of only 1–3 emoji shows larger (#113).
@@ -522,6 +619,8 @@ class KinChat extends HTMLElement {
         : "Loading…";
     }
     item.append(body);
+    const attached = visible(message) && message.contentKind === "attachment" ? this.attachments.get(message.messageId) : null;
+    if (attached?.status === "ready" && attached.files.length) item.append(this.attachmentList(message, attached));
 
     const notes = [];
     // A grouped row's time is visually hidden: show "edited" with the notes.
@@ -539,6 +638,182 @@ class KinChat extends HTMLElement {
     const actions = this.actionsFor(message, room);
     if (actions.length) item.append(this.menu(message, actions, author));
     return item;
+  }
+
+  /** The photos and files of an attachment message: a thumbnail per photo,
+   * and a name, type and size per file. Both open (the photo in a viewer,
+   * the file as a download). */
+  attachmentList(message, state) {
+    const list = document.createElement("ul");
+    list.className = "chat-files";
+    list.setAttribute("aria-label", "Attachments");
+    state.files.forEach((file, index) => {
+      const entry = document.createElement("li");
+      const label = attachmentKindLabel(file);
+      const size = formatAttachmentSize(file.size);
+      if (file.photo) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "chat-photo";
+        button.setAttribute("aria-label", `Open photo ${file.name}`);
+        const url = state.thumbs.get(index);
+        if (url) {
+          const image = document.createElement("img");
+          image.src = url;
+          image.alt = "";
+          image.decoding = "async";
+          button.append(image);
+        } else {
+          button.classList.add("chat-gone");
+          button.textContent = "Loading photo…";
+        }
+        button.addEventListener("click", () => void this.openPhoto(message, index));
+        entry.append(button);
+      } else {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "chat-file";
+        button.setAttribute("aria-label", `Download ${file.name}, ${label}, ${size}`);
+        const name = document.createElement("span");
+        name.className = "chat-file-name";
+        name.textContent = file.name;
+        const details = document.createElement("span");
+        details.className = "chat-file-details";
+        details.textContent = `${label} · ${size}`;
+        button.append(name, details);
+        button.addEventListener("click", () => void this.downloadFile(message, index));
+        entry.append(button);
+      }
+      list.append(entry);
+    });
+    return list;
+  }
+
+  /** Opens a photo in the viewer at full size. */
+  async openPhoto(message, index) {
+    const room = this.chatRoom;
+    if (!room) return;
+    try {
+      const blob = await room.attachmentFile(message, index);
+      const url = this.urls.create(blob);
+      const file = this.attachments.get(message.messageId)?.files[index];
+      if (this.viewerUrl) this.urls.revoke(this.viewerUrl);
+      this.viewerUrl = url;
+      // Focus goes back to the photo that was opened, when the viewer closes.
+      this.viewerOpener = document.activeElement;
+      this.viewer.replaceChildren();
+      const heading = document.createElement("p");
+      heading.id = "chat-viewer-name";
+      heading.className = "chat-viewer-name";
+      heading.textContent = file?.name ?? "Photo";
+      const image = document.createElement("img");
+      image.src = url;
+      image.alt = `Photo: ${file?.name ?? "attachment"}`;
+      const actions = document.createElement("div");
+      actions.className = "chat-viewer-actions";
+      const download = document.createElement("button");
+      download.type = "button";
+      download.textContent = "Download";
+      download.addEventListener("click", () => void this.downloadFile(message, index));
+      const close = document.createElement("button");
+      close.type = "button";
+      close.textContent = "Close";
+      close.addEventListener("click", () => this.viewer.close());
+      actions.append(download, close);
+      this.viewer.append(heading, image, actions);
+      this.viewer.showModal?.();
+      if (!this.viewer.open) this.viewer.setAttribute("open", "");
+      close.focus();
+    } catch (error) {
+      this.message.textContent = this.attachmentError(error);
+    }
+  }
+
+  closeViewer() {
+    if (this.viewerUrl) this.urls.revoke(this.viewerUrl);
+    this.viewerUrl = null;
+    this.viewer.replaceChildren();
+    this.viewer.removeAttribute("open");
+    const opener = this.viewerOpener;
+    this.viewerOpener = null;
+    if (opener?.isConnected) opener.focus({ preventScroll: true });
+  }
+
+  /** Saves a file (or a photo at full size) through a short-lived link. */
+  async downloadFile(message, index) {
+    const room = this.chatRoom;
+    if (!room) return;
+    try {
+      const blob = await room.attachmentFile(message, index);
+      const name = this.attachments.get(message.messageId)?.files[index]?.name ?? "Attachment";
+      const url = this.urls.create(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = name;
+      link.hidden = true;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => this.urls.revoke(url), DOWNLOAD_URL_MS);
+    } catch (error) {
+      this.message.textContent = this.attachmentError(error);
+    }
+  }
+
+  attachmentError(error) {
+    if (error?.code === "chat_attachment_deleted") return "That message was deleted.";
+    if (error?.code === "chat_attachment_pending") return "That is still arriving. Try again in a moment.";
+    if (error?.code === "chat_storage_unavailable" || error?.code === "connection_unavailable") return "Kin couldn't reach that attachment right now. Try again.";
+    return "Kin couldn't open that attachment.";
+  }
+
+  /** Opens the file dialog once; the input is removed after the choice (or
+   * a cancel), so the page never holds a file input between sends. */
+  chooseFiles() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.hidden = true;
+    const done = () => input.remove();
+    input.addEventListener("change", () => { done(); this.addFiles([...input.files]); });
+    input.addEventListener("cancel", done);
+    document.body.append(input);
+    input.click();
+  }
+
+  /** Adds photos and files to the ones to send, within the limits. */
+  addFiles(incoming) {
+    if (!incoming.length) return;
+    const next = [...this.files, ...incoming];
+    const problem = attachmentProblem(next);
+    if (problem) {
+      this.message.textContent = problem;
+      return;
+    }
+    this.message.textContent = "";
+    this.files = next;
+    this.renderPending();
+  }
+
+  renderPending() {
+    this.pendingList.replaceChildren(...this.files.map((file, index) => {
+      const item = document.createElement("li");
+      const name = document.createElement("span");
+      name.textContent = `${safeAttachmentName(file.name)} · ${formatAttachmentSize(file.size)}`;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "chat-pending-remove";
+      remove.textContent = "Remove";
+      remove.setAttribute("aria-label", `Remove ${safeAttachmentName(file.name)}`);
+      remove.addEventListener("click", () => {
+        this.files = this.files.filter((_, at) => at !== index);
+        this.renderPending();
+        (this.pendingList.querySelector("button") ?? this.attach).focus();
+      });
+      item.append(name, " ", remove);
+      return item;
+    }));
+    this.pendingList.hidden = this.files.length === 0;
   }
 
   actionsFor(message, room) {
@@ -685,7 +960,10 @@ class KinChat extends HTMLElement {
     const room = this.chatRoom;
     if (!room || this.isDisabled || this.sending) return;
     const text = this.input.value;
-    const problem = chatTextProblem(text);
+    // With photos or files, the caption may be empty.
+    const withFiles = !this.editing && this.files.length > 0;
+    const caption = withFiles && !text.trim() ? "" : text;
+    const problem = withFiles ? (caption ? chatTextProblem(caption) : null) : chatTextProblem(text);
     if (problem) {
       this.message.textContent = problem;
       this.input.focus();
@@ -697,18 +975,24 @@ class KinChat extends HTMLElement {
     const editing = this.editing;
     try {
       if (editing) await room.edit(editing, text);
+      else if (withFiles) await room.sendAttachments({ text: caption, files: this.files });
       else await room.send(text);
       if (editing) {
         // Back to whatever draft was there before editing.
         this.stopEditing({ restoreDraft: this.input.value === text });
         await this.queueRender("update");
       } else {
+        if (withFiles) {
+          this.files = [];
+          this.renderPending();
+        }
         // Only clear what was sent: typing that continued meanwhile stays.
         if (this.input.value === text) this.input.value = "";
         await this.queueRender("reset");
       }
     } catch (error) {
-      this.message.textContent = error?.code === "chat_text_invalid" ? error.message : "Kin couldn't send that. Your text is still here.";
+      const plain = error?.code === "chat_text_invalid" || error?.code === "chat_attachment_invalid";
+      this.message.textContent = plain ? error.message : "Kin couldn't send that. Your text is still here.";
     } finally {
       this.sending = false;
       this.applyDisabled();
