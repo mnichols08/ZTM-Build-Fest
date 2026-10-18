@@ -967,6 +967,12 @@ kin-household-defaults kin-appearance .appearance-follow { display: none; }
 .household-panel button, .security-panel button { margin: 4px 6px 4px 0; padding-inline: 13px; }
 .pairing-code { display: block; margin: 1rem 0; overflow-wrap: anywhere; font: 700 clamp(1.5rem, 8vw, 2.5rem)/1.2 ui-monospace, monospace; letter-spacing: .12em; user-select: all; }
 .pairing-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+/* Signing in with a phone (#100, #101): the code is large and selectable, and
+   the warning stands out without relying on colour alone (it is bold text). */
+.link-approval-code { display: block; margin: 1rem 0; font: 700 clamp(2rem, 12vw, 3.25rem)/1.1 ui-monospace, monospace; letter-spacing: .18em; user-select: all; }
+.link-approval-device { font-weight: 700; font-size: 1.15rem; }
+.link-approval-warning { padding: .75rem; border-inline-start: 4px solid var(--danger); }
+.sign-in-code input { font: 600 1.5rem ui-monospace, monospace; letter-spacing: .15em; max-width: 12ch; min-height: 48px; }
 .household-panel .danger, .security-panel .danger { border-color: var(--danger); color: var(--danger); }
 .household-message[role="alert"] { color: var(--danger); }
 .device-list { padding-inline-start: 1.25rem; }

@@ -154,10 +154,9 @@ async function pageInvitationQr() {
   return { value: qr.value, readBack, label: canvas.getAttribute("aria-label"), codeShown: h.querySelector(".pairing-code")?.textContent ?? null };
 }
 
-// Sign in with your phone (#100). The computer's QR code is read back from
-// its canvas by the real engine. The phone's approval is stubbed: profile A
-// makes the same calls the phone's approval screen makes (#101), with a real
-// passkey and its real device key, but without that screen.
+// Sign in with your phone (#100, #101). The computer's QR code is read back
+// from its canvas by the real engine, and A's phone approves through its real
+// screens, with a real passkey and its real device key.
 async function pageStartPhoneSignIn() {
   const app = document.querySelector("kin-app");
   const h = app.household;
@@ -192,34 +191,45 @@ async function pageStartPhoneSignIn() {
   };
 }
 
+// Add a computer (#101) on A's phone, through its real screens; only the
+// scanner's result is stubbed (the camera is covered by qr-regression.mjs).
 async function pagePhoneApprove(link) {
   const h = document.querySelector("kin-app").household;
-  const { linkTag, newLinkCode, signInRequest } = await import("/device-link.js");
-  const scanned = signInRequest(link, location.origin);
-  if (!scanned) throw new Error("Not a sign-in link: " + link);
-  const { authenticationOptions, credentialJson } = await import("/components/household/auth.js");
-  const { createDeviceAuthorizationCertificate, deviceKeyFingerprint } = await import("/sync/crypto.js");
-  const body = { secret: scanned.secret, fingerprint: scanned.fingerprint };
-  const started = await h.api(`/api/link/requests/${scanned.requestId}/approve/options`, { method: "POST", body: JSON.stringify(body) });
-  const credential = await navigator.credentials.get({ publicKey: authenticationOptions(started.publicKey) });
-  const view = started.request;
-  let deviceCertificate;
-  if (!view.existingDevice) {
-    const own = await h.syncKeyStore.getDevice(h.identity.deviceId);
-    deviceCertificate = await createDeviceAuthorizationCertificate({
-      householdId: view.householdId, memberId: view.memberId, deviceId: view.deviceId,
-      issuerDeviceId: h.identity.deviceId, issuerFingerprint: await deviceKeyFingerprint(own.publicKeys),
-      publicKeys: view.syncPublicKeys, signingKey: own.keys.signingPrivateKey,
-    });
-  }
-  // A random code, and the tag binding this phone to it and the QR nonce.
-  const code = newLinkCode();
-  const tag = await linkTag({ nonce: scanned.nonce, code, requestId: scanned.requestId, approverDeviceId: h.identity.deviceId,
-    approverFingerprint: h.localFingerprint, computerFingerprint: scanned.fingerprint });
-  await h.api(`/api/link/requests/${scanned.requestId}/approve/finish`, {
-    method: "POST", body: JSON.stringify({ ...body, flow: started.flow, credential: credentialJson(credential), deviceCertificate, code, tag }),
-  });
-  return { code, existingDevice: view.existingDevice, deviceId: view.deviceId, deviceLabel: view.deviceLabel, secret: scanned.secret, nonce: scanned.nonce };
+  h.pairing = null;
+  h.render();
+  const add = [...h.querySelectorAll("button")].find((button) => button.textContent === "Add a computer");
+  if (!add) throw new Error("People & devices offers no Add a computer: " + h.textContent.slice(0, 300));
+  add.click();
+  const scanner = h.querySelector("kin-qr-scanner");
+  if (!scanner) throw new Error("Add a computer did not open the scanner");
+  const cameraOff = scanner.state === "idle";
+  scanner.dispatchEvent(new CustomEvent("kin-qr-scan", { bubbles: true, detail: { url: link } }));
+  for (let i = 0; i < 400 && !h.querySelector(".link-approval-warning"); i++) await new Promise((r) => setTimeout(r, 25));
+  const warning = h.querySelector(".link-approval-warning")?.textContent ?? "";
+  const deviceName = h.querySelector(".link-approval-device")?.textContent ?? "";
+  const asYou = h.textContent.includes("signed in as you");
+  const view = h.ctx.linkApproval.flow?.view;
+  if (!view) throw new Error("The phone shows no approval screen: " + h.textContent.slice(0, 300));
+  const approve = [...h.querySelectorAll("button")].find((button) => button.textContent === "Approve with passkey");
+  approve.click();
+  for (let i = 0; i < 400 && !h.querySelector(".link-approval-code"); i++) await new Promise((r) => setTimeout(r, 25));
+  const shown = h.querySelector(".link-approval-code");
+  if (!shown) throw new Error("The phone shows no code: " + h.textContent.slice(0, 300));
+  return {
+    code: shown.querySelector("[aria-hidden=true]")?.textContent ?? "", existingDevice: view.existingDevice, deviceId: view.deviceId, deviceLabel: view.deviceLabel,
+    secret: h.ctx.linkApproval.flow.scanned.secret, nonce: h.ctx.linkApproval.flow.scanned.nonce, warning, deviceName, asYou, cameraOff,
+    countdown: h.querySelector(".link-approval-countdown")?.textContent ?? "",
+  };
+}
+
+async function pagePhoneApprovalDone() {
+  const h = document.querySelector("kin-app").household;
+  for (let i = 0; i < 400 && h.querySelector(".link-approval-heading")?.textContent !== "The computer is signed in"; i++)
+    await new Promise((r) => setTimeout(r, 25));
+  const heading = h.querySelector(".link-approval-heading")?.textContent ?? "";
+  const done = [...h.querySelectorAll("button")].find((button) => button.textContent === "Done");
+  done?.click();
+  return { heading, closed: !h.ctx.linkApproval.open };
 }
 
 async function pageSignInCodeField() {
@@ -1387,12 +1397,17 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       "the countdown is visible but not a live region, and focus moves to the screen: " + JSON.stringify(shownSignIn));
     const firstApproval = await a.call(pagePhoneApprove, shownSignIn.value);
     check(/^\d{6}$/.test(firstApproval.code) && !firstApproval.existingDevice, "A's phone approves the new computer with a passkey and gets a 6-digit code");
+    check(firstApproval.warning === "Only approve a computer that's in front of you." && firstApproval.deviceName === firstApproval.deviceLabel &&
+      firstApproval.asYou && firstApproval.cameraOff && /^The code works for 0[12]:\d\d$/.test(firstApproval.countdown),
+      "the phone names the computer, says it signs in as you, warns before approving, and counts the code down: " + JSON.stringify(firstApproval));
     const codeField = await e.call(pageSignInCodeField);
     check(codeField.inputMode === "numeric" && codeField.autocomplete === "one-time-code" && codeField.focused && codeField.qrGone &&
       /approved this computer/.test(codeField.status),
       "the computer notices the approval and asks for the code in a focused numeric field: " + JSON.stringify(codeField));
     await e.call(pageTypeSignInCode, { code: firstApproval.code, navigates: true });
     const eLoaded = await e.waitForReloadAndUnlock();
+    const phoneDone = await a.call(pagePhoneApprovalDone);
+    check(phoneDone.heading === "The computer is signed in" && phoneDone.closed, "the phone sees the computer finish and closes with Done");
     check(eLoaded.identity?.memberId === aBoot.identity.memberId && eLoaded.identity?.deviceId === firstApproval.deviceId,
       "the computer is signed in as a new device of A's membership");
     const aDevices = await a.call(pageFetch, { path: "/api/devices" });
@@ -1424,6 +1439,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     const secrets = [firstApproval.secret, secondApproval.secret, firstApproval.code, secondApproval.code, firstApproval.nonce, secondApproval.nonce];
     check(requests.slice(requestsBefore).every(({ url, referer }) => secrets.every((value) => !url.includes(value) && !referer.includes(value))),
       "no sign-in secret or code ever reaches a request URL or Referer");
+    check((await a.call(pagePhoneApprovalDone)).closed, "the phone closes once the returning computer finishes");
     pass(`${checks} phone sign-in assertions (profile E with A's phone)`);
     await retire(e);
     console.log(`PASS ${checks} live household authority and recovery assertions across independent browser profiles`);
