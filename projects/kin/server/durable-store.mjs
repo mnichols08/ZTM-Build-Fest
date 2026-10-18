@@ -29,6 +29,7 @@ import { pushMethods } from "./durable-store/push.mjs";
 import { chatBlobMethods } from "./durable-store/chat-blobs.mjs";
 import { chatEventMethods } from "./durable-store/chat-events.mjs";
 import { chatHiddenMethods } from "./durable-store/chat-hidden.mjs";
+import { chatReceiptMethods } from "./durable-store/chat-receipts.mjs";
 import { lifecycleMethods } from "./durable-store/lifecycle.mjs";
 import {
   acquireDatabaseMaintenanceLock,
@@ -67,6 +68,7 @@ export {
   MAX_HOUSEHOLD_CHAT_BLOBS,
   MAX_HOUSEHOLD_CHAT_EVENTS,
   MAX_CHAT_HIDDEN_RECORD_BYTES,
+  MAX_CHAT_RECEIPT_BYTES,
   MAX_MEMBER_CHAT_CLAIMS,
   MAX_HOUSEHOLD_CHAT_TOMBSTONES,
   MIN_CHAT_BLOB_BYTES,
@@ -453,4 +455,4 @@ export class DurableStore {
   }
 }
 
-addMethods(DurableStore, schemaMethods, validationMethods, identityMethods, installIdentityMethods, pushMethods, chatBlobMethods, chatEventMethods, chatHiddenMethods, lifecycleMethods, authorityMethods, envelopeMethods);
+addMethods(DurableStore, schemaMethods, validationMethods, identityMethods, installIdentityMethods, pushMethods, chatBlobMethods, chatEventMethods, chatHiddenMethods, chatReceiptMethods, lifecycleMethods, authorityMethods, envelopeMethods);

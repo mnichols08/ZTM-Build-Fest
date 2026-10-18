@@ -78,6 +78,37 @@ test("records are read strictly, and the URL follows the page's origin", () => {
   assert.equal(liveUrl({ href: "http://127.0.0.1:8080/" }), "ws://127.0.0.1:8080/api/live");
 });
 
+test("typing frames and receipt hints reach the chat once up, and typing goes out only on a draining socket", () => {
+  const typed = [], hints = [];
+  const { live, sockets } = channel({ onTyping: (bytes) => typed.push([...bytes]), onReceipts: () => hints.push(1) });
+  live.start();
+  const socket = sockets[0];
+  Object.assign(socket, { readyState: 1, bufferedAmount: 0, sent: [], send(bytes) { this.sent.push(bytes); } });
+  socket.receive(record(LIVE_TYPE.TYPING, Uint8Array.of(1, 2)));
+  socket.receive(record(LIVE_TYPE.RECEIPTS));
+  assert.deepEqual([typed, hints], [[], []], "nothing before HELLO");
+  assert.equal(live.send(LIVE_TYPE.TYPING, Uint8Array.of(9)), false, "and nothing is sent before HELLO");
+  socket.receive(record(LIVE_TYPE.HELLO));
+  socket.receive(record(LIVE_TYPE.TYPING, Uint8Array.of(1, 2)));
+  socket.receive(record(LIVE_TYPE.RECEIPTS));
+  assert.deepEqual([typed, hints.length], [[[1, 2]], 1]);
+  // A frame goes out as a Kin record: type, flags, reserved, little-endian length, payload.
+  assert.equal(live.send(LIVE_TYPE.TYPING, Uint8Array.of(7, 8, 9)), true);
+  assert.deepEqual([...socket.sent[0]], [3, 0, 0, 0, 3, 0, 0, 0, 7, 8, 9]);
+  // Typing is worth sending now or not at all.
+  assert.equal(live.send(LIVE_TYPE.TYPING, new Uint8Array(2049)), false, "too big");
+  assert.equal(live.send(LIVE_TYPE.TYPING, "text"), false, "not bytes");
+  socket.bufferedAmount = 64 * 1024;
+  assert.equal(live.send(LIVE_TYPE.TYPING, Uint8Array.of(1)), false, "a socket that isn't draining");
+  socket.bufferedAmount = 0;
+  socket.readyState = 2;
+  assert.equal(live.send(LIVE_TYPE.TYPING, Uint8Array.of(1)), false, "a closing socket");
+  socket.readyState = 1;
+  socket.send = () => { throw new Error("closed"); };
+  assert.equal(live.send(LIVE_TYPE.TYPING, Uint8Array.of(1)), false, "a send that throws");
+  assert.equal(socket.sent.length, 1);
+});
+
 test("HELLO brings the channel up and hints sync; a drop reconnects with doubling, jittered waits", () => {
   const { live, sockets, timers, calls } = channel();
   live.start();
@@ -421,4 +452,32 @@ test("end to end: the real service's HELLO, event and key hints, and sign-out re
   await until(() => seen.some((entry) => entry.startsWith("end")));
   assert.deepEqual(seen, ["up", "hint", "hint", `end ${LIVE_CLOSE.SESSION_ENDED}`]);
   live.stop();
+});
+
+test("the coordinator hands typing frames and receipt hints to the chat room, and gives it the channel to send on", async () => {
+  const frames = [], hints = [], sent = [];
+  const channelStub = { started: false, start() { this.started = true; }, stop() {}, send(type, bytes) { sent.push([type, [...bytes]]); return true; } };
+  let options = null;
+  const room = {
+    receiveTyping: (bytes) => frames.push([...bytes]), receiptsChanged: () => hints.push(1),
+    setLiveSender(send) { this.send = send; }, close() {},
+  };
+  const coordinator = new SyncCoordinator({
+    store: {}, engine: {}, identity: { householdId: "aa".repeat(16), memberId: "bb".repeat(16), deviceId: "d1" },
+    liveChannel: (given) => { options = given; return channelStub; },
+    chatRoom: async () => room,
+  });
+  coordinator.deviceKeys = { keys: {} };
+  coordinator.keyStore = { close() {} };
+  coordinator.startLive();
+  assert.equal(channelStub.started, true);
+  await coordinator.openChat();
+  options.onTyping(Uint8Array.of(4, 5));
+  options.onReceipts();
+  assert.deepEqual([frames, hints.length], [[[4, 5]], 1]);
+  assert.equal(room.send(Uint8Array.of(1, 2)), true);
+  assert.deepEqual(sent, [[LIVE_TYPE.TYPING, [1, 2]]]);
+  coordinator.stopLive();
+  assert.equal(room.send(Uint8Array.of(1)), false, "no channel, no typing");
+  coordinator.stop();
 });

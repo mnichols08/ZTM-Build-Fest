@@ -5,7 +5,8 @@
 // The socket only says "something is new". Events still move over the HTTP
 // sync routes, which stay the source of truth: a hint (or a reconnect) makes
 // the coordinator sync now, and while the socket is down the coordinator
-// polls as before. Nothing is sent on the socket; the browser answers the
+// polls as before. The only thing a client sends on the socket is a sealed typing
+// frame (#122), when the chat asks; the browser answers the
 // service's pings itself.
 //
 // One tab per device holds the socket: a Web Lock named for the device
@@ -20,7 +21,7 @@
 // being deleted) stops reconnecting: the coordinator's next HTTP sync
 // meets the same refusal and shows the signed-out or deleted state.
 
-export const LIVE_TYPE = Object.freeze({ HELLO: 1, SYNC_HINT: 2 });
+export const LIVE_TYPE = Object.freeze({ HELLO: 1, SYNC_HINT: 2, TYPING: 3, RECEIPTS: 4 });
 export const LIVE_CLOSE = Object.freeze({
   SESSION_ENDED: 4401,
   ACCESS_LOST: 4403,
@@ -63,6 +64,8 @@ export class LiveChannel {
    * @param options.onUp       the socket opened (HELLO): sync now, poll less
    * @param options.onDown     the socket closed and will reconnect: poll again
    * @param options.onEnd      access was lost ({ code }); no reconnecting
+   * @param options.onTyping   a sealed typing frame relayed by the service (#122)
+   * @param options.onReceipts a member's read-receipt slot changed (#121)
    */
   constructor({
     url,
@@ -71,6 +74,8 @@ export class LiveChannel {
     onUp = () => {},
     onDown = () => {},
     onEnd = () => {},
+    onTyping = () => {},
+    onReceipts = () => {},
     WebSocket: Socket = globalThis.WebSocket,
     locks = globalThis.navigator?.locks ?? null,
     events = globalThis,
@@ -78,7 +83,7 @@ export class LiveChannel {
     clearTimer = (timer) => clearTimeout(timer),
     random = Math.random,
   }) {
-    Object.assign(this, { url, lockName, onHint, onUp, onDown, onEnd, Socket, locks, events, setTimer, clearTimer, random });
+    Object.assign(this, { url, lockName, onHint, onUp, onDown, onEnd, onTyping, onReceipts, Socket, locks, events, setTimer, clearTimer, random });
     this.socket = null;
     this.timer = null;
     this.attempts = 0;
@@ -114,6 +119,25 @@ export class LiveChannel {
     this.up = false;
     if (wasUp) this.onDown();
     this.retry();
+  }
+
+  /** Sends one record (typing, #122). False when the socket isn't up, or
+   * isn't draining: typing is worth sending now or not at all. */
+  send(type, payload) {
+    const socket = this.socket;
+    if (!this.up || !socket || socket.readyState !== 1 || (socket.bufferedAmount ?? 0) > 16 * 1024) return false;
+    if (!(payload instanceof Uint8Array) || payload.length > 2048) return false;
+    const record = new Uint8Array(RECORD_HEADER + payload.length);
+    const view = new DataView(record.buffer);
+    view.setUint8(0, type);
+    view.setUint32(4, payload.length, true);
+    record.set(payload, RECORD_HEADER);
+    try {
+      socket.send(record);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** Starts holding the socket (once this tab holds the lock). */
@@ -187,6 +211,10 @@ export class LiveChannel {
         }
       } else if (record.type === LIVE_TYPE.SYNC_HINT && this.up) {
         this.onHint();
+      } else if (record.type === LIVE_TYPE.TYPING && this.up) {
+        this.onTyping(record.payload.slice());
+      } else if (record.type === LIVE_TYPE.RECEIPTS && this.up) {
+        this.onReceipts();
       }
       // Newer record types are ignored: the service only sends them to
       // clients that ask for them.

@@ -17,8 +17,14 @@
 import { PairingError, canParticipate } from "./pairing-service.mjs";
 import { canonicalEventEnvelope, MAX_LOGICAL_TIME_ADVANCE } from "./sync-contract.mjs";
 import { decodeCursor, encodeCursor, MAX_EVENTS_PER_BATCH, validateEventEnvelope } from "./sync-service.mjs";
-import { DurableConflictError, MAX_CHAT_HIDDEN_RECORD_BYTES, MAX_HOUSEHOLD_CHAT_EVENTS } from "./durable-store.mjs";
+import { DurableConflictError, MAX_CHAT_HIDDEN_RECORD_BYTES, MAX_CHAT_RECEIPT_BYTES, MAX_HOUSEHOLD_CHAT_EVENTS } from "./durable-store.mjs";
 import { isSyncId } from "./sync-contract.mjs";
+
+/** A device may replace its member's receipt slot this often at most: the
+ * client sends one write per 2 seconds, so this leaves room for a busy minute
+ * and stops a loop. */
+export const RECEIPT_WRITES_PER_MINUTE = 40;
+const RECEIPT_WINDOW_MS = 60_000;
 
 const MAX_REQUEST_BYTES = 200_000;
 /** Most chat events one pull returns. Chat is far busier than household
@@ -77,6 +83,18 @@ class MemoryChatRelayStore {
     state.hidden.set(memberId, { revision: expectedRevision + 1, record: structuredClone(record) });
     return expectedRevision + 1;
   }
+  chatReceiptSlots(householdId) {
+    return [...(this.state(householdId).receipts ?? new Map())].map(([memberId, row]) => ({ memberId, ...structuredClone(row) }))
+      .sort((a, b) => (a.memberId < b.memberId ? -1 : 1));
+  }
+  putChatReceiptSlot(householdId, memberId, { expectedRevision, record }) {
+    const state = this.state(householdId);
+    state.receipts ??= new Map();
+    if ((state.receipts.get(memberId)?.revision ?? 0) !== expectedRevision)
+      throw new DurableConflictError("chat_receipts_stale", "Changed on another device meanwhile.");
+    state.receipts.set(memberId, { revision: expectedRevision + 1, record: structuredClone(record) });
+    return expectedRevision + 1;
+  }
   forgetHousehold(householdId) { this.households.delete(householdId); }
 }
 
@@ -92,10 +110,26 @@ export function isHiddenRecordValid(record, { householdId, memberId, deviceId, r
     record.recipients.every((entry) => entry && isSyncId(entry.deviceId) && typeof entry.wrappedKey === "string");
 }
 
+/** A read-receipt slot is a household-key envelope (web/chat/chat-presence.js)
+ * sent by one of the member's own devices; its sequence is the slot revision
+ * it replaces, so a stale writer is refused before anything is stored. */
+export function isReceiptSlotValid(record, auth, currentEpoch, revision) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return false;
+  if (Buffer.byteLength(JSON.stringify(record)) > MAX_CHAT_RECEIPT_BYTES) return false;
+  try {
+    validateEventEnvelope(record, auth, currentEpoch);
+  } catch {
+    return false;
+  }
+  return record.deviceSequence === revision;
+}
+
 export class ChatRelayService {
   constructor({ syncService, store = null }) {
     this.syncService = syncService;
     this.storage = store ?? new MemoryChatRelayStore();
+    /** deviceId → recent receipt-write times, for the per-device limit. */
+    this.receiptWrites = new Map();
   }
 
   /** Chat is open to every member who may take part in the household; the
@@ -216,6 +250,42 @@ export class ChatRelayService {
       if (!(error instanceof DurableConflictError)) throw error;
       throw new PairingError("chat_hidden_stale", "Changed on another device meanwhile; try again.", 409);
     }
+  }
+
+  /**
+   * Every member's sealed read-receipt slot (#121), latest only. The service
+   * can't read them and doesn't know who has chat receipts turned off.
+   */
+  receipts(auth) {
+    this.assertCanChat(auth);
+    return { slots: this.storage.chatReceiptSlots(auth.household.id) };
+  }
+
+  /** Replaces this member's slot compare-and-set, from one of their own
+   * devices, at a bounded rate. */
+  putReceipt(auth, body) {
+    this.assertCanChat(auth);
+    const expectedRevision = body?.expectedRevision;
+    const sync = this.syncService.state(auth.household.id);
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !isReceiptSlotValid(body.record, auth, sync.currentEpoch, expectedRevision + 1))
+      throw new PairingError("chat_receipts_invalid", "That chat change is invalid.", 400);
+    const now = this.syncService.now();
+    const recent = (this.receiptWrites.get(auth.device.id) ?? []).filter((time) => time > now - RECEIPT_WINDOW_MS);
+    if (recent.length >= RECEIPT_WRITES_PER_MINUTE) {
+      this.receiptWrites.set(auth.device.id, recent);
+      throw new PairingError("chat_receipts_rate_limited", "Too many chat updates. Wait a moment.", 429);
+    }
+    recent.push(now);
+    this.receiptWrites.set(auth.device.id, recent);
+    let revision;
+    try {
+      revision = this.storage.putChatReceiptSlot(auth.household.id, auth.member.id, { expectedRevision, record: body.record });
+    } catch (error) {
+      if (!(error instanceof DurableConflictError)) throw error;
+      throw new PairingError("chat_receipts_stale", "Changed on another device meanwhile; try again.", 409);
+    }
+    try { this.syncService.liveService?.receiptsChanged(auth.household.id, auth.device.id); } catch { /* best effort */ }
+    return { revision };
   }
 
   /** In-memory mode only: the durable store purges with the household. */

@@ -23,7 +23,8 @@
 //                                          and the message it concerns
 //   meta    { key: "state", nextOrder, cursor, deviceSequence, provisional,
 //             admins, members, membersSignature, retiredThrough, refused,
-//             hidden, hiddenRevision, hiddenDirty, hiddenSealedFor }
+//             hidden, hiddenRevision, hiddenDirty, hiddenSealedFor,
+//             presence }
 //
 // `cursor` is the relay position read up to. `deviceSequence` is the last
 // chat sequence this device used. It starts provisional when the log is new
@@ -33,6 +34,8 @@
 // events' replaced blobs this device already deleted, and `refused` the
 // relay events it skipped because they failed authentication. `hidden` are
 // the messages this member hid for themselves (#119; chat-hidden.js).
+// `presence` is this member's read cursor and receipt and typing settings,
+// with the revision of their slot on the service (#121; chat-presence.js).
 // Removing the household from the device deletes the whole database.
 
 const DATABASE_VERSION = 1;
@@ -246,6 +249,20 @@ export class ChatLogStore {
     return transact(this.db, [META], "readwrite", async ({ meta }) => {
       const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
       state.retiredThrough = count;
+      await settle(meta.put(state));
+    });
+  }
+
+  /** This device's read cursor and receipt and typing settings (#121). */
+  async presence() {
+    return transact(this.db, [META], "readonly", async ({ meta }) =>
+      ((await settle(meta.get(STATE_KEY))) ?? freshState()).presence ?? null);
+  }
+
+  async savePresence(presence) {
+    return transact(this.db, [META], "readwrite", async ({ meta }) => {
+      const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
+      state.presence = presence;
       await settle(meta.put(state));
     });
   }

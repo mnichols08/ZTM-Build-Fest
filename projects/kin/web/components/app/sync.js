@@ -86,6 +86,7 @@ export class SyncController {
         if (room && !(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
         if (!room && this.app.chat.room !== coordinator.chat && this.app.chat.room) return;
         this.app.chat.room = room;
+        if (this.app.chatSettings) this.app.chatSettings.room = room;
       },
     });
     this.app.syncCoordinator = coordinator;

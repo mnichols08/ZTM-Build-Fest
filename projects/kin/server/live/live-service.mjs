@@ -25,7 +25,7 @@
 import {
   acceptKey, CLOSE, closePayload, encodeFrame, encodeMessage, FrameParser, isClientKey, MAX_MESSAGE_BYTES, OPCODE, parseMessage,
 } from "./websocket.mjs";
-import { PairingError } from "../pairing-service/shared.mjs";
+import { PairingError, canParticipate } from "../pairing-service/shared.mjs";
 
 export const LIVE_PATH = "/api/live";
 export const PING_INTERVAL_MS = 25_000;
@@ -46,7 +46,23 @@ export const LIVE_TYPE = Object.freeze({
   /** New household events were accepted: pull from the HTTP sync routes.
    * Empty payload; it says nothing about what changed or who changed it. */
   SYNC_HINT: 0x02,
+  /** Typing (#122), both ways. A client sends one sealed frame (a signed
+   * household-key envelope, JSON); the service relays it unchanged to the
+   * household's other connected, chat-allowed devices and keeps nothing. */
+  TYPING: 0x03,
+  /** A member's read-receipt slot changed (#121): fetch /api/chat/receipts.
+   * Empty payload; like a sync hint it says nothing about what changed. */
+  RECEIPTS: 0x04,
 });
+
+/** A typing frame is one small envelope; anything larger isn't one. */
+export const MAX_TYPING_BYTES = 2048;
+/** Frames a connection may send in a burst, and how fast that refills. A
+ * client sends one every 3 seconds, plus one when it stops. */
+export const TYPING_BURST = 4;
+export const TYPING_REFILL_MS = 1_000;
+/** Frames dropped in a row before the connection is closed as abusive. */
+export const MAX_TYPING_DROPS = 60;
 
 const ACCESS_CODES = new Map([
   ["authentication_required", CLOSE.SESSION_ENDED],
@@ -87,6 +103,10 @@ class LiveConnection {
     this.queuedHint = false;
     this.blocked = false;
     this.missedPongs = 0;
+    this.typingTokens = TYPING_BURST;
+    this.typingRefilledAt = 0;
+    this.typingDrops = 0;
+    this.queuedReceipts = false;
     this.closing = false;
     this.disposed = false;
     this.resources = new DisposableStack();
@@ -183,7 +203,18 @@ class LiveConnection {
       if (this.queuedHint) return true;
       this.queuedHint = true;
     }
+    if (type === LIVE_TYPE.RECEIPTS && this.blocked) {
+      if (this.queuedReceipts) return true;
+      this.queuedReceipts = true;
+    }
     return this.write(encodeFrame(OPCODE.BINARY, encodeMessage(type, payload, flags)));
+  }
+
+  /** Sends a record that is only worth sending now: dropped, not queued,
+   * while the socket can't take more (typing is gone in six seconds anyway). */
+  sendEphemeral(type, payload) {
+    if (this.closing || this.disposed || this.blocked) return false;
+    return this.write(encodeFrame(OPCODE.BINARY, encodeMessage(type, payload)));
   }
 
   write(frame) {
@@ -209,7 +240,10 @@ class LiveConnection {
       this.queuedBytes -= frame.length;
       this.blocked = !this.socket.write(frame);
     }
-    if (!this.blocked) this.queuedHint = false;
+    if (!this.blocked) {
+      this.queuedHint = false;
+      this.queuedReceipts = false;
+    }
   }
 
   /** Starts the closing handshake; the socket ends once the close frame is
@@ -272,6 +306,46 @@ export class LiveService {
     this.closingByDevice = new Map();
     /** Kin record type → handler(connection, record), for client messages. */
     this.handlers = new Map();
+    this.handlers.set(LIVE_TYPE.TYPING, (connection, record) => this.relayTyping(connection, record));
+  }
+
+  /** Whether the connection's member may take part in chat now. */
+  chatAllowed(connection) {
+    return canParticipate(this.service.members.get(connection.memberId), this.service.now());
+  }
+
+  /**
+   * Relays one typing frame (#122) to the household's other connected,
+   * chat-allowed devices, unchanged and unstored. The service can't read it;
+   * it checks only that it is small, names the sender's own household and
+   * device, and isn't coming faster than a person types. Frames over the
+   * rate are dropped; a connection that keeps sending them is closed.
+   */
+  relayTyping(connection, record) {
+    const payload = record.payload;
+    if (payload.length < 1 || payload.length > MAX_TYPING_BYTES) return connection.close(CLOSE.TOO_BIG, "Bad typing frame");
+    const now = this.service.now();
+    const elapsed = Math.max(0, now - connection.typingRefilledAt);
+    connection.typingTokens = Math.min(TYPING_BURST, connection.typingTokens + Math.floor(elapsed / TYPING_REFILL_MS));
+    if (elapsed >= TYPING_REFILL_MS) connection.typingRefilledAt = now;
+    if (connection.typingTokens < 1) {
+      connection.typingDrops += 1;
+      if (connection.typingDrops > MAX_TYPING_DROPS) connection.close(CLOSE.POLICY, "Too many typing frames");
+      return;
+    }
+    connection.typingTokens -= 1;
+    connection.typingDrops = 0;
+    let frame;
+    try {
+      frame = JSON.parse(payload.toString("utf8"));
+    } catch {
+      return connection.close(CLOSE.INVALID_DATA, "Bad typing frame");
+    }
+    if (!frame || typeof frame !== "object" || frame.householdId !== connection.householdId || frame.deviceId !== connection.deviceId)
+      return connection.close(CLOSE.POLICY, "Bad typing frame");
+    if (!this.chatAllowed(connection)) return;
+    for (const other of this.households.get(connection.householdId) ?? [])
+      if (other !== connection && this.chatAllowed(other)) other.sendEphemeral(LIVE_TYPE.TYPING, payload);
   }
 
   /** node:http's "upgrade" event. */
@@ -369,6 +443,13 @@ export class LiveService {
   eventsAccepted(householdId, authorDeviceId) {
     for (const connection of this.households.get(householdId) ?? [])
       if (connection.deviceId !== authorDeviceId) connection.send(LIVE_TYPE.SYNC_HINT);
+  }
+
+  /** A member's read-receipt slot changed: tell the household's other
+   * chat-allowed devices to fetch the slots. */
+  receiptsChanged(householdId, authorDeviceId) {
+    for (const connection of this.households.get(householdId) ?? [])
+      if (connection.deviceId !== authorDeviceId && this.chatAllowed(connection)) connection.send(LIVE_TYPE.RECEIPTS);
   }
 
   /** Closes every socket (service shutdown), without waiting long. */

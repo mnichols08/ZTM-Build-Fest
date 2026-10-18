@@ -238,6 +238,9 @@ export class ViewBuilder {
     // Per-device notification settings (#85), shown once this browser is a
     // trusted household device.
     this.app.notifications = document.createElement("kin-notifications");
+    // Read receipts and typing (#120): per member, so shown with the room.
+    this.app.chatSettings = document.createElement("kin-chat-settings");
+    this.app.chatSettings.hidden = true;
 
     const privacyPage = document.createElement("section");
     privacyPage.className = "household-subpage";

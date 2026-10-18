@@ -354,8 +354,10 @@ the fallback whenever the socket is closed.
   `[u8 type][u8 flags][u16 reserved][u32 length][payload]`, little-endian.
   The service sends `HELLO` (1) when the socket opens and `SYNC_HINT` (2) to a
   household's other devices when events are accepted. Both are empty: a hint
-  says neither what changed nor who changed it. Clients send nothing yet; an
-  unknown record type closes the socket.
+  says neither what changed nor who changed it. Clients send only typing
+  frames (record 3, see [Read receipts and typing](#read-receipts-and-typing-v11-120));
+  the service also sends `RECEIPTS` (4, empty) when a member's receipt slot
+  changed. An unknown record type closes the socket.
 - **The client (#108, `web/sync/live-channel.js`).** An unlocked device opens
   the socket after its first sync and closes it on lock or sign-out. One
   tab per device holds it (a Web Lock named for the device); another tab
@@ -605,6 +607,78 @@ to their now-untrusted devices, until the household is deleted. The service
 sees only the record's size, timing and revision. It can't read, forge or
 move one; it could withhold one (fewer hidden messages on a device that
 hasn't kept them, until a device that has writes again).
+
+## Read receipts and typing (v1.1, #120)
+
+Two small signals for the household chat, neither of them a chat event, and
+neither ever sent or stored in the clear: the service sees only that
+encrypted frames passed through.
+
+**Read cursors (#121).** A receipt is a *cursor*, "read up to this message",
+not a record per message, so storage is constant however long the chat grows.
+Each member has one slot on the service (`GET /api/chat/receipts` for everyone's,
+`PUT /api/chat/receipts` for their own, compare-and-set on `expectedRevision`),
+latest only: it is overwritten, never appended to the chat log. A slot is a
+household-key sync envelope (the same AES-256-GCM and ECDSA signature as a chat
+event, `web/chat/chat-presence.js`), at most 4,096 bytes, whose
+`deviceSequence` is the revision it replaces; the service checks that it comes
+from the writing device, under a key epoch the household has, and nothing else.
+Its plaintext (format 1) is the cursor (`postedAt` and `messageId`), when it
+was read, and the member's two settings.
+
+- A message counts as read by a member when it is at or before their cursor in
+  (`postedAt`, `messageId`) order. A deleted message keeps its place, so it
+  still counts toward the cursor. This is the order messages are posted in;
+  two devices with clocks seconds apart can disagree on a message or two near
+  the edge, which shows as seen slightly early or late.
+- Cursors only move forward. Two devices of one member merge to the later one,
+  and a lower cursor is never written over a higher one (the loser of a
+  compare-and-set reads, merges and writes again). Other members' slots are
+  trusted only from a device that is that member's, and an older revision than
+  one already seen is ignored.
+- The client marks a message read only when its row is at least half on screen
+  in a visible, focused window with the chat showing (an `IntersectionObserver`
+  on the rows, the page's visibility and focus), not when it was merely
+  downloaded or a push arrived. It writes at most once every 2 seconds; the
+  service allows 40 writes a minute per device.
+- Settings, in the same slot so every device of the member sees them
+  (the settings that were written last win): **Send read receipts** and
+  **Show when I'm typing**, both on by default. Turning receipts off clears the
+  stored cursor (the slot says "none"), stops collecting one, and hides other
+  members' receipts from that member on all their devices: reciprocity. The
+  settings share the slot, not the member's private "delete for me" record
+  (#119) as the story suggested: that record is sealed to the member's own
+  devices, so it couldn't carry anything the others should read, and the two
+  settings are not secret from them anyway.
+- The slot is fetched when the chat opens, on a `RECEIPTS` live hint, and at
+  most every 15 seconds on the chat pass. The "Seen by" line shows under the
+  member's latest message ("Seen by everyone" when every other active member
+  has); opening it lists each reader with the time of the report that covered
+  the message.
+- Where the story named Rust for the merge and projection: the cursors are
+  per-member presence, not household or chat state (they are not events, are
+  not replayed and are not part of any history), so they live beside the
+  device's other presence code in JavaScript with tests, and the engine and
+  its ABI are unchanged.
+
+**Typing (#122).** Typing is ephemeral. The client sends a sealed frame
+(the same envelope, plaintext kind `typing`, `on` true or false) over the live
+channel at most every 3 seconds while the composer has new input, and `on:
+false` on send, clear, blur, lock or page hide. The service relays the frame
+unchanged to the household's other connected devices whose member may chat,
+and keeps nothing: it checks only that the frame is at most 2 KiB, is JSON, and
+names the sender's own household and device, and it drops frames faster than a
+burst of four then one a second (a connection that keeps sending them is
+closed). A receiver verifies the frame like a chat event, drops one that is
+not newer than the last it accepted from that device (the sequence is the
+sender's clock in milliseconds, so a replay shows nothing), and shows the
+indicator for 6 seconds unless refreshed, so it disappears within 6 seconds of
+the person stopping, closing, locking or losing connection. Nothing about
+typing is written to disk on either side. Turning it off stops this device
+sending; the member still sees others'. The indicator is visible text beneath
+the list and is the log's accessible description, not a live region, so screen
+readers aren't interrupted on every change. Only the tab that holds the
+device's live channel (one per device, by Web Lock) sends or receives typing.
 
 ## Privacy boundary
 

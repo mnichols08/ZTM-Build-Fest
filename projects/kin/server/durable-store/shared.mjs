@@ -2,7 +2,7 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const SERVER_SCHEMA_VERSION = 14;
+export const SERVER_SCHEMA_VERSION = 15;
 
 export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024 + 4096;
 
@@ -34,6 +34,8 @@ export const MAX_HOUSEHOLD_CHAT_EVENTS = 250_000;
 // "Delete for me" (#119): the most one member's sealed hidden-messages record
 // may hold (about 10,000 message IDs, sealed and base64url-encoded).
 export const MAX_CHAT_HIDDEN_RECORD_BYTES = 256 * 1024;
+/** A member's sealed read-receipt slot (#121): one small signed envelope. */
+export const MAX_CHAT_RECEIPT_BYTES = 4096;
 
 export const MAX_AUDIT_ROWS = 10_000;
 
