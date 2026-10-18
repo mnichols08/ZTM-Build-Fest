@@ -265,8 +265,6 @@ fn conflicting_chat_events_are_kept_and_change_nothing() {
     let base = posted(1, MEMBER_1, 0x11, 1, 1);
     let attachment = posted(2, MEMBER_1, 0x11, 2, 2);
     let expected = chat(&[base.clone(), attachment.clone()]);
-    let mut reused_post = posted(3, MEMBER_2, 0x21, 3, 1);
-    reused_post[108..140].copy_from_slice(&blob(1, 0));
     // Events that change nothing a page shows. Those bringing a new blob no
     // message will ever show retire it; the others retire nothing.
     for (conflicting, retires) in [
@@ -277,9 +275,8 @@ fn conflicting_chat_events_are_kept_and_change_nothing() {
         (edited(3, MEMBER_2, 0x21, 1, 1), Some(blob(1, 1))),
         // An attachment is never edited.
         (edited(3, MEMBER_1, 0x11, 2, 1), Some(blob(2, 1))),
-        // Blobs this log has already seen: reused, never retired.
+        // An edit to the blob the message already has.
         (edited(3, MEMBER_1, 0x11, 1, 0), None),
-        (reused_post, None),
         // Messages this log never saw: elsewhere the edit may apply.
         (edited(3, MEMBER_1, 0x11, 9, 1), None),
         (deleted(3, MEMBER_1, 0x11, 9, false), None),
@@ -316,28 +313,65 @@ fn conflicting_chat_events_are_kept_and_change_nothing() {
 }
 
 #[test]
-fn a_blob_reference_is_used_once_so_a_live_blob_is_never_retired() {
-    // Edit A -> B -> A: the third edit reuses A, so it changes nothing and
-    // A, retired by the second, is not live again.
+fn a_blob_a_visible_message_shows_is_never_retired() {
+    // Edit A -> B -> A: the message shows A again, so only B is retired.
     let state = chat(&[
         posted(1, MEMBER_1, 0x11, 1, 1),
         edited(2, MEMBER_1, 0x11, 1, 1),
         edited(3, MEMBER_1, 0x11, 1, 0),
     ]);
-    let message = state.get(&ChatMessageId(message(1))).unwrap();
-    assert_eq!(message.blob_ref, blob(1, 1));
-    assert_eq!(state.retired, vec![blob(1, 0)]);
-    // A second message reusing the first's blob is no message at all, so
-    // deleting the first can't retire a blob another message shows.
-    let mut reuse = posted(2, MEMBER_2, 0x21, 2, 1);
-    reuse[108..140].copy_from_slice(&blob(1, 0));
-    let state = chat(&[
+    assert_eq!(
+        state.get(&ChatMessageId(message(1))).unwrap().blob_ref,
+        blob(1, 0)
+    );
+    assert_eq!(state.retired_blobs(&[]), vec![blob(1, 1)]);
+    // Two messages sharing a blob: deleting one keeps the blob while the
+    // other shows it; deleting both retires it once.
+    let mut shared = posted(2, MEMBER_2, 0x21, 2, 1);
+    shared[108..140].copy_from_slice(&blob(1, 0));
+    let mut records = vec![
         posted(1, MEMBER_1, 0x11, 1, 1),
-        reuse,
+        shared,
         deleted(3, MEMBER_1, 0x11, 1, false),
-    ]);
-    assert_eq!(state.messages.len(), 1);
-    assert_eq!(state.retired, vec![blob(1, 0)]);
+    ];
+    assert_eq!(chat(&records).messages.len(), 2);
+    assert_eq!(chat(&records).retired_blobs(&[]), Vec::<[u8; 32]>::new());
+    records.push(deleted(4, MEMBER_2, 0x21, 2, false));
+    assert_eq!(chat(&records).retired_blobs(&[]), vec![blob(1, 0)]);
+}
+
+#[test]
+fn a_backdated_copy_of_a_blob_neither_hides_nor_deletes_the_original() {
+    // Logical times are the author's to write, and every chat member can
+    // read every blob reference. A modified client copying member 1's blob
+    // into an earlier-dated event:
+    let original = posted(10, MEMBER_1, 0x11, 1, 1);
+    // ...as a post of its own message: both messages show; the copy shows as
+    // its author's (it holds the key; that can't be prevented).
+    let mut repost = posted(9, MEMBER_2, 0x21, 9, 1);
+    repost[108..140].copy_from_slice(&blob(1, 0));
+    let state = chat(&[original.clone(), repost]);
+    let authors: Vec<_> = state
+        .messages
+        .iter()
+        .map(|message| (message.message_id, message.author))
+        .collect();
+    assert_eq!(
+        authors,
+        vec![
+            (ChatMessageId(message(9)), ActorId(MEMBER_2)),
+            (ChatMessageId(message(1)), ActorId(MEMBER_1))
+        ]
+    );
+    assert!(state.retired_blobs(&[]).is_empty());
+    // ...as an edit of its own attachment, which applies nowhere: the blob
+    // is a candidate, but member 1's message shows it, so it isn't retired.
+    let mut edit = edited(9, MEMBER_2, 0x21, 2, 0);
+    edit[104..136].copy_from_slice(&blob(1, 0));
+    let state = chat(&[posted(5, MEMBER_2, 0x21, 2, 2), original, edit]);
+    assert_eq!(status_of(&state, 1), ChatMessageStatus::Live);
+    assert!(state.retired.contains(&blob(1, 0)));
+    assert!(state.retired_blobs(&[]).is_empty());
 }
 
 #[test]

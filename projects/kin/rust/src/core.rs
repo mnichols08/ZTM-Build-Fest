@@ -69,17 +69,11 @@ pub fn chat_page(
         .replay(&context)?
         .finalize(context.as_of, context.civil_date)?;
     let chat = &state.chat;
-    for blob in &chat.retired {
+    let retired = chat.retired_blobs(&request.admins);
+    for blob in &retired {
         texts.forget(blob);
     }
-    for message in &chat.messages {
-        if message.blob_ref != [0; 32]
-            && chat.removed_by_admin(&message.message_id, &request.admins)
-        {
-            texts.forget(&message.blob_ref);
-        }
-    }
-    crate::chat::encode_page(chat, &request, texts)
+    crate::chat::encode_page(chat, &request, texts, &retired)
 }
 
 pub fn encode_device_names(devices: &[state::DeviceNameState]) -> Result<Vec<u8>, KinError> {

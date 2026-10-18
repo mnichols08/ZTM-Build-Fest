@@ -7,19 +7,25 @@
 //! history may still hold them (another device's bug, or a member who joined
 //! later and never received the message an edit refers to).
 //!
-//! - Every blob reference is used once: an event whose blob this log has
-//!   already seen is a conflict and changes nothing (it could otherwise
-//!   make a live blob a retired one).
+//! - Blob references are content hashes under random keys, so honest
+//!   devices never repeat one, and commands refuse a reference the log has
+//!   seen (`ChatState::seen`). Replay doesn't rely on that: a modified
+//!   client can copy any reference into an event dated as it likes, so a
+//!   reused reference is applied like any other, and a page never retires a
+//!   blob a visible message still shows (`ChatState::retired_blobs`). A copy
+//!   can then only show the content as its author's own message; it can't
+//!   hide or delete the original.
 //! - A post adds a message, unless a message with that ID exists (the first
-//!   post wins; the second post's blob is retired, since nothing shows it).
+//!   post wins; the second post's blob becomes a retirement candidate).
 //! - Only the author edits, only a text message, and never a deleted one. An
-//!   edit replaces the content blob; the old one is retired. An edit that
-//!   can't apply to a message this log holds (another member's, an
-//!   attachment's, or the author's after or concurrent with their own
-//!   deletion) retires its new blob, so a deleted message's edited text
-//!   doesn't survive.
-//! - The author deletes for everyone: terminal, and it retires the current
-//!   blob. Deletion wins over an edit at the same logical time in either
+//!   edit replaces the content blob; the old one becomes a candidate. An
+//!   edit that can't apply to a message this log holds (another member's,
+//!   an attachment's, or the author's after or concurrent with their own
+//!   deletion) makes its new blob a candidate, so a deleted message's edited
+//!   text doesn't survive. An edit to the blob a message already has
+//!   changes nothing.
+//! - The author deletes for everyone: terminal, and its current blob
+//!   becomes a candidate. Deletion wins over an edit at the same logical time in either
 //!   replay order, because replay order is total and a delete is terminal:
 //!   whichever sorts first, the message ends deleted.
 //! - An admin deleting someone else's message records a claim. Whether the
@@ -46,9 +52,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
             blob_ref,
             blob_key,
         } => {
-            if !chat.seen.insert(*blob_ref) {
-                return Ok(());
-            }
+            chat.seen.insert(*blob_ref);
             if chat.positions.contains_key(message_id) {
                 chat.retired.push(*blob_ref);
                 return Ok(());
@@ -71,13 +75,14 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
             blob_ref,
             blob_key,
         } => {
-            if !chat.seen.insert(*blob_ref) {
-                return Ok(());
-            }
+            chat.seen.insert(*blob_ref);
             let Some(&at) = chat.positions.get(message_id) else {
                 return Ok(());
             };
             let message = &mut chat.messages[at];
+            if message.blob_ref == *blob_ref {
+                return Ok(());
+            }
             // An edit every history that holds the message ignores (another
             // member's, an attachment's, or one that lost to the author's own
             // deletion) leaves its blob shown nowhere: retire it. An edit of

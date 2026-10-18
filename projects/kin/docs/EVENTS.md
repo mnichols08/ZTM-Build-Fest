@@ -254,17 +254,24 @@ the product decisions).
   only a text message, never a deleted one. The author deletes for everyone;
   deletion is terminal, so it wins over an edit at the same logical time in
   either replay order.
-- **One event per blob.** A blob reference is used by one event only: an
-  event carrying a reference the log has already seen (an edit back to an
-  earlier blob, a second message sharing a blob) changes nothing, and
-  commands refuse it. So a retired blob is never one a message still shows.
-- **Retired blobs.** Hosts delete these locally and on the service: every
-  blob an edit replaced or the author's deletion dropped, and every blob
-  brought by an event that applies nowhere (a second post of an existing ID,
-  another member's edit, an edit of an attachment, an edit after or
-  concurrent with the author's deletion). An edit of a message the log
-  doesn't hold keeps its blob, since where the message is known the edit may
-  apply.
+- **Blob references.** Honest devices never repeat a blob reference (each
+  is a content hash under a random key), and commands refuse one the log has
+  seen. Replay doesn't rely on that: logical times are the author's to
+  write and every chat member can read every reference, so a modified client
+  could copy one into an earlier-dated event. A reused reference applies like
+  any other, and a blob a visible message shows is never retired. A copy can
+  only show the content again as its author's own message; it can't hide or
+  delete the original.
+- **Retired blobs.** Hosts delete these locally and on the service. The
+  candidates are every blob an edit replaced or the author's deletion
+  dropped, and every blob brought by an event that applies nowhere (a second
+  post of an existing ID, another member's edit, an edit of an attachment,
+  an edit after or concurrent with the author's deletion). A page retires
+  each candidate, and each blob of a message removed by a named admin, once
+  and only while no live or edited message shows it. An edit of a message
+  the log doesn't hold keeps its blob, since where the message is known the
+  edit may apply. An edit to the blob a message already has changes
+  nothing.
 - **Admin removal is a claim.** `by_admin` set on another member's message
   records a claim. Only the service knows who is an admin, so a page counts
   the claim when the host names its author among the household's admins;

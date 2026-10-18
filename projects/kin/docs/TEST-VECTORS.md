@@ -191,11 +191,11 @@ order.
 **031 — Conflicts change nothing shown.** Against a posted text message and a
 posted attachment, each of these leaves the messages and claims unchanged: a
 second post of the same ID (by anyone), an edit by another member, an edit
-of the attachment (each retires its new blob), an edit to an already-seen
-blob, a post reusing another message's blob, an edit or deletion of an
-unknown message, and a non-admin deletion by another member (none retires
-anything). Nothing changes a deleted message; an edit after it retires its
-blob.
+of the attachment (each makes its new blob a retirement candidate), an edit
+to the blob the message already has, an edit or deletion of an unknown
+message, and a non-admin deletion by another member (none adds a
+candidate). Nothing changes a deleted message; an edit after it makes its
+blob a candidate.
 
 **032 — Delete beats edit.** An edit and a deletion by the author at the same
 logical time, from two devices, in both replay orders: the message ends
@@ -222,10 +222,16 @@ describes, and reading the page forgets the retired blobs' texts.
 the newest page of 50 replays within the test's bound, and the next page
 reuses the checkpoint (`History::last_replay_reused`).
 
-**037 — One event per blob.** Edits A, B, then A again: the third changes
-nothing, and the message keeps B with A retired once. A second message
-reusing the first's blob is no message, so deleting the first retires only
-its own blob. Commands refuse both reuses.
+**037 — Shown blobs are never retired.** Edits A, B, then A again: the
+message shows A and only B is retired. Two messages sharing a blob: deleting
+one retires nothing while the other shows it; deleting both retires it once.
+Commands refuse both reuses.
+
+**038 — Backdated copies.** A modified client copies member 1's blob into an
+earlier-dated post of its own message: both messages show (the copy as its
+author's) and nothing is retired. Into an earlier-dated edit of its own
+attachment: the blob is a candidate, but member 1's message still shows it,
+so it is not retired.
 
 ## Push payload (RFC 8291)
 

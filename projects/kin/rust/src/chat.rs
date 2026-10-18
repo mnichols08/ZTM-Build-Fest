@@ -65,16 +65,15 @@ pub struct ChatState {
     /// Messages in posting order.
     pub messages: Vec<ChatMessage>,
     pub positions: BTreeMap<ChatMessageId, usize>,
-    /// Blobs no message refers to any more: replaced by an edit, deleted by
-    /// the author, or brought by an event that lost (an edit after the
-    /// author deleted, a second post of an existing ID). Hosts delete their
-    /// local copies (#110). Every blob reference is used by one event only
-    /// (`seen`), so a retired blob is never one a message still shows.
+    /// Retirement candidates, in replay order: blobs replaced by an edit,
+    /// dropped by the author's deletion, or brought by an event that applies
+    /// nowhere (an edit after the author deleted, a second post of an
+    /// existing ID). A page retires those no visible message shows
+    /// (`retired_blobs`); hosts then delete them (#110).
     pub retired: Vec<[u8; 32]>,
     /// Every blob reference any chat event in this log has carried. A
     /// reference is content-addressed and its key random, so honest devices
-    /// never repeat one; an event that does is a conflict and changes
-    /// nothing, which keeps a retired blob from being a live one.
+    /// never repeat one, and commands refuse one this set holds.
     pub seen: BTreeSet<[u8; 32]>,
     /// Admin deletions of other members' messages, by message: who claimed
     /// them, in replay order. Whether a claim counts depends on whether its
@@ -93,6 +92,42 @@ impl ChatState {
         self.admin_claims
             .get(message_id)
             .is_some_and(|claims| claims.iter().any(|actor| admins.contains(actor)))
+    }
+
+    /// The status a page shows, given the household's admins.
+    pub fn shown_status(&self, message: &ChatMessage, admins: &[ActorId]) -> ChatMessageStatus {
+        if message.status != ChatMessageStatus::Deleted
+            && self.removed_by_admin(&message.message_id, admins)
+        {
+            ChatMessageStatus::RemovedByAdmin
+        } else {
+            message.status
+        }
+    }
+
+    /// The blobs to delete, given the household's admins: the candidates,
+    /// then the blobs of messages a named admin removed, each once and only
+    /// if no live or edited message shows it. However a log came to hold a
+    /// blob reference twice, a blob a page shows is never retired.
+    pub fn retired_blobs(&self, admins: &[ActorId]) -> Vec<[u8; 32]> {
+        let mut shown = BTreeSet::new();
+        let mut removed = Vec::new();
+        for message in &self.messages {
+            match self.shown_status(message, admins) {
+                ChatMessageStatus::Live | ChatMessageStatus::Edited => {
+                    shown.insert(message.blob_ref);
+                }
+                ChatMessageStatus::RemovedByAdmin => removed.push(message.blob_ref),
+                ChatMessageStatus::Deleted => {}
+            }
+        }
+        let mut listed = BTreeSet::new();
+        self.retired
+            .iter()
+            .chain(&removed)
+            .filter(|blob| **blob != [0; 32] && !shown.contains(*blob) && listed.insert(**blob))
+            .copied()
+            .collect()
     }
 }
 
@@ -300,30 +335,18 @@ pub fn encode_page(
     state: &ChatState,
     request: &PageRequest<'_>,
     texts: &ChatTexts,
+    retired_blobs: &[[u8; 32]],
 ) -> Result<Vec<u8>, KinError> {
     let total = state.messages.len();
     let end = (request.before as usize).min(total);
     let start = end.saturating_sub(request.limit);
     let page = &state.messages[start..end];
-    let status = |message: &ChatMessage| {
-        if message.status != ChatMessageStatus::Deleted
-            && state.removed_by_admin(&message.message_id, &request.admins)
-        {
-            ChatMessageStatus::RemovedByAdmin
-        } else {
-            message.status
-        }
+    let status = |message: &ChatMessage| state.shown_status(message, &request.admins);
+    let retired = if request.include_retired {
+        retired_blobs
+    } else {
+        &[]
     };
-    // Admin-removed messages' blobs are retired too, once the admins say so.
-    let mut retired: Vec<[u8; 32]> = Vec::new();
-    if request.include_retired {
-        retired.extend_from_slice(&state.retired);
-        for message in &state.messages {
-            if message.blob_ref != [0; 32] && status(message) == ChatMessageStatus::RemovedByAdmin {
-                retired.push(message.blob_ref);
-            }
-        }
-    }
     let mut text_bytes = 0usize;
     if request.include_text {
         for message in page {
@@ -394,7 +417,7 @@ pub fn encode_page(
     for text in text_spans {
         bytes.extend_from_slice(text);
     }
-    for blob in &retired {
+    for blob in retired {
         bytes.extend_from_slice(blob);
     }
     debug_assert_eq!(bytes.len(), size);

@@ -421,8 +421,8 @@ revision is meaningful only within one instance.
   edited), the text bytes, and 32 bytes per retired blob: every blob replaced
   by an edit or deleted by its author, every blob brought by an event that
   applies nowhere ([EVENTS](EVENTS.md#v110-household-chat)), plus the blobs
-  of messages removed by a named admin. A blob reference is used by one event
-  only, so no retired blob is one a page shows. Reading a page first forgets
+  of messages removed by a named admin, each once and only if no live or
+  edited message shows it (`ChatState::retired_blobs`). Reading a page first forgets
   the arena's texts for those blobs, so a deleted message's text never comes
   back out. Message indexes
   are positions in posting (replay) order, so a late-arriving older message
