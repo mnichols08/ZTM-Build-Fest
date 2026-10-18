@@ -97,6 +97,32 @@ export class SyncKeyStore {
     }).then(record => hydrateDevice(record, this.vault));
   }
 
+  /** This browser's most recent device that a household approved: its ID,
+   * household, member and public keys, without the private keys. Null when
+   * it has none (only the pending device, or nothing). Signing in with a
+   * phone (#98) offers these keys so a returning computer keeps its device. */
+  latestBoundDevice() {
+    const transaction = this.database.transaction(DEVICE_STORE, "readonly");
+    const request = transaction.objectStore(DEVICE_STORE).getAll();
+    return transactionResult(transaction, (finish) => {
+      request.onsuccess = () => {
+        let latest = null;
+        for (const record of request.result ?? []) {
+          if (record.deviceId === PENDING_DEVICE_ID || !record.householdId || !record.publicKeys) continue;
+          if (!latest || (record.createdAt ?? 0) > (latest.createdAt ?? 0)) latest = record;
+        }
+        finish(latest && {
+          deviceId: latest.deviceId,
+          householdId: latest.householdId,
+          memberId: latest.memberId,
+          publicKeys: structuredClone(latest.publicKeys),
+          fingerprint: latest.fingerprint,
+        });
+      };
+      request.onerror = () => abortWith(transaction, request.error);
+    });
+  }
+
   async pinTrustedDevice({
     householdId,
     deviceId,
