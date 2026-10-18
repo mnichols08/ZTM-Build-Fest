@@ -445,27 +445,64 @@ test("People & devices remains useful offline when encrypted names are unavailab
   component.identity = { memberId: "me", deviceId: "phone" };
   component.syncKeyError = "offline";
   component.run = async (action) => action();
-  component.api = async () => ({ canManageMembers: false, devices: [
-    { id: "phone", memberId: "me", label: "Chrome on Android", revokedAt: null },
-    { id: "tablet", memberId: "other", label: "Device", revokedAt: null },
-  ] });
-  component.memberNames = { load: async () => { throw new Error("offline"); } };
-  component.deviceNames = { load: async () => { throw new Error("offline"); } };
+  component.api = async (path) => {
+    assert.equal(path, "/api/devices");
+    const error = new Error("offline");
+    error.code = "connection_unavailable";
+    throw error;
+  };
+  component.memberNames = { load: async () => [
+    { memberId: "me", preferredName: "Alex" },
+    { memberId: "other", preferredName: "Riley" },
+  ] };
+  component.deviceNames = { load: async () => [
+    { deviceId: "phone", memberId: "me", autoName: "Chrome on Android", nickname: null },
+    { deviceId: "tablet", memberId: "other", autoName: "Safari on iPad", nickname: "Shared tablet" },
+  ] };
 
   await component.showDevices();
 
   const descendants = (items) => items.flatMap((item) => [item, ...descendants(item.children ?? [])]);
   const groups = component.children.filter((child) => child.className === "device-group");
-  assert.deepEqual(groups.map((group) => group.children[0].textContent), ["You", "Household member 1"]);
+  assert.deepEqual(groups.map((group) => group.children[0].textContent), ["Alex (You)", "Riley"]);
   const buttons = descendants(component.children).filter((child) => child.tagName === "button");
   assert.equal(buttons.some((button) => button.textContent === "Invite person"), false,
     "inviting another person remains limited to server-authorized managers");
   assert.equal(buttons.some((button) => button.textContent === "Add my device"), true);
+  const messages = descendants(component.children).filter((child) => child.className === "household-message");
+  assert.ok(messages.some((message) => message.textContent.includes("connection is unavailable")));
   const deviceLines = descendants(component.children).filter((child) => child.className === "device-name-line");
   assert.deepEqual(deviceLines.map((line) => line.children.map((part) => part.textContent ?? part).join("")), [
-    "Chrome on Android — This device · Trusted",
-    "New device — Trusted",
+    "Chrome on Android — This device · Status unavailable offline",
+    "Shared tablet — Safari on iPad · Status unavailable offline",
   ]);
+  assert.equal(buttons.some((button) => /Replace|Revoke/.test(button.textContent)), false,
+    "projection-only rows never imply current remote-management authority");
+
+  component.memberNames.load = async () => { throw new Error("projection unavailable"); };
+  component.deviceNames.load = async () => { throw new Error("projection unavailable"); };
+  await component.showDevices();
+  const fallbackMessages = descendants(component.children).filter((child) => child.className === "household-message");
+  assert.ok(fallbackMessages.some((message) => message.textContent.includes("encrypted names aren't available")));
+});
+
+test("People & devices does not mislabel server failures as offline (#226)", async () => {
+  const component = new KinHousehold();
+  component.identity = { memberId: "me", deviceId: "phone" };
+  component.syncKeyError = "skip sync-key access";
+  let rendered;
+  component.run = async (action) => { try { await action(); } catch (error) { rendered = error; } };
+  component.api = async () => { const error = new Error("Sign in again."); error.code = "authentication_required"; throw error; };
+  await component.showDevices();
+  assert.equal(rendered?.code, "authentication_required");
+  assert.equal(component.children.some((child) => child.textContent?.includes("connection is unavailable")), false);
+
+  rendered = null;
+  component.api = async () => ({});
+  await component.showDevices();
+  assert.equal(rendered?.code, "device_list_invalid");
+  assert.equal(component.children.some((child) => child.textContent?.includes("connection is unavailable")), false,
+    "a malformed response is surfaced instead of using the offline fallback");
 });
 
 test("an invitation code arriving after connection fills the join screen (#97)", async () => {

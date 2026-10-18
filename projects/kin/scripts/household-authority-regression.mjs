@@ -11,6 +11,7 @@
 //
 // Usage: node scripts/household-authority-regression.mjs <browser executable>
 import { waitForOrigin } from "./cdp-page.mjs";
+import { setViewport } from "./cdp-viewport.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -415,7 +416,8 @@ async function pageTrustDevice(deviceLabel) {
   // The row shows the device's synced name (#71), which can differ from the
   // server label, so it is found by device ID.
   const item = h.querySelector(`li[data-device-id="${device.id}"]`);
-  if (!item?.textContent.includes("Trusted")) throw new Error(`Trusted-device row is missing for ${deviceLabel}`);
+  if (!item?.textContent.includes("Untrusted"))
+    throw new Error(`Untrusted device row is missing for ${deviceLabel}`);
   const verify = [...(item?.querySelectorAll("button") ?? [])].find(
     (button) => button.textContent === "Verify device",
   );
@@ -455,18 +457,45 @@ async function pageTrustDevice(deviceLabel) {
   const pinnedAfterConfirmation = Boolean(
     await h.syncKeyStore.getPinnedDevice(h.identity.householdId, device.id),
   );
+  await h.showDevices();
+  const trustedAfterConfirmation = Boolean(
+    h.querySelector(`li[data-device-id="${device.id}"]`)?.textContent.includes("Trusted"),
+  );
   return {
     visuallyGated,
     gateSurvivedBusyCycle,
     refusedBeforeConfirmation,
     unpinnedBeforeConfirmation,
     pinnedAfterConfirmation,
+    trustedAfterConfirmation,
   };
 }
 
 async function pageHousehold() {
   const app = document.querySelector("kin-app");
   return app.household.api("/api/household");
+}
+
+async function pagePeopleDevicesLayout() {
+  const app = document.querySelector("kin-app");
+  const h = app.household;
+  location.hash = "#household/people";
+  app.ctx.navigation.showPageFromLocation();
+  await h.showDevices();
+  const firstName = h.querySelector(".device-name-line strong");
+  if (firstName)
+    firstName.textContent = "Alex's very long shared household tablet name that must wrap";
+  const groups = [...h.querySelectorAll(".device-group")];
+  const lines = [...h.querySelectorAll(".device-name-line")];
+  const actions = [...h.querySelectorAll(".people-device-actions button")];
+  return {
+    width: innerWidth,
+    overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    groupCount: groups.length,
+    linesFit: lines.every((line) => line.getBoundingClientRect().right <= innerWidth + 0.5),
+    actions: actions.map((button) => button.textContent),
+    targetHeights: actions.map((button) => button.getBoundingClientRect().height),
+  };
 }
 
 // `bytes` (an array of byte values) sends a binary body, as sync event
@@ -646,7 +675,7 @@ async function pageInstallIdentityAsMember() {
   return { section: Boolean(app.householdDefaults.install || document.querySelector("kin-install-identity")), putStatus: put.status, shortName: manifest.short_name };
 }
 
-// #85: turn notifications on and off through the real panel, with the
+// #85, #90, #227: turn notifications on and off through the real panel, with the
 // browser's permission prompt and PushManager stubbed (no push service).
 async function pageNotifications(action) {
   const app = document.querySelector("kin-app");
@@ -683,7 +712,15 @@ async function pageNotifications(action) {
     button("Turn on notifications").click();
     await wait(() => panel.state.textContent === "On.", "notifications on");
     return { state: panel.state.textContent, promptedOnlyOnPress: stub.prompts === promptsBefore + 1, userVisibleOnly: stub.userVisibleOnly,
-      status: await (await fetch("/api/push/subscription")).json(), explained: panel.textContent.includes("never include what it is") };
+      status: await (await fetch("/api/push/subscription")).json(),
+      recipientExplanation: panel.textContent.includes("other household members") && panel.textContent.includes("never receive notifications for changes you make"),
+      localChecks: [...panel.querySelectorAll(".notification-checks dd")].map((entry) => entry.textContent),
+      testGuide: panel.textContent.includes("two distinct household members") && ![...panel.querySelectorAll("button")].some((entry) => /send.*test/i.test(entry.textContent)),
+      accessibleDiagnostics: panel.querySelectorAll(".notification-checks dt").length === 3 && (() => {
+        const summary = panel.querySelector(".notification-test-guide > summary");
+        return summary?.tagName === "SUMMARY" && getComputedStyle(summary).minHeight === "48px";
+      })(),
+    };
   }
   button("Turn off notifications").click();
   await wait(() => panel.state.textContent === "Off.", "notifications off");
@@ -1091,6 +1128,15 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(household.adminRecorded && !bMember.admin && !household.canManageMembers &&
       household.members.some((member) => !member.current && member.kind === "adult" && member.admin),
       "the founding Adult A is the household admin and Adult B is not");
+    await setViewport(a, { width: 320, height: 720, deviceScaleFactor: 1, mobile: true });
+    const peopleDevicesLayout = await a.call(pagePeopleDevicesLayout);
+    check(peopleDevicesLayout.width === 320 && !peopleDevicesLayout.overflow &&
+      peopleDevicesLayout.groupCount >= 2 && peopleDevicesLayout.linesFit &&
+      peopleDevicesLayout.actions.includes("Invite person") && peopleDevicesLayout.actions.includes("Add my device") &&
+      peopleDevicesLayout.targetHeights.every((height) => height >= 44),
+    "People & devices groups members, wraps a long label, and keeps both actions tappable without 320px overflow: " +
+      JSON.stringify(peopleDevicesLayout));
+    await setViewport(a, { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
     const bPairing = await b.call(pageFetch, { path: "/api/pairings", method: "POST", body: { kind: "limited" } });
     check(bPairing.status === 403 && bPairing.body?.error === "household_admin_required",
       "non-admin Adult B cannot create invitations: " + JSON.stringify(bPairing));
@@ -1098,8 +1144,9 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(result.last?.state !== "paused", "Adult A rotates and provisions after B joins: " + JSON.stringify(result.last));
     const notificationsOn = await b.call(pageNotifications, "on");
     check(notificationsOn.state === "On." && notificationsOn.promptedOnlyOnPress && notificationsOn.userVisibleOnly === true &&
-      notificationsOn.status.subscribed && notificationsOn.explained,
-      "Adult B turns notifications on: one permission prompt after pressing Turn on, a visible-only subscription, the content-free promise stated");
+      notificationsOn.status.subscribed && notificationsOn.recipientExplanation && notificationsOn.testGuide && notificationsOn.accessibleDiagnostics &&
+      notificationsOn.localChecks.includes("Allowed") && notificationsOn.localChecks.includes("On for this device") && notificationsOn.localChecks.includes("Not muted"),
+      "Adult B turns notifications on: one permission prompt after pressing Turn on, a visible-only subscription, recipient rules and local diagnostics stated");
     const pushesBefore = pushes.length;
     await a.call(pageAddItem, "A2 after B joined");
     result = await a.call(pageSync);
@@ -1154,6 +1201,8 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       "Adult B's forced unconfirmed device-trust click is refused without pinning Client C");
     check(bTrustsC.pinnedAfterConfirmation,
       "Adult B pins Client C exactly after confirming the displayed device code");
+    check(bTrustsC.trustedAfterConfirmation,
+      "Adult B sees Client C change from Untrusted to Trusted after confirmation");
     await c.call(pageAddItem, "C1 limited member item");
     result = await c.call(pageSync);
     result = await a.call(pageSync);

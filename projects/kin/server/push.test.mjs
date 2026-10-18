@@ -140,6 +140,12 @@ function household({ store = null } = {}) {
   return { pairing, sync, push, sent, adult, join, addDevice, auth, subscribe, advance, settle, setRespond: (value) => { respond = value; }, now: () => now };
 }
 
+const syncEnvelope = (identity, deviceSequence = 1) => ({
+  protocolVersion: 1, envelopeVersion: 1, eventId: deviceSequence.toString(16).padStart(32, "e"), householdId: identity.householdId, deviceId: identity.deviceId,
+  deviceSequence, logicalTime: String(deviceSequence), keyEpoch: 1, nonce: Buffer.alloc(12, 1).toString("base64url"),
+  ciphertext: Buffer.alloc(32, 2).toString("base64url"), signature: Buffer.alloc(64, 3).toString("base64url"),
+});
+
 test("a device manages only its own validated subscription and mute", () => {
   const h = household();
   const partner = h.join("partner");
@@ -173,19 +179,20 @@ test("a device manages only its own validated subscription and mute", () => {
   assert.equal(h.push.status(h.auth(h.adult)).subscribed, false, "another device's state is its own");
 });
 
-test("an accepted batch notifies other members' devices but every author-member device is excluded", async () => {
+test("a sync-accepted batch notifies only other members' unmuted devices, content-free", async () => {
   const h = household();
-  const adultSecondDevice = h.addDevice(h.adult, "adult-second-device");
+  const authorsOtherDevice = h.addDevice(h.adult, "adult-other-device");
   const partner = h.join("partner");
   const third = h.join("third");
   h.subscribe(h.adult);
-  h.subscribe(adultSecondDevice);
+  h.subscribe(authorsOtherDevice);
   h.subscribe(partner);
   h.subscribe(third);
   h.push.mute(h.auth(third), "indefinite");
-  h.push.eventsAccepted(h.adult.householdId, h.adult.memberId);
+  h.sync.enable(h.adult.sessionToken);
+  assert.equal(h.sync.push(h.adult.sessionToken, [syncEnvelope(h.adult)]).accepted, 1);
   await h.settle();
-  assert.deepEqual(h.sent.map((entry) => entry.deviceId), [partner.deviceId], "never the author's devices; never a muted one");
+  assert.deepEqual(h.sent.map((entry) => entry.deviceId), [partner.deviceId], "member_id excludes every author's device; mute excludes the other member");
   assert.equal(h.sent[0].options.payload, '{"v":1,"kind":"new"}');
   assert.equal(h.sent[0].options.topic, "kin-new");
 });
