@@ -354,7 +354,10 @@ fragment, so the payload never reaches a server log or `Referer`.
   - At most 256 finder candidates are kept. Triangles from the 32 strongest
     are ranked by timing-pattern agreement, and up to 12 are tried. A frame
     with 30 or more finder-like patterns as strong as the symbol's own can
-    lose the symbol; it is then refused, not misread.
+    lose the symbol, and so can one with more than 256 weaker multi-row
+    patterns ahead of it in raster order (the table fills first). Either way
+    it is refused, not misread. The slowest adversarial frame measured (dense
+    finder-like tiles over all of 1280 × 720) took 36 ms natively.
   - The decoder's working memory (about 4.7 MB at 720p) is kept between calls,
     so its scratch doesn't grow for frames of the same size. Each call still
     allocates its input and result buffers. `kin_clear` frees the scratch for
