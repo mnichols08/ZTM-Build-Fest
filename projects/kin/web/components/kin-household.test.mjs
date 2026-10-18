@@ -411,3 +411,18 @@ test("trusted devices group by member and show synced names, nicknames and place
   await remove.listeners.click();
   assert.deepEqual(renamed.at(-1), ["phone", ""]);
 });
+
+test("an invitation code arriving after connection fills the join screen (#97)", async () => {
+  const { captureInvitationCode } = await import("../pairing-link.js");
+  const calls = [];
+  captureInvitationCode({ pathname: "/pair", search: "", hash: "#code=F7KM-Q2DX" }, { replaceState: (...args) => calls.push(args[2]) });
+  const component = new KinHousehold();
+  let renders = 0;
+  component.render = () => { renders += 1; };
+  component.offerInvitationCode();
+  assert.equal(component.prefilledCode, "F7KM-Q2DX");
+  assert.equal(renders, 1);
+  assert.deepEqual(calls, ["/pair"], "the address was cleared when the code was taken");
+  component.offerInvitationCode();
+  assert.equal(renders, 1, "nothing more to offer");
+});

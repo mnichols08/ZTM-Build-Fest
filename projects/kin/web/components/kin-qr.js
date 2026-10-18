@@ -30,6 +30,9 @@ const DEFAULT_SIZE = 240;
 const DEFAULT_EXPIRED = "This code expired. Ask for a new one.";
 // setTimeout's longest delay; longer expiries are re-armed in steps.
 const MAX_TIMER = 2_147_483_647;
+/** A refreshed payload must stay valid at least this long to be shown, so a
+ * clock that runs ahead can't drive refreshes faster than once a second. */
+export const MIN_REFRESH_LIFETIME_MS = 1_000;
 
 /** Whole pixels per module so every module edge lands on a pixel boundary.
  * Never below one pixel per module. */
@@ -218,9 +221,10 @@ export class KinQr extends HTMLElement {
       next = null;
     }
     if (generation !== this.generation || !this.isConnected) return;
-    // A replacement that has already expired (say, a clock running ahead of
-    // the service) ends here rather than asking again at once.
-    const usable = next?.value && !(Number.isFinite(next.expiresAt) && next.expiresAt <= Date.now());
+    // A replacement that has already expired, or is about to (say, a clock
+    // running ahead of the service), ends here rather than asking again.
+    const usable = next?.value &&
+      !(Number.isFinite(next.expiresAt) && next.expiresAt <= Date.now() + MIN_REFRESH_LIFETIME_MS);
     if (usable) {
       this._value = String(next.value);
       this._code = String(next.code ?? "");
