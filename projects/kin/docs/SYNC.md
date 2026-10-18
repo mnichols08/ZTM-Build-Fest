@@ -470,7 +470,7 @@ should also separate the two domains.
   successful full household pass of the sync coordinator (a household pass
   that pauses holds chat back too), and a message sent hints the coordinator
   at once. A pass uploads each pending event's content blob, then pushes the
-  events in batches of 20 (at most five batches), then asks the service to
+  events in batches of 20 (at most two batches), then asks the service to
   retire the blobs those events replaced (an edit's old text, a deleted
   message's), then pulls up to five pages; a pass that leaves more continues
   on the coordinator's normal continuation schedule. Each pulled event is
@@ -479,18 +479,22 @@ should also separate the two domains.
   history, signed by one of that device's keys, and carrying the same event
   ID, household, author (the signing device's member), device and logical
   time inside as outside; its kind must be a chat kind.
-- **Refused events.** An event from a device this one doesn't know yet (paired
-  after the pass read the directory) or under a key epoch it lacks pauses
-  chat until a later pass. An event that can never pass (a bad signature, a
-  mismatched identity, not a chat event, a revoked or not-yet-granted device)
+- **Refused events.** An event that says something that can never pass (not
+  a chat event, a mismatched identity, a revoked or not-yet-granted device)
   is skipped and remembered (the last 100) for the chat view to report, so
-  one bad event from a member's device can't stop the household's chat.
+  one bad event from a member's device can't stop the household's chat. A
+  signature that doesn't verify pauses chat once (the device may have
+  changed its key after this pass read the directory) and is skipped only if
+  it fails again on a later pass with a fresh directory. Anything else (a
+  device this one doesn't know yet, a missing key epoch, a storage error)
+  pauses chat until a later pass. Pushes take at most two batches a pass, so
+  chat stays within a small share of the coordinator's request budget.
 - **Admins.** Whose removals count comes from the service's own record: the
   device directory (`/api/sync/devices`) marks each device's member
   `householdAdmin`, the rule the service uses to let a member delete others'
   blobs. Devices keep the last list they saw, so removals show offline. The
   engine applies the list when it reads a page, so a removal counts while its
-  author is an admin. If the service refuses a blob deletion outright (the
+  author is an admin; a change of admins re-checks which blobs that retires. If the service refuses a blob deletion outright (the
   member isn't an admin by its record), the event is sent anyway, the blob
   stays on the service, and the refusal is reported; a deletion that fails
   for now is retried with the event.

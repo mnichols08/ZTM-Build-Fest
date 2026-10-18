@@ -680,6 +680,8 @@ export class SyncCoordinator {
     this.recordRequest();
     const response = await fetch(path, { ...init, signal: this.abortController.signal });
     if (this.stopped) throw new Error("Device sync was stopped.");
+    await this.keyStore?.vault.checkSecurityEpoch?.();
+    if (this.stopped) throw new Error("Device sync was stopped.");
     this.keyStore?.vault.assertUnlocked();
     return response;
   }

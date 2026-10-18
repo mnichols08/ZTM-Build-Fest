@@ -35,16 +35,24 @@ export const MAX_CHAT_PULL = 200;
 /** Pull pages and push batches per sync pass; the coordinator continues
  * when there are more. */
 const MAX_CHAT_PULL_PAGES = 5;
-const MAX_CHAT_PUSH_BATCHES = 5;
+// Two push batches are at most 42 requests (20 blob uploads and a POST
+// each), so a long outbox can't take much of the coordinator's shared
+// request budget in one pass.
+const MAX_CHAT_PUSH_BATCHES = 2;
 /** Records read, decrypted and decoded together while opening the log. */
 const LOAD_BATCH = 500;
 /** Retire refusals that retrying can't fix: the blob stays on the service
  * and the event is sent anyway. */
 const FINAL_RETIRE_REFUSALS = new Set(["chat_blob_retire_forbidden", "chat_blob_invalid"]);
-/** Authentication failures that skip the event: retrying can't fix them.
- * An unknown device (one paired after this pass read the directory) or a
- * missing key epoch pauses chat instead, to be retried. */
-const RETRYABLE_REFUSALS = new Set(["chat_device_unknown", "chat_key_missing"]);
+/** Authentication failures that skip an event at once: what the event
+ * itself says can never pass (not a chat event, an identity that doesn't
+ * match, a revoked or not-yet-granted device). A signature that doesn't
+ * verify is skipped only when it fails again on a later pass, with a freshly
+ * read directory (the device may have changed its key in between). Anything
+ * else (an unknown device, a missing key epoch, a storage error) pauses chat
+ * for a retry. */
+const FINAL_REFUSALS = new Set(["chat_event_refused"]);
+const SECOND_LOOK_REFUSALS = new Set(["event_signature_invalid"]);
 const CHAT_KINDS = new Set(["CHAT_MESSAGE_POSTED", "CHAT_MESSAGE_EDITED", "CHAT_MESSAGE_DELETED"]);
 const REF = /^[a-f0-9]{64}$/;
 
@@ -130,6 +138,9 @@ export class ChatRoom {
     this.retiredThrough = 0;
     this.retiredApplied = new Set();
     this.refused = [];
+    // Events whose signature failed once: eventId -> the pass it failed in.
+    this.suspects = new Map();
+    this.pass = 0;
     this.retireRefusal = null;
     // refresh() calls run one at a time (see refresh()).
     this.refreshQueue = Promise.resolve();
@@ -347,12 +358,16 @@ export class ChatRoom {
    */
   async sync({ status, devices, deviceKeys }) {
     this.assertOpen();
+    this.pass += 1;
     if (deviceKeys) this.deviceKeys = deviceKeys;
     this.currentEpoch = status.currentEpoch;
     const admins = chatAdmins(devices, this.now());
     if (admins.join() !== this.admins.join()) {
       await this.store.saveAdmins(admins);
       this.admins = admins;
+      // Different admins can make an existing removal count, retiring its
+      // blob: look at the retired list again this pass.
+      this.retiredThrough = 0;
       this.notify();
     }
     await this.refresh();
@@ -492,6 +507,10 @@ export class ChatRoom {
         { binary: true },
       ));
       const verified = [], refused = [];
+      // A signature failing for the first time pauses the page, but the rest
+      // of the page is still checked, so every such event gets its second
+      // look on the next pass rather than one per pass.
+      let pause = null;
       for (const { cursor: at, envelope } of page.events) {
         if (this.indexById.has(envelope.eventId)) {
           verified.push(envelope);
@@ -501,13 +520,23 @@ export class ChatRoom {
           await this.authenticate(envelope, status, devices);
           verified.push(envelope);
         } catch (error) {
-          // An event no retry can fix (a bad signature, an identity that
-          // doesn't match, not a chat event) is skipped and remembered, so
-          // one bad event can't stop the household's chat for good.
-          if (RETRYABLE_REFUSALS.has(error.code) || this.closed) throw error;
+          // An event no retry can fix is skipped and remembered, so one bad
+          // event can't stop the household's chat for good.
+          if (this.closed) throw error;
+          const secondLook = SECOND_LOOK_REFUSALS.has(error.code);
+          const final = FINAL_REFUSALS.has(error.code) ||
+            (secondLook && (this.suspects.get(envelope.eventId) ?? this.pass) < this.pass);
+          if (!final && !secondLook) throw error;
+          if (!final) {
+            if (!this.suspects.has(envelope.eventId)) this.suspects.set(envelope.eventId, this.pass);
+            pause ??= error;
+            continue;
+          }
+          this.suspects.delete(envelope.eventId);
           refused.push({ eventId: envelope.eventId, deviceId: envelope.deviceId, cursor: at, code: error.code ?? "chat_event_refused" });
         }
       }
+      if (pause) throw pause;
       this.assertOpen();
       await this.store.addReceived(verified, page.nextCursor, { refused });
       if (refused.length) {

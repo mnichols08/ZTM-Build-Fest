@@ -105,6 +105,14 @@ test("legacy households without a recorded admin fail closed", () => {
   assert.throws(() => sync.updateHouseholdSettings(adult.sessionToken, value), (error) => error.code === "household_admin_required");
 });
 
+test("the device directory marks household admins by the service's record (#111)", () => {
+  const { pairing, adult, sync } = fixture();
+  const entry = () => sync.deviceDirectory(adult.sessionToken).find((device) => device.memberId === adult.memberId);
+  assert.equal(entry().householdAdmin, true, "the founder");
+  delete pairing.members.get(adult.memberId).householdAdmin;
+  assert.equal(entry().householdAdmin, false);
+});
+
 test("relay enforces bounded interoperable logical time", () => {
   const { adult } = fixture();
   const base = makeEnvelope(adult);

@@ -214,19 +214,34 @@ test("only authenticated chat events are stored; one that can never pass is skip
   await b.room.sync({ status: STATUS, devices: [phone.entry, laptop.entry] });
   assert.equal(b.room.records.length, 2);
 
+  // A signature that doesn't verify against the directory this pass read
+  // (the device changed its key since) pauses chat; with a fresh directory
+  // the event arrives.
+  const stale = await openRoom({ ...laptop, indexedDB: fakeIndexedDB() }, s);
+  const wrongKey = { ...phone.entry, verifiedKeyHistory: laptop.entry.verifiedKeyHistory };
+  await assert.rejects(stale.room.sync({ status: STATUS, devices: [wrongKey, laptop.entry] }), (error) => error.code === "event_signature_invalid");
+  assert.equal((await stale.room.store.state()).cursor, "", "not read past");
+  await stale.room.sync({ status: STATUS, devices: [phone.entry, laptop.entry] });
+  assert.equal(stale.room.records.length, 2);
+  assert.deepEqual(stale.room.refused, []);
+
   // What no retry can fix is skipped and remembered: a device revoked before
-  // this epoch, history from before the device's grant, a key that doesn't
-  // match the signature, an author who isn't the signing device's member.
+  // this epoch, history from before the device's grant, an author who isn't
+  // the signing device's member, and a signature that fails on two passes.
   let phoneEvents = 2;
-  for (const [signer, code] of [
-    [{ ...phone.entry, revokedAt: 1 }, "chat_event_refused"],
-    [{ ...phone.entry, historyFromEpoch: 2 }, "chat_event_refused"],
-    [{ ...phone.entry, verifiedKeyHistory: laptop.entry.verifiedKeyHistory }, "event_signature_invalid"],
-    [{ ...phone.entry, memberId: s.partner.memberId }, "chat_event_refused"],
+  for (const [signer, code, passes] of [
+    [{ ...phone.entry, revokedAt: 1 }, "chat_event_refused", 1],
+    [{ ...phone.entry, historyFromEpoch: 2 }, "chat_event_refused", 1],
+    [{ ...phone.entry, memberId: s.partner.memberId }, "chat_event_refused", 1],
+    [wrongKey, "event_signature_invalid", 2],
   ]) {
     const fresh = await openRoom({ ...laptop, indexedDB: fakeIndexedDB() }, s);
     const seen = [];
     fresh.room.subscribe(() => seen.push(fresh.room.refused.length));
+    if (passes === 2) {
+      await assert.rejects(fresh.room.sync({ status: STATUS, devices: [signer, laptop.entry] }), (error) => error.code === code);
+      assert.deepEqual(fresh.room.refused, [], "one failure isn't enough");
+    }
     assert.deepEqual(await fresh.room.sync({ status: STATUS, devices: [signer, laptop.entry] }), { hasMore: false });
     assert.equal(fresh.room.records.length, 0, "nothing refused is kept");
     assert.deepEqual(fresh.room.refused.map((entry) => entry.code), new Array(phoneEvents).fill(code));
@@ -293,17 +308,18 @@ test("a device that lost its chat log continues its sequence; a lost acknowledge
   assert.deepEqual((await texts(b)).sort(), ["four", "one", "three", "two"]);
 });
 
-test("a long outbox goes out over several passes, five batches at a time", { timeout: 30_000 }, async (t) => {
+test("a long outbox goes out over several passes, two batches at a time", { timeout: 30_000 }, async (t) => {
   const s = await service(t);
   const epochs = new Map([[1, await generateHouseholdKey()]]);
   const phone = await device(s.admin, { householdId: s.householdId, epochs });
   const a = await openRoom(phone, s);
   a.request.offline = true;
-  for (let index = 0; index < 101; index += 1) await a.room.send(`message ${index}`);
+  for (let index = 0; index < 41; index += 1) await a.room.send(`message ${index}`);
   a.request.offline = false;
   assert.deepEqual(await a.room.sync({ status: STATUS, devices: [phone.entry] }), { hasMore: true });
   assert.equal(a.room.pending.size, 1);
-  assert.equal(a.request.paths.filter((path) => path === "POST /api/chat/events").length, 5);
+  assert.equal(a.request.paths.filter((path) => path === "POST /api/chat/events").length, 2);
+  assert.ok(a.request.paths.length <= 50, "a pass stays well inside the request budget");
   assert.deepEqual(await a.room.sync({ status: STATUS, devices: [phone.entry] }), { hasMore: false });
   assert.equal(a.room.pending.size, 0);
 });
@@ -347,6 +363,11 @@ test("editing and deleting delete the replaced content on the service and on eve
   assert.deepEqual(reopened.room.admins, [s.admin.memberId]);
   assert.deepEqual(await texts(reopened), ["fixed", "removed-by-admin"]);
   assert.equal(reopened.room.retiredThrough, reopened.room.records.length, "replaced blobs aren't deleted again after reopening");
+  // A change of admins looks at the retired list again, with no new event.
+  const pages = reopened.engine.calls.page;
+  await reopened.room.sync({ status: STATUS, devices: [{ ...phone.entry, householdAdmin: false }, laptop.entry] });
+  assert.deepEqual(reopened.room.admins, []);
+  assert.ok(reopened.engine.calls.page > pages);
 });
 
 test("a deletion the service refuses outright doesn't hold back later messages", { timeout: 30_000 }, async (t) => {
