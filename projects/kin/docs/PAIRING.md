@@ -8,9 +8,10 @@ Inviting another household member changes household membership. Adding a device 
 
 Before either QR or manual-code UI appears, Kin names the choices **Invite a
 person** and **Add my device** and states whether a new member ID will be
-created. The same explanation remains visible through approval and completion;
-Back or Cancel grants nothing. Platform, offline, migration and accessibility
-evidence is tracked in
+created. Keeping that explanation visible throughout approval and completion
+is tracked by #219; the current approval screens retain their existing generic
+pairing copy. Back or Cancel grants nothing. Platform, offline, migration and
+accessibility evidence is tracked in
 [Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md).
 
 ## Invite a household member

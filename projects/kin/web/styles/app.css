@@ -980,7 +980,7 @@ kin-household-defaults kin-appearance .appearance-follow { display: none; }
 .device-name-line { overflow-wrap: anywhere; }
 .people-device-actions { display: grid; gap: var(--space-2); margin-block-start: var(--space-4); }
 .people-device-actions h3, .people-device-actions p { margin: 0; }
-.people-device-actions button { justify-self: start; max-width: 100%; white-space: normal; }
+.people-device-actions button { justify-self: start; min-height: var(--tap); max-width: 100%; white-space: normal; }
 .security-panel { max-width: none; margin: 0; padding: 0; border: 0; background: transparent; }
 .security-panel h2 { margin-top: 0; }
 kin-app > .security-panel {
@@ -1254,10 +1254,23 @@ kin-app > .security-panel {
 kin-notifications { display: grid; gap: 10px; margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
 kin-notifications h2 { margin: 0; font-size: 18px; font-weight: 650; }
 kin-notifications .notification-state { margin: 0; font-weight: 650; }
+kin-notifications .notification-checks { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 16px; margin: 2px 0; }
+kin-notifications .notification-checks dt { font-weight: 650; }
+kin-notifications .notification-checks dd { margin: 0; overflow-wrap: anywhere; }
+kin-notifications .notification-test-guide { margin-top: 4px; }
+kin-notifications .notification-test-guide > summary { min-height: var(--tap); display: flex; align-items: center; color: var(--accent); font-weight: 700; cursor: pointer; }
+kin-notifications .notification-test-guide p { margin: 8px 0; }
+kin-notifications .notification-test-guide ol { margin: 8px 0; padding-left: 24px; }
+kin-notifications .notification-test-guide li + li { margin-top: 6px; }
 kin-notifications label { display: grid; gap: 6px; font-weight: 650; }
 kin-notifications select { min-height: var(--tap); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; font-weight: 400; }
 kin-notifications .field-error { margin: 0; color: var(--danger); font-size: 14px; }
 kin-notifications .field-error:empty { display: none; }
+
+@media (max-width: 420px) {
+  kin-notifications .notification-checks { grid-template-columns: 1fr; gap: 2px; }
+  kin-notifications .notification-checks dd + dt { margin-top: 8px; }
+}
 
 /* QR code display and scanner (#96). The code is always dark on light, even
    in dark mode or forced colours, because scanners expect that; the text

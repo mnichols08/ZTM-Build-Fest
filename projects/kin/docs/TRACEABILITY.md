@@ -149,10 +149,10 @@ No capability was added. Real-WASM tests validate all truncated v6 summary/resul
 | Dependency-free VAPID and RFC 8291 sender | [PUSH](PUSH.md), [TEST-VECTORS](TEST-VECTORS.md#push-payload-rfc-8291) | `server/push.test.mjs`: RFC vector byte for byte, ES256 JWT verified, headers. |
 | Only allowlisted push services | [PUSH](PUSH.md) | Allowlist and refusal cases in `server/push.test.mjs`. |
 | Per-device subscription, mute and API authority | [PUSH](PUSH.md) | Subscription, mute and HTTP API tests in `server/push.test.mjs`. |
-| Other members only, unmuted, coalesced, never delaying sync | [PUSH](PUSH.md), [SYNC](SYNC.md) | Author exclusion, mute, coalescing with trailing send, hanging push service tests. |
+| Other members only, unmuted, coalesced, never delaying sync | [PUSH](PUSH.md), [SYNC](SYNC.md) | `server/push.test.mjs`: an accepted sync batch excludes every device with the author's stable `member_id`, skips muted subscriptions, coalesces with a trailing send, and never waits for a hanging push service. |
 | Access loss and deletion remove subscriptions | [PUSH](PUSH.md), [PRIVACY](PRIVACY.md) | Revocation/access-change, pending deletion and purge tests; schema 11 migration tests. |
 | Content-free notification, focus or open on tap | [PUSH](PUSH.md) | `web/service-worker.test.mjs`. |
-| Per-device controls, prompt only on press, honest states | [UX](UX.md) §8.8 | `web/components/kin-notifications.test.mjs`; `scripts/household-authority-regression.mjs` with a stubbed PushManager. |
+| Per-device controls, prompt only on press, honest local diagnostics and a two-member test flow | [UX](UX.md) §8.8, [DEBUGGING](DEBUGGING.md#push-notification-checks) | `web/components/kin-notifications.test.mjs`; `scripts/household-authority-regression.mjs` with two distinct members and a stubbed PushManager. |
 
 ## v1.1.0 QR pairing and desktop sign-in (#93)
 

@@ -5,7 +5,7 @@ import test from "node:test";
 
 globalThis.HTMLElement = class {};
 globalThis.customElements = { define() {} };
-const { applicationServerKey, endpointTag, KinNotifications, MUTE_CHOICES, notificationSupport, sameServerKey } = await import("./kin-notifications.js");
+const { applicationServerKey, endpointTag, KinNotifications, MUTE_CHOICES, notificationDeviceChecks, notificationSupport, sameServerKey } = await import("./kin-notifications.js");
 
 test("a browser subscription made for other server keys is recognised", () => {
   const key = Uint8Array.from([4, 1, 2, 3]);
@@ -22,6 +22,41 @@ test("each unsupported situation gets its own state", () => {
   assert.equal(notificationSupport({ ...base, permission: "denied" }), "blocked");
   assert.equal(notificationSupport({ ...base, platform: { ios: true, standalone: false } }), "ios-home-screen", "an iOS browser tab can't receive pushes");
   assert.equal(notificationSupport({ ...base, platform: { ios: true, standalone: true } }), "available", "the Home Screen app can");
+});
+
+test("local diagnostics explain permission, subscription and mute without endpoint details", () => {
+  const now = Date.UTC(2026, 9, 18, 16, 0);
+  assert.deepEqual(notificationDeviceChecks({
+    support: "available",
+    permission: "granted",
+    status: {
+      subscribed: true,
+      mutedUntil: now + 60_000,
+      mutedIndefinitely: false,
+      endpointHost: "fcm.googleapis.com",
+      endpointTag: "private-fingerprint",
+    },
+    now,
+    formatDate: () => "Oct 18, 2026, 12:01 PM",
+  }), [
+    ["Browser permission", "Allowed"],
+    ["Kin subscription", "On for this device"],
+    ["Mute", "Muted until Oct 18, 2026, 12:01 PM"],
+  ]);
+
+  assert.deepEqual(notificationDeviceChecks({
+    support: "blocked",
+    permission: "denied",
+    status: { subscribed: false, mutedUntil: null, mutedIndefinitely: false },
+    now,
+  }), [
+    ["Browser permission", "Blocked in browser settings"],
+    ["Kin subscription", "Off for this device"],
+    ["Mute", "Not applicable while notifications are off"],
+  ]);
+
+  assert.equal(notificationDeviceChecks({ support: "available", permission: "default", status: null, now })[1][1],
+    "Could not check — check your connection and try again");
 });
 
 test("the VAPID key becomes the subscribe() bytes", () => {
@@ -108,4 +143,42 @@ test("a refresh during a press runs after it", async () => {
   await press;
   await settle();
   assert.ok(requests.includes("GET /api/push/subscription"));
+});
+
+test("a failed retry announces the actionable error and restores focus", async () => {
+  let focused = false;
+  globalThis.document = { activeElement: { dataset: { notificationAction: "retry" } } };
+  globalThis.fetch = async () => { throw new TypeError("offline"); };
+  const panel = new KinNotifications();
+  panel.firstElementChild = true;
+  panel.support = () => "available";
+  panel.contains = () => true;
+  panel.render = () => {};
+  panel.actions = { contains: () => true, querySelector: () => ({ focus: () => { focused = true; } }) };
+  panel.error = {};
+  await panel.refresh();
+  assert.equal(panel.hidden, false);
+  assert.match(panel.error.textContent, /Check your connection and try again/);
+  assert.equal(focused, true);
+
+  focused = false;
+  globalThis.document.activeElement = { dataset: {} };
+  await panel.refresh();
+  assert.equal(focused, false, "a background refresh does not move focus from another control");
+});
+
+test("a successful retry announces the update and moves focus to the replacement action", async () => {
+  let focused = false;
+  globalThis.document = { activeElement: { dataset: { notificationAction: "retry" } } };
+  globalThis.fetch = async () => Response.json({ available: true, subscribed: false, mutedUntil: null, mutedIndefinitely: false });
+  const panel = new KinNotifications();
+  panel.firstElementChild = true;
+  panel.support = () => "available";
+  panel.render = () => {};
+  panel.repair = async () => {};
+  panel.actions = { contains: () => true, querySelector: () => ({ focus: () => { focused = true; } }) };
+  panel.feedback = {};
+  await panel.refresh();
+  assert.equal(panel.feedback.textContent, "Notification settings updated.");
+  assert.equal(focused, true);
 });

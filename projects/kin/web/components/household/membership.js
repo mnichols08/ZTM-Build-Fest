@@ -6,6 +6,19 @@ import { authenticationOptions, credentialJson } from "./auth.js";
 
 const MAX_ACTIVE_ADULTS = 4;
 const MAX_ACTIVE_LIMITED = 8;
+const connectionUnavailable = (error) => {
+  if (error?.code) return error.code === "connection_unavailable";
+  return (typeof navigator !== "undefined" && navigator.onLine === false) ||
+    (error?.name === "TypeError" && /failed to fetch|network|load failed/i.test(error.message));
+};
+const deviceList = (response) => {
+  if (!Array.isArray(response?.devices)) {
+    const error = new Error("Kin could not read the trusted-device list. Try again, and contact the server operator if this continues.");
+    error.code = "device_list_invalid";
+    throw error;
+  }
+  return response.devices;
+};
 const localDateTimeValue = (timestamp) => {
   const date = new Date(timestamp);
   return new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
@@ -21,30 +34,83 @@ export class HouseholdMembership {
 
   async showDevices() {
     await this.host.run(async () => {
-      const { devices, canManageMembers } = await this.host.api("/api/devices");
+      let deviceResponse;
+      let showingCachedDevices = false;
+      try {
+        deviceResponse = await this.host.api("/api/devices");
+      } catch (error) {
+        if (!connectionUnavailable(error)) throw error;
+        showingCachedDevices = true;
+        deviceResponse = {
+          canManageMembers: false,
+          devices: this.deviceSnapshot ?? [{
+            id: this.host.identity.deviceId,
+            memberId: this.host.identity.memberId,
+            label: "Device",
+            revokedAt: null,
+            statusUnavailable: true,
+          }],
+        };
+      }
+      let devices = deviceList(deviceResponse);
+      if (!showingCachedDevices)
+        this.deviceSnapshot = devices.map((device) => ({ ...device }));
+      const { canManageMembers } = deviceResponse;
       let directoryDevices = [];
       if (!this.host.syncKeyError) {
         await this.ctx.api.openSyncKeyStore();
-        directoryDevices = (await this.host.api("/api/sync/devices")).devices;
+        let directoryResponse;
+        try {
+          directoryResponse = await this.host.api("/api/sync/devices");
+        } catch (error) {
+          if (!connectionUnavailable(error)) throw error;
+          showingCachedDevices = true;
+          directoryDevices = this.directorySnapshot ?? [];
+        }
+        if (directoryResponse) {
+          directoryDevices = deviceList(directoryResponse);
+          this.directorySnapshot = directoryDevices.map((device) => ({ ...device }));
+        }
       }
       // Names come from encrypted household events (#71); the server only
       // knows each device's automatic name. A device that has not synced its
       // name yet shows as "New device" with the start of its sync code.
       let names = [];
+      let encryptedNamesUnavailable = false;
       try {
         names = (await this.host.deviceNames?.load()) ?? [];
       } catch {
-        names = [];
+        encryptedNamesUnavailable = true;
       }
       // Preferred names are encrypted household projection data supplied by
       // the app. Keep this optional so an older/offline projection still has
       // stable member-ID grouping and useful fallback labels. The seam is
       // [{ memberId, preferredName }]; names are presentation, never keys.
       let memberNames = [];
-      try {
-        memberNames = (await this.host.memberNames?.load()) ?? [];
-      } catch {
-        memberNames = [];
+      if (this.host.memberNames) {
+        try {
+          memberNames = (await this.host.memberNames.load()) ?? [];
+        } catch {
+          encryptedNamesUnavailable = true;
+        }
+      }
+      // DEVICE_DESCRIBED events are encrypted durable local projection data.
+      // On a cold offline start they reconstruct the known member/device
+      // grouping without persisting a second plaintext identity cache.
+      if (showingCachedDevices) {
+        const known = new Set(devices.map((device) => device.id));
+        const projected = names
+          .filter((entry) => typeof entry?.deviceId === "string" &&
+            typeof entry?.memberId === "string" && !known.has(entry.deviceId))
+          .map((entry) => ({
+            id: entry.deviceId,
+            memberId: entry.memberId,
+            label: entry.autoName ?? "Device",
+            revokedAt: null,
+            statusUnavailable: true,
+          }));
+        devices = [...devices, ...projected];
+        this.deviceSnapshot = devices.map((device) => ({ ...device }));
       }
       const named = new Map(names.map((entry) => [entry.deviceId, entry]));
       const preferredNameByMember = new Map(
@@ -59,6 +125,12 @@ export class HouseholdMembership {
       this.host.text(
         "People have their own household identity. Devices belong to a person, and a device name never changes who it belongs to or what it can access.",
       );
+      const availabilityNotes = [];
+      if (showingCachedDevices)
+        availabilityNotes.push("The connection is unavailable. Showing encrypted device details saved on this device; management changes need a connection.");
+      if (encryptedNamesUnavailable)
+        availabilityNotes.push("Some encrypted names aren't available right now. Showing privacy-safe fallback labels.");
+      if (availabilityNotes.length) this.host.message(availabilityNotes.join(" "));
       // Yours first, then each other member's, in the order the server lists them.
       const members = [...new Set([this.host.identity.memberId, ...devices.map((device) => device.memberId)])];
       const lists = new Map();
@@ -109,11 +181,12 @@ export class HouseholdMembership {
         const details = [
           ...(name?.nickname && automatic ? [automatic] : []),
           ...(isThisDevice ? ["This device"] : []),
-          device.revokedAt ? "Revoked" : pinned ? "Trusted" : "Untrusted",
+          device.statusUnavailable ? "Status unavailable offline" :
+            device.revokedAt ? "Revoked" : pinned ? "Trusted" : "Untrusted",
         ];
         text.append(` — ${details.join(" · ")}`);
         item.append(text);
-        if (!device.revokedAt && device.memberId === this.host.identity.memberId && name)
+        if (!device.statusUnavailable && !device.revokedAt && device.memberId === this.host.identity.memberId && name)
           item.append(this.renameControl(device.id, displayName, name.nickname));
         if (syncDevice?.fingerprint) {
           if (
@@ -190,7 +263,7 @@ export class HouseholdMembership {
             item.append(verify);
           }
         }
-        if (!device.revokedAt && device.id !== this.host.identity.deviceId) {
+        if (!device.statusUnavailable && !device.revokedAt && device.id !== this.host.identity.deviceId) {
           if (device.memberId === this.host.identity.memberId)
             item.append(
               this.host.makeButton(
