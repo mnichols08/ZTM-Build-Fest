@@ -37,6 +37,8 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_archive_header: status,
       kin_archive_layout: status,
       kin_plan_import: status,
+      kin_qr_encode: status,
+      kin_qr_decode: status,
       kin_clear() {},
       kin_result_ptr: () => (output.length ? 32 : 0),
       kin_result_len: () => output.length,

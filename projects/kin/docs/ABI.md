@@ -20,6 +20,8 @@ kin_event_metadata_batch(ptr, len)   KMDQ -> KMDL
 kin_plan_import(ptr, len)            import plan of the history: KINE context -> KIMP
 kin_archive_header(ptr, len)         two lengths -> 16-byte KARC header
 kin_archive_layout(ptr, len)         KARC header + total length -> two lengths
+kin_qr_encode(ptr, len)              UTF-8 text -> KQRM matrix (no crates; qr/)
+kin_qr_decode(ptr, len)              width, height, luma -> QR payload bytes
 kin_encode_archive / kin_decode_archive   whole KARC framing (retained)
 kin_result_ptr/len, kin_error_ptr/len     the last call's result or error
 kin_clear()                               drop every retained buffer
@@ -104,7 +106,8 @@ than the history holds, so appending a few events copies nothing.
 
 `0` success, `1` invalid ABI pointer or range, `2` malformed protocol or
 payload, `3` unsupported version or kind, `4` invalid domain event or state,
-`5` size or allocation limit, `6` internal error. The same failure always maps
+`5` size or allocation limit, `6` internal error, `7` no readable QR code in
+the image. The same failure always maps
 to the same code; messages are diagnostic only and never contain household
 text. The error buffer is `KERR | version:u16 = 1 | code:u16 | length:u32 |
 UTF-8 message`.
@@ -321,6 +324,28 @@ unchanged section.
 
 The bridge keys reuse on the engine instance as well as the revision. A
 revision is meaningful only within one instance.
+
+## QR codes (#94, #95)
+
+The engine writes and reads QR codes itself (`rust/src/qr/`, ISO/IEC 18004,
+byte mode, level M, versions 1–10, about 200 bytes). The browser only draws
+the matrix and reads the camera. Pairing links carry their secrets in the URL
+fragment, so the payload never reaches a server log or `Referer`.
+
+- `kin_qr_encode(ptr, len)`: the input is the text's UTF-8 bytes. The result
+  is `KQRM | version:u16 = 1 | reserved:u16 = 0 | side:u32 | side*side bytes`,
+  one byte per module in row-major order (1 dark, 0 light), with no quiet
+  zone. Empty input is `2`; more than 213 bytes is `5`; invalid UTF-8 is `2`.
+- `kin_qr_decode(ptr, len)`: the input is `width:u32 | height:u32 | luma`, where
+  luma is `width*height` bytes of 8-bit grayscale, row-major. The result is the
+  decoded payload bytes. A size that disagrees with the pixels is `2`; a frame
+  with no symbol Kin can read is `7`.
+
+Limits of the decoder: version 1 symbols (up to 14 bytes) can fail on
+perspective frames, because the fourth corner cannot be pinned without an
+alignment pattern. Invitation and sign-in links are much longer, so they are
+unaffected. Multi-segment symbols (mixed text modes) are refused, not
+partially read.
 
 ## Side formats
 
