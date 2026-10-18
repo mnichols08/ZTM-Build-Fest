@@ -9,6 +9,7 @@ import { deviceLabel } from "./pairing-service/device-label.mjs";
 import { configuredDatabasePath, permissionProblem } from "./permissions.mjs";
 import { builtInManifest, etagMatches, INSTALL_ICONS, publishedManifest } from "./install-identity.mjs";
 import { PushService } from "./push-service.mjs";
+import { ChatBlobService } from "./chat-blob-service.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
 import {
@@ -83,6 +84,9 @@ export function createKinServer(options = {}) {
   const pushService = options.pushService ?? new PushService({ pairingService: service, store, now: options.now ?? (() => Date.now()),
     subject: process.env.KIN_PUSH_SUBJECT || origin });
   syncService.pushService = pushService;
+  // Chat content blobs (#110).
+  const chatBlobService = new ChatBlobService({ pairingService: service, store, now: options.now ?? (() => Date.now()) });
+  syncService.chatBlobService = chatBlobService;
   const webauthn =
     options.webauthn ??
     new WebAuthn({
@@ -97,6 +101,7 @@ export function createKinServer(options = {}) {
     service,
     syncService,
     pushService,
+    chatBlobService,
     store,
     webauthn,
     flows: new Map(),
@@ -243,6 +248,7 @@ export function createKinServer(options = {}) {
     service,
     syncService,
     pushService,
+    chatBlobService,
     liveService,
     webauthn,
     store,
@@ -370,6 +376,7 @@ async function api(request, response, url, context) {
   for (const householdId of service.finalizeExpiredDeletions(context.now()))
     syncService.forgetHousehold(householdId);
   const binaryUpload = (request.method === "POST" && /^\/api\/sync\/attachments\/[a-f0-9]{32}$/.test(url.pathname)) ||
+    (request.method === "PUT" && /^\/api\/chat\/blobs\/[a-f0-9]{64}$/.test(url.pathname)) ||
     (request.method === "PUT" && url.pathname === "/api/household/settings");
   // Event envelopes travel as binary batches (web/sync/envelope-wire.js).
   const envelopePush = request.method === "POST" && url.pathname === "/api/sync/events";
@@ -847,6 +854,23 @@ async function api(request, response, url, context) {
       json(response, 200, withTransaction(context, () => syncService.withdrawInstallIdentity(session, body.expectedRev)));
       return;
     }
+  }
+  const chatBlobRoute = url.pathname.match(/^\/api\/chat\/blobs\/([a-f0-9]{64})$/);
+  if (chatBlobRoute && request.method === "PUT") {
+    const auth = syncService.authorize(session);
+    json(response, 200, withTransaction(context, () => context.chatBlobService.put(auth, chatBlobRoute[1], body)));
+    return;
+  }
+  if (chatBlobRoute && request.method === "GET") {
+    const bytes = context.chatBlobService.get(syncService.authorize(session), chatBlobRoute[1]);
+    response.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": bytes.length, "Cache-Control": "no-store" });
+    response.end(bytes);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/chat/blobs/retire") {
+    const auth = syncService.authorize(session);
+    json(response, 200, withTransaction(context, () => context.chatBlobService.retire(auth, body.refs)));
+    return;
   }
   if (url.pathname.startsWith("/api/push/")) {
     const auth = syncService.authorize(session);

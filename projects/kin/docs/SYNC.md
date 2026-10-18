@@ -357,6 +357,46 @@ the fallback whenever the socket is closed.
   says neither what changed nor who changed it. Clients send nothing yet; an
   unknown record type closes the socket.
 
+## Chat content blobs (v1.1, #110)
+
+Each chat message's content (its text now, a photo or file later) is a
+**content blob**: sealed on the device under its own random 32-byte AES-GCM
+key (`web/chat/chat-blob-crypto.js`), kept outside the event log, and named
+by the SHA-256 of its sealed bytes. The key travels only inside the
+encrypted chat event, so the service stores ciphertext it can't open and
+deleting the blob deletes the content.
+
+- **Format 1:** version byte 1, a 12-byte random nonce, then the AES-GCM
+  ciphertext and its 16-byte tag; the additional data binds the format. A key
+  seals one blob only. Blobs are 29 bytes to 4 MiB plus 4 KiB.
+- **Routes.** `PUT /api/chat/blobs/<ref>` stores a blob (raw bytes; the
+  service checks they hash to `<ref>`, and nothing else). Storing the same
+  blob again is a no-op. `GET /api/chat/blobs/<ref>` returns it, re-checked;
+  404 means it hasn't been uploaded yet, and 410 `chat_blob_deleted` means it
+  was deleted, which clients show as a deleted message rather than an error.
+  `POST /api/chat/blobs/retire` with `{"refs": [...]}` (at most 64) deletes
+  blobs. Every route needs a trusted device of a member who may take part in
+  the household, and only reaches that household's blobs.
+- **Deletion.** There is no direct `DELETE`. When the engine's chat page
+  lists blobs as retired (an edit replaced one, its author deleted the
+  message, an admin removed it), every device deletes its local copy, and the
+  author's device (an admin's, for a removal) asks the service to retire
+  them. The service retires a blob only for the member who uploaded it or a
+  household admin, all of a request or none of it. Unknown and already
+  retired blobs are skipped. A retired blob keeps a tombstone (its reference,
+  size, uploader and times, no bytes), so it is never served or accepted
+  again. A device that was offline deletes its copy when it next syncs and
+  reads a page.
+- **Bounds.** Per household, 256 MiB of live blobs and 500,000 rows (live
+  blobs and tombstones); beyond either, uploads fail with
+  `chat_storage_full` until content is retired. #125 revisits these with
+  measured chat volume.
+- **On the device,** blobs live in their own IndexedDB database per
+  household ([STORAGE](STORAGE.md#chat-content-blobs-v11-110)).
+- Household deletion purges every blob and tombstone at finalization. An
+  admin removal adds a `chat_content_removed_by_admin` audit row with a count,
+  never what was removed.
+
 ## Privacy boundary
 
 Ciphertext payloads conceal content only to the extent that key management and client integrity hold. The relay can still observe routing IDs, ciphertext lengths, timing, delivery patterns, and possibly IP/log metadata. Document retention and access controls for these fields. Do not claim perfect anonymity, complete metadata privacy, or protection from a compromised authorized client.

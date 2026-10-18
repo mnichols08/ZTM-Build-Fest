@@ -9,6 +9,7 @@ export function purgeHouseholdData(database, householdId) {
   database.prepare("DELETE FROM household_install_identity_revisions WHERE household_id = ?").run(householdId);
   database.prepare("DELETE FROM push_subscriptions WHERE household_id = ?").run(householdId);
   database.prepare("DELETE FROM sync_attachments WHERE household_id = ?").run(householdId);
+  database.prepare("DELETE FROM chat_blobs WHERE household_id = ?").run(householdId);
   database
     .prepare("DELETE FROM provisioning_grants WHERE household_id = ?")
     .run(householdId);
@@ -83,6 +84,9 @@ export const lifecycleMethods = {
       ),
       attachments: count(
         "SELECT COUNT(*) AS count FROM sync_attachments WHERE household_id = ?",
+      ),
+      chatBlobs: count(
+        "SELECT COUNT(*) AS count FROM chat_blobs WHERE household_id = ?",
       ),
       events: count(
         "SELECT COUNT(*) AS count FROM sync_events WHERE household_id = ?",
