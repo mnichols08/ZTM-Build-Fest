@@ -70,7 +70,7 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== self.location.origin || url.pathname.startsWith("/api/")) return;
-  if (event.request.mode === "navigate" && ["/", "/pair"].includes(url.pathname)) {
+  if (event.request.mode === "navigate" && ["/", "/pair", "/link"].includes(url.pathname)) {
     // Never cache the requested URL (which could contain a pairing code).
     event.respondWith(fetch(event.request).catch(() => caches.open(CACHE).then((cache) => cache.match("/index.html"))));
   } else if (!url.search && ALLOWED.has(url.pathname)) {

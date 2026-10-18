@@ -108,7 +108,9 @@ export class SyncKeyStore {
       request.onsuccess = () => {
         let latest = null;
         for (const record of request.result ?? []) {
-          if (record.deviceId === PENDING_DEVICE_ID || !record.householdId || !record.publicKeys) continue;
+          // A device mid key transition offers keys the service may not
+          // know yet; such a computer signs in as a new device instead.
+          if (record.deviceId === PENDING_DEVICE_ID || !record.householdId || !record.publicKeys || record.pendingTransition) continue;
           if (!latest || (record.createdAt ?? 0) > (latest.createdAt ?? 0)) latest = record;
         }
         finish(latest && {

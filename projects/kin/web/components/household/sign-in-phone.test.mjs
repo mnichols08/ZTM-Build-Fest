@@ -1,18 +1,23 @@
 // Sign in with your phone, the computer's side (#100): the request, its QR
-// code and countdown, the code field, completion for a new and a returning
-// computer, and every way the request ends. Without a browser.
+// code and countdown, the code field, the code checked against the approving
+// device, completion for a new and a returning computer with the approver
+// pinned, and every way the request ends. Without a browser.
 import assert from "node:assert/strict";
+import { webcrypto } from "node:crypto";
 import test from "node:test";
-import { installDom } from "../qr-test-dom.mjs";
-import { cleanLinkCode, isLinkCode, signInLink, signInRequest } from "../../device-link.js";
+import { installDom, settle } from "../qr-test-dom.mjs";
+import { deviceKeyFingerprint } from "../../sync/crypto.js";
+import {
+  cleanLinkCode, consumeOpenedSignInLink, isLinkCode, linkNonce, signInCode, signInLink, signInRequest, takeSignInLink,
+} from "../../device-link.js";
 
+globalThis.crypto ??= webcrypto;
 const defined = installDom();
 const ORIGIN = "https://kin.test";
 const where = { origin: ORIGIN, pathname: "/", href: `${ORIGIN}/` };
 Object.defineProperty(globalThis, "location", { configurable: true, value: where });
 const replaced = [];
 globalThis.history = { replaceState: (_, __, url) => replaced.push(url) };
-globalThis.requestAnimationFrame = (callback) => callback();
 const released = [];
 globalThis.fetch = async (url, init) => {
   released.push({ url, init });
@@ -21,36 +26,56 @@ globalThis.fetch = async (url, init) => {
 await import("../kin-qr.js");
 const { HouseholdLink, MAX_SIGN_IN_REFRESHES, SIGN_IN_STEPS } = await import("./link.js");
 
-const FRESH = { agreement: { kty: "EC", x: "fresh" }, signing: { kty: "EC", x: "fresh-s" } };
-const BOUND = { agreement: { kty: "EC", x: "bound" }, signing: { kty: "EC", x: "bound-s" } };
+async function publicKeys() {
+  const [agreement, signing] = await Promise.all([
+    crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]),
+    crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]),
+  ]);
+  const keys = { agreement: await crypto.subtle.exportKey("jwk", agreement.publicKey), signing: await crypto.subtle.exportKey("jwk", signing.publicKey) };
+  return { publicKeys: keys, fingerprint: await deviceKeyFingerprint(keys) };
+}
+
+const FRESH = await publicKeys();
+const BOUND = await publicKeys();
+const PHONE = await publicKeys();
 const hex = (n, c) => c.repeat(n);
+const PHONE_ID = hex(32, "9");
+const MEMBER = hex(32, "b");
+const HOUSEHOLD = hex(32, "a");
 let serial = 0;
-const created = (extra = {}) => {
+/** What the service answers for a request with `keys`. */
+const created = (keys, extra = {}) => {
   serial += 1;
   return {
     requestId: String(serial).padStart(32, "0"),
     secret: `S${String(serial).padStart(42, "x")}`,
-    fingerprint: hex(64, "f"),
+    fingerprint: keys.fingerprint,
     expiresAt: Date.now() + 120_000,
     returning: false,
     ...extra,
   };
 };
+const approvedStatus = () => ({ state: "approved", expiresAt: Date.now() + 120_000, approverDeviceId: PHONE_ID, approverFingerprint: PHONE.fingerprint });
 
 /** A household element stand-in around the link part, with a scripted API. */
-function rig({ bound = null, routes = {} } = {}) {
+function rig({ bound = null, routes = {}, pendingFingerprint } = {}) {
   const calls = [];
   const bindings = [];
+  const pins = [];
   const store = {
     latestBoundDevice: async () => bound,
-    getOrCreatePendingDevice: async () => ({ publicKeys: FRESH }),
+    getOrCreatePendingDevice: async () => ({ ...FRESH }),
+    getDevice: async (id) => (id === "pending" ? { fingerprint: pendingFingerprint ?? FRESH.fingerprint } : null),
     bindPendingDevice: async (identity) => { bindings.push(identity); return identity; },
+    getPinnedDevice: async () => null,
+    pinTrustedDevice: async (pin) => { pins.push(pin); return pin; },
   };
   const host = document.createElement("div");
   host.isConnected = true;
   let busy = false;
   Object.assign(host, {
     intent: "phone",
+    claim: null,
     syncKeyStore: store,
     errors: [],
     loads: 0,
@@ -76,30 +101,37 @@ function rig({ bound = null, routes = {} } = {}) {
   });
   const ctx = { host, api: { openSyncKeyStore: async () => store } };
   const link = new HouseholdLink(ctx);
+  link.announceDelay = 0;
   ctx.link = link;
-  return { host, link, calls, bindings };
+  return { host, link, calls, bindings, pins, store };
 }
 
 const qrOf = (host) => host.find((node) => node.constructor === defined["kin-qr"]);
 const texts = (host) => [...host.all()].map((node) => node._text).filter(Boolean);
-const releases = () => released.filter((entry) => entry.init?.method === "DELETE");
+const releases = () => released.filter((entry) => entry.init?.method === "DELETE" && entry.url.startsWith("/api/link/"));
+const logouts = () => released.filter((entry) => entry.url === "/api/logout");
 
 test.afterEach(() => { released.length = 0; replaced.length = 0; });
 
-test("the screen asks with fresh keys and shows the request as a QR code for its fragment link", async () => {
-  const request = created();
-  const { host, link, calls } = rig({ routes: { "/api/link/requests": () => request } });
+test("the screen asks with fresh keys and shows the request, with a nonce, as a QR code for its fragment link", async () => {
+  let answer;
+  const { host, link, calls } = rig({ routes: { "/api/link/requests": () => (answer = created(FRESH)) } });
   await link.begin();
   link.stop();
   const ask = calls.find((call) => call.path === "/api/link/requests");
-  assert.deepEqual(ask.body.syncPublicKeys, FRESH);
+  assert.deepEqual(ask.body.syncPublicKeys, FRESH.publicKeys);
   assert.equal(typeof ask.body.deviceLabel, "string", "the computer's automatic name");
   const qr = qrOf(host);
-  assert.equal(qr.value, `${ORIGIN}/link#r=${request.requestId}&s=${request.secret}&f=${request.fingerprint}`);
+  const read = signInRequest(qr.value, ORIGIN);
+  assert.equal(read.requestId, answer.requestId);
+  assert.equal(read.secret, answer.secret);
+  assert.equal(read.fingerprint, FRESH.fingerprint);
+  assert.equal(read.nonce, link.request.nonce, "the nonce rides in the QR code");
+  assert.equal(JSON.stringify(calls).includes(link.request.nonce), false, "and never reaches the service");
   assert.equal(qr.value.includes("?"), false, "nothing in the query");
-  assert.equal(qr.expiresAt, request.expiresAt);
+  assert.ok(qr.value.length - ORIGIN.length <= 157, "the link fits the QR limit for origins up to 56 bytes");
+  assert.equal(qr.expiresAt, answer.expiresAt);
   assert.equal(qr.code, "", "there's nothing to type on this screen");
-  assert.equal(typeof qr.refresh, "function", "the code replaces itself when it expires");
   assert.ok(texts(host).includes(SIGN_IN_STEPS));
   assert.equal(SIGN_IN_STEPS, "On your phone, open Kin → People & devices → Add a computer → Scan.");
   const countdown = host.byClass("sign-in-countdown");
@@ -107,34 +139,54 @@ test("the screen asks with fresh keys and shows the request as a QR code for its
   assert.equal(countdown.getAttribute("role"), null, "the countdown isn't a live region");
   assert.equal(host.byClass("sign-in-status").getAttribute("role"), "status");
   assert.ok(host.byText("Cancel"));
-  assert.equal(document.activeElement, host.byClass("sign-in-heading"), "focus moves to the screen's heading");
-  assert.equal(link.request.keys, "pending");
+  assert.equal(document.activeElement, host.byClass("sign-in-heading"), "focus moves to the screen's heading at once");
+});
+
+test("an answer for keys the computer didn't offer is refused", async () => {
+  const { host, link } = rig({ routes: { "/api/link/requests": () => created(BOUND) } });
+  await link.begin();
+  assert.equal(link.request, null);
+  assert.match(host.errors[0]?.message ?? "", /didn't offer/);
+  assert.equal(releases().length, 1);
 });
 
 test("a returning computer offers its device's keys, and falls back to fresh keys when the service doesn't know it", async () => {
-  const bound = { deviceId: hex(32, "d"), householdId: hex(32, "h"), memberId: hex(32, "m"), publicKeys: BOUND };
+  const bound = { deviceId: hex(32, "d"), householdId: HOUSEHOLD, memberId: MEMBER, ...BOUND };
   const offered = [];
-  const answers = [created({ returning: false }), created()];
+  const answers = [created(BOUND, { returning: false }), created(FRESH)];
   const { link } = rig({ bound, routes: { "/api/link/requests": (body) => { offered.push(body.syncPublicKeys); return answers.shift(); } } });
   await link.begin();
   link.stop();
-  assert.deepEqual(offered, [BOUND, FRESH]);
-  assert.equal(releases().length, 1, "the first request is ended");
+  assert.deepEqual(offered, [BOUND.publicKeys, FRESH.publicKeys]);
+  assert.equal(releases().length, 1, "the first request is ended first");
   assert.equal(link.request.keys, "pending");
 
-  const known = rig({ bound, routes: { "/api/link/requests": () => created({ returning: true }) } });
+  const known = rig({ bound, routes: { "/api/link/requests": () => created(BOUND, { returning: true }) } });
   await known.link.begin();
   known.link.stop();
   assert.equal(known.link.request.keys, "existing");
   assert.equal(known.link.request.deviceId, bound.deviceId);
 });
 
-test("once the phone approves, the screen asks for the 6-digit code with a numeric keypad", async () => {
-  const request = created();
-  const { host, link } = rig({ routes: {
-    "/api/link/requests": () => request,
-    "/status": () => ({ state: "approved", expiresAt: Date.now() + 120_000 }),
+test("signing in as someone else always offers fresh keys", async () => {
+  const bound = { deviceId: hex(32, "d"), householdId: HOUSEHOLD, memberId: MEMBER, ...BOUND };
+  const offered = [];
+  const { host, link } = rig({ bound, routes: {
+    "/api/link/requests": (body) => { offered.push(body.syncPublicKeys); return created(body.syncPublicKeys === undefined ? FRESH : (offered.length === 1 ? BOUND : FRESH), { returning: offered.length === 1 }); },
+    "/status": () => ({ state: "ended" }),
   } });
+  await link.begin();
+  await link.poll(); // another member's phone was refused: the request ended
+  assert.ok(host.byText("Sign in as someone else"));
+  host.byText("Sign in as someone else").click();
+  await settle();
+  link.stop();
+  assert.deepEqual(offered.at(-1), FRESH.publicKeys);
+  assert.equal(link.request.keys, "pending");
+});
+
+test("once the phone approves, the screen asks for the 6-digit code with a numeric keypad and says so", async () => {
+  const { host, link } = rig({ routes: { "/api/link/requests": () => created(FRESH), "/status": approvedStatus } });
   await link.begin();
   await link.poll();
   link.stop();
@@ -142,91 +194,153 @@ test("once the phone approves, the screen asks for the 6-digit code with a numer
   const input = host.byClass("sign-in-code").find((node) => node.tagName === "INPUT");
   assert.equal(input.inputMode, "numeric");
   assert.equal(input.autocomplete, "one-time-code");
+  assert.equal(input.pattern, undefined, "no pattern to contradict typed spaces or dashes");
   assert.equal(document.activeElement, input, "focus moves to the field");
   assert.match(host.byClass("sign-in-status").textContent, /approved this computer/);
   assert.match(host.byClass("sign-in-countdown").textContent, /^The code works for/);
+  assert.equal(link.request.approverFingerprint, PHONE.fingerprint);
 });
 
-async function approvedRig(completion, { keys = "pending" } = {}) {
-  const request = created({ returning: keys === "existing" });
-  const bound = keys === "existing" ? { deviceId: hex(32, "d"), householdId: hex(32, "h"), memberId: hex(32, "m"), publicKeys: BOUND } : null;
-  const r = rig({ bound, routes: {
-    "/api/link/requests": () => request,
-    "/status": () => ({ state: "approved", expiresAt: Date.now() + 120_000 }),
-    "/complete": completion,
+test("a request the phone approved at the last moment is kept, never replaced", async () => {
+  const { host, link } = rig({ routes: { "/api/link/requests": () => created(FRESH), "/status": approvedStatus } });
+  await link.begin();
+  const kept = link.request.requestId;
+  assert.equal(await link.refresh(), null);
+  link.stop();
+  assert.equal(releases().length, 0, "the approved request isn't cancelled");
+  assert.equal(link.request.requestId, kept);
+  assert.equal(link.request.state, "approved");
+  assert.ok(host.byClass("sign-in-code"));
+});
+
+async function approvedRig({ keys = "pending", completion, directory, pendingFingerprint } = {}) {
+  const bound = keys === "existing" ? { deviceId: hex(32, "d"), householdId: HOUSEHOLD, memberId: MEMBER, ...BOUND } : null;
+  const r = rig({ bound, pendingFingerprint, routes: {
+    "/api/link/requests": () => created(keys === "existing" ? BOUND : FRESH, { returning: keys === "existing" }),
+    "/status": approvedStatus,
+    "/complete": completion ?? (() => ({ householdId: HOUSEHOLD, memberId: MEMBER, deviceId: keys === "existing" ? bound.deviceId : hex(32, "c"), newDevice: keys !== "existing", approverDeviceId: PHONE_ID })),
+    "/api/sync/devices": directory ?? (() => ({ devices: [{ deviceId: PHONE_ID, memberId: MEMBER, publicKeys: PHONE.publicKeys, fingerprint: PHONE.fingerprint }] })),
   } });
   await r.link.begin();
   await r.link.poll();
   r.link.stop();
-  return { ...r, request, bound };
+  const request = r.link.request;
+  const code = await signInCode({ requestId: request.requestId, nonce: request.nonce, approverFingerprint: PHONE.fingerprint, computerFingerprint: request.fingerprint });
+  return { ...r, request, bound, code };
 }
 
-test("a wrong code clears the field and says so; the request stays open", async () => {
-  const { host, link, request, calls } = await approvedRig(() => {
-    throw Object.assign(new Error("That code didn't match. 2 tries left."), { code: "link_code_mismatch" });
-  });
-  link.field.value = "123 456";
-  await link.complete(link.field.value);
-  const sent = calls.find((call) => call.path.endsWith("/complete"));
-  assert.deepEqual(sent.body, { secret: request.secret, code: "123456" }, "the secret and code go only in the body");
-  assert.equal(sent.path.includes(request.secret), false);
+test("a code that doesn't come from the approving device is never sent", async () => {
+  const { host, link, calls, code } = await approvedRig();
+  const wrong = code === "000000" ? "000001" : "000000";
+  link.field.value = wrong;
+  await link.complete(wrong);
+  assert.equal(calls.some((call) => call.path.endsWith("/complete")), false);
   assert.equal(link.field.value, "");
   assert.equal(document.activeElement, link.field);
   assert.match(host.byClass("sign-in-status").textContent, /doesn't match/);
-  assert.equal(link.request?.requestId, request.requestId);
+  await link.complete(wrong);
+  await link.complete(wrong);
+  assert.equal(link.request, null, "three misses end the request");
+  assert.ok(texts(host).some((value) => /didn't match three times/.test(value)));
+  assert.equal(releases().length, 1);
 });
 
-test("a short code is caught before it is sent", async () => {
-  const { link, calls } = await approvedRig(() => ({}));
+test("a service that names another approver can't make the typed code match", async () => {
+  const impostor = await publicKeys();
+  const r = rig({ routes: {
+    "/api/link/requests": () => created(FRESH),
+    "/status": () => ({ ...approvedStatus(), approverFingerprint: impostor.fingerprint }),
+    "/complete": () => { throw new Error("must not be called"); },
+  } });
+  await r.link.begin();
+  await r.link.poll();
+  r.link.stop();
+  // What the real phone shows: derived from its own fingerprint.
+  const shown = await signInCode({ requestId: r.link.request.requestId, nonce: r.link.request.nonce, approverFingerprint: PHONE.fingerprint, computerFingerprint: FRESH.fingerprint });
+  await r.link.complete(shown);
+  assert.equal(r.calls.some((call) => call.path.endsWith("/complete")), false);
+  assert.match(r.host.byClass("sign-in-status").textContent, /doesn't match/);
+});
+
+test("a short code is caught before anything is checked", async () => {
+  const { link, calls } = await approvedRig();
   await link.complete("12 34");
   assert.equal(calls.some((call) => call.path.endsWith("/complete")), false);
   assert.match(link.status.textContent, /all 6 digits/);
 });
 
-test("a new computer keeps its fresh keys under the device the service made, then starts Kin afresh", async () => {
-  const done = { householdId: hex(32, "a"), memberId: hex(32, "b"), deviceId: hex(32, "c"), newDevice: true };
-  const { link, bindings } = await approvedRig(() => done);
-  await link.complete("654321");
-  assert.deepEqual(bindings, [{ deviceId: done.deviceId, householdId: done.householdId, memberId: done.memberId }]);
+test("a new computer binds its fresh keys, pins the approving phone's checked key, then starts Kin afresh", async () => {
+  const { link, bindings, pins, calls, code, request } = await approvedRig();
+  await link.complete(code.replace(/(...)/, "$1-"));
+  const sent = calls.find((call) => call.path.endsWith("/complete"));
+  assert.deepEqual(sent.body, { secret: request.secret, code }, "the secret and code go only in the body");
+  assert.deepEqual(bindings, [{ deviceId: hex(32, "c"), householdId: HOUSEHOLD, memberId: MEMBER }]);
+  assert.deepEqual(pins, [{ householdId: HOUSEHOLD, memberId: MEMBER, deviceId: PHONE_ID, publicKeys: PHONE.publicKeys, fingerprint: PHONE.fingerprint }]);
   assert.equal(where.href, "/");
   assert.equal(link.request, null);
   where.href = `${ORIGIN}/`;
 });
 
-test("a returning computer is simply signed back in", async () => {
-  let r;
-  r = await approvedRig(() => ({ householdId: r.bound.householdId, memberId: r.bound.memberId, deviceId: r.bound.deviceId, newDevice: false }), { keys: "existing" });
-  await r.link.complete("654321");
+test("a directory whose phone key isn't the one behind the code signs the computer out", async () => {
+  const other = await publicKeys();
+  const { link, host, pins, code } = await approvedRig({
+    directory: () => ({ devices: [{ deviceId: PHONE_ID, memberId: MEMBER, publicKeys: other.publicKeys, fingerprint: PHONE.fingerprint }] }),
+  });
+  await link.complete(code);
+  assert.equal(pins.length, 0);
+  assert.equal(logouts().length, 1);
+  assert.match(host.errors[0]?.message ?? "", /couldn't verify the phone/);
+  assert.equal(where.href, `${ORIGIN}/`, "no restart");
+});
+
+test("keys replaced while signing in (another tab) stop the sign-in before it finishes", async () => {
+  const { link, calls, code } = await approvedRig({ pendingFingerprint: hex(64, "0") });
+  await link.complete(code);
+  assert.equal(calls.some((call) => call.path.endsWith("/complete")), false);
+  assert.equal(link.request, null);
+});
+
+test("a returning computer is signed back in, and pins the phone unless it already has", async () => {
+  const r = await approvedRig({ keys: "existing" });
+  await r.link.complete(r.code);
   assert.deepEqual(r.bindings, [], "its keys are already its own");
+  assert.equal(r.pins.length, 1);
   assert.equal(r.host.loads, 1);
   assert.deepEqual(replaced, ["/"]);
   assert.equal(r.host.intent, null);
+
+  const again = await approvedRig({ keys: "existing" });
+  again.store.getPinnedDevice = async () => ({ fingerprint: "earlier" });
+  await again.link.complete(again.code);
+  assert.equal(again.pins.length, 0, "an existing pin is kept; sync checks it against the key history");
+  assert.equal(again.host.loads, 1);
 });
 
-test("an answer that doesn't fit the keys this computer offered is refused", async () => {
-  const { link, host, bindings } = await approvedRig(() => ({ householdId: "h", memberId: "m", deviceId: "d", newDevice: false }));
-  await link.complete("654321");
+test("an answer that doesn't fit the request is refused and signed out", async () => {
+  const { link, host, bindings, code } = await approvedRig({
+    completion: () => ({ householdId: HOUSEHOLD, memberId: MEMBER, deviceId: "d", newDevice: false, approverDeviceId: PHONE_ID }),
+  });
+  await link.complete(code);
   assert.equal(bindings.length, 0);
-  assert.match(host.errors[0]?.message ?? "", /couldn't match|could not match/);
+  assert.equal(logouts().length, 1);
+  assert.match(host.errors[0]?.message ?? "", /couldn't verify/);
   assert.equal(host.loads, 0);
 });
 
-for (const [code, wording] of [
-  ["link_code_attempts", /wrong too many times/],
-  ["link_unavailable", /ended\. Nothing was signed in/],
-]) {
-  test(`${code} ends the screen with a way to start again`, async () => {
-    const { host, link } = await approvedRig(() => { throw Object.assign(new Error("x"), { code }); });
-    await link.complete("111111");
-    assert.equal(link.request, null);
-    assert.ok(texts(host).some((value) => wording.test(value)));
-    assert.ok(host.byText("Show a new code"));
-    assert.equal(document.activeElement, host.byClass("sign-in-heading"));
+for (const code of ["link_code_attempts", "link_unavailable"]) {
+  test(`${code} from the service ends the screen with a way to start again`, async () => {
+    const r = await approvedRig({ completion: () => { throw Object.assign(new Error("x"), { code }); } });
+    await r.link.complete(r.code);
+    assert.equal(r.link.request, null);
+    assert.ok(texts(r.host).some((value) => /ended\. Nothing was signed in/.test(value)));
+    assert.ok(r.host.byText("Show a new code"));
+    assert.equal(r.host.byText("Sign in as someone else"), null, "fresh keys were already offered");
+    assert.equal(document.activeElement, r.host.byClass("sign-in-heading"));
   });
 }
 
 test("a request the phone cancelled ends the screen at the next poll", async () => {
-  const { host, link } = rig({ routes: { "/api/link/requests": () => created(), "/status": () => ({ state: "ended" }) } });
+  const { host, link } = rig({ routes: { "/api/link/requests": () => created(FRESH), "/status": () => ({ state: "ended" }) } });
   await link.begin();
   await link.poll();
   link.stop();
@@ -234,40 +348,56 @@ test("a request the phone cancelled ends the screen at the next poll", async () 
   assert.ok(host.byText("Show a new code"));
 });
 
+test("an expired request with no QR code to replace it ends instead of polling forever", async () => {
+  const { link } = rig({ routes: { "/api/link/requests": () => created(FRESH, { expiresAt: Date.now() - 20_000 }), "/status": () => ({ state: "ended" }) } });
+  await link.begin();
+  await link.poll();
+  link.stop();
+  assert.equal(link.request, null);
+  assert.equal(link.poller, null);
+});
+
 test("Cancel ends the request with the service, sending the secret only in the body", async () => {
-  const request = created();
-  const { host, link } = rig({ routes: { "/api/link/requests": () => request } });
+  let answer;
+  const { host, link } = rig({ routes: { "/api/link/requests": () => (answer = created(FRESH)) } });
   await link.begin();
   host.byText("Cancel").click();
   const [cancel] = releases();
-  assert.equal(cancel.url, `/api/link/requests/${request.requestId}`);
-  assert.deepEqual(JSON.parse(cancel.init.body), { secret: request.secret });
+  assert.equal(cancel.url, `/api/link/requests/${answer.requestId}`);
+  assert.deepEqual(JSON.parse(cancel.init.body), { secret: answer.secret });
   assert.equal(cancel.init.keepalive, true);
   assert.equal(host.intent, null, "back to the choices");
   assert.equal(link.request, null);
 });
 
-test("Kin locking or the screen going away ends the request too", async () => {
-  const request = created();
-  const { link } = rig({ routes: { "/api/link/requests": () => request } });
+test("starting again, Kin locking or the page going away end the request too", async () => {
+  const { link } = rig({ routes: { "/api/link/requests": () => created(FRESH) } });
   await link.begin();
+  await link.begin();
+  link.stop();
+  assert.equal(releases().length, 1, "a new start ends the old request");
+  link.onPageHide();
+  assert.equal(releases().length, 2);
   link.abandon();
-  assert.equal(releases().length, 1);
+  assert.equal(releases().length, 3);
   assert.equal(link.request, null);
 });
 
 test("an unscanned code replaces itself a few times, ending each old request, then stops", async () => {
-  const { link } = rig({ routes: { "/api/link/requests": () => created() } });
+  const { link } = rig({ routes: { "/api/link/requests": () => created(FRESH), "/status": () => ({ state: "pending" }) } });
   await link.begin();
   const seen = new Set([link.request.requestId]);
+  const nonces = new Set([link.request.nonce]);
   for (let index = 0; index < MAX_SIGN_IN_REFRESHES; index += 1) {
     const next = await link.refresh();
     assert.ok(next?.value.startsWith(`${ORIGIN}/link#r=`));
     assert.equal(next.code, "");
     seen.add(link.request.requestId);
+    nonces.add(link.request.nonce);
   }
   link.stop();
   assert.equal(seen.size, MAX_SIGN_IN_REFRESHES + 1, "each replacement is a new request");
+  assert.equal(nonces.size, MAX_SIGN_IN_REFRESHES + 1, "with a new nonce");
   assert.equal(releases().length, MAX_SIGN_IN_REFRESHES, "and each old one is ended");
   assert.equal(await link.refresh(), null, "then the screen asks before making more");
 });
@@ -280,11 +410,11 @@ test("a failed request leaves a way to try again", async () => {
   assert.ok(host.byText("Try again"));
 });
 
-// ---- Sign-in links ----------------------------------------------------------
+// ---- Sign-in links and codes ------------------------------------------------
 
-const sample = { requestId: hex(32, "a"), secret: "A".repeat(20) + "b-_" + "9".repeat(20), fingerprint: hex(64, "e") };
+const sample = { requestId: hex(32, "a"), secret: "A".repeat(20) + "b-_" + "9".repeat(20), fingerprint: FRESH.fingerprint, nonce: linkNonce() };
 
-test("a sign-in link reads back exactly, secret case and all", () => {
+test("a sign-in link reads back exactly, secret and nonce case and all", () => {
   const link = signInLink(ORIGIN, sample);
   assert.deepEqual(signInRequest(link, ORIGIN), sample);
 });
@@ -298,11 +428,25 @@ test("anything but an exact sign-in link for this origin is refused", () => {
     `${good}&x=1`,
     `${good}&r=${sample.requestId}`,
     good.replace(sample.secret, sample.secret.slice(1)),
+    good.replace(`&c=${sample.nonce}`, ""),
+    good.replace(sample.nonce, `${sample.nonce}A`),
     good.replace(sample.requestId, sample.requestId.toUpperCase()),
-    good.replace(`&f=${sample.fingerprint}`, ""),
+    good.replace(/&f=[^&]+/, ""),
     good.replace("https://kin.test", "https://user@kin.test"),
     "not a url",
   ]) assert.equal(signInRequest(bad, ORIGIN), null, bad);
+});
+
+test("the code depends on the request, the nonce and both devices' keys", async () => {
+  const base = { requestId: sample.requestId, nonce: sample.nonce, approverFingerprint: PHONE.fingerprint, computerFingerprint: FRESH.fingerprint };
+  const code = await signInCode(base);
+  assert.match(code, /^\d{6}$/);
+  assert.equal(await signInCode(base), code, "the same on both devices");
+  const changes = [{ nonce: linkNonce() }, { approverFingerprint: BOUND.fingerprint }, { computerFingerprint: BOUND.fingerprint }, { requestId: hex(32, "b") }];
+  let differing = 0;
+  for (const change of changes) if ((await signInCode({ ...base, ...change })) !== code) differing += 1;
+  assert.equal(differing, changes.length);
+  await assert.rejects(signInCode({ ...base, nonce: "short" }));
 });
 
 test("typed codes ignore spaces and dashes, and must be six digits", () => {
@@ -310,4 +454,13 @@ test("typed codes ignore spaces and dashes, and must be six digits", () => {
   assert.equal(isLinkCode("123456"), true);
   assert.equal(isLinkCode("12345"), false);
   assert.equal(isLinkCode("12345a"), false);
+});
+
+test("a sign-in link opened outside Kin's scanner is dropped from the address", () => {
+  assert.equal(takeSignInLink({ pathname: "/pair" }, globalThis.history), false);
+  assert.equal(consumeOpenedSignInLink(), false);
+  assert.equal(takeSignInLink({ pathname: "/link", hash: "#r=1" }, globalThis.history), true);
+  assert.deepEqual(replaced, ["/"]);
+  assert.equal(consumeOpenedSignInLink(), true);
+  assert.equal(consumeOpenedSignInLink(), false, "said once");
 });

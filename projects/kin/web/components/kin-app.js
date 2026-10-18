@@ -21,10 +21,14 @@ import "./kin-appearance.js";
 import "./kin-household-defaults.js";
 import { createAppContext, initializeAppState } from "./app/context.js";
 import { captureInvitationCode } from "../pairing-link.js";
+import { takeSignInLink } from "../device-link.js";
 
 // An invitation link (/pair#code=…) hands over its code before any route is
-// resolved, and the address bar drops it at once (#97).
+// resolved, and the address bar drops it at once (#97). A computer's sign-in
+// link (/link#…) is meant for Kin's own scanner; opened here, it is dropped
+// the same way (#100).
 captureInvitationCode();
+takeSignInLink();
 
 // The application root. It owns lifecycle, event wiring and the state the
 // controllers in ./app/ share; each behavior lives in one of those controllers.

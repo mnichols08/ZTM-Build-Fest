@@ -14,7 +14,12 @@
 //   fingerprint must match the stored keys, so the server can't swap them.
 //   After a fresh passkey assertion bound to the request, it approves: for a
 //   new computer it signs the device certificate (existing certificate path).
-//   The service returns a 6-digit code and keeps only its hash.
+//   The phone chooses the 6-digit code: it derives it from a nonce that only
+//   the QR code carries (never sent here) and both devices' key
+//   fingerprints. The service keeps only its hash, and tells the computer
+//   which device approved; the computer derives the same code from that
+//   device's fingerprint, so a service that names another approver can't
+//   produce a code that matches what the person types (web/device-link.js).
 // - The computer completes with the code: three tries, then the request ends.
 //   A new computer becomes a trusted device of the approving member and
 //   receives retained history; a computer already trusted for that member,
@@ -41,7 +46,7 @@
 //   device already has, is refused: a device's keys are never shared by two
 //   devices. Only Adults approve, as for adding a device, so Limited and
 //   Temporary members sign back in with their own passkey instead.
-import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { MAX_TRUSTED_DEVICES } from "../identity-limits.mjs";
 import { deviceLabel } from "./device-label.mjs";
 import { validateDeviceAuthorizationCertificate, validateSyncPublicKeys } from "./devices.mjs";
@@ -192,7 +197,13 @@ export const linkMethods = {
   /** What the computer may learn while it waits: only the state. */
   linkStatus(requestId, secret) {
     const request = this.linkRequestFor(requestId, secret);
-    return { state: this.linkState(request), expiresAt: request.expiresAt };
+    const state = this.linkState(request);
+    // Once approved, which device approved, so the computer can check the
+    // code against that device's key (and pin it) before finishing.
+    return state === "approved"
+      ? { state, expiresAt: request.expiresAt, approverDeviceId: request.approval.approverDeviceId,
+          approverFingerprint: request.approval.approverFingerprint }
+      : { state, expiresAt: request.expiresAt };
   },
 
   /** The device this request signs back in: the computer's existing trusted
@@ -259,10 +270,14 @@ export const linkMethods = {
   },
 
   /** The phone approves, after the route has verified a fresh passkey
-   * assertion bound to this request. Returns the 6-digit code once. */
-  approveLinkRequest(sessionToken, requestId, { secret, fingerprint, deviceCertificate } = {}) {
+   * assertion bound to this request, with the code the phone derived. */
+  approveLinkRequest(sessionToken, requestId, { secret, fingerprint, deviceCertificate, code } = {}) {
+    if (typeof code !== "string" || !/^[0-9]{6}$/.test(code))
+      throw new PairingError("invalid_request", "Kin could not understand that request.", 400);
     const view = this.linkRequestForApprover(sessionToken, requestId, { secret, fingerprint });
     const { member, household, device: approverDevice } = this.authorize(sessionToken);
+    if (!approverDevice.syncKeyFingerprint)
+      throw new PairingError("device_sync_key_required", "This device needs its sync key before it can approve a computer.", 409);
     const request = this.linkRequests.get(view.requestId);
     let certificate = null;
     if (!view.existingDevice) {
@@ -275,7 +290,6 @@ export const linkMethods = {
         approverDevice,
       });
     }
-    const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
     request.state = "approved";
     request.codeVerifier = digest(`${request.id}:${code}`);
     request.expiresAt = this.now() + LINK_CODE_TTL_MS;
@@ -283,6 +297,7 @@ export const linkMethods = {
       householdId: household.id,
       memberId: member.id,
       approverDeviceId: approverDevice.id,
+      approverFingerprint: approverDevice.syncKeyFingerprint,
       existingDeviceId: view.existingDevice ? view.deviceId : null,
       certificate,
     };
@@ -293,7 +308,7 @@ export const linkMethods = {
       approverDeviceId: approverDevice.id,
     });
     this.persistHousehold(household.id);
-    return { code, expiresAt: request.expiresAt, deviceLabel: request.deviceLabel, existingDevice: view.existingDevice };
+    return { expiresAt: request.expiresAt, deviceLabel: request.deviceLabel, existingDevice: view.existingDevice };
   },
 
   /** The computer finishes with the code from the phone. Wrong codes count
@@ -366,7 +381,10 @@ export const linkMethods = {
         newDevice,
       });
       this.persistHousehold(household.id);
-      return { sessionToken, deviceToken, householdId: household.id, memberId: member.id, deviceId: device.id, newDevice };
+      return {
+        sessionToken, deviceToken, householdId: household.id, memberId: member.id, deviceId: device.id, newDevice,
+        approverDeviceId: approverDevice.id,
+      };
     }, { ...LIMITS, table: this.linkRateBuckets });
   },
 

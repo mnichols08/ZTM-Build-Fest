@@ -613,6 +613,7 @@ async function api(request, response, url, context) {
           secret: body.secret,
           fingerprint: body.fingerprint,
           deviceCertificate: body.deviceCertificate,
+          code: body.code,
         }),
       ));
       json(response, 200, approved);
@@ -1586,7 +1587,7 @@ function serve(response, pathname) {
   let requested;
   try {
     requested =
-      pathname === "/" || pathname === "/pair"
+      pathname === "/" || pathname === "/pair" || pathname === "/link"
         ? "index.html"
         : decodeURIComponent(pathname.slice(1));
   } catch (error) {

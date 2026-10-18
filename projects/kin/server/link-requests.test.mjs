@@ -61,7 +61,9 @@ async function approved(h, { computerKeys, deviceToken, rateKey = "198.51.100.1"
   const scan = { secret: request.secret, fingerprint: request.fingerprint };
   const view = h.service.linkRequestForApprover(h.phone.sessionToken, request.requestId, scan);
   const deviceCertificate = view.existingDevice ? undefined : await certificateFor(h, view);
-  const approval = h.service.approveLinkRequest(h.phone.sessionToken, request.requestId, { ...scan, deviceCertificate });
+  // The phone derives the code (web/device-link.js); any six digits do here.
+  const code = String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0");
+  const approval = { ...h.service.approveLinkRequest(h.phone.sessionToken, request.requestId, { ...scan, deviceCertificate, code }), code };
   return { request, view, approval, keys, rateKey };
 }
 
@@ -72,13 +74,16 @@ test("a new computer becomes a trusted device of the approving member", async ()
   assert.equal(view.existingDevice, false);
   assert.equal(view.deviceLabel, "Chrome on Windows", "the phone shows the computer's automatic name");
   assert.equal(view.memberId, h.phone.memberId, "signing in as the phone's member");
-  assert.match(approval.code, /^\d{6}$/);
-  assert.equal(h.service.linkStatus(request.requestId, request.secret).state, "approved");
+  const status = h.service.linkStatus(request.requestId, request.secret);
+  assert.equal(status.state, "approved");
+  assert.equal(status.approverDeviceId, h.phone.deviceId, "the computer learns which device approved");
+  assert.equal(status.approverFingerprint, h.service.devices.get(h.phone.deviceId).syncKeyFingerprint, "and its key, to check the code and pin it");
 
   const done = h.service.completeLinkRequest({ requestId: request.requestId, secret: request.secret, code: approval.code, rateKey });
   assert.equal(done.newDevice, true);
   assert.equal(done.memberId, h.phone.memberId);
   assert.equal(done.deviceId, view.deviceId);
+  assert.equal(done.approverDeviceId, h.phone.deviceId);
   const device = h.service.devices.get(done.deviceId);
   assert.equal(device.label, "Chrome on Windows");
   assert.equal(device.syncKeyFingerprint, request.fingerprint);
@@ -186,7 +191,7 @@ test("a new computer needs the phone's certificate", async () => {
   const keys = await keyPair();
   const request = h.service.createLinkRequest({ syncPublicKeys: keys.publicKeys, rateKey: "x" });
   const scan = { secret: request.secret, fingerprint: request.fingerprint };
-  assert.throws(() => h.service.approveLinkRequest(h.phone.sessionToken, request.requestId, scan), refused("device_certificate_invalid"));
+  assert.throws(() => h.service.approveLinkRequest(h.phone.sessionToken, request.requestId, { ...scan, code: "123456" }), refused("device_certificate_invalid"));
   assert.equal(h.service.linkStatus(request.requestId, request.secret).state, "pending");
 });
 
@@ -311,6 +316,18 @@ test("a computer set up for one account can't be signed in to another, and keys 
   assert.equal([...h.service.devices.values()].filter((device) => device.syncKeyFingerprint === first.request.fingerprint).length, 1);
 });
 
+test("the phone's code must be six digits", async () => {
+  const h = await household();
+  const keys = await keyPair();
+  const request = h.service.createLinkRequest({ syncPublicKeys: keys.publicKeys, rateKey: "198.51.100.40" });
+  const scan = { secret: request.secret, fingerprint: request.fingerprint };
+  const view = h.service.linkRequestForApprover(h.phone.sessionToken, request.requestId, scan);
+  const deviceCertificate = await certificateFor(h, view);
+  for (const code of [undefined, "12345", "1234567", "12345a", 123456])
+    assert.throws(() => h.service.approveLinkRequest(h.phone.sessionToken, request.requestId, { ...scan, deviceCertificate, code }), refused("invalid_request"));
+  assert.equal(h.service.linkStatus(request.requestId, request.secret).state, "pending");
+});
+
 test("no secret or code is kept or audited", async () => {
   const h = await household();
   const { request, approval, rateKey } = await approved(h);
@@ -375,10 +392,12 @@ test("over HTTP: request, approve with a passkey, complete with the code, and si
     const view = approveOptions.body.request;
     assert.equal(view.deviceLabel, "Chrome on Windows");
     const deviceCertificate = await certificateFor({ phone: { deviceId: phone.body.deviceId }, phoneKeys }, view);
+    const code = "407153";
     const finish = await s.call("POST", `/api/link/requests/${requestId}/approve/finish`,
-      { flow: approveOptions.body.flow, credential: { id: credentialId }, secret, fingerprint, deviceCertificate }, phone.cookies);
+      { flow: approveOptions.body.flow, credential: { id: credentialId }, secret, fingerprint, deviceCertificate, code }, phone.cookies);
     assert.equal(finish.status, 200);
-    assert.match(finish.body.code, /^\d{6}$/);
+    assert.equal("code" in finish.body, false, "the phone already knows its code");
+    finish.body.code = code;
 
     const wrong = await s.call("POST", `/api/link/requests/${requestId}/complete`, { secret, code: finish.body.code === "000000" ? "000001" : "000000" });
     assert.equal(wrong.status, 400);
@@ -421,10 +440,11 @@ async function httpApproved(s, phone) {
   const { requestId, secret, fingerprint } = created.body;
   const options = await s.call("POST", `/api/link/requests/${requestId}/approve/options`, { secret, fingerprint }, phone.cookies);
   const deviceCertificate = await certificateFor({ phone: { deviceId: phone.body.deviceId }, phoneKeys: phone.phoneKeys }, options.body.request);
+  const code = "582604";
   const finish = await s.call("POST", `/api/link/requests/${requestId}/approve/finish`,
-    { flow: options.body.flow, credential: { id: phone.credentialId }, secret, fingerprint, deviceCertificate }, phone.cookies);
+    { flow: options.body.flow, credential: { id: phone.credentialId }, secret, fingerprint, deviceCertificate, code }, phone.cookies);
   assert.equal(finish.status, 200);
-  return { requestId, secret, code: finish.body.code };
+  return { requestId, secret, code };
 }
 
 test("over HTTP: a request ended by a failing call keeps its audit, though the call rolls back", async () => {

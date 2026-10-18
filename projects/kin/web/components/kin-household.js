@@ -57,7 +57,7 @@ class KinHousehold extends HTMLElement {
   }
 
   startIntent(kind) {
-    if (kind === "phone") {
+    if (kind === "phone" && !this.claim) {
       // Signing in with a phone (#100) starts a request at once.
       this.intent = "phone";
       return this.ctx.link.begin();

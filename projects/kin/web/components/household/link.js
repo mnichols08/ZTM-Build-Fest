@@ -7,27 +7,43 @@
 // only reaches the computer in front of the person, so a QR code shown
 // somewhere else can't be completed.
 //
+// - The QR code also carries a nonce the service never sees. The phone
+//   derives the code from it and both devices' key fingerprints
+//   (web/device-link.js). Before sending the code, the computer derives it
+//   too, from the approving device the service names; a mismatch means a
+//   typo or a service naming the wrong approver, and nothing is sent. After
+//   signing in, the computer pins that approving device's key, checked
+//   against the same fingerprint, so its first sync can verify the household.
 // - A computer that already has a device in a household offers that
 //   device's keys, so a returning computer keeps its device and its history.
 //   The service says whether its device cookie names that device; if not,
 //   the computer starts again with fresh keys and joins as a new device.
+//   "Sign in as someone else" always uses fresh keys (a shared computer).
 // - The QR code replaces itself when the request expires, a few times, then
 //   stops. Its countdown is plain text: nothing is announced every second.
-// - Cancel, leaving the screen, or Kin locking ends the request.
+// - Cancel, Kin locking, the page going away and starting over end the
+//   request. Moving to another view in Kin hides this screen without ending
+//   it; it then ends with its 2-minute expiry.
 //
 // Part of <kin-household>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
 import { currentPlatform, householdDeviceName } from "../../platform.js";
-import { cleanLinkCode, isLinkCode, LINK_CODE_LENGTH, signInLink } from "../../device-link.js";
+import { deviceKeyFingerprint } from "../../sync/crypto.js";
+import { cleanLinkCode, isLinkCode, LINK_CODE_LENGTH, linkNonce, signInCode, signInLink } from "../../device-link.js";
 
 /** How often the computer asks whether the phone has approved. */
 export const SIGN_IN_POLL_MS = 2_000;
 /** Replacement QR codes shown before the screen stops and asks. */
 export const MAX_SIGN_IN_REFRESHES = 4;
+/** Codes that don't match, checked here, before the request ends. */
+export const MAX_LOCAL_MISSES = 3;
+/** An expired request the QR code hasn't replaced in this long has ended. */
+const STALE_MS = 15_000;
 
 export const SIGN_IN_STEPS = "On your phone, open Kin → People & devices → Add a computer → Scan.";
 
 const ENDED_NOTICE = "This sign-in request ended. Nothing was signed in.";
+const UNVERIFIED = "Kin couldn't verify the phone that approved this computer, so it signed this computer out. Start again.";
 
 function remaining(expiresAt) {
   const seconds = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
@@ -38,28 +54,38 @@ export class HouseholdLink {
   constructor(ctx) {
     this.ctx = ctx;
     this.host = ctx.host;
-    /** The request on screen: { requestId, secret, fingerprint, expiresAt,
-     * state, keys: "existing" | "pending", deviceId, refreshes }. */
+    /** The request on screen: { requestId, secret, fingerprint, nonce,
+     * expiresAt, state, keys: "existing" | "pending", deviceId, fresh,
+     * refreshes, misses, approverDeviceId, approverFingerprint }. */
     this.request = null;
     this.ended = null;
+    this.lastKeys = null;
     this.starting = false;
     this.countdown = null;
     this.ticker = null;
     this.poller = null;
     this.focusNext = null;
+    /** Status text waits this long after a render, so screen readers hear a
+     * region that already exists change. */
+    this.announceDelay = 100;
+    this.onPageHide = () => this.release(this.request);
   }
 
-  /** Opens the screen and starts a request. */
-  async begin() {
+  /** Opens the screen and starts a request; `fresh` offers new keys even on
+   * a computer that has a device (someone else signing in). */
+  async begin({ fresh = false } = {}) {
+    this.release(this.request);
     this.stop();
     this.request = null;
     this.ended = null;
     this.starting = true;
     this.focusNext = "heading";
+    globalThis.removeEventListener?.("pagehide", this.onPageHide);
+    globalThis.addEventListener?.("pagehide", this.onPageHide);
     this.host.render();
     await this.host.run(async () => {
       try {
-        this.request = await this.create();
+        this.request = await this.create({ fresh });
       } finally {
         // Shown before any failure's message, which render() would clear.
         this.starting = false;
@@ -71,32 +97,41 @@ export class HouseholdLink {
   }
 
   /** A new request for this computer, with the keys it should offer. */
-  async create({ refreshes = 0 } = {}) {
+  async create({ refreshes = 0, fresh = false } = {}) {
     const store = await this.ctx.api.openSyncKeyStore();
-    const returning = await store.latestBoundDevice();
-    const pending = async () => (await store.getOrCreatePendingDevice()).publicKeys;
+    const returning = fresh ? null : await store.latestBoundDevice();
+    const pending = () => store.getOrCreatePendingDevice();
     const ask = (syncPublicKeys) => this.host.api("/api/link/requests", {
       method: "POST",
       body: JSON.stringify({ syncPublicKeys, deviceLabel: householdDeviceName(currentPlatform()) }),
     });
-    let created = await ask(returning?.publicKeys ?? (await pending()));
+    let offered = returning ?? (await pending());
+    let created = await ask(offered.publicKeys);
     let keys = returning ? "existing" : "pending";
     if (returning && !created.returning) {
       // Its device cookie doesn't name that device (signed out elsewhere,
       // removed, or cookies cleared): join as a new device with fresh keys.
-      this.release(created);
-      created = await ask(await pending());
+      await this.release(created);
+      offered = await pending();
+      created = await ask(offered.publicKeys);
       keys = "pending";
+    }
+    if (created.fingerprint !== offered.fingerprint) {
+      this.release(created);
+      throw new Error("The service answered for keys this computer didn't offer. Nothing was signed in.");
     }
     return {
       requestId: created.requestId,
       secret: created.secret,
       fingerprint: created.fingerprint,
+      nonce: linkNonce(),
       expiresAt: created.expiresAt,
       state: "pending",
       keys,
       deviceId: keys === "existing" ? returning.deviceId : null,
+      fresh,
       refreshes,
+      misses: 0,
     };
   }
 
@@ -104,9 +139,16 @@ export class HouseholdLink {
   async refresh() {
     const current = this.request;
     if (!current || current.state !== "pending" || current.refreshes >= MAX_SIGN_IN_REFRESHES) return null;
+    // The phone may have approved in the last moments: never cancel that.
+    const status = await this.requestStatus(current).catch(() => null);
+    if (this.request !== current) return null;
+    if (status?.state === "approved") {
+      this.approved(current, status);
+      return null;
+    }
     // Ended first, so the service's per-client cap never counts it.
     await this.release(current);
-    const next = await this.create({ refreshes: current.refreshes + 1 });
+    const next = await this.create({ refreshes: current.refreshes + 1, fresh: current.fresh });
     if (this.request !== current) {
       this.release(next);
       return null;
@@ -118,6 +160,13 @@ export class HouseholdLink {
 
   link(request) {
     return signInLink(location.origin, request);
+  }
+
+  requestStatus(request) {
+    return this.host.api(`/api/link/requests/${request.requestId}/status`, {
+      method: "POST",
+      body: JSON.stringify({ secret: request.secret }),
+    });
   }
 
   /** Ends a request with the service, best effort (keepalive survives the
@@ -138,6 +187,7 @@ export class HouseholdLink {
     this.stop();
     this.request = null;
     this.ended = null;
+    globalThis.removeEventListener?.("pagehide", this.onPageHide);
     this.host.startIntent(null);
   }
 
@@ -146,6 +196,7 @@ export class HouseholdLink {
     this.release(this.request);
     this.stop();
     this.request = null;
+    globalThis.removeEventListener?.("pagehide", this.onPageHide);
   }
 
   stop() {
@@ -157,6 +208,7 @@ export class HouseholdLink {
 
   end(notice = ENDED_NOTICE) {
     this.release(this.request);
+    this.lastKeys = this.request?.keys ?? this.lastKeys;
     this.stop();
     this.request = null;
     this.ended = notice;
@@ -172,39 +224,53 @@ export class HouseholdLink {
   async poll() {
     const request = this.request;
     if (!request || !this.host.isConnected) return;
+    // An unscanned request that ran out is the QR code's to replace; one it
+    // hasn't replaced (the code isn't on screen) has simply ended.
+    const lapsed = request.state === "pending" && request.expiresAt <= Date.now();
+    if (lapsed && request.expiresAt + STALE_MS <= Date.now())
+      return this.end("The sign-in code expired. Nothing was signed in.");
     let status;
     try {
-      status = await this.host.api(`/api/link/requests/${request.requestId}/status`, {
-        method: "POST",
-        body: JSON.stringify({ secret: request.secret }),
-      });
+      status = await this.requestStatus(request);
     } catch (error) {
       if (this.request !== request) return;
-      if (error.code === "link_unavailable") {
-        // An unscanned request that ran out is the QR code's to replace.
-        if (request.state === "pending" && request.expiresAt <= Date.now()) return this.schedulePoll();
-        return this.end();
-      }
+      if (error.code === "link_unavailable") return lapsed ? this.schedulePoll() : this.end();
       return this.schedulePoll();
     }
     if (this.request !== request) return;
-    if (status.state === "approved" && request.state === "pending") {
-      request.state = "approved";
-      request.expiresAt = status.expiresAt;
-      this.focusNext = "code";
-      this.host.render();
-      this.announce("Your phone approved this computer. Type the 6-digit code it shows.");
-    } else if (status.state === "ended") {
-      if (request.state === "pending" && request.expiresAt <= Date.now()) return this.schedulePoll();
-      return this.end();
-    } else if (status.state === "done") {
-      return;
-    }
+    if (status.state === "approved" && request.state === "pending") return this.approved(request, status);
+    if (status.state === "ended") return lapsed ? this.schedulePoll() : this.end();
+    if (status.state === "done") return;
     this.schedulePoll();
   }
 
+  /** The phone approved: ask for the code. */
+  approved(request, status) {
+    request.state = "approved";
+    request.expiresAt = status.expiresAt;
+    request.approverDeviceId = status.approverDeviceId;
+    request.approverFingerprint = status.approverFingerprint;
+    this.focusNext = "code";
+    this.host.render();
+    this.announce("Your phone approved this computer. Type the 6-digit code it shows.");
+  }
+
   announce(text) {
-    if (this.status) this.status.textContent = text;
+    const status = this.status;
+    if (!status) return;
+    const show = () => { if (this.status === status) status.textContent = text; };
+    // Cleared first, so the same words said twice are announced twice.
+    status.textContent = "";
+    if (this.announceDelay > 0) setTimeout(show, this.announceDelay);
+    else show();
+  }
+
+  wrongCode(message) {
+    if (this.field) {
+      this.field.value = "";
+      this.field.focus();
+    }
+    this.announce(message);
   }
 
   async complete(code) {
@@ -217,6 +283,23 @@ export class HouseholdLink {
       return;
     }
     await this.host.run(async () => {
+      // The code must come from the approving device the service names.
+      const expected = await signInCode({
+        requestId: request.requestId, nonce: request.nonce,
+        approverFingerprint: request.approverFingerprint, computerFingerprint: request.fingerprint,
+      });
+      if (this.request !== request) return;
+      if (digits !== expected) {
+        request.misses += 1;
+        if (request.misses >= MAX_LOCAL_MISSES)
+          return this.end("That code didn't match three times, so the sign-in request ended. Nothing was signed in. If you typed it correctly, something between your phone and this computer may be interfering.");
+        return this.wrongCode("That code doesn't match. Check the code on your phone and type it again.");
+      }
+      if (request.keys === "pending") {
+        const local = await this.host.syncKeyStore.getDevice("pending");
+        if (local?.fingerprint !== request.fingerprint)
+          return this.end("This computer's keys changed while it was signing in, perhaps in another tab. Nothing was signed in.");
+      }
       let result;
       try {
         result = await this.host.api(`/api/link/requests/${request.requestId}/complete`, {
@@ -225,34 +308,58 @@ export class HouseholdLink {
         });
       } catch (error) {
         if (this.request !== request) return;
-        if (error.code === "link_code_mismatch") {
-          if (this.field) { this.field.value = ""; this.field.focus(); }
-          this.announce("That code doesn't match. Check the code on your phone and type it again.");
-          return;
-        }
-        if (["link_unavailable", "link_code_attempts"].includes(error.code))
-          return this.end(error.code === "link_code_attempts"
-            ? "That code was wrong too many times, so the sign-in request ended. Nothing was signed in."
-            : ENDED_NOTICE);
+        if (error.code === "link_code_mismatch") return this.wrongCode(error.message);
+        if (["link_unavailable", "link_code_attempts"].includes(error.code)) return this.end(ENDED_NOTICE);
         throw error;
       }
       this.stop();
       this.request = null;
-      if (result.newDevice) {
-        if (request.keys !== "pending") throw new Error("Kin could not match this computer's keys to the sign-in. Start again.");
+      globalThis.removeEventListener?.("pagehide", this.onPageHide);
+      const matches = result.approverDeviceId === request.approverDeviceId &&
+        (result.newDevice ? request.keys === "pending" : request.keys === "existing" && result.deviceId === request.deviceId);
+      if (!matches) return this.signOut(UNVERIFIED);
+      if (result.newDevice)
         await this.host.syncKeyStore.bindPendingDevice({
           deviceId: result.deviceId, householdId: result.householdId, memberId: result.memberId,
         });
+      if (!(await this.pinApprover(request, result))) return this.signOut(UNVERIFIED);
+      if (result.newDevice) {
         // A new device starts Kin afresh, as after joining with a code.
         location.href = "/";
         return;
       }
-      if (request.keys !== "existing" || result.deviceId !== request.deviceId)
-        throw new Error("Kin could not match this computer's keys to the sign-in. Start again.");
       this.host.intent = null;
       history.replaceState(null, "", "/");
       await this.host.load();
     });
+  }
+
+  /** Pins the approving phone's key, after checking that the directory's
+   * copy is the key whose fingerprint produced the code. Sync then verifies
+   * the household from it. */
+  async pinApprover(request, result) {
+    const { devices } = await this.host.api("/api/sync/devices");
+    const approver = devices.find((device) => device.deviceId === request.approverDeviceId);
+    if (!approver?.publicKeys || approver.memberId !== result.memberId ||
+        (await deviceKeyFingerprint(approver.publicKeys)) !== request.approverFingerprint)
+      return false;
+    const store = this.host.syncKeyStore;
+    // A returning computer may have pinned it before, perhaps under an
+    // earlier key; sync checks that pin against the key history.
+    if (await store.getPinnedDevice(result.householdId, approver.deviceId)) return true;
+    await store.pinTrustedDevice({
+      householdId: result.householdId,
+      memberId: approver.memberId,
+      deviceId: approver.deviceId,
+      publicKeys: approver.publicKeys,
+      fingerprint: request.approverFingerprint,
+    });
+    return true;
+  }
+
+  async signOut(message) {
+    await fetch("/api/logout", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }).catch(() => {});
+    throw new Error(message);
   }
 
   /** The screen, for whichever step the request is at. */
@@ -275,6 +382,9 @@ export class HouseholdLink {
         this.host.text(this.ended);
         this.host.append(status);
         this.host.button("Show a new code", () => this.begin());
+        // On a shared computer, the device it offered may be someone else's.
+        if (this.lastKeys === "existing")
+          this.host.button("Sign in as someone else", () => this.begin({ fresh: true }), "secondary");
       } else {
         this.host.text(this.starting ? "Getting a sign-in code…" : "Kin couldn't get a sign-in code.");
         this.host.append(status);
@@ -294,8 +404,8 @@ export class HouseholdLink {
       input.name = "code";
       input.inputMode = "numeric";
       input.autocomplete = "one-time-code";
-      input.pattern = "[0-9 ]*";
-      input.maxLength = LINK_CODE_LENGTH + 1;
+      // Room for "123 456" or "123-456"; the digits are what count.
+      input.maxLength = LINK_CODE_LENGTH + 3;
       input.required = true;
       label.append(input);
       this.field = input;
@@ -358,9 +468,11 @@ export class HouseholdLink {
     this.ticker = null;
   }
 
+  /** Focus moves now, not on the next frame: a background window may not
+   * paint frames, and the elements are already in place. */
   applyFocus(heading, field) {
     const target = this.focusNext === "code" ? field : this.focusNext === "heading" ? heading : null;
     this.focusNext = null;
-    if (target) requestAnimationFrame(() => target.focus());
+    target?.focus();
   }
 }

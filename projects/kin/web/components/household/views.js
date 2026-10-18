@@ -3,6 +3,7 @@
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
 import { currentPlatform, householdDeviceName } from "../../platform.js";
 import { invitationCode, invitationLink } from "../../pairing-link.js";
+import { consumeOpenedSignInLink } from "../../device-link.js";
 import "../kin-qr.js";
 import "../kin-qr-scanner.js";
 
@@ -51,6 +52,8 @@ export class HouseholdViews {
     if (location.pathname === "/pair" && !this.host.identity)
       return this.renderJoin();
     if (!this.host.identity) return this.renderSetup();
+    if (consumeOpenedSignInLink())
+      this.host.message("That was a computer's sign-in code. To approve it, choose Add a computer below and scan it there.");
     if (this.host.prefilledCode) {
       // An invitation opened on a device that is already a member: say so,
       // and don't keep the code (#97).
@@ -76,7 +79,7 @@ export class HouseholdViews {
       ["Join an existing household", "Someone in your household sends you an invitation code and approves this device.", () => this.host.startIntent("join"), ""],
       ["Sign in with your phone", "You're already signed in to Kin on a phone. Scan this computer's code with it, then type the 6-digit code it shows.", () => this.host.startIntent("phone"), ""],
       ["Add this device to my existing membership", "You already use Kin on another device and want this one too.", () => this.host.startIntent("device"), ""],
-    ]) {
+    ].filter(([label]) => label !== "Sign in with your phone" || !this.host.claim)) {
       const choice = document.createElement("div");
       choice.className = "household-choice";
       const button = this.host.makeButton(label, action, className);

@@ -189,7 +189,7 @@ async function pageStartPhoneSignIn() {
 
 async function pagePhoneApprove(link) {
   const h = document.querySelector("kin-app").household;
-  const { signInRequest } = await import("/device-link.js");
+  const { signInCode, signInRequest } = await import("/device-link.js");
   const scanned = signInRequest(link, location.origin);
   if (!scanned) throw new Error("Not a sign-in link: " + link);
   const { authenticationOptions, credentialJson } = await import("/components/household/auth.js");
@@ -207,10 +207,12 @@ async function pagePhoneApprove(link) {
       publicKeys: view.syncPublicKeys, signingKey: own.keys.signingPrivateKey,
     });
   }
-  const approved = await h.api(`/api/link/requests/${scanned.requestId}/approve/finish`, {
-    method: "POST", body: JSON.stringify({ ...body, flow: started.flow, credential: credentialJson(credential), deviceCertificate }),
+  // The phone derives the code from the QR code's nonce and both keys.
+  const code = await signInCode({ requestId: scanned.requestId, nonce: scanned.nonce, approverFingerprint: h.localFingerprint, computerFingerprint: scanned.fingerprint });
+  await h.api(`/api/link/requests/${scanned.requestId}/approve/finish`, {
+    method: "POST", body: JSON.stringify({ ...body, flow: started.flow, credential: credentialJson(credential), deviceCertificate, code }),
   });
-  return { code: approved.code, existingDevice: view.existingDevice, deviceId: view.deviceId, deviceLabel: view.deviceLabel, secret: scanned.secret };
+  return { code, existingDevice: view.existingDevice, deviceId: view.deviceId, deviceLabel: view.deviceLabel, secret: scanned.secret, nonce: scanned.nonce };
 }
 
 async function pageSignInCodeField() {
@@ -1367,12 +1369,12 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     const e = await launch("computer-e");
     const requestsBefore = requests.length;
     const shownSignIn = await e.call(pageStartPhoneSignIn);
-    check(shownSignIn.readBack === shownSignIn.value && /^http:\/\/localhost:\d+\/link#r=[a-f0-9]{32}&s=[A-Za-z0-9_-]{43}&f=[a-f0-9]{64}$/.test(shownSignIn.value),
+    check(shownSignIn.readBack === shownSignIn.value && /^http:\/\/localhost:\d+\/link#r=[a-f0-9]{32}&s=[A-Za-z0-9_-]{43}&f=[A-Za-z0-9_-]{43}&c=[A-Za-z0-9_-]{22}$/.test(shownSignIn.value),
       "the computer shows a QR code that reads back as its fragment sign-in link: " + shownSignIn.value);
     check(shownSignIn.steps && /QR code to sign in on this computer/.test(shownSignIn.label ?? "") && shownSignIn.keys === "pending",
       "the sign-in screen tells the person what to do on the phone, and a new computer offers fresh keys");
     check(/^This code changes in 0[12]:\d\d$/.test(shownSignIn.countdown) && !shownSignIn.countdownLive && shownSignIn.focused,
-      "the countdown is visible but not a live region, and focus moves to the screen");
+      "the countdown is visible but not a live region, and focus moves to the screen: " + JSON.stringify(shownSignIn));
     const firstApproval = await a.call(pagePhoneApprove, shownSignIn.value);
     check(/^\d{6}$/.test(firstApproval.code) && !firstApproval.existingDevice, "A's phone approves the new computer with a passkey and gets a 6-digit code");
     const codeField = await e.call(pageSignInCodeField);
@@ -1409,7 +1411,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     const devicesAfter = await a.call(pageFetch, { path: "/api/devices" });
     check(devicesAfter.body.devices.filter((device) => device.id === firstApproval.deviceId).length === 1 &&
       devicesAfter.body.devices.length === aDevices.body.devices.length, "signing back in adds no device");
-    const secrets = [firstApproval.secret, secondApproval.secret, firstApproval.code, secondApproval.code];
+    const secrets = [firstApproval.secret, secondApproval.secret, firstApproval.code, secondApproval.code, firstApproval.nonce, secondApproval.nonce];
     check(requests.slice(requestsBefore).every(({ url, referer }) => secrets.every((value) => !url.includes(value) && !referer.includes(value))),
       "no sign-in secret or code ever reaches a request URL or Referer");
     pass(`${checks} phone sign-in assertions (profile E with A's phone)`);
