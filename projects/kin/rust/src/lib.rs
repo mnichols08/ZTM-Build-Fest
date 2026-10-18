@@ -7,6 +7,7 @@ pub mod error;
 pub mod event;
 pub mod event_decode;
 pub mod history;
+pub mod qr;
 pub mod recurrence;
 pub mod replay;
 pub mod request;

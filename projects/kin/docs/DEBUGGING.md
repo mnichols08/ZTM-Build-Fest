@@ -48,4 +48,14 @@ If a developer explicitly opts into inspecting local synthetic test data, keep i
 - **Sync conflict:** use synthetic households/devices, event IDs, logical order, and conflict class; do not include plaintext event content.
 - **Authentication/cryptography failure:** never log credentials, assertions, pairing codes, plaintext keys, or secret material. Capture only reviewed high-level failure categories and protocol versions.
 
+## Push notification checks
+
+The in-app **Notifications on this device** panel is the safe first diagnostic. It shows this browser's permission, whether this device has a Kin subscription, and its mute state. It deliberately does not show or export the push endpoint, subscription keys, or endpoint fingerprint.
+
+Test delivery with two distinct household members: opt in on the receiving member's device, leave it unmuted, then make and sync a household change from the other member's device. Allow up to the two-minute coalescing window. A second device belonging to the author is not a receiver, because selection uses the stable member ID and excludes all devices owned by that member. There is no manual push sender, delivery receipt, read receipt, or presence diagnostic.
+
+If the panel cannot load subscription state, check the connection and retry there. If permission is blocked, change the site's notification permission in the browser. On iPhone and iPad, use the Home Screen installation. If the server reports notifications unavailable, its operator must configure an HTTPS VAPID subject; do not work around that state by exposing subscription details.
+
+The original push design and its service, subscription, recipient, service-worker, and client contracts are tracked in [#85](https://github.com/mnichols08/ZTM-Build-Fest/issues/85), [#86](https://github.com/mnichols08/ZTM-Build-Fest/issues/86), [#87](https://github.com/mnichols08/ZTM-Build-Fest/issues/87), [#88](https://github.com/mnichols08/ZTM-Build-Fest/issues/88), [#89](https://github.com/mnichols08/ZTM-Build-Fest/issues/89), and [#90](https://github.com/mnichols08/ZTM-Build-Fest/issues/90).
+
 A local “export diagnostics” feature, if considered, requires a preview/redaction policy and user consent. Diagnostics must not become hidden analytics or activity surveillance.

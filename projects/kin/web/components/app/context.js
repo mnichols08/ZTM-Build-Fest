@@ -26,6 +26,7 @@
 // - The vault's security epoch: persisted lock counter shared by all tabs
 //   (EventStore.checkSecurityEpoch); a newer epoch means another tab locked.
 // - The event arena's `generation` and `epoch`: see storage/event-arena.js.
+import { captureInvitationCode } from "../../pairing-link.js";
 import { AppearanceController } from "./appearance.js";
 import { AppendCommands } from "./commands/append.js";
 import { AttachmentController } from "./attachments.js";
@@ -206,7 +207,12 @@ export function initializeAppState(app) {
       app.ctx.status.setStatus(event.detail?.message ?? "Household sync has stopped.");
     };
     app.onSyncState = (value) => app.ctx.sync.handleSyncState(value);
-    app.onHashChange = () => app.ctx.navigation.showPageFromLocation();
+    app.onHashChange = () => {
+      // A same-page jump to an invitation link (/pair#code=…) takes its code
+      // first, so it never lingers in the address bar or history (#97).
+      if (captureInvitationCode()) app.household?.offerInvitationCode?.();
+      app.ctx.navigation.showPageFromLocation();
+    };
     app.onNavigationClick = (event) => {
       const link = event.target.closest?.("a[href^='#']");
       if (

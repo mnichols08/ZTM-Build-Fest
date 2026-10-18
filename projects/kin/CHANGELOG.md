@@ -5,7 +5,72 @@ development candidates that never received a release tag; their changes
 ship in v1.0.0. The project's planning releases v0.0.1–v0.0.12 are
 documentation only.
 
-## Unreleased — v1.1.0
+## v1.1.1 — Member and Notification Clarity
+
+Released 2026-10-18 as `kin-v1.1.1`. This patch makes the People & devices
+surface accurately distinguish household members from their paired devices,
+separates invitation from same-member device enrollment, and makes device trust,
+push recipients and delivery diagnostics explicit. It does not change Kin's
+persistent formats, protocol versions, or v1.0 compatibility commitment.
+
+### Changed
+
+- People & devices groups each member's paired devices under that member and
+  labels device trust separately from member roles.
+- People & devices exposes separate invitation and same-member device-enrollment
+  actions and labels devices Trusted or Untrusted.
+- Notification settings identify which other member devices can receive a
+  content-free push and distinguish subscription state from delivery outcome.
+
+### Verification
+
+- Added an identity/pairing acceptance matrix covering member/device identity,
+  household authority, and notification-recipient behavior (#221, #226–#228).
+- Expanded household, notification, server-push, documentation, narrow-screen,
+  and Untrusted → Trusted browser regressions.
+- Made the sandboxed-service integration test tolerate Windows' brief delay in
+  releasing SQLite handles after a process tree exits, with a bounded cleanup
+  retry.
+
+## v1.1.0 — Connected Household Devices
+
+Released 2026-10-18 as `kin-v1.1.0`. This release adds device names and
+nicknames, household identity on installed home screens, opt-in content-free
+push notifications, a sandboxed Node service, and QR pairing/phone-approved
+computer sign-in while preserving the v1.0 compatibility commitment.
+
+### QR pairing and signing in with a phone (#93)
+
+- **QR codes, written and read by Kin itself.** The engine encodes and
+  decodes QR codes in Rust (`rust/src/qr/`, byte mode, level M, versions
+  1–10) with a bounded amount of work per camera frame. `<kin-qr>` draws a
+  code, beside its typed alternative where there is one; `<kin-qr-scanner>` turns the camera on
+  only when tapped, stops it on every way out, and accepts only this Kin's
+  own links. No frame is stored or sent.
+- **Invite by QR code (#97).** A waiting invitation shows a QR code for
+  `/pair#code=…`. The code rides in the URL fragment, which never reaches the
+  server; opening or scanning it only fills in the join screen. The QR code
+  goes as soon as the invitation is claimed, expires or is revoked.
+- **Sign in on a computer with your phone (#98).** On the computer, "Sign in
+  with your phone" shows a QR code. On the phone, People & devices → Add a
+  computer → Scan shows the computer's name and "Only approve a computer
+  that's in front of you."; approving with a passkey shows a 6-digit code to
+  type on the computer. A new computer becomes one of your devices with the
+  household's history; a computer that's already yours is signed back in.
+  Adults only. New service routes under `/api/link/requests` (#99).
+- **The code binds the phone.** The phone's random code comes with a tag
+  keyed by the code and a nonce only the QR code carries; with the right
+  code the computer receives the tag, checks it and pins the phone's key, so
+  neither the QR code alone nor the service can substitute a device.
+- **Production camera access.** Kin's response policy permits camera capture
+  only for its own document; microphone, geolocation and cross-origin camera
+  access remain disabled. A real-server regression covers the policy, and the
+  scanner was exercised on a physical Moto G.
+- **Limits.** A sign-in QR code needs an origin of at most 56 bytes. The
+  decoder can miss very small (version 1) codes seen at an angle; Kin's links
+  are far larger. Opening a computer sign-in QR in the system Camera app while
+  Kin is locked can lose the explanatory handoff after recovery unlock; open
+  Kin and use People & devices → Add a computer instead.
 
 ### Push notifications (#85)
 

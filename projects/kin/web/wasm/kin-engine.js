@@ -96,6 +96,8 @@ export function createEngine(instanceExports) {
     "kin_archive_header",
     "kin_archive_layout",
     "kin_plan_import",
+    "kin_qr_encode",
+    "kin_qr_decode",
     "kin_clear",
     "kin_result_ptr",
     "kin_result_len",

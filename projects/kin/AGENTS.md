@@ -106,11 +106,17 @@ If an unrelated parent-repository file was modified accidentally, revert that ch
 
 # Current Development Stage
 
-Kin is at **v1.0.0 — Stable Kin Platform**, Kin's first stable release,
-tagged `kin-v1.0.0` (with `kin-v1.0.0-rc.1` on the same commit) on 2026-10-17. Create, move or push
-tags only with the owner's explicit approval.
+Kin is at **v1.1.1 — Member and Notification Clarity**, released as
+`kin-v1.1.1` on 2026-10-18. It follows v1.1.0 — Connected Household Devices
+and Kin's first stable release,
+`kin-v1.0.0` (with `kin-v1.0.0-rc.1` on the same commit), released on
+2026-10-17. Create, move or push tags only with the owner's explicit approval.
 
-v1.0.0 includes everything since the last release, v0.10.3: the
+v1.1.1 clarifies member/device identity, pairing choices and device trust, and push
+recipients and diagnostics without changing persistent formats. v1.1.0 adds
+device names, household home-screen identity, opt-in content-free push
+notifications, service sandboxing, and QR pairing/phone-approved computer
+sign-in. v1.0.0 includes everything since the preceding release, v0.10.3: the
 tagged v0.11.x–v0.20.x review lines, the untagged v0.21.0–v0.47.0 development
 candidates, the desktop workspace UX, the performance refactor, and the v1.0
 readiness fixes. [CHANGELOG](CHANGELOG.md) lists every version and marks the
@@ -1178,6 +1184,8 @@ kin-v0.16.1
 kin-v0.16.2
 kin-v0.17.0
 kin-v1.0.0
+kin-v1.1.0
+kin-v1.1.1
 ```
 
 Never use ambiguous repository-wide tags such as `v0.0.1` or `v1.0.0`.

@@ -6,7 +6,7 @@ canonical events protected by the existing local and sync encryption
 boundaries. Rendering uses text nodes/textContent; household Step text is not
 treated as HTML or sent to an AI service.
 
-**Status:** Current as of v1.0.0. Local protected content is encrypted after verified migration. Sync is optional and uploads client-encrypted canonical event envelopes. The durable service receives no plaintext household event payloads or content keys, but it sees and persists routing and traffic metadata; no anonymity or zero-knowledge claim is made.
+**Status:** Current as of v1.1.1. Local protected content is encrypted after verified migration. Sync is optional and uploads client-encrypted canonical event envelopes. The durable service receives no plaintext household event payloads or content keys, but it sees and persists routing and traffic metadata; no anonymity or zero-knowledge claim is made.
 
 v0.10 encrypts local canonical events, duplicated outbox content, protected metadata
 and private sync key material. Household drafts remain in unlocked memory only;
@@ -39,6 +39,15 @@ Since You Last Looked stores only a local event cursor and local timestamp in th
 Household information can be highly personal. Sync remains disabled until an authenticated adult explicitly enables it. Local-only use continues without sync.
 
 ## Intended principles
+
+Future preferred member names and member/device groupings must be presentation
+carried in encrypted household events; they must not become relay authorization
+metadata. The existing automatic technical device name remains the narrow
+exception needed to identify a device before provisioning. Typed nicknames are
+not sent to the relay, and a preferred-member-name implementation must preserve
+that boundary. See
+[Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md) for
+the migration and cross-platform privacy checks.
 
 - **Local-first:** Begin with data stored and processed on the user's device where practical.
 - **Minimum server knowledge:** If a service is introduced, design it to know as little household content as reasonably possible.
