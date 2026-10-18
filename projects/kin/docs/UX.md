@@ -849,6 +849,8 @@ It should not evolve into:
 
 Its purpose is simply to keep quick household conversation near household context when useful.
 
+Household chat is separate and sits beside Talk under Updates → Chat ([ADR 0008](decisions/0008-household-chat.md)); this list still holds for Talk.
+
 ---
 
 # 8. Security, sync, and continuity UX
@@ -1087,6 +1089,8 @@ Never add by default:
 - exact activity timelines;
 - "Sam opened this at 8:42";
 - completion-performance analytics.
+
+Exception: household chat's read receipts, typing and "online now" are visible, switchable per member, reciprocal and never kept as history ([ADR 0008](decisions/0008-household-chat.md)). "Last seen" and location stay out.
 
 ---
 
@@ -1724,7 +1728,7 @@ For any significant UI PR:
 
 - [ ] No scoring.
 - [ ] No surveillance.
-- [ ] No passive read receipts.
+- [ ] No passive read receipts (chat's visible, switchable receipts follow [ADR 0008](decisions/0008-household-chat.md)).
 - [ ] No judgmental copy.
 - [ ] Attribution is factual.
 
