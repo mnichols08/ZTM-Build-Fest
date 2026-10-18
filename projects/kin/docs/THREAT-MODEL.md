@@ -1,6 +1,6 @@
 # Threat Model
 
-**Status:** Current as of v1.0.0; see [Known limitations at v1.0](#known-limitations-at-v10). Local authenticated encryption, credential/recovery root wrappers, locked startup, encrypted archives and signed transport-key migration complement encrypted sync. The service has durable identity/relay storage, backup/restore and explicit household lifecycle. Independent security audit, cross-browser certification and general rollback protection are not provided.
+**Status:** Current as of v1.1.0; see [Known limitations at v1.0](#known-limitations-at-v10). Local authenticated encryption, credential/recovery root wrappers, locked startup, encrypted archives and signed transport-key migration complement encrypted sync. The service has durable identity/relay storage, backup/restore and explicit household lifecycle. Independent security audit, cross-browser certification and general rollback protection are not provided.
 
 ## Refactor track: decrypted history in memory while unlocked
 
