@@ -14,7 +14,7 @@
 //   ids     { eventId, order }             one row per event: the log
 //                                          stores each event once, even when
 //                                          two tabs store it at the same time
-//   outbox  { deviceSequence, eventId, blobRef, retireRef, messageId }
+//   outbox  { deviceSequence, eventId, blobRef, retireRef, retireParts, messageId }
 //                                          this device's events not yet
 //                                          accepted by the relay, the content
 //                                          blob each must upload first, and
@@ -173,7 +173,7 @@ export class ChatLogStore {
    * sequence must follow the last one this device used, so two tabs sending
    * at once can't both take the same one; the loser retries.
    */
-  async addLocal(envelope, { blobRef = null, retireRef = null, messageId = null } = {}) {
+  async addLocal(envelope, { blobRef = null, retireRef = null, retireParts = [], messageId = null } = {}) {
     return transact(this.db, [EVENTS, IDS, OUTBOX, META], "readwrite", async ({ events, ids, outbox, meta }) => {
       const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
       if (envelope.deviceSequence !== state.deviceSequence + 1)
@@ -183,7 +183,7 @@ export class ChatLogStore {
       const order = state.nextOrder++;
       events.put({ order, eventId: envelope.eventId, envelope });
       ids.put({ eventId: envelope.eventId, order });
-      outbox.put({ deviceSequence: envelope.deviceSequence, eventId: envelope.eventId, blobRef, retireRef, messageId });
+      outbox.put({ deviceSequence: envelope.deviceSequence, eventId: envelope.eventId, blobRef, retireRef, retireParts, messageId });
       state.deviceSequence = envelope.deviceSequence;
       await settle(meta.put(state));
       return order;
@@ -193,7 +193,7 @@ export class ChatLogStore {
   /**
    * Replaces pending events' envelopes after renumbering or resealing them
    * (chat-room.js), and records the relay's sequence as settled. Each entry
-   * is { order, previousSequence, envelope, blobRef, retireRef }. Only events still in
+   * is { order, previousSequence, envelope, blobRef, retireRef, retireParts }. Only events still in
    * the outbox may be replaced: the relay has never accepted them.
    */
   async replacePending(entries, { expectedDeviceSequence, deviceSequence, provisional = false }) {
@@ -207,9 +207,9 @@ export class ChatLogStore {
         if (!(await settle(outbox.get(previousSequence))))
           throw new ChatLogError("Chat changed meanwhile; retry.", "chat_outbox_changed");
       for (const { previousSequence } of entries) outbox.delete(previousSequence);
-      for (const { order, envelope, blobRef, retireRef, messageId = null } of entries) {
+      for (const { order, envelope, blobRef, retireRef, retireParts = [], messageId = null } of entries) {
         events.put({ order, eventId: envelope.eventId, envelope });
-        outbox.put({ deviceSequence: envelope.deviceSequence, eventId: envelope.eventId, blobRef, retireRef, messageId });
+        outbox.put({ deviceSequence: envelope.deviceSequence, eventId: envelope.eventId, blobRef, retireRef, retireParts, messageId });
       }
       state.deviceSequence = deviceSequence;
       state.provisional = provisional;

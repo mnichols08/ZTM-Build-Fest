@@ -23,6 +23,10 @@ import { idToHex } from "../wasm/kin-engine.js";
 import { projectionContext } from "../browser-time.js";
 import { ChatBlobClient } from "./chat-blob-client.js";
 import { refHex } from "./chat-blob-crypto.js";
+import {
+  ATTACHMENT_PART_BYTES, ChatAttachmentError, MAX_ATTACHMENT_BYTES, PHOTO_TYPES, attachmentProblem, decodeManifest,
+  encodeManifest, manifestRefs, preparePhoto as browserPreparePhoto, safeAttachmentName, safeAttachmentType,
+} from "./chat-attachments.js";
 import { ChatBlobStore } from "./chat-blob-store.js";
 import { ChatBlobs } from "./chat-blobs.js";
 import { ChatLogError, ChatLogStore } from "./chat-log-store.js";
@@ -135,9 +139,9 @@ export class ChatRoom {
    * `request(path, options)` is the coordinator's authenticated request;
    * `blobs` a ChatBlobs (#110). `locks` serializes sending across tabs.
    */
-  static async open({ identity, keyStore, deviceKeys, engine, request, blobs, indexedDB, keyRange, locks = globalThis.navigator?.locks, now = () => Date.now(), onLocalChange = () => {} }) {
+  static async open({ identity, keyStore, deviceKeys, engine, request, blobs, indexedDB, keyRange, locks = globalThis.navigator?.locks, now = () => Date.now(), onLocalChange = () => {}, preparePhoto = browserPreparePhoto }) {
     const store = await ChatLogStore.open(identity.householdId, { indexedDB, keyRange });
-    const room = new ChatRoom({ identity, keyStore, deviceKeys, engine, request, blobs, store, locks, now, onLocalChange });
+    const room = new ChatRoom({ identity, keyStore, deviceKeys, engine, request, blobs, store, locks, now, onLocalChange, preparePhoto });
     try {
       await room.loadState();
       await room.refresh();
@@ -148,7 +152,7 @@ export class ChatRoom {
     return room;
   }
 
-  constructor({ identity, keyStore, deviceKeys, engine, request, blobs, store, locks, now, onLocalChange }) {
+  constructor({ identity, keyStore, deviceKeys, engine, request, blobs, store, locks, now, onLocalChange, preparePhoto }) {
     this.identity = identity;
     this.keyStore = keyStore;
     this.deviceKeys = deviceKeys;
@@ -159,6 +163,9 @@ export class ChatRoom {
     this.locks = locks;
     this.now = now;
     this.onLocalChange = onLocalChange;
+    this.preparePhoto = preparePhoto;
+    // Attachment manifests this device has opened, by manifest reference.
+    this.manifests = new Map();
     this.records = new ChatRecords();
     // eventId -> record index, for resealing pending events.
     this.indexById = new Map();
@@ -474,6 +481,176 @@ export class ChatRoom {
     return { messageId, eventId };
   }
 
+  /**
+   * Sends photos and files (#114) with an optional caption. Each file is
+   * sealed in parts as it is read (so a large file never sits in memory
+   * whole), then the manifest that names them. Resolves with
+   * { messageId, eventId } like send().
+   */
+  async sendAttachments({ text = "", files }) {
+    this.assertOpen();
+    const problem = attachmentProblem(files);
+    if (problem) throw new ChatRoomError(problem, "chat_attachment_invalid");
+    if (text !== "" && chatTextProblem(text)) throw new ChatRoomError(chatTextProblem(text), "chat_text_invalid");
+    const messageId = randomIdHex();
+    const prepared = [];
+    const kept = [];
+    let manifest;
+    try {
+      for (const file of files) {
+        const sealed = await this.sealFile(file);
+        prepared.push(sealed);
+        kept.push(...manifestRefs({ files: [sealed] }));
+      }
+      this.assertOpen();
+      const bytes = encodeManifest({ text, files: prepared });
+      try {
+        manifest = await this.blobs.sealBytes(bytes, { parts: kept });
+      } finally {
+        bytes.fill(0);
+      }
+    } catch (error) {
+      // Nothing was sent: this device's kept parts go too.
+      await this.blobs.retire(kept).catch(() => {});
+      throw error;
+    }
+    const hex = refHex(manifest.key);
+    manifest.key.fill(0);
+    const eventId = await this.author({ type: "post-chat-message", messageId, blobRef: manifest.ref, blobKey: hex, contentKind: "attachment" },
+      { blobRef: manifest.ref });
+    return { messageId, eventId };
+  }
+
+  /** One file as its manifest entry: photos are drawn again first, then the
+   * bytes are sealed in parts of ATTACHMENT_PART_BYTES. */
+  async sealFile(file) {
+    let source = file;
+    let thumbnail = null;
+    if (PHOTO_TYPES.has(file.type)) {
+      const photo = await this.preparePhoto(file);
+      source = photo.blob;
+      thumbnail = photo.thumbnail;
+    }
+    if (source.size < 1) throw new ChatAttachmentError(`${safeAttachmentName(file.name)} is empty. Choose a file that has content.`);
+    if (source.size > MAX_ATTACHMENT_BYTES)
+      throw new ChatAttachmentError(`${safeAttachmentName(file.name)} is too large to send${source !== file ? " even with its details removed" : ""}. Files can be 25 MB or smaller.`);
+    const parts = await this.sealParts(source);
+    const thumb = thumbnail ? (await this.sealParts(thumbnail))[0] : null;
+    return { name: safeAttachmentName(file.name), type: safeAttachmentType(source.type || file.type), size: source.size, thumbnail: thumb, parts };
+  }
+
+  /** Seals a blob's bytes part by part; each part is kept until sent. */
+  async sealParts(source) {
+    const parts = [];
+    for (let offset = 0; offset < source.size; offset += ATTACHMENT_PART_BYTES) {
+      this.assertOpen();
+      const bytes = new Uint8Array(await source.slice(offset, offset + ATTACHMENT_PART_BYTES).arrayBuffer());
+      try {
+        const sealed = await this.blobs.sealBytes(bytes);
+        parts.push({ ref: sealed.ref, key: refHex(sealed.key), size: bytes.length });
+        sealed.key.fill(0);
+      } finally {
+        bytes.fill(0);
+      }
+    }
+    return parts;
+  }
+
+  /**
+   * An attachment message's caption and file list (names, types, sizes),
+   * opened once per device and remembered until the room closes. Throws
+   * with code chat_attachment_deleted or chat_attachment_pending when its
+   * manifest isn't available.
+   */
+  async openAttachment(message) {
+    const manifest = await this.manifestOf(message);
+    return {
+      text: manifest.text,
+      files: manifest.files.map((file) => ({ name: file.name, type: file.type, size: file.size, photo: Boolean(file.thumbnail) })),
+    };
+  }
+
+  async manifestOf(message) {
+    this.assertOpen();
+    if (message.contentKind !== "attachment" || !message.blobRef) throw new ChatAttachmentError("This message has no attachments.");
+    // Deleted here (or on the service) since it was opened: no longer shown.
+    if (await this.blobs.store.isRetired(message.blobRef)) {
+      this.manifests.delete(message.blobRef);
+      throw new ChatRoomError("This message was deleted.", "chat_attachment_deleted");
+    }
+    const cached = this.manifests.get(message.blobRef);
+    if (cached) return cached;
+    const opened = await this.blobs.openBytes({ ref: message.blobRef, key: message.blobKey });
+    if (opened.deleted) throw new ChatRoomError("This message was deleted.", "chat_attachment_deleted");
+    if (opened.pending) throw new ChatRoomError("This message is still arriving.", "chat_attachment_pending");
+    let manifest;
+    try {
+      manifest = decodeManifest(opened.bytes);
+    } finally {
+      opened.bytes.fill(0);
+    }
+    // Its parts are now known: kept with the manifest, so deleting it can
+    // delete them here too.
+    await this.blobs.store.keepParts(message.blobRef, manifestRefs(manifest));
+    this.manifests.set(message.blobRef, manifest);
+    return manifest;
+  }
+
+  /** One file's bytes, as a Blob, fetched and checked part by part. */
+  async attachmentFile(message, index) {
+    const file = (await this.manifestOf(message)).files[index];
+    if (!file) throw new ChatAttachmentError("This attachment couldn't be opened.");
+    const chunks = await this.partBytes(file.parts, file.size);
+    try {
+      return new Blob(chunks, { type: file.type });
+    } finally {
+      for (const chunk of chunks) chunk.fill(0);
+    }
+  }
+
+  /** A photo's thumbnail as a Blob, or null for a file without one. */
+  async attachmentThumbnail(message, index) {
+    const file = (await this.manifestOf(message)).files[index];
+    if (!file?.thumbnail) return null;
+    const [bytes] = await this.partBytes([file.thumbnail], file.thumbnail.size);
+    try {
+      return new Blob([bytes], { type: "image/jpeg" });
+    } finally {
+      bytes.fill(0);
+    }
+  }
+
+  async partBytes(parts, size) {
+    const chunks = [];
+    let total = 0;
+    for (const part of parts) {
+      this.assertOpen();
+      const opened = await this.blobs.openBytes({ ref: part.ref, key: bytesOfHex(part.key) });
+      if (opened.deleted) throw new ChatRoomError("This attachment was deleted.", "chat_attachment_deleted");
+      if (opened.pending) throw new ChatRoomError("This attachment is still arriving.", "chat_attachment_pending");
+      if (opened.bytes.length !== part.size) throw new ChatAttachmentError("This attachment couldn't be opened.");
+      total += opened.bytes.length;
+      chunks.push(opened.bytes);
+    }
+    if (total !== size) throw new ChatAttachmentError("This attachment couldn't be opened.");
+    return chunks;
+  }
+
+  /** The blobs an attachment message's removal must also delete (its
+   * parts): from this device's kept copy, else its manifest. Deleted or still
+   * arriving content has none to name. */
+  async attachmentParts(message) {
+    if (message.contentKind !== "attachment" || !message.blobRef) return [];
+    const known = (await this.blobs.store.partsOf([message.blobRef])).get(message.blobRef);
+    if (known) return known;
+    try {
+      return manifestRefs(await this.manifestOf(message));
+    } catch (error) {
+      if (error.code === "chat_attachment_deleted" || error.code === "chat_attachment_pending") return [];
+      throw error;
+    }
+  }
+
   /** Seals text into a kept blob; the key goes into the event as hex. */
   async sealText(text) {
     this.assertOpen();
@@ -494,13 +671,15 @@ export class ChatRoom {
 
   /** Deletes a message for everyone: the author's own, or as an admin. */
   async remove(message, { byAdmin = false } = {}) {
+    const retireParts = await this.attachmentParts(message);
     return this.author({ type: "delete-chat-message", messageId: message.messageId, byAdmin },
-      { retireRef: message.blobRef });
+      { retireRef: message.blobRef, retireParts });
   }
 
-  async author(command, { blobRef = null, retireRef = null }) {
+  async author(command, { blobRef = null, retireRef = null, retireParts = [] }) {
     this.assertOpen();
     if (retireRef !== null && !REF.test(retireRef)) retireRef = null;
+    retireParts = retireParts.filter((ref) => REF.test(ref));
     const write = async () => {
       // Another tab may have stored events (or sent) since this one read.
       await this.refresh();
@@ -534,7 +713,7 @@ export class ChatRoom {
         result.encodedEvent.fill(0);
       }
       this.assertOpen();
-      await this.store.addLocal(envelope, { blobRef, retireRef, messageId: command.messageId });
+      await this.store.addLocal(envelope, { blobRef, retireRef, retireParts, messageId: command.messageId });
       await this.refresh();
       return eventId;
     };
@@ -674,7 +853,7 @@ export class ChatRoom {
    * may not delete that blob) is reported and the entry is dropped anyway:
    * retrying would block every later message. */
   async finishSent(rows) {
-    const refs = rows.map((row) => row.retireRef).filter((ref) => ref);
+    const refs = rows.flatMap((row) => [row.retireRef, ...(row.retireParts ?? [])]).filter((ref) => ref);
     if (refs.length) {
       const { remoteError } = await this.blobs.retire(refs, { remote: refs });
       if (remoteError && !FINAL_RETIRE_REFUSALS.has(remoteError.code)) throw remoteError;
@@ -724,7 +903,7 @@ export class ChatRoom {
       } finally {
         plaintext.fill(0);
       }
-      entries.push({ order: index + 1, previousSequence: row.deviceSequence, envelope, blobRef: row.blobRef ?? null, retireRef: row.retireRef ?? null, messageId: row.messageId ?? null });
+      entries.push({ order: index + 1, previousSequence: row.deviceSequence, envelope, blobRef: row.blobRef ?? null, retireRef: row.retireRef ?? null, retireParts: row.retireParts ?? [], messageId: row.messageId ?? null });
     }
     await this.store.replacePending(entries, { expectedDeviceSequence, deviceSequence });
   }
@@ -840,6 +1019,7 @@ export class ChatRoom {
     this.pending.clear();
     this.pendingMessages.clear();
     this.retiredApplied.clear();
+    this.manifests.clear();
     this.hidden?.clear();
     this.listeners.clear();
     this.deviceKeys = null;
@@ -848,3 +1028,8 @@ export class ChatRoom {
   }
 }
 
+/** Bytes from lowercase hex (64 characters for a key). */
+function bytesOfHex(hex) {
+  if (typeof hex !== "string" || !/^([a-f0-9]{2})+$/.test(hex)) throw new ChatAttachmentError("This attachment couldn't be opened.");
+  return Uint8Array.from(hex.match(/../g), (pair) => Number.parseInt(pair, 16));
+}

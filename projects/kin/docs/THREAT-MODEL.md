@@ -449,6 +449,19 @@ directory says about revocation) can make it a recipient of later revisions,
 as with household key rotation. The service learns that a member's record
 changed, its size and when. A member's device that never syncs again keeps showing what it showed.
 
+**Photos and files (#114, in place).** An attachment is one sealed manifest
+(the message's content blob: caption, file names, types and sizes, and the
+keys of its parts) plus one sealed blob per 1 MiB part and per photo
+thumbnail, each under its own key. The service sees part sizes and hashes,
+and the number of parts, which bounds a file's size to within a megabyte; it
+never sees names, types or contents. Photos are drawn again on the device,
+which drops their location, camera and other metadata; a browser that can't
+do that refuses the photo. Other files are sent as they are, so a PDF's own
+metadata goes with it. A member's device keeps decrypted names only while
+the room is open. Deleting the message retires the manifest and every part
+on the service and on each device that kept them; a copy a member saved or
+downloaded is not recalled.
+
 **Planned.** Each chat story records its own detail here as it lands.
 
 ### v1.0 was not tested across every browser and device
