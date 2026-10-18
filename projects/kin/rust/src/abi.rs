@@ -142,6 +142,11 @@ impl AbiState {
         self.previous_projection = None;
     }
 
+    /// Empties the chat log, keeping the text arena (`kin_chat_history_reset`).
+    fn reset_chat_history(&mut self) {
+        self.chat_history.clear();
+    }
+
     /// Publishes an operation's outcome as the result or error buffer and
     /// returns the status code.
     fn publish(&mut self, outcome: Result<Vec<u8>, KinError>, locate: Option<Locate>) -> i32 {
@@ -309,12 +314,14 @@ pub extern "C" fn kin_device_names(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::device_names, None)
 }
 
-/// Empties the instance's chat log. Always succeeds.
+/// Empties the instance's chat log. Always succeeds. The text arena stays:
+/// its texts are content-addressed and independent of the log, and the
+/// history mirror resets the log whenever it is handed a plain array, so
+/// clearing texts here would drop them before every such page. `kin_clear`
+/// drops both on lock.
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
 pub extern "C" fn kin_chat_history_reset() -> i32 {
-    let mut state = lock_state();
-    state.chat_history.clear();
-    state.chat_texts.clear();
+    lock_state().reset_chat_history();
     0
 }
 
@@ -645,6 +652,38 @@ mod tests {
             "lengths must cover the result"
         );
         assert_eq!(command_projection(&result[..10]), None);
+    }
+
+    #[test]
+    fn resetting_the_chat_log_keeps_texts_and_clearing_drops_both() {
+        let mut state = AbiState::new();
+        let mut post = vec![0u8; 88 + 84];
+        post[..2].copy_from_slice(&1u16.to_le_bytes());
+        post[2..4].copy_from_slice(&44u16.to_le_bytes());
+        for range in [4..20, 20..36, 36..52, 52..68] {
+            post[range].fill(0x11);
+        }
+        post[68..76].copy_from_slice(&1_791_475_200_000i64.to_le_bytes());
+        post[76..84].copy_from_slice(&1u64.to_le_bytes());
+        post[84..88].copy_from_slice(&84u32.to_le_bytes());
+        post[88..104].fill(0x07);
+        post[104] = 1;
+        post[108..140].fill(0xa1);
+        post[140..172].fill(0xc1);
+        let mut batch = 1u32.to_le_bytes().to_vec();
+        batch.extend_from_slice(&(post.len() as u32).to_le_bytes());
+        batch.extend_from_slice(&post);
+        state.chat_history.append(&batch).unwrap();
+        state.chat_texts.put([0xa1; 32], b"Dinner at 6").unwrap();
+        // The history mirror resets the log before re-sending a plain array;
+        // the texts it was given must survive that.
+        state.reset_chat_history();
+        assert!(state.chat_history.is_empty());
+        assert_eq!(state.chat_texts.get(&[0xa1; 32]), Some(&b"Dinner at 6"[..]));
+        state.chat_history.append(&batch).unwrap();
+        state.clear();
+        assert!(state.chat_history.is_empty());
+        assert!(state.chat_texts.is_empty());
     }
 
     #[test]

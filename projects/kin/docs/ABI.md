@@ -13,7 +13,7 @@ kin_history_append(ptr, len)         append a record batch to the history
 kin_history_truncate(count) -> status   keep the first `count` records
 kin_project(ptr, len)                replay the history: KINE context -> KINS
 kin_device_names(ptr, len)           replay the history: KINE context -> KDEV (v1.1)
-kin_chat_history_reset() -> status   empty the chat log (and the text arena)
+kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
 kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
 kin_chat_history_truncate(count) -> status   keep the chat log's first `count`
 kin_chat_execute(ptr, len)           chat command: length + KCMD + KINE context -> KCMT
