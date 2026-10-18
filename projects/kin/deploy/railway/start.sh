@@ -95,7 +95,9 @@ for old in $(ls -1t "$backups"/kin-*.sqlite 2>/dev/null | tail -n "+$((keep + 1)
   [ "$(realpath -m -- "$old")" = "$protect" ] || rm -f -- "$old"
 done
 
-as_node node /app/server/server.mjs &
+# start.mjs runs the service inside Node's permission model (reads /app,
+# reads and writes only the data directory) and forwards TERM to it.
+as_node node /app/server/start.mjs &
 kin=$!
 as_node caddy run --config /app/Caddyfile --adapter caddyfile &
 caddy=$!

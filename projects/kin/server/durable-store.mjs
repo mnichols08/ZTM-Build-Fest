@@ -253,12 +253,14 @@ export class DurableStore {
     }
 
     try {
+      // node:sqlite's own busy timeout replaces the earlier busy_timeout
+      // pragma: a locked database is retried for this long (#106).
       this.db = new DatabaseSync(this.databasePath, {
         readOnly: readonly,
         enableForeignKeyConstraints: true,
+        timeout: BUSY_TIMEOUT_MS,
       });
       sqlitePragma(this.db, "foreign_keys = ON");
-      sqlitePragma(this.db, `busy_timeout = ${BUSY_TIMEOUT_MS}`);
       sqlitePragma(this.db, "trusted_schema = OFF");
       if (!readonly && this.databasePath !== ":memory:") {
         sqlitePragma(this.db, "journal_mode = WAL");
@@ -311,10 +313,22 @@ export class DurableStore {
       );
   }
 
+  /** `using store = new DurableStore(…)` closes it at the end of the block. */
+  [Symbol.dispose]() {
+    this.close();
+  }
+
   transaction(operation) {
     this.assertAvailable();
     const depth = this.transactionDepth;
     const savepoint = `kin_transaction_${depth}`;
+    // SQLite's own view must agree with the nesting count: an outer call
+    // opens the only transaction. Anything else is a leaked transaction,
+    // and continuing could commit someone else's partial work.
+    if (this.db.isTransaction !== depth > 0) {
+      this.failed = true;
+      throw new DurableStoreError("Kin found an unexpected open database transaction.");
+    }
     let began = false;
     this.transactionDepth += 1;
     try {

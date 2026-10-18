@@ -63,7 +63,7 @@ rustup target add wasm32-unknown-unknown
 ./projects/kin/run.ps1
 ```
 
-The script builds the WASM module and serves the web app at `http://localhost:8000`. On Windows, if PATH selects Node.js older than 24.16.0, `run.ps1` uses the lowest compatible version already installed with fnm; it does not install Node.js. On macOS/Linux, run `sh projects/kin/run.sh` from the repository root with Node.js 24.16.0 or later on PATH.
+The script builds the WASM module and serves the web app at `http://localhost:8000`, inside Node's permission model (the service can read the app and write only its data directory; see [DEVELOPMENT](docs/DEVELOPMENT.md#the-service-sandbox)). On Windows, if PATH selects Node.js older than 24.16.0, `run.ps1` uses the lowest compatible version already installed with fnm; it does not install Node.js. On macOS/Linux, run `sh projects/kin/run.sh` from the repository root with Node.js 24.16.0 or later on PATH.
 
 The service database defaults to `projects/kin/.kin-data/kin.sqlite`; set
 `KIN_DATA_DIR` or `KIN_DATABASE_PATH` to choose another location. Keep the data
@@ -107,7 +107,7 @@ location / {
 ```
 
 ```sh
-KIN_ORIGIN=https://kin.example.org KIN_TRUSTED_PROXIES=127.0.0.1,::1 node server/server.mjs
+KIN_ORIGIN=https://kin.example.org KIN_TRUSTED_PROXIES=127.0.0.1,::1 node server/start.mjs
 ```
 
 The proxy must **replace** `X-Forwarded-For` with the address it saw, as above;
@@ -138,7 +138,7 @@ created, so a cap reached in between refuses after it). An invalid value for eit
 with an explanation.
 
 ```sh
-KIN_ORIGIN=https://kin.example.org KIN_TRUSTED_PROXIES=127.0.0.1,::1 KIN_ALLOW_NEW_HOUSEHOLDS=false node server/server.mjs
+KIN_ORIGIN=https://kin.example.org KIN_TRUSTED_PROXIES=127.0.0.1,::1 KIN_ALLOW_NEW_HOUSEHOLDS=false node server/start.mjs
 ```
 
 The service persists household identity, authorization metadata, opaque relay

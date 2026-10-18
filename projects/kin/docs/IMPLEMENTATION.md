@@ -65,7 +65,9 @@ Rust core is organised as follows:
 ## Server modules today (refactor track)
 
 - `server.mjs`: the HTTP server and routes. `http-body.mjs` reads request
-  bodies with their byte limit enforced as they stream.
+  bodies with their byte limit enforced as they stream. `start.mjs` starts it
+  inside Node's permission model, whose flags and startup check live in
+  `permissions.mjs`; `server.mjs` refuses to serve without that sandbox.
 - `durable-store.mjs`: the SQLite store's core (opening, locks,
   transactions, backup, restore). Its method groups live in `durable-store/`:
   `schema.mjs`, `validation.mjs`, `identity.mjs`, `lifecycle.mjs`,

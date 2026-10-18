@@ -29,4 +29,5 @@ VOLUME /data
 # container's network namespace (compose.yaml) and is the only way in.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["node", "-e", "fetch('http://127.0.0.1:8000/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
-CMD ["node", "server/server.mjs"]
+# start.mjs runs the service inside Node's permission model (server/permissions.mjs).
+CMD ["node", "server/start.mjs"]

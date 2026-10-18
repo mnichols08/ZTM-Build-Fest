@@ -79,6 +79,40 @@ Stable needs the same target (`rustup target add wasm32-unknown-unknown
 differ in bytes from the pinned build, formatting or Clippy findings may
 differ, and it does not count as a pass of the gate.
 
+### The service sandbox
+
+The service runs under Node's permission model (#106). `server/start.mjs`
+(which `npm start`, `run.sh`, `run.ps1` and the container use) creates the
+data directory, then starts `server/server.mjs` with `--permission`, read
+access to the app directory and read and write access to the data directory
+only. The service cannot start child processes or workers, or load addons or
+WASI, and it refuses to start without the sandbox, naming any path missing
+from its allowlist. `server/permissions.mjs` builds the flags.
+
+- `npm run dev` runs `node --watch server/server.mjs --unrestricted`: Node's
+  watch mode restarts the service as a child process, which the sandbox
+  forbids, so development runs without it and logs that it did.
+- Maintenance commands (`server/admin.mjs` backup and restore,
+  `deploy/railway/snapshot.mjs`) run outside the sandbox as short-lived
+  processes, because they write outside the data directory.
+- The permission model checks Node's own file APIs. SQLite's file I/O is
+  native and unchecked (SQL such as `ATTACH` could write elsewhere); no
+  request input reaches SQL text. `fsync` is unavailable inside the sandbox,
+  so anything that needs durable writes belongs in SQLite.
+- The launcher passes the canonical database path to the service, because the
+  model compares paths as written: a symlinked data directory works through
+  `start.mjs`. A data directory that is the app directory, or contains it, is
+  refused.
+- Running `node server/server.mjs` directly (for example from a systemd unit)
+  is refused; use `node server/start.mjs`.
+- Node's permission model disables `fsync`, so the service's lock file is not
+  fsynced (the exclusive create is the lock; its content is diagnostic). The
+  database's own durability is SQLite's.
+- Node tests that start the service run it inside the same sandbox, and
+  `server/permissions.test.mjs` checks that writes outside the data directory,
+  child processes and workers are denied. The gate gives every Node test a
+  two-minute timeout.
+
 Node.js 24.16.0 is the supported runtime floor: earlier Node 24 releases (and Node 22) can corrupt `node:sqlite` TEXT values that contain NUL characters. CI runs Node 24.22.0 on Windows and Linux. Other operating-system and runtime/architecture combinations remain unverified.
 
 ## Browser capabilities

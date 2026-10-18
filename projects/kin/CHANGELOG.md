@@ -7,6 +7,22 @@ documentation only.
 
 ## Unreleased — v1.1.0
 
+### Service sandbox (#106)
+
+- **Node's permission model.** The service now runs with `--permission`: it can
+  read the app directory and read and write only its data directory, and
+  cannot start processes or workers or load addons. `server/start.mjs` starts
+  it that way (`npm start`, `run.sh`, `run.ps1`, the container and Railway),
+  and the service refuses to start otherwise. `npm run dev` stays unsandboxed
+  because Node's watch mode needs a child process.
+- **If you start Kin your own way** (a systemd unit, a script running
+  `node server/server.mjs`), switch it to `node server/start.mjs`: the service
+  now refuses to start outside the sandbox.
+- `node:sqlite`'s own busy timeout replaces the pragma, and every transaction
+  checks SQLite agrees about whether one is open.
+- New routes use `URLPattern`; locks and stores support `using`.
+- The verification gate gives every Node test a two-minute timeout.
+
 ### Household name and icon on home screens (#78)
 
 - **Opt-in.** In Identity & defaults → Home screen, a household admin can show
