@@ -39,6 +39,7 @@ export class EncryptedSyncService {
   forgetHousehold(householdId) {
     this.households.delete(householdId);
     this.pushService?.removeUntrusted(householdId);
+    this.liveService?.revalidate(householdId);
   }
 
   status(sessionToken) {
@@ -361,6 +362,8 @@ export class EncryptedSyncService {
     // It runs in the background and can never fail or delay this response.
     if (staged.length) {
       try { this.pushService?.eventsAccepted(auth.household.id, auth.member.id); } catch { /* best effort */ }
+      // And to connected devices at once, over the live channel (#107).
+      try { this.liveService?.eventsAccepted(auth.household.id, auth.device.id); } catch { /* best effort */ }
     }
     return {
       accepted: envelopes.length,
@@ -882,6 +885,8 @@ export class EncryptedSyncService {
   onAccessChange(householdId, excludedDeviceIds = []) {
     // Devices that lost access stop getting notifications at once (#85).
     this.pushService?.removeUntrusted(householdId, excludedDeviceIds);
+    // Live sockets of devices that lost access close at once (#107).
+    this.liveService?.revalidate(householdId);
     const state = this.state(householdId);
     state.rotationPending = true;
     // Keep committed packages only for recipients who still hold trust.

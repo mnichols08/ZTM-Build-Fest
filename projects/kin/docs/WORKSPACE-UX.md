@@ -20,7 +20,7 @@ and on any screen size:
 | Question | Where the answer lives |
 | --- | --- |
 | What needs attention now? | **Today**: task counts, plans still open from earlier, planned-for-today items, plans coming up, routines due in the current period, handoffs waiting, catch-up |
-| Where do things live? | **Lists** (To do · Shopping · Staples), **Routines**, **Updates** (Handoffs · Talk), **Household** |
+| Where do things live? | **Lists** (To do · Shopping · Staples), **Routines**, **Updates** (Handoffs · Talk; Chat planned, #104), **Household** |
 | How do I add something? | A capture field at the top of Today and of every list, each fixed to where it lands |
 | How do I open its details? | The item text or its `Details` control opens one shared detail view |
 | Did it save, and is it syncing? | Inline result next to the capture field; a header status chip for device/sync state |

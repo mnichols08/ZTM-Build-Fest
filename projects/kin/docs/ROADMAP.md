@@ -424,7 +424,7 @@ Through the October plan, preserve the [product principles](PRINCIPLES.md) and [
 - No points, streak pressure, rankings, contribution percentages or spouse scoring.
 - No covert location, presence or activity surveillance.
 - No enterprise workflow builder, arbitrary RBAC, Gantt/sprint/project-management expansion.
-- No chat replacement, public social network or anonymous household sharing. (Household chat, #104, is a later owner decision for members of one household, not a general messenger; its own decision record, #105, has to reconcile it with this boundary.)
+- No general messenger, public social network or anonymous household sharing. Household chat (#104) is one room for the members of one household, beside Talk, decided in [ADR 0008](decisions/0008-household-chat.md) (#105): its receipts, typing and "online now" are visible, switchable, reciprocal and never kept as history.
 - No forced `v1.0.0` on October 31.
 
 ## Scope discipline

@@ -371,6 +371,35 @@ and iPad until it is added again.
 
 **Planned.** Nothing further; this is the opt-in trade the feature makes.
 
+### Household chat: what the service and members learn (planned, #104)
+
+**What it is.** The household chat epic ([ADR 0008](decisions/0008-household-chat.md))
+adds a chat room with read receipts, typing indicators and "online now". This
+entry records the boundary before the code exists; each story updates it.
+
+**Who and what.**
+- **The service** relays encrypted chat events and stores encrypted content
+  blobs. It never sees message text, file names or contents, which message
+  someone read, or what anyone typed. It does learn routing metadata: when a
+  device holds a live connection, which device sent each event, roughly
+  when messages are sent and how
+  large they and their blobs are, and, while a member shares them, that a
+  receipt, typing or presence signal passed between devices.
+- **Household members** see each other's read receipts, typing and "online
+  now" only while both share them; each member can turn off sending their
+  own, which also stops showing them others'. None is kept as history: there
+  is no "last seen".
+- **Deleted messages.** Deleting or editing a message deletes its content
+  blob on the relay and on every device (offline devices when they next
+  sync); the log keeps the message event (who sent it, when, and that it was
+  edited or deleted) but not its content. Nothing can recall what someone
+  already saw, screenshotted, downloaded or exported, and a device that never
+  syncs again keeps its copy.
+- **Admin removal** of another member's message is shown to everyone as
+  "Removed by an admin", never silent.
+
+**Planned.** Each chat story records its own detail here as it lands.
+
 ### v1.0 was not tested across every browser and device
 
 **What it is.** v1.0 shipped on the owner's decision with limited real-world

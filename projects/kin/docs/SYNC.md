@@ -316,6 +316,47 @@ When a push batch with new events commits, the relay asks the push service
 response is decided, in the background; it can't fail, delay or reorder sync,
 and a duplicate-only batch notifies nobody. See [Push notifications](PUSH.md).
 
+## Live channel (v1.1, #107)
+
+A trusted device can hold one WebSocket to the service at `/api/live`, so the
+service can say "something is new" at once instead of waiting for the next
+poll. Household data still moves only over the HTTP sync routes, which stay
+the fallback whenever the socket is closed.
+
+- **Native.** RFC 6455 is implemented on `node:http`'s `upgrade` event and
+  `node:crypto` (`server/live/websocket.mjs`): the handshake, a streaming
+  frame parser, ping/pong and close handling. No extensions (no
+  `permessage-deflate`), no subprotocols, binary messages only; every client
+  frame must be masked; a message is at most 256 KiB in at most 128 frames.
+  The parser is a loop over a header state machine and unmasks payloads in
+  place.
+- **Access.** The upgrade needs Kin's exact `Origin` (against cross-site
+  WebSocket hijacking), a session on a trusted device of an active member, and
+  a household not being deleted. One socket per device; a newer one replaces
+  the older (close 4409).
+- **Losing access closes the socket at once.** A signed-out or expired
+  session closes with 4401; a revoked device, removed member or household
+  being deleted with 4403. Revocation, replacement and recovery approvals,
+  member and membership changes, sign-out and deletion re-check a
+  household's sockets; a timer fires when the session or a Temporary
+  membership expires; every ping (25 s) re-checks too, and two unanswered
+  pings close the socket. A storage failure closes with 1011 (the upgrade
+  answers 503), never as lost access. A client that half-closes is let go
+  at once.
+- **Backpressure.** Messages queue while the socket can't take more (a sync
+  hint already waiting isn't queued again); past 1 MiB the socket closes
+  with 4429 and the device catches up over HTTP.
+- **Limits.** At most 4,096 sockets at once, counting those still closing;
+  a device holds at most two (one open, one closing), so a device that
+  reconnects in a loop can't crowd others out.
+  Stopping the service closes every socket within a quarter of a second.
+- **Messages.** Each binary message carries one record,
+  `[u8 type][u8 flags][u16 reserved][u32 length][payload]`, little-endian.
+  The service sends `HELLO` (1) when the socket opens and `SYNC_HINT` (2) to a
+  household's other devices when events are accepted. Both are empty: a hint
+  says neither what changed nor who changed it. Clients send nothing yet; an
+  unknown record type closes the socket.
+
 ## Privacy boundary
 
 Ciphertext payloads conceal content only to the extent that key management and client integrity hold. The relay can still observe routing IDs, ciphertext lengths, timing, delivery patterns, and possibly IP/log metadata. Document retention and access controls for these fields. Do not claim perfect anonymity, complete metadata privacy, or protection from a compromised authorized client.
