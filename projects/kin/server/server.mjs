@@ -1478,7 +1478,7 @@ function setHeaders(response) {
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader(
     "Permissions-Policy",
-    "camera=(), microphone=(), geolocation=()",
+    "camera=(self), microphone=(), geolocation=()",
   );
 }
 // The service worker keys its shell cache by the release in the registration
