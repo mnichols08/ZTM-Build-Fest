@@ -188,16 +188,19 @@ key, its edited-at time the second edit's; message 2 deleted with a zero blob
 and key; retired blobs message 1 v0, message 1 v1, message 2 v0, in that
 order.
 
-**031 — Conflicts change nothing.** Against a posted text message and a
-posted attachment, each of these leaves the chat unchanged: a second post of
-the same ID (by anyone), an edit by another member, an edit to the same
-blob, an edit of the attachment, an edit or deletion of an unknown message,
-and a non-admin deletion by another member. Nothing changes a deleted
-message.
+**031 — Conflicts change nothing shown.** Against a posted text message and a
+posted attachment, each of these leaves the messages and claims unchanged: a
+second post of the same ID (by anyone), an edit by another member, an edit
+of the attachment (each retires its new blob), an edit to an already-seen
+blob, a post reusing another message's blob, an edit or deletion of an
+unknown message, and a non-admin deletion by another member (none retires
+anything). Nothing changes a deleted message; an edit after it retires its
+blob.
 
 **032 — Delete beats edit.** An edit and a deletion by the author at the same
 logical time, from two devices, in both replay orders: the message ends
-deleted with a zero blob, and no blob survives.
+deleted with a zero blob, and both blobs it had (the original and the edit's)
+are retired.
 
 **033 — Admin claims.** An admin removes member 1's message twice and member
 2 claims once. Replay records the claims (the admin once) and leaves the
@@ -217,7 +220,12 @@ describes, and reading the page forgets the retired blobs' texts.
 
 **036 — Long chat.** 100,000 posts, one in ten edited, one in twenty deleted:
 the newest page of 50 replays within the test's bound, and the next page
-reuses the checkpoint.
+reuses the checkpoint (`History::last_replay_reused`).
+
+**037 — One event per blob.** Edits A, B, then A again: the third changes
+nothing, and the message keeps B with A retired once. A second message
+reusing the first's blob is no message, so deleting the first retires only
+its own blob. Commands refuse both reuses.
 
 ## Push payload (RFC 8291)
 

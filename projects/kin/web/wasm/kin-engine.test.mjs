@@ -231,8 +231,10 @@ test("chat posts, edits, deletes and pages from its own log through real WASM (#
   run({ type: "edit-chat-message", messageId: "01".repeat(16), blobRef: blob(0xa3), blobKey: blob(0xc3) }, context(3));
   // Only the author edits; your own message is not deleted "as admin".
   assert.throws(() => engine.executeChatCommand({ type: "edit-chat-message", messageId: "01".repeat(16), blobRef: blob(0xa4), blobKey: blob(0xc4) }, context(4, other), chat, asOf, day), (error) => error.code === 4);
-  assert.throws(() => engine.executeChatCommand({ type: "delete-chat-message", messageId: "01".repeat(16), byAdmin: true }, context(4), chat, asOf, day), (error) => error.code === 4);
-  run({ type: "delete-chat-message", messageId: "02".repeat(16), byAdmin: true }, context(4, admin));
+  assert.throws(() => engine.executeChatCommand({ type: "delete-chat-message", messageId: "01".repeat(16), byAdmin: true }, context(4), chat, asOf, day, null, [hex(member)]), (error) => error.code === 4);
+  // A removal needs its actor among the admins the host names.
+  assert.throws(() => engine.executeChatCommand({ type: "delete-chat-message", messageId: "02".repeat(16), byAdmin: true }, context(4, admin), chat, asOf, day), (error) => error.code === 4);
+  chat.push(engine.executeChatCommand({ type: "delete-chat-message", messageId: "02".repeat(16), byAdmin: true }, context(4, admin), chat, asOf, day, null, [hex(admin)]).encodedEvent);
   assert.deepEqual(engine.putChatTexts([{ blobRef: blob(0xa3), text: "Dinner at 6" }, { blobRef: blob(0xa2), text: "\u0007" }]), [true, false]);
   const page = engine.chatPage(chat, { includeRetired: true, admins: [hex(admin)] }, asOf, day);
   assert.equal(page.total, 2);
@@ -250,6 +252,10 @@ test("chat posts, edits, deletes and pages from its own log through real WASM (#
   assert.throws(() => engine.executeCommand({ type: "post-chat-message", messageId: "09".repeat(16), blobRef: blob(0xa9), blobKey: blob(0xc9) }, context(6), [], asOf, null, day), (error) => error.code === 4);
   assert.throws(() => engine.executeChatCommand({ type: "add", text: "Milk" }, context(6), chat, asOf, day), (error) => error.code === 2);
   assert.equal(engine.applyEvents([], asOf, null, day).items.length, 0);
+  // Texts last until lock, or until cleared.
+  engine.putChatTexts([{ blobRef: blob(0xa5), text: "kept" }]);
+  engine.clearChatTexts();
+  assert.equal(engine.chatPage(chat, {}, asOf, day).messages.some((message) => message.text !== null), false);
 });
 
 test("Attachment bind and remove intent payloads roundtrip through real WASM", async () => {

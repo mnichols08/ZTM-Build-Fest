@@ -63,6 +63,24 @@ fn posted(event: u32, actor: [u8; 16], device: u8, id: u8, kind: u8) -> Vec<u8> 
     record(44, event, actor, device, &payload)
 }
 
+/// A post of message `id` carrying blob version `version` of it.
+fn posted_version(event: u32, actor: [u8; 16], device: u8, id: u8, version: u8) -> Vec<u8> {
+    let mut payload = message(id).to_vec();
+    payload.extend_from_slice(&[1, 0, 0, 0]);
+    payload.extend_from_slice(&blob(id, version));
+    payload.extend_from_slice(&key(id, version));
+    record(44, event, actor, device, &payload)
+}
+
+/// What a page can show: the messages and the admin claims.
+type Shown = (
+    Vec<ChatMessage>,
+    std::collections::BTreeMap<ChatMessageId, Vec<ActorId>>,
+);
+fn shown(state: &ChatState) -> Shown {
+    (state.messages.clone(), state.admin_claims.clone())
+}
+
 fn edited(event: u32, actor: [u8; 16], device: u8, id: u8, version: u8) -> Vec<u8> {
     let mut payload = message(id).to_vec();
     payload.extend_from_slice(&blob(id, version));
@@ -247,42 +265,79 @@ fn conflicting_chat_events_are_kept_and_change_nothing() {
     let base = posted(1, MEMBER_1, 0x11, 1, 1);
     let attachment = posted(2, MEMBER_1, 0x11, 2, 2);
     let expected = chat(&[base.clone(), attachment.clone()]);
-    for conflicting in [
+    let mut reused_post = posted(3, MEMBER_2, 0x21, 3, 1);
+    reused_post[108..140].copy_from_slice(&blob(1, 0));
+    // Events that change nothing a page shows. Those bringing a new blob no
+    // message will ever show retire it; the others retire nothing.
+    for (conflicting, retires) in [
         // A second post of the same ID, even by the author: the first wins.
-        posted(3, MEMBER_2, 0x21, 1, 1),
-        posted(3, MEMBER_1, 0x11, 1, 2),
+        (posted_version(3, MEMBER_2, 0x21, 1, 5), Some(blob(1, 5))),
+        (posted_version(3, MEMBER_1, 0x11, 1, 6), Some(blob(1, 6))),
         // Another member edits it.
-        edited(3, MEMBER_2, 0x21, 1, 1),
-        // An edit that keeps the blob.
-        edited(3, MEMBER_1, 0x11, 1, 0),
+        (edited(3, MEMBER_2, 0x21, 1, 1), Some(blob(1, 1))),
         // An attachment is never edited.
-        edited(3, MEMBER_1, 0x11, 2, 1),
-        // Messages this history never saw.
-        edited(3, MEMBER_1, 0x11, 9, 1),
-        deleted(3, MEMBER_1, 0x11, 9, false),
-        deleted(3, ADMIN, 0x31, 9, true),
+        (edited(3, MEMBER_1, 0x11, 2, 1), Some(blob(2, 1))),
+        // Blobs this log has already seen: reused, never retired.
+        (edited(3, MEMBER_1, 0x11, 1, 0), None),
+        (reused_post, None),
+        // Messages this log never saw: elsewhere the edit may apply.
+        (edited(3, MEMBER_1, 0x11, 9, 1), None),
+        (deleted(3, MEMBER_1, 0x11, 9, false), None),
+        (deleted(3, ADMIN, 0x31, 9, true), None),
         // Another member deletes it without claiming to be an admin.
-        deleted(3, MEMBER_2, 0x21, 1, false),
+        (deleted(3, MEMBER_2, 0x21, 1, false), None),
     ] {
+        let state = chat(&[base.clone(), attachment.clone(), conflicting.clone()]);
+        let what = format!("{:?}", decode_event(&conflicting).unwrap().kind);
+        assert_eq!(shown(&state), shown(&expected), "{what}");
         assert_eq!(
-            chat(&[base.clone(), attachment.clone(), conflicting.clone()]),
-            expected,
-            "{:?}",
-            decode_event(&conflicting).unwrap().kind
+            state.retired,
+            retires.into_iter().collect::<Vec<_>>(),
+            "{what}"
         );
     }
-    // Nothing happens to a deleted message.
+    // Nothing happens to a deleted message; an edit after it retires its blob.
     let gone = [base.clone(), deleted(2, MEMBER_1, 0x11, 1, false)];
     let expected = chat(&gone);
-    for after in [
-        edited(3, MEMBER_1, 0x11, 1, 1),
-        deleted(3, MEMBER_1, 0x11, 1, false),
-        deleted(3, ADMIN, 0x31, 1, true),
+    for (after, retires) in [
+        (
+            edited(3, MEMBER_1, 0x11, 1, 1),
+            vec![blob(1, 0), blob(1, 1)],
+        ),
+        (deleted(3, MEMBER_1, 0x11, 1, false), vec![blob(1, 0)]),
+        (deleted(3, ADMIN, 0x31, 1, true), vec![blob(1, 0)]),
     ] {
         let mut records = gone.to_vec();
         records.push(after);
-        assert_eq!(chat(&records), expected);
+        let state = chat(&records);
+        assert_eq!(shown(&state), shown(&expected));
+        assert_eq!(state.retired, retires);
     }
+}
+
+#[test]
+fn a_blob_reference_is_used_once_so_a_live_blob_is_never_retired() {
+    // Edit A -> B -> A: the third edit reuses A, so it changes nothing and
+    // A, retired by the second, is not live again.
+    let state = chat(&[
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        edited(2, MEMBER_1, 0x11, 1, 1),
+        edited(3, MEMBER_1, 0x11, 1, 0),
+    ]);
+    let message = state.get(&ChatMessageId(message(1))).unwrap();
+    assert_eq!(message.blob_ref, blob(1, 1));
+    assert_eq!(state.retired, vec![blob(1, 0)]);
+    // A second message reusing the first's blob is no message at all, so
+    // deleting the first can't retire a blob another message shows.
+    let mut reuse = posted(2, MEMBER_2, 0x21, 2, 1);
+    reuse[108..140].copy_from_slice(&blob(1, 0));
+    let state = chat(&[
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        reuse,
+        deleted(3, MEMBER_1, 0x11, 1, false),
+    ]);
+    assert_eq!(state.messages.len(), 1);
+    assert_eq!(state.retired, vec![blob(1, 0)]);
 }
 
 #[test]
@@ -298,16 +353,15 @@ fn a_delete_wins_over_a_concurrent_edit_in_either_replay_order() {
         assert_eq!(status_of(&state, 1), ChatMessageStatus::Deleted);
         let message = state.get(&ChatMessageId(message(1))).unwrap();
         assert_eq!(message.blob_ref, [0; 32]);
-        // Both blobs the message ever had are retired; neither survives.
+        // Both blobs the message ever had are retired, in either order:
+        // the edited text doesn't survive the deletion.
         let mut retired = state.retired.clone();
         retired.sort();
-        let mut both = if edit_device < delete_device {
-            vec![blob(1, 0), blob(1, 1)]
-        } else {
-            vec![blob(1, 0)]
-        };
-        both.sort();
-        assert_eq!(retired, both);
+        assert_eq!(
+            retired,
+            vec![blob(1, 0), blob(1, 1)],
+            "edit on {edit_device:#x}"
+        );
     }
 }
 
@@ -405,7 +459,19 @@ fn context(event: u8, actor: [u8; 16], device: u8, logical_time: u64) -> Command
 /// Runs a command against the chat log and, when it succeeds, appends the
 /// new event as the host would once stored.
 fn run(log: &mut History, command: C, ctx: CommandContext) -> Result<(), KinError> {
-    let result = execute_with(&command, ctx, &mut HeldHistory::new(log, local_context())?)?;
+    run_named(log, command, ctx, &[ADMIN])
+}
+
+/// `run` with the household admins the host names.
+fn run_named(
+    log: &mut History,
+    command: C,
+    ctx: CommandContext,
+    admins: &[[u8; 16]],
+) -> Result<(), KinError> {
+    let held = HeldHistory::new(log, local_context())?
+        .with_admins(admins.iter().copied().map(ActorId).collect());
+    let result = execute_with(&command, ctx, &mut { held })?;
     assert!(
         result.encoded_projection.is_empty(),
         "a chat command has no projection"
@@ -493,6 +559,37 @@ fn commands_post_edit_and_delete_and_reject_what_replay_would_ignore() {
         "only the author edits"
     );
     run(&mut events, edit(1, 1), context(3, MEMBER_1, 0x12, 3)).unwrap();
+    // A removal needs its actor among the admins the host names.
+    for (actor, admins) in [(ADMIN, &[][..]), (MEMBER_1, &[ADMIN][..])] {
+        assert_eq!(
+            run_named(
+                &mut events,
+                delete(2, true),
+                context(4, actor, 0x31, 4),
+                admins
+            ),
+            Err(KinError::InvalidEvent)
+        );
+    }
+    // Blob references are used once: no edit back to an earlier blob, no
+    // post with another message's blob.
+    assert_eq!(
+        run(&mut events, edit(1, 0), context(4, MEMBER_1, 0x11, 4)),
+        Err(KinError::InvalidEvent)
+    );
+    assert_eq!(
+        run(
+            &mut events,
+            C::PostChatMessage {
+                id: ChatMessageId(message(5)),
+                content_kind: ChatContentKind::Text,
+                blob_ref: blob(1, 1),
+                blob_key: key(5, 0),
+            },
+            context(4, MEMBER_2, 0x21, 4)
+        ),
+        Err(KinError::InvalidEvent)
+    );
     run(&mut events, delete(2, true), context(4, ADMIN, 0x31, 4)).unwrap();
     assert_eq!(
         run(&mut events, delete(2, true), context(5, ADMIN, 0x31, 5)),
@@ -566,12 +663,22 @@ fn chat_commands_run_against_the_chat_log_only() {
     intent[76..84].copy_from_slice(&BASE_TIME.to_le_bytes());
     let mut input = (intent.len() as u32).to_le_bytes().to_vec();
     input.extend_from_slice(&intent);
+    input.extend_from_slice(&0u32.to_le_bytes());
     input.extend_from_slice(&kine(&[], BASE_TIME + 100, TEST_DATE, None));
-    let result = crate::command::execute_history(&input, &mut log).unwrap();
+    let result = crate::command::execute_chat_history(&input, &mut log).unwrap();
     assert_eq!(&result[..8], b"KCMT\x01\0\0\0");
     assert_eq!(u32_at(&result, 8), 88 + 84);
     assert_eq!(u32_at(&result, 16), 0, "no projection");
     assert!(log.is_empty(), "executing appends nothing");
+    // Admins in the layout: at most 16, non-zero, all present.
+    for (count, admin) in [(17u32, [3u8; 16]), (1, [0; 16]), (2, [3; 16])] {
+        let mut input = (intent.len() as u32).to_le_bytes().to_vec();
+        input.extend_from_slice(&intent);
+        input.extend_from_slice(&count.to_le_bytes());
+        input.extend_from_slice(&admin);
+        input.extend_from_slice(&kine(&[], BASE_TIME + 100, TEST_DATE, None));
+        assert!(crate::command::execute_chat_history(&input, &mut log).is_err());
+    }
 }
 
 fn kcmd(kind: u16, id: [u8; 16], option: u8, payload: &[u8]) -> Vec<u8> {
@@ -716,6 +823,42 @@ fn the_text_arena_stores_each_text_alone_and_forgets_by_zeroing() {
     assert_eq!(texts.get(&blob(1, 0)), None);
     assert!(texts.is_empty());
     texts.clear();
+}
+
+#[test]
+fn a_batch_that_fills_the_arena_starts_it_over_first_and_keeps_every_text_it_reports() {
+    let mut texts = ChatTexts::new();
+    // Fill the arena to within a few bytes, in full-length texts, growing
+    // its buffer by hand along the way.
+    let long = "a".repeat(MAX_CHAT_TEXT_CHARS);
+    let mut stored = 0usize;
+    let mut index = 0u32;
+    while stored + long.len() <= MAX_CHAT_ARENA_BYTES {
+        let mut blob_ref = [0x70; 32];
+        blob_ref[..4].copy_from_slice(&index.to_le_bytes());
+        texts.make_room(long.len());
+        texts.put(blob_ref, long.as_bytes()).unwrap();
+        stored += long.len();
+        index += 1;
+    }
+    let mut first = [0x70; 32];
+    first[..4].copy_from_slice(&0u32.to_le_bytes());
+    assert!(
+        texts.get(&first) == Some(long.as_bytes()),
+        "texts survive growth"
+    );
+    // A batch that doesn't fit starts the arena over once, before storing,
+    // so both of its texts are held afterwards.
+    let result = put_texts(
+        &kcht(&[(blob(1, 0), long.as_bytes()), (blob(2, 0), long.as_bytes())]),
+        &mut texts,
+    )
+    .unwrap();
+    assert_eq!(&result[12..], &[0, 0]);
+    assert!(texts.get(&blob(1, 0)) == Some(long.as_bytes()));
+    assert!(texts.get(&blob(2, 0)) == Some(long.as_bytes()));
+    assert!(texts.get(&first).is_none());
+    assert_eq!(texts.len(), 2);
 }
 
 fn kchq(before: u32, limit: u16, flags: u8, admins: &[[u8; 16]], context: &[u8]) -> Vec<u8> {
@@ -987,4 +1130,8 @@ fn a_long_chat_replays_and_pages_quickly() {
     // Generous bounds for unoptimized test builds on shared CI machines.
     assert!(first.as_secs() < 20, "first page took {first:?}");
     assert!(second.as_secs() < 5, "second page took {second:?}");
+    assert!(
+        history.last_replay_reused(),
+        "the second page used the checkpoint"
+    );
 }

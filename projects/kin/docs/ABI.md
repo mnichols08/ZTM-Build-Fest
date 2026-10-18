@@ -16,9 +16,10 @@ kin_device_names(ptr, len)           replay the history: KINE context -> KDEV (v
 kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
 kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
 kin_chat_history_truncate(count) -> status   keep the chat log's first `count`
-kin_chat_execute(ptr, len)           chat command: length + KCMD + KINE context -> KCMT
+kin_chat_execute(ptr, len)           chat command: length + KCMD + admins + KINE context -> KCMT
 kin_chat_page(ptr, len)              replay the chat log: KCHQ -> KCHP (v1.1)
 kin_chat_text(ptr, len)              decrypted texts for the arena: KCHT -> KCHS
+kin_chat_texts_clear() -> status     drop every decrypted chat text
 kin_execute(ptr, len)                command: length + KCMD + KINE context -> KCMT
 kin_encode_command(ptr, len)         KCMD -> canonical event bytes
 kin_event_metadata(ptr, len)         one canonical event -> KMET
@@ -97,9 +98,11 @@ household history takes every other kind; either refuses the other's with
 code 4, as does a whole KINE request carrying a chat record. The chat log
 holds up to 250,000 records and 64 MiB. `kin_chat_execute` runs chat
 commands against it (any other command fails with code 4, as a chat command
-does against the household history) and publishes KCMT with an empty
-projection: a chat event changes no projection, and applying it to a copy of
-the chat would copy all of it. `kin_chat_page` and `kin_chat_text` read the
+does against the household history). Its input is `intent length:u32`, the
+KCMD intent, `admin count:u32` (at most 16), the household admins' member IDs
+as the service reports them (16 bytes each, non-zero), then a record-less
+KINE context. It publishes KCMT with an empty projection: a chat event changes
+no projection, and applying it to a copy of the chat would copy all of it. `kin_chat_page` and `kin_chat_text` read the
 chat log and the text arena (side formats below).
 
 Records stay where they were appended: the history keeps one buffer and an
@@ -395,10 +398,11 @@ revision is meaningful only within one instance.
   Action 45 (`edit-chat-message`) carries the same payload and a zero u8
   field. Action 46 (`delete-chat-message`) carries `by_admin` (0 or 1) in the
   u8 field and no payload. A zero ref or key is malformed (code 2). Executing
-  requires a new message ID to post; the author, a text message, a message
-  not deleted and a different blob to edit; and to delete, a message not
-  deleted, with `by_admin` 0 for your own and 1 for another member's (once
-  per admin). Whether the actor is an admin is not checked: the page decides.
+  requires a blob reference the chat log has never seen (to post or edit), a
+  new message ID to post; the author, a text message and a message not
+  deleted to edit; and to delete, a message not deleted, with `by_admin` 0
+  for your own and 1 for another member's, once per admin and only with the
+  actor among the admins named in the request.
 - **KCHQ v1** (chat page request, `kin_chat_page`): `"KCHQ"`, version 1,
   reserved u16, before u32 (the page ends before this message index;
   `0xFFFFFFFF` for the newest), limit u16 (1–500), flags u8 (bit 0: texts the
@@ -415,9 +419,12 @@ revision is meaningful only within one instance.
   u32 @104 and length u32 @108 (length 0: the arena doesn't hold the text),
   16 reserved. Then 32 bytes of blob key per message (zero unless live or
   edited), the text bytes, and 32 bytes per retired blob: every blob replaced
-  by an edit or deleted by its author, plus the blobs of messages removed by
-  a named admin. Reading a page first forgets the arena's texts for those
-  blobs, so a deleted message's text never comes back out. Message indexes
+  by an edit or deleted by its author, every blob brought by an event that
+  applies nowhere ([EVENTS](EVENTS.md#v110-household-chat)), plus the blobs
+  of messages removed by a named admin. A blob reference is used by one event
+  only, so no retired blob is one a page shows. Reading a page first forgets
+  the arena's texts for those blobs, so a deleted message's text never comes
+  back out. Message indexes
   are positions in posting (replay) order, so a late-arriving older message
   shifts them; hosts re-read from the newest after a sync.
 - **KCHT v1 / KCHS v1** (chat texts, `kin_chat_text`): `"KCHT"`, version 1,
@@ -425,8 +432,14 @@ revision is meaningful only within one instance.
   length u32, the UTF-8 text. Every entry is framed before any is stored. The
   result is `"KCHS"`, version 1, reserved u16, count u32, then a status byte
   per text: 0 held (or already held: texts are content-addressed), 1 refused
-  by the text rules. The arena holds texts only while unlocked, at most
-  16 MiB (it starts over beyond that, and the host supplies texts again).
+  by the text rules. The arena holds at most 16 MiB: a batch that wouldn't
+  fit starts it over once, before storing anything, so every text a batch
+  reports as held is held, and the host supplies earlier texts again. The
+  arena grows by copying into a new buffer and zero-filling the old one, so
+  freed memory holds no text. Texts stay until lock (`kin_clear`) or
+  `kin_chat_texts_clear` (a member who lost chat access while unlocked);
+  `kin_chat_history_reset` keeps them, since the history mirror resets the
+  chat log whenever it is handed a plain array.
 - **KIMP v1** (import plan): `"KIMP"`, version 1, reserved, event count u32,
   next logical time u64, projection length u32, KINS projection. Duplicate
   event IDs, including exact duplicates, fail.

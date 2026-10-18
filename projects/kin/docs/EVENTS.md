@@ -247,21 +247,35 @@ the product decisions).
   32-byte SHA-256 reference and its 32-byte random key, and (for a post) the
   content kind: text or attachment. Text and files live in the blob, outside
   the log, so deleting a message can delete its content.
-- **Conflicts change nothing.** As with device names, a decoded chat event
-  never fails replay. One that conflicts with what a history knows is kept
-  and changes nothing; commands enforce the rules when the event is created.
-  The first post of a message ID wins. Only the author edits, only a text
-  message, never a deleted one, and an edit must change the blob. The author
-  deletes for everyone; deletion is terminal, so it wins over an edit at the
-  same logical time in either replay order. Every replaced or deleted blob is
-  listed as retired for hosts to delete.
+- **Conflicts change nothing shown.** As with device names, a decoded chat
+  event never fails replay. One that conflicts with what a log knows is kept
+  and changes nothing a page shows; commands enforce the rules when the event
+  is created. The first post of a message ID wins. Only the author edits,
+  only a text message, never a deleted one. The author deletes for everyone;
+  deletion is terminal, so it wins over an edit at the same logical time in
+  either replay order.
+- **One event per blob.** A blob reference is used by one event only: an
+  event carrying a reference the log has already seen (an edit back to an
+  earlier blob, a second message sharing a blob) changes nothing, and
+  commands refuse it. So a retired blob is never one a message still shows.
+- **Retired blobs.** Hosts delete these locally and on the service: every
+  blob an edit replaced or the author's deletion dropped, and every blob
+  brought by an event that applies nowhere (a second post of an existing ID,
+  another member's edit, an edit of an attachment, an edit after or
+  concurrent with the author's deletion). An edit of a message the log
+  doesn't hold keeps its blob, since where the message is known the edit may
+  apply.
 - **Admin removal is a claim.** `by_admin` set on another member's message
   records a claim. Only the service knows who is an admin, so a page counts
   the claim when the host names its author among the household's admins;
-  the message then shows "Removed by an admin" and its blob is retired. If
-  that member later stops being an admin, the claim stops counting and the
-  message reads as live again, but its blob has usually been deleted by then,
-  so its content stays gone.
+  the message then shows "Removed by an admin" and its blob is retired. The
+  host names the admins to commands too (`kin_chat_execute`), so Kin's own
+  clients only make a claim as a current admin. A claim is counted while its
+  author is an admin, whenever it was made: one written by a modified client
+  before its author became an admin counts once they are one, and one whose
+  author stops being an admin stops counting (the message reads as live
+  again, but its blob has usually been deleted by then, so its content stays
+  gone).
 - **Text rules.** A message's decrypted text is checked in Rust when the host
   hands it over: 1 to 4,000 Unicode scalar values, valid UTF-8, not only
   whitespace, and no control characters other than tab and line feed. It is

@@ -344,13 +344,14 @@ pub extern "C" fn kin_chat_history_truncate(count: u32) -> i32 {
     }
 }
 
-/// Validates a chat command against the chat log (the `kin_execute`
-/// layout) and publishes KCMT with an empty projection. The log is not
-/// changed.
+/// Validates a chat command against the chat log (u32 intent length, KCMD,
+/// u32 admin count, admins, record-less KINE context; command.rs
+/// `execute_chat_history`) and publishes KCMT with an empty projection. The
+/// log is not changed.
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
 pub extern "C" fn kin_chat_execute(pointer: u32, length: u32) -> i32 {
     run_chat(pointer, length, |input, chat, _| {
-        crate::command::execute_history(input, chat)
+        crate::command::execute_chat_history(input, chat)
     })
 }
 
@@ -359,6 +360,14 @@ pub extern "C" fn kin_chat_execute(pointer: u32, length: u32) -> i32 {
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
 pub extern "C" fn kin_chat_page(pointer: u32, length: u32) -> i32 {
     run_chat(pointer, length, crate::core::chat_page)
+}
+
+/// Drops every decrypted chat text (zero-filling the arena), for a member
+/// who lost access to chat while unlocked. Always succeeds.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_texts_clear() -> i32 {
+    lock_state().chat_texts.clear();
+    0
 }
 
 /// Stores decrypted chat texts (KCHT) in the instance's arena; publishes

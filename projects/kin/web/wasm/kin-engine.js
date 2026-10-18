@@ -102,6 +102,7 @@ export function createEngine(instanceExports) {
     "kin_chat_execute",
     "kin_chat_page",
     "kin_chat_text",
+    "kin_chat_texts_clear",
     "kin_clear",
     "kin_result_ptr",
     "kin_result_len",
@@ -264,9 +265,11 @@ export function createEngine(instanceExports) {
     // Household chat (#109). `chatRecords` is the chat log (a history view
     // or an array of canonical chat records), never the household history.
     // A chat command validated against the chat log: { encodedEvent,
-    // metadata }. The host stores the event, then reads a page.
-    executeChatCommand: (command, identity, chatRecords, asOf, civilDate, syncIdentity = null) =>
-      executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity),
+    // metadata }. The host stores the event, then reads a page. `admins`
+    // are the household admins' member IDs (hex) as the service reports
+    // them; removing another member's message needs the actor among them.
+    executeChatCommand: (command, identity, chatRecords, asOf, civilDate, syncIdentity = null, admins = []) =>
+      executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity, admins),
     // A page of messages, oldest first (KCHP, ABI.md). Options: before (an
     // index; omit for the newest), limit (1 to 500), includeText, includeRetired,
     // admins (the household admins' member IDs as hex; at most 16).
@@ -278,6 +281,11 @@ export function createEngine(instanceExports) {
     // blobRef as 64 hex digits. Returns one boolean per text: whether it
     // passed Rust's checks and is held.
     putChatTexts: (entries) => putChatTexts(exports, entries),
+    // Drops every decrypted chat text the engine holds, for a member who
+    // lost access to chat while unlocked (locking drops them too).
+    clearChatTexts: () => {
+      if (exports) exports.kin_chat_texts_clear();
+    },
   };
 }
 
@@ -294,15 +302,22 @@ function blobFromHex(value, what) {
   return bytes;
 }
 
-function executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity) {
+function executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity, admins) {
   if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
   if (!["post-chat-message", "edit-chat-message", "delete-chat-message"].includes(command?.type))
     throw new KinEngineError(2, "Kin received an invalid household action.");
   if (chatRecords.length > MAX_CHAT_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  if (!Array.isArray(admins) || admins.length > 16)
+    throw new KinEngineError(2, "Kin received an invalid household action.");
   const intent = encodeIntentPacket(command, identity);
-  const request = encodeRequest([], asOf, null, civilDate, syncIdentity, 4 + intent.length);
-  new DataView(request.buffer).setUint32(0, intent.length, true);
+  // u32 intent length, KCMD, u32 admin count, admins, KINE context.
+  const prefix = 4 + intent.length + 4 + admins.length * 16;
+  const request = encodeRequest([], asOf, null, civilDate, syncIdentity, prefix);
+  const requestView = new DataView(request.buffer);
+  requestView.setUint32(0, intent.length, true);
   request.set(intent, 4);
+  requestView.setUint32(4 + intent.length, admins.length, true);
+  admins.forEach((admin, index) => request.set(idFromHex(admin), 8 + intent.length + index * 16));
   const release = chatMirror.hold(chatRecords);
   let bytes;
   try {
@@ -364,6 +379,8 @@ function decodeChatPage(bytes) {
   if (count > MAX_CHAT_PAGE || start + count > total || retiredAt + retiredCount * 32 !== bytes.length) throw invalid();
   const zero = (slice) => slice.every((byte) => byte === 0);
   const messages = [];
+  // Texts follow each other in record order, with no gaps or overlaps.
+  let nextText = 0;
   for (let index = 0; index < count; index += 1) {
     const at = 28 + index * 128;
     const status = CHAT_STATUSES[bytes[at + 68]], contentKind = CHAT_CONTENT_KINDS[bytes[at + 69]];
@@ -374,7 +391,12 @@ function decodeChatPage(bytes) {
       throw invalid();
     const visible = status === "live" || status === "edited";
     const blobRef = bytes.subarray(at + 72, at + 104), blobKey = bytes.subarray(keysAt + index * 32, keysAt + index * 32 + 32);
-    if (visible === zero(blobRef) || visible === zero(blobKey) || (!visible && textLength)) throw invalid();
+    if (visible === zero(blobRef) || visible === zero(blobKey) || (!visible && textLength) ||
+      (textLength && (contentKind !== "text" || textOffset !== nextText)) || (!textLength && textOffset) ||
+      bytes[at + 70] || bytes[at + 71] || !zero(bytes.subarray(at + 112, at + 128)) ||
+      (status === "edited" && !editedAt) || (status === "live" && editedAt))
+      throw invalid();
+    nextText += textLength;
     messages.push({
       messageId: idToHex(bytes.subarray(at, at + 16)),
       authorId: idToHex(bytes.subarray(at + 16, at + 32)),
@@ -390,6 +412,7 @@ function decodeChatPage(bytes) {
       text: textLength ? strictTextDecoder.decode(bytes.subarray(textsAt + textOffset, textsAt + textOffset + textLength)) : null,
     });
   }
+  if (nextText !== textBytes) throw invalid();
   const retired = [];
   for (let index = 0; index < retiredCount; index += 1)
     retired.push(idToHex(bytes.subarray(retiredAt + index * 32, retiredAt + index * 32 + 32)));
@@ -401,7 +424,9 @@ function putChatTexts(exports, entries) {
   if (!Array.isArray(entries) || entries.length < 1 || entries.length > MAX_CHAT_PAGE)
     throw new KinEngineError(2, "Kin received invalid chat texts.");
   const encoded = entries.map(({ blobRef, text }) => {
-    if (typeof text !== "string") throw new KinEngineError(2, "Kin received invalid chat texts.");
+    // A lone surrogate would be encoded as U+FFFD, so Rust would check
+    // different text from the host's.
+    if (typeof text !== "string" || !text.isWellFormed()) throw new KinEngineError(2, "Kin received invalid chat texts.");
     return [blobFromHex(blobRef, "reference"), textEncoder.encode(text)];
   });
   const request = new Uint8Array(12 + encoded.reduce((sum, [, text]) => sum + 36 + text.length, 0));

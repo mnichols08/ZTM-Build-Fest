@@ -15,7 +15,7 @@
 //! decrypted texts in a separate append-only arena referenced by offset and
 //! length. The arena lives on the engine instance, only while it is
 //! unlocked (`kin_clear` drops it with everything else).
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::KinError;
 use crate::event::{ActorId, ChatContentKind, ChatMessageId, DeviceId};
@@ -65,9 +65,17 @@ pub struct ChatState {
     /// Messages in posting order.
     pub messages: Vec<ChatMessage>,
     pub positions: BTreeMap<ChatMessageId, usize>,
-    /// Blobs no message refers to any more: replaced by an edit or deleted
-    /// by the author. Hosts delete their local copies (#110).
+    /// Blobs no message refers to any more: replaced by an edit, deleted by
+    /// the author, or brought by an event that lost (an edit after the
+    /// author deleted, a second post of an existing ID). Hosts delete their
+    /// local copies (#110). Every blob reference is used by one event only
+    /// (`seen`), so a retired blob is never one a message still shows.
     pub retired: Vec<[u8; 32]>,
+    /// Every blob reference any chat event in this log has carried. A
+    /// reference is content-addressed and its key random, so honest devices
+    /// never repeat one; an event that does is a conflict and changes
+    /// nothing, which keeps a retired blob from being a live one.
+    pub seen: BTreeSet<[u8; 32]>,
     /// Admin deletions of other members' messages, by message: who claimed
     /// them, in replay order. Whether a claim counts depends on whether its
     /// author is an admin, which only the service knows, so the host names
@@ -132,7 +140,8 @@ impl ChatTexts {
     }
 
     /// Checks and stores a blob's text. Storing the same blob again is a
-    /// no-op (content-addressed: the text can't differ).
+    /// no-op (content-addressed: the text can't differ). The caller makes
+    /// room first (`make_room`); a text that doesn't fit is refused.
     pub fn put(&mut self, blob_ref: [u8; 32], text: &[u8]) -> Result<(), KinError> {
         if blob_ref == [0; 32] {
             return Err(KinError::MalformedProtocol);
@@ -142,14 +151,43 @@ impl ChatTexts {
             return Ok(());
         }
         if self.bytes.len() + text.len() > MAX_CHAT_ARENA_BYTES {
-            self.clear();
+            return Err(KinError::SizeLimit);
         }
         let offset = u32::try_from(self.bytes.len()).map_err(|_| KinError::SizeLimit)?;
-        self.bytes
-            .try_reserve(text.len())
-            .map_err(|_| KinError::SizeLimit)?;
+        self.grow(text.len())?;
         self.bytes.extend_from_slice(text);
         self.spans.insert(blob_ref, (offset, text.len() as u32));
+        Ok(())
+    }
+
+    /// Starts the arena over if `incoming` more bytes would not fit, so a
+    /// batch is stored whole: nothing it reports as held is dropped by a
+    /// later text of the same batch.
+    pub fn make_room(&mut self, incoming: usize) {
+        if self.bytes.len() + incoming > MAX_CHAT_ARENA_BYTES {
+            self.clear();
+        }
+    }
+
+    /// Grows the buffer by hand: a reallocation by `Vec` would free the old
+    /// buffer with decrypted text still in it, out of reach of `forget` and
+    /// `clear`. The old buffer is zero-filled before it is released.
+    fn grow(&mut self, additional: usize) -> Result<(), KinError> {
+        let needed = self.bytes.len() + additional;
+        if needed <= self.bytes.capacity() {
+            return Ok(());
+        }
+        // `put` keeps `needed` within the arena's bound.
+        let capacity = needed
+            .max(self.bytes.capacity() * 2)
+            .clamp(4096, MAX_CHAT_ARENA_BYTES);
+        let mut bigger = Vec::new();
+        bigger
+            .try_reserve_exact(capacity)
+            .map_err(|_| KinError::SizeLimit)?;
+        bigger.extend_from_slice(&self.bytes);
+        self.bytes.fill(0);
+        self.bytes = bigger;
         Ok(())
     }
 
@@ -403,6 +441,16 @@ pub fn put_texts(bytes: &[u8], texts: &mut ChatTexts) -> Result<Vec<u8>, KinErro
     if offset != bytes.len() {
         return Err(KinError::MalformedProtocol);
     }
+    // Room for every text that passes and isn't held yet, made once, before
+    // storing any.
+    let incoming = entries
+        .iter()
+        .filter(|(blob_ref, range)| {
+            texts.get(blob_ref).is_none() && check_text(&bytes[range.clone()]).is_ok()
+        })
+        .map(|(_, range)| range.len())
+        .sum();
+    texts.make_room(incoming);
     let mut output = Vec::with_capacity(12 + count);
     output.extend_from_slice(b"KCHS\x01\0\0\0");
     output.extend_from_slice(&(count as u32).to_le_bytes());

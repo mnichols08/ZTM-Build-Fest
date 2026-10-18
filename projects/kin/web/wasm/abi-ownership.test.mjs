@@ -43,6 +43,7 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_chat_execute: status,
       kin_chat_page: status,
       kin_chat_text: status,
+      kin_chat_texts_clear: () => 0,
       kin_clear() {},
       kin_result_ptr: () => (output.length ? 32 : 0),
       kin_result_len: () => output.length,
@@ -240,6 +241,12 @@ test("chat pages decode from KCHP and malformed pages are refused (#109)", () =>
     (() => { const copy = page.slice(); copy[28 + 128 + 72] = 1; return copy; })(),
     // start + count past the total.
     (() => { const copy = page.slice(); new DataView(copy.buffer).setUint32(8, 4, true); return copy; })(),
+    // Reserved bytes, a text that doesn't start where the last one ended,
+    // and an edited message without its edit time.
+    (() => { const copy = page.slice(); copy[28 + 70] = 1; return copy; })(),
+    (() => { const copy = page.slice(); copy[28 + 120] = 1; return copy; })(),
+    (() => { const copy = page.slice(); copy[28 + 104] = 1; return copy; })(),
+    (() => { const copy = page.slice(); copy.fill(0, 28 + 56, 28 + 64); return copy; })(),
   ];
   for (const bytes of broken) {
     const fake = substituteExports({ operation: () => 0, result: bytes });
@@ -256,7 +263,7 @@ test("chat texts report one status per text (#109)", () => {
   const fake = substituteExports({ operation: () => 0, result: statuses });
   const engine = createEngine(fake.exports);
   assert.deepEqual(engine.putChatTexts([{ blobRef: "ab".repeat(32), text: "ok" }, { blobRef: "cd".repeat(32), text: "\u0007" }]), [true, false]);
-  for (const entries of [[], [{ blobRef: "00".repeat(32), text: "zero" }], [{ blobRef: "AB".repeat(32), text: "upper" }], [{ blobRef: "ab".repeat(32), text: 7 }]]) {
+  for (const entries of [[], [{ blobRef: "00".repeat(32), text: "zero" }], [{ blobRef: "AB".repeat(32), text: "upper" }], [{ blobRef: "ab".repeat(32), text: 7 }], [{ blobRef: "ab".repeat(32), text: "lone \ud800" }]]) {
     assert.throws(() => engine.putChatTexts(entries), KinEngineError);
   }
   const wrong = createEngine(substituteExports({ operation: () => 0, result: statuses.slice(0, -1) }).exports);

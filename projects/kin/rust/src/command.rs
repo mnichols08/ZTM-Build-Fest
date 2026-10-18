@@ -464,6 +464,11 @@ pub trait CommandHistory {
     fn is_chat(&self) -> bool {
         false
     }
+    /// The household admins the host names for a chat command
+    /// (`kin_chat_execute`); an admin removal needs its actor among them.
+    fn chat_admins(&self) -> &[ActorId] {
+        &[]
+    }
     /// Whether some event rules out a new event with `context`: it belongs to
     /// another household, is not earlier, or has the same event ID.
     fn conflicts_with(&self, context: &CommandContext) -> bool;
@@ -508,6 +513,7 @@ impl CommandHistory for WholeRequest {
 pub struct HeldHistory<'h> {
     history: &'h mut crate::history::History,
     context: DecodedRequest,
+    admins: Vec<ActorId>,
 }
 
 impl<'h> HeldHistory<'h> {
@@ -517,7 +523,17 @@ impl<'h> HeldHistory<'h> {
         context: DecodedRequest,
     ) -> Result<Self, KinError> {
         history.replay(&context)?;
-        Ok(Self { history, context })
+        Ok(Self {
+            history,
+            context,
+            admins: Vec::new(),
+        })
+    }
+
+    /// Names the household admins for chat commands.
+    pub fn with_admins(mut self, admins: Vec<ActorId>) -> Self {
+        self.admins = admins;
+        self
     }
 
     fn replay(&self) -> Result<&crate::replay::Replay, KinError> {
@@ -537,6 +553,9 @@ impl CommandHistory for HeldHistory<'_> {
     }
     fn is_chat(&self) -> bool {
         self.history.log() == crate::history::Log::Chat
+    }
+    fn chat_admins(&self) -> &[ActorId] {
+        &self.admins
     }
     // Every applied event shares the replay's household, its last logical
     // time is the greatest, and it knows every applied event ID.
@@ -687,18 +706,20 @@ pub fn execute_with(
     // say; the host offers removal only to admins, and a page counts a
     // removal only while its claimant is one.
     match command {
-        HouseholdCommand::PostChatMessage { id, .. } => {
-            if current.chat.get(id).is_some() {
+        // A blob reference is used once in a log (chat.rs `seen`).
+        HouseholdCommand::PostChatMessage { id, blob_ref, .. } => {
+            if current.chat.get(id).is_some() || current.chat.seen.contains(blob_ref) {
                 return Err(KinError::InvalidEvent);
             }
         }
         HouseholdCommand::EditChatMessage { id, blob_ref, .. } => {
-            if !current.chat.get(id).is_some_and(|message| {
-                message.author == context.actor_id
-                    && message.status != crate::chat::ChatMessageStatus::Deleted
-                    && message.content_kind == ChatContentKind::Text
-                    && message.blob_ref != *blob_ref
-            }) {
+            if current.chat.seen.contains(blob_ref)
+                || !current.chat.get(id).is_some_and(|message| {
+                    message.author == context.actor_id
+                        && message.status != crate::chat::ChatMessageStatus::Deleted
+                        && message.content_kind == ChatContentKind::Text
+                })
+            {
                 return Err(KinError::InvalidEvent);
             }
         }
@@ -708,11 +729,12 @@ pub fn execute_with(
             if message.status == crate::chat::ChatMessageStatus::Deleted
                 || *by_admin == own
                 || *by_admin
-                    && current
-                        .chat
-                        .admin_claims
-                        .get(id)
-                        .is_some_and(|claims| claims.contains(&context.actor_id))
+                    && (!history.chat_admins().contains(&context.actor_id)
+                        || current
+                            .chat
+                            .admin_claims
+                            .get(id)
+                            .is_some_and(|claims| claims.contains(&context.actor_id)))
             {
                 return Err(KinError::InvalidEvent);
             }
@@ -1464,6 +1486,45 @@ pub fn execute_history(
     let replay_context =
         crate::request::decode_context(bytes.get(end..).ok_or(KinError::MalformedProtocol)?)?;
     let mut held = HeldHistory::new(history, replay_context)?;
+    command_result(execute_with(&command, context, &mut held)?)
+}
+
+/// A chat command against the instance's chat log (`kin_chat_execute`): u32
+/// intent length, the KCMD intent, u32 admin count (at most 16), the
+/// household admins' member IDs (16 bytes each, non-zero), then a
+/// record-less KINE context. The admins are the service's word on who may
+/// remove other members' messages; an honest client offers removal only to
+/// them, and Rust refuses a removal by anyone else.
+pub fn execute_chat_history(
+    bytes: &[u8],
+    history: &mut crate::history::History,
+) -> Result<Vec<u8>, KinError> {
+    if bytes.len() > MAX_PROTOCOL_BYTES {
+        return Err(KinError::SizeLimit);
+    }
+    let command_length = u32::from_le_bytes(field(bytes, 0)?) as usize;
+    let end = 4usize
+        .checked_add(command_length)
+        .ok_or(KinError::MalformedProtocol)?;
+    let (command, context) = decode_command(bytes.get(4..end).ok_or(KinError::MalformedProtocol)?)?;
+    let admin_count = u32::from_le_bytes(field(bytes, end)?) as usize;
+    if admin_count > crate::chat::MAX_CHAT_ADMINS {
+        return Err(KinError::MalformedProtocol);
+    }
+    let admins_end = end + 4 + admin_count * 16;
+    let admins = bytes
+        .get(end + 4..admins_end)
+        .ok_or(KinError::MalformedProtocol)?
+        .chunks_exact(16)
+        .map(|chunk| ActorId(chunk.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    if admins.iter().any(|admin| admin.0 == [0; 16]) {
+        return Err(KinError::MalformedProtocol);
+    }
+    let replay_context = crate::request::decode_context(
+        bytes.get(admins_end..).ok_or(KinError::MalformedProtocol)?,
+    )?;
+    let mut held = HeldHistory::new(history, replay_context)?.with_admins(admins);
     command_result(execute_with(&command, context, &mut held)?)
 }
 
