@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Current implementation line: `v1.1.0` — Connected Household Devices.** Released as `kin-v1.1.0` on 2026-10-18, it adds device names, household home-screen identity, opt-in content-free push notifications, service sandboxing, and QR pairing/phone-approved computer sign-in. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
+**Current implementation line: `v1.1.1` — Member and Notification Clarity.** Released as `kin-v1.1.1` on 2026-10-18, this patch clarifies member/device identity, pairing choices and device trust, and content-free push recipients and diagnostics. It builds on v1.1.0's connected-household capabilities without changing persistent formats or protocol versions. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Exports are encrypted history recovery and do not restore server membership, device trust, credentials, or sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
@@ -42,6 +42,9 @@ AI runtime features, gamification, surveillance, and enterprise workflows stay o
 
 ## Release history
 
+- `v1.1.1` — Member and Notification Clarity: clearer member/device grouping,
+  pairing choices, device trust, and push-recipient diagnostics. Released
+  2026-10-18 (`kin-v1.1.1`).
 - `v1.1.0` — Connected Household Devices: device names, installed-app identity,
   opt-in push, a sandboxed service, and QR pairing/phone sign-in. Released
   2026-10-18 (`kin-v1.1.0`).

@@ -16,7 +16,10 @@ const NETWORK_TEST = { timeout: 30_000 };
 
 function temporary(t) {
   const directory = canonicalPath(mkdtempSync(join(tmpdir(), "kin-permission-")));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  // Windows can report a killed process tree as exited just before SQLite's
+  // file handles are released. Keep cleanup bounded while allowing that brief
+  // OS-level delay; other platforms normally succeed on the first attempt.
+  t.after(() => rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }));
   return directory;
 }
 

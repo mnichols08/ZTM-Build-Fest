@@ -5,6 +5,33 @@ development candidates that never received a release tag; their changes
 ship in v1.0.0. The project's planning releases v0.0.1–v0.0.12 are
 documentation only.
 
+## v1.1.1 — Member and Notification Clarity
+
+Released 2026-10-18 as `kin-v1.1.1`. This patch makes the People & devices
+surface accurately distinguish household members from their paired devices,
+separates invitation from same-member device enrollment, and makes device trust,
+push recipients and delivery diagnostics explicit. It does not change Kin's
+persistent formats, protocol versions, or v1.0 compatibility commitment.
+
+### Changed
+
+- People & devices groups each member's paired devices under that member and
+  labels device trust separately from member roles.
+- People & devices exposes separate invitation and same-member device-enrollment
+  actions and labels devices Trusted or Untrusted.
+- Notification settings identify which other member devices can receive a
+  content-free push and distinguish subscription state from delivery outcome.
+
+### Verification
+
+- Added an identity/pairing acceptance matrix covering member/device identity,
+  household authority, and notification-recipient behavior (#221, #226–#228).
+- Expanded household, notification, server-push, documentation, narrow-screen,
+  and Untrusted → Trusted browser regressions.
+- Made the sandboxed-service integration test tolerate Windows' brief delay in
+  releasing SQLite handles after a process tree exits, with a bounded cleanup
+  retry.
+
 ## v1.1.0 — Connected Household Devices
 
 Released 2026-10-18 as `kin-v1.1.0`. This release adds device names and

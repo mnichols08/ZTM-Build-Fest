@@ -1,6 +1,6 @@
 # Support
 
-Kin's current release is v1.1.0 — Connected Household Devices (`kin-v1.1.0`,
+Kin's current release is v1.1.1 — Member and Notification Clarity (`kin-v1.1.1`,
 2026-10-18). It is a Build Fest project, not a
 supported service: there is no staffed runtime support channel or guaranteed
 response time.

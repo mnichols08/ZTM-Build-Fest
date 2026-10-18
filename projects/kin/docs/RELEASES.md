@@ -1,9 +1,9 @@
 # Release Process
 
-**Status:** Current release: v1.1.0 — Connected Household Devices, released
-2026-10-18 as `kin-v1.1.0`. The release before it was v1.0.0 — Stable Kin
-Platform (`kin-v1.0.0`, with `kin-v1.0.0-rc.1` on the same commit). Neither is
-production certification or an independent audit.
+**Status:** Current release: v1.1.1 — Member and Notification Clarity, released
+2026-10-18 as `kin-v1.1.1`. The release before it was v1.1.0 — Connected
+Household Devices (`kin-v1.1.0`). Neither is production certification or an
+independent audit.
 
 Before any v1.x release, check it against the
 [v1.0 compatibility commitment](V1.0-COMPATIBILITY.md): a release may add
@@ -37,6 +37,10 @@ push notifications, a sandboxed Node service, and QR pairing/phone-approved
 computer sign-in. It preserves the v1.0 formats and reads v1.0 data under the
 [compatibility commitment](V1.0-COMPATIBILITY.md); server schemas 10 and 11
 are forward migrations, so keep a pre-upgrade backup if rollback matters.
+
+v1.1.1 clarifies member/device identity, pairing choices and device trust, and push
+recipients and diagnostics. It introduces no persistent-format or protocol
+version changes.
 
 ```text
 scope complete
