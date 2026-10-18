@@ -6,21 +6,28 @@
 // (wasm/kin-qr.js); this element only paints it.
 //
 // Properties:
-//   value      the text to encode (a Kin link)
-//   code       the text code shown beside it
-//   label      the QR image's accessible name
-//   size       the largest side to draw, in CSS pixels (default 240)
-//   expiresAt  when the payload stops working (epoch ms), or null
-//   refresh    optional async () => ({ value, code, expiresAt }) | null,
-//              called when the payload expires; without it, or when it
-//              returns null, the element shows that the code expired and
-//              dispatches "kin-qr-expired"
-//   codec      the QR codec (tests); defaults to the page's shared codec
+//   value           the text to encode (a Kin link)
+//   code            the text code shown beside it
+//   label           the QR image's accessible name
+//   size            the largest side to draw, in CSS pixels (default 240)
+//   expiresAt       when the payload stops working (epoch ms), or null
+//   expiredMessage  what to say once it has (default "This code expired.
+//                   Ask for a new one.")
+//   refresh         optional async () => ({ value, code, expiresAt }) | null,
+//                   called when the payload expires; without it, when it
+//                   fails, returns null, or returns a payload that has
+//                   already expired, the element shows the expired state
+//                   and dispatches "kin-qr-expired"
+//   codec           the QR codec (tests); defaults to the page's shared codec
+//
+// The element is built once and updated in place, so its status region keeps
+// announcing changes and focus on Copy survives a refresh.
 import { qrCodec } from "../wasm/kin-qr.js";
 
 /** Light modules around the symbol, as the standard requires. */
 export const QUIET_ZONE = 4;
 const DEFAULT_SIZE = 240;
+const DEFAULT_EXPIRED = "This code expired. Ask for a new one.";
 // setTimeout's longest delay; longer expiries are re-armed in steps.
 const MAX_TIMER = 2_147_483_647;
 
@@ -30,6 +37,16 @@ export function qrLayout(side, maxPixels) {
   const total = side + 2 * QUIET_ZONE;
   const scale = Math.max(1, Math.floor(maxPixels / total));
   return { scale, pixels: total * scale };
+}
+
+/** The canvas for `side` modules at most `maxCss` CSS pixels wide on a screen
+ * with `ratio` device pixels per CSS pixel: whole device pixels per module,
+ * and the CSS size that shows the canvas at exactly one device pixel per
+ * canvas pixel, even at fractional ratios such as 1.25 or 2.75. */
+export function qrCanvasSize(side, maxCss, ratio = 1) {
+  const density = Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
+  const { scale, pixels } = qrLayout(side, maxCss * density);
+  return { scale, pixels, css: pixels / density };
 }
 
 /** Paints a module grid at `scale` pixels per module, quiet zone included.
@@ -57,11 +74,13 @@ export class KinQr extends HTMLElement {
     this._label = "QR code";
     this._size = DEFAULT_SIZE;
     this._expiresAt = null;
+    this.expiredMessage = DEFAULT_EXPIRED;
     this.refresh = null;
     this.codec = null;
     this.expired = false;
     this.generation = 0;
     this.timer = null;
+    this.parts = null;
   }
 
   connectedCallback() {
@@ -84,21 +103,16 @@ export class KinQr extends HTMLElement {
   set expiresAt(time) { this._expiresAt = Number.isFinite(time) ? time : null; this.expired = false; this.render(); }
   get expiresAt() { return this._expiresAt; }
 
-  render() {
-    if (!this.isConnected) return;
-    const generation = ++this.generation;
+  /** Builds the element's structure once. */
+  build() {
     const figure = document.createElement("figure");
     figure.className = "kin-qr";
-
     const frame = document.createElement("div");
     frame.className = "kin-qr-frame";
+    frame.hidden = true;
     const canvas = document.createElement("canvas");
     canvas.setAttribute("role", "img");
-    canvas.setAttribute("aria-label", this._label);
-    canvas.textContent = this._label;
     frame.append(canvas);
-    frame.hidden = true;
-
     const caption = document.createElement("figcaption");
     const heading = document.createElement("p");
     heading.className = "kin-qr-code-label";
@@ -107,42 +121,57 @@ export class KinQr extends HTMLElement {
     row.className = "kin-qr-code-row";
     const code = document.createElement("code");
     code.className = "kin-qr-code";
-    code.textContent = this._code;
     const copy = document.createElement("button");
     copy.type = "button";
     copy.className = "kin-qr-copy";
     copy.textContent = "Copy code";
-    copy.addEventListener("click", () => this.copyCode(status));
+    copy.addEventListener("click", () => this.copyCode());
     row.append(code, copy);
     const status = document.createElement("p");
     status.className = "kin-qr-status";
     status.setAttribute("role", "status");
     caption.append(heading, row, status);
-    heading.hidden = row.hidden = !this._code;
-
     figure.append(frame, caption);
     this.replaceChildren(figure);
-    this.arm();
-    if (this.expired) {
-      status.textContent = "This code expired. Ask for a new one.";
-      return;
-    }
-    if (this._value) this.draw(canvas, frame, status, generation);
+    this.parts = { frame, canvas, heading, row, code, status };
   }
 
-  async draw(canvas, frame, status, generation) {
+  render() {
+    if (!this.isConnected) return;
+    if (!this.parts) this.build();
+    const generation = ++this.generation;
+    const { frame, canvas, heading, row, code, status } = this.parts;
+    canvas.setAttribute("aria-label", this._label);
+    canvas.textContent = this._label;
+    code.textContent = this._code;
+    // An expired code is not offered for copying either.
+    heading.hidden = row.hidden = !this._code || this.expired;
+    this.arm();
+    if (this.expired) {
+      frame.hidden = true;
+      status.textContent = this.expiredMessage;
+      return;
+    }
+    status.textContent = "";
+    if (!this._value) {
+      frame.hidden = true;
+      return;
+    }
+    this.draw(generation);
+  }
+
+  async draw(generation) {
+    const { frame, canvas, status } = this.parts;
     try {
       const codec = this.codec ?? (await qrCodec());
       if (generation !== this.generation) return;
       const { side, modules } = codec.encode(this._value);
-      const { scale, pixels } = qrLayout(side, this._size);
-      // Whole device pixels per module keep edges sharp on dense screens.
-      const density = Math.max(1, Math.round(globalThis.devicePixelRatio || 1));
-      canvas.width = pixels * density;
-      canvas.height = pixels * density;
-      canvas.style.width = `${pixels}px`;
-      canvas.style.height = `${pixels}px`;
-      paintModules(canvas.getContext("2d"), side, modules, scale * density);
+      const { scale, pixels, css } = qrCanvasSize(side, this._size, globalThis.devicePixelRatio);
+      canvas.width = pixels;
+      canvas.height = pixels;
+      canvas.style.width = `${css}px`;
+      canvas.style.height = `${css}px`;
+      paintModules(canvas.getContext("2d"), side, modules, scale);
       frame.hidden = false;
     } catch {
       if (generation !== this.generation) return;
@@ -153,7 +182,8 @@ export class KinQr extends HTMLElement {
     }
   }
 
-  async copyCode(status) {
+  async copyCode() {
+    const { status } = this.parts;
     try {
       await navigator.clipboard.writeText(this._code);
       status.textContent = "Code copied.";
@@ -188,7 +218,10 @@ export class KinQr extends HTMLElement {
       next = null;
     }
     if (generation !== this.generation || !this.isConnected) return;
-    if (next?.value) {
+    // A replacement that has already expired (say, a clock running ahead of
+    // the service) ends here rather than asking again at once.
+    const usable = next?.value && !(Number.isFinite(next.expiresAt) && next.expiresAt <= Date.now());
+    if (usable) {
       this._value = String(next.value);
       this._code = String(next.code ?? "");
       this._expiresAt = Number.isFinite(next.expiresAt) ? next.expiresAt : null;

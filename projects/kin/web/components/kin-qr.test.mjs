@@ -5,7 +5,7 @@ import test from "node:test";
 import { connect, disconnect, installDom, recordEvents, settle } from "./qr-test-dom.mjs";
 
 const defined = installDom();
-const { KinQr, QUIET_ZONE, paintModules, qrLayout } = await import("./kin-qr.js");
+const { KinQr, QUIET_ZONE, paintModules, qrCanvasSize, qrLayout } = await import("./kin-qr.js");
 assert.equal(defined["kin-qr"], KinQr);
 
 /** A codec that returns a fixed 21 × 21 grid with a known pattern. */
@@ -40,6 +40,21 @@ test("every module is a whole number of pixels, never less than one", () => {
   assert.deepEqual(qrLayout(21, 240), { scale: 8, pixels: 232 }, "21 + 8 quiet modules = 29; 240 / 29 = 8");
   assert.deepEqual(qrLayout(57, 240), { scale: 3, pixels: 195 });
   assert.deepEqual(qrLayout(57, 10), { scale: 1, pixels: 65 }, "a tiny size still draws one pixel per module");
+});
+
+test("fractional screen scaling still gets whole device pixels per module", () => {
+  // 21 modules + 8 quiet = 29. At 240 CSS px:
+  assert.deepEqual(qrCanvasSize(21, 240, 1), { scale: 8, pixels: 232, css: 232 });
+  assert.deepEqual(qrCanvasSize(21, 240, 1.25), { scale: 10, pixels: 290, css: 232 });
+  assert.deepEqual(qrCanvasSize(21, 240, 2.75), { scale: 22, pixels: 638, css: 232 });
+  for (const ratio of [1.5, 2.625, 3]) {
+    const { scale, pixels, css } = qrCanvasSize(21, 240, ratio);
+    assert.equal(Number.isInteger(scale), true);
+    assert.equal(pixels, 29 * scale, "the canvas is a whole number of modules");
+    assert.ok(Math.abs(css * ratio - pixels) < 1e-9, "shown at one device pixel per canvas pixel");
+    assert.ok(css <= 240);
+  }
+  assert.deepEqual(qrCanvasSize(21, 240, Number.NaN), qrCanvasSize(21, 240, 1), "an unknown ratio counts as 1");
 });
 
 test("modules are painted black on white with the quiet zone around them", () => {
@@ -119,6 +134,59 @@ test("without refresh, an expired payload says so and tells the page", async () 
   assert.ok(events.some((event) => event.type === "kin-qr-expired"));
   assert.equal(qr.byClass("kin-qr-status").textContent, "This code expired. Ask for a new one.");
   assert.equal(qr.byClass("kin-qr-frame").hidden, true, "an expired QR is not shown");
+  assert.equal(qr.byClass("kin-qr-code-row").hidden, true, "nor is its code offered for copying");
+  disconnect(qr);
+});
+
+test("the expired message can be the page's own", async () => {
+  const qr = element();
+  qr.expiredMessage = "This invitation ended.";
+  connect(qr);
+  qr.expiresAt = Date.now() - 1;
+  await settle();
+  await settle();
+  assert.equal(qr.byClass("kin-qr-status").textContent, "This invitation ended.");
+  disconnect(qr);
+});
+
+test("a refresh that returns an already-expired payload ends there, without asking again", async () => {
+  let calls = 0;
+  const qr = element();
+  qr.refresh = async () => { calls += 1; return { value: "https://kin.test/pair#code=STALE", code: "STALE", expiresAt: Date.now() - 1000 }; };
+  connect(qr);
+  qr.expiresAt = Date.now() - 1;
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(calls, 1, "one refresh, not a loop");
+  assert.equal(qr.expired, true);
+  assert.notEqual(qr.value, "https://kin.test/pair#code=STALE");
+  disconnect(qr);
+});
+
+test("a refresh that fails shows the expired state", async () => {
+  const qr = element();
+  qr.refresh = async () => { throw new Error("offline"); };
+  connect(qr);
+  qr.expiresAt = Date.now() - 1;
+  await settle();
+  await settle();
+  assert.equal(qr.expired, true);
+  disconnect(qr);
+});
+
+test("the status region and Copy button survive a refresh, so announcements and focus do too", async () => {
+  const qr = element();
+  qr.refresh = async () => ({ value: "https://kin.test/pair#code=NEW", code: "NEW-CODE", expiresAt: Date.now() + 60_000 });
+  connect(qr);
+  await settle();
+  const status = qr.byClass("kin-qr-status");
+  const copy = qr.byText("Copy code");
+  qr.expiresAt = Date.now() - 1;
+  await settle();
+  await settle();
+  await settle();
+  assert.equal(qr.byClass("kin-qr-code").textContent, "NEW-CODE");
+  assert.equal(qr.byClass("kin-qr-status"), status, "the same live region");
+  assert.equal(qr.byText("Copy code"), copy, "the same button");
   disconnect(qr);
 });
 

@@ -41,7 +41,8 @@ at 64 MiB and 10,000 events.
 `kin_alloc(0)` and a failed allocation return 0, which the host treats as
 failure. Live allocations sit in a fixed table of 8 slots. The host holds one
 input at a time, so a full table means a leaked allocation, and `kin_alloc`
-returns 0. `kin_clear` releases retained buffers and the history (whose bytes
+returns 0. The browser's QR codec runs on its own instance and holds two at
+most: its frame buffer and, briefly, an encode input. `kin_clear` releases retained buffers and the history (whose bytes
 it zero-fills first); it does not promise physical erasure. `engine.dispose()`
 calls it.
 

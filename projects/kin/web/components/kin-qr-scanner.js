@@ -1,23 +1,29 @@
 // <kin-qr-scanner>: reads a Kin code with the camera (#96).
 //
 // The camera starts only when the person taps "Scan a code", and stops on a
-// result, Cancel, the page being hidden, a route change, leaving the page, or
-// the element being removed (which is what locking Kin does). Frames are
+// result, Cancel, the page being hidden, an in-app route change (Kin's
+// ROUTE_CHANGE_EVENT; views are hidden, not removed), browser navigation,
+// leaving the page, the camera ending, or the element being removed (which
+// is what locking Kin does). When it stops, the codec overwrites the last
+// frame and payload it held. Frames are
 // downscaled to 640 pixels wide, turned to grayscale straight into the
 // engine's frame buffer, and decoded by the engine (wasm/kin-qr.js). No frame
 // is stored or sent anywhere.
 //
-// Only links for this Kin's own origin and a known path are accepted; anything
-// else says "This isn't a Kin code." and scanning continues. "Type the code
-// instead" is always offered.
+// Only links for this Kin's own origin and a known path, with no query (Kin's
+// secrets travel in the fragment), are accepted; anything else says "This
+// isn't a Kin code." and scanning continues. "Type the code instead" is always
+// offered.
 //
 // Events (bubbling):
 //   kin-qr-scan    detail { url }: a Kin link was read; the camera is off
 //   kin-qr-manual  the person chose to type the code instead
 //   kin-qr-cancel  the person cancelled scanning
 //
-// For tests, `codec`, `media` (navigator.mediaDevices) and `environment`
-// ({ isSecureContext }) can be replaced before use.
+// For tests, `codec` (used instead of the page's shared codec), `media`
+// (navigator.mediaDevices) and `environment` ({ isSecureContext }) can be
+// replaced before use.
+import { ROUTE_CHANGE_EVENT } from "../routes.js";
 import { MAX_FRAME_HEIGHT, MAX_FRAME_PIXELS, MAX_FRAME_WIDTH, qrCodec } from "../wasm/kin-qr.js";
 
 /** Kin paths a code may lead to: pairing a device and signing in. */
@@ -37,21 +43,28 @@ const MESSAGES = {
   "no-camera": ["No camera is available.", "This device has no camera Kin can use. Type the code instead."],
   denied: ["Camera access is blocked.", "Allow the camera for this site in your browser's settings, then try again. Or type the code instead."],
   error: ["The camera couldn't start.", "Try again, or type the code instead."],
+  lost: ["The camera stopped.", "It was turned off or disconnected. Try again, or type the code instead."],
+  reader: ["The code reader couldn't start.", "Try again, or type the code instead."],
 };
+const PAGE_EVENTS = ["hashchange", "popstate", "pagehide", ROUTE_CHANGE_EVENT];
 const NOT_KIN = "This isn't a Kin code.";
 
-/** The Kin link in a decoded payload, or null when it isn't one: it must be
- * an absolute URL on `origin` whose path is one of `paths`. */
+/** The Kin link in a decoded payload, or null when it isn't one: an absolute
+ * http(s) URL on `origin` whose path is one of `paths`, with no credentials
+ * and no query. Kin puts secrets in the fragment, which browsers never send
+ * to a server; a query would be. */
 export function kinLink(text, origin, paths = KIN_PATHS) {
   if (typeof text !== "string" || text.length === 0) return null;
+  if (typeof origin !== "string" || origin === "null") return null;
   let url;
   try {
     url = new URL(text);
   } catch {
     return null;
   }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   if (url.origin !== origin || !paths.includes(url.pathname)) return null;
-  if (url.username || url.password) return null;
+  if (url.username || url.password || url.search) return null;
   return url.href;
 }
 
@@ -107,6 +120,7 @@ export class KinQrScanner extends HTMLElement {
     this.state = "idle";
     this.notice = "";
     this.codec = null;
+    this.reader = null;
     this.media = globalThis.navigator?.mediaDevices ?? null;
     this.environment = globalThis;
     this.stream = null;
@@ -129,14 +143,14 @@ export class KinQrScanner extends HTMLElement {
 
   connectedCallback() {
     globalThis.document?.addEventListener("visibilitychange", this.onVisibility);
-    for (const type of ["hashchange", "popstate", "pagehide"]) globalThis.addEventListener?.(type, this.onPageChange);
+    for (const type of PAGE_EVENTS) globalThis.addEventListener?.(type, this.onPageChange);
     this.build();
     this.update();
   }
 
   disconnectedCallback() {
     globalThis.document?.removeEventListener("visibilitychange", this.onVisibility);
-    for (const type of ["hashchange", "popstate", "pagehide"]) globalThis.removeEventListener?.(type, this.onPageChange);
+    for (const type of PAGE_EVENTS) globalThis.removeEventListener?.(type, this.onPageChange);
     this.stop("idle");
   }
 
@@ -215,26 +229,42 @@ export class KinQrScanner extends HTMLElement {
     }
     const generation = ++this.generation;
     this.setState("starting");
+    // The codec loads alongside the camera prompt. The shared codec is asked
+    // for on every start: one released by a lock is replaced, never reused.
+    const codecReady = this.codec ? Promise.resolve(this.codec) : qrCodec();
+    // If the camera fails first, the codec's own failure is not reported.
+    codecReady.catch(() => {});
     let stream;
     try {
-      // The codec loads alongside the camera prompt.
-      const codecReady = this.codec ? Promise.resolve(this.codec) : qrCodec();
-      // If the camera fails first, the codec's own failure is not reported.
-      codecReady.catch(() => {});
       stream = await this.media.getUserMedia({ video: { facingMode: "environment" }, audio: false });
-      if (generation !== this.generation) {
-        stopTracks(stream);
-        return;
-      }
-      this.stream = stream;
-      this.codec = await codecReady;
-      if (generation !== this.generation) return;
+    } catch (error) {
+      if (generation === this.generation) this.stop(cameraErrorState(error));
+      return;
+    }
+    if (generation !== this.generation) {
+      stopTracks(stream);
+      return;
+    }
+    this.stream = stream;
+    for (const track of stream.getTracks?.() ?? []) {
+      track.addEventListener?.("ended", () => {
+        if (generation === this.generation) this.stop("lost");
+      });
+    }
+    try {
+      this.reader = await codecReady;
+      if (this.reader?.disposed) throw new Error("The QR reader was closed.");
+    } catch {
+      if (generation === this.generation) this.stop("reader");
+      return;
+    }
+    if (generation !== this.generation) return;
+    try {
       const { video } = this.parts;
       video.srcObject = stream;
       await video.play?.();
-    } catch (error) {
-      if (generation !== this.generation) return;
-      this.stop(stream ? "error" : cameraErrorState(error));
+    } catch {
+      if (generation === this.generation) this.stop("error");
       return;
     }
     if (generation !== this.generation) return;
@@ -264,7 +294,8 @@ export class KinQrScanner extends HTMLElement {
       try {
         text = this.readFrame();
       } catch {
-        this.stop("error");
+        // The reader was closed (Kin locked) or failed; the camera goes off.
+        this.stop("reader");
         return;
       }
       if (text !== null) {
@@ -294,7 +325,7 @@ export class KinQrScanner extends HTMLElement {
     const context = this.canvas.getContext("2d", { willReadFrequently: true });
     context.drawImage(video, 0, 0, width, height);
     const { data } = context.getImageData(0, 0, width, height);
-    return this.codec.decodeFrame(width, height, (target) => rgbaToLuma(data, target));
+    return this.reader.decodeFrame(width, height, (target) => rgbaToLuma(data, target));
   }
 
   /** Turns the camera off and forgets every frame. */
@@ -305,6 +336,12 @@ export class KinQrScanner extends HTMLElement {
     stopTracks(this.stream);
     this.stream = null;
     if (this.parts?.video) this.parts.video.srcObject = null;
+    try {
+      this.reader?.forget?.();
+    } catch {
+      // A closed reader holds nothing to forget.
+    }
+    this.reader = null;
     if (this.canvas) {
       this.canvas.width = 0;
       this.canvas.height = 0;

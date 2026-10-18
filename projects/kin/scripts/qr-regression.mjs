@@ -3,17 +3,20 @@
 // writeQrCamera() runs in Node before the browser starts: it draws QR codes
 // with the real engine into a .y4m file that Chromium plays as its camera
 // (--use-file-for-fake-video-capture). The file shows a code for another
-// origin for two seconds, then this Kin's pairing link for one, and loops.
+// origin for five seconds, then this Kin's pairing link for one, and loops.
 //
 // qrRegressions() runs in the page, so it must stay self-contained (it is
 // serialised with toString). It checks that:
 // - <kin-qr> draws pure black-and-white modules that the engine reads back;
 // - <kin-qr-scanner> keeps the camera off until a tap, refuses the foreign
 //   code, hands over the Kin link, and ends the camera track on a result;
-// - Cancel, a route change and removal each end the real camera track.
+// - Cancel, an in-app route change (the app's own navigation, which uses
+//   history.pushState) and removal each end the real camera track.
 import { readFile, writeFile } from "node:fs/promises";
 
-export const QR_CAMERA = Object.freeze({ width: 320, height: 240, fps: 10, rejectSeconds: 2, acceptSeconds: 1 });
+// The foreign code shows for five seconds, so even a slow CI runner decodes it
+// before the Kin link appears.
+export const QR_CAMERA = Object.freeze({ width: 320, height: 240, fps: 10, rejectSeconds: 5, acceptSeconds: 1 });
 
 /** Writes the fake camera file showing `reject`, then `accept`. */
 export async function writeQrCamera(path, { reject, accept }, camera = QR_CAMERA) {
@@ -122,7 +125,10 @@ export async function qrRegressions(expected) {
     scanner.codec = { decodeFrame: () => null };
     const exits = [
       ["Cancel", () => [...scanner.querySelectorAll("button")].find((button) => button.textContent === "Cancel").click()],
-      ["a route change", () => window.dispatchEvent(new HashChangeEvent("hashchange"))],
+      ["an in-app route change", () => {
+        const app = document.querySelector("kin-app");
+        app.ctx.navigation.navigate(app.route?.page === "today" ? "#routines" : "#today");
+      }],
       ["removal", () => scanner.remove()],
     ];
     for (const [label, exit] of exits) {

@@ -14,14 +14,17 @@ Object.defineProperty(globalThis, "location", { configurable: true, value: { ori
 const {
   KinQrScanner, SCAN_INTERVAL_MS, cameraErrorState, cameraSupport, frameSize, kinLink, rgbaToLuma,
 } = await import("./kin-qr-scanner.js");
+const { ROUTE_CHANGE_EVENT } = await import("../routes.js");
+const { qrCodec, releaseQrCodec } = await import("../wasm/kin-qr.js");
 assert.equal(defined["kin-qr-scanner"], KinQrScanner);
 
 test("only links to this Kin's pairing and sign-in paths are accepted", () => {
   const origin = "https://kin.test";
   assert.equal(kinLink("https://kin.test/pair#code=ABCD", origin), "https://kin.test/pair#code=ABCD");
-  assert.equal(kinLink("https://kin.test/pair?code=ABCD", origin), "https://kin.test/pair?code=ABCD");
-  assert.equal(kinLink("https://kin.test/link#token=xyz", origin), "https://kin.test/link#token=xyz");
+  assert.equal(kinLink("https://kin.test/link#r=1&s=2&f=3", origin), "https://kin.test/link#r=1&s=2&f=3");
+  assert.equal(kinLink("http://127.0.0.1:8080/pair#code=ABCD", "http://127.0.0.1:8080"), "http://127.0.0.1:8080/pair#code=ABCD");
   for (const text of [
+    "https://kin.test/pair?code=ABCD", // a query reaches the server; Kin's secrets ride in the fragment
     "https://evil.test/pair#code=ABCD", // another origin
     "http://kin.test/pair#code=ABCD", // the same host without TLS is another origin
     "https://kin.test.evil.test/pair", // a look-alike host
@@ -33,6 +36,9 @@ test("only links to this Kin's pairing and sign-in paths are accepted", () => {
     "",
     null,
   ]) assert.equal(kinLink(text, origin), null, String(text));
+  // An opaque origin (a sandboxed frame) matches no Kin link, whatever the scheme.
+  assert.equal(kinLink("data:/pair", "null"), null);
+  assert.equal(kinLink("javascript:/pair", "null"), null);
 });
 
 test("each reason a camera can't be used has its own state", () => {
@@ -77,7 +83,13 @@ function rig({ secure = true, cameraError = null, payloads = [] } = {}) {
       requests.push(constraints);
       if (holdCamera) await cameraHeld;
       if (cameraError) throw cameraError;
-      const track = { stopped: false, stop() { this.stopped = true; } };
+      const listeners = {};
+      const track = {
+        stopped: false,
+        stop() { this.stopped = true; },
+        addEventListener(type, listener) { (listeners[type] ??= []).push(listener); },
+        fire(type) { for (const listener of listeners[type] ?? []) listener({ type }); },
+      };
       tracks.push(track);
       return { getTracks: () => [track] };
     },
@@ -202,7 +214,8 @@ for (const [trigger, act] of [
   ["Cancel", (r) => press(r.scanner, "Cancel")],
   ["Type the code instead", (r) => press(r.scanner, "Type the code instead")],
   ["the page being hidden", () => { document.visibilityState = "hidden"; document.fire("visibilitychange"); document.visibilityState = "visible"; }],
-  ["a route change", () => fireWindow("hashchange")],
+  ["an in-app route change", () => fireWindow(ROUTE_CHANGE_EVENT)],
+  ["a hash route change", () => fireWindow("hashchange")],
   ["history navigation", () => fireWindow("popstate")],
   ["leaving the page", () => fireWindow("pagehide")],
   ["removal (Kin locking)", (r) => disconnect(r.scanner)],
@@ -247,10 +260,84 @@ test("cancelling while the camera prompt is open releases the camera it returns"
   assert.equal(r.scanner.state, "idle");
 });
 
-test("removing the scanner removes its page listeners", () => {
+test("removing the scanner removes every page listener it added", () => {
+  const counts = () => [document.listenerCount("visibilitychange"),
+    ...["hashchange", "popstate", "pagehide", ROUTE_CHANGE_EVENT].map((type) => (windowListeners[type] ?? []).length)];
+  const before = counts();
   const r = rig();
-  const before = document.listenerCount("visibilitychange");
+  assert.deepEqual(counts(), before.map((count) => count + 1), "one of each while connected");
   disconnect(r.scanner);
-  assert.equal(document.listenerCount("visibilitychange"), before - 1);
+  assert.deepEqual(counts(), before);
   assert.ok(r.scanner instanceof FakeElement);
+});
+
+test("a camera that ends mid-scan stops the scanner and says so", async () => {
+  const r = rig();
+  press(r.scanner, "Scan a code");
+  await settle();
+  const track = r.tracks[0];
+  assert.equal(r.scanner.state, "scanning");
+  track.fire("ended");
+  assert.equal(r.scanner.state, "lost");
+  assert.ok(track.stopped);
+  assert.ok(r.scanner.byText("Try again"));
+});
+
+test("a code reader that fails after the camera was granted turns the camera off", async () => {
+  const r = rig();
+  r.scanner.codec = { disposed: true, decodeFrame() { throw new Error("closed"); } };
+  press(r.scanner, "Scan a code");
+  await settle();
+  assert.equal(r.scanner.state, "reader");
+  assert.equal(status(r.scanner), "The code reader couldn't start.");
+  assert.ok(r.tracks.every((track) => track.stopped));
+});
+
+test("a preview that won't play turns the camera off", async () => {
+  const r = rig();
+  r.video.play = async () => { throw new Error("NotAllowedError"); };
+  press(r.scanner, "Scan a code");
+  await settle();
+  assert.equal(r.scanner.state, "error");
+  assert.ok(r.tracks.every((track) => track.stopped));
+});
+
+test("stopping asks the reader to forget the last frame", async () => {
+  const r = rig();
+  let forgotten = 0;
+  r.scanner.codec.forget = () => { forgotten += 1; };
+  press(r.scanner, "Scan a code");
+  await settle();
+  press(r.scanner, "Cancel");
+  assert.equal(forgotten, 1);
+});
+
+test("a shared reader released by a lock is replaced on the next start, never reused", async () => {
+  const made = [];
+  const load = async () => {
+    const codec = {
+      disposed: false, decoded: 0,
+      decodeFrame(width, height, write) { this.decoded += 1; write(new Uint8Array(width * height)); return null; },
+      forget() {}, dispose() { this.disposed = true; },
+    };
+    made.push(codec);
+    return codec;
+  };
+  await qrCodec(load);
+  const r = rig();
+  r.scanner.codec = null; // use the page's shared reader
+  press(r.scanner, "Scan a code");
+  await settle();
+  r.frame(1000);
+  press(r.scanner, "Cancel");
+  await releaseQrCodec(); // Kin locks
+  assert.equal(made[0].disposed, true);
+  await qrCodec(load); // the next use loads a new one
+  press(r.scanner, "Scan a code");
+  await settle();
+  r.frame(3000);
+  assert.equal(r.scanner.state, "scanning", "the new reader works");
+  assert.deepEqual(made.map((codec) => codec.decoded), [1, 1], "each start used the live reader");
+  press(r.scanner, "Cancel");
+  await releaseQrCodec();
 });

@@ -57,11 +57,17 @@ export function createQrCodec(instanceExports) {
     return exports;
   };
   const fail = (status) => new KinEngineError(status, MESSAGES.get(status) ?? "Kin could not read that QR code. Try again.");
+  // Copies the result out, then zeroes it in WASM memory: a decoded payload
+  // can carry a pairing secret, and only the copy handed to the caller
+  // should hold it.
   const result = (engine) => {
     const pointer = engine.kin_result_ptr();
     const length = engine.kin_result_len();
     if (pointer === 0 || length === 0) return new Uint8Array(0);
-    return new Uint8Array(engine.memory.buffer, pointer, length).slice();
+    const view = new Uint8Array(engine.memory.buffer, pointer, length);
+    const bytes = view.slice();
+    view.fill(0);
+    return bytes;
   };
 
   const frameBuffer = (engine, width, height) => {
@@ -96,7 +102,8 @@ export function createQrCodec(instanceExports) {
         const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
         const side = bytes.length >= MATRIX_HEADER ? view.getUint32(8, true) : 0;
         const magic = String.fromCharCode(...bytes.subarray(0, 4));
-        if (magic !== "KQRM" || side === 0 || bytes.length !== MATRIX_HEADER + side * side) throw fail(6);
+        const version = bytes.length >= MATRIX_HEADER ? view.getUint16(4, true) : 0;
+        if (magic !== "KQRM" || version !== 1 || side === 0 || bytes.length !== MATRIX_HEADER + side * side) throw fail(6);
         return { side, modules: bytes.subarray(MATRIX_HEADER) };
       } finally {
         engine.kin_free(pointer, input.length);
@@ -126,6 +133,17 @@ export function createQrCodec(instanceExports) {
       } catch {
         return "";
       }
+    },
+
+    /** Overwrites what the last frame left behind: the held frame is blanked
+     * and decoded once, which replaces the decoder's working image of the
+     * frame and its result. The scanner calls this when it stops. Like
+     * kin_clear, this doesn't promise physical erasure of memory the engine
+     * freed earlier (docs/ABI.md). */
+    forget() {
+      if (!exports || !frame) return;
+      new Uint8Array(exports.memory.buffer, frame.pointer + FRAME_HEADER, frame.width * frame.height).fill(0);
+      exports.kin_qr_decode(frame.pointer, frame.length);
     },
 
     /** Releases the frame buffer and the decoder's working memory. The codec

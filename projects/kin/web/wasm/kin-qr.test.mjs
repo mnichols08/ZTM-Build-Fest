@@ -42,6 +42,7 @@ function substitute({ status = 0, payload = encoder.encode("https://kin.test/pai
       const side = 21;
       const bytes = new Uint8Array(12 + side * side);
       bytes.set(encoder.encode("KQRM"));
+      new DataView(bytes.buffer).setUint16(4, 1, true);
       new DataView(bytes.buffer).setUint32(8, side, true);
       bytes[12] = 1;
       setResult(bytes);
@@ -130,6 +131,36 @@ test("encode returns the module grid and frees its input", () => {
   assert.equal(modules[0], 1);
   assert.equal(engine.live.size, 0, "the input is freed");
   assert.throws(() => codec.encode(""), (error) => error.code === 2, "nothing to encode");
+});
+
+test("a decoded payload is zeroed in WASM memory once copied out", () => {
+  const engine = substitute();
+  const codec = createQrCodec(engine.exports);
+  assert.equal(codec.decodeFrame(40, 30, fill(1)), "https://kin.test/pair#code=ABCD");
+  const length = engine.exports.kin_result_len();
+  const left = new Uint8Array(engine.memory.buffer, RESULT_AT, length);
+  assert.ok(left.every((byte) => byte === 0), "only the caller's copy holds the payload");
+});
+
+test("forget blanks the held frame and decodes it once, replacing what the last frame left", () => {
+  const engine = substitute({ status: 7 });
+  const codec = createQrCodec(engine.exports);
+  codec.decodeFrame(40, 30, fill(200));
+  codec.forget();
+  assert.deepEqual(engine.log.filter(([kind]) => kind === "decode").at(-1), ["decode", 40, 30, [0, 0, 0]], "a blank frame went through the decoder");
+  assert.equal(engine.log.filter(([kind]) => kind === "alloc").length, 1, "the held buffer is reused, not reallocated");
+  createQrCodec(substitute().exports).forget(); // nothing held: nothing to do
+});
+
+test("a matrix of another version is refused", () => {
+  const engine = substitute();
+  const original = engine.exports.kin_qr_encode;
+  engine.exports.kin_qr_encode = (pointer, length) => {
+    const status = original(pointer, length);
+    new DataView(engine.memory.buffer, RESULT_AT, 12).setUint16(4, 2, true);
+    return status;
+  };
+  assert.throws(() => createQrCodec(engine.exports).encode("x"), (error) => error.code === 6);
 });
 
 test("a disposed codec clears the engine and refuses further use", () => {
