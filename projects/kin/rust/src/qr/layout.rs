@@ -4,13 +4,18 @@
 
 use super::tables;
 
-/// Module grid, one byte per module (1 = dark), row-major.
+/// The largest symbol side (version 10), and so the largest module count.
+pub const MAX_SIZE: usize = 57;
+pub const MAX_MODULES: usize = MAX_SIZE * MAX_SIZE;
+
+/// Module grid, one byte per module (1 = dark), row-major, in fixed storage:
+/// only the first `size * size` entries are used. Nothing here allocates.
 pub struct Grid {
     pub size: usize,
-    pub dark: Vec<u8>,
+    pub dark: [u8; MAX_MODULES],
     /// True for every module that is a function pattern or format/version
     /// information rather than data.
-    pub reserved: Vec<bool>,
+    pub reserved: [bool; MAX_MODULES],
 }
 
 impl Grid {
@@ -19,8 +24,8 @@ impl Grid {
         let size = tables::size(version);
         let mut grid = Grid {
             size,
-            dark: vec![0; size * size],
-            reserved: vec![false; size * size],
+            dark: [0; MAX_MODULES],
+            reserved: [false; MAX_MODULES],
         };
         grid.draw_finders();
         grid.draw_timing();
@@ -75,10 +80,11 @@ impl Grid {
     fn draw_alignment(&mut self, version: usize) {
         let centres = tables::ALIGNMENT[version - 1];
         let last = self.size - 7;
+        let finder_centres = [(6, 6), (6, last), (last, 6)];
         for &cx in centres {
             for &cy in centres {
                 // Skip the three centres that would overlap a finder pattern.
-                if (cx == 6 && cy == 6) || (cx == 6 && cy == last) || (cx == last && cy == 6) {
+                if finder_centres.contains(&(cx, cy)) {
                     continue;
                 }
                 for dy in -2isize..=2 {
@@ -97,57 +103,117 @@ impl Grid {
 
     /// Writes the 15 format bits (both copies) into the grid.
     pub fn write_format(&mut self, bits: u32) {
-        for (x, y, bit) in format_modules(self.size) {
-            self.dark[y * self.size + x] = ((bits >> bit) & 1) as u8;
-        }
+        write_format_bits(&mut self.dark, self.size, bits);
     }
 
-    /// Data module indices in placement order: two columns at a time from the
-    /// bottom-right, alternating upward and downward, skipping column 6 and
-    /// every reserved module.
-    pub fn data_order(&self) -> Vec<usize> {
-        let size = self.size;
-        let mut order = Vec::with_capacity(size * size);
-        let mut right = size as isize - 1;
-        let mut upward = true;
-        while right >= 1 {
-            if right == 6 {
-                right -= 1;
-            }
-            for step in 0..size {
-                let y = if upward { size - 1 - step } else { step };
-                for column in [right, right - 1] {
-                    let index = y * size + column as usize;
-                    if !self.reserved[index] {
-                        order.push(index);
-                    }
-                }
-            }
-            upward = !upward;
-            right -= 2;
+    /// Data module indices in placement order (see [`DataOrder`]). The
+    /// iterator borrows only the reserved map, so the caller can write
+    /// `dark` while walking it.
+    pub fn data_order(&self) -> DataOrder<'_> {
+        DataOrder::new(&self.reserved, self.size)
+    }
+}
+
+/// Writes the 15 format bits into a module array of side `size`.
+pub fn write_format_bits(dark: &mut [u8], size: usize, bits: u32) {
+    for (x, y, bit) in format_modules(size) {
+        dark[y * size + x] = ((bits >> bit) & 1) as u8;
+    }
+}
+
+/// Data module indices in placement order: two columns at a time from the
+/// bottom-right, alternating upward and downward, skipping column 6 and
+/// every reserved module. Lazy, so no order table is built.
+pub struct DataOrder<'a> {
+    reserved: &'a [bool],
+    size: usize,
+    right: isize,
+    upward: bool,
+    step: usize,
+    second_column: bool,
+}
+
+impl<'a> DataOrder<'a> {
+    pub(super) fn new(reserved: &'a [bool], size: usize) -> DataOrder<'a> {
+        DataOrder {
+            reserved,
+            size,
+            right: size as isize - 1,
+            upward: true,
+            step: 0,
+            second_column: false,
         }
-        order
+    }
+}
+
+impl Iterator for DataOrder<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        let size = self.size;
+        loop {
+            if self.right < 1 {
+                return None;
+            }
+            if self.step == size {
+                // The pair of columns is done: move two left, skipping the
+                // vertical timing column.
+                self.step = 0;
+                self.second_column = false;
+                self.upward = !self.upward;
+                self.right -= 2;
+                if self.right == 6 {
+                    self.right -= 1;
+                }
+                continue;
+            }
+            let y = if self.upward {
+                size - 1 - self.step
+            } else {
+                self.step
+            };
+            let column = if self.second_column {
+                self.right - 1
+            } else {
+                self.right
+            };
+            if self.second_column {
+                self.second_column = false;
+                self.step += 1;
+            } else {
+                self.second_column = true;
+            }
+            let index = y * size + column as usize;
+            if !self.reserved[index] {
+                return Some(index);
+            }
+        }
     }
 }
 
 /// Positions of the 15 format-information bits: (x, y, bit index). Each bit
 /// appears twice, around the top-left finder and split across the others.
-pub fn format_modules(size: usize) -> Vec<(usize, usize, u32)> {
-    let mut modules = Vec::with_capacity(30);
+pub fn format_modules(size: usize) -> [(usize, usize, u32); 30] {
+    let mut modules = [(0usize, 0usize, 0u32); 30];
+    let mut count = 0;
+    let mut push = |module: (usize, usize, u32)| {
+        modules[count] = module;
+        count += 1;
+    };
     for i in 0..=5 {
-        modules.push((8, i, i as u32));
+        push((8, i, i as u32));
     }
-    modules.push((8, 7, 6));
-    modules.push((8, 8, 7));
-    modules.push((7, 8, 8));
+    push((8, 7, 6));
+    push((8, 8, 7));
+    push((7, 8, 8));
     for i in 9..15 {
-        modules.push((14 - i, 8, i as u32));
+        push((14 - i, 8, i as u32));
     }
     for i in 0..8 {
-        modules.push((size - 1 - i, 8, i as u32));
+        push((size - 1 - i, 8, i as u32));
     }
     for i in 8..15 {
-        modules.push((8, size - 15 + i, i as u32));
+        push((8, size - 15 + i, i as u32));
     }
     modules
 }

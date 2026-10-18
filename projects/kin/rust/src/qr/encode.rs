@@ -1,16 +1,26 @@
-//! Byte-mode QR encoder, level M, versions 1–10. Every stage writes into
-//! preallocated, exact-size buffers; nothing is parsed or re-decoded.
+//! Byte-mode QR encoder, level M, versions 1–10. The whole encode path works
+//! in fixed-size storage: the module grid, the bit stream and the blocks are
+//! arrays sized for version 10, so encoding does not allocate. Nothing is
+//! parsed or re-decoded.
 
 use super::{
-    layout::{self, Grid},
+    layout::{self, DataOrder, Grid, MAX_MODULES},
     rs, tables, QrError,
 };
 
-/// A finished symbol: `size` × `size` modules, one byte each (1 = dark).
+/// A finished symbol: `size` × `size` modules, one byte each (1 = dark), in
+/// fixed storage. Only the first `size * size` bytes are meaningful.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Code {
     pub size: usize,
-    pub dark: Vec<u8>,
+    pub dark: [u8; MAX_MODULES],
+}
+
+impl Code {
+    /// The `size * size` module bytes, row-major.
+    pub fn modules(&self) -> &[u8] {
+        &self.dark[..self.size * self.size]
+    }
 }
 
 /// The longest byte payload that fits version 10 at level M.
@@ -18,39 +28,47 @@ pub const MAX_BYTES: usize = 213;
 
 /// Encodes `data` (any bytes; Kin passes UTF-8 text) as a QR symbol.
 pub fn encode(data: &[u8]) -> Result<Code, QrError> {
+    encode_with_mask(data, None)
+}
+
+/// Encodes with `forced` as the mask, or with the lowest-penalty mask when
+/// `None`. Tests use the forced form to cover every mask pattern.
+pub(crate) fn encode_with_mask(data: &[u8], forced: Option<u8>) -> Result<Code, QrError> {
     if data.is_empty() {
         return Err(QrError::Empty);
     }
     let version = choose_version(data.len())?;
-    let codewords = codewords(data, version);
+    let mut stream = [0u8; tables::MAX_CODEWORDS];
+    let total = codewords(data, version, &mut stream);
     let mut grid = Grid::with_function_patterns(version);
-    let order = grid.data_order();
-    let total_bits = codewords.len() * 8;
-    for (position, &index) in order.iter().enumerate().take(total_bits) {
-        grid.dark[index] = (codewords[position / 8] >> (7 - position % 8)) & 1;
-    }
-    // Remainder modules (beyond `total_bits`) stay light.
     let size = grid.size;
-    let mut best: Option<(u32, Vec<u8>)> = None;
+    // Remainder modules (beyond the codeword bits) stay light.
+    let order = DataOrder::new(&grid.reserved, size);
+    for (position, index) in order.enumerate().take(total * 8) {
+        grid.dark[index] = (stream[position / 8] >> (7 - position % 8)) & 1;
+    }
+    let mut best: Option<(u32, [u8; MAX_MODULES])> = None;
     for mask in 0..8u8 {
-        let mut candidate = grid.dark.clone();
-        for &index in &order {
-            if layout::mask_applies(mask, index / size, index % size) {
-                candidate[index] ^= 1;
-            }
+        if forced.is_some_and(|fixed| fixed != mask) {
+            continue;
         }
         let mut masked = Grid {
             size,
-            dark: candidate,
-            reserved: grid.reserved.clone(),
+            dark: grid.dark,
+            reserved: grid.reserved,
         };
+        for index in DataOrder::new(&grid.reserved, size) {
+            if layout::mask_applies(mask, index / size, index % size) {
+                masked.dark[index] ^= 1;
+            }
+        }
         masked.write_format(layout::format_bits(mask));
-        let score = layout::penalty(&masked.dark, size);
+        let score = layout::penalty(&masked.dark[..size * size], size);
         if best.as_ref().is_none_or(|(lowest, _)| score < *lowest) {
             best = Some((score, masked.dark));
         }
     }
-    let (_, dark) = best.expect("eight masks are always evaluated");
+    let (_, dark) = best.ok_or(QrError::Unsupported)?;
     Ok(Code { size, dark })
 }
 
@@ -66,81 +84,73 @@ fn choose_version(length: usize) -> Result<usize, QrError> {
     Err(QrError::TooLong)
 }
 
-/// Data codewords, then the interleaved data and error-correction codewords.
-fn codewords(data: &[u8], version: usize) -> Vec<u8> {
+/// Writes the data and error-correction codewords of `data` into `out`,
+/// interleaved in placement order. Returns how many were written.
+fn codewords(data: &[u8], version: usize, out: &mut [u8; tables::MAX_CODEWORDS]) -> usize {
     let capacity = tables::DATA_CODEWORDS[version - 1];
-    let mut bits = BitWriter::with_capacity(capacity);
+    let mut stream = [0u8; tables::MAX_CODEWORDS];
+    let mut bits = BitWriter {
+        bytes: &mut stream,
+        bits: 0,
+    };
     bits.push(0b0100, 4); // byte mode
     bits.push(data.len() as u32, tables::count_bits(version));
     for &byte in data {
         bits.push(u32::from(byte), 8);
     }
-    let terminator = (capacity * 8 - bits.len()).min(4);
+    let terminator = (capacity * 8 - bits.bits).min(4);
     bits.push(0, terminator);
     bits.pad_to_byte();
-    let mut stream = bits.into_bytes();
-    let mut pad = [0xEC, 0x11].into_iter().cycle();
-    while stream.len() < capacity {
-        stream.push(pad.next().expect("cycle never ends"));
+    let filled = bits.bits / 8;
+    for (offset, slot) in stream[filled..capacity].iter_mut().enumerate() {
+        *slot = if offset % 2 == 0 { 0xEC } else { 0x11 };
     }
 
     // Split into blocks, compute each block's check codewords.
     let lengths = tables::block_data_lengths(version);
     let check_length = tables::EC_PER_BLOCK[version - 1];
-    let mut blocks: Vec<&[u8]> = Vec::with_capacity(lengths.len());
+    let mut starts = [0usize; tables::MAX_BLOCKS];
+    let mut checks = [[0u8; tables::MAX_EC]; tables::MAX_BLOCKS];
     let mut offset = 0;
-    for &length in &lengths {
-        blocks.push(&stream[offset..offset + length]);
+    for (index, &length) in lengths.as_slice().iter().enumerate() {
+        starts[index] = offset;
+        rs::encode_into(
+            &stream[offset..offset + length],
+            &mut checks[index][..check_length],
+        );
         offset += length;
     }
-    let checks: Vec<Vec<u8>> = blocks
-        .iter()
-        .map(|block| rs::encode(block, check_length))
-        .collect();
 
-    let mut out = Vec::with_capacity(capacity + lengths.len() * check_length);
-    let longest = lengths.iter().copied().max().unwrap_or(0);
+    let mut k = 0;
+    let longest = lengths.as_slice().iter().copied().max().unwrap_or(0);
     for i in 0..longest {
-        for block in &blocks {
-            if let Some(&byte) = block.get(i) {
-                out.push(byte);
+        for (index, &length) in lengths.as_slice().iter().enumerate() {
+            if i < length {
+                out[k] = stream[starts[index] + i];
+                k += 1;
             }
         }
     }
     for i in 0..check_length {
-        for check in &checks {
-            out.push(check[i]);
+        for block in &checks[..lengths.count] {
+            out[k] = block[i];
+            k += 1;
         }
     }
-    out
+    k
 }
 
-/// Packs bit fields most significant bit first.
-struct BitWriter {
-    bytes: Vec<u8>,
+/// Packs bit fields most significant bit first into a zeroed byte array.
+struct BitWriter<'a> {
+    bytes: &'a mut [u8],
     bits: usize,
 }
 
-impl BitWriter {
-    fn with_capacity(bytes: usize) -> BitWriter {
-        BitWriter {
-            bytes: Vec::with_capacity(bytes),
-            bits: 0,
-        }
-    }
-
-    fn len(&self) -> usize {
-        self.bits
-    }
-
+impl BitWriter<'_> {
     fn push(&mut self, value: u32, width: usize) {
         for shift in (0..width).rev() {
-            if self.bits.is_multiple_of(8) {
-                self.bytes.push(0);
-            }
             let bit = ((value >> shift) & 1) as u8;
-            let last = self.bytes.len() - 1;
-            self.bytes[last] |= bit << (7 - self.bits % 8);
+            self.bytes[self.bits / 8] |= bit << (7 - self.bits % 8);
             self.bits += 1;
         }
     }
@@ -149,10 +159,6 @@ impl BitWriter {
         if !self.bits.is_multiple_of(8) {
             self.bits += 8 - self.bits % 8;
         }
-    }
-
-    fn into_bytes(self) -> Vec<u8> {
-        self.bytes
     }
 }
 

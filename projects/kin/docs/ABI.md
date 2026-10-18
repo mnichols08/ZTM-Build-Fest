@@ -24,7 +24,7 @@ kin_qr_encode(ptr, len)              UTF-8 text -> KQRM matrix (no crates; qr/)
 kin_qr_decode(ptr, len)              width, height, luma -> QR payload bytes
 kin_encode_archive / kin_decode_archive   whole KARC framing (retained)
 kin_result_ptr/len, kin_error_ptr/len     the last call's result or error
-kin_clear()                               drop every retained buffer
+kin_clear()                               drop every retained buffer (and QR scratch)
 ```
 
 Pointers are byte offsets into the module's linear memory. Every operation
@@ -336,16 +336,28 @@ fragment, so the payload never reaches a server log or `Referer`.
   is `KQRM | version:u16 = 1 | reserved:u16 = 0 | side:u32 | side*side bytes`,
   one byte per module in row-major order (1 dark, 0 light), with no quiet
   zone. Empty input is `2`; more than 213 bytes is `5`; invalid UTF-8 is `2`.
+  The encoder itself works in fixed arrays sized for version 10; only the
+  returned result buffer is allocated.
 - `kin_qr_decode(ptr, len)`: the input is `width:u32 | height:u32 | luma`, where
   luma is `width*height` bytes of 8-bit grayscale, row-major. The result is the
-  decoded payload bytes. A size that disagrees with the pixels is `2`; a frame
-  with no symbol Kin can read is `7`.
+  decoded payload bytes.
+  - A zero size, or a luma length that doesn't equal `width*height`, is `2`.
+  - A frame wider or taller than 1280, or with more than 921 600 pixels
+    (1280 × 720), is `5`.
+  - A frame with no symbol Kin can read is `7`.
+  - Light-on-dark symbols are read: the decoder retries the frame inverted when
+    the first pass fails.
+  - Each pass has a budget of 4 000 000 pixel reads, so a noisy frame stops
+    instead of scanning on. At most 64 finder candidates are kept.
+  - The working memory (about 4.7 MB at 720p) is kept between calls, so frames
+    of the same size don't allocate. `kin_clear` releases it.
 
 Limits of the decoder: version 1 symbols (up to 14 bytes) can fail on
 perspective frames, because the fourth corner cannot be pinned without an
 alignment pattern. Invitation and sign-in links are much longer, so they are
 unaffected. Multi-segment symbols (mixed text modes) are refused, not
-partially read.
+partially read. The decoder reads what a camera shows of a screen; it is not
+tuned for printed codes under heavy blur.
 
 ## Side formats
 

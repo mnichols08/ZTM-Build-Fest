@@ -186,3 +186,30 @@ auth secret `BTBZMqHH6r4Tts7J_aSIgg`, salt `DGv6ra1nlYgDCS1FRnbzlw`.
 `encryptPushPayload` must produce the RFC's message exactly, and decrypting
 it with the user-agent private key `q1dXpw3UpT5VOmu_cf_v6ih07Aems3njxI-JWgLcM94`
 must give the plaintext (`server/push.test.mjs`).
+
+## QR symbols (#94)
+
+The engine's QR encoder (`rust/src/qr/`) must produce the module grid below
+for each text and mask, byte mode, level M. Each grid is pinned by the FNV-1a
+64 hash of its modules (one byte per module, row-major, no quiet zone). The
+reference is python-qrcode 8.x with byte mode forced and `mask_pattern` set,
+run once and recorded here; it is not a runtime or build dependency.
+`coverage::golden_grids_match_an_independent_encoder_for_every_mask` checks
+all of them.
+
+- `01234567`, version 1 (side 21): the ISO/IEC 18004 Annex I example, in byte
+  mode. The annex example itself is numeric, so this is its byte-mode
+  equivalent.
+- `https://kin.example.org/#join=7kq4-zpm2-hr9t-vxb6`, version 4 (side 33).
+- `https://kin.example.org/#sign-in=q7tk-2mzp-vx8r-3hdn-4wjb-9cfl-6ygs-zt5m`,
+  version 5 (side 37).
+
+| Text | Mask | FNV-1a 64 |
+|---|---|---|
+| `01234567` | 0–7 | `6ca855685a57b68d` `d3a2a295bf82e0c3` `03266a2fbe5602a3` `e2cffb098f25ae39` `fef5e643e723249b` `e20213afa4307655` `4c91aab4c8c01f95` `ef39ad586b7ebd8f` |
+| join link | 0–7 | `92424d5f7ff9a791` `5e761cb029f507e3` `21f4527da7335d8a` `18e017e9e3e71022` `c01aac4b6d43773f` `2aff60efa4dc7421` `9eedae69d11331e6` `31ab0d471c819530` |
+| sign-in link | 0–7 | `9050850d9fab18d5` `077723bf125628f3` `76bb94d44063b69f` `7c55179d943c7a85` `532d25518e3545cf` `12bc4b76d93e24be` `524efe1360e99449` `aee5e630353e1e1f` |
+
+The V4 and V6 grids in `tests.rs` come from the same reference. Their masks
+differ from the encoder's lowest-penalty choice, which is still a valid
+symbol.

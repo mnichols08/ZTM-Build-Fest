@@ -51,12 +51,45 @@ pub fn size(version: usize) -> usize {
     17 + 4 * version
 }
 
+/// Most blocks any version uses (versions 9 and 10).
+pub const MAX_BLOCKS: usize = 5;
+/// Most check codewords per block (version 10).
+pub const MAX_EC: usize = 26;
+/// Largest data-plus-check block (version 10: 44 + 26).
+pub const MAX_BLOCK_BYTES: usize = 70;
+/// Most codewords in a symbol (version 10).
+pub const MAX_CODEWORDS: usize = 346;
+/// Most data codewords in a symbol (version 10).
+pub const MAX_DATA_CODEWORDS: usize = 216;
+
+/// The data-codeword count of each block, in order, in fixed storage.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlockLengths {
+    pub count: usize,
+    pub data: [usize; MAX_BLOCKS],
+}
+
+impl BlockLengths {
+    pub fn as_slice(&self) -> &[usize] {
+        &self.data[..self.count]
+    }
+}
+
 /// The block layout of a version: (data codewords per block, block count) per
 /// group, flattened to a list of block data lengths in order.
-pub fn block_data_lengths(version: usize) -> Vec<usize> {
+pub fn block_data_lengths(version: usize) -> BlockLengths {
     let ((n1, d1), (n2, d2)) = BLOCK_GROUPS[version - 1];
-    let mut lengths = vec![d1; n1];
-    lengths.extend(std::iter::repeat_n(d2, n2));
+    let mut lengths = BlockLengths {
+        count: n1 + n2,
+        data: [0; MAX_BLOCKS],
+    };
+    for (slot, length) in lengths
+        .data
+        .iter_mut()
+        .zip(std::iter::repeat_n(d1, n1).chain(std::iter::repeat_n(d2, n2)))
+    {
+        *slot = length;
+    }
     lengths
 }
 
@@ -71,14 +104,33 @@ mod tests {
         for version in 1..=10 {
             let lengths = block_data_lengths(version);
             assert_eq!(
-                lengths.iter().sum::<usize>(),
+                lengths.as_slice().iter().sum::<usize>(),
                 DATA_CODEWORDS[version - 1],
                 "version {version} data"
             );
             assert_eq!(
-                DATA_CODEWORDS[version - 1] + lengths.len() * EC_PER_BLOCK[version - 1],
+                DATA_CODEWORDS[version - 1] + lengths.count * EC_PER_BLOCK[version - 1],
                 TOTALS[version - 1],
                 "version {version} total"
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_bounds_cover_every_version() {
+        for version in 1..=10 {
+            let lengths = block_data_lengths(version);
+            let ec = EC_PER_BLOCK[version - 1];
+            assert!(lengths.count <= MAX_BLOCKS, "version {version} blocks");
+            assert!(ec <= MAX_EC, "version {version} check count");
+            assert!(DATA_CODEWORDS[version - 1] <= MAX_DATA_CODEWORDS);
+            assert!(
+                lengths.as_slice().iter().max().copied().unwrap_or(0) + ec <= MAX_BLOCK_BYTES,
+                "version {version} block bytes"
+            );
+            assert!(
+                DATA_CODEWORDS[version - 1] + lengths.count * ec <= MAX_CODEWORDS,
+                "version {version} codewords"
             );
         }
     }

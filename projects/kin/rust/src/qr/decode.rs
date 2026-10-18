@@ -7,11 +7,40 @@
 //! unmasking; de-interleaving; Reed–Solomon correction; byte-mode parse.
 //!
 //! Only level M, byte mode and versions 1–10 are read: the symbols Kin draws.
+//!
+//! Resource limits, enforced here rather than by callers:
+//! - frames are at most [`MAX_WIDTH`] × [`MAX_HEIGHT`] and [`MAX_PIXELS`] in
+//!   total, which is what a camera delivers at 720p;
+//! - each pass has a pixel-read budget ([`PIXEL_BUDGET`]), so a noisy frame
+//!   stops scanning instead of running on;
+//! - at most [`MAX_FINDERS`] finder candidates are kept;
+//! - working memory lives in a [`Scratch`] that the caller reuses, and every
+//!   other buffer is a fixed-size array sized for version 10.
+//!
+//! A frame is tried as dark-on-light first, then inverted if that fails.
 
 use super::{
-    layout::{self, Grid},
+    layout::{self, Grid, MAX_MODULES},
     rs, tables, QrError,
 };
+
+/// Largest frame side accepted.
+pub const MAX_WIDTH: usize = 1280;
+/// Largest frame side accepted.
+pub const MAX_HEIGHT: usize = 1280;
+/// Largest frame accepted, in pixels (1280 × 720).
+pub const MAX_PIXELS: usize = 1280 * 720;
+
+// Integral-image sums stay within u32 for every accepted frame: at most 255
+// per pixel over MAX_PIXELS pixels.
+const _: () = assert!(MAX_PIXELS * 255 <= u32::MAX as usize);
+
+/// Pixel reads allowed per decoding pass. A clean 720p symbol needs a small
+/// fraction of this; a frame that exhausts it reports no symbol.
+pub const PIXEL_BUDGET: usize = 4_000_000;
+
+/// Finder candidates kept per pass; further distinct detections are dropped.
+pub const MAX_FINDERS: usize = 64;
 
 /// A grayscale frame, one byte per pixel, row-major.
 pub struct Frame<'a> {
@@ -20,24 +49,92 @@ pub struct Frame<'a> {
     pub luma: &'a [u8],
 }
 
+/// Reusable working memory for [`decode_in`]. Buffers keep their capacity
+/// between frames, so steady-state decoding does not allocate.
+pub struct Scratch {
+    integral: Vec<u32>,
+    binary: Vec<u8>,
+    runs: Vec<Run>,
+    finders: Vec<Finder>,
+}
+
+impl Scratch {
+    pub const fn new() -> Scratch {
+        Scratch {
+            integral: Vec::new(),
+            binary: Vec::new(),
+            runs: Vec::new(),
+            finders: Vec::new(),
+        }
+    }
+
+    /// Bytes of capacity held. Callers that need a bound drop the scratch.
+    pub fn reserved_bytes(&self) -> usize {
+        self.integral.capacity() * std::mem::size_of::<u32>()
+            + self.binary.capacity()
+            + self.runs.capacity() * std::mem::size_of::<Run>()
+            + self.finders.capacity() * std::mem::size_of::<Finder>()
+    }
+}
+
+impl Default for Scratch {
+    fn default() -> Scratch {
+        Scratch::new()
+    }
+}
+
 /// Reads the single QR symbol in `frame` and returns its payload.
 pub fn decode(frame: &Frame) -> Result<Vec<u8>, QrError> {
-    let pixels = frame.width.checked_mul(frame.height);
-    if frame.width == 0 || frame.height == 0 || pixels != Some(frame.luma.len()) {
-        return Err(QrError::NotFound);
+    decode_in(frame, &mut Scratch::new())
+}
+
+/// Like [`decode`], reusing `scratch` for the frame's working memory.
+pub fn decode_in(frame: &Frame, scratch: &mut Scratch) -> Result<Vec<u8>, QrError> {
+    let (w, h) = (frame.width, frame.height);
+    if w == 0 || h == 0 || frame.luma.len() != w * h {
+        return Err(QrError::BadFrame);
     }
-    let binary = binarize(frame);
-    let finders = find_finders(&binary, frame.width, frame.height);
-    let triangle = pick_triangle(&finders).ok_or(QrError::NotFound)?;
-    let geometry = Geometry::from_triangle(&triangle, &binary, frame.width, frame.height)?;
+    if w > MAX_WIDTH || h > MAX_HEIGHT || w * h > MAX_PIXELS {
+        return Err(QrError::FrameTooLarge);
+    }
+    binarize(frame, &mut scratch.integral, &mut scratch.binary);
+    match read_binary(w, h, scratch) {
+        Ok(payload) => Ok(payload),
+        Err(first) => {
+            // Light-on-dark symbols: retry with the modules inverted.
+            invert(&mut scratch.binary);
+            read_binary(w, h, scratch).map_err(|_| first)
+        }
+    }
+}
+
+/// One decoding pass over the binarized frame in `scratch`.
+fn read_binary(w: usize, h: usize, scratch: &mut Scratch) -> Result<Vec<u8>, QrError> {
+    let Scratch {
+        binary,
+        runs,
+        finders,
+        ..
+    } = scratch;
+    let mut budget = Budget::default();
+    find_finders(binary, w, h, runs, finders, &mut budget);
+    let triangle = pick_triangle(finders).ok_or(QrError::NotFound)?;
+    let geometry = Geometry::from_triangle(&triangle, binary, w, h, &mut budget)?;
     let version = geometry.version;
     let transform = geometry.transform()?;
-    let dark = sample(&binary, frame.width, frame.height, &transform, geometry.dim);
+    let mut dark = [0u8; MAX_MODULES];
+    sample(binary, w, h, &transform, geometry.dim, &mut dark);
     let (mask, _) = read_format(&dark, geometry.dim)?;
     let grid = Grid::with_function_patterns(version);
-    let codewords = read_codewords(&dark, &grid, version, mask);
-    let data = correct_blocks(&codewords, version)?;
-    parse_byte_mode(&data, version)
+    let (codewords, total) = read_codewords(&dark, &grid, version, mask);
+    let (data, data_length) = correct_blocks(&codewords[..total], version)?;
+    parse_byte_mode(&data[..data_length], version)
+}
+
+/// Pixel reads spent in the current pass, against [`PIXEL_BUDGET`].
+#[derive(Default)]
+struct Budget {
+    used: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -46,19 +143,20 @@ pub fn decode(frame: &Frame) -> Result<Vec<u8>, QrError> {
 
 /// Dark if a pixel is clearly darker than its neighbourhood mean. Local means
 /// tolerate uneven lighting and glare, which a global threshold doesn't.
-fn binarize(frame: &Frame) -> Vec<u8> {
+fn binarize(frame: &Frame, integral: &mut Vec<u32>, out: &mut Vec<u8>) {
     let (w, h) = (frame.width, frame.height);
-    // u64: a 4200x4200 frame's running sums overflow u32 in debug builds.
-    let mut integral = vec![0u64; (w + 1) * (h + 1)];
+    integral.clear();
+    integral.resize((w + 1) * (h + 1), 0);
     for y in 0..h {
-        let mut row = 0u64;
+        let mut row = 0u32;
         for x in 0..w {
-            row += u64::from(frame.luma[y * w + x]);
+            row += u32::from(frame.luma[y * w + x]);
             integral[(y + 1) * (w + 1) + x + 1] = integral[y * (w + 1) + x + 1] + row;
         }
     }
     let half = (w.min(h) / 12).max(4);
-    let mut out = vec![0u8; w * h];
+    out.clear();
+    out.resize(w * h, 0);
     for y in 0..h {
         let (y0, y1) = (y.saturating_sub(half), (y + half + 1).min(h));
         for x in 0..w {
@@ -69,12 +167,17 @@ fn binarize(frame: &Frame) -> Vec<u8> {
             let count = ((y1 - y0) * (x1 - x0)) as u64;
             let pixel = u64::from(frame.luma[y * w + x]);
             // pixel < mean - 8, without dividing.
-            if pixel * count + 8 * count < sum {
+            if pixel * count + 8 * count < u64::from(sum) {
                 out[y * w + x] = 1;
             }
         }
     }
-    out
+}
+
+fn invert(binary: &mut [u8]) {
+    for module in binary.iter_mut() {
+        *module ^= 1;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -89,6 +192,14 @@ struct Finder {
     hits: u32,
 }
 
+/// A maximal run of one colour along a row.
+#[derive(Clone, Copy)]
+struct Run {
+    colour: u8,
+    start: usize,
+    length: usize,
+}
+
 /// Position along one axis through a dark centre, measured outward.
 struct Axis {
     /// Offset of the centre run's midpoint from the scan origin.
@@ -101,7 +212,7 @@ struct Axis {
 }
 
 /// Measures the run structure through (x, y) along one axis. Fails if the
-/// origin isn't dark or the pattern runs off the frame.
+/// origin isn't dark, the pattern runs off the frame, or the budget is spent.
 fn scan_axis(
     binary: &[u8],
     w: usize,
@@ -109,8 +220,13 @@ fn scan_axis(
     x: usize,
     y: usize,
     horizontal: bool,
+    budget: &mut Budget,
 ) -> Option<Axis> {
-    let pixel = |t: isize| -> Option<bool> {
+    let mut pixel = |t: isize| -> Option<bool> {
+        if budget.used >= PIXEL_BUDGET {
+            return None;
+        }
+        budget.used += 1;
         let (px, py) = if horizontal {
             (x as isize + t, y as isize)
         } else {
@@ -180,30 +296,38 @@ fn unit_of(axis: &Axis, centre_units: usize) -> Option<f64> {
     ok.then_some(unit)
 }
 
-fn find_finders(binary: &[u8], w: usize, h: usize) -> Vec<Finder> {
-    let mut found: Vec<Finder> = Vec::new();
+/// Collects finder candidates into `found`, reusing `runs` for each row.
+fn find_finders(
+    binary: &[u8],
+    w: usize,
+    h: usize,
+    runs: &mut Vec<Run>,
+    found: &mut Vec<Finder>,
+    budget: &mut Budget,
+) {
+    found.clear();
     for y in 0..h {
-        // Runs along the row: (colour, start, length).
-        let mut runs: Vec<(u8, usize, usize)> = Vec::new();
+        runs.clear();
+        let row = &binary[y * w..(y + 1) * w];
         let mut x = 0;
         while x < w {
-            let colour = binary[y * w + x];
+            let colour = row[x];
             let start = x;
-            while x < w && binary[y * w + x] == colour {
+            while x < w && row[x] == colour {
                 x += 1;
             }
-            runs.push((colour, start, x - start));
+            runs.push(Run {
+                colour,
+                start,
+                length: x - start,
+            });
         }
-        for i in 0..runs.len().saturating_sub(4) {
-            if !(runs[i].0 == 1
-                && runs[i + 1].0 == 0
-                && runs[i + 2].0 == 1
-                && runs[i + 3].0 == 0
-                && runs[i + 4].0 == 1)
-            {
+        for window in runs.windows(5) {
+            let pattern = [window[0].colour, window[1].colour, window[2].colour];
+            if pattern != [1, 0, 1] || window[3].colour != 0 || window[4].colour != 1 {
                 continue;
             }
-            let lengths: Vec<usize> = (0..5).map(|k| runs[i + k].2).collect();
+            let lengths: [usize; 5] = std::array::from_fn(|k| window[k].length);
             let total: usize = lengths.iter().sum();
             if total < 7 {
                 continue;
@@ -216,11 +340,11 @@ fn find_finders(binary: &[u8], w: usize, h: usize) -> Vec<Finder> {
             if !fits {
                 continue;
             }
-            let centre_run = runs[i + 2];
-            let cx = centre_run.1 as f64 + centre_run.2 as f64 / 2.0;
+            let centre_run = window[2];
+            let cx = centre_run.start as f64 + centre_run.length as f64 / 2.0;
             // Confirm vertically through the centre column.
             let column = cx.round() as usize;
-            let Some(vertical) = scan_axis(binary, w, h, column, y, false) else {
+            let Some(vertical) = scan_axis(binary, w, h, column, y, false, budget) else {
                 continue;
             };
             let Some(vertical_unit) = unit_of(&vertical, 3) else {
@@ -228,14 +352,14 @@ fn find_finders(binary: &[u8], w: usize, h: usize) -> Vec<Finder> {
             };
             let cy = y as f64 + vertical.mid;
             let candidate_unit = (unit + vertical_unit) / 2.0;
-            merge(&mut found, cx, cy, candidate_unit);
+            merge(found, cx, cy, candidate_unit);
         }
     }
-    found
 }
 
 /// Adds a detection, or folds it into a nearby one: a finder is seen on many
-/// rows, and each row's measurement is averaged in.
+/// rows, and each row's measurement is averaged in. Distinct detections past
+/// [`MAX_FINDERS`] are dropped.
 fn merge(found: &mut Vec<Finder>, x: f64, y: f64, unit: f64) {
     for finder in found.iter_mut() {
         let reach = 1.5 * finder.unit.max(unit);
@@ -248,12 +372,14 @@ fn merge(found: &mut Vec<Finder>, x: f64, y: f64, unit: f64) {
             return;
         }
     }
-    found.push(Finder {
-        x,
-        y,
-        unit,
-        hits: 1,
-    });
+    if found.len() < MAX_FINDERS {
+        found.push(Finder {
+            x,
+            y,
+            unit,
+            hits: 1,
+        });
+    }
 }
 
 /// The three finders as (top-left, top-right, bottom-left).
@@ -268,10 +394,10 @@ struct Triangle {
 /// rows, while stray matches in the data are seen on few, so the strongest
 /// triple that forms a plausible triangle wins; its shape only breaks ties.
 /// Perspective bends the triangle a lot, so the shape test is loose.
-fn pick_triangle(finders: &[Finder]) -> Option<Triangle> {
-    let mut candidates = finders.to_vec();
-    candidates.sort_by_key(|f| std::cmp::Reverse(f.hits));
-    candidates.truncate(8);
+fn pick_triangle(finders: &mut [Finder]) -> Option<Triangle> {
+    // Unstable sort: in place, so no allocation.
+    finders.sort_unstable_by_key(|f| std::cmp::Reverse(f.hits));
+    let candidates = &finders[..finders.len().min(8)];
     let mut best: Option<((u32, f64), Triangle)> = None;
     for a in 0..candidates.len() {
         for b in a + 1..candidates.len() {
@@ -315,7 +441,11 @@ fn score_triangle(trio: [Finder; 3]) -> Option<(f64, Triangle)> {
         .iter()
         .cloned()
         .fold((0.0, 0), |acc, s| if s.0 > acc.0 { s } else { acc });
-    let legs: Vec<usize> = (0..3).filter(|&k| k != right).collect();
+    let legs: [usize; 2] = match right {
+        0 => [1, 2],
+        1 => [0, 2],
+        _ => [0, 1],
+    };
     let (l1, l2) = (
         dist(trio[legs[0]], trio[right]),
         dist(trio[legs[1]], trio[right]),
@@ -354,6 +484,11 @@ fn score_triangle(trio: [Finder; 3]) -> Option<(f64, Triangle)> {
 struct Geometry {
     version: usize,
     dim: usize,
+    /// Pixel step of one module along the symbol's own x and y axes, from the
+    /// finder triangle. They follow the symbol through rotation, so templates
+    /// sampled along them match at any angle.
+    module_x: (f64, f64),
+    module_y: (f64, f64),
     top_left: (f64, f64),
     top_right: (f64, f64),
     bottom_left: (f64, f64),
@@ -363,9 +498,22 @@ struct Geometry {
 }
 
 impl Geometry {
-    fn from_triangle(t: &Triangle, binary: &[u8], w: usize, h: usize) -> Result<Geometry, QrError> {
+    fn from_triangle(
+        t: &Triangle,
+        binary: &[u8],
+        w: usize,
+        h: usize,
+        budget: &mut Budget,
+    ) -> Result<Geometry, QrError> {
         let leg = |a: Finder, b: Finder| (a.x - b.x).hypot(a.y - b.y);
-        let unit = (t.top_left.unit + t.top_right.unit + t.bottom_left.unit) / 3.0;
+        // A finder's runs are measured along rows and columns. At angle θ to
+        // the symbol's axes, a run of one module measures m / max(|cos θ|,
+        // |sin θ|) pixels, so the module size is the measured unit scaled by
+        // that factor. θ comes from the top edge of the triangle.
+        let (edge_x, edge_y) = (t.top_right.x - t.top_left.x, t.top_right.y - t.top_left.y);
+        let edge = edge_x.hypot(edge_y).max(1e-9);
+        let angle_factor = edge_x.abs().max(edge_y.abs()) / edge;
+        let unit = (t.top_left.unit + t.top_right.unit + t.bottom_left.unit) / 3.0 * angle_factor;
         let modules = (leg(t.top_left, t.top_right) + leg(t.top_left, t.bottom_left)) / 2.0 / unit;
         // Centre-to-centre distance is dim - 7 modules. Sizes step by four, so
         // the estimate snaps to the nearest valid version; a module count off
@@ -388,9 +536,14 @@ impl Geometry {
             tl.0 + fraction * (tr.0 - tl.0) + fraction * (bl.0 - tl.0),
             tl.1 + fraction * (tr.1 - tl.1) + fraction * (bl.1 - tl.1),
         );
+        let per_module = span;
+        let module_x = ((tr.0 - tl.0) / per_module, (tr.1 - tl.1) / per_module);
+        let module_y = ((bl.0 - tl.0) / per_module, (bl.1 - tl.1) / per_module);
         let mut geometry = Geometry {
             version: version as usize,
             dim: dim as usize,
+            module_x,
+            module_y,
             top_left: tl,
             top_right: tr,
             bottom_left: bl,
@@ -399,7 +552,8 @@ impl Geometry {
         // Versions 2 and up have an alignment pattern there: prefer its
         // measured centre to the extrapolation.
         if geometry.version >= 2 {
-            if let Some(found) = find_alignment(binary, w, h, expected, unit) {
+            let axes = (geometry.module_x, geometry.module_y);
+            if let Some(found) = find_alignment(binary, w, h, expected, axes, budget) {
                 geometry.bottom_right = found;
             }
         }
@@ -421,28 +575,6 @@ impl Geometry {
         ];
         solve_homography(pairs).ok_or(QrError::NotFound)
     }
-}
-
-/// Mismatching modules between the frame and an alignment pattern centred at
-/// `(cx, cy)` (frame pixels) with `unit` pixels per module. The whole 5×5
-/// template is checked, so the light ring and the dark outer ring are
-/// both tested. Neighbouring data can't fake a full match.
-fn alignment_mismatches(binary: &[u8], w: usize, h: usize, cx: f64, cy: f64, unit: f64) -> usize {
-    let mut mismatches = 0;
-    for dy in -2isize..=2 {
-        for dx in -2isize..=2 {
-            let want = u8::from(dx.abs().max(dy.abs()) != 1);
-            let x = (cx + dx as f64 * unit).floor();
-            let y = (cy + dy as f64 * unit).floor();
-            let got = if x >= 0.0 && y >= 0.0 && (x as usize) < w && (y as usize) < h {
-                binary[y as usize * w + x as usize]
-            } else {
-                0
-            };
-            mismatches += usize::from(got != want);
-        }
-    }
-    mismatches
 }
 
 /// Moves the fourth correspondence within about a module of its estimate to
@@ -510,20 +642,53 @@ fn timing_agreement(
     agreed
 }
 
-/// Finds the alignment pattern near `expected`. A candidate needs a dark
-/// centre whose light ring is one unit wide on both axes; its own centre run
-/// gives the local module size, which perspective makes different from the
-/// finders' average. The full 5×5 template must then match, and the nearest
-/// good candidate to `expected` wins.
+/// Mismatching modules between the frame and an alignment pattern centred at
+/// `(cx, cy)` (frame pixels). The 5×5 template is sampled along the symbol's
+/// own module axes, so it matches at any rotation. Light ring and dark outer
+/// ring are both checked, so neighbouring data can't fake a full match.
+fn alignment_mismatches(
+    binary: &[u8],
+    w: usize,
+    h: usize,
+    centre: (f64, f64),
+    axes: ((f64, f64), (f64, f64)),
+) -> usize {
+    let ((ux, uy), (vx, vy)) = axes;
+    let mut mismatches = 0;
+    for dy in -2isize..=2 {
+        for dx in -2isize..=2 {
+            let want = u8::from(dx.abs().max(dy.abs()) != 1);
+            let (fdx, fdy) = (dx as f64, dy as f64);
+            let x = (centre.0 + fdx * ux + fdy * vx).floor();
+            let y = (centre.1 + fdx * uy + fdy * vy).floor();
+            let got = if x >= 0.0 && y >= 0.0 && (x as usize) < w && (y as usize) < h {
+                binary[y as usize * w + x as usize]
+            } else {
+                0
+            };
+            mismatches += usize::from(got != want);
+        }
+    }
+    mismatches
+}
+
+/// Pixel reads charged per alignment template check, for the budget.
+const TEMPLATE_COST: usize = 25;
+
+/// Finds the alignment pattern near `expected`: the dark pixel whose 5×5
+/// template matches best, within a window of twelve modules (the affine
+/// estimate can be several modules off under strong perspective). Among
+/// matches with at most three mismatches, the nearest to `expected` wins.
 fn find_alignment(
     binary: &[u8],
     w: usize,
     h: usize,
     expected: (f64, f64),
-    unit: f64,
+    axes: ((f64, f64), (f64, f64)),
+    budget: &mut Budget,
 ) -> Option<(f64, f64)> {
-    // The affine estimate can be several modules off under strong perspective.
-    let radius = (12.0 * unit).ceil() as isize;
+    let module = (axes.0 .0.hypot(axes.0 .1)).max(1e-9);
+    let radius = (12.0 * module).ceil() as isize;
     let (cx, cy) = (expected.0.round() as isize, expected.1.round() as isize);
     let mut best: Option<(f64, (f64, f64))> = None;
     for y in (cy - radius).max(0)..=(cy + radius).min(h as isize - 1) {
@@ -532,52 +697,23 @@ fn find_alignment(
             if binary[uy * w + ux] != 1 {
                 continue;
             }
-            let Some(horizontal) = scan_axis(binary, w, h, ux, uy, true) else {
-                continue;
-            };
-            let Some(local_h) = alignment_unit(&horizontal) else {
-                continue;
-            };
-            let Some(vertical) = scan_axis(binary, w, h, ux, uy, false) else {
-                continue;
-            };
-            let Some(local_v) = alignment_unit(&vertical) else {
-                continue;
-            };
-            if (local_h - local_v).abs() > 0.5 * unit {
-                continue;
+            if budget.used >= PIXEL_BUDGET {
+                return best.map(|(_, centre)| centre);
             }
-            let local = (local_h + local_v) / 2.0;
-            let centre = (x as f64 + horizontal.mid, y as f64 + vertical.mid);
-            let mismatches = alignment_mismatches(binary, w, h, centre.0, centre.1, local);
+            budget.used += TEMPLATE_COST;
+            let centre = (x as f64, y as f64);
+            let mismatches = alignment_mismatches(binary, w, h, centre, axes);
             if mismatches > 3 {
                 continue;
             }
             let distance = (centre.0 - expected.0).hypot(centre.1 - expected.1);
-            let cost = mismatches as f64 + distance / (12.0 * unit);
+            let cost = mismatches as f64 + distance / (12.0 * module);
             if best.is_none_or(|(c, _)| cost < c) {
                 best = Some((cost, centre));
             }
         }
     }
     best.map(|(_, centre)| centre)
-}
-
-/// An alignment pattern's centre run is one unit wide and its light ring is
-/// one unit wide. The dark outer run is only checked for a minimum width.
-fn alignment_unit(axis: &Axis) -> Option<f64> {
-    let unit = axis.centre as f64;
-    if unit < 1.0 {
-        return None;
-    }
-    let tolerance = 0.5 * unit;
-    let light_ok = [axis.outer[0], axis.outer[2]]
-        .iter()
-        .all(|&run| (run as f64 - unit).abs() <= tolerance);
-    let dark_ok = [axis.outer[1], axis.outer[3]]
-        .iter()
-        .all(|&run| run as f64 >= tolerance);
-    (light_ok && dark_ok).then_some(unit)
 }
 
 /// Solves the eight-unknown homography mapping four module points to pixels.
@@ -621,19 +757,28 @@ pub(crate) fn project(h: &[f64; 8], mx: f64, my: f64) -> (f64, f64) {
     )
 }
 
-/// Samples the module grid at module centres.
-fn sample(binary: &[u8], w: usize, h: usize, transform: &[f64; 8], dim: usize) -> Vec<u8> {
-    let mut modules = vec![0u8; dim * dim];
+/// Samples the module grid at module centres into `modules` (row-major,
+/// `dim` wide). Modules outside the frame read as light.
+fn sample(
+    binary: &[u8],
+    w: usize,
+    h: usize,
+    transform: &[f64; 8],
+    dim: usize,
+    modules: &mut [u8; MAX_MODULES],
+) {
     for my in 0..dim {
         for mx in 0..dim {
             let (px, py) = project(transform, mx as f64 + 0.5, my as f64 + 0.5);
             let (x, y) = (px.round(), py.round());
-            if x >= 0.0 && y >= 0.0 && (x as usize) < w && (y as usize) < h {
-                modules[my * dim + mx] = binary[y as usize * w + x as usize];
-            }
+            modules[my * dim + mx] = if x >= 0.0 && y >= 0.0 && (x as usize) < w && (y as usize) < h
+            {
+                binary[y as usize * w + x as usize]
+            } else {
+                0
+            };
         }
     }
-    modules
 }
 
 // ---------------------------------------------------------------------------
@@ -671,30 +816,39 @@ fn read_format(dark: &[u8], dim: usize) -> Result<(u8, u32), QrError> {
     }
 }
 
-/// Reads the codeword bytes in placement order, undoing the mask.
-fn read_codewords(dark: &[u8], grid: &Grid, version: usize, mask: u8) -> Vec<u8> {
+/// Reads the codeword bytes in placement order, undoing the mask. Returns the
+/// bytes and how many of them are codewords for this version.
+fn read_codewords(
+    dark: &[u8],
+    grid: &Grid,
+    version: usize,
+    mask: u8,
+) -> ([u8; tables::MAX_CODEWORDS], usize) {
     let size = grid.size;
-    let order = grid.data_order();
     let total = tables::DATA_CODEWORDS[version - 1]
-        + tables::EC_PER_BLOCK[version - 1] * tables::block_data_lengths(version).len();
-    let mut bytes = vec![0u8; total];
-    for (position, &index) in order.iter().enumerate().take(total * 8) {
+        + tables::EC_PER_BLOCK[version - 1] * tables::block_data_lengths(version).count;
+    let mut bytes = [0u8; tables::MAX_CODEWORDS];
+    for (position, index) in grid.data_order().enumerate().take(total * 8) {
         let (row, column) = (index / size, index % size);
         let bit = dark[index] ^ u8::from(layout::mask_applies(mask, row, column));
         bytes[position / 8] |= bit << (7 - position % 8);
     }
-    bytes
+    (bytes, total)
 }
 
-/// De-interleaves the blocks, corrects each one, and returns the data bytes.
-fn correct_blocks(codewords: &[u8], version: usize) -> Result<Vec<u8>, QrError> {
+/// De-interleaves the blocks, corrects each one, and returns the data bytes
+/// with their count.
+fn correct_blocks(
+    codewords: &[u8],
+    version: usize,
+) -> Result<([u8; tables::MAX_DATA_CODEWORDS], usize), QrError> {
     let lengths = tables::block_data_lengths(version);
     let ec = tables::EC_PER_BLOCK[version - 1];
-    let mut blocks: Vec<Vec<u8>> = lengths.iter().map(|&d| vec![0u8; d + ec]).collect();
-    let longest = lengths.iter().copied().max().unwrap_or(0);
+    let mut blocks = [[0u8; tables::MAX_BLOCK_BYTES]; tables::MAX_BLOCKS];
+    let longest = lengths.as_slice().iter().copied().max().unwrap_or(0);
     let mut k = 0;
     for i in 0..longest {
-        for (block, &d) in blocks.iter_mut().zip(&lengths) {
+        for (block, &d) in blocks.iter_mut().zip(lengths.as_slice()) {
             if i < d {
                 block[i] = codewords[k];
                 k += 1;
@@ -702,17 +856,20 @@ fn correct_blocks(codewords: &[u8], version: usize) -> Result<Vec<u8>, QrError> 
         }
     }
     for i in 0..ec {
-        for (b, &d) in lengths.iter().enumerate() {
-            blocks[b][d + i] = codewords[k];
+        for (block, &d) in blocks.iter_mut().zip(lengths.as_slice()) {
+            block[d + i] = codewords[k];
             k += 1;
         }
     }
-    let mut data = Vec::with_capacity(tables::DATA_CODEWORDS[version - 1]);
-    for (block, &d) in blocks.iter_mut().zip(&lengths) {
+    let mut data = [0u8; tables::MAX_DATA_CODEWORDS];
+    let mut length = 0;
+    for (index, &d) in lengths.as_slice().iter().enumerate() {
+        let block = &mut blocks[index][..d + ec];
         rs::correct(block, ec).ok_or(QrError::Uncorrectable)?;
-        data.extend_from_slice(&block[..d]);
+        data[length..length + d].copy_from_slice(&block[..d]);
+        length += d;
     }
-    Ok(data)
+    Ok((data, length))
 }
 
 /// Parses a byte-mode segment: mode, count, payload.
@@ -725,7 +882,9 @@ fn parse_byte_mode(data: &[u8], version: usize) -> Result<Vec<u8>, QrError> {
         return Err(QrError::Unsupported);
     }
     let count = reader.read(tables::count_bits(version))? as usize;
-    let mut payload = Vec::with_capacity(count);
+    // A count can't exceed what the data holds; checking first keeps a corrupt
+    // count from reserving memory.
+    let mut payload = Vec::with_capacity(count.min(data.len()));
     for _ in 0..count {
         payload.push(reader.read(8)? as u8);
     }
@@ -752,9 +911,7 @@ impl BitReader<'_> {
         };
         probe.read(4).map(|mode| mode != 0).unwrap_or(false)
     }
-}
 
-impl BitReader<'_> {
     fn read(&mut self, width: usize) -> Result<u32, QrError> {
         if self.position + width > self.bytes.len() * 8 {
             return Err(QrError::Malformed);

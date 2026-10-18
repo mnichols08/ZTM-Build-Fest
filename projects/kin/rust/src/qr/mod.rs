@@ -30,7 +30,15 @@ pub enum QrError {
     Uncorrectable,
     /// The corrected data isn't a byte-mode payload of the stated length.
     Malformed,
+    /// The frame's size is zero, or its pixel count doesn't match its width
+    /// and height.
+    BadFrame,
+    /// The frame exceeds the largest size decode accepts (decode.rs).
+    FrameTooLarge,
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod coverage;

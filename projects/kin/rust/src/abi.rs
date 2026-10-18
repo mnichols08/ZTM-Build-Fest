@@ -420,6 +420,7 @@ pub extern "C" fn kin_result_ptr() -> u32 {
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
 pub extern "C" fn kin_clear() {
     lock_state().clear();
+    crate::qr::wire::release_scratch();
 }
 
 #[cfg_attr(target_arch = "wasm32", no_mangle)]

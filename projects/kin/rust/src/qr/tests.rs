@@ -5,12 +5,19 @@
 use super::{
     decode::{decode, project, solve_homography, Frame},
     encode,
-    layout::Grid,
+    layout::{self, Grid},
     Code, QrError,
 };
 
+/// A code from an explicit module list (fixtures), in the fixed storage.
+pub(super) fn code_from(size: usize, modules: &[u8]) -> Code {
+    let mut dark = [0u8; layout::MAX_MODULES];
+    dark[..modules.len()].copy_from_slice(modules);
+    Code { size, dark }
+}
+
 /// Draws a code as luma: `scale` pixels per module, four-module quiet zone.
-fn render(code: &Code, scale: usize) -> (usize, usize, Vec<u8>) {
+pub(super) fn render(code: &Code, scale: usize) -> (usize, usize, Vec<u8>) {
     let quiet = 4;
     let side = (code.size + 2 * quiet) * scale;
     let mut luma = vec![255u8; side * side];
@@ -31,7 +38,7 @@ fn render(code: &Code, scale: usize) -> (usize, usize, Vec<u8>) {
 /// Warps a grayscale image through `forward` (source pixel → destination
 /// pixel), filling outside with white, and adds deterministic noise and a
 /// lighting gradient.
-fn warp(
+pub(super) fn warp(
     src: &(usize, usize, Vec<u8>),
     forward: [f64; 8],
     out: (usize, usize),
@@ -74,7 +81,7 @@ fn warp(
     (ow, oh, dest)
 }
 
-fn round_trip(text: &[u8]) -> Vec<u8> {
+pub(super) fn round_trip(text: &[u8]) -> Vec<u8> {
     let code = encode(text).expect("encodes");
     let (w, h, luma) = render(&code, 6);
     decode(&Frame {
@@ -131,7 +138,7 @@ fn corrects_damage_inside_the_symbol() {
     // Flip a band of data modules. They must lie outside the function patterns.
     assert_eq!(code.size, 33, "version 4");
     let grid = Grid::with_function_patterns(4);
-    let order = grid.data_order();
+    let order: Vec<usize> = grid.data_order().collect();
     for &index in order.iter().skip(40).step_by(9).take(12) {
         code.dark[index] ^= 1;
     }
@@ -281,7 +288,7 @@ fn refuses_a_symbol_with_more_than_one_segment() {
         .iter()
         .flat_map(|row| row.bytes().map(|b| b - b'0'))
         .collect();
-    let (w, h, luma) = render(&Code { size, dark }, 6);
+    let (w, h, luma) = render(&code_from(size, &dark), 6);
     assert_eq!(
         decode(&Frame {
             width: w,
@@ -300,7 +307,7 @@ fn reads_symbols_from_an_independent_encoder() {
             .iter()
             .flat_map(|row| row.bytes().map(|b| b - b'0'))
             .collect();
-        let code = Code { size, dark };
+        let code = code_from(size, &dark);
         let (w, h, luma) = render(&code, 6);
         assert_eq!(
             decode(&Frame {
@@ -349,7 +356,7 @@ fn rejects_a_frame_whose_size_disagrees_with_its_pixels() {
             height: 10,
             luma: &[0u8; 5]
         }),
-        Err(QrError::NotFound)
+        Err(QrError::BadFrame)
     );
 }
 

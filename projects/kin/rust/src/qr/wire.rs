@@ -8,7 +8,10 @@
 //! Decode input is `width:u32`, `height:u32`, then `width * height` bytes of
 //! 8-bit luma, row-major. Its result is the decoded payload bytes.
 
-use super::{decode, encode, Frame, QrError};
+use std::sync::{Mutex, MutexGuard};
+
+use super::decode::{self, Scratch};
+use super::{encode, Frame, QrError};
 use crate::error::KinError;
 
 const MATRIX_MAGIC: &[u8; 4] = b"KQRM";
@@ -20,6 +23,8 @@ impl From<QrError> for KinError {
         match error {
             QrError::Empty => KinError::MalformedProtocol,
             QrError::TooLong => KinError::SizeLimit,
+            QrError::BadFrame => KinError::MalformedProtocol,
+            QrError::FrameTooLarge => KinError::SizeLimit,
             QrError::NotFound
             | QrError::Unsupported
             | QrError::Uncorrectable
@@ -35,13 +40,13 @@ pub fn encode_request(input: &[u8]) -> Result<Vec<u8>, KinError> {
     let side = u32::try_from(code.size).map_err(|_| KinError::Internal)?;
     let mut bytes = Vec::new();
     bytes
-        .try_reserve_exact(16 + code.dark.len())
+        .try_reserve_exact(12 + code.modules().len())
         .map_err(|_| KinError::SizeLimit)?;
     bytes.extend_from_slice(MATRIX_MAGIC);
     bytes.extend_from_slice(&MATRIX_VERSION.to_le_bytes());
     bytes.extend_from_slice(&0u16.to_le_bytes());
     bytes.extend_from_slice(&side.to_le_bytes());
-    bytes.extend_from_slice(&code.dark);
+    bytes.extend_from_slice(code.modules());
     Ok(bytes)
 }
 
@@ -59,11 +64,31 @@ pub fn decode_request(input: &[u8]) -> Result<Vec<u8>, KinError> {
     if width == 0 || height == 0 || pixels != luma.len() {
         return Err(KinError::MalformedProtocol);
     }
-    Ok(decode(&Frame {
-        width,
-        height,
-        luma,
-    })?)
+    let mut scratch = lock_scratch();
+    Ok(decode::decode_in(
+        &Frame {
+            width,
+            height,
+            luma,
+        },
+        &mut scratch,
+    )?)
+}
+
+/// The decoder's working memory, kept between frames so the camera path does
+/// not allocate per frame. One WASM instance is single-threaded; the lock is
+/// for native test builds, which run threads.
+static SCRATCH: Mutex<Scratch> = Mutex::new(Scratch::new());
+
+fn lock_scratch() -> MutexGuard<'static, Scratch> {
+    SCRATCH
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Drops the decoder's retained working memory (called by `kin_clear`).
+pub fn release_scratch() {
+    *lock_scratch() = Scratch::new();
 }
 
 #[cfg(test)]
@@ -138,6 +163,21 @@ mod tests {
         assert_eq!(decode_request(&short), Err(KinError::MalformedProtocol));
         let empty = frame_bytes(0, 4, &[]);
         assert_eq!(decode_request(&empty), Err(KinError::MalformedProtocol));
+    }
+
+    #[test]
+    fn oversized_frames_report_the_size_limit() {
+        // One pixel past the 720p pixel budget, and a width past 1280.
+        let wide = frame_bytes(1281, 1, &[255; 1281]);
+        assert_eq!(decode_request(&wide), Err(KinError::SizeLimit));
+        let large = frame_bytes(1280, 721, &vec![255; 1280 * 721]);
+        assert_eq!(decode_request(&large), Err(KinError::SizeLimit));
+    }
+
+    #[test]
+    fn a_frame_at_the_720p_limit_is_read_not_refused() {
+        let blank = frame_bytes(1280, 720, &vec![255; 1280 * 720]);
+        assert_eq!(decode_request(&blank), Err(KinError::QrNotFound));
     }
 
     #[test]
