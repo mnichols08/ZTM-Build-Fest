@@ -1348,3 +1348,40 @@ test("10,000-event history permits bounded summary records and copied results", 
   }
   assert.deepEqual(state, snapshot, "host-owned summary survives later calls");
 });
+
+test("the chat search folds case and accents over the real text arena (#124)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const member = new Uint8Array(16).fill(0xbb), other = new Uint8Array(16).fill(0xbe);
+  const context = (sequence, actorId = member) => ({ eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId, deviceId: new Uint8Array(16).fill(actorId[0] - 0x10), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) });
+  const asOf = 1_791_475_200_100, day = 20261009;
+  const blob = (byte) => byte.toString(16).padStart(2, "0").repeat(32);
+  const chat = [];
+  const post = (byte, actorId, text, held = true) => {
+    const result = engine.executeChatCommand({ type: "post-chat-message", messageId: byte.toString(16).padStart(2, "0").repeat(16), blobRef: blob(0xa0 + byte), blobKey: blob(0xc0 + byte) }, context(byte, actorId), chat, asOf, day);
+    chat.push(result.encodedEvent);
+    if (held) engine.putChatTexts([{ blobRef: blob(0xa0 + byte), text }]);
+  };
+  post(1, member, "The Café opens at 9");
+  post(2, other, "pick up the CAFE order 👍");
+  post(3, member, "not here");
+  post(4, other, "cafe after lunch", false);
+  const search = (options) => engine.chatSearch(chat, { limit: 10, ...options }, asOf, day);
+  const found = search({ query: "cafe" });
+  assert.equal(found.total, 2);
+  assert.deepEqual(found.results.map((result) => result.messageId), ["02".repeat(16), "01".repeat(16)]);
+  // "Café" is bytes 4..9: the accent takes two.
+  assert.deepEqual(found.results[1].ranges, [[4, 9]]);
+  assert.equal(found.results[1].excerpt, "The Café opens at 9");
+  // The fourth message's text isn't in the arena yet: listed for the host.
+  assert.equal(found.unsearched, 1);
+  assert.deepEqual(found.missing.map((entry) => [entry.messageId, entry.blobRef]), [["04".repeat(16), blob(0xa4)]]);
+  assert.equal(search({ query: "CAFÉ" }).total, 2);
+  assert.equal(search({ query: "👍" }).total, 1);
+  assert.equal(search({ query: "cafe", authors: ["be".repeat(16)] }).total, 1);
+  assert.equal(search({ query: "cafe", excluded: ["02".repeat(16)] }).total, 1);
+  assert.equal(search({ query: "", attachmentsOnly: true }).total, 0);
+  // Deleting a message forgets its text: it never matches again.
+  const deleted = engine.executeChatCommand({ type: "delete-chat-message", messageId: "01".repeat(16) }, context(9), chat, asOf, day);
+  chat.push(deleted.encodedEvent);
+  assert.deepEqual(search({ query: "cafe" }).results.map((result) => result.messageId), ["02".repeat(16)]);
+});

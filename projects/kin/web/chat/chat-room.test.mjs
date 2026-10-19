@@ -58,6 +58,28 @@ function fakeEngine() {
       const encodedEvent = encoder.encode(JSON.stringify(event));
       return { encodedEvent, metadata: metadata(encodedEvent) };
     },
+    // The engine's chat search, simplified: case-insensitive substring over
+    // the texts it holds; the rest are listed for the host to open.
+    chatSearch(source, options) {
+      (this.calls.search ??= []).push(options);
+      const { messages } = this.chatPage(source, { includeText: true, admins: [] });
+      const excluded = new Set(options.excluded);
+      const results = [], missing = [];
+      let total = 0, unsearched = 0;
+      for (const message of [...messages].reverse()) {
+        if (!["live", "edited"].includes(message.status) || excluded.has(message.messageId)) continue;
+        if (message.text === null) {
+          unsearched += 1;
+          missing.push({ messageId: message.messageId, blobRef: message.blobRef, blobKey: message.blobKey });
+          continue;
+        }
+        const at = message.text.toLowerCase().indexOf(options.query.toLowerCase());
+        if (at < 0) continue;
+        total += 1;
+        results.push({ messageId: message.messageId, index: message.index, authorId: message.authorId, postedAt: message.postedAt, contentKind: message.contentKind, ranges: [[at, at + options.query.length]], excerpt: message.text, excerptOffset: 0 });
+      }
+      return { total, results, unsearched, missing };
+    },
     chatPage(source, options) {
       this.calls.page += 1;
       const messages = new Map(), retired = [];
@@ -1139,4 +1161,39 @@ test("a reply quotes its original, and the quote follows the original's edits, d
   // A reply to a message nobody holds still sends; its quote is "unknown".
   await b.room.send("Who said that?", { replyTo: "ab".repeat(16) });
   assert.equal(b.room.page().messages[2].replyTo.state, "unknown");
+});
+
+test("searching opens older texts in rounds, leaves out hidden messages and refuses without chat access (#124)", { timeout: 30_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs, householdAdmin: true });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs, memberKind: "limited" });
+  const devices = [phone.entry, laptop.entry];
+  const a = await openRoom(phone, s), b = await openRoom(laptop, s);
+  await a.room.send("Dinner at 6");
+  await a.room.send("Pasta night, dinner again");
+  await a.room.send("Something else");
+  await a.room.sync({ status: STATUS, devices });
+  await b.room.sync({ status: STATUS, devices });
+  // The reader's engine holds no texts yet: they are opened, then searched.
+  const updates = [];
+  const done = await b.room.search({ query: "DINNER" }, (update) => updates.push(update));
+  assert.equal(updates[0].searching, true);
+  assert.equal(updates[0].total, 0);
+  assert.equal(done.searching, false);
+  assert.equal(done.incomplete, false);
+  assert.equal(done.total, 2);
+  assert.deepEqual(done.results.map((result) => result.ranges), [[[13, 19]], [[0, 6]]]);
+  assert.equal(b.engine.calls.search.length, 2);
+  assert.equal(b.engine.calls.search[0].admins.length, b.room.admins.length);
+  // A message the reader hid is left out.
+  b.room.hidden = new Set([done.results[0].messageId]);
+  const hidden = await b.room.search({ query: "dinner" });
+  assert.deepEqual(hidden.results.map((result) => result.messageId), [done.results[1].messageId]);
+  assert.deepEqual(b.engine.calls.search.at(-1).excluded, [done.results[0].messageId]);
+  // No access to chat: nothing is searched, even from what this device holds.
+  b.room.access = "none";
+  const before = b.engine.calls.search.length;
+  await assert.rejects(b.room.search({ query: "dinner" }), (error) => error.code === "chat_no_access");
+  assert.equal(b.engine.calls.search.length, before);
 });

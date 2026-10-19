@@ -48,7 +48,7 @@ export async function chatRegressions() {
       blobRef: shown ? original.blobRef : null, blobKey: shown ? original.blobKey : null, text: shown ? held.get(original.blobRef) ?? null : null,
     };
   };
-  const calls = { send: [], edit: [], remove: [], hide: [], attach: [] };
+  const calls = { send: [], edit: [], remove: [], hide: [], attach: [], search: [] };
   const attachments = new Map();
   const room = {
     identity: { memberId: me, householdId: "c3".repeat(16), deviceId: "d4".repeat(16) },
@@ -93,6 +93,49 @@ export async function chatRegressions() {
         else { held.set(replyTo.blobRef, text); results.set(replyTo.messageId, { text }); }
       }
       return results;
+    },
+    members: [{ id: me, kind: "adult", active: true }, { id: other, kind: "adult", active: true }, { id: third, kind: "adult", active: true }],
+    // Chat search (#124): the engine's, simplified. Folds case and accents
+    // one UTF-16 unit at a time, so string indexes stay put; ranges are UTF-8
+    // byte offsets, as the engine reports them.
+    async search(options, onUpdate, stopped = () => false) {
+      calls.search.push(options);
+      const fold = (text) => [...text].map((ch) => ch.normalize("NFD")[0].toLowerCase()).join("");
+      const needle = fold(options.query);
+      const encoder = new TextEncoder();
+      const run = (searching, incomplete) => {
+        const results = [];
+        let total = 0;
+        for (let index = log.length - 1; index >= 0; index -= 1) {
+          const message = log[index];
+          if (message.status !== "live" && message.status !== "edited") continue;
+          if (this.hidden.has(message.messageId)) continue;
+          if (options.authors?.length && !options.authors.includes(message.authorId)) continue;
+          if (options.attachmentsOnly && message.contentKind !== "attachment") continue;
+          const text = held.get(message.blobRef);
+          let ranges = [];
+          if (needle) {
+            if (message.contentKind !== "text" || text === undefined) continue;
+            const at = fold(text).indexOf(needle);
+            if (at < 0) continue;
+            ranges = [[encoder.encode(text.slice(0, at)).length, encoder.encode(text.slice(0, at + needle.length)).length]];
+          }
+          total += 1;
+          if (results.length < options.limit) results.push({
+            messageId: message.messageId, index, authorId: message.authorId, postedAt: message.postedAt,
+            contentKind: message.contentKind, ranges, excerpt: text ?? "", excerptOffset: 0,
+          });
+        }
+        return { total, results, searching, incomplete };
+      };
+      const older = log.filter((message) => message.contentKind === "text" && !held.has(message.blobRef) && sources.has(message.blobRef));
+      onUpdate(run(older.length > 0, false));
+      if (!older.length || stopped()) return run(false, false);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      for (const message of older) held.set(message.blobRef, sources.get(message.blobRef));
+      const done = run(false, false);
+      onUpdate(done);
+      return done;
     },
     async openAttachment(message) {
       const found = attachments.get(message.blobRef);
@@ -201,7 +244,7 @@ export async function chatRegressions() {
     fresh.room = room;
     await settle();
     const heard = [];
-    const freshAnnouncer = fresh.querySelector('[aria-live="polite"]');
+    const freshAnnouncer = fresh.querySelector('.visually-hidden[aria-live="polite"]');
     const ear = new MutationObserver(() => { if (freshAnnouncer.textContent) heard.push(freshAnnouncer.textContent); });
     ear.observe(freshAnnouncer, { childList: true, characterData: true, subtree: true });
     for (let i = 0; i < 4; i += 1) {
@@ -240,7 +283,7 @@ export async function chatRegressions() {
 
   // Receiving (what the live socket's hint brings): appended, its text
   // loaded, announced politely, and shown as text only.
-  const announcer = chat.querySelector('[aria-live="polite"]');
+  const announcer = chat.querySelector('.visually-hidden[aria-live="polite"]');
   add(other, '<img src=x onerror="window.chatXss=1"> Dinner at 6', { incoming: true });
   notify();
   await settle();
@@ -584,7 +627,7 @@ export async function chatRegressions() {
   await choose([photo]);
   const textBox = chat.querySelector("textarea");
   textBox.value = "Sign by Friday";
-  chat.querySelector("form").requestSubmit();
+  chat.querySelector(".chat-form").requestSubmit();
   await settle();
   check(calls.attach.length === 1 && calls.attach[0][0] === "Sign by Friday" && calls.attach[0][1].join() === "Permission slip.pdf,IMG_2041.jpg", "sent with its caption and files");
   check(chat.querySelector(".chat-pending").hidden && textBox.value === "", "the composer clears after sending");
@@ -712,7 +755,7 @@ export async function chatRegressions() {
   composer.value = "sent now";
   composer.dispatchEvent(new Event("input", { bubbles: true }));
   presence.stoppedCount = 0;
-  chat.querySelector("form").requestSubmit();
+  chat.querySelector(".chat-form").requestSubmit();
   await settle();
   check(presence.stoppedCount >= 1, "sending stops it");
 
@@ -838,6 +881,92 @@ export async function chatRegressions() {
     await settle();
     check(deletedQuote()?.textContent.includes("Fetched when quoted"), "an original that wasn't downloaded loads for the quote");
     room.send = plainSend;
+  }
+
+  // Chat search (#124): the panel, results, filters, jump with a text-range highlight.
+  {
+    const old = add(other, "The wifi password is Café42", { at: 1 });
+    const lazy = add(other, "Pick up the cafe order", { incoming: true, at: 9 });
+    notify();
+    await settle();
+    // A fresh view shows only the newest window.
+    chat.room = null;
+    await settle();
+    chat.room = room;
+    await settle();
+    await settle();
+    const panel = chat.querySelector(".chat-search-panel");
+    const toggle = chat.querySelector(".chat-search-toggle");
+    check(panel.hidden && toggle.getAttribute("aria-expanded") === "false", "the search panel starts closed");
+    toggle.click();
+    await settle();
+    const box = panel.querySelector("input[type=search]");
+    check(!panel.hidden && toggle.getAttribute("aria-expanded") === "true" && document.activeElement === box, "Search chat opens the panel and focuses its box");
+    check(box.labels?.[0]?.textContent === "Search chat", "the box is labeled");
+    const type = async (value) => {
+      box.value = value;
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await settle();
+    };
+    const status = () => panel.querySelector(".chat-search-status").textContent;
+    const found = () => [...panel.querySelectorAll(".search-result-open")];
+    await type("CAFE");
+    check(calls.search.at(-1).query === "CAFE" && calls.search.at(-1).limit === 50, "typing searches the room after a pause");
+    check(found().length === 2 && status().startsWith("2 chat messages"), `case and accents fold; older messages are fetched (${found().length}, ${status()})`);
+    check(found()[0].querySelector("mark")?.textContent.toLowerCase().startsWith("cafe"), "the match is marked with a <mark> element");
+    check(found()[1].textContent.includes("Café42") && found()[1].getAttribute("aria-label").includes("Open chat message from Adult 2"), "a result names its author and text");
+    check(!panel.querySelector(".search-result-text").innerHTML.includes("<script"), "results are built from text nodes");
+    // Choosing the old result loads that stretch of the chat and highlights the match by text range.
+    check(!chat.querySelector(`.chat-row[data-message-id="${old}"]`), "the old message is not on screen yet");
+    found()[1].click();
+    await settle();
+    await settle();
+    const arrived = chat.querySelector(`.chat-row[data-message-id="${old}"]`);
+    check(arrived && arrived.classList.contains("chat-highlight"), "choosing a result jumps to the message and marks its row");
+    const marked = globalThis.CSS?.highlights?.get("chat-search");
+    if (marked) {
+      const ranges = [...marked];
+      check(ranges.length === 1 && ranges[0].toString() === "Café" && !arrived.querySelector(".chat-text mark"), "the match is highlighted by text range, not markup");
+    }
+    // Filters reach the engine.
+    panel.querySelector("details").open = true;
+    const from = panel.querySelector("select");
+    check([...from.options].map((option) => option.textContent).join() === "Anyone,You,Adult 2,Adult 3", "From lists the household");
+    from.value = other;
+    from.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await settle();
+    check(calls.search.at(-1).authors.join() === other && found().every((entry) => entry.textContent.includes("Adult 2")), "From limits the results to one person");
+    const dates = panel.querySelectorAll("input[type=date]");
+    dates[0].value = "2026-10-18";
+    dates[0].dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    check(calls.search.at(-1).from === new Date(2026, 9, 18).getTime() && calls.search.at(-1).to === 0, "a start date is a local midnight");
+    dates[1].value = "2026-10-20";
+    dates[1].dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    check(calls.search.at(-1).to === new Date(2026, 9, 21).getTime(), "an end date includes that whole day (to the next local midnight)");
+    dates[0].value = "";
+    dates[1].value = "";
+    from.value = "";
+    from.dispatchEvent(new Event("change", { bubbles: true }));
+    const files = panel.querySelector(".chat-search-files input");
+    files.checked = true;
+    files.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    check(calls.search.at(-1).attachmentsOnly === true, "Only photos and files is sent as a filter");
+    files.checked = false;
+    files.dispatchEvent(new Event("change", { bubbles: true }));
+    await type("no such words");
+    check(found().length === 0 && status() === "No matching chat messages.", "no match says so");
+    // Nothing about the query is stored.
+    check(!JSON.stringify({ ...localStorage }).toLowerCase().includes("cafe") && !JSON.stringify({ ...sessionStorage }).toLowerCase().includes("cafe"), "queries are not stored");
+    // Escape closes the panel and returns to the button.
+    box.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await settle();
+    check(panel.hidden && document.activeElement === toggle && !globalThis.CSS?.highlights?.get("chat-search"), "Escape closes the panel and clears the highlight");
+    void lazy;
   }
 
   // Reactions (#127): quick bar, chips as toggle buttons, who reacted, read-only.

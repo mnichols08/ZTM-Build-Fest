@@ -188,6 +188,7 @@ export function initializeAppState(app) {
     app.onOpenItem = (event) => app.ctx.detail.openItemDetail(event.detail.itemId, { opener: event.detail.opener ?? event.target });
     app.onCloseItemDetail = () => app.ctx.detail.closeItemDetail({ restoreFocus: true });
     app.onOpenSearchResult = (event) => app.ctx.navigation.handleOpenSearchResult(event.detail);
+    app.onOpenChatMessage = (event) => app.ctx.navigation.handleOpenChatMessage(event.detail);
     app.onPlaybookIntent = (event) => app.ctx.routines.handlePlaybookIntent(event);
     app.onLocalReminder = (event) => app.ctx.records.handleLocalReminder(event.detail);
     app.onCancelLocalReminder = (event) => { app.localReminders.cancel(event.detail.id); app.ctx.records.renderReminders(); app.ctx.status.setStatus("Reminder canceled on this device."); };

@@ -79,6 +79,9 @@ export class ChatRoomError extends Error {
 const randomIdHex = () => [...crypto.getRandomValues(new Uint8Array(16))]
   .map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
+/** Most rounds of opening older texts a single search runs (256 messages each). */
+const MAX_SEARCH_ROUNDS = 40;
+
 /** Members whose removals count: the household admins (ADR 0008), by the
  * service's own record (`householdAdmin` in the device directory), the same
  * rule it uses to let them delete others' content. A household has at most
@@ -550,6 +553,43 @@ export class ChatRoom {
     this.assertOpen();
     const { asOf, civilDate } = projectionContext(this.now());
     return this.engine.chatPage(this.records.view(), { includeReactions: true, ...options, admins: this.admins }, asOf, civilDate, this.syncIdentity());
+  }
+
+  /**
+   * Searches the chat (#124) in the engine, over the decrypted texts it
+   * holds; nothing about the query leaves this device or is kept. Texts the
+   * engine doesn't hold yet (older messages) are opened from this device's
+   * store or the service in rounds, searching again after each, and
+   * `onUpdate({ total, results, searching, incomplete })` runs after every
+   * round. Resolves with the last update. `stopped()` ends it early.
+   * Options: query, from, to (ms), authors (member IDs), attachmentsOnly, limit.
+   */
+  async search(options = {}, onUpdate = () => {}, stopped = () => false) {
+    // Chat the member may not open can't be searched, whatever this device still holds.
+    if (this.access === "none") throw new ChatRoomError("Chat isn't available to you.", "chat_no_access");
+    const { query = "", from = 0, to = 0, authors = [], attachmentsOnly = false, limit = 50 } = options;
+    // Messages whose text couldn't be opened: left out of later rounds so
+    // they don't crowd out older ones the engine lists next.
+    const unopened = new Set();
+    let update = { total: 0, results: [], searching: false, incomplete: false };
+    for (let round = 0; round < MAX_SEARCH_ROUNDS; round += 1) {
+      this.assertOpen();
+      const { asOf, civilDate } = projectionContext(this.now());
+      const found = this.engine.chatSearch(this.records.view(), {
+        query, from, to, authors, attachmentsOnly, limit, admins: this.admins, excluded: [...unopened, ...this.hidden].slice(0, MAX_HIDDEN_MESSAGES),
+      }, asOf, civilDate, this.syncIdentity());
+      const wanted = found.missing;
+      const more = wanted.length > 0 && !stopped();
+      update = { total: found.total, results: found.results, searching: more, incomplete: unopened.size > 0 || (!more && found.unsearched > 0) };
+      onUpdate(update);
+      if (!more) return update;
+      const opened = await this.loadTexts(wanted.map((message) => ({ ...message, contentKind: "text", text: null })));
+      for (const message of wanted) if (typeof opened.get(message.messageId)?.text !== "string") unopened.add(message.messageId);
+      if (stopped()) return { ...update, searching: false };
+    }
+    update = { ...update, searching: false, incomplete: true };
+    onUpdate(update);
+    return update;
   }
 
   /** Sends a text message. Resolves with { messageId, eventId } once it is

@@ -1370,3 +1370,15 @@ kin-notifications label { display: grid; gap: 6px; font-weight: 650; }
 kin-notifications select { min-height: var(--tap); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; font-weight: 400; }
 kin-notifications .field-error { margin: 0; color: var(--danger); font-size: 14px; }
 kin-notifications .field-error:empty { display: none; }
+
+/* Chat search (#124) */
+.chat-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.chat-top h2 { margin: 0; }
+.chat-search-toggle { min-height: var(--tap); padding-inline: 14px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--ink); font: inherit; }
+.chat-search-panel { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius, 12px); background: var(--surface); }
+.chat-search-panel[hidden] { display: none; }
+.chat-search { display: grid; gap: 8px; min-width: 0; }
+.chat-search-heading { margin: 8px 0 0; font-size: 1rem; }
+.chat-search-files { display: flex; align-items: center; gap: 8px; min-height: var(--tap); }
+.chat-search-results { max-height: 50vh; overflow-y: auto; }
+::highlight(chat-search) { background-color: color-mix(in srgb, var(--warm) 45%, transparent); color: inherit; }
