@@ -17,6 +17,7 @@
 import { PairingError, canManageTrust, chatAccess } from "./pairing-service.mjs";
 import { canonicalEventEnvelope, MAX_LOGICAL_TIME_ADVANCE } from "./sync-contract.mjs";
 import { decodeCursor, encodeCursor, MAX_EVENTS_PER_BATCH, validateEventEnvelope } from "./sync-service.mjs";
+import { CHAT_EVENTS_PER_MINUTE, DeviceWindow, chatRateLimited } from "./chat-limits.mjs";
 import { DurableConflictError, MAX_CHAT_HIDDEN_RECORD_BYTES, MAX_CHAT_RECEIPT_BYTES, MAX_HOUSEHOLD_CHAT_EVENTS } from "./durable-store.mjs";
 import { isProvisioningPackageValid, isSyncId } from "./sync-contract.mjs";
 
@@ -160,6 +161,14 @@ export class ChatRelayService {
     this.storage = store ?? new MemoryChatRelayStore();
     /** deviceId → recent receipt-write times, for the per-device limit. */
     this.receiptWrites = new Map();
+    /** deviceId → events sent in the last minute (#125). */
+    this.eventWindow = new DeviceWindow({ limit: CHAT_EVENTS_PER_MINUTE, windowMs: 60_000, now: () => syncService.now() });
+  }
+
+  /** The household's chat event use, for the admin's storage line (#125). */
+  eventUsage(auth) {
+    this.assertCanChat(auth);
+    return { events: this.storage.chatRelayState(auth.household.id).eventCount, eventLimit: MAX_HOUSEHOLD_CHAT_EVENTS };
   }
 
   /** What the admin's chat policy (#123) lets this member do. `need` is
@@ -191,6 +200,9 @@ export class ChatRelayService {
     if (!Array.isArray(envelopes) || envelopes.length < 1 || envelopes.length > MAX_EVENTS_PER_BATCH)
       throw new PairingError("sync_batch_invalid", "That chat batch is invalid.", 400);
     const householdId = auth.household.id;
+    // New events only count: a retry of events the service already holds is free.
+    const fresh = envelopes.filter((envelope) => !this.storage.findChatEvent(householdId, envelope.eventId)).length;
+    if (fresh && !this.eventWindow.spend(auth.device.id, fresh)) throw chatRateLimited("many messages");
     const relay = this.storage.chatRelayState(householdId);
     const expectedDeviceSequence = this.storage.chatDeviceSequence(householdId, auth.device.id);
     let deviceSequence = expectedDeviceSequence;

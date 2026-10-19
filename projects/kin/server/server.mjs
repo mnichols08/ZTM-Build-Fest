@@ -962,6 +962,11 @@ async function api(request, response, url, context) {
     json(response, 200, context.chatRelayService.rejectKey(syncService.authorize(session), body));
     return;
   }
+  if (url.pathname === "/api/chat/storage" && request.method === "GET") {
+    const auth = syncService.authorize(session);
+    json(response, 200, { ...context.chatBlobService.usage(auth), ...context.chatRelayService.eventUsage(auth) });
+    return;
+  }
   if (url.pathname === "/api/chat/status" && request.method === "GET") {
     json(response, 200, context.chatRelayService.status(syncService.authorize(session)));
     return;

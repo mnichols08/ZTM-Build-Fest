@@ -275,4 +275,41 @@ test("the chat blob routes need a trusted session and move raw bytes", { timeout
   const after = await fetch(`${url}/api/chat/blobs/${content.ref}`, { headers: { cookie } });
   assert.equal(after.status, 410);
   assert.equal((await after.json()).error, "chat_blob_deleted");
+  // The household's storage total, for an admin (#125).
+  assert.equal((await fetch(`${url}/api/chat/storage`)).status, 401);
+  const storage = await fetch(`${url}/api/chat/storage`, { headers: { cookie } });
+  assert.equal(storage.status, 200);
+  assert.deepEqual(await storage.json(), { bytes: 0, byteLimit: 256 * 1024 * 1024, blobs: 0, blobLimit: 250_000, events: 0, eventLimit: 250_000 });
+});
+
+bothStores("a device can upload only so many chat blobs and bytes at a time (#125)", (h) => {
+  const auth = h.auth(h.partner);
+  // 120 a minute.
+  for (let index = 0; index < 120; index += 1) {
+    const content = blob(64 + index);
+    h.service.put(auth, content.ref, content.bytes);
+  }
+  const extra = blob(300);
+  assert.throws(() => h.service.put(auth, extra.ref, extra.bytes), rejects("chat_rate_limited", 429));
+  // A blob the service already holds costs nothing, so a retry of a finished upload goes through.
+  const held = blob(64);
+  clock.now += 61_000;
+  h.service.put(auth, held.ref, held.bytes);
+  for (let index = 0; index < 119; index += 1) {
+    const next = blob(400 + index);
+    h.service.put(auth, next.ref, next.bytes);
+  }
+  assert.equal(h.service.put(auth, held.ref, held.bytes).accepted, false);
+  // Another device has its own allowance.
+  assert.equal(h.service.put(h.auth(h.other), extra.ref, extra.bytes).accepted, true);
+});
+
+bothStores("only an admin sees the household's chat storage, as totals (#125)", (h) => {
+  const first = blob(100), second = blob(200);
+  h.service.put(h.auth(h.partner), first.ref, first.bytes);
+  h.service.put(h.auth(h.other), second.ref, second.bytes);
+  assert.deepEqual(h.service.usage(h.auth(h.admin)), { bytes: 300, byteLimit: 256 * 1024 * 1024, blobs: 2, blobLimit: 250_000 });
+  assert.throws(() => h.service.usage(h.auth(h.partner)), rejects("household_admin_required", 403));
+  h.service.retire(h.auth(h.partner), [first.ref]);
+  assert.equal(h.service.usage(h.auth(h.admin)).bytes, 200);
 });

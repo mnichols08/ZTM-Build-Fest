@@ -434,8 +434,8 @@ deleting the blob deletes the content.
   Tombstones (at most 500,000 per household) and claims (at most 20,000 per
   member) never block retiring: past their bound the oldest are dropped
   (for claims, only the claiming member's own), after which a very old
-  retired blob could be uploaded again by someone who kept its bytes. #125
-  revisits these bounds with measured chat volume.
+  retired blob could be uploaded again by someone who kept its bytes. The
+  bounds stand after #125's review (see "Chat capacity" below).
 - **On the device,** blobs live in their own IndexedDB database per
   household ([STORAGE](STORAGE.md#chat-content-blobs-v11-110)).
 - Household deletion purges every blob and tombstone at finalization. An
@@ -479,6 +479,37 @@ characters, captions up to 4,000, a manifest up to 256 KiB.
 - **Limits by the service:** a household holds 256 MiB of live blobs, so a
   message of ten 25 MB files can fill a small household's chat storage;
   uploads then fail with `chat_storage_full` and say so.
+
+## Chat capacity (v1.1, #125)
+
+Limits that keep one noisy device or a long-lived household from exhausting
+the service, and what each does when reached. Every refusal is a stable code
+the app turns into plain words (`noticeText` in `kin-chat.js`); nothing is
+dropped silently, and refused messages stay on the sender's device.
+
+| Limit | Value | Reached |
+| --- | --- | --- |
+| Chat events per household | 250,000 (`MAX_HOUSEHOLD_CHAT_EVENTS`) | `chat_limit` (413) |
+| Live blobs per household | 256 MiB, 250,000 blobs | `chat_storage_full` (409) |
+| Chat events per device | 120 a minute, new events only | `chat_rate_limited` (429) |
+| Blob uploads per device | 120 a minute and 256 MiB per ten minutes, new blobs only | `chat_rate_limited` (429) |
+| Other sync requests | 256 a minute per device (unchanged) | `sync_rate_limited` |
+
+Re-sent events and blobs the service already holds cost nothing, so a retry
+after a lost acknowledgement is never refused for it. Windows are in memory
+per device (at most 4,096 tracked) and reset on restart. A rate-limited
+device keeps its outbox and sends again on its next pass.
+
+**Volume model.** A busy household of six sending 300 events a day (messages,
+edits, deletes and reactions) reaches 250,000 events in about 2.3 years; the
+blob quota, not the event count, is the earlier limit for households that
+share photos and files. These bounds stand; the figures above are the model
+to revisit if measured use differs.
+
+**Seeing use.** `GET /api/chat/storage` (admin only, `household_admin_required`
+otherwise) returns `{ bytes, byteLimit, blobs, blobLimit, events, eventLimit }`:
+totals only. The chat access panel shows it as one line. Freeing space is
+deleting messages with attachments (their content is retired).
 
 ## Chat relay (v1.1, #111)
 

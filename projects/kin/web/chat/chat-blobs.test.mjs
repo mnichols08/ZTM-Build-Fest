@@ -213,3 +213,25 @@ test("the client talks to the real service: upload, download, deletion and refus
   assert.deepEqual(await as(partner).download(message.ref), { deleted: true });
   await assert.rejects(as(admin).upload(message.ref, (await sealChatText("x")).ciphertext), (error) => error.code === "chat_blob_invalid");
 });
+
+test("evicting old blobs frees the cache without deleting anything for good (#125)", async () => {
+  let clock = 1_000;
+  const store = await ChatBlobStore.open(HOUSEHOLD, { indexedDB: fakeIndexedDB(), now: () => clock });
+  const sealed = [];
+  for (const text of ["old one", "old kept", "fresh"]) {
+    const blob = await sealChatText(text);
+    sealed.push(blob);
+    await store.put(blob.ref, blob.ciphertext);
+    clock += 1_000;
+  }
+  const [old, kept, fresh] = sealed;
+  const dropped = await store.evictOlderThan(2_500, { keep: new Set([kept.ref]) });
+  assert.equal(dropped, 1, "only the old blob that isn't kept");
+  assert.equal(await store.get(old.ref), null);
+  assert.ok(await store.get(kept.ref));
+  assert.ok(await store.get(fresh.ref));
+  assert.equal(await store.isRetired(old.ref), false, "no tombstone: it can be fetched again");
+  assert.equal(await store.put(old.ref, old.ciphertext), true, "and stored again");
+  assert.equal(await store.evictOlderThan(Number.NaN), 0);
+  store.close();
+});

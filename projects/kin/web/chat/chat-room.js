@@ -79,6 +79,11 @@ export class ChatRoomError extends Error {
 const randomIdHex = () => [...crypto.getRandomValues(new Uint8Array(16))]
   .map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
+/** How long a device keeps chat content it downloaded, and how often it
+ * looks for older content to drop (#125). */
+export const CHAT_CACHE_DAYS = 90;
+const CACHE_TRIM_EVERY_MS = 6 * 60 * 60 * 1000;
+
 /** Most rounds of opening older texts a single search runs (256 messages each). */
 const MAX_SEARCH_ROUNDS = 40;
 
@@ -949,6 +954,7 @@ export class ChatRoom {
     }
     const pullMore = await this.pull(status, devices);
     await this.retireReplaced();
+    await this.trimCache().catch(() => {});
     // "Delete for me" is a nicety beside the chat itself: its trouble is
     // reported, and messages still flow.
     const hadError = this.hiddenError?.code ?? null, wasWaiting = this.hiddenWaiting;
@@ -968,6 +974,30 @@ export class ChatRoom {
     }
     if (pushError) throw pushError;
     return { hasMore: pushMore || pullMore };
+  }
+
+  /**
+   * Drops this device's cached copies of chat content older than
+   * CHAT_CACHE_DAYS (#125), at most every few hours. Messages stay; opening
+   * an old one fetches its content again. Content waiting to be uploaded
+   * (the outbox, with the parts of its attachment manifests) is never
+   * dropped. Resolves with how many blobs were dropped.
+   */
+  async trimCache() {
+    const now = this.now();
+    if (this.trimmedAt && now - this.trimmedAt < CACHE_TRIM_EVERY_MS) return 0;
+    this.trimmedAt = now;
+    const keep = new Set();
+    for (const row of await this.store.outbox()) if (row.blobRef) keep.add(row.blobRef);
+    for (const parts of (await this.blobs.store.partsOf([...keep])).values()) for (const part of parts) keep.add(part);
+    return this.blobs.store.evictOlderThan(now - CHAT_CACHE_DAYS * 24 * 60 * 60 * 1000, { keep });
+  }
+
+  /** The household's chat storage use, for an admin (#125): bytes and blobs
+   * with their limits, and chat events. Totals only. */
+  storageUsage() {
+    this.assertOpen();
+    return this.request("/api/chat/storage");
   }
 
   /** Sends pending events, at most MAX_CHAT_PUSH_BATCHES batches; resolves

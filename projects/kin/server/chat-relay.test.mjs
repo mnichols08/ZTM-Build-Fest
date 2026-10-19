@@ -267,3 +267,30 @@ test("the receipt routes carry JSON, need a session, and stay out of the chat st
   assert.equal(stale.status, 409);
   assert.equal((await stale.json()).error, "chat_receipts_stale");
 });
+
+bothStores("a device can send only so many chat events a minute (#125)", (h) => {
+  const auth = h.auth(h.adult);
+  let sequence = 0;
+  const batch = (count) => Array.from({ length: count }, () => {
+    sequence += 1;
+    return envelope(h.adult, { eventId: hex(sequence % 255, 16).replace(/..$/, sequence.toString(16).padStart(2, "0")).slice(0, 32).padEnd(32, "0"), deviceSequence: sequence });
+  });
+  const send = (count) => h.relay.push(auth, batch(count));
+  // 120 a minute, spent in batches of 20.
+  for (let round = 0; round < 6; round += 1) send(20);
+  const before = sequence;
+  assert.throws(() => send(1), rejects("chat_rate_limited", 429));
+  sequence = before;
+  // A refused batch changes nothing: the same events go through later.
+  h.sync.now = () => Date.now() + 61_000;
+  h.relay.eventWindow.now = h.sync.now;
+  assert.equal(send(20).accepted, 20);
+  // Another device has its own allowance.
+  assert.equal(h.relay.push(h.auth(h.laptop), [envelope(h.laptop, { eventId: hex(250), deviceSequence: 1, logicalTime: 1 })]).accepted, 1);
+});
+
+bothStores("an admin sees the household's chat event total (#125)", (h) => {
+  const auth = h.auth(h.adult);
+  h.relay.push(auth, [envelope(h.adult, { eventId: hex(1), deviceSequence: 1 }), envelope(h.adult, { eventId: hex(2), deviceSequence: 2 })]);
+  assert.deepEqual(h.relay.eventUsage(auth), { events: 2, eventLimit: 250_000 });
+});
