@@ -85,12 +85,15 @@ These hold today and are guarded by `scripts/ephemeral-isolation.test.mjs`,
 
 1. The category table is empty in production; an envelope for any category
    closes the socket.
-2. The ephemeral path in `server/live/` has no database, file, log or queue
-   access.
-3. Nothing in the engine, the event kinds, the archive or the export mentions
+2. The code in `server/live/` has no database, file or log access, and a
+   message for a receiver that cannot take it right now is dropped, not
+   queued (tested).
+3. Nothing in the engine, the chat, archive, attachment, storage and sync code
+   (apart from the envelope codec itself) or the server's routes refers to
    ephemeral messages.
 4. No WebRTC API (`RTCPeerConnection`, session descriptions, ICE candidates),
-   no screen capture, and no `getUserMedia` outside `web/chat/chat-voice.js`.
+   no screen capture, and no `getUserMedia` outside `web/chat/chat-voice.js`
+   (voice messages).
 5. Routing uses member and device IDs only; the sender is never read from the
    message; foreign, unknown, offline and revoked targets receive nothing.
 6. Zero third-party packages and crates; the ABI stays manual and versioned.

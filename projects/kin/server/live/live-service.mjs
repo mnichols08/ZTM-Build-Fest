@@ -26,7 +26,7 @@ import {
   acceptKey, CLOSE, closePayload, encodeFrame, encodeMessage, FrameParser, isClientKey, MAX_MESSAGE_BYTES, OPCODE, parseMessage,
 } from "./websocket.mjs";
 import { PairingError, canParticipate, chatAccess } from "../pairing-service/shared.mjs";
-import { CATEGORIES, EphemeralError, SCOPE, decodeRequest, encodeDelivery } from "./ephemeral.mjs";
+import { CATEGORIES, EphemeralError, MAX_EPHEMERAL_PAYLOAD, SCOPE, decodeRequest, encodeDelivery } from "./ephemeral.mjs";
 
 export const LIVE_PATH = "/api/live";
 export const PING_INTERVAL_MS = 25_000;
@@ -102,6 +102,19 @@ function refuse(socket, status, headers = "") {
 
 function headerList(value) {
   return String(value ?? "").toLowerCase().split(",").map((part) => part.trim());
+}
+
+/** A category table is checked once, so a bad entry stops the service
+ * starting instead of quietly disabling a limit later. */
+function checkedCategories(table) {
+  for (const [id, category] of table) {
+    const whole = (value, min, max) => Number.isInteger(value) && value >= min && value <= max;
+    if (!whole(id, 0, 255) || !whole(category?.maxPayload, 1, MAX_EPHEMERAL_PAYLOAD) || !whole(category.burst, 1, 1_000) ||
+        !whole(category.refillMs, 1, 3_600_000) || !Array.isArray(category.scopes) || !category.scopes.length ||
+        !category.scopes.every((scope) => Object.values(SCOPE).includes(scope)) || !["chat", "write"].includes(category.access))
+      throw new RangeError(`Invalid ephemeral category ${id}.`);
+  }
+  return table;
 }
 
 class LiveConnection {
@@ -316,7 +329,7 @@ export class LiveService {
     this.maxQueued = maxQueued;
     this.maxMessage = maxMessage;
     this.maxConnections = maxConnections;
-    this.ephemeralCategories = ephemeralCategories;
+    this.ephemeralCategories = checkedCategories(ephemeralCategories);
     /** deviceId → connection */
     this.connections = new Map();
     /** householdId → Set of connections */
@@ -441,9 +454,13 @@ export class LiveService {
     const now = this.service.now();
     let bucket = connection.ephemeralBuckets.get(categoryId);
     if (!bucket) connection.ephemeralBuckets.set(categoryId, (bucket = { tokens: category.burst, refilledAt: now, drops: 0 }));
-    const elapsed = Math.max(0, now - bucket.refilledAt);
-    bucket.tokens = Math.min(category.burst, bucket.tokens + Math.floor(elapsed / category.refillMs));
-    if (elapsed >= category.refillMs) bucket.refilledAt = now;
+    // Whole tokens earned since the last refill; the part of an interval
+    // not yet earned carries over instead of being thrown away.
+    const earned = Math.floor(Math.max(0, now - bucket.refilledAt) / category.refillMs);
+    if (earned > 0) {
+      bucket.tokens = Math.min(category.burst, bucket.tokens + earned);
+      bucket.refilledAt = bucket.tokens >= category.burst ? now : bucket.refilledAt + earned * category.refillMs;
+    }
     if (bucket.tokens < 1) {
       bucket.drops += 1;
       if (bucket.drops > MAX_TYPING_DROPS) connection.close(CLOSE.POLICY, "Too many messages");

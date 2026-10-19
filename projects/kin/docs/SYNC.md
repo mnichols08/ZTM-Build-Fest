@@ -758,13 +758,15 @@ a second copy: the newer socket replaces the older (close 4409).
 
 **Checked on the server, at dispatch, both sides.** Before relaying, the
 service re-validates the sender's session and device, and for each receiver
-that its device is still trusted, its member active and not expired, and that
-member and sender may take part under the category's access level and the
-admin's chat policy. None of this is left to the browser.
+that its device is not revoked, its member is active and not expired and its
+household not being deleted, and that sender and receiver may take part under
+the category's access level and the admin's chat policy. (A receiver's own
+session expiring closes its socket on its own timer; only the sender's session
+is re-read per message.) None of this is left to the browser.
 
 **What the sender learns.** Nothing about delivery. A target that is in another
 household, unknown, offline, revoked or not allowed gets nothing and the
-sender gets no error, no acknowledgement and no timing difference, so the path
+sender gets no error, no acknowledgement and no different response, so the path
 cannot be used to find out who is online, to scan device IDs or to learn a
 device exists. Presence for people to see remains the opt-in "Online now"
 feature (#128).

@@ -25,24 +25,27 @@ test("production accepts no ephemeral category", () => {
   assert.equal(CATEGORIES.size, 0);
 });
 
-test("the ephemeral path has no database, file, log or queue access", () => {
-  for (const file of ["server/live/ephemeral.mjs", "server/live/live-service.mjs"]) {
-    const source = text(join(root, file));
-    assert.doesNotMatch(source, /durable-store|node:sqlite|node:fs|\.prepare\(|\.exec\(|writeFile|appendFile/, file);
-    assert.doesNotMatch(source, /console\.(log|info|warn|error|debug)/, `${file} logs`);
+test("the live-channel code has no database, file or log access", () => {
+  for (const path of sources(join(root, "server/live"), [".mjs"])) {
+    const source = text(path);
+    assert.doesNotMatch(source, /durable-store|node:sqlite|node:fs|\.prepare\(|\.exec\(|writeFile|appendFile/, rel(path));
+    assert.doesNotMatch(source, /console\.(log|info|warn|error|debug)/, `${rel(path)} logs`);
   }
   assert.doesNotMatch(text(join(root, "server/live/ephemeral.mjs")), /import /, "the envelope module imports nothing");
 });
 
-test("nothing in the engine, events, archives or exports mentions ephemeral messages", () => {
-  const places = [["rust/src", [".rs"]], ["web/security", [".js"]], ["web/chat", [".js"]], ["web/attachments", [".js"]]];
-  for (const [dir, extensions] of places)
-    for (const path of sources(join(root, dir), extensions))
-      {
-        const source = text(path);
-        assert.doesNotMatch(source, /EPHEMERAL_|LIVE_TYPE\.EPHEMERAL/, rel(path));
-        assert.doesNotMatch(source, /ephemeral[ -](message|signal|envelope|categor)/i, rel(path));
-      }
+test("nothing in the engine, chat, archives, storage, sync or server routes mentions ephemeral messages", () => {
+  const places = [["rust/src", [".rs"]], ["web/security", [".js"]], ["web/chat", [".js"]], ["web/attachments", [".js"]], ["web/storage", [".js"]], ["web/components", [".js"]]];
+  const files = [
+    ...places.flatMap(([dir, extensions]) => [...sources(join(root, dir), extensions)]),
+    ...[...sources(join(root, "server"), [".mjs"])].filter((path) => !rel(path).startsWith("server/live/")),
+    ...[...sources(join(root, "web/sync"), [".js"])].filter((path) => !["web/sync/ephemeral-envelope.js", "web/sync/live-channel.js"].includes(rel(path))),
+  ];
+  for (const path of files) {
+    const source = text(path);
+    assert.doesNotMatch(source, /EPHEMERAL_|LIVE_TYPE\.EPHEMERAL/, rel(path));
+    assert.doesNotMatch(source, /ephemeral[ -](message|signal|envelope|categor)/i, rel(path));
+  }
 });
 
 test("no WebRTC, screen capture or call code, and getUserMedia only records voice messages", () => {
@@ -51,7 +54,7 @@ test("no WebRTC, screen capture or call code, and getUserMedia only records voic
   for (const path of files) {
     const source = text(path);
     assert.doesNotMatch(source, forbidden, rel(path));
-    if (/getUserMedia/.test(source)) assert.ok(["web/chat/chat-voice.js", "web/components/kin-chat-voice.js"].includes(rel(path)) || /Permissions-Policy|microphone/.test(source) && rel(path).startsWith("server/"), `${rel(path)} uses getUserMedia`);
+    if (/getUserMedia/.test(source)) assert.equal(rel(path), "web/chat/chat-voice.js", `${rel(path)} uses getUserMedia`);
   }
 });
 
