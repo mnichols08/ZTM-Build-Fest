@@ -132,7 +132,7 @@ export class ChatKeys {
     if (sequence !== null && this.epoch > 0 && keyEpoch > this.epoch)
       throw new ChatKeyError("A chat message names a chat key that doesn't exist yet.", "chat_key_future");
     if (this.lost.has(keyEpoch) && !this.keys.has(keyEpoch) && !(await this.keyStore.getEpoch(this.family, keyEpoch)))
-      throw new ChatKeyError("A chat message was sealed under a chat key no device has any more.", "chat_event_refused");
+      throw new ChatKeyError("A chat message was sealed under a chat key no device has any more.", "chat_key_lost");
     const key = await this.key(keyEpoch);
     let plaintext;
     try {

@@ -64,7 +64,7 @@ const FINAL_RETIRE_REFUSALS = new Set(["chat_blob_retire_forbidden", "chat_blob_
 const FINAL_REFUSALS = new Set(["chat_event_refused"]);
 // A chat key epoch the household hasn't reached may only be newer than this
 // pass's look at the service, so it gets a second look like a signature.
-const SECOND_LOOK_REFUSALS = new Set(["event_signature_invalid", "chat_key_future"]);
+const SECOND_LOOK_REFUSALS = new Set(["event_signature_invalid", "chat_key_future", "chat_key_lost"]);
 const CHAT_KINDS = new Set(["CHAT_MESSAGE_POSTED", "CHAT_MESSAGE_EDITED", "CHAT_MESSAGE_DELETED"]);
 const REF = /^[a-f0-9]{64}$/;
 
@@ -883,7 +883,7 @@ export class ChatRoom {
         // The service wants the chat key rotated, or this device's view of it
         // is behind: sending resumes on a later pass. A chat key this device
         // doesn't have yet must not hold up reading what it can.
-        if (error?.code === "chat_key_stale" || error?.code === "chat_key_rotation_pending") pushMore = true;
+        if (error?.code === "chat_key_stale" || error?.code === "chat_key_rotation_pending") pushMore = false;
         else if (error?.code === "chat_key_missing") pushError = error;
         else throw error;
       }

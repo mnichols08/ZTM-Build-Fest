@@ -56,7 +56,7 @@ test("a chat key epoch that doesn't exist yet, or that nobody can open, doesn't 
   lost.lost = new Set([2]);
   const sealedAtTwo = new Uint8Array(future);
   new DataView(sealedAtTwo.buffer).setUint32(4, 2);
-  await assert.rejects(lost.open(sealedAtTwo, "11".repeat(16), { sequence: 3 }), (error) => error.code === "chat_event_refused", "no holder left");
+  await assert.rejects(lost.open(sealedAtTwo, "11".repeat(16), { sequence: 3 }), (error) => error.code === "chat_key_lost", "no holder left (looked at twice)");
   lost.lost = new Set();
   await assert.rejects(lost.open(new Uint8Array(sealedAtTwo), "11".repeat(16), { sequence: 3 }), (error) => error.code === "chat_key_missing", "held by someone: wait for it");
 });

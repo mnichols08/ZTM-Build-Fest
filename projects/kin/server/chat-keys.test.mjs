@@ -55,7 +55,7 @@ function household(store = null) {
     expectedEpoch: epoch - 1, epoch,
     packages: recipients.map((to) => ({ deviceId: to.deviceId, keyEpoch: epoch, package: pack(sender, to, epoch) })),
   });
-  return { pairing, sync, relay, admin, child, guest, adult, auth, setPolicy, pack, rotation, fingerprint };
+  return { pairing, sync, relay, admin, child, guest, adult, auth, setPolicy, pack, rotation, fingerprint, admit, nextFingerprint: () => hex(++counter + 100, 32) };
 }
 
 /** What the status tells a device about the chat key, without the counters. */
@@ -133,7 +133,7 @@ bothStores("giving access back asks a holder to share the key; other members can
   const plan = h.relay.keys(h.auth(h.admin)).plan;
   assert.deepEqual(plan.recipients.map((entry) => [entry.deviceId, entry.keyEpochs]), [[h.child.deviceId, [1]]]);
   const grant = (sender, recipient, keyEpoch) => ({ expectedEpoch: 1, epoch: 1, packages: [{ deviceId: recipient.deviceId, keyEpoch, package: h.pack(sender, recipient, keyEpoch) }] });
-  assert.throws(() => h.relay.putKeys(h.auth(h.child), grant(h.child, h.child, 1)), rejects("chat_keys_stale", 409), "a device can't grant itself");
+  assert.throws(() => h.relay.putKeys(h.auth(h.child), grant(h.child, h.child, 1)), rejects("chat_keys_invalid", 400), "a device can't grant itself");
   assert.throws(() => h.relay.putKeys(h.auth(h.admin), grant(h.admin, h.guest, 1)), rejects("chat_keys_invalid", 400), "someone who already holds it");
   assert.throws(() => h.relay.putKeys(h.auth(h.admin), grant(h.admin, h.child, 2)), rejects("chat_keys_invalid", 400), "an epoch that doesn't exist");
   h.relay.putKeys(h.auth(h.admin), grant(h.admin, h.child, 1));
@@ -186,4 +186,26 @@ bothStores("an epoch nobody who may read still holds is reported lost", (h) => {
   h.setPolicy("write", "write");
   for (const who of [h.admin, h.guest, h.adult]) h.pairing.devices.get(who.deviceId).revokedAt = Date.now();
   assert.deepEqual(h.relay.keySummary(h.auth(h.child)).lost, [1]);
+});
+
+bothStores("a household that replaced its Adult devices gets its key back from a device that still holds it", (h) => {
+  h.setPolicy("none", "write");
+  h.relay.putKeys(h.auth(h.admin), h.rotation(h.admin, [h.admin, h.guest, h.adult], 1));
+  const fresh = h.admit({ kind: "adult" });
+  h.pairing.devices.get(fresh.deviceId).syncKeyFingerprint = h.nextFingerprint();
+  // While an Adult's device holds the key, only Adults share it.
+  assert.equal(keyOf(h, h.guest).action, null);
+  assert.equal(keyOf(h, h.admin).action, "grant");
+  for (const who of [h.admin, h.adult]) h.pairing.devices.get(who.deviceId).revokedAt = Date.now();
+  // Both Adults that held it are gone. The new Adult's device makes a fresh key,
+  // and the Temporary member's device, which still holds the old one and
+  // which no Adult's device does, shares it so history stays readable.
+  assert.equal(keyOf(h, h.guest).action, null, "rotating is an Adult's to do");
+  assert.deepEqual(keyOf(h, fresh), { epoch: 1, pending: true, action: "rotate" });
+  h.relay.putKeys(h.auth(fresh), h.rotation(fresh, [h.guest, fresh], 2));
+  assert.equal(keyOf(h, h.guest).action, "grant");
+  const grant = { expectedEpoch: 2, epoch: 2, packages: [{ deviceId: fresh.deviceId, keyEpoch: 1, package: h.pack(h.guest, fresh, 1) }] };
+  h.relay.putKeys(h.auth(h.guest), grant);
+  assert.deepEqual(h.relay.keys(h.auth(fresh)).packages.map((row) => row.keyEpoch), [1, 2]);
+  assert.equal(keyOf(h, h.guest).action, null);
 });
