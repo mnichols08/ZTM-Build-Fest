@@ -683,6 +683,12 @@ export async function chatRegressions() {
   await settle();
   check(chat.querySelector(".chat-pending").textContent.includes("dropped.txt") && !chat.querySelector(".chat-form").classList.contains("chat-dropping"), "a dropped file is listed to send");
 
+  // A folder dropped in arrives as an empty file; and a drag over a composer that can't take it is still claimed.
+  const folder = new DataTransfer();
+  folder.items.add(new File([], "Holiday photos", { type: "" }));
+  chat.dispatchEvent(new DragEvent("drop", { dataTransfer: folder, bubbles: true, cancelable: true }));
+  await settle();
+  check(chat.querySelector(".compose-message").textContent.includes("Holiday photos is empty") && !chat.querySelector(".chat-pending").textContent.includes("Holiday photos"), "a dropped folder is refused by name");
   const stopButton = chat.querySelector(".chat-stop-send");
   const retryButton = chat.querySelector(".chat-retry");
   calls.attachMode = "hang";

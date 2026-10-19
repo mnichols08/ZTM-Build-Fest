@@ -1920,11 +1920,14 @@ and receive a short ID suffix in selection/management labels until renamed.
 # 30. Attaching in chat: paste, drop, camera, progress, retry (#115, #116)
 
 - **Paste.** Pasting a picture or file into the message box adds it to the
-  files to send. Pasted text, including text that also carries a picture (as a
+  files to send. When files can't be added (read-only, editing, recording,
+  sending) the message box says so. A dropped folder is refused by name as
+  empty. Pasted text, including text that also carries a picture (as a
   spreadsheet does), pastes as text.
 - **Drop.** On a desktop, dragging files over the chat outlines the composer
-  and dropping adds them. Nothing happens, and no outline shows, when the
-  member can't post, is editing or recording, or is already sending.
+  and dropping adds them. When the member can't post, is editing or
+  recording, or is already sending, no outline shows and the drop is
+  refused with a message (the browser never opens the file in the tab).
 - **Camera.** On a phone or tablet (a touch screen as the main pointer) a
   **Camera** button beside Attach opens the device's camera for one photo. It
   is not shown on a desktop.

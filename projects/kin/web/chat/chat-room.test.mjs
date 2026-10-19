@@ -1053,11 +1053,24 @@ test("sending files reports progress per file, and cancelling leaves no sealed p
   assert.equal(await held(), afterSend, "nothing from the cancelled send is kept");
   assert.equal(a.room.page().messages.filter((entry) => entry.contentKind === "attachment").length, 1, "and no message was posted");
 
+  // Cancelled after the last part is sealed (the common case for a small file): still stopped.
+  const late = new AbortController();
+  await assert.rejects(
+    a.room.sendAttachments({ text: "", files: [note], signal: late.signal, onProgress: ({ done, total }) => { if (done === total) late.abort(); } }),
+    (error) => error.code === "chat_attachment_cancelled",
+  );
+  assert.equal(await held(), afterSend, "the sealed part and manifest are gone");
+
+  // A progress callback that throws doesn't break sending or leak.
+  await a.room.sendAttachments({ text: "", files: [note], onProgress: () => { throw new Error("broken"); } });
+  assert.equal(a.room.page().messages.filter((entry) => entry.contentKind === "attachment").length, 2);
+  const afterBroken = await held();
+
   // Cancelled before it starts.
   const early = new AbortController();
   early.abort();
   await assert.rejects(a.room.sendAttachments({ text: "", files: [note], signal: early.signal }), (error) => error.code === "chat_attachment_cancelled");
-  assert.equal(await held(), afterSend);
+  assert.equal(await held(), afterBroken);
 });
 
 test("read receipts travel through the real receipt route, sealed, and survive the other device's sync", { timeout: 30_000 }, async (t) => {

@@ -479,13 +479,18 @@ characters, captions up to 4,000, a manifest up to 256 KiB.
 - **Preparing, cancelling and retrying (#115, #116).** `sendAttachments`
   reports `{ index, done, total }` bytes per file after each part and takes an
   `AbortSignal`: when it fires (or the room closes, or sealing fails) the parts
-  already sealed for that send are retired, nothing is posted, and the caller
-  gets `chat_attachment_cancelled`. The composer keeps the files, so a failed
-  or cancelled send is retried with the same draft.
+  already sealed for that send are retired and nothing is posted; an abort
+  gives the caller `chat_attachment_cancelled`. Cancelling works until the
+  message starts being posted (between files, between parts and after the
+  manifest is sealed). If the room closes, or the post itself fails, the
+  sealed parts stay on this device as ciphertext until the blob store's
+  expiry sweep removes them. The composer keeps the files, so a failed or
+  cancelled send is retried with the same draft.
 - **Why 1 MiB parts rather than 64 KiB chunks with their own endpoints.**
   Every part is already a content-addressed blob sealed under its own random
-  key and nonce, uploaded with an idempotent `PUT` by hash, so an interrupted
-  upload resumes by sending only the parts the service lacks, and a receiver
+  key and nonce, uploaded with an idempotent `PUT` by hash, so repeating an
+  interrupted upload is harmless (a repeat of what the service has changes
+  nothing), and a receiver
   checks each part against its reference and size before using it. The
   manifest, sealed inside the signed event, fixes the order, sizes and keys, so
   a truncated, reordered or swapped sequence fails closed (a part from the

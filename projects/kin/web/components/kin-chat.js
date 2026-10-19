@@ -381,7 +381,7 @@ class KinChat extends HTMLElement {
     this.cameraButton.type = "button";
     this.cameraButton.className = "chat-attach chat-camera";
     this.cameraButton.textContent = "Camera";
-    this.cameraButton.setAttribute("aria-label", "Take a photo to attach");
+    this.cameraButton.setAttribute("aria-label", "Camera, take a photo to attach");
     this.cameraButton.hidden = typeof matchMedia !== "function" || !matchMedia("(pointer: coarse)").matches;
     this.cameraButton.addEventListener("click", () => this.chooseFiles({ camera: true }));
     // Quick polls (#135): a question with 2 to 10 options.
@@ -583,7 +583,7 @@ class KinChat extends HTMLElement {
     // Attachments aren't edited: no attaching while editing a message.
     this.attach.disabled = off || Boolean(this.sending) || Boolean(this.editing) || this.voice?.open === true;
     this.cameraButton.disabled = this.attach.disabled;
-    this.retry.disabled = off || Boolean(this.sending);
+    this.retry.disabled = off || Boolean(this.sending) || Boolean(this.editing) || this.voice?.open === true;
     this.pollButton.disabled = off || Boolean(this.sending) || Boolean(this.editing);
     this.voiceButton.disabled = off || Boolean(this.sending) || Boolean(this.editing) || this.voice.open;
   }
@@ -2069,14 +2069,25 @@ class KinChat extends HTMLElement {
 
   /** Adds photos and files to the ones to send, within the limits. */
   addFiles(incoming) {
-    if (!incoming.length || !this.canAttach()) return;
+    if (!incoming.length) return;
+    if (!this.canAttach()) {
+      this.message.textContent = "Files can't be added right now.";
+      return;
+    }
+    // A dropped folder arrives as an empty file.
+    const empty = incoming.find((file) => !file.size);
+    if (empty) {
+      this.message.textContent = `${safeAttachmentName(empty.name)} is empty, or is a folder. Choose a file that has content.`;
+      incoming = incoming.filter((file) => file.size);
+      if (!incoming.length) return;
+    }
     const next = [...this.files, ...incoming];
     const problem = attachmentProblem(next);
     if (problem) {
       this.message.textContent = problem;
       return;
     }
-    this.message.textContent = "";
+    if (!empty) this.message.textContent = "";
     this.files = next;
     this.retry.hidden = true;
     this.renderPending();
@@ -2104,10 +2115,14 @@ class KinChat extends HTMLElement {
   }
 
   onDragOver(event) {
-    if (!this.filesOf(event.dataTransfer).length && ![...(event.dataTransfer?.types ?? [])].includes("Files")) return;
-    // Allowed to drop only where files can be added now.
-    if (!this.canAttach()) return;
+    if (![...(event.dataTransfer?.types ?? [])].includes("Files")) return;
+    // Always claimed, so a drop never makes the browser open the file in this
+    // tab and lose the draft; it is only accepted where files can be added.
     event.preventDefault();
+    if (!this.canAttach()) {
+      event.dataTransfer.dropEffect = "none";
+      return;
+    }
     event.dataTransfer.dropEffect = "copy";
     this.form.classList.add("chat-dropping");
   }
@@ -2370,6 +2385,8 @@ class KinChat extends HTMLElement {
     if (withFiles) {
       this.stopSend.hidden = false;
       this.renderPending();
+      // Send is about to be disabled; keep the keyboard on something useful.
+      this.stopSend.focus();
       this.say("Sending files.");
     }
     try {

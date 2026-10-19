@@ -826,24 +826,31 @@ export class ChatRoom {
     const prepared = [];
     const kept = [];
     let manifest;
+    // A broken progress callback must not break sending.
+    const progress = (value) => { try { onProgress(value); } catch { /* progress is only for show */ } };
     try {
       for (const [index, file] of files.entries()) {
-        const sealed = await this.sealFile(file, { signal, onBytes: (done, total) => onProgress({ index, done, total }) });
-        onProgress({ index, done: sealed.size, total: sealed.size });
+        const sealed = await this.sealFile(file, { signal, onBytes: (done, total) => progress({ index, done, total }) });
         if (voice) sealed.voice = { durationMs: voice.durationMs, peaks: [...voice.peaks] };
         prepared.push(sealed);
+        // Kept first, so a failure from here on retires this file's parts too.
         kept.push(...manifestRefs({ files: [sealed] }));
+        progress({ index, done: sealed.size, total: sealed.size });
       }
       this.assertOpen();
+      cancelCheck(signal);
       const bytes = encodeManifest({ text, files: prepared });
       try {
         manifest = await this.blobs.sealBytes(bytes, { parts: kept });
       } finally {
         bytes.fill(0);
       }
+      // The last point at which sending can still be stopped.
+      cancelCheck(signal);
     } catch (error) {
-      // Nothing was sent: this device's kept parts go too.
-      await this.blobs.retire(kept).catch(() => {});
+      // Nothing was sent: this device's kept parts, and the manifest, go too.
+      await this.blobs.retire(manifest ? [manifest.ref, ...kept] : kept).catch(() => {});
+      manifest?.key.fill(0);
       throw error;
     }
     const hex = refHex(manifest.key);
