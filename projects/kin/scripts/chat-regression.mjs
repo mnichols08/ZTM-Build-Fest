@@ -48,7 +48,7 @@ export async function chatRegressions() {
       blobRef: shown ? original.blobRef : null, blobKey: shown ? original.blobKey : null, text: shown ? held.get(original.blobRef) ?? null : null,
     };
   };
-  const calls = { send: [], edit: [], remove: [], hide: [], attach: [], search: [] };
+  const calls = { send: [], edit: [], remove: [], hide: [], attach: [], search: [], voice: [] };
   const attachments = new Map();
   const room = {
     identity: { memberId: me, householdId: "c3".repeat(16), deviceId: "d4".repeat(16) },
@@ -149,7 +149,7 @@ export async function chatRegressions() {
     async openAttachment(message) {
       const found = attachments.get(message.blobRef);
       if (!found) throw Object.assign(new Error("gone"), { code: "chat_attachment_deleted" });
-      return { text: found.text, files: found.files.map((file) => ({ name: file.name, type: file.type, size: file.size, photo: file.type.startsWith("image/") })) };
+      return { text: found.text, files: found.files.map((file) => ({ name: file.name, type: file.type, size: file.size, photo: file.type.startsWith("image/"), voice: found.voice ?? null })) };
     },
     async attachmentFile(message, index) {
       return attachments.get(message.blobRef).files[index];
@@ -157,6 +157,17 @@ export async function chatRegressions() {
     async attachmentThumbnail(message, index) {
       const file = attachments.get(message.blobRef).files[index];
       return file.type.startsWith("image/") ? new Blob([file], { type: "image/jpeg" }) : null;
+    },
+    engine: { audioPeaks: () => Uint8Array.from({ length: 64 }, (_, index) => (index * 4) % 256) },
+    async sendVoice({ recording, durationMs, peaks }) {
+      calls.voice.push({ type: recording.type, size: recording.size, durationMs, peaks: peaks.length });
+      ids += 1;
+      const messageId = hex(ids);
+      const blobRef = hex(ids, 64);
+      log.push({ messageId, authorId: me, deviceId: hex(9), postedAt: start + (clock += 60_000), editedAt: null, status: "live", contentKind: "attachment", blobRef, blobKey: new Uint8Array(32).fill(2) });
+      attachments.set(blobRef, { text: "", files: [new File([recording], "Voice message.webm", { type: recording.type })], voice: { durationMs, peaks: [...peaks] } });
+      notify();
+      return { messageId };
     },
     async sendAttachments({ text, files, signal, onProgress }) {
       if (calls.attachMode === "fail") throw new Error("offline");
@@ -690,6 +701,7 @@ export async function chatRegressions() {
   await settle();
   check(chat.querySelector(".compose-message").textContent.includes("Holiday photos is empty") && !chat.querySelector(".chat-pending").textContent.includes("Holiday photos"), "a dropped folder is refused by name");
   const stopButton = chat.querySelector(".chat-stop-send");
+  // (voice messages are exercised below)
   const retryButton = chat.querySelector(".chat-retry");
   calls.attachMode = "hang";
   chat.querySelector(".chat-form").requestSubmit();
@@ -707,6 +719,70 @@ export async function chatRegressions() {
   retryButton.click();
   await settle();
   check(calls.attach.length === sentBefore + 1 && calls.attach.at(-1)[1].join() === "pasted.png,dropped.txt" && retryButton.hidden && chat.querySelector(".chat-pending").hidden, "Retry sends the same files");
+
+  // Voice messages (#134): the microphone and recorder are stood in for, the
+  // panel, player and sending are real.
+  {
+    const realDevices = Object.getOwnPropertyDescriptor(navigator, "mediaDevices");
+    const RealRecorder = window.MediaRecorder;
+    const track = { stopped: false, stop() { this.stopped = true; } };
+    let asked = 0;
+    let denied = false;
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia: async () => {
+      asked += 1;
+      if (denied) throw Object.assign(new Error("no"), { name: "NotAllowedError" });
+      track.stopped = false;
+      return { getTracks: () => [track] };
+    } } });
+    window.MediaRecorder = class FakeRecorder {
+      static isTypeSupported(type) { return type === "audio/webm;codecs=opus"; }
+      constructor() { this.state = "inactive"; }
+      start() { this.state = "recording"; }
+      stop() { this.state = "inactive"; setTimeout(() => { this.ondataavailable?.({ data: new Blob([new Uint8Array(200)], { type: "audio/webm" }) }); this.onstop?.(); }, 0); }
+    };
+    try {
+      const voiceButton = chat.querySelector(".chat-voice-open");
+      const panel = chat.querySelector(".chat-voice-recorder");
+      check(voiceButton && panel.hidden && asked === 0, "a Voice button, and the microphone is not asked for until it is used");
+      denied = true;
+      voiceButton.click();
+      await settle();
+      check(!panel.hidden && panel.querySelector('[role="alert"]')?.textContent.includes("can't use the microphone") && asked === 1, "a refused microphone says so plainly");
+      panel.querySelector(".chat-voice-discard").click();
+      await settle();
+      check(panel.hidden && document.activeElement === voiceButton, "closing it returns to the Voice button");
+      denied = false;
+      voiceButton.click();
+      await settle();
+      check(!panel.hidden && voiceButton.disabled && panel.querySelector(".chat-voice-clock") && document.activeElement === panel.querySelector(".chat-voice-stop"), "recording shows a clock and Stop, focused");
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      check(panel.querySelector(".chat-voice-clock").textContent === "0:01", `the clock runs (${panel.querySelector(".chat-voice-clock").textContent})`);
+      panel.querySelector(".chat-voice-stop").click();
+      await settle();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      check(track.stopped, "the microphone is released the moment recording stops");
+      check(panel.querySelector("audio")?.src.startsWith("blob:") && panel.querySelector(".chat-voice-send"), "the recording can be played back, then sent");
+      panel.querySelector(".chat-voice-send").click();
+      await settle();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await settle();
+      check(calls.voice.length === 1 && calls.voice[0].type === "audio/webm" && calls.voice[0].size === 200 && calls.voice[0].peaks === 64 && panel.hidden, "sending hands the recording and 64 peaks to the room");
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      await settle();
+      const voiceRow = rows().at(-1);
+      const player = voiceRow.querySelector(".chat-voice");
+      check(player && /^Voice message from You, 0:0\d$/.test(player.getAttribute("aria-label")), `a voice message reads as one (${player?.getAttribute("aria-label")})`);
+      check(voiceRow.querySelectorAll(".chat-voice-wave span").length === 64 && voiceRow.querySelector(".chat-voice-seek").type === "range", "a waveform of 64 bars over a native slider");
+      const speed = voiceRow.querySelector(".chat-voice-speed");
+      speed.click();
+      check(speed.textContent === "1.5×" && speed.getAttribute("aria-label") === "Playback speed 1.5×", "speed steps to 1.5×");
+      check(!voiceRow.querySelector(".chat-file"), "it is not also a download row");
+    } finally {
+      window.MediaRecorder = RealRecorder;
+      if (realDevices) Object.defineProperty(navigator, "mediaDevices", realDevices);
+      else delete navigator.mediaDevices;
+    }
+  }
 
   // Read receipts and typing (#120): a stub presence stands in for the
   // room's. A message counts as read only while on screen in a visible,
