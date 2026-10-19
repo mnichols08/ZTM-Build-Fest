@@ -689,7 +689,7 @@ class KinChat extends HTMLElement {
   loadMissingTexts() {
     const room = this.chatRoom;
     const target = this.replyingTo && this.messages.find((message) => message.messageId === this.replyingTo.messageId);
-    if (target && !visible(target)) {
+    if (this.replyingTo && (room.isHidden?.(this.replyingTo.messageId) || (target && !visible(target)))) {
       this.stopReplying();
       this.say("The message you were replying to is gone.");
     }
@@ -727,11 +727,12 @@ class KinChat extends HTMLElement {
       .filter((message) => {
         const original = message.replyTo;
         return original && visible(message) && original.contentKind === "attachment" && original.blobRef &&
-          !room.isHidden?.(original.messageId) && !this.attachments.has(original.messageId);
+          !room.isHidden?.(original.messageId) && !this.attachments.has(original.messageId) &&
+          !this.messages.some((shown) => shown.messageId === original.messageId);
       })
       .map(({ replyTo }) => [replyTo.messageId, replyTo])).values()];
     for (const original of files) {
-      this.attachments.set(original.messageId, { status: "loading", text: "", files: [], thumbs: new Map() });
+      this.attachments.set(original.messageId, { status: "loading", text: "", files: [], thumbs: new Map(), quoteOnly: true });
       void this.loadAttachment(room, { ...original, contentKind: "attachment" }, { thumbnails: false });
     }
     if (!replies.length) return;
@@ -785,7 +786,8 @@ class KinChat extends HTMLElement {
   loadMissingAttachments() {
     const room = this.chatRoom;
     if (!room) return;
-    const missing = this.messages.filter((message) => visible(message) && message.contentKind === "attachment" && message.blobRef && !this.attachments.has(message.messageId));
+    const missing = this.messages.filter((message) => visible(message) && message.contentKind === "attachment" && message.blobRef &&
+      (!this.attachments.has(message.messageId) || (this.attachments.get(message.messageId).quoteOnly && this.attachments.get(message.messageId).status !== "loading")));
     for (const message of missing) this.attachments.set(message.messageId, { status: "loading", text: "", files: [], thumbs: new Map() });
     for (const message of missing) void this.loadAttachment(room, message);
   }
@@ -797,12 +799,12 @@ class KinChat extends HTMLElement {
     } catch (error) {
       if (room !== this.chatRoom) return;
       const status = error?.code === "chat_attachment_deleted" ? "deleted" : error?.code === "chat_attachment_pending" ? "pending" : "failed";
-      this.attachments.set(message.messageId, { status, text: "", files: [], thumbs: new Map() });
+      this.attachments.set(message.messageId, { status, text: "", files: [], thumbs: new Map(), quoteOnly: !thumbnails });
       this.queueRender("update");
       return;
     }
     if (room !== this.chatRoom) return;
-    const state = { status: "ready", text: opened.text, files: opened.files, thumbs: new Map() };
+    const state = { status: "ready", text: opened.text, files: opened.files, thumbs: new Map(), quoteOnly: !thumbnails };
     this.attachments.set(message.messageId, state);
     this.queueRender("update");
     for (let index = 0; thumbnails && index < opened.files.length; index += 1) {
