@@ -81,7 +81,7 @@ fn schemas_and_kinds_outside_protocol_24_are_unsupported() {
             "add schema {schema}"
         );
     }
-    for kind in [2u16, 5, 12, 29, 41, 42, 43] {
+    for kind in [2u16, 5, 12, 29, 41, 42, 43, 51] {
         let mut record = reference_record(kind, 1, 0x11);
         record[..2].copy_from_slice(&2u16.to_le_bytes());
         assert_eq!(
@@ -90,7 +90,7 @@ fn schemas_and_kinds_outside_protocol_24_are_unsupported() {
             "kind {kind} schema 2"
         );
     }
-    for kind in [0u16, 51, 99, u16::MAX] {
+    for kind in [0u16, 52, 99, u16::MAX] {
         assert_eq!(
             decode_event(&reference_record(kind, 1, 0x11)),
             Err(KinError::UnsupportedVersion)

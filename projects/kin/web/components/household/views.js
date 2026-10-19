@@ -372,6 +372,16 @@ export class HouseholdViews {
       }
       if (this.host.syncStatus?.memberKind === "adult")
         this.host.button("Trusted devices", () => this.host.showDevices(), "secondary");
+      // Any member can choose the name their household sees (#225); it opens
+      // the editor beside their devices in People & devices.
+      if (this.host.memberNames?.rename) {
+        const hint = this.host.text("Choose the name your household sees. It changes no access.");
+        if (hint) hint.className = "household-choice-hint";
+        this.host.button("Set my name", () => {
+          this.host.editOwnName = true;
+          return this.host.showDevices();
+        }, "secondary");
+      }
       this.host.button("Household access", () => this.host.showHousehold(), "secondary");
       this.host.button("Log out", () => this.ctx.auth.logout(), "secondary");
       return;

@@ -87,6 +87,7 @@ export function createEngine(instanceExports) {
     "kin_history_truncate",
     "kin_project",
     "kin_device_names",
+    "kin_member_names",
     "kin_event_metadata",
     "kin_event_metadata_batch",
     "kin_audio_peaks",
@@ -265,6 +266,13 @@ export function createEngine(instanceExports) {
     deviceNames: (records, asOf, civilDate, syncIdentity = null) =>
       safeDecode(() => decodeDeviceNames(
         replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_device_names"),
+      )),
+    // Members' preferred display names (#224), replayed from the same
+    // history: [{ memberId, name }] in member-ID order, IDs as hex. Members
+    // who never set a name are absent; hosts fall back to their own labels.
+    memberNames: (records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeMemberNames(
+        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_member_names"),
       )),
     // Household chat (#109). `chatRecords` is the chat log (a history view
     // or an array of canonical chat records), never the household history.
@@ -752,6 +760,31 @@ function decodeDeviceNames(bytes) {
   return devices;
 }
 
+// KMNM v1 (ABI.md, #224): "KMNM", version u16, reserved u16, count u32,
+// then per member its ID (16 bytes), name length u16 (nonzero) and UTF-8 name.
+export function decodeMemberNames(bytes) {
+  const invalid = () => new KinEngineError(6, "Kin received invalid member names.");
+  if (bytes.length < 12 || readAscii(bytes, 0, 4) !== "KMNM") throw invalid();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint16(4, true) !== 1 || view.getUint16(6, true) !== 0) throw invalid();
+  const count = view.getUint32(8, true);
+  const members = [];
+  let offset = 12;
+  for (let index = 0; index < count; index += 1) {
+    if (offset + 18 > bytes.length) throw invalid();
+    const length = view.getUint16(offset + 16, true);
+    const end = offset + 18 + length;
+    if (length < 1 || end > bytes.length) throw invalid();
+    members.push({
+      memberId: idToHex(bytes.subarray(offset, offset + 16)),
+      name: strictTextDecoder.decode(bytes.subarray(offset + 18, end)),
+    });
+    offset = end;
+  }
+  if (offset !== bytes.length) throw invalid();
+  return members;
+}
+
 export function randomId() {
   const id = new Uint8Array(16);
   crypto.getRandomValues(id);
@@ -865,6 +898,8 @@ const COMMAND_TYPES = [
   "pin-chat-message",
   "vote-chat-poll",
   "close-chat-poll",
+  // A member's own preferred display name (#224): KCMD action 51.
+  "name-member",
 ];
 const EVENT_KINDS = [
   null,
@@ -918,6 +953,7 @@ const EVENT_KINDS = [
   "CHAT_PIN_SET",
   "CHAT_POLL_VOTE",
   "CHAT_POLL_CLOSED",
+  "MEMBER_NAMED",
 ];
 
 // The command field that names each event's own entity (packet offset 92).
@@ -1014,7 +1050,8 @@ function encodeIntentPacket(command, identity) {
   const noteBody = kind === 22 || kind === 23 ? textEncoder.encode(command.body ?? "") : null;
   if ((kind === 22 || kind === 23) && (typeof command.title !== "string" || typeof command.body !== "string" || strictTextDecoder.decode(noteTitle) !== command.title || strictTextDecoder.decode(noteBody) !== command.body || noteTitle.length > 256 || noteBody.length > 4096))
     throw new KinEngineError(2, "Note text must be valid Unicode and within its supported size.");
-  const deviceName = kind === 42 ? command.autoName : kind === 43 ? (command.nickname ?? "") : null;
+  // A member's own name (51) travels like a nickname: empty clears it.
+  const deviceName = kind === 42 ? command.autoName : kind === 43 || kind === 51 ? (command.nickname ?? command.name ?? "") : null;
   const deviceNameBytes = deviceName === null ? null : textEncoder.encode(deviceName);
   // Rust trims and checks device names; this only keeps the packet well formed.
   if (
@@ -1025,7 +1062,7 @@ function encodeIntentPacket(command, identity) {
       (kind === 42 && deviceNameBytes.length < 1) ||
       (kind === 43 && !/^[a-f0-9]{32}$/.test(command.targetDeviceId ?? "")))
   ) {
-    throw new KinEngineError(2, "A device name must be short plain text.");
+    throw new KinEngineError(2, kind === 51 ? "A name must be short plain text." : "A device name must be short plain text.");
   }
   const textBytes = textEncoder.encode(text);
   const playbookBytes = kind === 33 ? encodePlaybookPayload(command) : null;
@@ -1084,7 +1121,7 @@ function encodeIntentPacket(command, identity) {
   if (logicalTime <= 0n || logicalTime > MAX_LOGICAL_TIME)
     throw new KinEngineError(2, "Kin received an invalid event order.");
   view.setBigUint64(84, logicalTime, true);
-  if (![12, 13, 29, 42].includes(kind)) {
+  if (![12, 13, 29, 42, 51].includes(kind)) {
     const entity = commandEntityId(command, identity);
     packet.set(
       typeof entity === "string" ? idFromHex(entity) : assertId(entity),

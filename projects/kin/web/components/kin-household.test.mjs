@@ -417,9 +417,11 @@ test("People & devices groups by stable member ID and labels people and device s
     return row.children.find((child) => child.className === "device-name-line").children.map((part) => part.textContent ?? part).join("");
   };
   assert.equal(line("phone"), "Kitchen phone — Chrome on iPhone · This device · Trusted");
-  assert.equal(line("laptop"), "Firefox on Windows — Trusted");
+  // Without a nickname, the owner's preferred name sits beside the automatic
+  // name (#225); a nickname still wins, and an unnamed device keeps its code.
+  assert.equal(line("laptop"), "Alex · Firefox on Windows — Trusted");
   assert.equal(line("partner-mac"), "New device · ABCD — Untrusted");
-  assert.equal(line("partner-tablet"), "Safari on iPad — Revoked");
+  assert.equal(line("partner-tablet"), "Riley · Safari on iPad — Revoked");
   const buttons = descendants(component.children).filter((child) => child.tagName === "button");
   await buttons.find((button) => button.textContent === "Invite another person").listeners.click();
   await buttons.find((button) => button.textContent === "Add my device").listeners.click();
@@ -427,7 +429,7 @@ test("People & devices groups by stable member ID and labels people and device s
   assert.ok(descendants(component.children).some((child) => child.textContent?.includes("own household member identity")));
   assert.ok(descendants(component.children).some((child) => child.textContent?.includes("same member identity")));
   const renameButtons = descendants(component.children).filter((child) => child.textContent === "Rename");
-  assert.deepEqual(renameButtons.map((button) => button.attributes["aria-label"]), ["Rename Kitchen phone", "Rename Firefox on Windows"],
+  assert.deepEqual(renameButtons.map((button) => button.attributes["aria-label"]), ["Rename Kitchen phone", "Rename Alex · Firefox on Windows"],
     "only your own named devices can be renamed");
   const forms = descendants(component.children).filter((child) => child.className === "device-rename-form");
   const laptopForm = forms[1];
@@ -474,7 +476,7 @@ test("People & devices remains useful offline when encrypted names are unavailab
   assert.ok(messages.some((message) => message.textContent.includes("connection is unavailable")));
   const deviceLines = descendants(component.children).filter((child) => child.className === "device-name-line");
   assert.deepEqual(deviceLines.map((line) => line.children.map((part) => part.textContent ?? part).join("")), [
-    "Chrome on Android — This device · Status unavailable offline",
+    "Alex · Chrome on Android — This device · Status unavailable offline",
     "Shared tablet — Safari on iPad · Status unavailable offline",
   ]);
   assert.equal(buttons.some((button) => /Replace|Revoke/.test(button.textContent)), false,
@@ -586,4 +588,90 @@ test("an inviter's code says whether it adds their own device or a new person (#
     assert.ok(text.includes(waiting), waiting);
     if (pairing.memberKind) assert.match(text, /Limited \(child or teen\) access/);
   }
+});
+
+// #225: a member sets, edits and removes only their own preferred name, and
+// their devices pick it up without losing nicknames.
+async function peopleWithNames(names, saved = []) {
+  const component = new KinHousehold();
+  component.identity = { memberId: "me", deviceId: "phone" };
+  component.localFingerprint = "SELF";
+  component.run = async (action) => {
+    try { await action(); } catch (error) { component.lastError = error.message; }
+  };
+  component.ctx.api.openSyncKeyStore = async () => component.syncKeyStore;
+  component.api = async (path) => path === "/api/devices"
+    ? { canManageMembers: false, devices: [
+      { id: "phone", memberId: "me", label: "Chrome on iPhone", revokedAt: null },
+      { id: "laptop", memberId: "me", label: "Firefox on Windows", revokedAt: null },
+      { id: "partner-mac", memberId: "partner", label: "Safari on Mac", revokedAt: null },
+    ] }
+    : { devices: [] };
+  component.syncKeyStore = { getPinnedDevice: async () => true };
+  component.memberNames = {
+    load: async () => names.map(([memberId, preferredName]) => ({ memberId, preferredName })),
+    rename: async (name) => { saved.push(name); },
+  };
+  component.deviceNames = { load: async () => [
+    { deviceId: "phone", memberId: "me", autoName: "Chrome on iPhone", nickname: "Kitchen phone" },
+    { deviceId: "laptop", memberId: "me", autoName: "Firefox on Windows", nickname: null },
+    { deviceId: "partner-mac", memberId: "partner", autoName: "Safari on Mac", nickname: null },
+  ], rename: async () => {} };
+  await component.showDevices();
+  const all = (node) => [node, ...(node.children ?? []).flatMap(all)];
+  const nodes = all(component);
+  const groups = component.children.filter((child) => child.className === "device-group");
+  return { component, nodes, groups, saved };
+}
+
+test("only your own group offers Set my name, and saving trims it (#225)", async () => {
+  const { nodes, groups, saved, component } = await peopleWithNames([["partner", "Sam"]]);
+  const nameButtons = nodes.filter((node) => node.tagName === "button" && /my name$/.test(node.textContent));
+  assert.deepEqual(nameButtons.map((button) => button.textContent), ["Set my name"]);
+  const yours = groups.find((group) => group.dataset.memberId === "me");
+  const theirs = groups.find((group) => group.dataset.memberId === "partner");
+  const inGroup = (group) => [group, ...group.children.flatMap(function walk(node) { return [node, ...(node.children ?? []).flatMap(walk)]; })];
+  assert.ok(inGroup(yours).some((node) => node.className === "member-name"));
+  assert.equal(inGroup(theirs).some((node) => node.className === "member-name"), false, "nobody names another member");
+  assert.equal(groups.map((group) => group.children[0].textContent).join("|"), "You|Sam");
+  const form = nodes.find((node) => node.className === "member-name-form");
+  const input = form.children.find((child) => child.tagName === "label").children.find((child) => child.tagName === "input");
+  input.value = "  Mikey  ";
+  form.listeners.submit({ preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(saved, ["Mikey"]);
+  input.value = "M".repeat(33);
+  form.listeners.submit({ preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(saved, ["Mikey"], "a name over 32 characters is not sent");
+  assert.match(component.lastError, /32 characters or fewer/);
+});
+
+test("a named member can edit or remove their name, and devices follow it (#225)", async () => {
+  const { nodes, groups, saved } = await peopleWithNames([["me", "Mikey"], ["partner", "Sam"]]);
+  assert.equal(groups[0].children[0].textContent, "Mikey (You)");
+  assert.ok(nodes.some((node) => node.tagName === "button" && node.textContent === "Edit my name"));
+  const lines = nodes.filter((node) => node.className === "device-name-line")
+    .map((line) => line.children.map((part) => part.textContent ?? part).join(""));
+  assert.ok(lines.includes("Kitchen phone — Chrome on iPhone · This device · Trusted"), "a nickname is never overwritten");
+  assert.ok(lines.includes("Mikey · Firefox on Windows — Trusted"));
+  assert.ok(lines.includes("Sam · Safari on Mac — Trusted"));
+  const remove = nodes.find((node) => node.tagName === "button" && node.textContent === "Remove my name");
+  await remove.listeners.click();
+  assert.deepEqual(saved, [""]);
+});
+
+test("Set my name on the household panel opens the editor in People & devices (#225)", async () => {
+  const component = new KinHousehold();
+  component.syncStatus = { enabled: true, memberKind: "limited" };
+  component.memberNames = { load: async () => [], rename: async () => {} };
+  let opened = 0;
+  component.showDevices = async () => { opened += 1; };
+  component.ctx.views.renderMember();
+  const all = (node) => [node, ...(node.children ?? []).flatMap(all)];
+  const button = all(component).find((node) => node.tagName === "button" && node.textContent === "Set my name");
+  assert.ok(button, "every member, not only Adults, can set their name");
+  await button.listeners.click();
+  assert.equal(opened, 1);
+  assert.equal(component.editOwnName, true);
 });

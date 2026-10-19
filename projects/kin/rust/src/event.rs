@@ -302,6 +302,13 @@ pub enum EventKind {
         device_id: DeviceId,
         nickname: Option<String>,
     },
+    /// Sets (Some) or clears (None) the event's own member's preferred
+    /// display name (#218, #224). The member named is always the header actor,
+    /// so a member can only ever name themselves; the name is presentation
+    /// only and never authority. Canonical (`state::normalize_member_name`).
+    MemberNamed {
+        name: Option<String>,
+    },
     /// A chat message (#109). Its content is a blob outside the log: the
     /// 32-byte content hash and the blob's own 32-byte key (chat.rs).
     ChatMessagePosted {

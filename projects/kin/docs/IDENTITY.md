@@ -17,12 +17,12 @@ sync. The refactor track's protocol reset (Slice 2) therefore keeps them.
 ## Separate identities
 
 The identity-presentation contract requires the stable member ID to remain the
-authority and treats a future optional preferred name only as presentation.
+authority and treats an optional preferred name only as presentation.
 “You” identifies the signed-in member; “This device” identifies the active
 installation. Neither label, a preferred name nor a device name may change
-permissions, event authorship or push filtering. When preferred member names
-are implemented, existing members without one must keep a deterministic
-fallback and must never be forced to rename. See the cross-platform contract in
+permissions, event authorship or push filtering. Existing members without a
+preferred name keep a deterministic fallback and are never forced to rename
+([Preferred member names](#preferred-member-names)). See the cross-platform contract in
 [Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md).
 
 ```text
@@ -145,6 +145,23 @@ else "New device" with the start of its sync code. A member who joined later
 has no description for devices that described themselves earlier, so they see
 those devices by nickname or by the server's automatic name. Only a device's own member
 can rename it ([EVENTS](EVENTS.md#v110-device-names) has the rules).
+
+## Preferred member names
+
+Each member may choose the name their household sees, such as "Mikey" (#224,
+#225), with **Set my name** on the household panel or in People & devices. It
+exists only as an encrypted `MEMBER_NAMED` event that names its own author, so
+nobody can name another member and the relay never sees it. An empty name
+clears it. A member who never sets one keeps the existing fallback ("You",
+"Household member 1", or their role label), so nothing changes for existing
+households and nobody is asked to rename.
+
+When a device has no nickname, People & devices shows its owner's name beside
+its automatic name, as "Mikey · Chrome on iPhone" (no possessive, so the
+pattern stays translatable). That label is worked out each time it is shown
+and never stored: renaming a member updates it everywhere, and it never
+replaces a nickname, which always wins. Like every name here, it is
+presentation only and proves nothing about who owns a device.
 
 ## v0.8.6 existing-member reauthentication
 

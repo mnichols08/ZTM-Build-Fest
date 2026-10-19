@@ -252,6 +252,14 @@ export class ViewBuilder {
       load: () => this.ctx.sync.deviceNames(),
       rename: (deviceId, nickname) => this.ctx.sync.renameDevice(deviceId, nickname),
     };
+    // Preferred member names (#224, #225) arrive through the seam People &
+    // devices already reads: [{ memberId, preferredName }]. A member can only
+    // set their own.
+    this.app.household.memberNames = {
+      load: async () => (await this.ctx.sync.memberNames())
+        .map(({ memberId, name }) => ({ memberId, preferredName: name })),
+      rename: (name) => this.ctx.sync.setMyName(name),
+    };
     this.app.peoplePage = peoplePage;
     // Per-device notification settings (#85), shown once this browser is a
     // trusted household device.

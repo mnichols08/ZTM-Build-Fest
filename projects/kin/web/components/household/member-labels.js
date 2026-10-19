@@ -23,3 +23,20 @@ export function memberLabels(members, currentMemberId) {
   }
   return labels;
 }
+
+/** The longest preferred member name, in characters (Rust: MAX_MEMBER_NAME_CHARS). */
+export const MAX_MEMBER_NAME_CHARS = 32;
+
+/** A device's friendly label (#225). An explicit nickname always wins.
+ * Otherwise the owner's preferred name goes beside the automatic name
+ * ("Mikey · Chrome on iPhone"), with no possessive so the pattern stays
+ * translatable; otherwise the automatic name alone, or null when neither is
+ * known (callers keep their own fallback). The label is derived at display
+ * time and never stored, so renaming a member updates it and can never
+ * overwrite a nickname. It is presentation only, never proof of ownership. */
+export function friendlyDeviceLabel({ nickname = null, automatic = null, preferredName = null } = {}) {
+  if (nickname) return nickname;
+  const name = typeof preferredName === "string" ? preferredName.trim() : "";
+  if (automatic && name) return `${name} · ${automatic}`;
+  return automatic || null;
+}
