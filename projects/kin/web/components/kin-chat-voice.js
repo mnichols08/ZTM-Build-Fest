@@ -84,6 +84,15 @@ export function voicePlayer({ author, voice, load, Audio = globalThis.Audio, cre
       audio = element;
       element.preload = "auto";
       element.playbackRate = rate;
+      // Browser-made webm has no length until it has been read to the end,
+      // which makes seeking fail: reading to the end once and coming back
+      // gives it one.
+      element.addEventListener("loadedmetadata", () => {
+        if (element.duration !== Infinity) return;
+        const back = () => { element.removeEventListener("timeupdate", back); element.currentTime = 0; };
+        element.addEventListener("timeupdate", back);
+        element.currentTime = 1e101;
+      });
       element.addEventListener("timeupdate", () => paint(Math.min(element.currentTime * 1000, voice.durationMs)));
       element.addEventListener("ended", () => { setPlaying(false); paint(0); });
       element.addEventListener("pause", () => setPlaying(false));
@@ -157,6 +166,7 @@ export class VoiceComposer {
   /** Starts a recording (asks for the microphone when this is the first). */
   async begin() {
     if (this.open) return;
+    this.interruptedStart = false;
     const support = this.support();
     if (!support.ok) { this.show("problem", support.reason); return; }
     this.show("starting");
@@ -219,6 +229,7 @@ export class VoiceComposer {
   }
 
   discard() {
+    this.interruptedStart = false;
     this.recorder?.cancel();
     this.recorder = null;
     this.clear();
