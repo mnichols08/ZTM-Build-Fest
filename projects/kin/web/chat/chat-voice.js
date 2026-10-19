@@ -78,9 +78,9 @@ export class VoiceRecorder {
   constructor({
     mediaDevices = globalThis.navigator?.mediaDevices, MediaRecorderCtor = globalThis.MediaRecorder,
     now = () => Date.now(), setTimer = (work, ms) => setInterval(work, ms), clearTimer = (id) => clearInterval(id),
-    maxMs = MAX_VOICE_MS, onTick = () => {}, onLimit = () => {},
+    maxMs = MAX_VOICE_MS, onTick = () => {}, onLimit = () => {}, onEnded = () => {},
   } = {}) {
-    Object.assign(this, { mediaDevices, MediaRecorderCtor, now, setTimer, clearTimer, maxMs, onTick, onLimit });
+    Object.assign(this, { mediaDevices, MediaRecorderCtor, now, setTimer, clearTimer, maxMs, onTick, onLimit, onEnded });
     this.state = "idle";
     this.stream = null;
     this.recorder = null;
@@ -160,18 +160,25 @@ export class VoiceRecorder {
   finish(type) {
     const pending = this.pendingStop;
     const chunks = this.chunks;
-    const durationMs = this.durationMs;
+    // The browser can end a recording by itself (a device unplugged, the
+    // permission revoked): what was captured is handed to `onEnded`.
+    const durationMs = pending ? this.durationMs : Math.min(this.now() - this.startedAt, this.maxMs);
     this.reset();
-    if (!pending) return;
     const blob = new Blob(chunks, { type: baseType(type) });
-    if (!blob.size || !VOICE_TYPES.has(blob.type) || durationMs < 1) pending.reject(new VoiceError("Nothing was recorded. Try again.", "voice_empty"));
+    const empty = !blob.size || !VOICE_TYPES.has(blob.type) || durationMs < 1;
+    if (!pending) {
+      this.onEnded(empty ? null : { blob, durationMs, type: blob.type });
+      return;
+    }
+    if (empty) pending.reject(new VoiceError("Nothing was recorded. Try again.", "voice_empty"));
     else pending.resolve({ blob, durationMs, type: blob.type });
   }
 
   fail() {
     const pending = this.pendingStop;
     this.reset();
-    pending?.reject(new VoiceError("Recording stopped unexpectedly. Try again.", "voice_failed"));
+    if (pending) pending.reject(new VoiceError("Recording stopped unexpectedly. Try again.", "voice_failed"));
+    else this.onEnded(null);
   }
 
   /** Throws the recording away. */

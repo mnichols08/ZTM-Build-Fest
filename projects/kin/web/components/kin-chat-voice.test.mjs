@@ -147,3 +147,48 @@ test("hiding the page stops a recording and keeps it for review", async () => {
   assert.equal(composer.state, "review");
   assert.equal(composer.result, result);
 });
+
+test("only one voice message plays at a time, and disposing while loading leaves nothing behind", async () => {
+  const Audio = fakeAudio();
+  const make = (load) => voicePlayer({ author: "Sam", voice: { durationMs: 5000, peaks }, load, Audio, createUrl: () => "blob:x", revokeUrl: () => {} });
+  const one = make(async () => new Blob([new Uint8Array(2)]));
+  const two = make(async () => new Blob([new Uint8Array(2)]));
+  await byClass(one, "chat-voice-play").fire("click");
+  await byClass(two, "chat-voice-play").fire("click");
+  assert.equal(Audio.made[0].paused, true, "the first was paused");
+  assert.equal(Audio.made[1].paused, false);
+
+  let release;
+  const revoked = [];
+  const slow = voicePlayer({ author: "Sam", voice: { durationMs: 5000, peaks }, load: () => new Promise((resolve) => { release = () => resolve(new Blob([new Uint8Array(2)])); }), Audio, createUrl: () => "blob:late", revokeUrl: (url) => revoked.push(url) });
+  const pressed = byClass(slow, "chat-voice-play").fire("click");
+  slow.dispose();
+  release();
+  await pressed;
+  assert.equal(Audio.made.length, 2, "no player is made after disposal");
+  assert.match(byClass(slow, "chat-voice-problem").textContent, /Couldn't play/);
+});
+
+test("the Cancel button leaves the starting state; a recording the browser ends is kept for review", async () => {
+  const host = new Node_("div");
+  const composer = new VoiceComposer({ host, send: async () => {}, createUrl: () => "blob:r", revokeUrl() {} });
+  composer.recorder = { state: "starting", cancel() { this.cancelled = true; } };
+  composer.show("starting");
+  assert.ok(Node_.focused === byClass(host, "chat-voice-discard"), "focus moves into the panel");
+  await byClass(host, "chat-voice-discard").fire("click");
+  assert.equal(host.hidden, true);
+
+  composer.ended({ blob: new Blob([new Uint8Array(3)]), durationMs: 2000, type: "audio/webm" });
+  assert.equal(composer.state, "review");
+  assert.match(host.children[0].textContent, /stopped on its own/);
+  composer.ended(null);
+  assert.equal(composer.state, "problem");
+
+  // Closing while a send is in flight leaves the panel closed, not broken.
+  const closing = new VoiceComposer({ host: new Node_("div"), send: async () => { closing.dispose(); throw new Error("locked"); }, createUrl: () => "blob:r", revokeUrl() {} });
+  closing.result = { blob: new Blob([new Uint8Array(3)]), durationMs: 2000, type: "audio/webm" };
+  closing.url = "blob:r";
+  closing.show("review");
+  await closing.send();
+  assert.equal(closing.host.hidden, true);
+});

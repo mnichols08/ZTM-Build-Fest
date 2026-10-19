@@ -19,6 +19,8 @@ const button = (className, text, label) => {
  * a speed button. `load()` resolves the decrypted recording the first time
  * it is played; its object URL is released by `dispose()`.
  */
+let playingNow = null;
+
 export function voicePlayer({ author, voice, load, Audio = globalThis.Audio, createUrl = (blob) => URL.createObjectURL(blob), revokeUrl = (url) => URL.revokeObjectURL(url) }) {
   const root = document.createElement("div");
   root.className = "chat-voice";
@@ -59,6 +61,7 @@ export function voicePlayer({ author, voice, load, Audio = globalThis.Audio, cre
   let url = null;
   let rate = 1;
   let loading = null;
+  let disposed = false;
 
   const paint = (ms) => {
     const played = Math.round((ms / voice.durationMs) * bars.length);
@@ -75,15 +78,22 @@ export function voicePlayer({ author, voice, load, Audio = globalThis.Audio, cre
     if (audio) return Promise.resolve(audio);
     loading ??= (async () => {
       const blob = await load();
+      if (disposed) throw new Error("disposed");
       url = createUrl(blob);
-      audio = new Audio(url);
-      audio.preload = "auto";
-      audio.playbackRate = rate;
-      audio.addEventListener("timeupdate", () => paint(Math.min(audio.currentTime * 1000, voice.durationMs)));
-      audio.addEventListener("ended", () => { setPlaying(false); paint(0); });
-      audio.addEventListener("pause", () => setPlaying(false));
-      audio.addEventListener("play", () => setPlaying(true));
-      return audio;
+      const element = new Audio(url);
+      audio = element;
+      element.preload = "auto";
+      element.playbackRate = rate;
+      element.addEventListener("timeupdate", () => paint(Math.min(element.currentTime * 1000, voice.durationMs)));
+      element.addEventListener("ended", () => { setPlaying(false); paint(0); });
+      element.addEventListener("pause", () => setPlaying(false));
+      element.addEventListener("play", () => {
+        setPlaying(true);
+        // One voice message at a time.
+        if (playingNow && playingNow !== root) playingNow.pauseVoice();
+        playingNow = root;
+      });
+      return element;
     })().finally(() => { loading = null; });
     return loading;
   };
@@ -108,9 +118,13 @@ export function voicePlayer({ author, voice, load, Audio = globalThis.Audio, cre
     speed.textContent = `${rate}×`;
     speed.setAttribute("aria-label", `Playback speed ${rate}×`);
     if (audio) audio.playbackRate = rate;
+    problem.textContent = `Speed ${rate}×`;
   });
+  root.pauseVoice = () => audio?.pause();
 
   root.dispose = () => {
+    disposed = true;
+    if (playingNow === root) playingNow = null;
     audio?.pause();
     audio = null;
     if (url) revokeUrl(url);
@@ -127,8 +141,9 @@ export function voicePlayer({ author, voice, load, Audio = globalThis.Audio, cre
  * hiding or locking is kept for review, not sent.
  */
 export class VoiceComposer {
-  constructor({ host, say = () => {}, send, support = voiceSupport, recorderOptions = {}, createUrl = (blob) => URL.createObjectURL(blob), revokeUrl = (url) => URL.revokeObjectURL(url), onChange = () => {} }) {
-    Object.assign(this, { host, say, sendRecording: send, support, createUrl, revokeUrl, onChange });
+  constructor({ host, say = () => {}, send, support = voiceSupport, shown = () => host.getClientRects?.().length !== 0, recorderOptions = {}, createUrl = (blob) => URL.createObjectURL(blob), revokeUrl = (url) => URL.revokeObjectURL(url), onChange = () => {} }) {
+    Object.assign(this, { host, say, sendRecording: send, support, shown, createUrl, revokeUrl, onChange });
+    this.interruptedStart = false;
     this.recorderOptions = recorderOptions;
     this.recorder = null;
     this.result = null;
@@ -147,7 +162,12 @@ export class VoiceComposer {
     this.show("starting");
     this.recorder = new VoiceRecorder({
       ...this.recorderOptions,
-      onTick: (ms) => { if (this.clock) this.clock.textContent = formatDuration(ms); },
+      onTick: (ms) => {
+        if (this.clock) this.clock.textContent = formatDuration(ms);
+        // The chat went out of view (another page of the app): stop here.
+        if (!this.shown()) this.interrupt();
+      },
+      onEnded: (result) => this.ended(result),
       // At the limit the recording ends on its own and goes to review.
       onLimit: () => { this.say("Five minutes reached. Recording stopped."); void this.stop(); },
     });
@@ -161,6 +181,8 @@ export class VoiceComposer {
     }
     this.show("recording");
     this.say("Recording");
+    // The page was hidden while the browser was asking: keep what little there is.
+    if (this.interruptedStart) { this.interruptedStart = false; await this.stop(); }
   }
 
   async stop() {
@@ -183,6 +205,17 @@ export class VoiceComposer {
   /** The page hid or the chat locked: stop and keep what was said. */
   interrupt() {
     if (this.recorder?.state === "recording") void this.stop();
+    else if (this.state === "starting") this.interruptedStart = true;
+  }
+
+  /** The browser ended the recording on its own. */
+  ended(result) {
+    this.recorder = null;
+    if (!result) { this.show("problem", "The recording stopped and nothing was kept. Try again."); return; }
+    this.result = result;
+    this.url = this.createUrl(result.blob);
+    this.show("review", "The recording stopped on its own. Review what was kept.");
+    this.say("The recording stopped on its own.");
   }
 
   discard() {
@@ -195,6 +228,7 @@ export class VoiceComposer {
 
   /** Closes everything, e.g. when the element leaves the page. */
   dispose() {
+    this.interruptedStart = false;
     this.recorder?.cancel();
     this.recorder = null;
     this.clear();
@@ -218,6 +252,8 @@ export class VoiceComposer {
       this.show(null);
     } catch (error) {
       this.busy = false;
+      // Closed (locked, or access changed) while sending: nothing to show.
+      if (!this.result) return;
       this.show("review", error?.message && error.code === "chat_attachment_invalid" ? error.message : "Kin couldn't send that. Your recording is still here.");
       return;
     }
@@ -226,6 +262,7 @@ export class VoiceComposer {
   }
 
   show(state, text = "") {
+    if (state === "review" && !this.result) state = null;
     this.state = state;
     const host = this.host;
     host.replaceChildren();
@@ -243,7 +280,15 @@ export class VoiceComposer {
     if (state === "problem") status.setAttribute("role", "alert");
     host.append(status);
     this.clock = null;
-    if (state === "recording") {
+    host.tabIndex = -1;
+    if (state === "starting") {
+      const cancel = button("chat-voice-discard", "Cancel", "Cancel recording");
+      cancel.addEventListener("click", () => this.discard());
+      host.append(cancel);
+      cancel.focus();
+    } else if (state === "sending") {
+      host.focus?.();
+    } else if (state === "recording") {
       this.clock = document.createElement("span");
       this.clock.className = "chat-voice-clock";
       this.clock.textContent = "0:00";

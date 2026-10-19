@@ -161,3 +161,24 @@ test("the waveform comes from the engine, mixed to mono and kept within its limi
   assert.deepEqual(flat, new Array(64).fill(96));
   assert.equal(calls.length, 1);
 });
+
+test("a recording the browser ends by itself is handed over, not lost", async () => {
+  const time = clock();
+  const ended = [];
+  const Recorder = fakeRecorderClass();
+  const recorder = new VoiceRecorder({ mediaDevices: fakeMedia(), MediaRecorderCtor: Recorder, ...time, onEnded: (result) => ended.push(result) });
+  await recorder.start();
+  time.advance(3_000);
+  const native = Recorder.made[0];
+  native.ondataavailable({ data: new Blob([new Uint8Array(10)], { type: "audio/webm" }) });
+  native.onstop();
+  assert.equal(ended.length, 1);
+  assert.equal(ended[0].durationMs, 3_000);
+  assert.equal(recorder.state, "idle");
+
+  const none = [];
+  const second = new VoiceRecorder({ mediaDevices: fakeMedia(), MediaRecorderCtor: Recorder, ...time, onEnded: (result) => none.push(result) });
+  await second.start();
+  Recorder.made[1].onerror();
+  assert.deepEqual(none, [null]);
+});

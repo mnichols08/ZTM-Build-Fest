@@ -405,7 +405,7 @@ class KinChat extends HTMLElement {
         await this.queueRender("reset");
       },
     });
-    this.players = new Set();
+    this.players = new Map();
     this.pollDialog = document.createElement("kin-chat-poll");
     // The quote bar above the box while replying (#129).
     this.replyBar = document.createElement("div");
@@ -906,6 +906,8 @@ class KinChat extends HTMLElement {
   applyAccess() {
     const access = this.chatRoom?.access ?? "write";
     this.form.hidden = access !== "write";
+    // Without permission to post, a recording in progress ends with the form.
+    if (access !== "write") this.voice?.dispose();
     this.readOnly.hidden = access !== "read";
     // A hidden scroller loses its position: start again at the latest message
     // when access comes back.
@@ -1195,6 +1197,7 @@ class KinChat extends HTMLElement {
       if (keep.has(messageId)) continue;
       this.rowObserver?.unobserve(entry.row);
       this.onScreen.delete(messageId);
+      this.disposePlayersOf(messageId);
       entry.row.remove();
     }
     this.rows = keep;
@@ -1891,12 +1894,18 @@ class KinChat extends HTMLElement {
         button.addEventListener("click", () => void this.openPhoto(message, index));
         entry.append(button);
       } else if (file.voice) {
-        const player = voicePlayer({
-          author: this.chatRoom?.authorLabel(message.authorId) ?? "a member",
-          voice: file.voice,
-          load: () => this.chatRoom.attachmentFile(message, index),
-        });
-        this.players.add(player);
+        // One player per voice message, kept when its row is rebuilt (a
+        // reaction arriving) so playback carries on.
+        const key = `${message.messageId}:${index}`;
+        let player = this.players.get(key);
+        if (!player) {
+          player = voicePlayer({
+            author: this.chatRoom?.authorLabel(message.authorId) ?? "a member",
+            voice: file.voice,
+            load: () => this.chatRoom.attachmentFile(message, index),
+          });
+          this.players.set(key, player);
+        }
         entry.append(player);
       } else {
         const button = document.createElement("button");
@@ -1919,8 +1928,17 @@ class KinChat extends HTMLElement {
   }
 
   disposePlayers() {
-    for (const player of this.players ?? []) player.dispose();
+    for (const player of this.players?.values() ?? []) player.dispose();
     this.players?.clear();
+  }
+
+  /** Releases the voice players of one message that left the window. */
+  disposePlayersOf(messageId) {
+    for (const [key, player] of this.players ?? []) {
+      if (!key.startsWith(`${messageId}:`)) continue;
+      player.dispose();
+      this.players.delete(key);
+    }
   }
 
   /** Opens a photo in the viewer at full size. */
