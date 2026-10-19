@@ -25,7 +25,8 @@ documentation only.
   Magnets (emoji, Kin-drawn or a short note) move by keyboard, menu or drag
   (#322); clearing asks first and anyone can bring it back (#323); the
   household admin decides whether Limited and Temporary members draw, look
-  only or have no access (#323, server schema 19).
+  only or have no access (#323, server schema 19). Encrypted exports carry
+  the fridge and restore brings it back (#363).
 
 ### Changed
 

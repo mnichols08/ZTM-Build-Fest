@@ -156,18 +156,34 @@ export class BoardRoom {
       });
       const decrypted = [];
       try {
-        for (const row of rows)
+        for (const row of rows) {
+          // Read from an export (#363): sealed by this device's vault.
+          if (row.imported) {
+            let opened = null;
+            try {
+              opened = await this.keyStore.vault.open(row.imported, { store: "board-import", id: row.eventId });
+            } catch (error) {
+              // Sealed under a root this device no longer has: skipped, not a
+              // wall. Restoring the same export again seals it afresh.
+              if (error?.code === "locked") throw error;
+            }
+            decrypted.push(opened);
+            continue;
+          }
           decrypted.push(await decryptStoredEvent({ envelope: row.envelope, householdKey: await this.epochKey(row.envelope.keyEpoch) }));
+        }
         this.assertOpen();
-        const metadata = this.engine.eventMetadataBatch(decrypted);
-        rows.forEach((row, index) => {
+        const readable = rows.filter((_, index) => decrypted[index]);
+        const kept = decrypted.filter(Boolean);
+        const metadata = this.engine.eventMetadataBatch(kept);
+        readable.forEach((row, index) => {
           this.indexById.set(row.eventId, this.records.length);
-          this.records.append(decrypted[index]);
+          this.records.append(kept[index]);
           const logicalTime = BigInt(metadata[index].logicalTime);
           if (logicalTime > this.maxLogicalTime) this.maxLogicalTime = logicalTime;
         });
       } finally {
-        for (const bytes of decrypted) bytes.fill(0);
+        for (const bytes of decrypted) bytes?.fill(0);
       }
       this.loadedOrder += rows.length;
       changed = true;
@@ -185,6 +201,17 @@ export class BoardRoom {
     this.assertOpen();
     const { asOf, civilDate } = projectionContext(this.now());
     return this.engine.boardState(this.records.view(), asOf, civilDate, this.syncIdentity());
+  }
+
+  /** What an export of the fridge holds (#363): the canonical board events
+   * this device has, as a snapshot view (nothing is copied). Null when the
+   * fridge is empty or this member has no access. */
+  async exportPlan() {
+    this.assertOpen();
+    if (this.access === "none") return null;
+    await this.refresh();
+    const view = this.records.view();
+    return view.length ? { view } : null;
   }
 
   /** Whether any of this device's changes are still waiting to send. */

@@ -174,6 +174,37 @@ ignoring part of it. Layout: `web/security/archive-stream.js`,
   the manifest counts are read together, so events that sync meanwhile are not
   half in the file.
 
+### The family fridge in an archive (#363)
+
+An export always includes the family fridge when this device holds any of it
+(the fridge is small: at most 250,000 events of a few hundred bytes). It adds,
+after the history and any chat, the board events in chunks of 256 to the same
+sealed stream (package format 3, KARC 1). The package manifest names
+`boardEventCount`, authenticated like the rest; an export without a fridge has
+no such key and is unchanged, and a release from before this change refuses an
+export that has one rather than ignoring part of it. Layout:
+`web/security/archive-stream.js`, `web/board/board-archive.js`.
+
+- **What goes in.** Every board event this device holds, as the engine's
+  canonical bytes without the transport envelope. Erased strokes, cleared
+  boards and taken-down magnets go in as the events that say so, exactly as
+  the household sees them; nothing is filtered or flattened. A member with no
+  access to the fridge exports none.
+- **Restore.** Before anything is written, every event must decode as a board
+  event of this household with a unique ID, the count must match the
+  manifest, and the engine must replay the whole fridge. Corruption anywhere
+  fails the whole file. The household is restored first; the fridge is then
+  written into its own storage, each event sealed by the local vault (store
+  `board-import`). If that step fails the household is still restored, and
+  restoring the same export again completes it. An event the relay already
+  gave this device is left as it is.
+- **After restore.** The fridge shows at once. When the household syncs, the
+  relay's signed copy of each event replaces the imported one in place, and
+  what the household drew after the export arrives as usual.
+- **Replacing the recovery key.** As for chat: imported events not yet
+  replaced are sealed by the vault's root, so the fridge opens without them
+  rather than stopping, and restoring the export again seals them afresh.
+
 ### v0.10.3 bounded KARC v1 processing
 
 KARC v1 remains one authenticated payload with unchanged bytes/AAD semantics.

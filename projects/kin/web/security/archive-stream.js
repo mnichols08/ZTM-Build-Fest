@@ -19,6 +19,9 @@
 // has the layout). The manifest names the counts, so an archive without chat
 // is byte-for-byte what package format 3 always was.
 //
+// An archive made with the family fridge (#363) ends with the board events in
+// chunks laid out the same way (after the chat, when there is one).
+//
 // Every segment is sealed under one key for this archive
 // (LocalVault.archiveStreamKey), with the nonce `noncePrefix:8 || index:u32 BE`
 // and additional data naming its index and whether it is the last. A reader
@@ -54,9 +57,10 @@ function segmentParams(noncePrefix, vaultId, index, final) {
 }
 
 /** The number of segments an archive with these counts holds. */
-export function segmentCount(attachmentCount, eventCount, chat = null) {
+export function segmentCount(attachmentCount, eventCount, chat = null, boardEventCount = 0) {
   const household = 1 + attachmentCount + Math.ceil(eventCount / CHUNK_EVENTS);
-  return chat ? household + 1 + Math.ceil(chat.eventCount / CHUNK_EVENTS) + chat.blobCount : household;
+  const withChat = chat ? household + 1 + Math.ceil(chat.eventCount / CHUNK_EVENTS) + chat.blobCount : household;
+  return withChat + Math.ceil(boardEventCount / CHUNK_EVENTS);
 }
 
 function chunkLength(view, from, to) {
@@ -111,10 +115,11 @@ export function readEventChunk(bytes) {
  * blobSegment(blob, bytes) }) adds the household chat (#136): `view` is its
  * event view (length, recordLength, record, localSequence), `blobs` the
  * blobs to include, each read by `loadBlob` as its segment is sealed.
+ * `board` ({ view }) adds the family fridge's events (#363) last.
  * `check` runs after every segment (the caller's lock and epoch checks);
  * `onProgress({ done, total })` reports events written.
  */
-export async function writeArchive({ engine, metadata, key, noncePrefix, vaultId, context, attachments, view, chat = null, check, onProgress }) {
+export async function writeArchive({ engine, metadata, key, noncePrefix, vaultId, context, attachments, view, chat = null, board = null, check, onProgress }) {
   const serializedLength = (value) => {
     const bytes = serializeProtectedValue(value);
     bytes.fill(0);
@@ -130,8 +135,14 @@ export async function writeArchive({ engine, metadata, key, noncePrefix, vaultId
     const to = Math.min(from + CHUNK_EVENTS, chat.view.length);
     chatChunks.push({ from, to, length: chunkLength(chat.view, from, to) });
   }
+  const boardChunks = [];
+  for (let from = 0; board && from < board.view.length; from += CHUNK_EVENTS) {
+    const to = Math.min(from + CHUNK_EVENTS, board.view.length);
+    boardChunks.push({ from, to, length: chunkLength(board.view, from, to) });
+  }
   const plainLengths = [serializedLength(context), ...attachments.map(serializedLength), ...chunks.map((chunk) => chunk.length),
-    ...(chat ? [serializedLength(chat.notes), ...chatChunks.map((chunk) => chunk.length), ...chat.blobs.map((blob) => chat.blobSegmentLength(blob))] : [])];
+    ...(chat ? [serializedLength(chat.notes), ...chatChunks.map((chunk) => chunk.length), ...chat.blobs.map((blob) => chat.blobSegmentLength(blob))] : []),
+    ...boardChunks.map((chunk) => chunk.length)];
   if (plainLengths.some((length) => length + TAG_BYTES > MAX_SEGMENT_BYTES))
     throw new VaultError("This household is too large to export.");
   const region = plainLengths.reduce((total, length) => total + 4 + length + TAG_BYTES, 0);
@@ -157,8 +168,9 @@ export async function writeArchive({ engine, metadata, key, noncePrefix, vaultId
     const bytes = serializeProtectedValue(value);
     try { await seal(bytes); } finally { bytes.fill(0); }
   };
-  const scratch = new Uint8Array([...chunks, ...chatChunks].reduce((largest, chunk) => Math.max(largest, chunk.length), 0));
-  const totalEvents = view.length + (chat?.view.length ?? 0);
+  const scratch = new Uint8Array([...chunks, ...chatChunks, ...boardChunks].reduce((largest, chunk) => Math.max(largest, chunk.length), 0));
+  const chatEvents = chat?.view.length ?? 0;
+  const totalEvents = view.length + chatEvents + (board?.view.length ?? 0);
   try {
     await sealValue(context);
     for (const attachment of attachments) await sealValue(attachment);
@@ -182,6 +194,11 @@ export async function writeArchive({ engine, metadata, key, noncePrefix, vaultId
         try { await seal(segment); } finally { segment.fill(0); }
       }
     }
+    for (const chunk of boardChunks) {
+      const length = writeChunk(board.view, chunk.from, chunk.to, scratch);
+      await seal(scratch.subarray(0, length));
+      onProgress?.({ done: view.length + chatEvents + chunk.to, total: totalEvents });
+    }
   } catch (error) {
     output.fill(0);
     throw error;
@@ -203,14 +220,17 @@ export async function writeArchive({ engine, metadata, key, noncePrefix, vaultId
  * from the manifest, #136) then calls `onChatNotes(value)`,
  * `onChatEvents(sequences, records)` for each chunk and
  * `onChatBlob(bytes)` for each blob segment (zero-filled afterwards too).
+ * An archive with the family fridge (`boardEventCount`, #363) ends with
+ * `onBoardEvents(sequences, records)` for each chunk.
  * Rejects a stream whose segment count or chunking differs from the counts
  * in the authenticated manifest.
  */
 export async function readArchive({ bytes, offset, length, key, noncePrefix, vaultId, attachmentCount, eventCount,
-  chatEventCount = 0, chatBlobCount = 0, chatPresent = false,
-  onContext, onAttachment, onEvents, onChatNotes, onChatEvents, onChatBlob, check, onProgress }) {
+  chatEventCount = 0, chatBlobCount = 0, chatPresent = false, boardEventCount = 0,
+  onContext, onAttachment, onEvents, onChatNotes, onChatEvents, onChatBlob, onBoardEvents, check, onProgress }) {
   const chat = chatPresent ? { eventCount: chatEventCount, blobCount: chatBlobCount } : null;
-  const total = segmentCount(attachmentCount, eventCount, chat);
+  const total = segmentCount(attachmentCount, eventCount, chat, boardEventCount);
+  const boardStart = segmentCount(attachmentCount, eventCount, chat);
   const historyEnd = attachmentCount + Math.ceil(eventCount / CHUNK_EVENTS);
   const notesAt = historyEnd + 1;
   const chatEventsEnd = notesAt + Math.ceil(chatEventCount / CHUNK_EVENTS);
@@ -219,6 +239,8 @@ export async function readArchive({ bytes, offset, length, key, noncePrefix, vau
   let index = 0;
   let events = 0;
   let chatEvents = 0;
+  let boardEvents = 0;
+  const allEvents = eventCount + chatEventCount + boardEventCount;
   while (offset < end) {
     if (index >= total || offset + 4 > end) throw damaged();
     const sealedLength = frames.getUint32(offset, true);
@@ -232,7 +254,14 @@ export async function readArchive({ bytes, offset, length, key, noncePrefix, vau
     } catch { throw damaged(); }
     try {
       await check();
-      if (index === 0) onContext(deserializeProtectedValue(plaintext));
+      if (index >= boardStart) {
+        const chunk = readEventChunk(plaintext);
+        const expected = Math.min(CHUNK_EVENTS, boardEventCount - boardEvents);
+        if (chunk.records.length !== expected) throw damaged();
+        onBoardEvents(chunk.sequences, chunk.records);
+        boardEvents += expected;
+        onProgress?.({ done: events + chatEvents + boardEvents, total: allEvents });
+      } else if (index === 0) onContext(deserializeProtectedValue(plaintext));
       else if (index <= attachmentCount) onAttachment(deserializeProtectedValue(plaintext));
       else if (index <= historyEnd) {
         const chunk = readEventChunk(plaintext);
@@ -240,7 +269,7 @@ export async function readArchive({ bytes, offset, length, key, noncePrefix, vau
         if (chunk.records.length !== expected) throw damaged();
         onEvents(chunk.sequences, chunk.records, end - offset);
         events += expected;
-        onProgress?.({ done: events + chatEvents, total: eventCount + chatEventCount });
+        onProgress?.({ done: events + chatEvents, total: allEvents });
       } else if (index === notesAt) onChatNotes(deserializeProtectedValue(plaintext));
       else if (index <= chatEventsEnd) {
         const chunk = readEventChunk(plaintext);
@@ -248,7 +277,7 @@ export async function readArchive({ bytes, offset, length, key, noncePrefix, vau
         if (chunk.records.length !== expected) throw damaged();
         onChatEvents(chunk.sequences, chunk.records);
         chatEvents += expected;
-        onProgress?.({ done: events + chatEvents, total: eventCount + chatEventCount });
+        onProgress?.({ done: events + chatEvents, total: allEvents });
       } else onChatBlob(plaintext);
     } finally {
       plaintext.fill(0);
@@ -256,5 +285,5 @@ export async function readArchive({ bytes, offset, length, key, noncePrefix, vau
     offset = start + sealedLength;
     index += 1;
   }
-  if (index !== total || events !== eventCount || chatEvents !== chatEventCount) throw damaged();
+  if (index !== total || events !== eventCount || chatEvents !== chatEventCount || boardEvents !== boardEventCount) throw damaged();
 }
