@@ -22,6 +22,11 @@ kin_chat_page(ptr, len)              replay the chat log: KCHQ -> KCHP (v1.1)
 kin_chat_search(ptr, len)            search the chat's decrypted texts: KCHF -> KCHR (v1.1)
 kin_chat_text(ptr, len)              decrypted texts for the arena: KCHT -> KCHS
 kin_chat_texts_clear() -> status     drop every decrypted chat text
+kin_board_history_reset() -> status  empty the fridge log (#317)
+kin_board_history_append(ptr, len)   append a board record batch to the fridge log
+kin_board_history_truncate(count) -> status   keep the fridge log's first `count`
+kin_board_execute(ptr, len)          fridge command: length + KCMD (52–58) + KINE context -> KCMT
+kin_board_state(ptr, len)            replay the fridge log: KINE context -> KBRD
 kin_execute(ptr, len)                command: length + KCMD + KINE context -> KCMT
 kin_encode_command(ptr, len)         KCMD -> canonical event bytes
 kin_event_metadata(ptr, len)         one canonical event -> KMET
@@ -470,6 +475,19 @@ tuned for printed codes under heavy blur.
   payload and a zero entity ID; action 43 (`nickname-device`) carries the
   target device as its entity ID and the nickname as its payload (empty
   clears). Executing either rejects a name that would change nothing.
+- **KBRD v1** (the fridge, `kin_board_state`, #317, [ADR 0011](decisions/0011-family-fridge.md)):
+  `"KBRD"`, version 1, reserved u16, visible stroke count u32, visible magnet
+  count u32, open-clear flag u8 + 3 reserved, open clear ID (16 bytes, zero
+  when none); then each visible stroke in drawing order: ID, author (16 bytes
+  each), colour u8 (palette index 0–7), width u8 (0–2), point count u16 and
+  the points as absolute (x u16, y u16); then each visible magnet bottom to
+  top: ID, author, content kind u8 (1 emoji, 2 Kin-drawn, 3 note), Kin
+  number u8 (1–12, else 0), x u16, y u16, text length u16 and the UTF-8 text.
+  The context is a record-less KINE request against the board log. KCMD
+  actions 52–58 carry the board event's exact payload (below) as their text,
+  with a zero entity ID and no option, date or expiry; `kin_board_execute`
+  takes a u32 command length, the KCMD and the context, and only the board
+  log accepts them.
 - **KMNM v1** (preferred member names, `kin_member_names`, #224): `"KMNM"`,
   version 1, reserved u16, member count u32, then per member in member-ID
   order: member ID (16 bytes, after identity bindings), name length u16

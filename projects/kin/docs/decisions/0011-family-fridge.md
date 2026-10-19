@@ -58,7 +58,7 @@ time); replay order is the protocol-8 order `(logical_time, device, event_id)`.
 
 | Kind | Payload |
 |---|---|
-| `BOARD_STROKE_ADDED` | stroke id[16], colour u8 (palette index 0–7), width u8 (0–2), point count u16 (2–1,024), first point x,y u16, then (dx, dy) zigzag varints; payload ≤ 4,096 bytes |
+| `BOARD_STROKE_ADDED` | stroke id[16], colour u8 (palette index 0–7), width u8 (0–2), point count u16 (1–1,024; one point is a dot), first point x,y u16, then (dx, dy) zigzag varints; payload ≤ 4,096 bytes |
 | `BOARD_STROKE_HIDDEN` | stroke id[16], hidden u8 (1 erase, 0 restore), 7 reserved zero bytes |
 | `BOARD_MAGNET_PLACED` | magnet id[16], kind u8 (1 emoji, 2 Kin magnet, 3 note), x,y u16, then content: emoji (`check_emoji`), Kin magnet number u8, or note text (1–60 characters, UTF-8, one line) |
 | `BOARD_MAGNET_MOVED` | magnet id[16], x,y u16, 4 reserved zero bytes |

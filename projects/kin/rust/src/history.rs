@@ -29,6 +29,11 @@
 //! projection, so they get their own log with its own cap
 //! (`MAX_CHAT_EVENT_COUNT`) and their own checkpoint. Each log refuses the
 //! other's events, so neither count eats into the other's.
+//!
+//! A third log holds the fridge (#317, board.rs): many small drawing events
+//! that never enter the KINS projection, with their own cap
+//! (`MAX_BOARD_EVENT_COUNT`) and checkpoint. Every log refuses the others'
+//! events.
 use crate::error::KinError;
 use crate::event::HouseholdId;
 use crate::event::IdentityBinding;
@@ -45,6 +50,21 @@ pub enum Log {
     Household,
     /// Chat events only; at most `MAX_CHAT_EVENT_COUNT`.
     Chat,
+    /// Fridge events only (#317); at most `MAX_BOARD_EVENT_COUNT`.
+    Board,
+}
+
+impl Log {
+    /// The log an event of this kind belongs in.
+    pub const fn of_kind(kind: &crate::event::EventKind) -> Self {
+        if kind.is_chat() {
+            Self::Chat
+        } else if kind.is_board() {
+            Self::Board
+        } else {
+            Self::Household
+        }
+    }
 }
 
 pub struct History {
@@ -81,6 +101,11 @@ impl History {
         Self::of(Log::Chat)
     }
 
+    /// An empty board (fridge) log.
+    pub const fn board() -> Self {
+        Self::of(Log::Board)
+    }
+
     const fn of(log: Log) -> Self {
         Self {
             log,
@@ -105,6 +130,7 @@ impl History {
         match self.log {
             Log::Household => MAX_EVENT_COUNT,
             Log::Chat => crate::chat::MAX_CHAT_EVENT_COUNT,
+            Log::Board => crate::board::MAX_BOARD_EVENT_COUNT,
         }
     }
 
@@ -151,7 +177,7 @@ impl History {
                 .checked_add(length)
                 .ok_or(KinError::MalformedProtocol)?;
             let record = batch.get(offset..end).ok_or(KinError::MalformedProtocol)?;
-            if decode_event(record)?.kind.is_chat() != (self.log == Log::Chat) {
+            if Log::of_kind(&decode_event(record)?.kind) != self.log {
                 return Err(KinError::InvalidEvent);
             }
             lengths.push(length);

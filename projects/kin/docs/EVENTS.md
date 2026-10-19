@@ -255,6 +255,39 @@ learns it ([PRIVACY](PRIVACY.md), [IDENTITY](IDENTITY.md#preferred-member-names)
   unsupported-event error above and syncs again once updated
   ([V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md)).
 
+## The family fridge
+
+Kinds 52–58 (#317, [ADR 0011](decisions/0011-family-fridge.md)) are schema 1
+and live only in the board log, a third log beside the household history and
+chat with its own cap (250,000 events), checkpoint and relay stream. Every log
+refuses the others' kinds, so these never enter household replay, the KINS
+projection or the catch-up summary. Coordinates are a fixed 3:4 board: x
+0–4095, y 0–5460. IDs are never zero; reserved bytes are zero.
+
+| Kind | Name | Payload |
+|---|---|---|
+| 52 | `BOARD_STROKE_ADDED` | stroke ID, colour u8 (0–7), width u8 (0–2), point count u16 (1–1,024), first x u16, first y u16, then per further point dx and dy as zigzag LEB128 varints (minimal, at most 3 bytes); every point stays on the board; at most 4,096 bytes |
+| 53 | `BOARD_STROKE_HIDDEN` | stroke ID, hidden u8 (1 erase, 0 restore), 7 reserved |
+| 54 | `BOARD_MAGNET_PLACED` | magnet ID, content kind u8 (1 emoji, 2 Kin-drawn, 3 note), Kin number u8 (1–12 for kind 2, else 0), x u16, y u16, text length u16, text (one emoji; empty; or a canonical note: trimmed, 1–60 characters, at most 240 bytes, no control characters) |
+| 55 | `BOARD_MAGNET_MOVED` | magnet ID, x u16, y u16, 4 reserved |
+| 56 | `BOARD_MAGNET_HIDDEN` | magnet ID, hidden u8, 7 reserved |
+| 57 | `BOARD_CLEARED` | clear ID |
+| 58 | `BOARD_CLEAR_UNDONE` | clear ID |
+
+Replay (rust/src/board.rs) never fails on a decoded board event:
+
+- The first add of an ID wins. An add beyond the visible budget (2,000 strokes,
+  200 magnets) is kept and never shown.
+- Erase and remove are visibility: the latest hide or restore in replay order
+  wins, and anyone may erase any stroke or move any magnet. A move puts the
+  magnet on top.
+- A clear hides everything visible and records what it hid; undoing it shows
+  exactly those again unless they were hidden since. Showing anything again
+  never exceeds the budget.
+- An event naming a stroke, magnet or clear the log lacks changes nothing.
+- Commands are stricter: a new ID, room in the budget, a change that changes
+  something, and a logical time after the board log's latest.
+
 ## v1.1.0 Household chat
 
 `CHAT_MESSAGE_POSTED` (44), `CHAT_MESSAGE_EDITED` (45) and

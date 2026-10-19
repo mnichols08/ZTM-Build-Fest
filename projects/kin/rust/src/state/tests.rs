@@ -110,7 +110,14 @@ fn event(event_number: u8, logical_time: u64, kind: EventKind) -> EventEnvelope 
         | EventKind::ChatReactionSet { .. }
         | EventKind::ChatPinSet { .. }
         | EventKind::ChatPollVote { .. }
-        | EventKind::ChatPollClosed { .. } => {
+        | EventKind::ChatPollClosed { .. }
+        | EventKind::BoardStrokeAdded { .. }
+        | EventKind::BoardStrokeHidden { .. }
+        | EventKind::BoardMagnetPlaced { .. }
+        | EventKind::BoardMagnetMoved { .. }
+        | EventKind::BoardMagnetHidden { .. }
+        | EventKind::BoardCleared { .. }
+        | EventKind::BoardClearUndone { .. } => {
             panic!("Area tests use independent wire fixtures")
         }
     }

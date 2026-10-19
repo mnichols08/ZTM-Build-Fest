@@ -34,6 +34,8 @@ id_type!(ReferenceFieldId);
 id_type!(MaintenanceEventId);
 id_type!(AttachmentId);
 id_type!(ChatMessageId);
+// A fridge stroke, magnet or clear (#317, board.rs).
+id_type!(BoardId);
 
 /// What a chat message's content blob holds (#109).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -361,6 +363,40 @@ pub enum EventKind {
     ChatPollClosed {
         message_id: ChatMessageId,
     },
+    /// The fridge (#317, board.rs): a stroke in the board's coordinates.
+    BoardStrokeAdded {
+        stroke_id: BoardId,
+        colour: u8,
+        width: u8,
+        points: Vec<(u16, u16)>,
+    },
+    /// Erases (hidden) or restores a stroke.
+    BoardStrokeHidden {
+        stroke_id: BoardId,
+        hidden: bool,
+    },
+    BoardMagnetPlaced {
+        magnet_id: BoardId,
+        x: u16,
+        y: u16,
+        content: crate::board::MagnetContent,
+    },
+    BoardMagnetMoved {
+        magnet_id: BoardId,
+        x: u16,
+        y: u16,
+    },
+    /// Removes (hidden) or restores a magnet.
+    BoardMagnetHidden {
+        magnet_id: BoardId,
+        hidden: bool,
+    },
+    BoardCleared {
+        clear_id: BoardId,
+    },
+    BoardClearUndone {
+        clear_id: BoardId,
+    },
 }
 
 impl EventKind {
@@ -376,6 +412,20 @@ impl EventKind {
                 | EventKind::ChatPinSet { .. }
                 | EventKind::ChatPollVote { .. }
                 | EventKind::ChatPollClosed { .. }
+        )
+    }
+
+    /// Whether this is a fridge event (#317), which only the board log holds.
+    pub const fn is_board(&self) -> bool {
+        matches!(
+            self,
+            EventKind::BoardStrokeAdded { .. }
+                | EventKind::BoardStrokeHidden { .. }
+                | EventKind::BoardMagnetPlaced { .. }
+                | EventKind::BoardMagnetMoved { .. }
+                | EventKind::BoardMagnetHidden { .. }
+                | EventKind::BoardCleared { .. }
+                | EventKind::BoardClearUndone { .. }
         )
     }
 }

@@ -11,7 +11,7 @@ const SHELL = [
   // Not the manifest or /install-icon/*: they depend on the household that
   // published an install identity (#78), so they always come from the network.
   "/", "/index.html", "/styles/app.css", "/icon.svg",
-  "/browser-time.js", "/platform.js", "/pairing-link.js", "/device-link.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin_engine.wasm", "/wasm/kin-qr.js",
+  "/browser-time.js", "/platform.js", "/pairing-link.js", "/device-link.js", "/calendar-export.js", "/household-validation.js", "/search.js", "/reminders.js", "/wasm/kin-engine.js", "/wasm/kin-board.js", "/wasm/kin_engine.wasm", "/wasm/kin-qr.js",
   "/wasm/wire.js", "/wasm/history-mirror.js", "/wasm/projection-decode.js", "/wasm/projection/reader.js", "/wasm/projection/items.js",
   "/wasm/projection/conversations.js", "/wasm/projection/routines.js", "/wasm/projection/records.js",
   "/routes.js", "/today-view.js", "/reminder-time.js", "/capture-plan.js", "/keyboard-commands.js", "/bulk-actions.js", "/recurrence.js",

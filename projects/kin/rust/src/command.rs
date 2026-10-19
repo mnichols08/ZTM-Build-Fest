@@ -209,6 +209,10 @@ pub enum HouseholdCommand {
     CloseChatPoll {
         id: ChatMessageId,
     },
+    /// A fridge event (#317, board.rs), against the board log only. KCMD
+    /// actions 52–58 carry the event's exact payload; the board's rules
+    /// (`BoardState::check_command`) decide whether it applies.
+    Board(EventKind),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -480,6 +484,12 @@ pub fn create_event(
             options: *options,
         },
         CloseChatPoll { id } => EventKind::ChatPollClosed { message_id: *id },
+        Board(kind) => {
+            if !kind.is_board() {
+                return Err(KinError::InvalidEvent);
+            }
+            kind.clone()
+        }
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -523,6 +533,10 @@ pub trait CommandHistory {
     /// Whether it is the chat log, which takes chat commands only; every
     /// other history takes every other command.
     fn is_chat(&self) -> bool {
+        false
+    }
+    /// Whether it is the board log (#317), which takes board commands only.
+    fn is_board(&self) -> bool {
         false
     }
     /// The household admins the host names for a chat command
@@ -628,6 +642,9 @@ impl CommandHistory for HeldHistory<'_> {
     fn is_chat(&self) -> bool {
         self.history.log() == crate::history::Log::Chat
     }
+    fn is_board(&self) -> bool {
+        self.history.log() == crate::history::Log::Board
+    }
     fn chat_admins(&self) -> &[ActorId] {
         &self.admins
     }
@@ -650,8 +667,8 @@ impl CommandHistory for HeldHistory<'_> {
             .finalize(self.context.as_of, self.context.civil_date)
     }
     fn with_event(&mut self, event: &EventEnvelope) -> Result<(HouseholdState, Vec<u8>), KinError> {
-        if self.is_chat() {
-            // A chat event changes no projection. Applying it to a copy would
+        if self.is_chat() || self.is_board() {
+            // A chat or board event changes no projection. Applying it to a copy would
             // copy the whole chat (copy-on-write), so the result carries the
             // state before the event and no KINS bytes; the host reads the
             // chat through a page once it has stored the event.
@@ -695,8 +712,10 @@ pub fn execute_with(
             | HouseholdCommand::VoteChatPoll { .. }
             | HouseholdCommand::CloseChatPoll { .. }
     );
+    let board_command = matches!(command, HouseholdCommand::Board(_));
     if history.event_count() >= history.limit()
         || chat_command != history.is_chat()
+        || board_command != history.is_board()
         || !valid_timestamp(context.timestamp)
         || context.logical_time == 0
         || context.logical_time > crate::state::MAX_LOGICAL_TIME
@@ -712,6 +731,9 @@ pub fn execute_with(
         return Err(KinError::InvalidEvent);
     }
     let current = history.current()?;
+    if let HouseholdCommand::Board(kind) = command {
+        current.board.check_command(kind)?;
+    }
     if let HouseholdCommand::ChangeResponsibility {
         target_kind,
         target_id,
@@ -1254,6 +1276,14 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
     if bytes.len() != 128 + text_length {
         return Err(KinError::MalformedProtocol);
     }
+    // The fridge (#317): the text is the event's exact payload.
+    if crate::board::is_board_code(kind) {
+        if id != [0; 16] || date != 0 || option != 0 || expires != 0 {
+            return Err(KinError::MalformedProtocol);
+        }
+        let event_kind = crate::board::decode_payload(kind, &bytes[128..])?;
+        return Ok((HouseholdCommand::Board(event_kind), command_context(bytes)?));
+    }
     let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41 | 44..=46 | 48..=50) {
         String::new()
     } else {
@@ -1702,15 +1732,40 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         },
         _ => return Err(KinError::UnsupportedVersion),
     };
-    let context = CommandContext {
+    Ok((command, command_context(bytes)?))
+}
+
+/// The identity and time a KCMD names for its event.
+fn command_context(bytes: &[u8]) -> Result<CommandContext, KinError> {
+    Ok(CommandContext {
         event_id: EventId(field(bytes, 12)?),
         household_id: HouseholdId(field(bytes, 28)?),
         actor_id: ActorId(field(bytes, 44)?),
         device_id: DeviceId(field(bytes, 60)?),
         timestamp: i64::from_le_bytes(field(bytes, 76)?),
         logical_time: u64::from_le_bytes(field(bytes, 84)?),
-    };
-    Ok((command, context))
+    })
+}
+
+/// Validates a fridge command against the board log (#317): u32 command
+/// length, KCMD (actions 52–58), then the record-less KINE context. Publishes
+/// KCMT with an empty projection; the log is not changed.
+pub fn execute_board_history(
+    bytes: &[u8],
+    history: &mut crate::history::History,
+) -> Result<Vec<u8>, KinError> {
+    if bytes.len() > MAX_PROTOCOL_BYTES {
+        return Err(KinError::SizeLimit);
+    }
+    let command_length = u32::from_le_bytes(field(bytes, 0)?) as usize;
+    let end = 4usize
+        .checked_add(command_length)
+        .ok_or(KinError::MalformedProtocol)?;
+    let (command, context) = decode_command(bytes.get(4..end).ok_or(KinError::MalformedProtocol)?)?;
+    let replay_context =
+        crate::request::decode_context(bytes.get(end..).ok_or(KinError::MalformedProtocol)?)?;
+    let mut held = HeldHistory::new(history, replay_context)?;
+    command_result(execute_with(&command, context, &mut held)?)
 }
 
 pub fn encode_command(bytes: &[u8]) -> Result<Vec<u8>, KinError> {
