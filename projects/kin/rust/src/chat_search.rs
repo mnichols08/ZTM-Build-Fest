@@ -538,6 +538,7 @@ pub fn encode_search(
         let kind: u32 = match message.content_kind {
             ChatContentKind::Text => 1,
             ChatContentKind::Attachment => 2,
+            ChatContentKind::Poll(_) => 3,
         };
         bytes.extend_from_slice(&kind.to_le_bytes());
         bytes.extend_from_slice(&hit.offset.to_le_bytes());

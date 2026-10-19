@@ -200,6 +200,44 @@ pub struct ChatPin {
     pub by: ActorId,
 }
 
+/// Fewest and most options a poll has (#135).
+pub const MIN_POLL_OPTIONS: u8 = 2;
+pub const MAX_POLL_OPTIONS: u8 = 10;
+/// Most members whose votes one poll keeps; a household has at most 64
+/// members who can read chat, so only a rogue log reaches it.
+pub const MAX_POLL_VOTERS: usize = 64;
+
+/// What a poll allows (#135): how many options it has and whether a member
+/// may choose several. The question and options themselves are the content
+/// blob.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PollSpec {
+    pub options: u8,
+    pub multiple: bool,
+}
+
+impl PollSpec {
+    pub fn is_valid(&self) -> bool {
+        (MIN_POLL_OPTIONS..=MAX_POLL_OPTIONS).contains(&self.options)
+    }
+
+    /// Whether `choice` (bit n is option n) is a vote this poll accepts:
+    /// only its own options, and one at most unless it allows several. None
+    /// is accepted too: it clears the member's vote.
+    pub fn allows(&self, choice: u16) -> bool {
+        choice >> self.options == 0 && (self.multiple || choice.count_ones() <= 1)
+    }
+}
+
+/// The votes of one poll as replay leaves them (#135).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PollState {
+    /// Each voter's current choice (never zero), the last write in replay
+    /// order.
+    pub votes: BTreeMap<ActorId, u16>,
+    pub closed: bool,
+}
+
 /// The chat domain of a replay.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ChatState {
@@ -229,9 +267,25 @@ pub struct ChatState {
     /// deleted is dropped from here; one an admin removed stays but is not
     /// shown (`shown_pins`).
     pub pins: Vec<ChatPin>,
+    /// Votes by poll (#135); a poll with no votes and still open has no
+    /// entry. Deleting the poll for everyone drops its entry.
+    pub polls: BTreeMap<ChatMessageId, PollState>,
 }
 
 impl ChatState {
+    /// The poll `message_id` names, if it is a poll message that still shows
+    /// to a reader (live, not deleted), with its options and votes.
+    pub fn poll_of(&self, message_id: &ChatMessageId) -> Option<(PollSpec, bool)> {
+        let message = self.get(message_id)?;
+        match (message.content_kind, message.status) {
+            (ChatContentKind::Poll(spec), ChatMessageStatus::Live) => Some((
+                spec,
+                self.polls.get(message_id).is_some_and(|poll| poll.closed),
+            )),
+            _ => None,
+        }
+    }
+
     pub fn is_pinned(&self, message_id: &ChatMessageId) -> bool {
         self.pins.iter().any(|pin| pin.message_id == *message_id)
     }
@@ -566,7 +620,7 @@ impl ChatTexts {
 /// KCHQ v1, a page request: "KCHQ", version u16 (1), reserved u16 (0),
 /// before u32 (page ends before this index; u32::MAX for the newest),
 /// limit u16 (1..=500), flags u8 (bit 0: include texts the arena holds;
-/// bit 1: include retired blobs; bit 2: include reactions; bit 3: include pins), reserved u8
+/// bit 1: include retired blobs; bit 2: include reactions; bit 3: include pins; bit 4: include polls), reserved u8
 /// (0), admin count u32 (at most
 /// 16), then 16 bytes per admin actor ID, then the record-less KINE context.
 pub struct PageRequest<'a> {
@@ -576,6 +630,7 @@ pub struct PageRequest<'a> {
     pub include_retired: bool,
     pub include_reactions: bool,
     pub include_pins: bool,
+    pub include_polls: bool,
     pub admins: Vec<ActorId>,
     pub context: &'a [u8],
 }
@@ -593,7 +648,7 @@ pub fn decode_page_request(bytes: &[u8]) -> Result<PageRequest<'_>, KinError> {
         return Err(KinError::UnsupportedVersion);
     }
     let flags = bytes[14];
-    if bytes[6..8] != [0; 2] || bytes[15] != 0 || flags & !0b1111 != 0 {
+    if bytes[6..8] != [0; 2] || bytes[15] != 0 || flags & !0b11111 != 0 {
         return Err(KinError::MalformedProtocol);
     }
     let before = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
@@ -620,6 +675,7 @@ pub fn decode_page_request(bytes: &[u8]) -> Result<PageRequest<'_>, KinError> {
         include_retired: flags & 2 != 0,
         include_reactions: flags & 4 != 0,
         include_pins: flags & 8 != 0,
+        include_polls: flags & 16 != 0,
         admins,
         context: &bytes[context_at..],
     })
@@ -746,6 +802,11 @@ fn shown_reactions<'a>(
 /// u32 (at most `MAX_PINS`), then per pin, oldest first, who pinned it (16)
 /// and the message as a quote entry; only messages that still show are
 /// pinned here.
+/// Last, when it asked for polls (#135), each shown poll's votes in record
+/// order: per voter, in ascending actor order, the actor ID (16), the chosen
+/// options as a u16 bit set and 2 zero bytes. A poll record carries its option
+/// count at 118, flags at 119 (1 multiple, 2 closed) and the voter count as a
+/// u16 at 120.
 pub fn encode_page(
     state: &ChatState,
     request: &PageRequest<'_>,
@@ -798,11 +859,37 @@ pub fn encode_page(
     } else {
         0
     };
+    // Polls (#135) are asked for: each shown poll's open/closed state and
+    // option count ride in its record; the votes follow the pins.
+    let poll_votes = |message: &ChatMessage| -> Vec<(ActorId, u16)> {
+        let visible = matches!(
+            status(message),
+            ChatMessageStatus::Live | ChatMessageStatus::Edited
+        );
+        match (request.include_polls && visible, message.content_kind) {
+            (true, ChatContentKind::Poll(_)) => state
+                .polls
+                .get(&message.message_id)
+                .map(|poll| {
+                    poll.votes
+                        .iter()
+                        .map(|(who, choice)| (*who, *choice))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    };
+    let poll_bytes = page
+        .iter()
+        .map(|message| poll_votes(message).len() * 20)
+        .sum::<usize>();
     let mut text_bytes = 0usize;
     if request.include_text {
         for message in page {
-            if status(message) == ChatMessageStatus::Live
-                || status(message) == ChatMessageStatus::Edited
+            if (status(message) == ChatMessageStatus::Live
+                || status(message) == ChatMessageStatus::Edited)
+                && message.content_kind == ChatContentKind::Text
             {
                 text_bytes += texts.get(&message.blob_ref).map_or(0, <[u8]>::len);
             }
@@ -816,6 +903,7 @@ pub fn encode_page(
         .and_then(|size| size.checked_add(reply_bytes))
         .and_then(|size| size.checked_add(mention_bytes))
         .and_then(|size| size.checked_add(pin_bytes))
+        .and_then(|size| size.checked_add(poll_bytes))
         .ok_or(KinError::SizeLimit)?;
     let mut bytes = Vec::new();
     bytes
@@ -836,11 +924,12 @@ pub fn encode_page(
     for (index, message) in page.iter().enumerate() {
         let shown = status(message);
         let visible = matches!(shown, ChatMessageStatus::Live | ChatMessageStatus::Edited);
-        let text = if request.include_text && visible {
-            texts.get(&message.blob_ref)
-        } else {
-            None
-        };
+        let text =
+            if request.include_text && visible && message.content_kind == ChatContentKind::Text {
+                texts.get(&message.blob_ref)
+            } else {
+                None
+            };
         bytes.extend_from_slice(&message.message_id.0);
         bytes.extend_from_slice(&message.author.0);
         bytes.extend_from_slice(&message.device.0);
@@ -848,7 +937,7 @@ pub fn encode_page(
         bytes.extend_from_slice(&message.edited_at.to_le_bytes());
         bytes.extend_from_slice(&((start + index) as u32).to_le_bytes());
         bytes.push(shown as u8);
-        bytes.push(message.content_kind as u8);
+        bytes.push(message.content_kind.code());
         let mentions = shown_mentions(message, shown);
         bytes.extend_from_slice(&[
             u8::from(quoted(message, shown).is_some()),
@@ -872,7 +961,27 @@ pub fn encode_page(
         bytes.extend_from_slice(
             &(mentions.map_or(0, |found| found.members.len()) as u16).to_le_bytes(),
         );
-        bytes.extend_from_slice(&[0; 10]);
+        // A poll's option count, flags (1 multiple choice, 2 closed) and
+        // voter count (#135); zero for everything else.
+        let poll = match (request.include_polls && visible, message.content_kind) {
+            (true, ChatContentKind::Poll(spec)) => Some((
+                spec,
+                state
+                    .polls
+                    .get(&message.message_id)
+                    .is_some_and(|poll| poll.closed),
+            )),
+            _ => None,
+        };
+        match poll {
+            Some((spec, closed)) => {
+                bytes.push(spec.options);
+                bytes.push(u8::from(spec.multiple) | u8::from(closed) << 1);
+                bytes.extend_from_slice(&(poll_votes(message).len() as u16).to_le_bytes());
+                bytes.extend_from_slice(&[0; 6]);
+            }
+            None => bytes.extend_from_slice(&[0; 10]),
+        }
     }
     for message in page {
         let visible = matches!(
@@ -917,6 +1026,13 @@ pub fn encode_page(
             write_quote(&mut bytes, state, request, texts, &pin.message_id);
         }
     }
+    for message in page {
+        for (voter, choice) in poll_votes(message) {
+            bytes.extend_from_slice(&voter.0);
+            bytes.extend_from_slice(&choice.to_le_bytes());
+            bytes.extend_from_slice(&[0, 0]);
+        }
+    }
     debug_assert_eq!(bytes.len(), size);
     Ok(bytes)
 }
@@ -940,7 +1056,7 @@ fn write_quote(
                 ChatMessageStatus::Deleted => 3,
                 ChatMessageStatus::RemovedByAdmin => 4,
             };
-            bytes.extend_from_slice(&[code, found.content_kind as u8, 0, 0]);
+            bytes.extend_from_slice(&[code, found.content_kind.code(), 0, 0]);
             bytes.extend_from_slice(&found.author.0);
             bytes.extend_from_slice(if visible { &found.blob_ref } else { &[0; 32] });
             bytes.extend_from_slice(if visible { &found.blob_key } else { &[0; 32] });

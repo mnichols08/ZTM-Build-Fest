@@ -54,6 +54,8 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::ChatMessageDeleted { .. } => 46,
         EventKind::ChatReactionSet { .. } => 47,
         EventKind::ChatPinSet { .. } => 48,
+        EventKind::ChatPollVote { .. } => 49,
+        EventKind::ChatPollClosed { .. } => 50,
     }
 }
 
@@ -325,7 +327,16 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
                 return Err(KinError::MalformedProtocol);
             }
             payload.extend_from_slice(&message_id.0);
-            payload.extend_from_slice(&[*content_kind as u8, 0, 0, 0]);
+            // A poll (#135) keeps its option count and multiple-choice flag in
+            // the bytes that are zero for every other kind.
+            let (options, multiple) = match content_kind {
+                crate::event::ChatContentKind::Poll(spec) if spec.is_valid() => {
+                    (spec.options, u8::from(spec.multiple))
+                }
+                crate::event::ChatContentKind::Poll(_) => return Err(KinError::MalformedProtocol),
+                _ => (0, 0),
+            };
+            payload.extend_from_slice(&[content_kind.code(), options, multiple, 0]);
             payload.extend_from_slice(blob_ref);
             payload.extend_from_slice(blob_key);
             // A reply adds the quoted message's ID (#129), mentions their
@@ -382,6 +393,27 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             }
             payload.extend_from_slice(&message_id.0);
             payload.extend_from_slice(&[u8::from(*on), 0, 0, 0]);
+        }
+        // Poll vote (#135): message ID, the chosen options as a u16 bit set
+        // and 2 reserved.
+        EventKind::ChatPollVote {
+            message_id,
+            options,
+        } => {
+            if message_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            payload.extend_from_slice(&options.to_le_bytes());
+            payload.extend_from_slice(&[0, 0]);
+        }
+        // Poll closed (#135): message ID and 4 reserved.
+        EventKind::ChatPollClosed { message_id } => {
+            if message_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            payload.extend_from_slice(&[0; 4]);
         }
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());

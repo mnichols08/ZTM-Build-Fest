@@ -1055,7 +1055,7 @@ fn malformed_page_requests_are_rejected() {
     let mut bad = vec![
         kchq(u32::MAX, 0, 0, &[], &context),
         kchq(u32::MAX, 501, 0, &[], &context),
-        kchq(u32::MAX, 10, 0b10000, &[], &context),
+        kchq(u32::MAX, 10, 0b100000, &[], &context),
         kchq(u32::MAX, 10, 0, &[[0; 16]], &context),
         kchq(u32::MAX, 10, 0, &[[3; 16]; 17], &context),
         kchq(
@@ -3230,4 +3230,400 @@ fn a_late_pin_of_a_deleted_message_changes_nothing_and_extra_pins_wait_their_tur
     records.push(pin_record(40, MEMBER_1, 0x11, 1, false));
     let state = chat(&records);
     assert_eq!(ids(&state), (2..=11).map(message).collect::<Vec<_>>());
+}
+
+// Polls (#135).
+
+fn poll_spec(options: u8, multiple: bool) -> ChatContentKind {
+    ChatContentKind::Poll(crate::chat::PollSpec { options, multiple })
+}
+
+fn poll_record(
+    event: u32,
+    actor: [u8; 16],
+    device: u8,
+    id: u8,
+    options: u8,
+    multiple: bool,
+) -> Vec<u8> {
+    let mut payload = message(id).to_vec();
+    payload.extend_from_slice(&[3, options, u8::from(multiple), 0]);
+    payload.extend_from_slice(&blob(id, 0));
+    payload.extend_from_slice(&key(id, 0));
+    record(44, event, actor, device, &payload)
+}
+
+fn vote_record(event: u32, actor: [u8; 16], device: u8, id: u8, choice: u16) -> Vec<u8> {
+    let mut payload = message(id).to_vec();
+    payload.extend_from_slice(&choice.to_le_bytes());
+    payload.extend_from_slice(&[0, 0]);
+    record(49, event, actor, device, &payload)
+}
+
+fn close_record(event: u32, actor: [u8; 16], device: u8, id: u8) -> Vec<u8> {
+    let mut payload = message(id).to_vec();
+    payload.extend_from_slice(&[0; 4]);
+    record(50, event, actor, device, &payload)
+}
+
+fn vote(id: u8, options: u16) -> C {
+    C::VoteChatPoll {
+        id: ChatMessageId(message(id)),
+        options,
+    }
+}
+
+fn close_poll(id: u8) -> C {
+    C::CloseChatPoll {
+        id: ChatMessageId(message(id)),
+    }
+}
+
+fn votes_of(state: &ChatState, id: u8) -> Vec<([u8; 16], u16)> {
+    state
+        .polls
+        .get(&ChatMessageId(message(id)))
+        .map(|poll| poll.votes.iter().map(|(who, c)| (who.0, *c)).collect())
+        .unwrap_or_default()
+}
+
+#[test]
+fn poll_records_decode_as_documented_and_malformed_ones_are_refused() {
+    let good = poll_record(1, MEMBER_1, 0x11, 1, 3, true);
+    let event = decode_event(&good).unwrap();
+    assert!(matches!(
+        event.kind,
+        EventKind::ChatMessagePosted {
+            content_kind: ChatContentKind::Poll(crate::chat::PollSpec {
+                options: 3,
+                multiple: true
+            }),
+            ..
+        }
+    ));
+    assert_eq!(crate::codec::encode_event(&event).unwrap(), good);
+    // The option count is 2..=10, the flag 0 or 1, and only a poll has them.
+    for (options, multiple) in [(0u8, 0u8), (1, 0), (11, 0), (3, 2)] {
+        let mut payload = message(1).to_vec();
+        payload.extend_from_slice(&[3, options, multiple, 0]);
+        payload.extend_from_slice(&blob(1, 0));
+        payload.extend_from_slice(&key(1, 0));
+        assert!(decode_event(&record(44, 1, MEMBER_1, 0x11, &payload)).is_err());
+    }
+    for kind in [1u8, 2] {
+        let mut payload = message(1).to_vec();
+        payload.extend_from_slice(&[kind, 3, 0, 0]);
+        payload.extend_from_slice(&blob(1, 0));
+        payload.extend_from_slice(&key(1, 0));
+        assert!(decode_event(&record(44, 1, MEMBER_1, 0x11, &payload)).is_err());
+    }
+    let vote_bytes = vote_record(2, MEMBER_2, 0x21, 1, 0b101);
+    let event = decode_event(&vote_bytes).unwrap();
+    assert_eq!(
+        event.kind,
+        EventKind::ChatPollVote {
+            message_id: ChatMessageId(message(1)),
+            options: 0b101
+        }
+    );
+    assert!(event.kind.is_chat());
+    assert_eq!(crate::codec::encode_event(&event).unwrap(), vote_bytes);
+    let close_bytes = close_record(3, MEMBER_1, 0x11, 1);
+    let event = decode_event(&close_bytes).unwrap();
+    assert_eq!(
+        event.kind,
+        EventKind::ChatPollClosed {
+            message_id: ChatMessageId(message(1))
+        }
+    );
+    assert_eq!(crate::codec::encode_event(&event).unwrap(), close_bytes);
+    let broken = |kind: u16, edit: &dyn Fn(&mut Vec<u8>)| {
+        let mut bytes = message(1).to_vec();
+        bytes.extend_from_slice(&[1, 0, 0, 0]);
+        edit(&mut bytes);
+        record(kind, 2, MEMBER_2, 0x21, &bytes)
+    };
+    for bad in [
+        broken(49, &|b| b.push(0)),
+        broken(49, &|b| {
+            b.pop();
+        }),
+        broken(49, &|b| b[18] = 1),
+        broken(49, &|b| b[..16].fill(0)),
+        broken(50, &|b| b[16] = 1),
+        broken(50, &|b| b.push(0)),
+        broken(50, &|b| b[..16].fill(0)),
+    ] {
+        assert!(decode_event(&bad).is_err());
+    }
+}
+
+#[test]
+fn replay_counts_the_last_vote_per_member_and_stops_at_the_authors_close() {
+    let state = chat(&[
+        poll_record(1, MEMBER_1, 0x11, 1, 3, false),
+        vote_record(2, MEMBER_1, 0x11, 1, 0b001),
+        vote_record(3, MEMBER_2, 0x21, 1, 0b010),
+        vote_record(4, MEMBER_1, 0x11, 1, 0b100),
+        // Not a choice this poll has, and two choices in a single-choice poll.
+        vote_record(5, MEMBER_2, 0x21, 1, 0b1000),
+        vote_record(6, MEMBER_2, 0x21, 1, 0b011),
+    ]);
+    assert_eq!(
+        votes_of(&state, 1),
+        vec![(MEMBER_1, 0b100), (MEMBER_2, 0b010)]
+    );
+    // Several choices where the poll allows them; none clears a vote.
+    let state = chat(&[
+        poll_record(1, MEMBER_1, 0x11, 1, 4, true),
+        vote_record(2, MEMBER_2, 0x21, 1, 0b0101),
+        vote_record(3, MEMBER_1, 0x11, 1, 0b1111),
+        vote_record(4, MEMBER_1, 0x11, 1, 0),
+    ]);
+    assert_eq!(votes_of(&state, 1), vec![(MEMBER_2, 0b0101)]);
+    // Only the author closes; later votes don't count; the first close stands.
+    let state = chat(&[
+        poll_record(1, MEMBER_1, 0x11, 1, 2, false),
+        vote_record(2, MEMBER_2, 0x21, 1, 0b01),
+        close_record(3, MEMBER_2, 0x21, 1),
+        vote_record(4, MEMBER_2, 0x21, 1, 0b10),
+        close_record(5, MEMBER_1, 0x11, 1),
+        vote_record(6, MEMBER_2, 0x21, 1, 0b01),
+        vote_record(7, MEMBER_1, 0x11, 1, 0b10),
+        close_record(8, MEMBER_1, 0x11, 1),
+    ]);
+    assert_eq!(votes_of(&state, 1), vec![(MEMBER_2, 0b10)]);
+    assert!(state.polls[&ChatMessageId(message(1))].closed);
+    // A vote or close for a text message, or one this history lacks, changes nothing.
+    let state = chat(&[
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        vote_record(2, MEMBER_2, 0x21, 1, 0b1),
+        close_record(3, MEMBER_1, 0x11, 1),
+        vote_record(4, MEMBER_2, 0x21, 9, 0b1),
+    ]);
+    assert!(state.polls.is_empty());
+    // The author's deletion deletes the votes; an admin's removal hides the poll.
+    let state = chat(&[
+        poll_record(1, MEMBER_1, 0x11, 1, 2, false),
+        vote_record(2, MEMBER_2, 0x21, 1, 0b01),
+        deleted(3, MEMBER_1, 0x11, 1, false),
+        vote_record(4, MEMBER_2, 0x21, 1, 0b10),
+    ]);
+    assert!(state.polls.is_empty(), "votes go with the poll");
+}
+
+#[test]
+fn two_devices_of_one_member_converge_on_the_later_vote() {
+    let one = [
+        poll_record(1, MEMBER_1, 0x11, 1, 3, false),
+        vote_record(2, MEMBER_2, 0x21, 1, 0b001),
+        vote_record(3, MEMBER_2, 0x22, 1, 0b100),
+    ];
+    // Replay orders by logical time whatever the arrival order.
+    let state = chat(&one);
+    assert_eq!(votes_of(&state, 1), vec![(MEMBER_2, 0b100)]);
+    let state = chat(&[one[0].clone(), one[2].clone(), one[1].clone()]);
+    assert_eq!(votes_of(&state, 1), vec![(MEMBER_2, 0b100)]);
+}
+
+#[test]
+fn commands_post_polls_vote_and_close_under_the_rules_replay_applies() {
+    let mut log = History::chat();
+    let mut next = 0u8;
+    let mut step = |log: &mut History, command: C, actor: [u8; 16]| {
+        next += 1;
+        run(
+            log,
+            command,
+            context(next, actor, actor[0], u64::from(next)),
+        )
+    };
+    // Shape: 2..=10 options; a poll stands alone.
+    for spec in [poll_spec(1, false), poll_spec(11, false)] {
+        assert_eq!(
+            step(&mut log, post(1, spec), MEMBER_1),
+            Err(KinError::InvalidEvent)
+        );
+    }
+    let mut reply = post(1, poll_spec(3, false));
+    if let C::PostChatMessage { reply_to, .. } = &mut reply {
+        *reply_to = Some(ChatMessageId(message(2)));
+    }
+    assert_eq!(step(&mut log, reply, MEMBER_1), Err(KinError::InvalidEvent));
+    step(&mut log, post(1, poll_spec(3, false)), MEMBER_1).unwrap();
+    step(&mut log, post(2, poll_spec(4, true)), MEMBER_1).unwrap();
+    step(&mut log, post(3, ChatContentKind::Text), MEMBER_1).unwrap();
+    // A poll can't be edited.
+    assert_eq!(
+        step(&mut log, edit(1, 1), MEMBER_1),
+        Err(KinError::InvalidEvent)
+    );
+    // Votes: the poll's own options, one in a single-choice poll, a change each time.
+    step(&mut log, vote(1, 0b001), MEMBER_2).unwrap();
+    for refused in [vote(1, 0b001), vote(1, 0b1000), vote(1, 0b011)] {
+        assert_eq!(
+            step(&mut log, refused, MEMBER_2),
+            Err(KinError::InvalidEvent)
+        );
+    }
+    step(&mut log, vote(1, 0b100), MEMBER_2).unwrap();
+    step(&mut log, vote(1, 0), MEMBER_2).unwrap();
+    assert_eq!(
+        step(&mut log, vote(1, 0), MEMBER_2),
+        Err(KinError::InvalidEvent),
+        "clearing a vote that isn't there changes nothing"
+    );
+    step(&mut log, vote(2, 0b1011), MEMBER_2).unwrap();
+    for refused in [vote(3, 0b1), vote(9, 0b1)] {
+        assert_eq!(
+            step(&mut log, refused, MEMBER_2),
+            Err(KinError::InvalidEvent)
+        );
+    }
+    // Only the author closes, once; nobody votes in a closed poll.
+    assert_eq!(
+        step(&mut log, close_poll(1), MEMBER_2),
+        Err(KinError::InvalidEvent)
+    );
+    assert_eq!(
+        step(&mut log, close_poll(3), MEMBER_1),
+        Err(KinError::InvalidEvent)
+    );
+    step(&mut log, close_poll(1), MEMBER_1).unwrap();
+    assert_eq!(
+        step(&mut log, close_poll(1), MEMBER_1),
+        Err(KinError::InvalidEvent)
+    );
+    assert_eq!(
+        step(&mut log, vote(1, 0b010), ADMIN),
+        Err(KinError::InvalidEvent)
+    );
+    // A deleted poll takes no votes and can't be closed.
+    step(&mut log, delete(2, false), MEMBER_1).unwrap();
+    assert_eq!(
+        step(&mut log, vote(2, 0b1), ADMIN),
+        Err(KinError::InvalidEvent)
+    );
+    assert_eq!(
+        step(&mut log, close_poll(2), MEMBER_1),
+        Err(KinError::InvalidEvent)
+    );
+}
+
+#[test]
+fn the_wire_commands_post_vote_and_close_polls() {
+    let mut refs = blob(1, 0).to_vec();
+    refs.extend_from_slice(&key(1, 0));
+    let with_date = |mut bytes: Vec<u8>, date: u32| {
+        bytes[108..112].copy_from_slice(&date.to_le_bytes());
+        bytes
+    };
+    // The date field holds the option count and, in the next byte, the flag.
+    assert_eq!(
+        decode_command(&with_date(kcmd(44, message(1), 3, &refs), 0x0104))
+            .unwrap()
+            .0,
+        post(1, poll_spec(4, true))
+    );
+    assert_eq!(
+        decode_command(&with_date(kcmd(44, message(1), 3, &refs), 3))
+            .unwrap()
+            .0,
+        post(1, poll_spec(3, false))
+    );
+    for broken in [
+        with_date(kcmd(44, message(1), 3, &refs), 1),
+        with_date(kcmd(44, message(1), 3, &refs), 11),
+        with_date(kcmd(44, message(1), 3, &refs), 0x0203),
+        with_date(kcmd(44, message(1), 3, &refs), 0x1_0003),
+        with_date(kcmd(44, message(1), 1, &refs), 3),
+        kcmd(44, message(1), 4, &refs),
+    ] {
+        assert!(decode_command(&broken).is_err());
+    }
+    assert_eq!(
+        decode_command(&with_date(kcmd(49, message(1), 0, &[]), 0b101))
+            .unwrap()
+            .0,
+        vote(1, 0b101)
+    );
+    assert_eq!(
+        decode_command(&kcmd(49, message(1), 0, &[])).unwrap().0,
+        vote(1, 0)
+    );
+    for broken in [
+        with_date(kcmd(49, message(1), 0, &[]), 0x1_0000),
+        kcmd(49, message(1), 1, &[]),
+        kcmd(49, [0; 16], 0, &[]),
+        kcmd(49, message(1), 0, &[1]),
+    ] {
+        assert!(decode_command(&broken).is_err());
+    }
+    assert_eq!(
+        decode_command(&kcmd(50, message(1), 0, &[])).unwrap().0,
+        close_poll(1)
+    );
+    for broken in [
+        kcmd(50, message(1), 1, &[]),
+        kcmd(50, [0; 16], 0, &[]),
+        kcmd(50, message(1), 0, &[1]),
+        with_date(kcmd(50, message(1), 0, &[]), 1),
+    ] {
+        assert!(decode_command(&broken).is_err());
+    }
+}
+
+#[test]
+fn a_page_lists_polls_with_their_state_and_who_voted_for_what() {
+    let mut log = history_of(&[
+        poll_record(1, MEMBER_1, 0x11, 1, 3, true),
+        posted(2, MEMBER_1, 0x11, 2, 1),
+        vote_record(3, MEMBER_2, 0x21, 1, 0b011),
+        vote_record(4, MEMBER_1, 0x11, 1, 0b100),
+        close_record(5, MEMBER_1, 0x11, 1),
+    ]);
+    let mut texts = ChatTexts::new();
+    let kctx = kine(&[], 0, TEST_DATE, None);
+    let without = chat_page(&kchq(u32::MAX, 10, 0, &[], &kctx), &mut log, &mut texts).unwrap();
+    let with = chat_page(&kchq(u32::MAX, 10, 16, &[], &kctx), &mut log, &mut texts).unwrap();
+    // Without the flag a poll is an ordinary record of kind 3.
+    assert_eq!(without[28 + 69], 3);
+    assert_eq!(&without[28 + 118..28 + 128], &[0; 10]);
+    // With it: option count, flags (multiple 1, closed 2), voter count.
+    assert_eq!(with[28 + 69], 3);
+    assert_eq!(with[28 + 118], 3);
+    assert_eq!(with[28 + 119], 3);
+    assert_eq!(u16::from_le_bytes([with[28 + 120], with[28 + 121]]), 2);
+    // The text message has none.
+    assert_eq!(&with[28 + 128 + 118..28 + 128 + 128], &[0; 10]);
+    // The votes close the page, voters in ascending actor order.
+    let tail = &with[with.len() - 40..];
+    assert_eq!(&tail[..16], &MEMBER_1);
+    assert_eq!(u16::from_le_bytes([tail[16], tail[17]]), 0b100);
+    assert_eq!(&tail[20..36], &MEMBER_2);
+    assert_eq!(u16::from_le_bytes([tail[36], tail[37]]), 0b011);
+    assert_eq!(with.len() - without.len(), 40);
+    // A deleted or removed poll shows none of it.
+    let mut gone = history_of(&[
+        poll_record(1, MEMBER_1, 0x11, 1, 3, true),
+        vote_record(2, MEMBER_2, 0x21, 1, 0b01),
+        deleted(3, ADMIN, 0x31, 1, true),
+    ]);
+    let hidden = chat_page(
+        &kchq(u32::MAX, 10, 16, &[ADMIN], &kctx),
+        &mut gone,
+        &mut texts,
+    )
+    .unwrap();
+    assert_eq!(&hidden[28 + 118..28 + 128], &[0; 10]);
+    assert_eq!(
+        hidden.len(),
+        chat_page(
+            &kchq(u32::MAX, 10, 0, &[ADMIN], &kctx),
+            &mut gone,
+            &mut texts
+        )
+        .unwrap()
+        .len()
+    );
 }

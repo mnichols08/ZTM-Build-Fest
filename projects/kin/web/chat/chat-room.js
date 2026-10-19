@@ -31,6 +31,7 @@ import { ChatBlobStore } from "./chat-blob-store.js";
 import { ChatBlobs } from "./chat-blobs.js";
 import { ChatLogError, ChatLogStore } from "./chat-log-store.js";
 import { ChatRecords } from "./chat-records.js";
+import { encodePoll, parsePoll, pollProblem } from "./chat-polls.js";
 import { memberLabels } from "../components/household/member-labels.js";
 import { MAX_HIDDEN_MESSAGES, openHiddenState, sealHiddenRecord } from "./chat-hidden.js";
 import { ChatPresence, CLOCK_SKEW_MS, compareCursors, cursorOf, isCursor, mergeCursors } from "./chat-presence.js";
@@ -65,7 +66,7 @@ const FINAL_REFUSALS = new Set(["chat_event_refused"]);
 // A chat key epoch the household hasn't reached may only be newer than this
 // pass's look at the service, so it gets a second look like a signature.
 const SECOND_LOOK_REFUSALS = new Set(["event_signature_invalid", "chat_key_future", "chat_key_lost"]);
-const CHAT_KINDS = new Set(["CHAT_MESSAGE_POSTED", "CHAT_MESSAGE_EDITED", "CHAT_MESSAGE_DELETED", "CHAT_REACTION_SET", "CHAT_PIN_SET"]);
+const CHAT_KINDS = new Set(["CHAT_MESSAGE_POSTED", "CHAT_MESSAGE_EDITED", "CHAT_MESSAGE_DELETED", "CHAT_REACTION_SET", "CHAT_PIN_SET", "CHAT_POLL_VOTE", "CHAT_POLL_CLOSED"]);
 const REF = /^[a-f0-9]{64}$/;
 /** Most messages pinned at once (#131); the engine enforces it too. */
 export const MAX_PINS = 10;
@@ -697,7 +698,7 @@ export class ChatRoom {
   page(options = {}) {
     this.assertOpen();
     const { asOf, civilDate } = projectionContext(this.now());
-    return this.engine.chatPage(this.records.view(), { includeReactions: true, ...options, admins: this.admins }, asOf, civilDate, this.syncIdentity());
+    return this.engine.chatPage(this.records.view(), { includeReactions: true, includePolls: true, ...options, admins: this.admins }, asOf, civilDate, this.syncIdentity());
   }
 
   /**
@@ -922,6 +923,54 @@ export class ChatRoom {
       if (error.code === "chat_attachment_deleted" || error.code === "chat_attachment_pending" || error.code === "chat_attachment_invalid") return [];
       throw error;
     }
+  }
+
+  /**
+   * Asks a quick poll (#135): a question and 2 to 10 options, one answer or
+   * several. The question and options are sealed like message text. Resolves
+   * with { messageId, eventId }.
+   */
+  async sendPoll({ question, options, multiple = false }) {
+    this.assertCanPost();
+    const problem = pollProblem({ question, options });
+    if (problem) throw new ChatRoomError(problem, "chat_poll_invalid");
+    const messageId = randomIdHex();
+    const sealed = await this.sealText(encodePoll({ question, options }));
+    const eventId = await this.author({
+      type: "post-chat-message", messageId, blobRef: sealed.ref, blobKey: sealed.key,
+      contentKind: "poll", poll: { options: options.length, multiple: multiple === true },
+    }, { blobRef: sealed.ref });
+    return { messageId, eventId };
+  }
+
+  /** Opens a poll message's question and options. Resolves with
+   * { question, options }; rejects with a ChatRoomError whose code is
+   * chat_poll_deleted, chat_poll_pending or chat_poll_invalid. */
+  async openPoll(message) {
+    this.assertOpen();
+    if (message.contentKind !== "poll" || !message.blobRef || !message.poll)
+      throw new ChatRoomError("This message isn't a poll.", "chat_poll_invalid");
+    const opened = await this.blobs.openText({ ref: message.blobRef, key: message.blobKey });
+    this.assertOpen();
+    if (opened.deleted) throw new ChatRoomError("This poll was deleted.", "chat_poll_deleted");
+    if (opened.pending) throw new ChatRoomError("This poll is still arriving.", "chat_poll_pending");
+    const poll = typeof opened.text === "string" ? parsePoll(opened.text, message.poll.options) : null;
+    if (!poll) throw new ChatRoomError("This poll couldn't be opened.", "chat_poll_invalid");
+    return poll;
+  }
+
+  /** Votes in a poll: `choice` is the option numbers chosen (none clears the
+   * vote). A later vote replaces an earlier one; the engine refuses it once
+   * the poll is closed. */
+  async vote(message, choice) {
+    this.assertCanPost();
+    return this.author({ type: "vote-chat-poll", messageId: message.messageId, choice }, { track: false });
+  }
+
+  /** Closes the member's own poll; no vote counts after. */
+  async closePoll(message) {
+    this.assertCanPost();
+    return this.author({ type: "close-chat-poll", messageId: message.messageId }, { track: false });
   }
 
   /** Seals text into a kept blob; the key goes into the event as hex. */

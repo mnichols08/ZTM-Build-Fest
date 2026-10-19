@@ -1857,3 +1857,20 @@ and receive a short ID suffix in selection/management labels until renamed.
   the message (its id, author or time) is stored with it, so deleting the
   message or the record never touches the other. The dialog then says
   "Added to Shopping." with **Open it** (items) and a link to the list.
+
+# 27. Quick polls (#135)
+
+- The composer has a **Poll** button for members who can post. It opens a
+  dialog with a question, two to ten options (add and remove buttons, each
+  option a labelled text field) and a "Allow choosing more than one answer"
+  checkbox.
+- A poll is a message. Its options are a native `fieldset` of radio buttons
+  (or checkboxes for multiple choice) with a legend of the question. Choosing
+  votes at once; a member can change or clear their vote while it is open.
+- Results are text, not only bars: each option shows its count and who voted
+  for it by name, so nothing depends on colour. Your own vote, clearing and closing are announced politely.
+- The poll's author has **Close poll**; a closed poll shows "Closed" and its
+  final result, and its options are disabled.
+- Read-only members see the results and cannot vote. Deleting a poll for
+  everyone removes the question, options and votes. Replying to a poll shows its
+  question.

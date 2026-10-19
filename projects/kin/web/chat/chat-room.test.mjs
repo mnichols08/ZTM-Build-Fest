@@ -24,7 +24,7 @@ const WASM = new URL("../wasm/kin_engine.wasm", import.meta.url);
 
 const encoder = new TextEncoder(), decoder = new TextDecoder();
 const bytesOf = (hex) => Uint8Array.from(hex.match(/../g), (pair) => Number.parseInt(pair, 16));
-const KINDS = { "post-chat-message": "CHAT_MESSAGE_POSTED", "edit-chat-message": "CHAT_MESSAGE_EDITED", "delete-chat-message": "CHAT_MESSAGE_DELETED", "react-chat-message": "CHAT_REACTION_SET", "pin-chat-message": "CHAT_PIN_SET" };
+const KINDS = { "post-chat-message": "CHAT_MESSAGE_POSTED", "edit-chat-message": "CHAT_MESSAGE_EDITED", "delete-chat-message": "CHAT_MESSAGE_DELETED", "react-chat-message": "CHAT_REACTION_SET", "pin-chat-message": "CHAT_PIN_SET", "vote-chat-poll": "CHAT_POLL_VOTE", "close-chat-poll": "CHAT_POLL_CLOSED" };
 
 /** The engine calls the room makes, over JSON "canonical events". */
 function fakeEngine() {
@@ -92,8 +92,17 @@ function fakeEngine() {
           const at = pinned.findIndex((pin) => pin.messageId === command.messageId);
           if (command.on && message && at < 0) pinned.push({ messageId: command.messageId, pinnedBy: actorId });
           else if (!command.on && at >= 0) pinned.splice(at, 1);
+        } else if (command.type === "vote-chat-poll") {
+          // Votes count while the poll shows and is open; the last write wins.
+          const poll = message?.poll;
+          if (!poll || poll.closed || message.status !== "live") continue;
+          if (command.choice.some((option) => option >= poll.options) || (!poll.multiple && command.choice.length > 1)) continue;
+          if (command.choice.length) poll.votes.set(actorId, [...command.choice].sort((x, y) => x - y));
+          else poll.votes.delete(actorId);
+        } else if (command.type === "close-chat-poll") {
+          if (message?.poll && !message.poll.closed && actorId === message.authorId) message.poll.closed = true;
         } else if (command.type === "post-chat-message" && !message)
-          messages.set(command.messageId, { reply: command.replyTo ?? null, mentions: { everyone: command.mentions?.everyone === true, members: command.mentions?.members ?? [] }, messageId: command.messageId, authorId: actorId, deviceId, postedAt: timestamp, status: "live", contentKind: command.contentKind ?? "text", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey) });
+          messages.set(command.messageId, { poll: command.contentKind === "poll" ? { options: command.poll.options, multiple: command.poll.multiple, closed: false, votes: new Map() } : null, reply: command.replyTo ?? null, mentions: { everyone: command.mentions?.everyone === true, members: command.mentions?.members ?? [] }, messageId: command.messageId, authorId: actorId, deviceId, postedAt: timestamp, status: "live", contentKind: command.contentKind ?? "text", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey) });
         else if (command.type === "react-chat-message") {
           if (!message) continue;
           const groups = message.reactions ??= [];
@@ -110,7 +119,10 @@ function fakeEngine() {
           if (command.type === "edit-chat-message") Object.assign(message, { status: "edited", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey), mentions: { everyone: command.mentions?.everyone === true, members: command.mentions?.members ?? [] } });
           else {
             Object.assign(message, { status: command.byAdmin ? "removed-by-admin" : "deleted", blobRef: null, blobKey: null });
-            if (!command.byAdmin) pinned.splice(0, pinned.length, ...pinned.filter((pin) => pin.messageId !== command.messageId));
+            if (!command.byAdmin) {
+              pinned.splice(0, pinned.length, ...pinned.filter((pin) => pin.messageId !== command.messageId));
+              message.poll = null;
+            }
           }
         }
       }
@@ -128,6 +140,9 @@ function fakeEngine() {
       };
       const list = [...messages.values()].map((message, index) => ({
         ...message, index, replyTo: quote(message),
+        poll: options.includePolls && message.poll && (message.status === "live" || message.status === "edited")
+          ? { options: message.poll.options, multiple: message.poll.multiple, closed: message.poll.closed, votes: [...message.poll.votes].sort(([x], [y]) => (x < y ? -1 : 1)).map(([memberId, choice]) => ({ memberId, choice })) }
+          : null,
         reactions: options.includeReactions && (message.status === "live" || message.status === "edited") ? message.reactions ?? [] : [],
         mentions: message.status === "live" || message.status === "edited" ? message.mentions ?? { everyone: false, members: [] } : { everyone: false, members: [] },
         text: options.includeText === false ? null : this.texts.get(message.blobRef) ?? null,
@@ -1380,6 +1395,59 @@ test("members pin messages up to the limit, anyone unpins, and deleting for ever
   assert.equal(pins().some((pin) => pin.messageId === sent[1].messageId), false);
   assert.equal(c.room.page({ includePins: true }).pins.length, 9, "and it syncs");
   assert.equal(a.room.page().total, before + 0, "no new messages");
+});
+
+test("members ask a poll, vote and change their vote, the author closes it, and deleting it deletes everything (#135)", { timeout: 60_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs, householdAdmin: true });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs });
+  const devices = [phone.entry, laptop.entry];
+  const a = await openRoom(phone, s), c = await openRoom(laptop, s);
+  const syncAll = async () => { for (const { room } of [a, c, a, c]) await room.sync({ status: STATUS, devices }); };
+  await syncAll();
+  // Bad polls never leave the device.
+  for (const bad of [
+    { question: "", options: ["a", "b"] },
+    { question: "Pizza?", options: ["only one"] },
+    { question: "Pizza?", options: ["a", "A"] },
+    { question: "Pizza?", options: ["a", ""] },
+    { question: "Pizza?", options: Array.from({ length: 11 }, (_, n) => `option ${n}`) },
+  ]) await assert.rejects(a.room.sendPoll(bad), (error) => error.code === "chat_poll_invalid");
+  const poll = await a.room.sendPoll({ question: "Pizza or tacos?", options: ["Pizza", "Tacos", "Soup"], multiple: true });
+  await syncAll();
+  const byId = (room) => room.page().messages.find((message) => message.messageId === poll.messageId);
+  assert.equal(byId(c.room).contentKind, "poll");
+  assert.deepEqual(await c.room.openPoll(byId(c.room)), { question: "Pizza or tacos?", options: ["Pizza", "Tacos", "Soup"] }, "another device opens the question and options");
+  assert.deepEqual(byId(c.room).poll, { options: 3, multiple: true, closed: false, votes: [] });
+  await c.room.vote(byId(c.room), [0, 2]);
+  await syncAll();
+  await a.room.vote(byId(a.room), [1]);
+  await syncAll();
+  const votes = () => Object.fromEntries(byId(a.room).poll.votes.map((vote) => [vote.memberId, vote.choice]));
+  assert.deepEqual(votes(), { [s.admin.memberId]: [1], [s.partner.memberId]: [0, 2] }, "who voted for what");
+  await c.room.vote(byId(c.room), [2]);
+  await syncAll();
+  assert.deepEqual(votes()[s.partner.memberId], [2], "a later vote replaces the earlier one");
+  await c.room.vote(byId(c.room), []);
+  await syncAll();
+  assert.equal(votes()[s.partner.memberId], undefined, "and may be cleared");
+  // Only the author closes; a vote after that doesn't count.
+  await c.room.closePoll(byId(c.room));
+  await syncAll();
+  assert.equal(byId(a.room).poll.closed, false, "someone else can't close it");
+  await a.room.closePoll(byId(a.room));
+  await syncAll();
+  await c.room.vote(byId(c.room), [0]);
+  await syncAll();
+  assert.equal(byId(c.room).poll.closed, true);
+  assert.deepEqual(votes(), { [s.admin.memberId]: [1] }, "no vote counts after it closes");
+  // Deleting the poll for everyone removes the question, options and votes.
+  await a.room.remove(byId(a.room));
+  await syncAll();
+  assert.equal(byId(c.room).status, "deleted");
+  assert.equal(byId(c.room).poll, null);
+  await assert.rejects(c.room.openPoll(byId(c.room)), (error) => error.code === "chat_poll_invalid");
 });
 
 test("rooms report who is online while Kin is visible, and go away when hidden or closed (#128)", { timeout: 60_000 }, async (t) => {

@@ -94,7 +94,7 @@ history. `kin_execute` uses it and applies the command's event to a copy.
 
 **The chat log (v1.1, #109).** Each instance also holds a second history,
 the chat log, with the same layout, batches, checkpoint and mirror
-(`kin_chat_history_*`). It takes chat records (kinds 44–48) only, and the
+(`kin_chat_history_*`). It takes chat records (kinds 44–50) only, and the
 household history takes every other kind; either refuses the other's with
 code 4, as does a whole KINE request carrying a chat record. The chat log
 holds up to 250,000 records and 64 MiB. `kin_chat_execute` runs chat
@@ -223,11 +223,13 @@ N  payload
 | 41 | RESPONSIBILITY_CHANGED | target kind u8 (1 Item, 2 Routine), target ID, member ID (zero clears) |
 | 42 | DEVICE_DESCRIBED (v1.1) | name length u32, the header device's automatic name (1–48 characters, at most 192 bytes) |
 | 43 | DEVICE_NICKNAMED (v1.1) | device ID (non-zero), nickname length u32 (zero clears), nickname (1–32 characters) |
-| 44 | CHAT_MESSAGE_POSTED (v1.1, chat log) | message ID, content kind u8 (1 text, 2 attachment), 3 reserved, blob ref (32), blob key (32): 84 bytes; a reply adds the ID of the message it answers (non-zero, not its own): 100 bytes |
+| 44 | CHAT_MESSAGE_POSTED (v1.1, chat log) | message ID, content kind u8 (1 text, 2 attachment, 3 poll), option count u8 and multiple-choice u8 (both zero unless a poll), 1 reserved, blob ref (32), blob key (32): 84 bytes; a reply adds the ID of the message it answers (non-zero, not its own): 100 bytes |
 | 45 | CHAT_MESSAGE_EDITED (v1.1, chat log) | message ID, blob ref (32), blob key (32): 80 bytes |
 | 46 | CHAT_MESSAGE_DELETED (v1.1, chat log) | message ID, by_admin u8 (0 or 1), 3 reserved: 20 bytes |
 | 47 | CHAT_REACTION_SET (v1.1, chat log) | message ID, on u8 (0 or 1), 3 reserved, emoji length u32, the emoji's UTF-8 (one emoji grapheme, 1–32 bytes) |
 | 48 | CHAT_PIN_SET (v1.1, chat log) | message ID, on u8 (0 or 1), 3 reserved: 20 bytes |
+| 49 | CHAT_POLL_VOTE (v1.1, chat log) | message ID, choice u16 (bit n is option n; 0 clears), 2 reserved: 20 bytes |
+| 50 | CHAT_POLL_CLOSED (v1.1, chat log) | message ID, 4 reserved: 20 bytes |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -247,7 +249,7 @@ nickname in replay order win. Commands enforce the strict rules. Device names ar
 only through `kin_device_names`. An engine older than v1.1 fails both kinds
 with code 3 (unsupported).
 
-Chat events (kinds 44–48, v1.1, no protocol change) belong to the chat log
+Chat events (kinds 44–50, v1.1, no protocol change) belong to the chat log
 (above). A zero message ID, blob ref or key, an unknown content kind, a
 `by_admin` other than 0 or 1, or a non-zero reserved byte fails with code 2.
 Once decoded, a chat event never fails replay (`replay/chat.rs`): one that
@@ -397,9 +399,19 @@ revision is meaningful only within one instance.
   payload and a zero entity ID; action 43 (`nickname-device`) carries the
   target device as its entity ID and the nickname as its payload (empty
   clears). Executing either rejects a name that would change nothing.
-- **Chat commands (KCMD 44–48, v1.1).** The entity ID is the message ID. Action 48 (`pin-chat-message`) carries `on` (0 or 1) in the u8 field and no payload.
+- **Chat commands (KCMD 44–50, v1.1).** The entity ID is the message ID. Action 48 (`pin-chat-message`) carries `on` (0 or 1) in the u8 field and no payload.
+  Poll commands (#135): action 44 with content kind 3 posts a poll: the
+  `date` field carries the option count in its low byte (2–10) and 1 in the
+  next byte for multiple choice; the payload is the blob pair as for text (the
+  question and the options' text live in the sealed blob). Action 49
+  (`vote-chat-poll`) carries the choice as a bit set (bit n is option n) in
+  the `date` field, replacing the member's earlier vote; 0 clears it. Action
+  50 (`close-chat-poll`) carries nothing. Executing a vote needs an open poll
+  that shows, a choice the poll allows (one bit unless multiple choice, none
+  past the option count) and a change from the member's current vote; a close
+  needs the poll's author and a poll not yet closed.
   Action 44 (`post-chat-message`) carries the content kind in the u8 field
-  (1 text, 2 attachment) and a 64-byte payload: blob ref, then blob key; a
+  (1 text, 2 attachment, 3 poll) and a 64-byte payload: blob ref, then blob key; a
   reply adds a third 16 bytes, the ID of the message it answers (80 in all).
   Executing a reply requires a message the log holds that still shows (not
   deleted, not removed by a named admin).
@@ -420,7 +432,7 @@ revision is meaningful only within one instance.
 - **KCHQ v1** (chat page request, `kin_chat_page`): `"KCHQ"`, version 1,
   reserved u16, before u32 (the page ends before this message index;
   `0xFFFFFFFF` for the newest), limit u16 (1–500), flags u8 (bit 0: texts the
-  arena holds; bit 1: retired blobs; bit 2: reactions; bit 3: pins), reserved u8, admin count u32 (at most
+  arena holds; bit 1: retired blobs; bit 2: reactions; bit 3: pins; bit 4: polls), reserved u8, admin count u32 (at most
   16), the admins' member IDs (16 bytes each, non-zero), then a record-less
   KINE context as for `kin_project`.
 - **KCHF v1** (chat search request, `kin_chat_search`, #124): `"KCHF"`,
@@ -464,7 +476,7 @@ revision is meaningful only within one instance.
   flags u8 @71 (bit 0 everyone, bit 1 members are named; #130), blob ref @72 (zero unless live or edited), text offset
   u32 @104 and length u32 @108 (length 0: the arena doesn't hold the text),
   reaction groups u32 @112 (0 unless the request asked for reactions and the
-  message is live or edited), named mentions u16 @116, 10 reserved
+  message is live or edited), named mentions u16 @116, poll option count u8 @118, poll flags u8 @119, poll voters u16 @120, 6 reserved
   (the named IDs follow the quotes in record order, 16 bytes each). Then 32 bytes of blob key per message (zero unless live or
   edited), the text bytes, and 32 bytes per retired blob: every blob replaced
   by an edit or deleted by its author, every blob brought by an event that
@@ -490,6 +502,13 @@ revision is meaningful only within one instance.
   named mentions: a count u32 (at most 10), then per pin, oldest pinned
   first, who pinned it (16) and the message as a quote entry (same layout and
   rules as above; only messages that show are listed).
+  When the request asked for polls (#135, flag bit 4), a poll's record carries
+  its option count at byte 118, flags at 119 (1 multiple choice, 2 closed) and
+  its voter count as a u16 at 120 (bytes 122–127 stay zero; all were reserved
+  zero before). The page then ends with the votes of each shown poll, in
+  record order: per voter, in ascending member order, the member ID (16), the
+  chosen options as a u16 bit set and 2 zero bytes (20 bytes). At most 64
+  voters are kept per poll. A member's vote is their latest, by logical time.
 - **KCHT v1 / KCHS v1** (chat texts, `kin_chat_text`): `"KCHT"`, version 1,
   reserved u16, count u32 (1–500), then per text: blob ref (32, non-zero),
   length u32, the UTF-8 text. Every entry is framed before any is stored. The
