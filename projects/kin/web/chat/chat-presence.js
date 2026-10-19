@@ -271,9 +271,11 @@ export class ChatPresence {
     this.active = false;
     this.onlineSent = false;
     this.onlineSequence = 0;
+    this.onlineIntent = 0;
     this.onlineChain = Promise.resolve();
     this.beatTimer = null;
-    this.lastReply = 0;
+    /** deviceId -> when its hello was last answered */
+    this.lastReplies = new Map();
     this.writeTimer = null;
     this.expiryTimer = null;
     this.lastWrite = 0;
@@ -643,6 +645,7 @@ export class ChatPresence {
       return false;
     }
     if (this.closed || typeof value.on !== "boolean") return false;
+    if ((this.watermarks.get(device.deviceId) ?? 0) >= envelope.deviceSequence) return false;
     this.watermarks.set(device.deviceId, envelope.deviceSequence);
     this.typers.set(device.memberId, value.on);
     this.armExpiry();
@@ -697,6 +700,8 @@ export class ChatPresence {
 
   sendOnline(on, hello) {
     this.onlineSent = on;
+    // A failed send only clears the flag if no later frame has been queued.
+    const intent = ++this.onlineIntent;
     const run = this.onlineChain.then(async () => {
       const { identity } = this.env;
       const epoch = await this.env.sendingEpoch();
@@ -708,10 +713,10 @@ export class ChatPresence {
       });
       const sent = this.env.sendLive(encoder.encode(JSON.stringify(envelope)), "presence");
       // Not connected: nothing was sent, so nothing needs an "away".
-      if (!sent && on) this.onlineSent = false;
+      if (!sent && on && this.onlineIntent === intent) this.onlineSent = false;
     });
     this.onlineChain = run.catch(() => {});
-    return run.catch(() => { if (on) this.onlineSent = false; });
+    return run.catch(() => { if (on && this.onlineIntent === intent) this.onlineSent = false; });
   }
 
   /** An online frame relayed by the service. Ignored while this member shows
@@ -738,11 +743,13 @@ export class ChatPresence {
       return false;
     }
     if (this.closed || !this.showsOnline || typeof value.on !== "boolean") return false;
+    // Frames can finish opening out of order: an older one must not undo a newer.
+    if ((this.onlineWatermarks.get(device.deviceId) ?? 0) >= envelope.deviceSequence) return false;
     this.onlineWatermarks.set(device.deviceId, envelope.deviceSequence);
     this.onlineTracker.set(device.deviceId, device.memberId, value.on);
     // A newcomer asked who is here: answer once in a while.
-    if (value.on && value.hello === true && this.active && this.now() - this.lastReply >= ONLINE_REPLY_MS) {
-      this.lastReply = this.now();
+    if (value.on && value.hello === true && this.active && this.now() - (this.lastReplies.get(device.deviceId) ?? -Infinity) >= ONLINE_REPLY_MS) {
+      this.lastReplies.set(device.deviceId, this.now());
       if (this.sendsOnline) void this.sendOnline(true, false);
     }
     this.armExpiry();
@@ -795,6 +802,7 @@ export class ChatPresence {
     this.typers.clear();
     this.onlineTracker.clear();
     this.onlineWatermarks.clear();
+    this.lastReplies.clear();
     this.slots = new Map();
     this.watermarks.clear();
     this.cursor = null;

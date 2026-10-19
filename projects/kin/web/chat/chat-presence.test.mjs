@@ -763,3 +763,50 @@ test("the online tracker expires devices on its own", () => {
   assert.deepEqual(tracker.active(), []);
   assert.equal(tracker.nextExpiry(), null);
 });
+
+test("frames that finish opening out of order never undo a newer one, and a failed beat doesn't hide a later away", async () => {
+  const h = await household();
+  const sam = h.open("sam"), alex = h.open("alex");
+  await Promise.all([sam.load(), alex.load()]);
+  sam.setActive(true);
+  await settleTasks();
+  sam.setActive(false);
+  await settleTasks();
+  const [beat, away] = h.frames.splice(0);
+  // The beat's key lookup is slow, so it finishes after the away.
+  let lookups = 0;
+  alex.env.epochKey = async () => { lookups += 1; if (lookups === 1) await new Promise((resolve) => setTimeout(resolve, 80)); return h.key; };
+  const first = alex.receiveOnline(beat.bytes);
+  const second = alex.receiveOnline(away.bytes);
+  await Promise.all([first, second]);
+  assert.deepEqual(alex.online(), [], "away stays away");
+  // Hello replies are throttled per sending device, not for everyone.
+  const sam2 = h.open("phone"), laptop = h.open("laptop");
+  await Promise.all([sam2.load(), laptop.load()]);
+  alex.setActive(true);
+  await settleTasks();
+  h.frames.splice(0);
+  sam2.setActive(true);
+  laptop.setActive(true);
+  await settleTasks();
+  await h.deliver(["alex"]);
+  await settleTasks();
+  assert.equal(h.frames.filter((frame) => frame.from === "alex").length, 2, "each newcomer is answered");
+});
+
+test("a beat that fails while the channel is down does not stop a later away being sent", async () => {
+  const h = await household();
+  let up = false;
+  const sam = h.open("sam", { liveUp: true });
+  sam.env.sendLive = (bytes, kind) => { if (!up) return false; h.frames.push({ from: "sam", bytes, kind }); return true; };
+  await sam.load();
+  sam.setActive(true);
+  await settleTasks();
+  up = true;
+  await h.advance(30_000);
+  await settleTasks();
+  const sent = h.frames.length;
+  sam.setActive(false);
+  await settleTasks();
+  assert.equal(h.frames.length, sent + 1, "the away goes out");
+});

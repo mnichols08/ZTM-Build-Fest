@@ -1831,7 +1831,9 @@ and receive a short ID suffix in selection/management labels until renamed.
   readers). The line is plain text, not announced on every change.
 - Nothing says when someone was last here, and nothing is kept: a member is
   online for at most 70 seconds after their last heartbeat, a hidden or locked
-  device says "away" at once where it can, and a reload starts empty.
+  device says "away" at once where it can (not when the page is closed or Kin
+  locks: the keys go first, so the others see it run out within 70 seconds),
+  and a reload starts empty.
 - **Settings → Chat → Show when I'm online** (on by default) syncs to all of
   a member's devices. Turning it off stops sending and also hides everyone
   else's status, and the copy says so. Members with no chat access neither
