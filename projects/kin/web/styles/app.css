@@ -850,8 +850,8 @@ button.chat-quote:hover, button.chat-quote:focus-visible { color: var(--ink); }
 .chat-form { grid-template-columns: minmax(0, 1fr); }
 .chat-form textarea { min-height: calc(var(--tap) * 1.5); max-height: 40vh; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; resize: vertical; }
 .chat-form-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
-.chat-cancel { min-height: var(--tap); padding-inline: 14px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
-.chat-cancel[hidden] { display: none; }
+.chat-cancel, .chat-stop-send { min-height: var(--tap); padding-inline: 14px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
+.chat-cancel[hidden], .chat-stop-send[hidden] { display: none; }
 .chat-edited { color: var(--ink-muted); }
 .chat-form.chat-editing { border-color: var(--accent); background: var(--accent-soft); }
 .chat-form.chat-editing > label { color: var(--accent); }
@@ -944,7 +944,7 @@ kin-emoji-picker { display: contents; }
 .emoji-heading, .emoji-status { margin: 0; color: var(--ink-muted); font-size: 13px; font-weight: 650; }
 @media (forced-colors: active) {
   .chat-scroll, .chat-menu, .chat-row.own { border: 1px solid CanvasText; }
-  .chat-older, .chat-jump, .chat-cancel, .chat-menu-button { border: 1px solid ButtonText; }
+  .chat-older, .chat-jump, .chat-cancel, .chat-stop-send, .chat-menu-button { border: 1px solid ButtonText; }
   .emoji-panel { border: 1px solid CanvasText; }
   .emoji-toggle[aria-expanded="true"] { outline: 2px solid Highlight; }
   .emoji-categories button[aria-pressed="true"] { outline: 2px solid Highlight; }
@@ -1443,3 +1443,5 @@ kin-notifications .field-error:empty { display: none; }
 .chat-poll-field-list li { display: flex; gap: .5rem; align-items: center; }
 .chat-poll-field-list input { flex: 1; min-width: 0; }
 .chat-poll-many { display: flex; gap: .5rem; align-items: center; min-height: 2.75rem; }
+.chat-form.chat-dropping, form.chat-dropping { outline: 2px dashed var(--ink); outline-offset: 2px; }
+.chat-pending progress { flex: 1 1 120px; min-width: 80px; max-width: 240px; }

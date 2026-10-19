@@ -1029,6 +1029,50 @@ test("photos and files go to the other device in parts, and deleting the message
   assert.deepEqual(Array.from(heard), Array.from(speech), "the recording arrives whole");
 });
 
+test("sending files reports progress per file, and cancelling leaves no sealed part behind", { timeout: 60_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs });
+  const a = await openRoom(phone, s);
+  const held = async () => (await a.blobs.store.inventory()).length;
+  const slip = new File([new Uint8Array(2.5 * 1024 * 1024).fill(3)], "Slip.pdf", { type: "application/pdf" });
+  const note = new File([new Uint8Array(100).fill(4)], "note.txt", { type: "text/plain" });
+
+  const seen = [];
+  await a.room.sendAttachments({ text: "", files: [slip, note], onProgress: (progress) => seen.push(progress) });
+  assert.deepEqual(seen.filter((entry) => entry.index === 0).map((entry) => entry.done), [1048576, 2097152, 2621440, 2621440], "a step per 1 MiB part, then complete");
+  assert.deepEqual(seen.filter((entry) => entry.index === 1).map((entry) => [entry.done, entry.total]), [[100, 100], [100, 100]]);
+  const afterSend = await held();
+
+  // Cancelled between parts of the second file: that file's sealed parts and the first file's are retired.
+  const controller = new AbortController();
+  await assert.rejects(
+    a.room.sendAttachments({ text: "", files: [note, slip], signal: controller.signal, onProgress: ({ index, done }) => { if (index === 1 && done >= 1048576) controller.abort(); } }),
+    (error) => error.code === "chat_attachment_cancelled",
+  );
+  assert.equal(await held(), afterSend, "nothing from the cancelled send is kept");
+  assert.equal(a.room.page().messages.filter((entry) => entry.contentKind === "attachment").length, 1, "and no message was posted");
+
+  // Cancelled after the last part is sealed (the common case for a small file): still stopped.
+  const late = new AbortController();
+  await assert.rejects(
+    a.room.sendAttachments({ text: "", files: [note], signal: late.signal, onProgress: ({ done, total }) => { if (done === total) late.abort(); } }),
+    (error) => error.code === "chat_attachment_cancelled",
+  );
+  assert.equal(await held(), afterSend, "the sealed part and manifest are gone");
+
+  // A progress callback that throws doesn't break sending or leak.
+  await a.room.sendAttachments({ text: "", files: [note], onProgress: () => { throw new Error("broken"); } });
+  assert.equal(a.room.page().messages.filter((entry) => entry.contentKind === "attachment").length, 2);
+  const afterBroken = await held();
+
+  // Cancelled before it starts.
+  const early = new AbortController();
+  early.abort();
+  await assert.rejects(a.room.sendAttachments({ text: "", files: [note], signal: early.signal }), (error) => error.code === "chat_attachment_cancelled");
+  assert.equal(await held(), afterBroken);
+});
+
 test("read receipts travel through the real receipt route, sealed, and survive the other device's sync", { timeout: 30_000 }, async (t) => {
   const s = await service(t);
   const epochs = new Map([[1, await generateHouseholdKey()]]);
