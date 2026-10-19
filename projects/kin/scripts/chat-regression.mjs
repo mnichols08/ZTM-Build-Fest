@@ -664,7 +664,9 @@ export async function chatRegressions() {
   const presenceListeners = new Set();
   const presence = {
     marks: [], typedCount: 0, stoppedCount: 0, readersByMessage: new Map(), typingIds: [], sendsReceipts: true,
-    get settings() { return { receipts: this.sendsReceipts, typing: this.sendsTyping !== false }; },
+    onlineIds: [],
+    get settings() { return { receipts: this.sendsReceipts, typing: this.sendsTyping !== false, online: this.sendsOnline !== false }; },
+    online() { return this.sendsOnline === false ? [] : this.onlineIds; },
     markRead(message) { this.marks.push(message.messageId); return true; },
     readers(message) { return this.sendsReceipts ? this.readersByMessage.get(message.messageId) ?? [] : []; },
     typing() { return this.typingIds; },
@@ -768,6 +770,29 @@ export async function chatRegressions() {
   await settle();
   check(presence.stoppedCount >= 1, "sending stops it");
 
+  // Online now (#128): one plain line at the top, and a dot by the author
+  // of a message, both only while the member shows their own status.
+  {
+    chat.room = room;
+    await settle();
+    const line = chat.querySelector(".chat-online");
+    check(line.hidden, "nobody online: no line");
+    presence.onlineIds = [third];
+    await presenceChanged();
+    check(!line.hidden && line.textContent.trim() === "Online now: Adult 3", `the line names who is online (${line.textContent})`);
+    check(!line.hasAttribute("aria-live") && line.getAttribute("role") !== "status", "and is not announced on every change");
+    check(chat.querySelector(".chat-online-dot"), "with a dot");
+    presence.sendsOnline = false;
+    await presenceChanged();
+    check(line.hidden, "showing no status of my own hides everyone's");
+    presence.sendsOnline = true;
+    presence.onlineIds = [];
+    await presenceChanged();
+    check(line.hidden, "and it goes when they leave");
+    chat.room = null;
+    await settle();
+  }
+
   // Settings → Chat: the two switches, per member, with the reciprocity said.
   if (customElements.get("kin-chat-settings")) {
     presence.sendsTyping = true;
@@ -776,6 +801,7 @@ export async function chatRegressions() {
       this.settingsCalls.push(change);
       if ("receipts" in change) this.sendsReceipts = change.receipts;
       if ("typing" in change) this.sendsTyping = change.typing;
+      if ("online" in change) this.sendsOnline = change.online;
       for (const listener of presenceListeners) listener();
     };
     const settings = document.createElement("kin-chat-settings");
@@ -786,7 +812,8 @@ export async function chatRegressions() {
     check(!settings.hidden, "and show once there is one");
     const boxes = [...settings.querySelectorAll('input[type="checkbox"]')];
     const labelOf = (box) => settings.querySelector(`label[for="${box.id}"]`)?.textContent;
-    check(boxes.length === 2 && labelOf(boxes[0]) === "Send read receipts" && labelOf(boxes[1]) === "Show when I'm typing", "two switches, named as the story names them");
+    check(boxes.length === 3 && labelOf(boxes[0]) === "Send read receipts" && labelOf(boxes[1]) === "Show when I'm typing" && labelOf(boxes[2]) === "Show when I'm online", "three switches, named as the stories name them");
+    check(/stop seeing when others are online/.test(settings.textContent), "turning online off says it hides theirs too");
     check(boxes.every((box) => box.checked), "both are on by default");
     check(/also stop seeing/.test(settings.textContent), "turning receipts off says it hides theirs too");
     boxes[0].click();
@@ -795,8 +822,12 @@ export async function chatRegressions() {
     boxes[1].click();
     await settle();
     check(presence.settingsCalls[1].typing === false && !boxes[1].checked, "typing off is saved on its own");
+    boxes[2].click();
+    await settle();
+    check(presence.settingsCalls[2].online === false && !boxes[2].checked, "online off is saved on its own");
     presence.sendsReceipts = true;
     presence.sendsTyping = true;
+    presence.sendsOnline = true;
     for (const listener of presenceListeners) listener();
     await settle();
     check(boxes.every((box) => box.checked), "a change made on another device shows here");

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { exportDevicePublicKeys, generateDeviceKeys, generateHouseholdKey } from "../sync/crypto.js";
 import {
-  ChatPresence, RECEIPT_WRITE_MS, TYPING_EXPIRE_MS, TYPING_SEND_MS, TypingTracker, compareCursors, cursorOf, hasRead, mergeCursors, readersOf,
+  ChatPresence, ONLINE_BEAT_MS, ONLINE_EXPIRE_MS, OnlineTracker, RECEIPT_WRITE_MS, TYPING_EXPIRE_MS, TYPING_SEND_MS, TypingTracker, compareCursors, cursorOf, hasRead, mergeCursors, readersOf,
   seenText, typingText,
 } from "./chat-presence.js";
 
@@ -133,7 +133,7 @@ async function household() {
       sendingEpoch: async () => 1,
       signingKey: () => who.keys.signingPrivateKey,
       devices: () => directory,
-      sendLive: (bytes) => { if (!liveUp) return false; frames.push({ from: name, bytes }); return true; },
+      sendLive: (bytes, kind = "typing") => { if (!liveUp) return false; frames.push({ from: name, bytes, kind }); return true; },
       store: { presence: async () => saved.value, savePresence: async (value) => { saved.value = structuredClone(value); } },
       now: () => clock.now,
       setTimer: fake.setTimer,
@@ -146,7 +146,10 @@ async function household() {
   /** Delivers the typing frames sent so far to the other devices. */
   const deliver = async (to) => {
     for (const frame of frames.splice(0)) {
-      for (const [name, presence] of presences) if (name !== frame.from && (!to || to.includes(name))) await presence.receiveTyping(frame.bytes);
+      for (const [name, presence] of presences) {
+        if (name === frame.from || (to && !to.includes(name))) continue;
+        await (frame.kind === "presence" ? presence.receiveOnline(frame.bytes) : presence.receiveTyping(frame.bytes));
+      }
     }
   };
   return { ...fake, people, directory, slots, log, open, frames, deliver, key };
@@ -156,7 +159,7 @@ async function household() {
 let running = new Map();
 async function settleTasks() {
   for (let round = 0; round < 3; round += 1) {
-    await Promise.all([...running.values()].flatMap((presence) => [presence.writing, presence.typingChain]));
+    await Promise.all([...running.values()].flatMap((presence) => [presence.writing, presence.typingChain, presence.onlineChain]));
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
@@ -600,4 +603,163 @@ test("a slot cursor dated far ahead is read as none", async () => {
   await sam.flush();
   await phone.refresh();
   assert.equal(phone.readers(message(1, ME)).length, 0);
+});
+
+test("a device is online while it heartbeats, a member while any device is, and none of it is kept (#128)", async () => {
+  const h = await household();
+  const sam = h.open("sam"), phone = h.open("phone"), laptop = h.open("laptop"), alex = h.open("alex");
+  await Promise.all([sam.load(), phone.load(), laptop.load(), alex.load()]);
+  sam.setActive(true);
+  await settleTasks();
+  assert.equal(h.frames.length, 1);
+  assert.equal(h.frames[0].kind, "presence");
+  assert.equal(new TextDecoder().decode(h.frames[0].bytes).includes(SAM), false, "nothing readable in the frame");
+  await h.deliver();
+  assert.deepEqual(phone.online(), [SAM]);
+  assert.deepEqual(alex.online(), [SAM]);
+  assert.deepEqual(sam.online(), [], "not myself");
+  // A heartbeat every 30 seconds keeps it going.
+  for (let round = 0; round < 4; round += 1) {
+    await h.advance(ONLINE_BEAT_MS);
+    await settleTasks();
+    await h.deliver();
+  }
+  assert.deepEqual(alex.online(), [SAM], "still here after two minutes");
+  // Connection lost (no frames arrive): gone within 70 seconds of the last one.
+  h.frames.splice(0);
+  await h.advance(ONLINE_EXPIRE_MS - 1);
+  assert.deepEqual(alex.online(), [SAM]);
+  await h.advance(1);
+  assert.deepEqual(alex.online(), []);
+  assert.ok(alex.changes.length >= 2, "the view is told when it runs out");
+  // Two devices of one member: online until both are away.
+  sam.setActive(false);
+  await settleTasks();
+  h.frames.splice(0);
+  phone.setActive(true);
+  laptop.setActive(true);
+  await settleTasks();
+  await h.deliver(["alex"]);
+  assert.deepEqual(alex.online(), [ME]);
+  phone.setActive(false);
+  await settleTasks();
+  await h.deliver(["alex"]);
+  assert.deepEqual(alex.online(), [ME], "the laptop is still here");
+  laptop.setActive(false);
+  await settleTasks();
+  await h.deliver(["alex"]);
+  assert.deepEqual(alex.online(), [], "away at once, not after 70 seconds");
+  // Nothing about it reaches the stored state.
+  assert.equal(JSON.stringify(alex.saved.value ?? {}).includes(SAM), false);
+  assert.equal(JSON.stringify([...h.slots.values()]).includes("online\":["), false);
+});
+
+test("a newcomer's hello is answered once, so it sees who is here without waiting", async () => {
+  const h = await household();
+  const sam = h.open("sam"), alex = h.open("alex");
+  await Promise.all([sam.load(), alex.load()]);
+  alex.setActive(true);
+  await settleTasks();
+  h.frames.splice(0);
+  sam.setActive(true);
+  await settleTasks();
+  await h.deliver(["alex"]);
+  await settleTasks();
+  assert.equal(h.frames.filter((frame) => frame.from === "alex").length, 1, "Alex answers");
+  await h.deliver(["sam"]);
+  assert.deepEqual(sam.online(), [ALEX]);
+  // A second hello right after is not answered again.
+  h.frames.splice(0);
+  sam.reconnected();
+  await settleTasks();
+  await h.deliver(["alex"]);
+  await settleTasks();
+  assert.equal(h.frames.filter((frame) => frame.from === "alex").length, 0);
+});
+
+test("turning the setting off stops my heartbeats and hides everyone's status, on all my devices", async () => {
+  const h = await household();
+  const phone = h.open("phone"), laptop = h.open("laptop"), sam = h.open("sam");
+  await Promise.all([phone.load(), laptop.load(), sam.load()]);
+  await phone.refresh();
+  sam.setActive(true);
+  phone.setActive(true);
+  laptop.setActive(true);
+  await settleTasks();
+  await h.deliver();
+  assert.deepEqual(phone.online(), [SAM]);
+  h.frames.splice(0);
+  await phone.setSettings({ online: false });
+  await settleTasks();
+  assert.deepEqual(phone.online(), [], "I see no one");
+  assert.equal(h.frames.filter((frame) => frame.from === "phone").length, 1, "one 'away', then nothing");
+  // The laptop learns from the slot and does the same.
+  await laptop.refresh();
+  await settleTasks();
+  assert.equal(laptop.settings.online, false);
+  assert.deepEqual(laptop.online(), []);
+  h.frames.splice(0);
+  await h.advance(ONLINE_BEAT_MS * 2);
+  await settleTasks();
+  assert.equal(h.frames.filter((frame) => frame.from === "phone" || frame.from === "laptop").length, 0, "no heartbeats from either");
+  // Frames that arrive anyway are ignored while it is off.
+  sam.reconnected();
+  await settleTasks();
+  await h.deliver(["phone", "laptop"]);
+  assert.deepEqual(phone.online(), []);
+  // On again: heartbeats resume.
+  await phone.setSettings({ online: true });
+  await settleTasks();
+  assert.ok(h.frames.some((frame) => frame.from === "phone"));
+});
+
+test("without chat access nothing is sent or shown; stale, forged and replayed online frames show nothing", async () => {
+  const h = await household();
+  let access = true;
+  const sam = h.open("sam"), alex = h.open("alex");
+  alex.env.hasAccess = () => access;
+  await Promise.all([sam.load(), alex.load()]);
+  sam.setActive(true);
+  await settleTasks();
+  const first = h.frames[0];
+  await h.deliver(["alex"]);
+  assert.deepEqual(alex.online(), [SAM]);
+  assert.equal(await alex.receiveOnline(first.bytes), false, "a replay shows nothing new");
+  access = false;
+  alex.accessChanged();
+  assert.deepEqual(alex.online(), [], "no access: cleared");
+  alex.setActive(true);
+  await settleTasks();
+  assert.equal(h.frames.filter((frame) => frame.from === "alex").length, 0, "and nothing sent");
+  access = true;
+  alex.accessChanged();
+  await settleTasks();
+  assert.equal(h.frames.filter((frame) => frame.from === "alex").length, 1, "access back: says it is here");
+  // Forged: garbage and a frame from nobody.
+  assert.equal(await alex.receiveOnline(new TextEncoder().encode("not json")), false);
+  assert.equal(await alex.receiveOnline(new TextEncoder().encode(JSON.stringify({ deviceId: id(0x99) }))), false);
+  // Stale: sealed a minute ago.
+  const stale = await household();
+  const old = stale.open("sam"), watcher = stale.open("alex");
+  await Promise.all([old.load(), watcher.load()]);
+  old.setActive(true);
+  await settleTasks();
+  stale.clock.timers = [];
+  await stale.advance(60_000);
+  await stale.deliver();
+  assert.deepEqual(watcher.online(), [], "a frame sealed long ago shows nothing");
+});
+
+test("the online tracker expires devices on its own", () => {
+  let now = 0;
+  const tracker = new OnlineTracker({ now: () => now });
+  tracker.set("d1", "m1", true);
+  tracker.set("d2", "m1", true);
+  now = 69_999;
+  assert.deepEqual(tracker.active(), ["m1"]);
+  tracker.set("d2", "m1", false);
+  tracker.set("d1", "m1", true);
+  now = 140_000;
+  assert.deepEqual(tracker.active(), []);
+  assert.equal(tracker.nextExpiry(), null);
 });

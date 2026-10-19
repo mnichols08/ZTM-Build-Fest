@@ -234,9 +234,11 @@ export class SyncCoordinator {
       onHint: () => this.hinted(),
       // Typing frames and receipt changes go to the chat room (#120).
       onTyping: (bytes) => void this.chat?.receiveTyping(bytes),
+      onPresence: (bytes) => void this.chat?.receivePresence(bytes),
       onReceipts: () => this.chat?.receiptsChanged(),
       onUp: () => {
         this.liveUp = true;
+        this.chat?.liveUp();
         this.updatePollInterval();
         // Catch up on anything missed while disconnected (including events
         // accepted before the service registered this socket), and send
@@ -670,7 +672,7 @@ export class SyncCoordinator {
       this.chat = room;
       this.chatOpenError = null;
       // Typing frames go out on the live channel when this tab holds it.
-      room?.setLiveSender((bytes) => this.live?.send(LIVE_TYPE.TYPING, bytes) ?? false);
+      room?.setLiveSender((bytes, kind) => this.live?.send(kind === "presence" ? LIVE_TYPE.PRESENCE : LIVE_TYPE.TYPING, bytes) ?? false);
       if (room) {
         try { this.onChatRoom(room); } catch { /* the view's trouble isn't sync's */ }
       }

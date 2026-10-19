@@ -481,3 +481,18 @@ test("the coordinator hands typing frames and receipt hints to the chat room, an
   assert.equal(room.send(Uint8Array.of(1)), false, "no channel, no typing");
   coordinator.stop();
 });
+
+test("presence frames reach the chat once up and go out as record type 5 (#128)", () => {
+  const seen = [];
+  const { live, sockets } = channel({ onPresence: (bytes) => seen.push([...bytes]) });
+  live.start();
+  const socket = sockets[0];
+  Object.assign(socket, { readyState: 1, bufferedAmount: 0, sent: [], send(bytes) { this.sent.push(bytes); } });
+  socket.receive(record(LIVE_TYPE.PRESENCE, Uint8Array.of(1)));
+  assert.deepEqual(seen, [], "nothing before HELLO");
+  socket.receive(record(LIVE_TYPE.HELLO));
+  socket.receive(record(LIVE_TYPE.PRESENCE, Uint8Array.of(1, 2)));
+  assert.deepEqual(seen, [[1, 2]]);
+  assert.equal(live.send(LIVE_TYPE.PRESENCE, Uint8Array.of(7)), true);
+  assert.deepEqual([...socket.sent[0]], [5, 0, 0, 0, 1, 0, 0, 0, 7]);
+});

@@ -1381,3 +1381,55 @@ test("members pin messages up to the limit, anyone unpins, and deleting for ever
   assert.equal(c.room.page({ includePins: true }).pins.length, 9, "and it syncs");
   assert.equal(a.room.page().total, before + 0, "no new messages");
 });
+
+test("rooms report who is online while Kin is visible, and go away when hidden or closed (#128)", { timeout: 60_000 }, async (t) => {
+  const listeners = new Map();
+  const doc = {
+    visibilityState: "visible",
+    addEventListener: (type, fn) => listeners.set(type, [...(listeners.get(type) ?? []), fn]),
+    removeEventListener: (type, fn) => listeners.set(type, (listeners.get(type) ?? []).filter((entry) => entry !== fn)),
+  };
+  const fire = (type) => (listeners.get(type) ?? []).forEach((fn) => fn());
+  const hadDocument = Object.hasOwn(globalThis, "document");
+  const previous = globalThis.document;
+  globalThis.document = doc;
+  t.after(() => { if (hadDocument) globalThis.document = previous; else delete globalThis.document; });
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs, householdAdmin: true });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs });
+  const devices = [phone.entry, laptop.entry];
+  const a = await openRoom(phone, s), c = await openRoom(laptop, s);
+  t.after(() => { a.room.close(); c.room.close(); });
+  await a.room.sync({ status: STATUS, devices });
+  await c.room.sync({ status: STATUS, devices });
+  // A loopback live channel between the two rooms.
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
+  const link = (from, to) => from.room.setLiveSender((bytes, kind) => {
+    void (kind === "presence" ? to.room.receivePresence(bytes) : to.room.receiveTyping(bytes));
+    return true;
+  });
+  link(a, c);
+  await settle();
+  assert.deepEqual(c.room.presence.online(), [s.admin.memberId], "c hears a's hello");
+  assert.deepEqual(a.room.presence.online(), [], "a has not heard from c yet");
+  link(c, a);
+  c.room.liveUp();
+  await settle();
+  assert.deepEqual(a.room.presence.online(), [s.partner.memberId], "c said hello when its channel came up");
+  // Hidden: away at once.
+  doc.visibilityState = "hidden";
+  fire("visibilitychange");
+  await settle();
+  assert.deepEqual(c.room.presence.online(), [], "hidden counts as away");
+  doc.visibilityState = "visible";
+  fire("visibilitychange");
+  await settle();
+  assert.deepEqual(c.room.presence.online(), [s.admin.memberId]);
+  // Locking closes the room: no more heartbeats (the "away" frame is best
+  // effort, since the keys go with the room; the others' view runs out in 70 s).
+  c.room.close();
+  assert.equal(c.room.presence.active, false);
+  assert.equal(c.room.presence.beatTimer, null);
+  a.room.close();
+});

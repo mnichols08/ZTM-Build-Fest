@@ -21,7 +21,7 @@
 // being deleted) stops reconnecting: the coordinator's next HTTP sync
 // meets the same refusal and shows the signed-out or deleted state.
 
-export const LIVE_TYPE = Object.freeze({ HELLO: 1, SYNC_HINT: 2, TYPING: 3, RECEIPTS: 4 });
+export const LIVE_TYPE = Object.freeze({ HELLO: 1, SYNC_HINT: 2, TYPING: 3, RECEIPTS: 4, PRESENCE: 5 });
 export const LIVE_CLOSE = Object.freeze({
   SESSION_ENDED: 4401,
   ACCESS_LOST: 4403,
@@ -65,6 +65,7 @@ export class LiveChannel {
    * @param options.onDown     the socket closed and will reconnect: poll again
    * @param options.onEnd      access was lost ({ code }); no reconnecting
    * @param options.onTyping   a sealed typing frame relayed by the service (#122)
+   * @param options.onPresence a sealed online frame relayed by the service (#128)
    * @param options.onReceipts a member's read-receipt slot changed (#121)
    */
   constructor({
@@ -75,6 +76,7 @@ export class LiveChannel {
     onDown = () => {},
     onEnd = () => {},
     onTyping = () => {},
+    onPresence = () => {},
     onReceipts = () => {},
     WebSocket: Socket = globalThis.WebSocket,
     locks = globalThis.navigator?.locks ?? null,
@@ -83,7 +85,7 @@ export class LiveChannel {
     clearTimer = (timer) => clearTimeout(timer),
     random = Math.random,
   }) {
-    Object.assign(this, { url, lockName, onHint, onUp, onDown, onEnd, onTyping, onReceipts, Socket, locks, events, setTimer, clearTimer, random });
+    Object.assign(this, { url, lockName, onHint, onUp, onDown, onEnd, onTyping, onPresence, onReceipts, Socket, locks, events, setTimer, clearTimer, random });
     this.socket = null;
     this.timer = null;
     this.attempts = 0;
@@ -213,6 +215,8 @@ export class LiveChannel {
         this.onHint();
       } else if (record.type === LIVE_TYPE.TYPING && this.up) {
         this.onTyping(record.payload.slice());
+      } else if (record.type === LIVE_TYPE.PRESENCE && this.up) {
+        this.onPresence(record.payload.slice());
       } else if (record.type === LIVE_TYPE.RECEIPTS && this.up) {
         this.onReceipts();
       }

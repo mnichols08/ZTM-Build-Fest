@@ -246,11 +246,20 @@ export class ChatRoom {
       signingKey: () => this.signingKey(),
       devices: () => this.directory,
       canPost: () => this.access === "write",
-      sendLive: (bytes) => Boolean(this.liveSender?.(bytes)),
+      hasAccess: () => this.access !== "none",
+      sendLive: (bytes, kind = "typing") => Boolean(this.liveSender?.(bytes, kind)),
       store,
       now: () => this.now(),
       onChange: () => this.notifyPresence(),
     });
+    // Visible and unlocked is what "online" means (#128).
+    this.onVisibility = () => this.updateActivity();
+    this.onPageHide = () => this.presence.setActive(false);
+    if (typeof document !== "undefined" && document.addEventListener) {
+      document.addEventListener("visibilitychange", this.onVisibility);
+      globalThis.addEventListener?.("pagehide", this.onPageHide);
+      globalThis.addEventListener?.("pageshow", this.onVisibility);
+    }
     // What the admin's chat policy lets this member do (#123): "write"
     // (read and post), "read" or "none". The service says so on every pass.
     this.access = "write";
@@ -296,6 +305,24 @@ export class ChatRoom {
    * whether the frame went out. Null when the channel is down. */
   setLiveSender(send) {
     this.liveSender = send;
+    this.updateActivity();
+  }
+
+  /** Online now (#128): this device counts as online while Kin is unlocked
+   * (this room is open) and the page is visible. */
+  updateActivity() {
+    const visible = typeof document !== "undefined" && document.visibilityState === "visible";
+    this.presence.setActive(!this.closed && visible);
+  }
+
+  /** The live channel came up: tell the others straight away. */
+  liveUp() {
+    this.presence.reconnected();
+  }
+
+  /** An online frame relayed by the service (live channel). */
+  receivePresence(bytes) {
+    return this.presence.receiveOnline(bytes).catch(() => false);
   }
 
   /** A typing frame relayed by the service (live channel). */
@@ -1371,6 +1398,11 @@ export class ChatRoom {
   /** Drops the decrypted log (on lock or stop). */
   close() {
     if (this.closed) return;
+    if (typeof document !== "undefined" && document.removeEventListener) {
+      document.removeEventListener("visibilitychange", this.onVisibility);
+      globalThis.removeEventListener?.("pagehide", this.onPageHide);
+      globalThis.removeEventListener?.("pageshow", this.onVisibility);
+    }
     this.presence.close();
     this.closed = true;
     this.records.clear();

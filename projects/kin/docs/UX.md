@@ -1822,3 +1822,17 @@ and receive a short ID suffix in selection/management labels until renamed.
   order.
 - Deleting a pinned message for everyone (or an admin removing it) takes it
   off the list. "Delete for me" only hides it from this member's list.
+
+# 25. Online now (#128)
+
+- A green dot and "Online now" mark members who have Kin unlocked and visible
+  on any device: a line at the top of Chat ("Online now: Sam, Alex") and a dot
+  after an author's name on their messages (with "online now" for screen
+  readers). The line is plain text, not announced on every change.
+- Nothing says when someone was last here, and nothing is kept: a member is
+  online for at most 70 seconds after their last heartbeat, a hidden or locked
+  device says "away" at once where it can, and a reload starts empty.
+- **Settings → Chat → Show when I'm online** (on by default) syncs to all of
+  a member's devices. Turning it off stops sending and also hides everyone
+  else's status, and the copy says so. Members with no chat access neither
+  send nor see it; read-only members can do both.

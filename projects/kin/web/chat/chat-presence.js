@@ -28,6 +28,15 @@
 // same way (kind "typing", `on` true or false), relayed by the service to the
 // household's other chat-allowed devices and never stored by it or by a
 // device. A receiver shows it for TYPING_EXPIRE_MS unless refreshed.
+//
+// Online frame (#128). Also ephemeral and sealed the same way (kind "online",
+// `on` true for a heartbeat, false for "away"; `hello` true on the first
+// heartbeat after unlocking, showing or reconnecting, which asks the others to
+// answer once so a newcomer sees who is here without waiting). A device sends
+// one every ONLINE_BEAT_MS while Kin is unlocked and visible; a member is
+// online while any of their devices sent one in the last ONLINE_EXPIRE_MS.
+// Nothing about it is stored: not by the service, not by a device. The member's
+// `online` setting rides in the receipt slot with the other two.
 import { decryptWithDeviceHistory, encryptEvent } from "../sync/crypto.js";
 
 export const SLOT_VERSION = 1;
@@ -35,6 +44,10 @@ export const RECEIPT_WRITE_MS = 2_000;
 export const RECEIPT_REFRESH_MS = 15_000;
 export const TYPING_SEND_MS = 3_000;
 export const TYPING_EXPIRE_MS = 6_000;
+export const ONLINE_BEAT_MS = 30_000;
+export const ONLINE_EXPIRE_MS = 70_000;
+/** Answers to "hello" frames are sent at most this often. */
+export const ONLINE_REPLY_MS = 5_000;
 /** A typing frame sealed longer ago than this (or further ahead) is dropped. */
 export const TYPING_FRESH_MS = 15_000;
 /** A cursor dated further ahead than this is not believed: one message with a
@@ -179,6 +192,42 @@ export class TypingTracker {
   }
 }
 
+/** Tracks which devices are online: a member is online while any of their
+ * devices sent a heartbeat recently. Nothing is kept past that. */
+export class OnlineTracker {
+  constructor({ now = () => Date.now(), expireMs = ONLINE_EXPIRE_MS } = {}) {
+    this.now = now;
+    this.expireMs = expireMs;
+    /** deviceId -> { memberId, until } */
+    this.devices = new Map();
+  }
+
+  set(deviceId, memberId, on) {
+    if (on) this.devices.set(deviceId, { memberId, until: this.now() + this.expireMs });
+    else this.devices.delete(deviceId);
+  }
+
+  /** Members with a device still online, sorted; drops the ones that ran out. */
+  active() {
+    const now = this.now();
+    const members = new Set();
+    for (const [deviceId, entry] of this.devices) {
+      if (entry.until <= now) this.devices.delete(deviceId);
+      else members.add(entry.memberId);
+    }
+    return [...members].sort();
+  }
+
+  nextExpiry() {
+    if (!this.devices.size) return null;
+    return Math.max(1, Math.min(...[...this.devices.values()].map((entry) => entry.until)) - this.now());
+  }
+
+  clear() {
+    this.devices.clear();
+  }
+}
+
 /* ---------- The room's presence ---------- */
 
 /**
@@ -197,7 +246,7 @@ export class ChatPresence {
     this.now = env.now ?? (() => Date.now());
     this.setTimer = env.setTimer ?? ((callback, ms) => setTimeout(callback, ms));
     this.clearTimer = env.clearTimer ?? ((timer) => clearTimeout(timer));
-    this.settings = { receipts: true, typing: true, settingsAt: 0 };
+    this.settings = { receipts: true, typing: true, online: true, settingsAt: 0 };
     this.cursor = null;
     this.readAt = 0;
     this.revision = 0;
@@ -216,6 +265,15 @@ export class ChatPresence {
     this.typingOn = false;
     this.typingSequence = 0;
     this.typingChain = Promise.resolve();
+    // Online now (#128).
+    this.onlineTracker = new OnlineTracker({ now: this.now });
+    this.onlineWatermarks = new Map();
+    this.active = false;
+    this.onlineSent = false;
+    this.onlineSequence = 0;
+    this.onlineChain = Promise.resolve();
+    this.beatTimer = null;
+    this.lastReply = 0;
     this.writeTimer = null;
     this.expiryTimer = null;
     this.lastWrite = 0;
@@ -231,6 +289,7 @@ export class ChatPresence {
     const saved = (await this.env.store.presence()) ?? {};
     if (typeof saved.receipts === "boolean") this.settings.receipts = saved.receipts;
     if (typeof saved.typing === "boolean") this.settings.typing = saved.typing;
+    if (typeof saved.online === "boolean") this.settings.online = saved.online;
     if (Number.isSafeInteger(saved.settingsAt)) this.settings.settingsAt = saved.settingsAt;
     if (isCursor(saved.cursor) && this.settings.receipts) this.cursor = saved.cursor;
     if (Number.isSafeInteger(saved.readAt)) this.readAt = saved.readAt;
@@ -248,7 +307,7 @@ export class ChatPresence {
   async persist() {
     try {
       await this.env.store.savePresence({
-        receipts: this.settings.receipts, typing: this.settings.typing, settingsAt: this.settings.settingsAt,
+        receipts: this.settings.receipts, typing: this.settings.typing, online: this.settings.online, settingsAt: this.settings.settingsAt,
         cursor: this.cursor, readAt: this.readAt, revision: this.revision, dirty: this.dirty,
       });
     } catch { /* kept in memory; the next change saves it */ }
@@ -259,10 +318,22 @@ export class ChatPresence {
   get mayPost() { return this.env.canPost ? this.env.canPost() : true; }
   get sendsReceipts() { return this.settings.receipts && !this.unverified && this.mayPost; }
   get sendsTyping() { return this.settings.typing && !this.unverified && this.mayPost; }
+  /** Online status (#128) needs chat access, not posting: a read-only member
+   * can be seen online and see others. */
+  get hasAccess() { return this.env.hasAccess ? this.env.hasAccess() : true; }
+  get sendsOnline() { return this.settings.online && !this.unverified && this.hasAccess; }
+  /** Reciprocity: someone who shows no status sees no one else's. */
+  get showsOnline() { return this.sendsOnline; }
 
-  /** The access level changed: stop any typing at once. */
+  /** The access level changed: stop any typing at once, and go away or come
+   * back as chat access is lost or given. */
   accessChanged() {
     if (!this.mayPost) this.stopTyping();
+    if (!this.hasAccess) {
+      this.stopBeating();
+      this.onlineTracker.clear();
+      this.env.onChange?.();
+    } else if (this.active) this.beat({ hello: true });
   }
 
   /** Reciprocity: someone who sends no receipts sees no one else's. */
@@ -305,7 +376,7 @@ export class ChatPresence {
   body() {
     return {
       v: SLOT_VERSION, kind: "receipt", cursor: this.settings.receipts ? this.cursor : null, readAt: this.readAt,
-      receipts: this.settings.receipts, typing: this.settings.typing, settingsAt: this.settings.settingsAt,
+      receipts: this.settings.receipts, typing: this.settings.typing, online: this.settings.online, settingsAt: this.settings.settingsAt,
     };
   }
 
@@ -365,6 +436,7 @@ export class ChatPresence {
     if (this.closed) return false;
     this.lastRefresh = this.now();
     this.hinted = false;
+    const wasUnverified = this.unverified;
     const { identity } = this.env;
     const response = await this.env.request("/api/chat/receipts");
     if (!Array.isArray(response?.slots)) throw new ChatPresenceError("Chat received invalid read receipts.");
@@ -409,7 +481,7 @@ export class ChatPresence {
       const slot = {
         revision: row.revision, cursor: value.receipts === false ? null : cursor,
         readAt: Number.isSafeInteger(value.readAt) ? value.readAt : 0,
-        receipts: value.receipts !== false, typing: value.typing !== false,
+        receipts: value.receipts !== false, typing: value.typing !== false, online: value.online !== false,
         settingsAt: Number.isSafeInteger(value.settingsAt) ? value.settingsAt : 0,
       };
       if (row.memberId === identity.memberId) {
@@ -428,6 +500,8 @@ export class ChatPresence {
     if (!ownUnreadable || this.settings.settingsAt !== 0) this.unverified = false;
     else this.unverified = true;
     this.slots = next;
+    // The member's settings just became known: now this device may say it is here.
+    if (wasUnverified && !this.unverified && this.active) this.beat({ hello: true });
     if (changed) this.env.onChange?.();
     if (this.dirty) this.scheduleWrite();
     return changed;
@@ -440,14 +514,17 @@ export class ChatPresence {
     this.unverified = false;
     // Equal times on two devices: the more private choice wins, so they agree.
     const tie = slot.settingsAt === this.settings.settingsAt
-      && (slot.receipts !== this.settings.receipts || slot.typing !== this.settings.typing)
-      && (!slot.receipts || !slot.typing);
+      && (slot.receipts !== this.settings.receipts || slot.typing !== this.settings.typing || slot.online !== this.settings.online)
+      && (!slot.receipts || !slot.typing || !slot.online);
     if (slot.settingsAt > this.settings.settingsAt || tie) {
+      const wasOnline = this.settings.online;
       this.settings = {
         receipts: tie ? slot.receipts && this.settings.receipts : slot.receipts,
         typing: tie ? slot.typing && this.settings.typing : slot.typing,
+        online: tie ? slot.online && this.settings.online : slot.online,
         settingsAt: slot.settingsAt,
       };
+      if (wasOnline !== this.settings.online) this.onlineSettingChanged();
       // The slot's progress replaces this device's: a device that was away
       // while receipts went off and on must not publish what was cleared.
       this.cursor = this.settings.receipts ? slot.cursor : null;
@@ -466,7 +543,7 @@ export class ChatPresence {
       if (compareCursors(this.cursor, slot.cursor) !== 0) this.touch();
     }
     if (slot.settingsAt < this.settings.settingsAt || (slot.settingsAt === this.settings.settingsAt
-      && (slot.receipts !== this.settings.receipts || slot.typing !== this.settings.typing))) this.touch();
+      && (slot.receipts !== this.settings.receipts || slot.typing !== this.settings.typing || slot.online !== this.settings.online))) this.touch();
     if (changed) void this.persist();
     return changed;
   }
@@ -490,10 +567,12 @@ export class ChatPresence {
 
   /** Turns sending receipts and typing on or off, on all this member's
    * devices. Off clears the stored cursor; typing off stops the indicator now. */
-  async setSettings({ receipts = this.settings.receipts, typing = this.settings.typing }) {
+  async setSettings({ receipts = this.settings.receipts, typing = this.settings.typing, online = this.settings.online }) {
     const now = this.now();
     const wasReceipts = this.settings.receipts;
-    this.settings = { receipts: Boolean(receipts), typing: Boolean(typing), settingsAt: Math.max(now, this.settings.settingsAt + 1) };
+    const wasOnline = this.settings.online;
+    this.settings = { receipts: Boolean(receipts), typing: Boolean(typing), online: Boolean(online), settingsAt: Math.max(now, this.settings.settingsAt + 1) };
+    if (wasOnline !== this.settings.online) this.onlineSettingChanged();
     if (!this.settings.receipts) { this.cursor = null; this.readAt = 0; }
     else if (!wasReceipts) this.readAt = now;
     if (!this.settings.typing) this.stopTyping();
@@ -571,14 +650,123 @@ export class ChatPresence {
     return true;
   }
 
+  /* --- online now (#128) --- */
+
+  /** Kin is unlocked and visible on this device (true), or locked, hidden or
+   * closing (false). Heartbeats run only while true. */
+  setActive(active) {
+    active = Boolean(active) && !this.closed;
+    if (active === this.active) return;
+    this.active = active;
+    if (active) this.beat({ hello: true });
+    else this.stopBeating();
+  }
+
+  /** The live channel came (back) up: say so at once. */
+  reconnected() {
+    if (this.active) this.beat({ hello: true });
+  }
+
+  /** The setting changed (here or from another device). */
+  onlineSettingChanged() {
+    if (!this.settings.online) {
+      this.stopBeating();
+      this.onlineTracker.clear();
+      this.env.onChange?.();
+    } else if (this.active) this.beat({ hello: true });
+  }
+
+  /** One heartbeat now, and the next after ONLINE_BEAT_MS. */
+  beat({ hello = false } = {}) {
+    this.clearTimer(this.beatTimer);
+    this.beatTimer = null;
+    if (this.closed || !this.active || !this.sendsOnline) return;
+    void this.sendOnline(true, hello);
+    this.beatTimer = this.setTimer(() => {
+      this.beatTimer = null;
+      this.beat();
+    }, ONLINE_BEAT_MS);
+  }
+
+  /** "Away": no more heartbeats, and one frame saying so if one was sent. */
+  stopBeating() {
+    this.clearTimer(this.beatTimer);
+    this.beatTimer = null;
+    if (this.onlineSent) void this.sendOnline(false, false);
+  }
+
+  sendOnline(on, hello) {
+    this.onlineSent = on;
+    const run = this.onlineChain.then(async () => {
+      const { identity } = this.env;
+      const epoch = await this.env.sendingEpoch();
+      const householdKey = await this.env.epochKey(epoch);
+      this.onlineSequence = Math.max(this.now(), this.onlineSequence + 1);
+      const envelope = await seal({
+        body: { v: SLOT_VERSION, kind: "online", on, ...(hello ? { hello: true } : {}) }, householdId: identity.householdId, deviceId: identity.deviceId,
+        sequence: this.onlineSequence, keyEpoch: epoch, householdKey, signingKey: this.env.signingKey(), now: this.now(),
+      });
+      const sent = this.env.sendLive(encoder.encode(JSON.stringify(envelope)), "presence");
+      // Not connected: nothing was sent, so nothing needs an "away".
+      if (!sent && on) this.onlineSent = false;
+    });
+    this.onlineChain = run.catch(() => {});
+    return run.catch(() => { if (on) this.onlineSent = false; });
+  }
+
+  /** An online frame relayed by the service. Ignored while this member shows
+   * no status of their own (reciprocity), and when unreadable, unsigned,
+   * replayed, stale or from this member. */
+  async receiveOnline(bytes) {
+    if (this.closed || !this.showsOnline) return false;
+    let envelope;
+    try {
+      envelope = JSON.parse(decoder.decode(bytes));
+    } catch {
+      return false;
+    }
+    const { identity } = this.env;
+    const device = this.env.devices().find((entry) => entry.deviceId === envelope?.deviceId);
+    if (!device || device.memberId === identity.memberId) return false;
+    if ((this.onlineWatermarks.get(device.deviceId) ?? 0) >= envelope.deviceSequence) return false;
+    const sealedAt = Number(envelope.logicalTime);
+    if (!Number.isFinite(sealedAt) || Math.abs(this.now() - sealedAt) > TYPING_FRESH_MS) return false;
+    let value;
+    try {
+      value = await open({ envelope, device, householdKey: await this.env.epochKey(envelope.keyEpoch), householdId: identity.householdId, kind: "online" });
+    } catch {
+      return false;
+    }
+    if (this.closed || !this.showsOnline || typeof value.on !== "boolean") return false;
+    this.onlineWatermarks.set(device.deviceId, envelope.deviceSequence);
+    this.onlineTracker.set(device.deviceId, device.memberId, value.on);
+    // A newcomer asked who is here: answer once in a while.
+    if (value.on && value.hello === true && this.active && this.now() - this.lastReply >= ONLINE_REPLY_MS) {
+      this.lastReply = this.now();
+      if (this.sendsOnline) void this.sendOnline(true, false);
+    }
+    this.armExpiry();
+    this.env.onChange?.();
+    return true;
+  }
+
+  /** Members online now, other than this one; empty while this member shows
+   * no status. */
+  online() {
+    if (!this.showsOnline) return [];
+    return this.onlineTracker.active().filter((memberId) => memberId !== this.env.identity.memberId);
+  }
+
   armExpiry() {
     this.clearTimer(this.expiryTimer);
     this.expiryTimer = null;
-    const wait = this.typers.nextExpiry();
+    const waits = [this.typers.nextExpiry(), this.onlineTracker.nextExpiry()].filter((wait) => wait !== null);
+    const wait = waits.length ? Math.min(...waits) : null;
     if (wait === null || this.closed) return;
     this.expiryTimer = this.setTimer(() => {
       this.expiryTimer = null;
       this.typers.active();
+      this.onlineTracker.active();
       this.armExpiry();
       this.env.onChange?.();
     }, wait);
@@ -597,11 +785,16 @@ export class ChatPresence {
     // Best effort: sealing is asynchronous and the room drops its keys right
     // after, so this may not go out. Receivers expire the indicator anyway.
     if (this.typingOn) void this.sendTyping(false);
+    if (this.onlineSent) void this.sendOnline(false, false);
     this.closed = true;
+    this.active = false;
     this.clearTimer(this.writeTimer);
     this.clearTimer(this.expiryTimer);
-    this.writeTimer = this.expiryTimer = null;
+    this.clearTimer(this.beatTimer);
+    this.writeTimer = this.expiryTimer = this.beatTimer = null;
     this.typers.clear();
+    this.onlineTracker.clear();
+    this.onlineWatermarks.clear();
     this.slots = new Map();
     this.watermarks.clear();
     this.cursor = null;

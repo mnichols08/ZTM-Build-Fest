@@ -680,6 +680,40 @@ more than five minutes ahead of the clock is not counted until its time comes
 (and a position that far ahead is ignored); and exactly 100 unread already
 shows `99+`.
 
+## Online now (v1.1, #128)
+
+Who has Kin open and visible right now. Like typing, it is a sealed frame on
+the live channel and nothing else: the service relays it and keeps nothing.
+
+- **Frames.** Live record type 5 `PRESENCE`, both ways. The payload is a
+  household-key sync envelope (JSON, at most 2,048 bytes, signed by the
+  sending device) whose plaintext is `{ "v": 1, "kind": "online", "on": bool,
+  "hello": true? }`. The service checks that it is small, valid JSON naming the
+  sender's own household and device, and not faster than a burst of 6 with 1
+  more every 2 seconds, then relays it unchanged to the household's other
+  connected devices whose member has chat access (read-only members send and
+  receive it: presence is not posting; "none" neither). It does not store,
+  count, log or index it.
+- **Heartbeat.** A device sends `on: true` every 30 seconds while Kin is
+  unlocked (its chat room is open) and the page is visible, and `on: false`
+  ("away") when it is hidden, locked or closing (best effort: a lock drops the
+  keys with the room, so there the others' view simply runs out). The first
+  heartbeat after unlocking, showing or reconnecting carries `hello: true`;
+  devices that are online answer it with one heartbeat, at most once every 5
+  seconds, so a newcomer sees who is here without waiting up to 30 seconds.
+- **Receiving.** A receiver opens a frame only from a device in the verified
+  directory that is another member's, drops replays (a per-device sequence
+  that only rises) and frames sealed more than 15 seconds ago, and marks the
+  member online until 70 seconds after the last heartbeat of any of their
+  devices. Nothing is persisted; a reload starts empty.
+- **Setting.** "Show when I'm online" (on by default) is the third setting in
+  the receipt slot (`online`, absent means on); it is written last-wins like
+  the other two, with the more private choice winning an exact tie. Turning it
+  off sends "away", stops heartbeats, and makes this member's devices ignore
+  everyone's frames (reciprocity), on every device of the member as it syncs.
+- **Limit.** The live channel is held by one tab of a browser; if that tab is
+  hidden while another tab of Kin is visible, the device reads as away.
+
 ## Read receipts and typing (v1.1, #120)
 
 Two small signals for the household chat, neither of them a chat event, and
