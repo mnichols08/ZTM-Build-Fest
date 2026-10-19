@@ -113,12 +113,28 @@ export async function fridgeRegressions(client, until) {
   const mouse = (type, point, buttons = 1) => client.send("Input.dispatchMouseEvent", { type, ...point, button: "left", buttons, clickCount: 1 });
   await page(`document.querySelector("kin-fridge .fridge-eraser").click()`);
   assert.equal(await page(`document.querySelector("kin-fridge .fridge-eraser").getAttribute("aria-pressed")`), "true");
-  // The pen stroke runs along y = 0.6 from x = 0.3; rub across it.
-  const rub = at(rect, 0.32, 0.55);
-  await mouse("mousePressed", rub);
-  for (let step = 1; step <= 8; step += 1) await mouse("mouseMoved", { x: rub.x, y: rub.y + step * 6 });
-  await mouse("mouseReleased", { x: rub.x, y: rub.y + 48 }, 0);
-  await until(async () => (await strokes()) === 1);
+  // Rub straight across the middle of the pen stroke, wherever it was stored.
+  const target = await page(`(() => {
+    const board = window.__fridgeRoom.board();
+    const stroke = board.strokes.at(-1);
+    const middle = Math.floor(stroke.points.length / 4) * 2;
+    const rect = document.querySelector("kin-fridge .fridge-door").getBoundingClientRect();
+    return { id: stroke.id, x: Math.round(rect.left + (stroke.points[middle] / 4096) * rect.width), y: Math.round(rect.top + (stroke.points[middle + 1] / 5461) * rect.height) };
+  })()`);
+  await mouse("mousePressed", { x: target.x, y: target.y - 24 });
+  for (let step = 1; step <= 8; step += 1) await mouse("mouseMoved", { x: target.x, y: target.y - 24 + step * 6 });
+  await mouse("mouseReleased", { x: target.x, y: target.y + 24 }, 0);
+  try {
+    await until(async () => (await strokes()) === 1);
+  } catch (error) {
+    const state = await page(`(() => {
+      const fridge = document.querySelector("kin-fridge");
+      return { tool: fridge.tool, stroke: fridge.stroke ? { pointerType: fridge.stroke.pointerType, erasing: Boolean(fridge.stroke.erasing) } : null, penDown: fridge.penDown,
+        status: fridge.querySelector(".fridge-status").textContent, strokes: window.__fridgeRoom.board().strokes.map((s) => ({ id: s.id.slice(0, 6), points: [...s.points].slice(0, 8) })) };
+    })()`);
+    error.message += ` — eraser at ${JSON.stringify(target)}; fridge ${JSON.stringify(state)}`;
+    throw error;
+  }
   await page(`document.querySelector("kin-fridge .fridge-history button:first-child").click()`);
   await until(async () => (await strokes()) === 2);
   assert.equal(await page(`document.querySelector("kin-fridge .fridge-status").textContent`), "Erase undone.");
