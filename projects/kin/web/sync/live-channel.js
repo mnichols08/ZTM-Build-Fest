@@ -21,7 +21,7 @@
 // being deleted) stops reconnecting: the coordinator's next HTTP sync
 // meets the same refusal and shows the signed-out or deleted state.
 
-export const LIVE_TYPE = Object.freeze({ HELLO: 1, SYNC_HINT: 2, TYPING: 3, RECEIPTS: 4, PRESENCE: 5 });
+export const LIVE_TYPE = Object.freeze({ HELLO: 1, SYNC_HINT: 2, TYPING: 3, RECEIPTS: 4, PRESENCE: 5, EPHEMERAL: 6 });
 export const LIVE_CLOSE = Object.freeze({
   SESSION_ENDED: 4401,
   ACCESS_LOST: 4403,
