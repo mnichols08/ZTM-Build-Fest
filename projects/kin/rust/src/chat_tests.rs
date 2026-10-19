@@ -3200,3 +3200,34 @@ fn a_page_lists_pins_with_who_pinned_and_the_message_as_a_quote() {
     let shown = chat_page(&kchq(u32::MAX, 10, 8, &[], &kctx), &mut log, &mut texts).unwrap();
     assert_eq!(u32_at(&shown, shown.len() - (4 + 16 + 108)), 1);
 }
+
+#[test]
+fn a_late_pin_of_a_deleted_message_changes_nothing_and_extra_pins_wait_their_turn() {
+    let state = chat(&[
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        deleted(2, MEMBER_1, 0x11, 1, false),
+        pin_record(3, MEMBER_2, 0x21, 1, true),
+    ]);
+    assert!(state.pins.is_empty() && !state.is_pinned(&ChatMessageId(message(1))));
+    // Twelve pins raced past the limit: the page shows the first ten, and an
+    // unpin brings the next one back.
+    let mut records = Vec::new();
+    for id in 1..=12u8 {
+        records.push(posted(u32::from(id), MEMBER_1, 0x11, id, 1));
+    }
+    for id in 1..=12u8 {
+        records.push(pin_record(20 + u32::from(id), MEMBER_2, 0x21, id, true));
+    }
+    let state = chat(&records);
+    let ids = |state: &ChatState| {
+        state
+            .shown_pins(&[])
+            .iter()
+            .map(|pin| pin.message_id.0)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(ids(&state), (1..=10).map(message).collect::<Vec<_>>());
+    records.push(pin_record(40, MEMBER_1, 0x11, 1, false));
+    let state = chat(&records);
+    assert_eq!(ids(&state), (2..=11).map(message).collect::<Vec<_>>());
+}

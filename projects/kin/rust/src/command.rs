@@ -846,6 +846,7 @@ pub fn execute_with(
                         crate::chat::ChatMessageStatus::Live
                             | crate::chat::ChatMessageStatus::Edited
                     )
+                    || current.chat.pins.len() >= crate::chat::MAX_PIN_RECORDS
                     || current.chat.shown_pins(history.chat_admins()).len() >= crate::chat::MAX_PINS
                 {
                     return Err(KinError::InvalidEvent);

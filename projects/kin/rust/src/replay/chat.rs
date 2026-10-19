@@ -188,7 +188,9 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
             // pinned, changes nothing (the first pinner stays). Commands keep
             // the shown pins to `MAX_PINS`; replay only bounds the record.
             if *on {
-                if chat.positions.contains_key(message_id)
+                if chat
+                    .get(message_id)
+                    .is_some_and(|message| message.status != ChatMessageStatus::Deleted)
                     && !chat.is_pinned(message_id)
                     && chat.pins.len() < crate::chat::MAX_PIN_RECORDS
                 {

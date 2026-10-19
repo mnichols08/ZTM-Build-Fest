@@ -227,6 +227,7 @@ N  payload
 | 45 | CHAT_MESSAGE_EDITED (v1.1, chat log) | message ID, blob ref (32), blob key (32): 80 bytes |
 | 46 | CHAT_MESSAGE_DELETED (v1.1, chat log) | message ID, by_admin u8 (0 or 1), 3 reserved: 20 bytes |
 | 47 | CHAT_REACTION_SET (v1.1, chat log) | message ID, on u8 (0 or 1), 3 reserved, emoji length u32, the emoji's UTF-8 (one emoji grapheme, 1–32 bytes) |
+| 48 | CHAT_PIN_SET (v1.1, chat log) | message ID, on u8 (0 or 1), 3 reserved: 20 bytes |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -396,7 +397,7 @@ revision is meaningful only within one instance.
   payload and a zero entity ID; action 43 (`nickname-device`) carries the
   target device as its entity ID and the nickname as its payload (empty
   clears). Executing either rejects a name that would change nothing.
-- **Chat commands (KCMD 44–47, v1.1).** The entity ID is the message ID.
+- **Chat commands (KCMD 44–48, v1.1).** The entity ID is the message ID. Action 48 (`pin-chat-message`) carries `on` (0 or 1) in the u8 field and no payload.
   Action 44 (`post-chat-message`) carries the content kind in the u8 field
   (1 text, 2 attachment) and a 64-byte payload: blob ref, then blob key; a
   reply adds a third 16 bytes, the ID of the message it answers (80 in all).
