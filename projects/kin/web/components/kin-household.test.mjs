@@ -774,3 +774,28 @@ test("a pairing poll answered after People & devices opened leaves that view alo
   assert.equal(renders, 0, "but the newer view is not replaced");
   assert.equal(errors, 0);
 });
+
+test("a household refresh that finishes after People & devices opened leaves that view alone", async () => {
+  const component = new KinHousehold();
+  component.viewGeneration = 3;
+  let renders = 0, notified = 0;
+  component.render = () => { renders += 1; };
+  component.addEventListener("kin:household-status", () => { notified += 1; });
+  component.ctx.api.notifyStatus = () => { notified += 1; };
+  let release;
+  component.api = async (path) => {
+    if (path === "/api/status") {
+      await new Promise((resolve) => { release = resolve; });
+      return { identity: null, householdLifecycle: null, claim: null };
+    }
+    return {};
+  };
+  const loading = component.ctx.api.load();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  component.viewGeneration += 1; // People & devices opens meanwhile.
+  release();
+  const result = await loading;
+  assert.equal(result.loaded, true);
+  assert.equal(renders, 0, "the newer view is not replaced");
+  assert.equal(notified, 1, "the app still hears the new status");
+});
