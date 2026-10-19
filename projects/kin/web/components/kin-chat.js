@@ -397,12 +397,21 @@ class KinChat extends HTMLElement {
       this.unsubscribePresence = this.chatRoom.subscribePresence?.(() => this.presenceChanged()) ?? null;
     }
     this.queueRender("reset");
-    this.publishUnread();
+    this.publishUnread({ now: true });
   }
 
   /** Tells the app how many messages are unread (#133), when that changed:
    * the Chat link and the app icon badge show it. No room, no count. */
-  publishUnread() {
+  publishUnread({ now = false } = {}) {
+    // Several changes in a row (a message arriving, then read) make one
+    // update, so the link and the icon badge don't flicker.
+    if (!now) {
+      if (this.unreadTimer) return;
+      this.unreadTimer = setTimeout(() => { this.unreadTimer = null; this.publishUnread({ now: true }); }, 250);
+      return;
+    }
+    clearTimeout(this.unreadTimer);
+    this.unreadTimer = null;
     let unread = { count: 0, capped: false };
     try {
       if (this.chatRoom) unread = this.chatRoom.unread();
@@ -484,7 +493,9 @@ class KinChat extends HTMLElement {
     }
     if (!reading) return;
     let latest = null;
-    for (const message of this.messages) if (this.onScreen.has(message.messageId)) latest = message;
+    // A message dated in the future can't be read past: the newest sane one counts.
+    const horizon = (room.now?.() ?? Date.now()) + 5 * 60_000;
+    for (const message of this.messages) if (this.onScreen.has(message.messageId) && message.postedAt <= horizon) latest = message;
     if (!latest) return;
     void room.markReadPosition?.(latest).catch(() => {});
     room.presence?.markRead(latest);
@@ -494,8 +505,10 @@ class KinChat extends HTMLElement {
   scrollToDivider() {
     if (!this.dividerPending || !this.divider) return;
     const row = this.rows.get(this.divider)?.row;
-    if (!row || !this.scroller.clientHeight) return;
+    // One try: a divider outside the drawn rows (more unread than a page)
+    // must not pull the view later, when older rows are drawn.
     this.dividerPending = false;
+    if (!row || !this.scroller.clientHeight) return;
     this.scroller.scrollTop += row.getBoundingClientRect().top - this.scroller.getBoundingClientRect().top;
     this.wasAtBottom = this.atBottom();
     if (!this.wasAtBottom) this.jump.hidden = false;
@@ -1009,7 +1022,9 @@ class KinChat extends HTMLElement {
       const divider = document.createElement("div");
       divider.className = "chat-unread-divider";
       divider.setAttribute("role", "separator");
+      divider.setAttribute("aria-label", "New messages");
       const label = document.createElement("span");
+      label.setAttribute("aria-hidden", "true");
       label.textContent = "New messages";
       divider.append(label);
       item.append(divider);

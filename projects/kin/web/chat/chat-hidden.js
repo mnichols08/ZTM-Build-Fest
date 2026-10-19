@@ -195,7 +195,7 @@ export async function openHiddenState({ record, householdId, memberId, revision,
       const contentKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["decrypt"]);
       const plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64Url(record.nonce), additionalData: contentAad(header) }, contentKey, fromBase64Url(record.ciphertext)));
       const hex = (bytes) => [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-      const trailer = plain.length % 16 === READ_TRAILER % 16 ? READ_TRAILER : 0;
+      const trailer = plain.length % 16 === READ_TRAILER % 16 && plain.length >= READ_TRAILER ? READ_TRAILER : 0;
       if (plain.length % 16 !== trailer % 16 || (plain.length - trailer) / 16 > MAX_HIDDEN_MESSAGES) throw invalid();
       const count = plain.length - trailer;
       const ids = [];

@@ -1061,6 +1061,7 @@ export async function chatRegressions() {
     await settle();
     chat.room = room;
     await settle();
+    await new Promise((resolve) => setTimeout(resolve, 400));
     check(counts.at(-1)?.count === 3, `the chat publishes its unread count (${JSON.stringify(counts.at(-1))})`);
     const link = app?.segmentNavs?.get("updates")?.querySelector('[data-segment="chat"] .segment-count');
     if (app) check(link?.textContent === "3" && link.getAttribute("aria-label") === "3 unread", "Updates → Chat shows the count");
@@ -1081,6 +1082,7 @@ export async function chatRegressions() {
     Object.assign(room, { unreadCount: 0, unreadFirst: null });
     notify();
     await settle();
+    await new Promise((resolve) => setTimeout(resolve, 400));
     check(counts.at(-1).count === 0, "reading clears the count");
     check(chat.querySelector(".chat-unread-divider"), "the divider stays while reading");
     chat.canRead = () => false;

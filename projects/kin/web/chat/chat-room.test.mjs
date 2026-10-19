@@ -1265,3 +1265,26 @@ test("searching opens older texts in rounds, leaves out hidden messages and refu
   await assert.rejects(b.room.search({ query: "dinner" }), (error) => error.code === "chat_no_access");
   assert.equal(b.engine.calls.search.length, before);
 });
+
+test("unread skips hidden, deleted and future-dated messages, and a future position is ignored (#133)", { timeout: 60_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs, householdAdmin: true });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs });
+  const devices = [phone.entry, laptop.entry];
+  const a = await openRoom(phone, s), c = await openRoom(laptop, s);
+  for (const text of ["one", "two", "three"]) { await c.room.send(text); await new Promise((resolve) => setTimeout(resolve, 3)); }
+  for (const { room } of [a, c]) await room.sync({ status: STATUS, devices });
+  for (const { room } of [a, c]) await room.sync({ status: STATUS, devices });
+  const [one, two] = a.room.page().messages;
+  assert.equal(a.room.unread().count, 3);
+  await a.room.hide(one);
+  assert.equal(a.room.unread().count, 2, "hidden is not unread");
+  await c.room.remove(c.room.page().messages.find((message) => message.messageId === two.messageId));
+  for (const { room } of [c, a, c, a]) await room.sync({ status: STATUS, devices });
+  assert.equal(a.room.unread().count, 1, "deleted is not unread");
+  const real = a.room.now;
+  a.room.now = () => real() - 3_600_000;
+  assert.equal(a.room.unread().count, 0, "dated ahead of this clock: not counted yet");
+  a.room.now = real;
+});

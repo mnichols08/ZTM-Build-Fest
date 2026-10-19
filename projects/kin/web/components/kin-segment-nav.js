@@ -62,8 +62,11 @@ class KinSegmentNav extends HTMLElement {
       list.append(item);
     }
     nav.append(list);
+    // A count changing rebuilds the links; keyboard focus stays on its link.
+    const focused = this.contains(document.activeElement) ? document.activeElement.dataset?.segment : null;
     this.dataset.current = this.currentId ?? "";
     this.replaceChildren(nav);
+    if (focused) nav.querySelector(`[data-segment="${CSS.escape(focused)}"]`)?.focus();
   }
 
   focusCurrent() { this.querySelector('[aria-current="true"]')?.focus(); }

@@ -466,6 +466,9 @@ export class ChatRoom {
     if (merged.length > MAX_HIDDEN_MESSAGES)
       throw new ChatRoomError("You've deleted too many messages for yourself to keep track of them all.", "chat_hidden_full");
     // The read position only moves forward, so the later of the two stands.
+    // A position from the future (a wrong clock) would hide everything and
+    // could never move back: it is ignored.
+    if (remoteRead && remoteRead.postedAt > this.now() + CLOCK_SKEW_MS) remoteRead = null;
     const read = mergeCursors(remoteRead, state.read ?? null);
     const changed = merged.length !== remote.length || merged.some((id) => !remoteSet.has(id)) || compareCursors(read, remoteRead) > 0;
     let stored = revision;
@@ -530,10 +533,13 @@ export class ChatRoom {
     const { messages, start } = this.page({ limit: UNREAD_SCAN });
     // Judged message by message against the position, not by where they
     // sit in the log: an offline message sorts earlier than it was posted.
+    const horizon = this.now() + CLOCK_SKEW_MS;
     const after = (message) => compareCursors(cursorOf(message), this.readPosition) > 0;
     let count = 0, first = null;
     for (const message of messages) {
-      if (!after(message) || message.authorId === me || this.hidden.has(message.messageId) || !(message.status === "live" || message.status === "edited")) continue;
+      // A message dated in the future (its sender's clock is wrong) can't be
+      // read past, so it isn't counted until its time comes.
+      if (!after(message) || message.postedAt > horizon || message.authorId === me || this.hidden.has(message.messageId) || !(message.status === "live" || message.status === "edited")) continue;
       count += 1;
       first ??= message;
     }
