@@ -108,8 +108,8 @@ export class StatusController {
       for (const [label, intent, className] of [
         ["Create a household", "create", "primary-action"],
         ["Join an existing household", "join", ""],
+        ["Add my device", "device", ""],
         ["Sign in with your phone", "phone", ""],
-        ["Add this device to my existing membership", "device", ""],
       ]) {
         const button = document.createElement("button");
         button.type = "button";
