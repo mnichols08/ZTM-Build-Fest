@@ -475,10 +475,31 @@ fn quote_text<'a>(
         ChatMessageStatus::Live | ChatMessageStatus::Edited
     );
     if request.include_text && visible && message.content_kind == ChatContentKind::Text {
-        texts.get(&message.blob_ref)
+        texts.get(&message.blob_ref).map(first_line)
     } else {
         None
     }
+}
+
+/// Most bytes of a quote's text a page carries.
+pub const MAX_QUOTE_BYTES: usize = 256;
+
+/// The first line with something in it, cut to `MAX_QUOTE_BYTES` at a
+/// character boundary: all a quote shows, so a long original isn't copied
+/// into every reply's page entry.
+fn first_line(text: &[u8]) -> &[u8] {
+    let Ok(text) = std::str::from_utf8(text) else {
+        return &[];
+    };
+    let line = text
+        .split('\n')
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("");
+    let mut end = line.len().min(MAX_QUOTE_BYTES);
+    while !line.is_char_boundary(end) {
+        end -= 1;
+    }
+    &line.as_bytes()[..end]
 }
 
 fn shown_reactions<'a>(
@@ -529,7 +550,8 @@ fn shown_reactions<'a>(
 /// its content kind u8 (0 if unknown), 2 reserved, its author (16), blob ref
 /// (32) and blob key (32) (zero unless live or edited), its index u32
 /// (`0xFFFFFFFF` if unknown), then text length u32 and the text (the arena's,
-/// only for visible text and only if the request asked for texts).
+/// only for visible text and only if the request asked for texts: its first
+/// non-blank line, at most 256 bytes).
 pub fn encode_page(
     state: &ChatState,
     request: &PageRequest<'_>,

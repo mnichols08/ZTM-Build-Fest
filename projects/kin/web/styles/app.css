@@ -840,7 +840,7 @@ button.chat-quote:hover, button.chat-quote:focus-visible { color: var(--ink); }
 .chat-replying-cancel { min-height: var(--tap); padding-inline: 10px; border: 0; border-radius: var(--r-control); background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
 .chat-replying-cancel:hover, .chat-replying-cancel:focus-visible { background: var(--surface); }
 .chat-row.chat-highlight { background: var(--surface-secondary); outline: 2px solid var(--line-strong); transition: background-color .4s; }
-.chat-row:focus { outline: none; }
+.chat-row:focus:not(:focus-visible) { outline: none; }
 .chat-row.chat-highlight:focus { outline: 2px solid var(--line-strong); }
 .chat-react-grid { display: flex; flex-wrap: wrap; flex-basis: 100%; gap: 2px; max-height: 190px; overflow-y: auto; }
 .chat-jump { justify-self: center; min-height: var(--tap); padding-inline: 16px; border: 1px solid var(--accent); border-radius: 999px; background: var(--surface); color: var(--accent); font: inherit; font-weight: 650; }

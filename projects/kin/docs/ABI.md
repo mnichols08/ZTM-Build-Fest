@@ -399,9 +399,9 @@ revision is meaningful only within one instance.
   reply adds a third 16 bytes, the ID of the message it answers (80 in all).
   Executing a reply requires a message the log holds that still shows (not
   deleted, not removed by a named admin).
-  Action 45 (`edit-chat-message`) carries the same payload and a zero u8
-  field. Action 46 (`delete-chat-message`) carries `by_admin` (0 or 1) in the
-  u8 field and no payload. A zero ref or key is malformed (code 2). Executing
+  Action 45 (`edit-chat-message`) carries the 64-byte blob payload only (80
+  is malformed) and a zero u8 field. Action 46 (`delete-chat-message`) carries `by_admin` (0 or 1) in the
+  u8 field and no payload. A zero ref, key or reply ID is malformed (code 2). Executing
   requires a blob reference the chat log has never seen (to post or edit), a
   new message ID to post; the author, a text message and a message not
   deleted to edit; and to delete, a message not deleted, with `by_admin` 0
@@ -445,7 +445,7 @@ revision is meaningful only within one instance.
   u8 (0 if unknown), 2 reserved, its author, blob ref and blob key (zero
   unless live or edited), its index u32 (`0xFFFFFFFF` if unknown), text
   length u32, then the text (the arena's, for visible text, when texts were
-  asked for). The quoted text is never copied into the reply's event. Reading a page first forgets
+  asked for: its first non-blank line, at most 256 bytes). The quoted text is never copied into the reply's event. Reading a page first forgets
   the arena's texts for those blobs, so a deleted message's text never comes
   back out. Message indexes
   are positions in posting (replay) order, so a late-arriving older message

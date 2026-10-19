@@ -1901,3 +1901,29 @@ fn the_wire_command_posts_a_reply() {
     // Edits take no reply.
     assert!(decode_command(&kcmd(45, message(1), 0, &payload)).is_err());
 }
+
+#[test]
+fn a_quote_carries_only_the_first_line_of_a_long_original() {
+    let records = vec![
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        replied(2, MEMBER_2, 0x21, 2, message(1)),
+    ];
+    let mut history = history_of(&records);
+    let mut texts = ChatTexts::new();
+    let long = format!("\n  \nFirst line {}\nSecond line", "\u{1F600}".repeat(100));
+    put_texts(&kcht(&[(blob(1, 0), long.as_bytes())]), &mut texts).unwrap();
+    let context = kine(&[], 0, TEST_DATE, None);
+    let page = chat_page(
+        &kchq(u32::MAX, 10, 0b01, &[], &context),
+        &mut history,
+        &mut texts,
+    )
+    .unwrap();
+    let texts_len = u32_at(&page, 20) as usize;
+    let at = 28 + 2 * 160 + texts_len;
+    let length = u32_at(&page, at + 104) as usize;
+    let quoted = std::str::from_utf8(&page[at + 108..at + 108 + length]).unwrap();
+    assert!(length <= MAX_QUOTE_BYTES);
+    assert!(quoted.starts_with("First line \u{1F600}"));
+    assert!(!quoted.contains("Second"));
+}

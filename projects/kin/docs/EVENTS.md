@@ -293,8 +293,11 @@ the product decisions).
   carries only that ID; the quoted text is looked up from the original each
   time a page is read, so an edit shows and a deletion turns the quote into
   "deleted" (and the original's blob and text are gone with it). Replay
-  stores the ID and never validates it: the original may be absent from a
-  log (a member who joined later), and the page then marks it unknown.
+  stores the ID and never checks it against the log (a zero ID or a message
+  answering itself is malformed and refused at decode): the original may be
+  absent from a log (a member who joined later), and the page then marks it
+  unknown. A quote carries the original's first non-blank line, at most 256
+  bytes.
   Commands answer only a message that still shows. There are no threads.
 - **Reactions (#127).** `CHAT_REACTION_SET` (47) turns one emoji on or off
   for the event's actor on one message. The emoji is a single grapheme from
