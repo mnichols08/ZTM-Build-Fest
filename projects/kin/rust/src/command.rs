@@ -890,7 +890,14 @@ pub fn execute_with(
                 .and_then(|poll| poll.votes.get(&context.actor_id))
                 .copied()
                 .unwrap_or(0);
+            let full = earlier == 0
+                && current
+                    .chat
+                    .polls
+                    .get(id)
+                    .is_some_and(|poll| poll.votes.len() >= crate::chat::MAX_POLL_VOTERS);
             if closed
+                || full
                 || !spec.allows(*options)
                 || earlier == *options
                 || !matches!(

@@ -235,7 +235,7 @@ the server never learns a name anyone typed ([PRIVACY](PRIVACY.md),
 ## v1.1.0 Household chat
 
 `CHAT_MESSAGE_POSTED` (44), `CHAT_MESSAGE_EDITED` (45) and
-`CHAT_MESSAGE_DELETED` (46), `CHAT_REACTION_SET` (47) and `CHAT_PIN_SET` (48) are schema 1 and leave replay protocol 24
+`CHAT_MESSAGE_DELETED` (46), `CHAT_REACTION_SET` (47), `CHAT_PIN_SET` (48), `CHAT_POLL_VOTE` (49) and `CHAT_POLL_CLOSED` (50) are schema 1 and leave replay protocol 24
 unchanged ([ABI](ABI.md) has the payloads; [ADR 0008](decisions/0008-household-chat.md)
 the product decisions).
 
@@ -245,7 +245,7 @@ the product decisions).
   carries chat. The chat log holds up to 250,000 events.
 - **Metadata only.** An event carries the message ID, the content blob's
   32-byte SHA-256 reference and its 32-byte random key, and (for a post) the
-  content kind: text or attachment. Text and files live in the blob, outside
+  content kind: text, attachment or poll. Text and files live in the blob, outside
   the log, so deleting a message can delete its content.
 - **Conflicts change nothing shown.** As with device names, a decoded chat
   event never fails replay. One that conflicts with what a log knows is kept
@@ -312,7 +312,7 @@ the product decisions).
   choice (both zero for other kinds); the question and options are in the
   sealed blob like any text. `CHAT_POLL_VOTE` (49) carries the message ID, the
   choice as a u16 bit set and 2 reserved zero bytes (20 bytes); the later vote
-  of a member (by logical time, then event ID) replaces the earlier, 0 clears.
+  of a member (by logical time, then device ID, then event ID) replaces the earlier, 0 clears.
   A vote is ignored if the message is not a poll, if the choice is not one the
   poll allows, or if it comes after the author's close. `CHAT_POLL_CLOSED`
   (50) carries the message ID and 4 reserved bytes; only the poll's author

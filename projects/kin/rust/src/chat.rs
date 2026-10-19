@@ -887,8 +887,9 @@ pub fn encode_page(
     let mut text_bytes = 0usize;
     if request.include_text {
         for message in page {
-            if status(message) == ChatMessageStatus::Live
-                || status(message) == ChatMessageStatus::Edited
+            if (status(message) == ChatMessageStatus::Live
+                || status(message) == ChatMessageStatus::Edited)
+                && message.content_kind == ChatContentKind::Text
             {
                 text_bytes += texts.get(&message.blob_ref).map_or(0, <[u8]>::len);
             }
@@ -923,11 +924,12 @@ pub fn encode_page(
     for (index, message) in page.iter().enumerate() {
         let shown = status(message);
         let visible = matches!(shown, ChatMessageStatus::Live | ChatMessageStatus::Edited);
-        let text = if request.include_text && visible {
-            texts.get(&message.blob_ref)
-        } else {
-            None
-        };
+        let text =
+            if request.include_text && visible && message.content_kind == ChatContentKind::Text {
+                texts.get(&message.blob_ref)
+            } else {
+                None
+            };
         bytes.extend_from_slice(&message.message_id.0);
         bytes.extend_from_slice(&message.author.0);
         bytes.extend_from_slice(&message.device.0);

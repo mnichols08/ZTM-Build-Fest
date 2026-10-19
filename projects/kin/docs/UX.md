@@ -1862,15 +1862,15 @@ and receive a short ID suffix in selection/management labels until renamed.
 
 - The composer has a **Poll** button for members who can post. It opens a
   dialog with a question, two to ten options (add and remove buttons, each
-  option a labelled text field) and a "Let people choose more than one"
+  option a labelled text field) and a "Allow choosing more than one answer"
   checkbox.
 - A poll is a message. Its options are a native `fieldset` of radio buttons
   (or checkboxes for multiple choice) with a legend of the question. Choosing
   votes at once; a member can change or clear their vote while it is open.
 - Results are text, not only bars: each option shows its count and who voted
-  for it by name, so nothing depends on colour. Changes are announced politely.
+  for it by name, so nothing depends on colour. Your own vote, clearing and closing are announced politely.
 - The poll's author has **Close poll**; a closed poll shows "Closed" and its
   final result, and its options are disabled.
 - Read-only members see the results and cannot vote. Deleting a poll for
-  everyone removes the question, options and votes. Replying to or quoting a
-  poll shows its question.
+  everyone removes the question, options and votes. Replying to a poll shows its
+  question.

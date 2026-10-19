@@ -1449,7 +1449,7 @@ test("chat polls are posted, voted in and closed through the engine, and a page 
   const page = (options = {}) => engine.chatPage(chat, { includePolls: true, ...options }, asOf, day);
   assert.equal(page().messages[0].contentKind, "poll");
   assert.deepEqual(page().messages[0].poll, { options: 3, multiple: false, closed: false, votes: [] });
-  assert.equal(engine.chatPage(chat, {}, asOf, day).messages[0].poll, null, "polls only when asked for");
+  assert.equal(engine.chatPage(chat, {}, asOf, day).messages[0].poll, undefined, "polls only when asked for");
   // Votes: one answer, from the poll's options, and a change each time.
   assert.equal(new DataView(run({ type: "vote-chat-poll", messageId: poll, choice: [1] }, friend).encodedEvent.buffer).getUint16(2, true), 49);
   for (const choice of [[1], [0, 1], [3]]) assert.throws(() => run({ type: "vote-chat-poll", messageId: poll, choice }, friend), (error) => error.code === 2 || error.code === 4, JSON.stringify(choice));

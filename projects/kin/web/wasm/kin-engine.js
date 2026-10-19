@@ -577,7 +577,6 @@ function decodeChatPage(bytes, includePins = false, includePolls = false) {
       reactions: [],
       replyTo: null,
       mentions: { everyone: false, members: [] },
-      poll: null,
     });
   }
   if (nextText !== textBytes) throw invalid();
