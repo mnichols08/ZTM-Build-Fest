@@ -856,6 +856,10 @@ kin-household, kin-security, kin-areas, kin-notes, kin-search, kin-item, kin-att
 .chat-details-readers { margin: 0 0 8px; padding-inline-start: 18px; }
 .chat-details-waiting { margin: 0 0 8px; color: var(--ink-muted); }
 .chat-details button { min-height: var(--tap); padding-inline: 14px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
+.chat-policy { display: grid; gap: 10px; margin-block: 16px; }
+.chat-policy-field { display: grid; gap: 4px; }
+.chat-policy select { min-height: 44px; font: inherit; }
+.chat-read-only { padding: 12px; margin: 0; }
 .chat-settings { display: grid; gap: 8px; margin-block: 16px; }
 .chat-setting { display: grid; grid-template-columns: auto 1fr; column-gap: 10px; align-items: center; }
 .chat-setting input { width: 22px; height: 22px; }

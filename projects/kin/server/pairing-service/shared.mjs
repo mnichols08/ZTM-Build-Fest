@@ -68,6 +68,29 @@ export function canParticipate(member, now = Date.now()) {
   return normalized === "adult" || normalized === "limited";
 }
 
+/** What a member may do in the household chat (#123): "write" (read and post),
+ * "read", or "none". Adults always write; the admin sets the other two
+ * classes. A household that never set a policy lets everyone read and post. */
+export const CHAT_ACCESS = Object.freeze(["write", "read", "none"]);
+export const DEFAULT_CHAT_POLICY = Object.freeze({ limited: "write", temporary: "write", revision: 0 });
+
+export function chatPolicyOf(household) {
+  const policy = household?.chatPolicy;
+  return {
+    limited: CHAT_ACCESS.includes(policy?.limited) ? policy.limited : "write",
+    temporary: CHAT_ACCESS.includes(policy?.temporary) ? policy.temporary : "write",
+    revision: Number.isSafeInteger(policy?.revision) && policy.revision >= 0 ? policy.revision : 0,
+  };
+}
+
+export function chatAccess(member, household, now = Date.now()) {
+  if (!canParticipate(member, now)) return "none";
+  const kind = normalizeMemberKind(member.kind);
+  if (kind === "adult") return "write";
+  const policy = chatPolicyOf(household);
+  return kind === "limited" ? policy.limited : policy.temporary;
+}
+
 export function requireTrustAuthority(member, action = "manage trust", now = Date.now()) {
   if (!canManageTrust(member, now))
     throw new PairingError(

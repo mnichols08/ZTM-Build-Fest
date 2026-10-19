@@ -143,6 +143,29 @@ export async function chatRegressions() {
   check(textOf(rows().at(-1)) === "Message 499", "newest at the bottom");
   check(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 2, "starts at the latest message");
   check(!chat.querySelector("textarea").disabled, "composer on");
+  // The admin's chat policy (#123): read only swaps the composer for a note
+  // and removes the author's own edit/delete; no access hides the chat.
+  const accessEvents = [];
+  chat.addEventListener("kin:chat-access", (event) => accessEvents.push(event.detail.access));
+  room.access = "read";
+  notify();
+  await settle();
+  check(chat.querySelector(".chat-form").hidden, "read only: no message box");
+  check(!chat.querySelector(".chat-read-only").hidden && chat.querySelector(".chat-read-only").textContent.includes("read-only for you"), "read only: says why");
+  check(!scroller.hidden, "read only: the conversation is still there");
+  check(accessEvents.at(-1) === "read", "the app hears the change");
+  const labels = chat.actionsFor({ ...room.page().messages.find((entry) => entry.authorId === room.identity.memberId), text: "x", contentKind: "text" }, room);
+  check(!labels.includes("edit") && !labels.includes("delete") && labels.includes("copy") && labels.includes("hide"), `read only: copy and hide only (${labels})`);
+  room.access = "none";
+  notify();
+  await settle();
+  check(scroller.hidden && chat.querySelector(".chat-form").hidden, "no access: nothing of the chat shows");
+  check(chat.querySelector(".chat-notice").textContent.includes("isn't available"), "no access: says so");
+  check(accessEvents.at(-1) === "none", "the app hears it, and hides the Chat tab");
+  room.access = "write";
+  notify();
+  await settle();
+  check(!chat.querySelector(".chat-form").hidden && chat.querySelector(".chat-read-only").hidden && !scroller.hidden, "restored: composer back");
   // Grouping: consecutive messages from one author show the author once.
   const grouped = rows().filter((row) => row.classList.contains("grouped"));
   check(grouped.length > 0 && grouped.every((row) => row.querySelector(".chat-meta.visually-hidden")), "grouped rows keep their author for screen readers");

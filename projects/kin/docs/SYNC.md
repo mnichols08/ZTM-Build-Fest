@@ -705,6 +705,43 @@ readers aren't interrupted on every change. Only the tab that holds the
 device's live channel (one per device, by Web Lock) sends or receives typing,
 so with several tabs of Kin open, typing shows in the one that holds it.
 
+## Chat access policy (v1.1, #123)
+
+The household admin decides whether Limited members (children) and Temporary
+members (babysitters, guests) can use the chat. Each of the two groups is set
+to **read and post** (the default for every household), **read only** or **no
+access**; Adults always read and post.
+
+- **Authorization metadata, in plaintext.** The policy is three columns on the
+  household (`chat_limited`, `chat_temporary`, a revision) because the service
+  has to enforce it. It holds no chat content. Changing it is admin-only and
+  needs a fresh passkey (`POST /api/household/chat-policy/options`, then
+  `/finish`), like other admin changes; a household with no recorded admin
+  fails closed and keeps the default. Each change is audited as
+  `chat_policy_changed` with the new values and revision, nothing else.
+- **The service enforces it** on every chat call. *Read only* may pull events,
+  read blobs and receipts, and delete messages for themselves; posting events,
+  uploading or retiring blobs, writing a receipt slot and sending typing are
+  refused (`chat_read_only`, 403). *No access* refuses everything
+  (`chat_unavailable`, 403) and stops the typing and receipt signals to that
+  member's open connections. Uploads are refused before the body is read. The
+  check happens at the start of each request, so a change applies to the next
+  call from members who are online, and `GET /api/sync/status` tells their
+  devices (`chat.access`) on the next pass or hint.
+- **Experience.** A read-only member sees the chat with the composer replaced
+  by "Your household has set chat to read-only for you." and no edit or delete
+  of their own messages; a no-access member doesn't see Chat in Updates, and
+  their chat pass fetches and sends nothing. The admin's panel is under
+  Household → Identity & appearance.
+- **Where this differs from the story.** The story also asks that Rust
+  validation reject posts from members who can't post. The log has no record
+  of when the policy changed, so a client cannot tell a post made before a
+  member became read only from one made after; the service, which sees each
+  push when it happens, is the check. Clients show what the service accepted.
+- **Cryptographic separation** (a dedicated chat key that devices of members
+  with no access never receive, rotated when a group loses access) follows in
+  the next change.
+
 ## Privacy boundary
 
 Ciphertext payloads conceal content only to the extent that key management and client integrity hold. The relay can still observe routing IDs, ciphertext lengths, timing, delivery patterns, and possibly IP/log metadata. Document retention and access controls for these fields. Do not claim perfect anonymity, complete metadata privacy, or protection from a compromised authorized client.

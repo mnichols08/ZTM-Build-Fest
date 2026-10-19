@@ -662,6 +662,29 @@ export const schemaMethods = {
         throw new DurableStoreError("Kin could not complete the read receipts migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 15) {
+      try {
+        this.transaction(() => {
+          // v1.1 (#123): the household's chat access policy, plaintext
+          // authorization metadata the service enforces. Existing households
+          // keep everyone reading and posting.
+          this.db.exec(`
+            ALTER TABLE households ADD COLUMN chat_limited TEXT NOT NULL DEFAULT 'write'
+              CHECK (chat_limited IN ('write', 'read', 'none'));
+            ALTER TABLE households ADD COLUMN chat_temporary TEXT NOT NULL DEFAULT 'write'
+              CHECK (chat_temporary IN ('write', 'read', 'none'));
+            ALTER TABLE households ADD COLUMN chat_policy_revision INTEGER NOT NULL DEFAULT 0
+              CHECK (chat_policy_revision >= 0);
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(16, Date.now());
+          sqlitePragma(this.db, "user_version = 16");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the chat policy migration.", { cause: error });
+      }
+    }
   },
 
   verify() {

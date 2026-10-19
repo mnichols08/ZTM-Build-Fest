@@ -67,7 +67,7 @@ export class RenderController {
     });
     const waiting = (this.app.state.handoffs ?? []).filter((record) => record.status === "unacknowledged").length;
     const updatesNav = this.app.segmentNavs?.get("updates");
-    if (updatesNav) updatesNav.segments = SEGMENTS.updates.map((entry) => ({ id: entry.id, label: entry.label, hash: routeHash("updates", entry.id), count: entry.id === "handoffs" ? waiting : 0, countLabel: "waiting" }));
+    if (updatesNav) updatesNav.segments = SEGMENTS.updates.filter((entry) => !(entry.id === "chat" && this.app.chatAccess === "none")).map((entry) => ({ id: entry.id, label: entry.label, hash: routeHash("updates", entry.id), count: entry.id === "handoffs" ? waiting : 0, countLabel: "waiting" }));
     if (updatesNav && this.app.route?.page === "updates") updatesNav.current = this.app.route.segment;
     const activePulse = this.app.state.pulses.find((pulse) => pulse.actorId === this.app.store?.actorId && pulse.status === "active");
     if (this.app.householdGlance) this.app.householdGlance.textContent = `Household mode: ${{ normal: "Normal", vacation: "Vacation", guests: "Guests", rest: "Rest" }[mode] ?? mode}${mode !== "normal" ? " (routines paused)" : ""}. Your pulse: ${activePulse ? activePulse.value.replace("-", " ") : "not set"}.`;

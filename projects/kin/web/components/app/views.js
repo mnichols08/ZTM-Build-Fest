@@ -115,6 +115,13 @@ export class ViewBuilder {
     handoffPanel.append(this.app.handoffs);
     talkPanel.append(this.app.talks);
     chatPanel.append(this.app.chat);
+    // The admin's chat policy (#123): with no access, Chat leaves Updates.
+    this.app.chat.addEventListener("kin:chat-access", (event) => {
+      this.app.chatAccess = event.detail.access;
+      this.ctx.render.renderState();
+      if (event.detail.access === "none" && this.app.route?.page === "updates" && this.app.route.segment === "chat")
+        this.ctx.navigation.navigate(routeHash("updates", "handoffs"));
+    });
     updates.append(updatesNav, handoffPanel, talkPanel, chatPanel);
     this.app.segmentPanels.set("updates", new Map([["handoffs", handoffPanel], ["talk", talkPanel], ["chat", chatPanel]]));
 
@@ -259,7 +266,8 @@ export class ViewBuilder {
     this.app.appearance = document.createElement("kin-appearance");
     this.app.householdDefaults = document.createElement("kin-household-defaults");
     this.app.householdDefaults.hidden = true;
-    appearancePage.append(this.app.householdDefaults, this.app.appearance);
+    this.app.chatPolicy = document.createElement("kin-chat-policy");
+    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.appearance);
 
     household.append(hub, notesPage, areasPage, peoplePage, privacyPage, appearancePage);
     this.app.segmentPanels.set("household", new Map([["hub", hub], ["notes", notesPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));

@@ -4,7 +4,7 @@ import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
-import { PairingError, PairingService, parseHouseholdPolicy, requireTrustAuthority } from "./pairing-service.mjs";
+import { PairingError, PairingService, CHAT_ACCESS, parseHouseholdPolicy, requireTrustAuthority } from "./pairing-service.mjs";
 import { deviceLabel } from "./pairing-service/device-label.mjs";
 import { configuredDatabasePath, permissionProblem } from "./permissions.mjs";
 import { builtInManifest, etagMatches, INSTALL_ICONS, publishedManifest } from "./install-identity.mjs";
@@ -386,9 +386,12 @@ async function api(request, response, url, context) {
   // A chat blob upload is authorized before its body is read, so nobody
   // without a session can make the service buffer 4 MiB.
   const chatBlobRoute = CHAT_BLOB_ROUTE.exec({ pathname: url.pathname })?.pathname.groups.ref ?? null;
-  const chatUploadAuth = request.method === "PUT" && chatBlobRoute
-    ? syncService.authorize(cookies(request).kin_session)
-    : null;
+  let chatUploadAuth = null;
+  if (request.method === "PUT" && chatBlobRoute) {
+    chatUploadAuth = syncService.authorize(cookies(request).kin_session);
+    // A member who can't post is refused before the body is read.
+    context.chatBlobService.assertCanChat(chatUploadAuth, "write");
+  }
   const binaryUpload = (request.method === "POST" && /^\/api\/sync\/attachments\/[a-f0-9]{32}$/.test(url.pathname)) ||
     chatUploadAuth !== null ||
     (request.method === "PUT" && url.pathname === "/api/household/settings");
@@ -1291,6 +1294,32 @@ async function api(request, response, url, context) {
         service.setHouseholdAdmin(session, flow.targetMemberId, flow.admin, auth.member.id),
       ),
     );
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/household/chat-policy/options") {
+    const change = service.chatPolicyContext(session);
+    if (!CHAT_ACCESS.includes(body?.limited) || !CHAT_ACCESS.includes(body?.temporary)) throw badRequest();
+    json(response, 200, issueAuthenticationFlow(
+      { purpose: "set-chat-policy", limited: body?.limited, temporary: body?.temporary, memberId: change.memberId, deviceId: change.deviceId },
+      change.credentialIds,
+      context,
+    ));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/household/chat-policy/finish") {
+    const flow = consumeFlow(body.flow, context);
+    if (flow.purpose !== "set-chat-policy") throw badRequest();
+    const auth = service.authorize(session);
+    if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+    const credential = service.credentials.get(body.credential?.id);
+    if (!credential || credential.memberId !== auth.member.id)
+      throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    const result = withTransaction(context, () =>
+      service.setChatPolicy(session, { limited: flow.limited, temporary: flow.temporary }, auth.member.id),
+    );
+    if (result.changed) syncService.chatPolicyChanged(auth.household.id);
+    json(response, 200, result);
     return;
   }
   if (

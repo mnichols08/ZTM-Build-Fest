@@ -109,6 +109,7 @@ export class AppearanceController {
       if (result.value && (this.app.householdSettings?.revision ?? -1) <= result.value.revision) this.app.householdSettings = result.value;
       const draftPreserved = this.app.householdDefaults.initialize({ ...result, value: this.app.householdSettings });
       if (result.admin) void this.refreshInstallIdentity({ onlyFirst: true });
+      void this.app.chatPolicy?.load();
       // A demotion removes the section; a later promotion loads it again.
       else this.installIdentitySession = null;
       if (draftPreserved) return;
