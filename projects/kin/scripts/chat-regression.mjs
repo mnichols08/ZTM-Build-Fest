@@ -162,8 +162,11 @@ export async function chatRegressions() {
   check(scroller.hidden && chat.querySelector(".chat-form").hidden, "no access: nothing of the chat shows");
   check(chat.querySelector(".chat-notice").textContent.includes("isn't available"), "no access: says so");
   check(accessEvents.at(-1) === "none", "the app hears it, and hides the Chat tab");
+  check(location.hash !== "#updates/chat", "no access: the Chat tab is left");
   room.access = "write";
   notify();
+  await settle();
+  location.hash = "#updates/chat";
   await settle();
   check(!chat.querySelector(".chat-form").hidden && chat.querySelector(".chat-read-only").hidden && !scroller.hidden, "restored: composer back");
   // Grouping: consecutive messages from one author show the author once.
