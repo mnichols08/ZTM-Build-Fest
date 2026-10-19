@@ -1387,9 +1387,17 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       "server marks Limited C removed through the Adult UI control");
     check(Boolean(service.devices.get(cDevice.id).revokedAt), "removal revokes Limited C's device");
     await c.setOffline(false);
-    result = await c.call(pageSync);
-    check(result.last?.state === "paused" && ["authentication_required", "membership_removed", "device_not_trusted"].includes(result.last.code),
-      "removed Limited C's reconnect sync is refused: " + JSON.stringify(result.last));
+    // Coming back online re-checks authorization, and a removed device locks
+    // and ends its session (context.js onOnline). That lock races this sync:
+    // it can land before the call (the profile is locked) or during it (the
+    // coordinator stops without a state). Either way the device is refused.
+    result = await c.call(pageSync).catch((error) => {
+      if (/Cannot sync a locked profile/.test(error.message)) return { locked: true };
+      throw error;
+    });
+    const cLocked = result.locked === true || await c.call(() => !document.querySelector("kin-app").store);
+    check(cLocked || (result.last?.state === "paused" && ["authentication_required", "membership_removed", "device_not_trusted"].includes(result.last.code)),
+      "removed Limited C's reconnect sync is refused: " + JSON.stringify({ locked: cLocked, last: result.last ?? null }));
     const cStatus = await c.call(pageFetch, { path: "/api/sync/status" });
     check([401, 403].includes(cStatus.status), `removed Limited C's stale session cannot read sync status (${cStatus.status})`);
     // An empty event batch: "KSEV", version 1, count 0.
