@@ -803,7 +803,8 @@ devices of members allowed to read are given.
   decrypted and every chat key it held. Read receipts, typing and delete-for-me
   records still use the household key: the service refuses them to no-access
   members, but that is enforcement, not encryption. A rotation needs an Adult's
-  device that is allowed to chat to be online; until then chat is paused for
+  device that is allowed to chat to be online (a grant too, except that any
+  other member's device may share an epoch no Adult's device holds); until then chat is paused for
   everyone so nothing is sent under a key a shut-out device holds. A household
   that already shuts a class out when it upgrades is paused the same way until
   an updated Adult device rotates. The key epoch count is capped at 128, as the

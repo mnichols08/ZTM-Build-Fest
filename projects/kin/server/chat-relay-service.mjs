@@ -108,7 +108,7 @@ class MemoryChatRelayStore {
   }
   chatKeyPackagesFor(householdId, deviceId) {
     return [...(this.state(householdId).keyPackages ?? new Map()).values()].filter((row) => row.deviceId === deviceId)
-      .sort((a, b) => a.keyEpoch - b.keyEpoch).map((row) => structuredClone(row));
+      .sort((a, b) => a.keyEpoch - b.keyEpoch).map(({ keyEpoch, senderDeviceId, package: pkg }) => structuredClone({ keyEpoch, senderDeviceId, package: pkg }));
   }
   commitChatKeys(householdId, { expectedEpoch, epoch, packages, since = 0 }) {
     const state = this.state(householdId);
@@ -493,7 +493,8 @@ export class ChatRelayService {
     if (!Number.isSafeInteger(body?.keyEpoch) || body.keyEpoch < 1 || body.keyEpoch > MAX_CHAT_KEY_EPOCHS)
       throw new PairingError("chat_keys_invalid", "Those chat keys could not be verified.", 400);
     // The only holder of an epoch keeps it: dropping it would lose the key.
-    const others = this.storage.chatKeyHolderPairs(auth.household.id).some((row) => row.keyEpoch === body.keyEpoch && row.deviceId !== auth.device.id);
+    const eligible = new Set(this.keyState(auth).eligible.map((device) => device.id));
+    const others = this.storage.chatKeyHolderPairs(auth.household.id).some((row) => row.keyEpoch === body.keyEpoch && row.deviceId !== auth.device.id && eligible.has(row.deviceId));
     if (others) this.storage.deleteChatKeyPackage(auth.household.id, auth.device.id, body.keyEpoch);
     this.syncService.hintHousehold(auth.household.id, auth.device.id);
     return this.keySummary(auth);
