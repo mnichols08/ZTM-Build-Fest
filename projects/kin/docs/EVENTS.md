@@ -235,7 +235,7 @@ the server never learns a name anyone typed ([PRIVACY](PRIVACY.md),
 ## v1.1.0 Household chat
 
 `CHAT_MESSAGE_POSTED` (44), `CHAT_MESSAGE_EDITED` (45) and
-`CHAT_MESSAGE_DELETED` (46), and `CHAT_REACTION_SET` (47) are schema 1 and leave replay protocol 24
+`CHAT_MESSAGE_DELETED` (46), `CHAT_REACTION_SET` (47) and `CHAT_PIN_SET` (48) are schema 1 and leave replay protocol 24
 unchanged ([ABI](ABI.md) has the payloads; [ADR 0008](decisions/0008-household-chat.md)
 the product decisions).
 
@@ -307,6 +307,18 @@ the product decisions).
   host lists as able to read chat; replay does not check. An edit replaces
   the message's mentions. The text is not changed: the mention is only a
   record of who the writer meant.
+- **Pins (#131).** `CHAT_PIN_SET` (48) pins or unpins one message: payload is
+  the message ID, `on` u8 and 3 reserved zero bytes (20 bytes). Replay keeps
+  pins in the order applied, with who pinned each: a pin of an unknown
+  message or of one already pinned changes nothing (the first pinner stays),
+  and an unpin of one that is not pinned changes nothing. The author's
+  deletion of a message unpins it; an admin's removal is only known to the
+  service, so a page leaves a pin out while a named admin has removed its
+  message. Commands allow a pin only on a message that shows, while fewer
+  than 10 pins show; any member who can post may pin or unpin. Pins from
+  devices that raced past the limit stay in the log but a page lists the
+  first 10 that show, so unpinning brings the next one back. Replay keeps at
+  most 64 records.
 - **Reactions (#127).** `CHAT_REACTION_SET` (47) turns one emoji on or off
   for the event's actor on one message. The emoji is a single grapheme from
   the emoji ranges (a pictograph with optional variation selector and skin

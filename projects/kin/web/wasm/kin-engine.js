@@ -279,6 +279,7 @@ export function createEngine(instanceExports) {
     chatPage: (chatRecords, options, asOf, civilDate, syncIdentity = null) =>
       safeDecode(() => decodeChatPage(
         chatPageBytes(exports, chatMirror, chatRecords, options, asOf, civilDate, syncIdentity),
+        options?.includePins === true,
       )),
     // Searches the chat (KCHF/KCHR, ABI.md): { query, limit (1 to 200),
     // attachmentsOnly, from, to (ms; 0 for none), authors (hex, at most 16),
@@ -341,7 +342,7 @@ function blobFromHex(value, what) {
 
 function executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity, admins, members) {
   if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
-  if (!["post-chat-message", "edit-chat-message", "delete-chat-message", "react-chat-message"].includes(command?.type))
+  if (!["post-chat-message", "edit-chat-message", "delete-chat-message", "react-chat-message", "pin-chat-message"].includes(command?.type))
     throw new KinEngineError(2, "Kin received an invalid household action.");
   if (chatRecords.length > MAX_CHAT_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
   if (!Array.isArray(admins) || admins.length > 16 || !Array.isArray(members) || members.length > 64)
@@ -385,7 +386,7 @@ function executeChatCommand(exports, chatMirror, command, identity, chatRecords,
 function chatPageBytes(exports, chatMirror, chatRecords, options = {}, asOf, civilDate, syncIdentity) {
   if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
   if (chatRecords.length > MAX_CHAT_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
-  const { before = null, limit = 50, includeText = true, includeRetired = false, includeReactions = false, admins = [] } = options;
+  const { before = null, limit = 50, includeText = true, includeRetired = false, includeReactions = false, includePins = false, admins = [] } = options;
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_CHAT_PAGE ||
     (before !== null && (!Number.isInteger(before) || before < 0 || before > 0xffff_ffff)) ||
     !Array.isArray(admins) || admins.length > 16)
@@ -396,7 +397,7 @@ function chatPageBytes(exports, chatMirror, chatRecords, options = {}, asOf, civ
   request.set([75, 67, 72, 81, 1, 0, 0, 0]);
   view.setUint32(8, before ?? 0xffff_ffff, true);
   view.setUint16(12, limit, true);
-  request[14] = (includeText ? 1 : 0) | (includeRetired ? 2 : 0) | (includeReactions ? 4 : 0);
+  request[14] = (includeText ? 1 : 0) | (includeRetired ? 2 : 0) | (includeReactions ? 4 : 0) | (includePins ? 8 : 0);
   view.setUint32(16, admins.length, true);
   admins.forEach((admin, index) => request.set(idFromHex(admin), 20 + index * 16));
   const release = chatMirror.hold(chatRecords);
@@ -516,7 +517,7 @@ function decodeChatSearch(bytes) {
 // KCHP v1 (ABI.md): a 28-byte header, 128 bytes per message, 32 bytes of
 // key per message, the texts, 32 bytes per retired blob, then the reactions
 // a request for them asked for.
-function decodeChatPage(bytes) {
+function decodeChatPage(bytes, includePins = false) {
   const invalid = () => new KinEngineError(6, "Kin received an invalid chat page.");
   if (bytes.length < 28 || readAscii(bytes, 0, 4) !== "KCHP") throw invalid();
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -588,10 +589,9 @@ function decodeChatPage(bytes) {
       messages[index].reactions.push({ emoji, actors });
     }
   });
-  // Quotes (#129), one per message flagged as a reply: the original's ID, its
-  // state, content kind, author, blob ref and key, index and the text held.
-  quoted.forEach((flagged, index) => {
-    if (!flagged) return;
+  // A quote entry (also a pin's message): the original's ID, state, content
+  // kind, author, blob ref and key, index and the text held.
+  const readQuote = () => {
     if (cursor + 108 > bytes.length) throw invalid();
     const state = CHAT_QUOTE_STATES[bytes[cursor + 16]], contentKind = bytes[cursor + 17] === 0 ? null : CHAT_CONTENT_KINDS[bytes[cursor + 17]];
     const ref = bytes.subarray(cursor + 36, cursor + 68), key = bytes.subarray(cursor + 68, cursor + 100);
@@ -600,7 +600,7 @@ function decodeChatPage(bytes) {
     if (!state || (state === "unknown") !== (contentKind === null) || bytes[cursor + 18] || bytes[cursor + 19] ||
       shown === zero(ref) || shown === zero(key) || (!shown && length) || (length && contentKind !== "text") ||
       (state === "unknown") !== (originalIndex === 0xffff_ffff) || cursor + 108 + length > bytes.length) throw invalid();
-    messages[index].replyTo = {
+    const quote = {
       messageId: idToHex(bytes.subarray(cursor, cursor + 16)),
       state,
       contentKind,
@@ -611,6 +611,11 @@ function decodeChatPage(bytes) {
       text: length ? strictTextDecoder.decode(bytes.subarray(cursor + 108, cursor + 108 + length)) : null,
     };
     cursor += 108 + length;
+    return quote;
+  };
+  // Quotes (#129), one per message flagged as a reply.
+  quoted.forEach((flagged, index) => {
+    if (flagged) messages[index].replyTo = readQuote();
   });
   // Mentions (#130): the named members of each message that has any, in
   // record order, ascending; "everyone" comes from the record's flag.
@@ -627,11 +632,28 @@ function decodeChatPage(bytes) {
       cursor += 16;
     }
   });
+  // Pins (#131), when asked for: a count (at most 10), then per pin who pinned
+  // it and the message as a quote entry; only messages that show.
+  const pins = [];
+  if (includePins) {
+    if (cursor + 4 > bytes.length) throw invalid();
+    const pinCount = view.getUint32(cursor, true);
+    cursor += 4;
+    if (pinCount > 10) throw invalid();
+    for (let pin = 0; pin < pinCount; pin += 1) {
+      if (cursor + 16 > bytes.length) throw invalid();
+      const pinnedBy = idToHex(bytes.subarray(cursor, cursor + 16));
+      cursor += 16;
+      const message = readQuote();
+      if ((message.state !== "live" && message.state !== "edited") || /^0{32}$/.test(pinnedBy)) throw invalid();
+      pins.push({ ...message, pinnedBy });
+    }
+  }
   if (cursor !== bytes.length) throw invalid();
   const retired = [];
   for (let index = 0; index < retiredCount; index += 1)
     retired.push(idToHex(bytes.subarray(retiredAt + index * 32, retiredAt + index * 32 + 32)));
-  return { total, start, messages, retired };
+  return { total, start, messages, retired, pins };
 }
 
 // KCHT v1 / KCHS v1 (ABI.md).
@@ -808,6 +830,7 @@ const COMMAND_TYPES = [
   "edit-chat-message",
   "delete-chat-message",
   "react-chat-message",
+  "pin-chat-message",
 ];
 const EVENT_KINDS = [
   null,
@@ -858,6 +881,7 @@ const EVENT_KINDS = [
   "CHAT_MESSAGE_EDITED",
   "CHAT_MESSAGE_DELETED",
   "CHAT_REACTION_SET",
+  "CHAT_PIN_SET",
 ];
 
 // The command field that names each event's own entity (packet offset 92).
@@ -910,6 +934,7 @@ const ENTITY_FIELDS = Object.freeze({
   "edit-chat-message": "messageId",
   "delete-chat-message": "messageId",
   "react-chat-message": "messageId",
+  "pin-chat-message": "messageId",
 });
 
 /** The entity ID an intent packet carries: the type's own field, else `id`, else the caller's fallback. */
@@ -1085,6 +1110,9 @@ function encodeIntentPacket(command, identity) {
   } else if (kind === 47) {
     if (typeof command.on !== "boolean") throw new KinEngineError(2, "Kin received an invalid reaction.");
     packet[112] = command.on ? 1 : 0;
+  } else if (kind === 48) {
+    if (typeof command.on !== "boolean") throw new KinEngineError(2, "Kin received an invalid pin.");
+    packet[112] = command.on ? 1 : 0;
   } else if (kind === 33) {
     packet.set(playbookBytes, 128);
     view.setUint32(124, playbookBytes.length, true);
@@ -1113,8 +1141,8 @@ function encodeIntentPacket(command, identity) {
   } else if (chatBlob) {
     packet.set(chatBlob, 128);
     view.setUint32(124, chatBlob.length, true);
-  } else if (kind === 33 || kind === 35 || kind === 37 || kind === 39 || kind === 41 || kind === 46) {
-    // The Playbook packet payload was encoded above; a chat deletion has none.
+  } else if (kind === 33 || kind === 35 || kind === 37 || kind === 39 || kind === 41 || kind === 46 || kind === 48) {
+    // The Playbook packet payload was encoded above; a chat deletion or pin has none.
   } else if (deviceNameBytes) {
     view.setUint32(124, deviceNameBytes.length, true);
     packet.set(deviceNameBytes, 128);

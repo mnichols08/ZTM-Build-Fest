@@ -65,8 +65,10 @@ const FINAL_REFUSALS = new Set(["chat_event_refused"]);
 // A chat key epoch the household hasn't reached may only be newer than this
 // pass's look at the service, so it gets a second look like a signature.
 const SECOND_LOOK_REFUSALS = new Set(["event_signature_invalid", "chat_key_future", "chat_key_lost"]);
-const CHAT_KINDS = new Set(["CHAT_MESSAGE_POSTED", "CHAT_MESSAGE_EDITED", "CHAT_MESSAGE_DELETED", "CHAT_REACTION_SET"]);
+const CHAT_KINDS = new Set(["CHAT_MESSAGE_POSTED", "CHAT_MESSAGE_EDITED", "CHAT_MESSAGE_DELETED", "CHAT_REACTION_SET", "CHAT_PIN_SET"]);
 const REF = /^[a-f0-9]{64}$/;
+/** Most messages pinned at once (#131); the engine enforces it too. */
+export const MAX_PINS = 10;
 
 export class ChatRoomError extends Error {
   constructor(message, code = "chat_unavailable") {
@@ -929,6 +931,18 @@ export class ChatRoom {
   async react(message, emoji, on) {
     this.assertCanPost();
     return this.author({ type: "react-chat-message", messageId: message.messageId, emoji, on }, { track: false });
+  }
+
+  /**
+   * Pins `message` or unpins it (#131); anyone who can post may. Up to
+   * `MAX_PINS` messages are pinned at once: the engine refuses an 11th, and
+   * this says so plainly first.
+   */
+  async pin(message, on) {
+    this.assertCanPost();
+    if (on && this.page({ limit: 1, includeText: false, includePins: true }).pins.length >= MAX_PINS)
+      throw new ChatRoomError(`You can pin up to ${MAX_PINS} messages. Unpin one first.`, "chat_pin_limit");
+    return this.author({ type: "pin-chat-message", messageId: message.messageId, on }, { track: false });
   }
 
   async author(command, { blobRef = null, retireRef = null, retireParts = [], track = true }) {

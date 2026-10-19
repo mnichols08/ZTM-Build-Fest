@@ -106,7 +106,8 @@ fn event(event_number: u8, logical_time: u64, kind: EventKind) -> EventEnvelope 
         | EventKind::ChatMessagePosted { .. }
         | EventKind::ChatMessageEdited { .. }
         | EventKind::ChatMessageDeleted { .. }
-        | EventKind::ChatReactionSet { .. } => {
+        | EventKind::ChatReactionSet { .. }
+        | EventKind::ChatPinSet { .. } => {
             panic!("Area tests use independent wire fixtures")
         }
     }

@@ -1403,3 +1403,30 @@ test("chat mentions are checked against the readers and come back in pages and s
   const plain = engine.executeChatCommand({ type: "post-chat-message", messageId: "02".repeat(16), blobRef: blob(0xa2), blobKey: blob(0xc2) }, context(2), [], asOf, day);
   assert.deepEqual(engine.chatPage([plain.encodedEvent], {}, asOf, day).messages[0].mentions ?? { everyone: false, members: [] }, { everyone: false, members: [] });
 });
+
+test("chat pins are commands, limited to ten, and listed by a page that asks for them (#131)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const member = new Uint8Array(16).fill(0xbb);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  let sequence = 0;
+  const context = () => { sequence += 1; return { eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId: member, deviceId: new Uint8Array(16).fill(0xab), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) }; };
+  const asOf = 1_791_475_200_900, day = 20261009;
+  const blob = (byte) => byte.toString(16).padStart(2, "0").repeat(32);
+  const chat = [];
+  const run = (command) => { const result = engine.executeChatCommand(command, context(), chat, asOf, day); chat.push(result.encodedEvent); return result; };
+  const ids = Array.from({ length: 11 }, (_, index) => (index + 1).toString(16).padStart(2, "0").repeat(16));
+  ids.forEach((messageId, index) => run({ type: "post-chat-message", messageId, blobRef: blob(0xa0 + index), blobKey: blob(0xc0 + index) }));
+  assert.equal(new DataView(run({ type: "pin-chat-message", messageId: ids[0], on: true }).encodedEvent.buffer).getUint16(2, true), 48);
+  for (const messageId of ids.slice(1, 10)) run({ type: "pin-chat-message", messageId, on: true });
+  // The eleventh, a repeat, and an unpin of something not pinned are refused.
+  assert.throws(() => run({ type: "pin-chat-message", messageId: ids[10], on: true }), (error) => error.code === 4);
+  assert.throws(() => run({ type: "pin-chat-message", messageId: ids[0], on: true }), (error) => error.code === 4);
+  assert.throws(() => run({ type: "pin-chat-message", messageId: ids[10], on: false }), (error) => error.code === 4);
+  const page = engine.chatPage(chat, { includePins: true }, asOf, day);
+  assert.deepEqual(page.pins.map((pin) => pin.messageId), ids.slice(0, 10));
+  assert.equal(page.pins[0].pinnedBy, hex(member));
+  assert.equal(page.pins[0].state, "live");
+  assert.deepEqual(engine.chatPage(chat, {}, asOf, day).pins, [], "pins only when asked for");
+  run({ type: "pin-chat-message", messageId: ids[0], on: false });
+  assert.equal(engine.chatPage(chat, { includePins: true }, asOf, day).pins.length, 9);
+});

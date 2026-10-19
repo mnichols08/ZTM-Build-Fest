@@ -53,6 +53,7 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::ChatMessageEdited { .. } => 45,
         EventKind::ChatMessageDeleted { .. } => 46,
         EventKind::ChatReactionSet { .. } => 47,
+        EventKind::ChatPinSet { .. } => 48,
     }
 }
 
@@ -373,6 +374,14 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             payload.extend_from_slice(&[u8::from(*on), 0, 0, 0]);
             payload.extend_from_slice(&(emoji.len() as u32).to_le_bytes());
             payload.extend_from_slice(emoji.as_bytes());
+        }
+        // Pin (#131): message ID, on u8 and 3 reserved.
+        EventKind::ChatPinSet { message_id, on } => {
+            if message_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            payload.extend_from_slice(&[u8::from(*on), 0, 0, 0]);
         }
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());

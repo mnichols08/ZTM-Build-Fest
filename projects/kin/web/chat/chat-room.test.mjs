@@ -24,7 +24,7 @@ const WASM = new URL("../wasm/kin_engine.wasm", import.meta.url);
 
 const encoder = new TextEncoder(), decoder = new TextDecoder();
 const bytesOf = (hex) => Uint8Array.from(hex.match(/../g), (pair) => Number.parseInt(pair, 16));
-const KINDS = { "post-chat-message": "CHAT_MESSAGE_POSTED", "edit-chat-message": "CHAT_MESSAGE_EDITED", "delete-chat-message": "CHAT_MESSAGE_DELETED", "react-chat-message": "CHAT_REACTION_SET" };
+const KINDS = { "post-chat-message": "CHAT_MESSAGE_POSTED", "edit-chat-message": "CHAT_MESSAGE_EDITED", "delete-chat-message": "CHAT_MESSAGE_DELETED", "react-chat-message": "CHAT_REACTION_SET", "pin-chat-message": "CHAT_PIN_SET" };
 
 /** The engine calls the room makes, over JSON "canonical events". */
 function fakeEngine() {
@@ -85,10 +85,14 @@ function fakeEngine() {
     },
     chatPage(source, options) {
       this.calls.page += 1;
-      const messages = new Map(), retired = [];
+      const messages = new Map(), retired = [], pinned = [];
       for (const { command, actorId, deviceId, timestamp } of events(source)) {
         const message = messages.get(command.messageId);
-        if (command.type === "post-chat-message" && !message)
+        if (command.type === "pin-chat-message") {
+          const at = pinned.findIndex((pin) => pin.messageId === command.messageId);
+          if (command.on && message && at < 0) pinned.push({ messageId: command.messageId, pinnedBy: actorId });
+          else if (!command.on && at >= 0) pinned.splice(at, 1);
+        } else if (command.type === "post-chat-message" && !message)
           messages.set(command.messageId, { reply: command.replyTo ?? null, mentions: { everyone: command.mentions?.everyone === true, members: command.mentions?.members ?? [] }, messageId: command.messageId, authorId: actorId, deviceId, postedAt: timestamp, status: "live", contentKind: command.contentKind ?? "text", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey) });
         else if (command.type === "react-chat-message") {
           if (!message) continue;
@@ -104,7 +108,10 @@ function fakeEngine() {
         } else if (message && message.status !== "deleted" && (actorId === message.authorId || (command.byAdmin && options.admins.includes(actorId)))) {
           retired.push(message.blobRef);
           if (command.type === "edit-chat-message") Object.assign(message, { status: "edited", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey), mentions: { everyone: command.mentions?.everyone === true, members: command.mentions?.members ?? [] } });
-          else Object.assign(message, { status: command.byAdmin ? "removed-by-admin" : "deleted", blobRef: null, blobKey: null });
+          else {
+            Object.assign(message, { status: command.byAdmin ? "removed-by-admin" : "deleted", blobRef: null, blobKey: null });
+            if (!command.byAdmin) pinned.splice(0, pinned.length, ...pinned.filter((pin) => pin.messageId !== command.messageId));
+          }
         }
       }
       const order = [...messages.keys()];
@@ -126,7 +133,16 @@ function fakeEngine() {
         text: options.includeText === false ? null : this.texts.get(message.blobRef) ?? null,
       }));
       const shown = new Set(list.map((message) => message.blobRef));
-      return { total: list.length, start: 0, messages: list, retired: options.includeRetired ? retired.filter((ref) => !shown.has(ref)) : [] };
+      const pins = options.includePins
+        ? pinned.filter((pin) => ["live", "edited"].includes(messages.get(pin.messageId).status)).slice(0, 10).map((pin) => {
+          const original = messages.get(pin.messageId);
+          return {
+            messageId: original.messageId, state: original.status, contentKind: original.contentKind, authorId: original.authorId, index: order.indexOf(original.messageId),
+            blobRef: original.blobRef, blobKey: original.blobKey, text: options.includeText !== false ? this.texts.get(original.blobRef) ?? null : null, pinnedBy: pin.pinnedBy,
+          };
+        })
+        : [];
+      return { total: list.length, start: 0, messages: list, retired: options.includeRetired ? retired.filter((ref) => !shown.has(ref)) : [], pins };
     },
   };
 }
@@ -1328,4 +1344,40 @@ test("mentions name members who can read chat, follow edits, and count as unread
   a.room.readers = a.room.readers.filter((id) => id !== s.partner.memberId);
   assert.deepEqual(a.room.mentionsOf({ authorId: "x", mentions: { everyone: false, members: [s.partner.memberId] } }).members, []);
   assert.deepEqual(a.room.mentionable(), []);
+});
+
+test("members pin messages up to the limit, anyone unpins, and deleting for everyone unpins (#131)", { timeout: 60_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs, householdAdmin: true });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs });
+  const devices = [phone.entry, laptop.entry];
+  const a = await openRoom(phone, s), c = await openRoom(laptop, s);
+  const syncAll = async () => { for (const { room } of [a, c, a, c]) await room.sync({ status: STATUS, devices }); };
+  await syncAll();
+  const sent = [];
+  for (let n = 1; n <= 12; n += 1) sent.push(await a.room.send(`message ${n}`));
+  await syncAll();
+  const byId = (room, id) => room.page().messages.find((message) => message.messageId === id);
+  await c.room.pin(byId(c.room, sent[0].messageId), true);
+  await syncAll();
+  const pins = () => a.room.page({ includePins: true }).pins;
+  assert.deepEqual(pins().map((pin) => [pin.messageId, pin.pinnedBy]), [[sent[0].messageId, s.partner.memberId]]);
+  for (let n = 1; n < 10; n += 1) await a.room.pin(byId(a.room, sent[n].messageId), true);
+  await syncAll();
+  assert.equal(pins().length, 10);
+  // The 11th is refused with a plain message, and nothing is sent.
+  const before = a.room.page().total;
+  await assert.rejects(a.room.pin(byId(a.room, sent[10].messageId), true), (error) => error.code === "chat_pin_limit" && /up to 10/.test(error.message));
+  // Anyone unpins; the slot is free.
+  await a.room.pin(byId(a.room, sent[0].messageId), false);
+  await a.room.pin(byId(a.room, sent[10].messageId), true);
+  await syncAll();
+  assert.equal(pins().length, 10);
+  // Deleting a pinned message for everyone unpins it.
+  await a.room.remove(byId(a.room, sent[1].messageId));
+  await syncAll();
+  assert.equal(pins().some((pin) => pin.messageId === sent[1].messageId), false);
+  assert.equal(c.room.page({ includePins: true }).pins.length, 9, "and it syncs");
+  assert.equal(a.room.page().total, before + 0, "no new messages");
 });

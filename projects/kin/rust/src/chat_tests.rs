@@ -1055,7 +1055,7 @@ fn malformed_page_requests_are_rejected() {
     let mut bad = vec![
         kchq(u32::MAX, 0, 0, &[], &context),
         kchq(u32::MAX, 501, 0, &[], &context),
-        kchq(u32::MAX, 10, 0b1000, &[], &context),
+        kchq(u32::MAX, 10, 0b10000, &[], &context),
         kchq(u32::MAX, 10, 0, &[[0; 16]], &context),
         kchq(u32::MAX, 10, 0, &[[3; 16]; 17], &context),
         kchq(
@@ -2973,4 +2973,230 @@ fn malformed_mention_tails_are_refused() {
     long.push(0);
     assert!(ChatMentions::decode_tail(&long, false).is_err());
     assert!(ChatMentions::decode_tail(&tail(0, 1, &[id(1)]), false).is_ok());
+}
+
+fn pin_record(event: u32, actor: [u8; 16], device: u8, id: u8, on: bool) -> Vec<u8> {
+    let mut payload = message(id).to_vec();
+    payload.extend_from_slice(&[u8::from(on), 0, 0, 0]);
+    record(48, event, actor, device, &payload)
+}
+
+fn pin(id: u8, on: bool) -> C {
+    C::PinChatMessage {
+        id: ChatMessageId(message(id)),
+        on,
+    }
+}
+
+fn pinned_ids(state: &ChatState) -> Vec<([u8; 16], [u8; 16])> {
+    state
+        .pins
+        .iter()
+        .map(|pin| (pin.message_id.0, pin.by.0))
+        .collect()
+}
+
+#[test]
+fn pin_records_decode_as_documented_and_malformed_ones_are_refused() {
+    let good = pin_record(2, MEMBER_2, 0x21, 1, true);
+    let event = decode_event(&good).unwrap();
+    assert_eq!(
+        event.kind,
+        EventKind::ChatPinSet {
+            message_id: ChatMessageId(message(1)),
+            on: true
+        }
+    );
+    assert!(event.kind.is_chat());
+    // Encoding it again gives the same bytes.
+    assert_eq!(crate::codec::encode_event(&event).unwrap(), good);
+    let payload = |edit: &dyn Fn(&mut Vec<u8>)| {
+        let mut bytes = message(1).to_vec();
+        bytes.extend_from_slice(&[1, 0, 0, 0]);
+        edit(&mut bytes);
+        record(48, 2, MEMBER_2, 0x21, &bytes)
+    };
+    for broken in [
+        payload(&|b| b.push(0)),
+        payload(&|b| {
+            b.pop();
+        }),
+        payload(&|b| b[16] = 2),
+        payload(&|b| b[17] = 1),
+        payload(&|b| b[..16].fill(0)),
+    ] {
+        assert!(decode_event(&broken).is_err());
+    }
+}
+
+#[test]
+fn replay_pins_in_order_keeps_the_first_pinner_and_drops_deleted_messages() {
+    let state = chat(&[
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        posted(2, MEMBER_1, 0x11, 2, 1),
+        pin_record(3, MEMBER_2, 0x21, 2, true),
+        pin_record(4, MEMBER_1, 0x11, 1, true),
+        pin_record(5, MEMBER_1, 0x11, 2, true),
+        pin_record(6, MEMBER_1, 0x11, 9, true),
+    ]);
+    assert_eq!(
+        pinned_ids(&state),
+        vec![(message(2), MEMBER_2), (message(1), MEMBER_1)],
+        "oldest pin first; a second pin or a pin of an unknown message changes nothing"
+    );
+    let state = chat(&[
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        posted(2, MEMBER_1, 0x11, 2, 1),
+        pin_record(3, MEMBER_2, 0x21, 1, true),
+        pin_record(4, MEMBER_2, 0x21, 2, true),
+        pin_record(5, MEMBER_2, 0x21, 1, false),
+        pin_record(6, MEMBER_2, 0x21, 1, false),
+    ]);
+    assert_eq!(pinned_ids(&state), vec![(message(2), MEMBER_2)]);
+    // The author's deletion unpins; an admin's removal hides the pin.
+    let state = chat(&[
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        posted(2, MEMBER_1, 0x11, 2, 1),
+        pin_record(3, MEMBER_2, 0x21, 1, true),
+        pin_record(4, MEMBER_2, 0x21, 2, true),
+        deleted(5, MEMBER_1, 0x11, 1, false),
+        deleted(6, ADMIN, 0x31, 2, true),
+    ]);
+    assert_eq!(pinned_ids(&state), vec![(message(2), MEMBER_2)]);
+    assert_eq!(state.shown_pins(&[ActorId(ADMIN)]).len(), 0);
+    assert_eq!(
+        state.shown_pins(&[]).len(),
+        1,
+        "no named admin: the removal doesn't count"
+    );
+}
+
+#[test]
+fn commands_pin_up_to_the_limit_and_refuse_what_changes_nothing() {
+    let mut log = History::chat();
+    for id in 1..=12u8 {
+        run(
+            &mut log,
+            post(id, ChatContentKind::Text),
+            context(id, MEMBER_1, 0x11, id.into()),
+        )
+        .unwrap();
+    }
+    let mut next = 20u8;
+    let mut step = |log: &mut History, command: C, actor: [u8; 16]| {
+        next += 1;
+        run(
+            log,
+            command,
+            context(next, actor, actor[0], u64::from(next)),
+        )
+    };
+    // Anyone who can post may pin; a message once, and only if it exists.
+    step(&mut log, pin(1, true), MEMBER_2).unwrap();
+    assert_eq!(
+        step(&mut log, pin(1, true), MEMBER_1),
+        Err(KinError::InvalidEvent)
+    );
+    assert_eq!(
+        step(&mut log, pin(99, true), MEMBER_1),
+        Err(KinError::InvalidEvent)
+    );
+    assert_eq!(
+        step(&mut log, pin(2, false), MEMBER_1),
+        Err(KinError::InvalidEvent)
+    );
+    for id in 2..=MAX_PINS as u8 {
+        step(&mut log, pin(id, true), MEMBER_1).unwrap();
+    }
+    // The 11th is refused until one is unpinned, by anyone.
+    assert_eq!(
+        step(&mut log, pin(11, true), MEMBER_1),
+        Err(KinError::InvalidEvent)
+    );
+    step(&mut log, pin(1, false), MEMBER_1).unwrap();
+    step(&mut log, pin(11, true), MEMBER_2).unwrap();
+    assert_eq!(
+        step(&mut log, pin(12, true), MEMBER_1),
+        Err(KinError::InvalidEvent)
+    );
+    // Deleting a pinned message for everyone frees its slot; it can't be pinned again.
+    step(&mut log, delete(2, false), MEMBER_1).unwrap();
+    assert_eq!(
+        step(&mut log, pin(2, true), MEMBER_1),
+        Err(KinError::InvalidEvent)
+    );
+    step(&mut log, pin(12, true), MEMBER_1).unwrap();
+    // An admin's removal also frees the slot.
+    assert_eq!(
+        step(&mut log, pin(1, true), MEMBER_1),
+        Err(KinError::InvalidEvent)
+    );
+    step(&mut log, delete(3, true), ADMIN).unwrap();
+    step(&mut log, pin(1, true), MEMBER_1).unwrap();
+}
+
+#[test]
+fn the_wire_command_pins() {
+    let bytes = kcmd(48, message(1), 1, &[]);
+    assert_eq!(decode_command(&bytes).unwrap().0, pin(1, true));
+    assert_eq!(
+        decode_command(&kcmd(48, message(1), 0, &[])).unwrap().0,
+        pin(1, false)
+    );
+    for broken in [
+        kcmd(48, message(1), 2, &[]),
+        kcmd(48, [0; 16], 1, &[]),
+        kcmd(48, message(1), 1, &[1]),
+    ] {
+        assert!(decode_command(&broken).is_err());
+    }
+}
+
+#[test]
+fn a_page_lists_pins_with_who_pinned_and_the_message_as_a_quote() {
+    let state_records = [
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        posted(2, MEMBER_1, 0x11, 2, 1),
+        posted(3, MEMBER_1, 0x11, 3, 1),
+        pin_record(4, MEMBER_2, 0x21, 2, true),
+        pin_record(5, MEMBER_1, 0x11, 1, true),
+        pin_record(6, MEMBER_1, 0x11, 3, true),
+        deleted(7, MEMBER_1, 0x11, 3, false),
+    ];
+    let mut log = history_of(&state_records);
+    let mut texts = ChatTexts::new();
+    let kctx = kine(&[], 0, TEST_DATE, None);
+    let without = chat_page(&kchq(u32::MAX, 10, 0, &[], &kctx), &mut log, &mut texts).unwrap();
+    let with = chat_page(&kchq(u32::MAX, 10, 8, &[], &kctx), &mut log, &mut texts).unwrap();
+    assert!(with.len() > without.len());
+    assert_eq!(&with[..without.len()], &without[..], "pins only append");
+    let tail = &with[without.len()..];
+    assert_eq!(
+        u32_at(tail, 0),
+        2,
+        "the deleted message is no longer pinned"
+    );
+    // Per pin: who pinned it, then a quote entry starting with the message ID.
+    assert_eq!(&tail[4..20], &MEMBER_2);
+    assert_eq!(&tail[20..36], &message(2));
+    assert_eq!(tail[36], 1, "live");
+    let second = 4 + 16 + 108;
+    assert_eq!(&tail[second..second + 16], &MEMBER_1);
+    assert_eq!(&tail[second + 16..second + 32], &message(1));
+    assert_eq!(tail.len(), 4 + 2 * (16 + 108));
+    // An admin's removal hides the pin from a page that names that admin.
+    let mut log = history_of(&[
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        pin_record(2, MEMBER_2, 0x21, 1, true),
+        deleted(3, ADMIN, 0x31, 1, true),
+    ]);
+    let hidden = chat_page(
+        &kchq(u32::MAX, 10, 8, &[ADMIN], &kctx),
+        &mut log,
+        &mut texts,
+    )
+    .unwrap();
+    assert_eq!(u32_at(&hidden, hidden.len() - 4), 0);
+    let shown = chat_page(&kchq(u32::MAX, 10, 8, &[], &kctx), &mut log, &mut texts).unwrap();
+    assert_eq!(u32_at(&shown, shown.len() - (4 + 16 + 108)), 1);
 }
