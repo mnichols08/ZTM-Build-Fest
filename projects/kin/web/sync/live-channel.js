@@ -216,8 +216,7 @@ export class LiveChannel {
       } else if (record.type === LIVE_TYPE.RECEIPTS && this.up) {
         this.onReceipts();
       }
-      // Newer record types are ignored: the service only sends them to
-      // clients that ask for them.
+      // Record types this client doesn't know are ignored.
     };
     socket.onclose = (event) => {
       if (this.socket !== socket) return;

@@ -270,6 +270,9 @@ export class ChatRelayService {
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !isReceiptSlotValid(body.record, auth, sync.currentEpoch, expectedRevision + 1))
       throw new PairingError("chat_receipts_invalid", "That chat change is invalid.", 400);
     const now = this.syncService.now();
+    // Forget devices that have been quiet for a window, so the map stays small.
+    for (const [deviceId, times] of this.receiptWrites)
+      if (deviceId !== auth.device.id && times.at(-1) <= now - RECEIPT_WINDOW_MS) this.receiptWrites.delete(deviceId);
     const recent = (this.receiptWrites.get(auth.device.id) ?? []).filter((time) => time > now - RECEIPT_WINDOW_MS);
     if (recent.length >= RECEIPT_WRITES_PER_MINUTE) {
       this.receiptWrites.set(auth.device.id, recent);

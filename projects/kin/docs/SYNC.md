@@ -630,7 +630,13 @@ was read, and the member's two settings.
   (`postedAt`, `messageId`) order. A deleted message keeps its place, so it
   still counts toward the cursor. This is the order messages are posted in;
   two devices with clocks seconds apart can disagree on a message or two near
-  the edge, which shows as seen slightly early or late.
+  the edge, which shows as seen slightly early or late. A message dated more
+  than five minutes ahead of the reader's clock never moves a cursor, and a
+  cursor that far ahead in a slot is read as none, so one message with a wrong
+  clock can't mark everything after it as read. The cursor is "the newest
+  message that was on screen", so a reader who opens a long unread backlog and
+  sees only its end marks the messages before it as read too: the line means
+  "has caught up to here", not "was shown every message".
 - Cursors only move forward. Two devices of one member merge to the later one,
   and a lower cursor is never written over a higher one (the loser of a
   compare-and-set reads, merges and writes again). Other members' slots are
@@ -642,14 +648,24 @@ was read, and the member's two settings.
   downloaded or a push arrived. It writes at most once every 2 seconds; the
   service allows 40 writes a minute per device.
 - Settings, in the same slot so every device of the member sees them
-  (the settings that were written last win): **Send read receipts** and
+  (the settings that were written last win; on an exact tie the more private
+  choice wins, so devices agree, and a device that takes a newer setting also
+  takes the slot's cursor, so it can't republish progress that was cleared):
+  **Send read receipts** and
   **Show when I'm typing**, both on by default. Turning receipts off clears the
   stored cursor (the slot says "none"), stops collecting one, and hides other
   members' receipts from that member on all their devices: reciprocity. The
   settings share the slot, not the member's private "delete for me" record
   (#119) as the story suggested: that record is sealed to the member's own
   devices, so it couldn't carry anything the others should read, and the two
-  settings are not secret from them anyway.
+  settings are not secret from them anyway. A device that cannot open its own
+  member's slot (it joined after a key change) fails closed: it sends no typing
+  and no receipts, and shows none, until the member sets the settings on it or
+  it reads a slot it can open. It still learns the slot's revision, so its
+  writes don't conflict, and a device that has settings of its own re-seals the
+  slot under a key it has. The cursor and read time sit unencrypted in the
+  device's local chat database beside the member list, as the other bookkeeping
+  there does; the chat events themselves stay sealed.
 - The slot is fetched when the chat opens, on a `RECEIPTS` live hint, and at
   most every 15 seconds on the chat pass. The "Seen by" line shows under the
   member's latest message ("Seen by everyone" when every other active member
@@ -671,14 +687,19 @@ names the sender's own household and device, and it drops frames faster than a
 burst of four then one a second (a connection that keeps sending them is
 closed). A receiver verifies the frame like a chat event, drops one that is
 not newer than the last it accepted from that device (the sequence is the
-sender's clock in milliseconds, so a replay shows nothing), and shows the
+sender's clock in milliseconds), or that was sealed more than 15 seconds before
+or after its own clock (so a replay of an old frame shows nothing, though one
+replayed within those seconds of being sent can), and shows the
 indicator for 6 seconds unless refreshed, so it disappears within 6 seconds of
-the person stopping, closing, locking or losing connection. Nothing about
+the person stopping, closing, locking or losing connection (the "stopped"
+frame on lock is best effort: the keys go with the lock, and the 6 seconds is
+what is guaranteed). Nothing about
 typing is written to disk on either side. Turning it off stops this device
 sending; the member still sees others'. The indicator is visible text beneath
 the list and is the log's accessible description, not a live region, so screen
 readers aren't interrupted on every change. Only the tab that holds the
-device's live channel (one per device, by Web Lock) sends or receives typing.
+device's live channel (one per device, by Web Lock) sends or receives typing,
+so with several tabs of Kin open, typing shows in the one that holds it.
 
 ## Privacy boundary
 

@@ -35,6 +35,11 @@ export const RECEIPT_WRITE_MS = 2_000;
 export const RECEIPT_REFRESH_MS = 15_000;
 export const TYPING_SEND_MS = 3_000;
 export const TYPING_EXPIRE_MS = 6_000;
+/** A typing frame sealed longer ago than this (or further ahead) is dropped. */
+export const TYPING_FRESH_MS = 15_000;
+/** A cursor dated further ahead than this is not believed: one message with a
+ * wrong clock must not mark everything after it as read. */
+export const CLOCK_SKEW_MS = 5 * 60_000;
 /** The service refuses a slot over this (server/durable-store/shared.mjs). */
 export const MAX_SLOT_BYTES = 4_096;
 
@@ -197,6 +202,13 @@ export class ChatPresence {
     this.readAt = 0;
     this.revision = 0;
     this.dirty = false;
+    // Bumped by every change that needs writing, so a write that was sealed
+    // before a change doesn't mark that change as written.
+    this.version = 0;
+    // The member's own slot exists but this device can't open it, and this
+    // device has no settings of its own: until they are known, send nothing.
+    this.unverified = false;
+    this.resealed = false;
     this.slots = new Map();
     this.typers = new TypingTracker({ now: this.now });
     this.watermarks = new Map();
@@ -223,6 +235,13 @@ export class ChatPresence {
     if (Number.isSafeInteger(saved.readAt)) this.readAt = saved.readAt;
     if (Number.isSafeInteger(saved.revision) && saved.revision >= 0) this.revision = saved.revision;
     this.dirty = saved.dirty === true;
+    if (this.dirty) this.version += 1;
+  }
+
+  /** Something needs writing to the slot. */
+  touch() {
+    this.dirty = true;
+    this.version += 1;
   }
 
   async persist() {
@@ -234,23 +253,23 @@ export class ChatPresence {
     } catch { /* kept in memory; the next change saves it */ }
   }
 
-  get sendsReceipts() { return this.settings.receipts; }
-  get sendsTyping() { return this.settings.typing; }
+  get sendsReceipts() { return this.settings.receipts && !this.unverified; }
+  get sendsTyping() { return this.settings.typing && !this.unverified; }
 
   /** Reciprocity: someone who sends no receipts sees no one else's. */
-  get showsReceipts() { return this.settings.receipts; }
+  get showsReceipts() { return this.sendsReceipts; }
 
   /* --- read cursor --- */
 
   /** A message was on screen in a visible, focused window: the cursor moves up
    * to it if that is later than where it was. Writes are throttled. */
   markRead(message) {
-    if (this.closed || !this.settings.receipts || !message) return false;
+    if (this.closed || !this.sendsReceipts || !message) return false;
     const cursor = cursorOf(message);
-    if (!isCursor(cursor) || compareCursors(cursor, this.cursor) <= 0) return false;
+    if (!isCursor(cursor) || compareCursors(cursor, this.cursor) <= 0 || cursor.postedAt > this.now() + CLOCK_SKEW_MS) return false;
     this.cursor = cursor;
     this.readAt = this.now();
-    this.dirty = true;
+    this.touch();
     void this.persist();
     this.scheduleWrite();
     this.env.onChange?.();
@@ -284,8 +303,10 @@ export class ChatPresence {
   /** Writes the slot if anything changed, compare-and-set on its revision;
    * another device having written meanwhile is merged and tried once more. */
   async flush({ retried = false } = {}) {
+    // A write in flight was sealed before any change made since; wait for it,
+    // then write again if something is still waiting.
+    while (this.writing) await this.writing.catch(() => {});
     if (this.closed || !this.dirty) return;
-    if (this.writing) return this.writing;
     this.writing = this.write({ retried }).finally(() => { this.writing = null; });
     return this.writing;
   }
@@ -296,6 +317,7 @@ export class ChatPresence {
     if (!me) return;
     const epoch = await this.env.sendingEpoch();
     const householdKey = await this.env.epochKey(epoch);
+    const version = this.version;
     const record = await seal({
       body: this.body(), householdId: identity.householdId, deviceId: identity.deviceId, sequence: this.revision + 1,
       keyEpoch: epoch, householdKey, signingKey: this.env.signingKey(), now: this.now(),
@@ -303,7 +325,7 @@ export class ChatPresence {
     try {
       const result = await this.env.request("/api/chat/receipts", { method: "PUT", body: JSON.stringify({ expectedRevision: this.revision, record }) });
       this.revision = result.revision;
-      this.dirty = false;
+      if (this.version === version) this.dirty = false;
       this.lastWrite = this.now();
       await this.persist();
     } catch (error) {
@@ -334,17 +356,30 @@ export class ChatPresence {
       // A slot signed by a device that isn't that member's is not theirs.
       if (!device || device.memberId !== row.memberId) continue;
       let value;
+      let keyMissing = false;
       try {
-        value = await open({
-          envelope: row.record, device, householdKey: await this.env.epochKey(row.record.keyEpoch),
-          householdId: identity.householdId, kind: "receipt",
-        });
+        const householdKey = await this.env.epochKey(row.record.keyEpoch).catch((error) => { keyMissing = true; throw error; });
+        value = await open({ envelope: row.record, device, householdKey, householdId: identity.householdId, kind: "receipt" });
         if (row.record.deviceSequence !== row.revision) continue;
       } catch (error) {
         if (error?.code === "chat_locked") throw error;
+        if (row.memberId === identity.memberId) {
+          // Sealed under a key this device never had. The revision is still
+          // known (so writes work), the settings are not: fail closed unless
+          // this device has its own, and re-seal the slot under a key it has.
+          this.revision = Math.max(this.revision, row.revision);
+          if (this.settings.settingsAt === 0) this.unverified = true;
+          else if (!this.resealed) { this.resealed = true; this.touch(); }
+        } else if (keyMissing) {
+          // A key this device doesn't hold right now: keep what was known
+          // rather than drop a reader. A slot that fails its signature or
+          // shape shows nothing.
+          const before = this.slots.get(row.memberId);
+          if (before) next.set(row.memberId, before);
+        }
         continue;
       }
-      const cursor = isCursor(value.cursor) ? value.cursor : null;
+      const cursor = isCursor(value.cursor) && value.cursor.postedAt <= this.now() + CLOCK_SKEW_MS ? value.cursor : null;
       const slot = {
         revision: row.revision, cursor: value.receipts === false ? null : cursor,
         readAt: Number.isSafeInteger(value.readAt) ? value.readAt : 0,
@@ -372,9 +407,22 @@ export class ChatPresence {
   mergeOwn(slot) {
     let changed = false;
     this.revision = Math.max(this.revision, slot.revision);
-    if (slot.settingsAt > this.settings.settingsAt) {
-      this.settings = { receipts: slot.receipts, typing: slot.typing, settingsAt: slot.settingsAt };
-      if (!slot.receipts) { this.cursor = null; this.readAt = 0; }
+    this.unverified = false;
+    // Equal times on two devices: the more private choice wins, so they agree.
+    const tie = slot.settingsAt === this.settings.settingsAt
+      && (slot.receipts !== this.settings.receipts || slot.typing !== this.settings.typing)
+      && (!slot.receipts || !slot.typing);
+    if (slot.settingsAt > this.settings.settingsAt || tie) {
+      this.settings = {
+        receipts: tie ? slot.receipts && this.settings.receipts : slot.receipts,
+        typing: tie ? slot.typing && this.settings.typing : slot.typing,
+        settingsAt: slot.settingsAt,
+      };
+      // The slot's progress replaces this device's: a device that was away
+      // while receipts went off and on must not publish what was cleared.
+      this.cursor = this.settings.receipts ? slot.cursor : null;
+      this.readAt = this.settings.receipts ? slot.readAt : 0;
+      if (tie) this.touch();
       changed = true;
     }
     if (this.settings.receipts) {
@@ -385,9 +433,10 @@ export class ChatPresence {
         changed = true;
       }
       // This device is ahead of (or differs from) the stored slot.
-      if (compareCursors(this.cursor, slot.cursor) !== 0) this.dirty = true;
+      if (compareCursors(this.cursor, slot.cursor) !== 0) this.touch();
     }
-    if (slot.settingsAt < this.settings.settingsAt) this.dirty = true;
+    if (slot.settingsAt < this.settings.settingsAt || (slot.settingsAt === this.settings.settingsAt
+      && (slot.receipts !== this.settings.receipts || slot.typing !== this.settings.typing))) this.touch();
     if (changed) void this.persist();
     return changed;
   }
@@ -417,7 +466,8 @@ export class ChatPresence {
     if (!this.settings.receipts) { this.cursor = null; this.readAt = 0; }
     else if (!wasReceipts) this.readAt = now;
     if (!this.settings.typing) this.stopTyping();
-    this.dirty = true;
+    this.unverified = false;
+    this.touch();
     await this.persist();
     this.env.onChange?.();
     try { await this.flush(); } catch { this.scheduleWrite(); }
@@ -427,7 +477,7 @@ export class ChatPresence {
 
   /** The composer has new input: tell the others, at most every 3 seconds. */
   typed() {
-    if (this.closed || !this.settings.typing) return;
+    if (this.closed || !this.sendsTyping) return;
     if (this.typingOn && this.now() - this.lastTypingSent < TYPING_SEND_MS) return;
     void this.sendTyping(true);
   }
@@ -473,6 +523,9 @@ export class ChatPresence {
     const device = this.env.devices().find((entry) => entry.deviceId === envelope?.deviceId);
     if (!device || device.memberId === identity.memberId) return false;
     if ((this.watermarks.get(device.deviceId) ?? 0) >= envelope.deviceSequence) return false;
+    // A frame is only as old as its seal: a replay of an old one shows nothing.
+    const sealedAt = Number(envelope.logicalTime);
+    if (!Number.isFinite(sealedAt) || Math.abs(this.now() - sealedAt) > TYPING_FRESH_MS) return false;
     let value;
     try {
       value = await open({ envelope, device, householdKey: await this.env.epochKey(envelope.keyEpoch), householdId: identity.householdId, kind: "typing" });
@@ -510,7 +563,8 @@ export class ChatPresence {
 
   close() {
     if (this.closed) return;
-    // Best effort while the keys are still here: tell the others we stopped.
+    // Best effort: sealing is asynchronous and the room drops its keys right
+    // after, so this may not go out. Receivers expire the indicator anyway.
     if (this.typingOn) void this.sendTyping(false);
     this.closed = true;
     this.clearTimer(this.writeTimer);

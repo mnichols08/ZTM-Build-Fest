@@ -67,14 +67,16 @@ class KinChatSettings extends HTMLElement {
   async apply(input, change) {
     const room = this.chatRoom;
     if (!room) return;
-    input.disabled = true;
+    if (input.getAttribute("aria-busy") === "true") return;
+    // Not `disabled`: that would drop keyboard focus from the box just used.
+    input.setAttribute("aria-busy", "true");
     this.error.textContent = "";
     try {
       await room.presence.setSettings(change);
     } catch {
       // The choice is kept on this device and sent on the next sync.
     } finally {
-      input.disabled = false;
+      input.removeAttribute("aria-busy");
       this.render();
     }
   }

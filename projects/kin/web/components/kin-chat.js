@@ -445,12 +445,16 @@ class KinChat extends HTMLElement {
       item.append(`${room.authorLabel(reader.memberId)} · `, time);
       seen.append(item);
     }
-    const waiting = this.audienceOf(message, room).filter((member) => !readers.some((reader) => reader.memberId === member.id));
+    const others = this.audienceOf(message, room).filter((member) => !readers.some((reader) => reader.memberId === member.id));
+    // Someone who sends no receipts isn't "not seen yet": nothing is known.
+    const off = others.filter((member) => room.presence?.slots?.get(member.id)?.receipts === false);
+    const waiting = others.filter((member) => !off.includes(member));
     const children = [heading, seen];
-    if (waiting.length) {
+    for (const [members, label] of [[waiting, "Not seen yet"], [off, "Read receipts off"]]) {
+      if (!members.length) continue;
       const rest = document.createElement("p");
       rest.className = "chat-details-waiting";
-      rest.textContent = `Not seen yet: ${waiting.map((member) => room.authorLabel(member.id)).join(", ")}`;
+      rest.textContent = `${label}: ${members.map((member) => room.authorLabel(member.id)).join(", ")}`;
       children.push(rest);
     }
     const note = document.createElement("p");

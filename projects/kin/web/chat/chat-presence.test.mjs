@@ -271,19 +271,110 @@ test("the settings that were written last win, wherever they were set", async ()
   assert.equal(phone.sendsReceipts, true, "the other setting is untouched");
 });
 
-test("a slot another member's device wrote under my member's name is ignored", async () => {
+test("a slot signed by a device that isn't its member's is ignored", async () => {
   const h = await household();
-  const sam = h.open("sam"), phone = h.open("phone");
-  await Promise.all([sam.load(), phone.load()]);
-  sam.markRead(message(9, ME));
+  const alex = h.open("alex"), phone = h.open("phone");
+  await Promise.all([alex.load(), phone.load()]);
+  alex.markRead(message(9, ME));
   await h.advance(RECEIPT_WRITE_MS);
-  // The service moves Sam's slot to Alex.
-  h.slots.set(ALEX, h.slots.get(SAM));
-  h.slots.delete(SAM);
-  const alex = h.open("alex");
-  await alex.load();
-  await alex.refresh();
-  assert.equal(alex.readers(message(1, ME)).length, 0, "signed by a device that isn't that member's");
+  // The service files Alex's slot under Sam's name.
+  h.slots.set(SAM, h.slots.get(ALEX));
+  h.slots.delete(ALEX);
+  await phone.refresh();
+  assert.equal(phone.readers(message(1, ME)).length, 0, "Alex's device can't speak for Sam");
+});
+
+test("a change made while a write is in flight is not lost", async () => {
+  const h = await household();
+  const phone = h.open("phone"), sam = h.open("sam");
+  await Promise.all([phone.load(), sam.load()]);
+  const request = phone.env.request;
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let entered;
+  const inFlight = new Promise((resolve) => { entered = resolve; });
+  phone.env.request = async (path, options = {}) => {
+    if (options.method === "PUT") { entered(); await gate; }
+    return request(path, options);
+  };
+  phone.markRead(message(5));
+  const first = phone.flush();
+  await inFlight;
+  const turnedOff = phone.setSettings({ receipts: false });
+  release();
+  await Promise.all([first, turnedOff]);
+  await settleTasks();
+  assert.equal(phone.dirty, false);
+  assert.equal(phone.revision, 2, "the change got its own write");
+  await sam.refresh();
+  assert.equal(sam.readers(message(3, SAM)).length, 0, "nothing of what was read is left");
+});
+
+test("a device that can't open my member's slot sends nothing until it knows the settings", async () => {
+  const h = await household();
+  const phone = h.open("phone"), laptop = h.open("laptop");
+  await Promise.all([phone.load(), laptop.load()]);
+  await phone.setSettings({ typing: false });
+  // The laptop joined after a key change: the slot is sealed under a key it never had.
+  laptop.env.epochKey = async (epoch) => { if (epoch === 1) throw new Error("no key for this epoch"); return h.key; };
+  laptop.env.sendingEpoch = async () => 2;
+  await laptop.refresh();
+  assert.equal(laptop.sendsTyping, false, "fails closed");
+  assert.equal(laptop.sendsReceipts, false);
+  laptop.typed();
+  await settleTasks();
+  assert.equal(h.frames.length, 0, "no typing from a device that doesn't know");
+  assert.equal(laptop.markRead(message(3)), false);
+  const before = h.log.filter((entry) => entry.deviceId === laptop.env.identity.deviceId && entry.expectedRevision !== undefined).length;
+  h.clock.now += 5_000;
+  await laptop.setSettings({ typing: false });
+  const writes = h.log.filter((entry) => entry.deviceId === laptop.env.identity.deviceId && entry.expectedRevision !== undefined);
+  assert.equal(writes.length - before, 1, "knew the revision, so no conflict");
+  assert.equal(writes.at(-1).expectedRevision, 1);
+  assert.equal(laptop.sendsReceipts, true);
+  assert.equal(laptop.sendsTyping, false);
+});
+
+test("a device that was away while receipts went off and on doesn't publish what was cleared", async () => {
+  const h = await household();
+  const phone = h.open("phone"), laptop = h.open("laptop"), sam = h.open("sam");
+  await Promise.all([phone.load(), laptop.load(), sam.load()]);
+  phone.markRead(message(5));
+  await h.advance(RECEIPT_WRITE_MS);
+  await laptop.refresh();
+  assert.deepEqual(laptop.cursor, cursorOf(message(5)));
+  await phone.setSettings({ receipts: false });
+  h.clock.now += 5_000;
+  await phone.setSettings({ receipts: true });
+  await laptop.refresh();
+  assert.equal(laptop.cursor, null, "takes the slot's progress with its newer settings");
+  await h.advance(RECEIPT_WRITE_MS);
+  await sam.refresh();
+  assert.equal(sam.readers(message(1, SAM)).length, 0);
+});
+
+test("settings set at the same instant on two devices agree, the more private one winning", async () => {
+  const h = await household();
+  const phone = h.open("phone"), laptop = h.open("laptop");
+  await Promise.all([phone.load(), laptop.load()]);
+  await phone.setSettings({ typing: false });
+  await laptop.setSettings({ receipts: false });
+  await phone.refresh();
+  await laptop.refresh();
+  await settleTasks();
+  for (const device of [phone, laptop]) {
+    assert.equal(device.sendsReceipts, false);
+    assert.equal(device.sendsTyping, false);
+  }
+});
+
+test("a message dated far in the future doesn't move the cursor", async () => {
+  const h = await household();
+  const phone = h.open("phone");
+  await phone.load();
+  assert.equal(phone.markRead({ ...message(1), postedAt: h.clock.now + 10 * 60_000 }), false);
+  assert.equal(phone.cursor, null);
+  assert.equal(phone.markRead({ ...message(2), postedAt: h.clock.now + 60_000 }), true, "a minute of clock difference is fine");
 });
 
 test("a rolled-back or garbled slot never lowers what is known", async () => {
@@ -451,4 +542,17 @@ test("typing is only sent while the live channel is up, and a closed presence sh
   assert.deepEqual(phone.typing(), []);
   phone.markRead(message(3));
   assert.equal(phone.cursor, null);
+});
+
+test("a typing frame sealed long ago shows nothing, even if it was never seen before", async () => {
+  const h = await household();
+  const sam = h.open("sam"), phone = h.open("phone");
+  await Promise.all([sam.load(), phone.load()]);
+  sam.typed();
+  await settleTasks();
+  const [{ bytes }] = h.frames;
+  h.frames.length = 0;
+  h.clock.now += 60_000;
+  assert.equal(await phone.receiveTyping(bytes), false, "a minute old");
+  assert.deepEqual(phone.typing(), []);
 });
