@@ -62,7 +62,7 @@ const DOWNLOAD_URL_MS = 60_000;
 const TIME = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 const DATE_TIME = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const FULL = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "short" });
-const ACTION_LABELS = { copy: "Copy text", reply: "Reply", details: "See who reacted", edit: "Edit", delete: "Delete for everyone", remove: "Remove as admin", hide: "Delete for me", pin: "Pin", unpin: "Unpin" };
+const ACTION_LABELS = { copy: "Copy text", reply: "Reply", details: "See who reacted", edit: "Edit", delete: "Delete for everyone", remove: "Remove as admin", hide: "Delete for me", pin: "Pin", unpin: "Unpin", "to-shopping": "Add to Shopping", "to-todo": "Add to To do", "to-handoff": "Make a handoff", "to-note": "Save as a note" };
 /** How long a press on a reaction chip must last to list who reacted. */
 const LONG_PRESS_MS = 500;
 const NO_RECALL = "Copies people already saved, screenshotted or downloaded can't be recalled.";
@@ -1899,8 +1899,10 @@ class KinChat extends HTMLElement {
     if (message.text !== null) actions.push("copy");
     if (message.reactions?.length) actions.push("details");
     if ((room.access ?? "write") === "write") actions.push("reply");
+    if (this.shareable(message)) actions.push("to-shopping", "to-todo", "to-handoff", "to-note");
     if ((room.access ?? "write") === "write") actions.push(this.pins.some((pin) => pin.messageId === message.messageId) ? "unpin" : "pin");
-    // Read-only members (#123) can copy and hide for themselves, nothing else.
+    // Read-only members (#123) can copy, hide and turn a message into a record
+    // (#132), but not post, react, pin, edit or delete.
     const canPost = (room.access ?? "write") === "write";
     if (canPost && own && message.text !== null && message.contentKind === "text") actions.push("edit");
     if (canPost && own) actions.push("delete");
@@ -1908,6 +1910,26 @@ class KinChat extends HTMLElement {
     // Your own message still waiting to send would go out anyway.
     if (!(own && room.pendingMessages?.has(message.messageId))) actions.push("hide");
     return actions;
+  }
+
+  /** A message Kin can turn into a record (#132): its text or its files are
+   * here on screen. Any member who can read chat may; the records are the
+   * household's, not the chat's. */
+  shareable(message) {
+    if (message.contentKind === "attachment") return this.attachments.get(message.messageId)?.status === "ready";
+    return message.contentKind === "text" && typeof message.text === "string" && message.text.trim() !== "";
+  }
+
+  /** Hands a message's text, and the files it carries, to the app's dialog
+   * for a shopping item, task, handoff or note. */
+  shareMessage(message, kind, opener) {
+    const room = this.chatRoom;
+    if (!room || !this.shareable(message)) return;
+    const state = message.contentKind === "attachment" ? this.attachments.get(message.messageId) : null;
+    const files = (state?.files ?? []).map((file, index) => ({ name: file.name, size: file.size, type: file.type, load: () => room.attachmentFile(message, index) }));
+    const readers = new Set(room.readers ?? []);
+    const limited = (room.members ?? []).some((member) => member.active !== false && !readers.has(member.id));
+    this.dispatchEvent(new CustomEvent("kin:chat-to-record", { bubbles: true, composed: true, detail: { kind, text: state ? state.text ?? "" : message.text, files, limited, opener } }));
   }
 
   /** A disclosure: the ⋯ button shows or hides the row's action buttons. */
@@ -1989,6 +2011,8 @@ class KinChat extends HTMLElement {
       } else if (action === "pin" || action === "unpin") {
         await this.setPin(message, action === "pin");
         this.rowFor(message.messageId)?.querySelector(".chat-menu-button")?.focus({ preventScroll: true });
+      } else if (action.startsWith("to-")) {
+        this.shareMessage(message, action.slice(3), this.rowFor(message.messageId)?.querySelector(".chat-menu-button") ?? null);
       } else if (action === "copy") {
         await navigator.clipboard.writeText(message.text);
         this.say("Copied.");

@@ -1838,3 +1838,22 @@ and receive a short ID suffix in selection/management labels until renamed.
   a member's devices. Turning it off stops sending and also hides everyone
   else's status, and the copy says so. Members with no chat access neither
   send nor see it; read-only members can do both.
+
+# 26. Turn a message into a task, handoff or note (#132)
+
+- A message's ⋯ menu offers **Add to Shopping**, **Add to To do**, **Make a
+  handoff** and **Save as a note** to any member who can read the chat
+  (read-only members too: the records are the household's, not the chat's).
+  Each opens one dialog with the message's text, editable. Items and handoffs
+  take it as one line; a note takes the message's first line as its title and
+  all of it as the body.
+- The dialog says everyone in the household will see the result, including
+  members who can't read the chat when there are any, and that it is a copy.
+- A photo or file on the message is offered as an unchecked box per file
+  (items and notes only; handoffs take text). Chosen files are re-encrypted as
+  ordinary household attachments of the new record; unchosen files are not
+  copied. A file that fails is named after the record is saved.
+- Saving goes through the same commands as typing the record in. Nothing about
+  the message (its id, author or time) is stored with it, so deleting the
+  message or the record never touches the other. The dialog then says
+  "Added to Shopping." with **Open it** (items) and a link to the list.

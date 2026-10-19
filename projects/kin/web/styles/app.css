@@ -1404,3 +1404,10 @@ kin-notifications .field-error:empty { display: none; }
 .chat-search-files { display: flex; align-items: center; gap: 8px; min-height: var(--tap); }
 .chat-search-results { max-height: 50vh; overflow-y: auto; }
 ::highlight(chat-search) { background-color: color-mix(in srgb, var(--warm) 45%, transparent); color: inherit; }
+
+/* Message to record (#132) */
+.chat-share-files { border: 1px solid var(--line, currentColor); border-radius: .5rem; padding: .5rem .75rem; margin: 0; }
+.chat-share-file { display: flex; gap: .5rem; align-items: center; min-height: 2.75rem; }
+.chat-share-result { margin: 0; }
+.chat-share-result a, .chat-share-result button { margin-inline-start: .25rem; }
+.chat-share-problem { display: block; }

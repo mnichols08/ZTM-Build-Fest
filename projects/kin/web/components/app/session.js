@@ -218,6 +218,7 @@ export class SessionController {
     this.ctx.status.clearAlert();
     clearLegacyDrafts();
     this.app.quickAdd?.reset();
+    this.app.chatShare?.reset();
     if (this.app.main) {
       this.app.nav.hidden = true;
       this.app.shell.before(this.app.security);

@@ -56,18 +56,22 @@ export class RecordCommands {
       }
     }
   }
-  async saveNote(action, detail) {
-    if (this.app.busy || !this.app.store || !this.app.engine) return;
+  // `fromChat` (#132): a note made from a chat message leaves the notes
+  // editor, and where focus goes, alone. Resolves true once it is saved.
+  async saveNote(action, detail, { fromChat = false } = {}) {
+    if (this.app.busy || !this.app.store || !this.app.engine) return false;
     const session = this.ctx.session.captureSession();
     const type = { "create-note": "create-note", "update-note": "update-note", "archive-note": "archive-note" }[action];
-    if (!type) return;
+    if (!type) return false;
     const noteId = detail.noteId ?? crypto.randomUUID().replaceAll("-", "");
     this.ctx.status.setBusy(true); this.ctx.status.clearAlert(); this.ctx.status.setStatus("Saving…");
     try {
       await this.ctx.append.appendCommand({ type, ...detail, noteId, id: noteId });
       this.ctx.session.assertCurrentSession(session);
-      this.app.notes.clearEditor();
-      this.app.notes.pendingFocus = action === "archive-note" ? this.app.notes.pendingFocus : "title";
+      if (!fromChat) {
+        this.app.notes.clearEditor();
+        this.app.notes.pendingFocus = action === "archive-note" ? this.app.notes.pendingFocus : "title";
+      }
       this.ctx.render.renderState();
       this.ctx.peers.broadcastEventChange();
       this.ctx.status.setStatus(action === "archive-note"
@@ -75,11 +79,13 @@ export class RecordCommands {
         : navigator.onLine
           ? "Note saved on this device."
           : "Note saved on this device. Sync is unavailable while offline.");
+      return true;
     } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return false;
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR);
       this.ctx.status.setStatus("");
-      this.app.notes.pendingFocus = "title";
+      if (!fromChat) this.app.notes.pendingFocus = "title";
+      return false;
     } finally {
       if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);
