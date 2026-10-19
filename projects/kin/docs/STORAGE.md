@@ -238,8 +238,17 @@ Deleting a blob removes its bytes and adds its tombstone in one transaction.
 `ChatBlobStore.destroy()` deletes the whole database; a tab holding it open
 closes its connection when asked, and an old tab that doesn't blocks the
 deletion with a "close other tabs" error. Calling it when the household
-leaves the device, and keeping only recent blobs (#125), are still to come;
-today local household data stays on the device as before.
+leaves the device is still to come; today local household data stays on the
+device as before.
+
+**Cache trim (#125).** A device keeps chat content (downloaded or sent from it) for 90 days
+(`CHAT_CACHE_DAYS`). During a sync pass (after pulling), at most every six hours,
+`ChatBlobStore.evictOlderThan` drops the bytes of blobs stored longer ago,
+except those of the outbox and the parts of their attachment manifests. It
+writes no `retired` row: the message stays, and opening it fetches the blob
+from the service again. It reads the blob rows in one `getAll`, so a pass
+briefly holds at most the cache in memory (bounded by the household's
+256 MiB blob quota).
 
 ## Chat log (v1.1, #111)
 

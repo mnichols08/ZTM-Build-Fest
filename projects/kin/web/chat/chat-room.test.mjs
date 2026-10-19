@@ -411,6 +411,30 @@ test("a long outbox goes out over several passes, two batches at a time", { time
   assert.equal(a.room.pending.size, 0);
 });
 
+test("a device drops cached content after 90 days, but never what is waiting to be sent (#125)", { timeout: 30_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs });
+  const a = await openRoom(phone, s);
+  await a.room.send("already sent");
+  await a.room.sync({ status: STATUS, devices: [phone.entry] });
+  const sent = a.room.page().messages[0].blobRef;
+  a.request.offline = true;
+  await a.room.send("still waiting");
+  const waiting = (await a.room.store.outbox())[0].blobRef;
+  assert.notEqual(sent, waiting);
+  const real = a.room.now;
+  assert.equal(await a.room.trimCache(), 0, "nothing is old yet");
+  a.room.trimmedAt = 0;
+  a.room.now = () => real() + 91 * 24 * 60 * 60 * 1000;
+  assert.equal(await a.room.trimCache(), 1);
+  assert.equal(await a.blobs.store.get(sent), null, "the sent message's cached bytes are gone");
+  assert.ok(await a.blobs.store.get(waiting), "the unsent one stays");
+  assert.equal(await a.blobs.store.isRetired(sent), false, "nothing was deleted for good");
+  assert.equal(await a.room.trimCache(), 0, "and it doesn't look again for hours");
+  assert.ok((await a.blobs.client.download(sent)).ciphertext, "the service still has it");
+});
+
 test("editing and deleting delete the replaced content on the service and on every device", { timeout: 30_000 }, async (t) => {
   const s = await service(t);
   const epochs = new Map([[1, await generateHouseholdKey()]]);

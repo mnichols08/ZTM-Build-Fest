@@ -49,6 +49,8 @@ class KinChatPolicy extends HTMLElement {
     this.feedback.className = "appearance-feedback";
     this.feedback.setAttribute("role", "status");
     this.feedback.setAttribute("aria-live", "polite");
+    this.usage = document.createElement("p");
+    this.usage.className = "section-hint chat-storage-usage";
     // A fieldset names the group of choices for assistive technology.
     const group = document.createElement("fieldset");
     const legend = document.createElement("legend");
@@ -56,7 +58,7 @@ class KinChatPolicy extends HTMLElement {
     legend.textContent = "Who can chat";
     group.append(legend, this.limited.field, this.temporary.field);
     this.group = group;
-    this.append(heading, note, group, this.save, this.feedback);
+    this.append(heading, note, group, this.save, this.feedback, this.usage);
   }
 
   field(id, text) {
@@ -84,10 +86,23 @@ class KinChatPolicy extends HTMLElement {
     try {
       const status = await json("/api/sync/status");
       this.show(status.chat?.policy ?? null);
+      if (status.chat?.policy) await this.loadUsage();
     } catch {
       // Keep what is shown (and any message): not being able to reach the
       // service is not the same as not being an admin. Before the first
       // successful load the panel simply stays hidden.
+    }
+  }
+
+  /** How full the household's chat storage is (#125); admins only, and
+   * best effort: the line stays empty if it can't be read. */
+  async loadUsage() {
+    try {
+      const use = await json("/api/chat/storage");
+      const mib = (bytes) => `${Math.max(0, Math.round(bytes / 1048576))} MiB`;
+      this.usage.textContent = `Chat storage: ${mib(use.bytes)} of ${mib(use.byteLimit)} used, ${use.events.toLocaleString()} of ${use.eventLimit.toLocaleString()} messages and edits.`;
+    } catch {
+      this.usage.textContent = "";
     }
   }
 

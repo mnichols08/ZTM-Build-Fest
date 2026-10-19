@@ -20,6 +20,7 @@
 // bounded and the oldest go first, so retiring never fails for space.
 import { createHash } from "node:crypto";
 import { PairingError, chatAccess, isHouseholdAdmin } from "./pairing-service.mjs";
+import { CHAT_UPLOADS_PER_MINUTE, CHAT_UPLOAD_BYTES_PER_TEN_MINUTES, DeviceWindow, chatRateLimited } from "./chat-limits.mjs";
 import {
   MAX_CHAT_BLOB_BYTES,
   MAX_HOUSEHOLD_CHAT_BLOB_BYTES,
@@ -138,6 +139,22 @@ export class ChatBlobService {
     this.pairingService = pairingService;
     this.storage = store ?? new MemoryChatBlobStore();
     this.now = now;
+    this.uploadWindow = new DeviceWindow({ limit: CHAT_UPLOADS_PER_MINUTE, windowMs: 60_000, now: () => this.now() });
+    this.byteWindow = new DeviceWindow({ limit: CHAT_UPLOAD_BYTES_PER_TEN_MINUTES, windowMs: 600_000, now: () => this.now() });
+  }
+
+  /** The household's chat content use and its limits, for an admin (#125):
+   * totals only, never per person. */
+  usage(auth) {
+    this.assertCanChat(auth);
+    if (!isHouseholdAdmin(auth.member, this.now()))
+      throw new PairingError("household_admin_required", "Only a household admin can see chat storage.", 403);
+    const usage = this.storage.chatBlobUsage(auth.household.id);
+    const limits = this.storage.limits ?? this.storage.chatBlobLimits ?? {};
+    return {
+      bytes: usage.liveBytes, byteLimit: limits.bytes ?? MAX_HOUSEHOLD_CHAT_BLOB_BYTES,
+      blobs: usage.liveBlobs, blobLimit: limits.blobs ?? MAX_HOUSEHOLD_CHAT_BLOBS,
+    };
   }
 
   /** What the admin's chat policy (#123) lets this member do. `need` is
@@ -156,11 +173,21 @@ export class ChatBlobService {
     if (!isRef(ref) || !Buffer.isBuffer(ciphertext) || ciphertext.length < MIN_CHAT_BLOB_BYTES ||
       ciphertext.length > MAX_CHAT_BLOB_BYTES || createHash("sha256").update(ciphertext).digest("hex") !== ref)
       throw invalid();
+    // An upload the service already holds costs nothing.
+    // Checked now, charged once the blob is stored: a refused upload (full,
+    // deleted) never uses up the allowance.
+    const held = Boolean(this.storage.chatBlobMeta(auth.household.id, ref));
+    if (!held && !(this.uploadWindow.allows(auth.device.id, 1) && this.byteWindow.allows(auth.device.id, ciphertext.length)))
+      throw chatRateLimited("many uploads");
     const outcome = this.storage.putChatBlob(auth.household.id, ref, ciphertext, {
       memberId: auth.member.id, deviceId: auth.device.id, now: this.now(),
     });
     if (outcome === "deleted") throw deleted();
     if (outcome === "full") throw new PairingError("chat_storage_full", "This household's chat storage is full.", 409);
+    if (outcome === "accepted") {
+      this.uploadWindow.spend(auth.device.id, 1);
+      this.byteWindow.spend(auth.device.id, ciphertext.length);
+    }
     return { accepted: outcome === "accepted", size: ciphertext.length };
   }
 

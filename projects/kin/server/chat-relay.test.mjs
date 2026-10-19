@@ -267,3 +267,38 @@ test("the receipt routes carry JSON, need a session, and stay out of the chat st
   assert.equal(stale.status, 409);
   assert.equal((await stale.json()).error, "chat_receipts_stale");
 });
+
+bothStores("a device can send only so many chat events a minute (#125)", (h) => {
+  const auth = h.auth(h.adult);
+  let sequence = 0;
+  const batch = (count) => Array.from({ length: count }, () => {
+    sequence += 1;
+    return envelope(h.adult, { eventId: hex(sequence % 255, 16).replace(/..$/, sequence.toString(16).padStart(2, "0")).slice(0, 32).padEnd(32, "0"), deviceSequence: sequence });
+  });
+  const send = (count) => h.relay.push(auth, batch(count));
+  // 120 a minute, spent in batches of 20.
+  for (let round = 0; round < 6; round += 1) send(20);
+  const before = sequence;
+  assert.throws(() => send(1), rejects("chat_rate_limited", 429));
+  sequence = before;
+  // A refused batch changes nothing: the same events go through later.
+  h.sync.now = () => Date.now() + 61_000;
+  h.relay.eventWindow.now = h.sync.now;
+  assert.equal(send(20).accepted, 20);
+  // Another device has its own allowance.
+  assert.equal(h.relay.push(h.auth(h.laptop), [envelope(h.laptop, { eventId: hex(250), deviceSequence: 1, logicalTime: 1 })]).accepted, 1);
+});
+
+bothStores("an admin sees the household's chat event total (#125)", (h) => {
+  const auth = h.auth(h.adult);
+  h.relay.push(auth, [envelope(h.adult, { eventId: hex(1), deviceSequence: 1 }), envelope(h.adult, { eventId: hex(2), deviceSequence: 2 })]);
+  assert.deepEqual(h.relay.eventUsage(auth), { events: 2, eventLimit: 250_000 });
+});
+
+bothStores("a batch that fails doesn't use up the sending allowance (#125)", (h) => {
+  const auth = h.auth(h.adult);
+  // A gap in the device sequence is refused after the rate check.
+  for (let attempt = 0; attempt < 10; attempt += 1)
+    assert.throws(() => h.relay.push(auth, Array.from({ length: 20 }, (_, i) => envelope(h.adult, { eventId: hex(attempt * 20 + i + 1, 16), deviceSequence: 50 + i }))), rejects("sync_sequence_gap", 409));
+  assert.equal(h.relay.push(auth, [envelope(h.adult, { eventId: hex(250), deviceSequence: 1 })]).accepted, 1, "still allowed to send");
+});

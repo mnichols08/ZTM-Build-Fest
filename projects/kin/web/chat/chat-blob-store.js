@@ -132,6 +132,35 @@ export class ChatBlobStore {
     return !retired;
   }
 
+  /**
+   * Drops the bytes of blobs stored before `cutoff` (ms), except those in
+   * `keep`, to bound what this device caches (#125). Unlike `retire`, this
+   * deletes nothing for good: no tombstone is written, the message stays, and
+   * opening it fetches the blob from the service again (and stores it
+   * afresh). Returns how many were dropped.
+   */
+  async evictOlderThan(cutoff, { keep = new Set() } = {}) {
+    if (!Number.isFinite(cutoff)) return 0;
+    const transaction = this.db.transaction([BLOBS], "readwrite");
+    const finished = done(transaction);
+    const store = transaction.objectStore(BLOBS);
+    let dropped = 0;
+    try {
+      const rows = await settle(store.getAll());
+      for (const { ref, storedAt } of rows) {
+        if (Number.isFinite(storedAt) && storedAt < cutoff && !keep.has(ref)) {
+          store.delete(ref);
+          dropped += 1;
+        }
+      }
+    } catch (error) {
+      await finished.catch(() => {});
+      throw error;
+    }
+    await finished;
+    return dropped;
+  }
+
   /** Deletes blobs and remembers that they were deleted, in one transaction. */
   async retire(refs) {
     const valid = [...new Set(refs)].filter(isRef);

@@ -611,6 +611,9 @@ class KinChat extends HTMLElement {
     if (room.access === "none") return "Chat isn't available to you in this household.";
     if (room.chatKeys?.pending) return "Chat is paused until an adult's device updates the chat key. Messages you send wait on this device.";
     if (room.syncError?.code === "connection_unavailable") return "Offline. Messages you send wait on this device and go out when you reconnect.";
+    if (room.syncError?.code === "chat_rate_limited") return "You're sending faster than the household service allows. Messages wait on this device and go out in a minute.";
+    if (room.syncError?.code === "chat_storage_full") return "The household's chat storage is full. Messages and attachments wait on this device. An adult can free space by deleting old messages.";
+    if (room.syncError?.code === "chat_limit") return "This household's chat has reached its size limit, so new messages wait on this device.";
     if (room.syncError) return "Chat is paused until household sync can continue. Messages you send wait on this device.";
     if (room.retireRefusal) return "A message was deleted here, but Kin couldn't delete its content on the household service.";
     if (room.refused?.length) return "Kin skipped a chat message it couldn't verify.";
