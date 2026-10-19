@@ -1011,6 +1011,22 @@ test("photos and files go to the other device in parts, and deleting the message
   await b.room.sync({ status: STATUS, devices });
   await assert.rejects(b.room.openAttachment(message), (error) => error.code === "chat_attachment_deleted");
   for (const ref of parts) assert.equal(await b.blobs.store.get(ref), null, "and on the other device");
+
+  // A voice message (#134) is one audio file with a duration and waveform.
+  const peaks = Array.from({ length: 64 }, (_, index) => index * 4);
+  const speech = new Uint8Array(3000).map((_, index) => (index * 7) & 0xff);
+  await assert.rejects(a.room.sendVoice({ recording: new Blob([speech], { type: "video/mp4" }), durationMs: 4000, peaks }), (error) => error.code === "chat_attachment_invalid");
+  await assert.rejects(a.room.sendVoice({ recording: new Blob([speech], { type: "audio/webm" }), durationMs: 400_000, peaks }), (error) => error.code === "chat_attachment_invalid");
+  await a.room.sendVoice({ recording: new Blob([speech], { type: "audio/webm;codecs=opus" }), durationMs: 4200, peaks });
+  await a.room.sync({ status: STATUS, devices });
+  await b.room.sync({ status: STATUS, devices });
+  const voiced = b.room.page().messages.find((entry) => entry.contentKind === "attachment" && entry.messageId !== message.messageId);
+  const spoken = await b.room.openAttachment(voiced);
+  assert.equal(spoken.files.length, 1);
+  assert.equal(spoken.files[0].type, "audio/webm");
+  assert.deepEqual(spoken.files[0].voice, { durationMs: 4200, peaks });
+  const heard = new Uint8Array(await (await b.room.attachmentFile(voiced, 0)).arrayBuffer());
+  assert.deepEqual(Array.from(heard), Array.from(speech), "the recording arrives whole");
 });
 
 test("read receipts travel through the real receipt route, sealed, and survive the other device's sync", { timeout: 30_000 }, async (t) => {

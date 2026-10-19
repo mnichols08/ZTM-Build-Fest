@@ -307,6 +307,10 @@ the product decisions).
   host lists as able to read chat; replay does not check. An edit replaces
   the message's mentions. The text is not changed: the mention is only a
   record of who the writer meant.
+- **Voice messages (#134).** An attachment message (content kind 2) whose
+  manifest holds one audio file with a `voice` entry. No event, kind or
+  payload byte changes; the engine only reduces samples to a waveform
+  (`kin_audio_peaks`, [ABI](ABI.md)).
 - **Polls (#135).** A post whose content kind (payload byte 16) is 3 is a
   poll: byte 17 is the option count (2–10) and byte 18 is 1 for multiple
   choice (both zero for other kinds); the question and options are in the

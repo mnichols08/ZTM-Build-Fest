@@ -1,5 +1,6 @@
 pub mod abi;
 pub mod archive;
+pub mod audio;
 pub mod chat;
 pub mod chat_search;
 pub mod codec;

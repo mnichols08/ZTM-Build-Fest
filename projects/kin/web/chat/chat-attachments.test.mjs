@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ATTACHMENT_PART_BYTES, ChatAttachmentError, MAX_ATTACHMENT_BYTES, MAX_ATTACHMENT_FILES, attachmentProblem, decodeManifest,
-  encodeManifest, manifestRefs, preparePhoto, safeAttachmentName, safeAttachmentType,
+  encodeManifest, manifestRefs, preparePhoto, safeAttachmentName, safeAttachmentType, voiceProblem,
 } from "./chat-attachments.js";
 
 const ref = (n) => n.toString(16).padStart(64, "0");
@@ -130,4 +130,29 @@ test("a decoded manifest's names and types are plain text, and a non-photo's typ
   const [file] = decodeManifest(bytes).files;
   assert.equal(file.name, "xf.pdf");
   assert.equal(file.type, "application/octet-stream");
+});
+
+test("a voice message keeps its length and waveform, and only an audio file alone may carry them (#134)", () => {
+  const peaks = Array.from({ length: 64 }, (_, index) => index * 4);
+  const voice = { durationMs: 42_000, peaks };
+  const note = { name: "Voice message.webm", type: "audio/webm", size: 10, thumbnail: null, parts: [part(1, 10)], voice };
+  const manifest = decodeManifest(encodeManifest({ text: "", files: [note] }));
+  assert.deepEqual(manifest.files[0].voice, voice);
+  assert.equal(decodeManifest(encodeManifest({ text: "", files: [{ ...note, voice: undefined }] })).files[0].voice, null, "a plain audio file has none");
+  assert.equal(voiceProblem(voice), null);
+  assert.match(voiceProblem({ ...voice, durationMs: 301_001 }), /5 minutes/);
+  assert.match(voiceProblem({ ...voice, durationMs: 0 }), /5 minutes/);
+  assert.match(voiceProblem({ ...voice, peaks: peaks.slice(1) }), /waveform/);
+  assert.match(voiceProblem({ ...voice, peaks: [...peaks.slice(1), 256] }), /waveform/);
+  assert.match(voiceProblem({ ...voice, peaks: [...peaks.slice(1), 1.5] }), /waveform/);
+  assert.ok(voiceProblem(null) && voiceProblem([]));
+  const bad = {
+    "a type that isn't audio": { ...note, type: "application/pdf" },
+    "too long": { ...note, voice: { ...voice, durationMs: 400_000 } },
+    "the wrong number of peaks": { ...note, voice: { ...voice, peaks: [1, 2] } },
+    "a peak out of range": { ...note, voice: { ...voice, peaks: [...peaks.slice(1), 300] } },
+  };
+  for (const [label, entry] of Object.entries(bad))
+    assert.throws(() => decodeManifest(encodeRaw(entry)), ChatAttachmentError, label);
+  assert.throws(() => decodeManifest(new TextEncoder().encode(JSON.stringify({ version: 1, text: "", files: [note, { ...note, parts: [part(2, 10)] }] }))), ChatAttachmentError, "with other files");
 });

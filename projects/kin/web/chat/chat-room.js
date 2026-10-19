@@ -25,7 +25,7 @@ import { ChatBlobClient } from "./chat-blob-client.js";
 import { refHex } from "./chat-blob-crypto.js";
 import {
   ATTACHMENT_PART_BYTES, ChatAttachmentError, MAX_ATTACHMENT_BYTES, attachmentProblem, decodeManifest,
-  encodeManifest, manifestRefs, preparePhoto as browserPreparePhoto, safeAttachmentName, safeAttachmentType, sniffPhotoType,
+  VOICE_TYPES, encodeManifest, manifestRefs, preparePhoto as browserPreparePhoto, safeAttachmentName, safeAttachmentType, sniffPhotoType, voiceProblem,
 } from "./chat-attachments.js";
 import { CHAT_EVENT_KINDS, chatNotes } from "./chat-archive.js";
 import { ChatBlobStore } from "./chat-blob-store.js";
@@ -806,11 +806,16 @@ export class ChatRoom {
    * whole), then the manifest that names them. Resolves with
    * { messageId, eventId } like send().
    */
-  async sendAttachments({ text = "", files, replyTo = null, mentions = null }) {
+  async sendAttachments({ text = "", files, replyTo = null, mentions = null, voice = null }) {
     this.assertOpen();
     this.assertCanPost();
     const problem = attachmentProblem(files);
     if (problem) throw new ChatRoomError(problem, "chat_attachment_invalid");
+    // A voice message is one audio file with its length and waveform (#134).
+    if (voice) {
+      const voiceIssue = files.length !== 1 ? "A voice message is one recording." : !VOICE_TYPES.has(files[0].type) ? "This recording's format can't be sent." : voiceProblem(voice);
+      if (voiceIssue) throw new ChatRoomError(voiceIssue, "chat_attachment_invalid");
+    }
     if (text !== "" && chatTextProblem(text)) throw new ChatRoomError(chatTextProblem(text), "chat_text_invalid");
     const messageId = randomIdHex();
     const prepared = [];
@@ -819,6 +824,7 @@ export class ChatRoom {
     try {
       for (const file of files) {
         const sealed = await this.sealFile(file);
+        if (voice) sealed.voice = { durationMs: voice.durationMs, peaks: [...voice.peaks] };
         prepared.push(sealed);
         kept.push(...manifestRefs({ files: [sealed] }));
       }
@@ -839,6 +845,19 @@ export class ChatRoom {
     const eventId = await this.author({ type: "post-chat-message", messageId, blobRef: manifest.ref, blobKey: hex, contentKind: "attachment", ...(replyTo ? { replyTo } : {}), ...mentionsOf(mentions) },
       { blobRef: manifest.ref });
     return { messageId, eventId };
+  }
+
+  /**
+   * Sends a voice message (#134): a recording of at most five minutes with
+   * its length and waveform peaks, sealed as an attachment of one audio file.
+   * `recording` is the audio Blob (webm, mp4 or ogg).
+   */
+  async sendVoice({ recording, durationMs, peaks, replyTo = null, mentions = null }) {
+    const type = String(recording?.type ?? "").split(";")[0].trim().toLowerCase();
+    const extension = type === "audio/mp4" ? "m4a" : type === "audio/ogg" ? "ogg" : "webm";
+    if (!(recording instanceof Blob) || !VOICE_TYPES.has(type)) throw new ChatRoomError("This recording's format can't be sent.", "chat_attachment_invalid");
+    const file = new File([recording], `Voice message.${extension}`, { type });
+    return this.sendAttachments({ text: "", files: [file], replyTo, mentions, voice: { durationMs, peaks: [...peaks] } });
   }
 
   /** One file as its manifest entry: photos are drawn again first, then the
@@ -889,7 +908,7 @@ export class ChatRoom {
     const manifest = await this.manifestOf(message);
     return {
       text: manifest.text,
-      files: manifest.files.map((file) => ({ name: file.name, type: file.type, size: file.size, photo: Boolean(file.thumbnail) })),
+      files: manifest.files.map((file) => ({ name: file.name, type: file.type, size: file.size, photo: Boolean(file.thumbnail), voice: file.voice ?? null })),
     };
   }
 

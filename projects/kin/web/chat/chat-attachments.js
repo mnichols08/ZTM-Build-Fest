@@ -12,7 +12,12 @@
 //   { "version": 1, "text": caption,
 //     "files": [{ "name", "type", "size",
 //                 "thumbnail": { "ref", "key", "size" } | null,
-//                 "parts": [{ "ref", "key", "size" }, ...] }, ...] }
+//                 "parts": [{ "ref", "key", "size" }, ...],
+//                 "voice": { "durationMs", "peaks": [64 integers 0-255] } }, ...] }
+// A voice message (#134) is an attachment message of exactly one audio file
+// that carries `voice`: its length and the 64 waveform peaks the engine
+// reduced it to, so the waveform can be drawn before the audio arrives. The
+// field is optional; a client that doesn't know it shows a plain audio file.
 // where ref is a 64-character lowercase SHA-256 and key 64 hex characters.
 // Every part but a file's last is ATTACHMENT_PART_BYTES long, and a file's
 // parts add up to its size.
@@ -30,6 +35,10 @@ export const MAX_ATTACHMENT_NAME_CHARS = 200;
 export const MAX_PHOTO_PIXELS = 40_000_000;
 export const THUMBNAIL_EDGE = 320;
 export const PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+/** What a voice message can be recorded as (the base type, without codecs). */
+export const VOICE_TYPES = new Set(["audio/webm", "audio/mp4", "audio/ogg"]);
+export const MAX_VOICE_MS = 5 * 60 * 1000;
+export const VOICE_PEAKS = 64;
 
 const VERSION = 1;
 const encoder = new TextEncoder();
@@ -137,6 +146,7 @@ export function encodeManifest({ text = "", files }) {
       size: file.size,
       thumbnail: file.thumbnail ?? null,
       parts: file.parts,
+      ...(file.voice ? { voice: file.voice } : {}),
     })),
   };
   const bytes = encoder.encode(JSON.stringify(manifest));
@@ -147,6 +157,17 @@ export function encodeManifest({ text = "", files }) {
 const invalid = () => new ChatAttachmentError("This message's attachments couldn't be opened.", "chat_attachment_invalid");
 const isPart = (value, maxSize) => value && typeof value === "object" && HEX64.test(value.ref) && HEX64.test(value.key) &&
   Number.isSafeInteger(value.size) && value.size >= 1 && value.size <= maxSize;
+
+/** Explains what is wrong with a voice message's details, or returns null. */
+export function voiceProblem(voice) {
+  if (!voice || typeof voice !== "object" || Array.isArray(voice)) return "This voice message has no details.";
+  // A little over five minutes: the clock that stops the recording is not exact.
+  if (!Number.isSafeInteger(voice.durationMs) || voice.durationMs < 1 || voice.durationMs > MAX_VOICE_MS + 1000)
+    return "A voice message can be up to 5 minutes long.";
+  if (!Array.isArray(voice.peaks) || voice.peaks.length !== VOICE_PEAKS ||
+    voice.peaks.some((peak) => !Number.isInteger(peak) || peak < 0 || peak > 255)) return "This voice message's waveform is not valid.";
+  return null;
+}
 
 /** Checks a decrypted manifest's shape and sizes; returns it normalized. */
 export function decodeManifest(bytes) {
@@ -164,6 +185,9 @@ export function decodeManifest(bytes) {
       typeof file.type !== "string" || file.type.length > 127 || !Number.isSafeInteger(file.size) || file.size < 1 || file.size > MAX_ATTACHMENT_BYTES ||
       !Array.isArray(file.parts) || file.parts.length !== Math.ceil(file.size / ATTACHMENT_PART_BYTES)) throw invalid();
     if (file.thumbnail !== null && (!isPart(file.thumbnail, ATTACHMENT_PART_BYTES) || !PHOTO_TYPES.has(file.type))) throw invalid();
+    // Voice details belong to a message of one audio file and nothing else.
+    if (file.voice !== undefined && file.voice !== null &&
+      (value.files.length !== 1 || !VOICE_TYPES.has(file.type) || file.thumbnail !== null || voiceProblem(file.voice))) throw invalid();
     let total = 0;
     file.parts.forEach((part, index) => {
       const last = index === file.parts.length - 1;
@@ -175,6 +199,7 @@ export function decodeManifest(bytes) {
       name: safeAttachmentName(file.name), type: safeAttachmentType(file.type), size: file.size,
       thumbnail: file.thumbnail === null ? null : { ref: file.thumbnail.ref, key: file.thumbnail.key, size: file.thumbnail.size },
       parts: file.parts.map((part) => ({ ref: part.ref, key: part.key, size: part.size })),
+      voice: file.voice ? { durationMs: file.voice.durationMs, peaks: [...file.voice.peaks] } : null,
     };
   });
   return { version: VERSION, text: value.text, files };

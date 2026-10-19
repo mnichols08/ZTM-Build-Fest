@@ -1893,3 +1893,26 @@ and receive a short ID suffix in selection/management labels until renamed.
   again to finish the chat.
 - The checkbox is a native control with its label and the size line as its
   description; the progress bar covers household and chat events together.
+
+# 29. Voice messages (#134)
+
+- The composer has a **Voice** button. The first tap asks the browser for the
+  microphone; Kin asks for nothing at page load. If it is refused, missing or
+  in use, a plain message says which, with a Close button; if the browser
+  can't record in a format Kin can send, the message says so.
+- Recording shows a running time and **Stop** and **Discard** buttons, and
+  stops by itself at five minutes (announced). The microphone is released the
+  moment recording stops, is discarded, or the page is hidden or locked.
+  Hiding the page keeps what was said for review; locking drops it.
+- After stopping, the recording can be played back with the browser's native
+  audio controls, then **Send voice message** or **Discard**. A failed send
+  keeps the recording.
+- In the log a voice message is a group named "Voice message from Sam, 0:42"
+  with a Play/Pause button, a waveform that is also a native slider (arrow
+  keys move through the message; the slider reads "0:21 of 0:42"), the time,
+  and a 1×/1.5×/2× speed button. Nothing is downloaded or decrypted until it
+  is played. If it can't be played the message says so beside it.
+- There is no transcription and no automatic captioning; the waveform is drawn
+  by the engine from the recording on the sender's device. A voice message is
+  an ordinary attachment: it is sealed, kept, expires, exports and is deleted
+  exactly like any other file.

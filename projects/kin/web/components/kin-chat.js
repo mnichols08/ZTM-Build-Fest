@@ -27,6 +27,8 @@
 // cursor. Under the member's latest message a "Seen by" line opens that
 // message's details; under the list a plain "Sam is typing…" line, which
 // screen readers get as the list's description, not as an announcement.
+import { VoiceComposer, voicePlayer } from "./kin-chat-voice.js";
+import { voicePeaks } from "../chat/chat-voice.js";
 import { chatTextProblem, MAX_CHAT_TEXT_CHARS } from "../chat/chat-room.js";
 import { emojiOnlyCount, loadEmojiTable } from "../chat/emoji.js";
 import { QUICK_REACTIONS, reactionChips, reactionNames } from "../chat/chat-reactions.js";
@@ -97,6 +99,7 @@ class KinChat extends HTMLElement {
     // Rows mostly on screen now, by message ID (see evaluateRead()).
     this.onScreen = new Set();
     this.onWindowChange = () => this.windowChanged();
+    this.onPageHide = () => { this.voice?.interrupt(); this.windowChanged(); };
     this.onDocumentClick = (event) => {
       if (this.menuFor && !event.composedPath().some((node) => node?.classList?.contains?.("chat-menu-wrap"))) this.closeMenu();
       if (this.reacting && !event.composedPath().some((node) => node?.classList?.contains?.("chat-react-bar") || node?.classList?.contains?.("chat-react-button"))) this.closeReactions();
@@ -105,6 +108,9 @@ class KinChat extends HTMLElement {
 
   /** Forgets everything about the room on screen. */
   resetView() {
+    // Locking or changing room ends any recording and drops the draft.
+    this.voice?.dispose();
+    this.disposePlayers();
     this.start = 0;
     this.end = 0;
     this.total = 0;
@@ -158,7 +164,7 @@ class KinChat extends HTMLElement {
     document.addEventListener("visibilitychange", this.onWindowChange);
     window.addEventListener("focus", this.onWindowChange);
     window.addEventListener("blur", this.onWindowChange);
-    window.addEventListener("pagehide", this.onWindowChange);
+    window.addEventListener("pagehide", this.onPageHide);
     if (this.list) {
       this.resizeObserver?.observe(this.scroller);
       return;
@@ -376,6 +382,30 @@ class KinChat extends HTMLElement {
     this.pollButton.textContent = "Poll";
     this.pollButton.setAttribute("aria-label", "Ask a poll");
     this.pollButton.addEventListener("click", () => this.askPoll());
+
+    // Voice messages (#134): the recorder panel sits above the buttons.
+    this.voiceButton = document.createElement("button");
+    this.voiceButton.type = "button";
+    this.voiceButton.className = "chat-attach chat-voice-open";
+    this.voiceButton.textContent = "Voice";
+    this.voiceButton.setAttribute("aria-label", "Record a voice message");
+    this.voiceButton.addEventListener("click", () => void this.voice.begin());
+    this.voiceHost = document.createElement("div");
+    this.voiceHost.className = "chat-voice-recorder";
+    this.voice = new VoiceComposer({
+      host: this.voiceHost,
+      say: (text) => this.say(text),
+      onChange: () => { this.applyDisabled(); if (!this.voice.open) this.voiceButton.focus(); },
+      send: async ({ blob, durationMs }) => {
+        const room = this.chatRoom;
+        if (!room) throw new Error("locked");
+        const peaks = await voicePeaks(blob, room.engine);
+        await room.sendVoice({ recording: blob, durationMs, peaks, replyTo: this.replyingTo?.messageId ?? null });
+        this.stopReplying();
+        await this.queueRender("reset");
+      },
+    });
+    this.players = new Map();
     this.pollDialog = document.createElement("kin-chat-poll");
     // The quote bar above the box while replying (#129).
     this.replyBar = document.createElement("div");
@@ -398,8 +428,8 @@ class KinChat extends HTMLElement {
     this.pendingList.hidden = true;
     const buttons = document.createElement("div");
     buttons.className = "chat-form-buttons";
-    buttons.append(this.attach, this.pollButton, this.emoji, this.send, this.cancel);
-    form.append(this.label, this.replyBar, this.input, this.mentionList, this.pendingList, panelSlot, buttons, this.message);
+    buttons.append(this.attach, this.pollButton, this.voiceButton, this.emoji, this.send, this.cancel);
+    form.append(this.label, this.replyBar, this.input, this.mentionList, this.pendingList, this.voiceHost, panelSlot, buttons, this.message);
 
     // A viewer for one photo, shown modally; its URL is released on close.
     this.viewer = document.createElement("dialog");
@@ -458,8 +488,10 @@ class KinChat extends HTMLElement {
     document.removeEventListener("visibilitychange", this.onWindowChange);
     window.removeEventListener("focus", this.onWindowChange);
     window.removeEventListener("blur", this.onWindowChange);
-    window.removeEventListener("pagehide", this.onWindowChange);
+    window.removeEventListener("pagehide", this.onPageHide);
     this.chatRoom?.presence?.stopTyping();
+    this.voice?.dispose();
+    this.disposePlayers();
     this.resizeObserver?.disconnect();
     this.urls.revokeAll();
   }
@@ -524,6 +556,7 @@ class KinChat extends HTMLElement {
     // Attachments aren't edited: no attaching while editing a message.
     this.attach.disabled = off || Boolean(this.sending) || Boolean(this.editing);
     this.pollButton.disabled = off || Boolean(this.sending) || Boolean(this.editing);
+    this.voiceButton.disabled = off || Boolean(this.sending) || Boolean(this.editing) || this.voice.open;
   }
 
   enterSends() {
@@ -601,6 +634,8 @@ class KinChat extends HTMLElement {
 
   windowChanged() {
     if (document.visibilityState !== "visible" || !document.hasFocus()) this.chatRoom?.presence?.stopTyping();
+    // Recording stops when the page goes away; what was said is kept to review.
+    if (document.visibilityState !== "visible") this.voice?.interrupt();
     this.evaluateRead();
   }
 
@@ -871,6 +906,8 @@ class KinChat extends HTMLElement {
   applyAccess() {
     const access = this.chatRoom?.access ?? "write";
     this.form.hidden = access !== "write";
+    // Without permission to post, a recording in progress ends with the form.
+    if (access !== "write") this.voice?.dispose();
     this.readOnly.hidden = access !== "read";
     // A hidden scroller loses its position: start again at the latest message
     // when access comes back.
@@ -1160,6 +1197,7 @@ class KinChat extends HTMLElement {
       if (keep.has(messageId)) continue;
       this.rowObserver?.unobserve(entry.row);
       this.onScreen.delete(messageId);
+      this.disposePlayersOf(messageId);
       entry.row.remove();
     }
     this.rows = keep;
@@ -1855,6 +1893,20 @@ class KinChat extends HTMLElement {
         }
         button.addEventListener("click", () => void this.openPhoto(message, index));
         entry.append(button);
+      } else if (file.voice) {
+        // One player per voice message, kept when its row is rebuilt (a
+        // reaction arriving) so playback carries on.
+        const key = `${message.messageId}:${index}`;
+        let player = this.players.get(key);
+        if (!player) {
+          player = voicePlayer({
+            author: this.chatRoom?.authorLabel(message.authorId) ?? "a member",
+            voice: file.voice,
+            load: () => this.chatRoom.attachmentFile(message, index),
+          });
+          this.players.set(key, player);
+        }
+        entry.append(player);
       } else {
         const button = document.createElement("button");
         button.type = "button";
@@ -1873,6 +1925,20 @@ class KinChat extends HTMLElement {
       list.append(entry);
     });
     return list;
+  }
+
+  disposePlayers() {
+    for (const player of this.players?.values() ?? []) player.dispose();
+    this.players?.clear();
+  }
+
+  /** Releases the voice players of one message that left the window. */
+  disposePlayersOf(messageId) {
+    for (const [key, player] of this.players ?? []) {
+      if (!key.startsWith(`${messageId}:`)) continue;
+      player.dispose();
+      this.players.delete(key);
+    }
   }
 
   /** Opens a photo in the viewer at full size. */

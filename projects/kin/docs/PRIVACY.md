@@ -160,6 +160,16 @@ automatic expiry. Full encrypted relay history is retained until final
 deletion or the hard event cap; it is not compacted. Deletion does not erase
 copies already held by devices, archives or external backups.
 
+### Voice messages (#134)
+
+Kin asks for the microphone only when a member taps Voice, and releases it the
+moment recording stops, is discarded, the page is hidden or the chat locks. A
+recording stays on the device until it is sent as an ordinary sealed chat
+attachment; nothing is uploaded while recording or reviewing, and nothing is
+transcribed or analysed. The waveform (64 numbers) and the length travel
+inside the sealed attachment manifest, so the service sees only a file of
+ciphertext parts like any other.
+
 ### Chat in exports (#136)
 
 An export can include the household chat (on by default, with its size shown
