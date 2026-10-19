@@ -773,8 +773,6 @@ export async function chatRegressions() {
   // Online now (#128): one plain line at the top, and a dot by the author
   // of a message, both only while the member shows their own status.
   {
-    chat.room = room;
-    await settle();
     const line = chat.querySelector(".chat-online");
     check(line.hidden, "nobody online: no line");
     presence.onlineIds = [third];
@@ -789,8 +787,6 @@ export async function chatRegressions() {
     presence.onlineIds = [];
     await presenceChanged();
     check(line.hidden, "and it goes when they leave");
-    chat.room = null;
-    await settle();
   }
 
   // Settings → Chat: the two switches, per member, with the reciprocity said.
