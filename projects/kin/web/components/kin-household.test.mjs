@@ -389,6 +389,7 @@ test("People & devices groups by stable member ID and labels people and device s
     getPinnedDevice: async (_householdId, deviceId) => deviceId === "phone",
   };
   const pairingActions = [];
+  component.showHousehold = () => pairingActions.push(["choose-person-role"]);
   component.createPairing = (kind) => pairingActions.push(["person", kind]);
   component.createDevicePairing = () => pairingActions.push(["device"]);
   component.memberNames = { load: async () => [
@@ -422,7 +423,7 @@ test("People & devices groups by stable member ID and labels people and device s
   const buttons = descendants(component.children).filter((child) => child.tagName === "button");
   await buttons.find((button) => button.textContent === "Invite another person").listeners.click();
   await buttons.find((button) => button.textContent === "Add my device").listeners.click();
-  assert.deepEqual(pairingActions, [["person", "adult"], ["device"]]);
+  assert.deepEqual(pairingActions, [["choose-person-role"], ["device"]], "invitation selection must not silently create an Adult invitation");
   assert.ok(descendants(component.children).some((child) => child.textContent?.includes("own household member identity")));
   assert.ok(descendants(component.children).some((child) => child.textContent?.includes("same member identity")));
   const renameButtons = descendants(component.children).filter((child) => child.textContent === "Rename");
