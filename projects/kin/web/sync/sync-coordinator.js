@@ -35,6 +35,13 @@ export function memberHasTrustAuthority(status) {
   return status?.memberKind === "adult";
 }
 
+function bytesToBase64Url(bytes) {
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000)
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
 /**
  * Whether a pending rotation's key was wrapped for a device that is no longer
  * among `recipients` (matched by device ID and key fingerprint). Reusing that
@@ -1397,7 +1404,20 @@ export class SyncCoordinator {
     const result = await this.request("/api/household/settings", { method: "PUT", body: encrypted.ciphertext,
       headers: { "Content-Type": "application/octet-stream", "X-Household-Settings-Revision": String(value.revision),
         "X-Household-Settings-Key-Epoch": String(status.currentEpoch), "X-Household-Settings-SHA256": encrypted.digest } });
-    return { ...value, revision: result.revision };
+    const accepted = { householdId: this.identity.householdId, revision: result.revision, keyEpoch: status.currentEpoch,
+      ciphertext: bytesToBase64Url(encrypted.ciphertext), digest: encrypted.digest };
+    let cached;
+    try {
+      cached = await this.keyStore.cacheHouseholdSettings(accepted);
+    } catch (cause) {
+      const error = new Error("Household settings were saved, but Kin couldn't update this device's offline copy. Stay online and refresh before editing again.", { cause });
+      error.code = "household_settings_cache_partial";
+      error.savedValue = { ...value, revision: result.revision };
+      throw error;
+    }
+    return cached.revision === accepted.revision
+      ? { ...value, revision: result.revision }
+      : this.decryptCachedHouseholdSettings(cached);
   }
 
   // The published install identity (#78) is plaintext by design: the admin

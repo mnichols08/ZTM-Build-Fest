@@ -70,6 +70,11 @@ const ALIASES = Object.freeze({
   "routines/playbooks": "routines/checklists",
 });
 
+/** Dispatched on window when the visible page or segment changes. In-app
+ * navigation uses history.pushState and hides views rather than removing
+ * them, so neither hashchange nor disconnection signals it. */
+export const ROUTE_CHANGE_EVENT = "kin-route-change";
+
 export function routeHash(page, segment = null) {
   const segments = SEGMENTS[page];
   if (!segments) return `#${page}`;
@@ -81,6 +86,9 @@ export function routeHash(page, segment = null) {
 
 export function resolveRoute({ hash = "", pathname = "/" } = {}) {
   let requested = String(hash ?? "").replace(/^#/, "").replace(/\/+$/, "").toLowerCase();
+  // An invitation link's fragment (#code=…) is not a route. pairing-link.js
+  // takes it as the app loads; this keeps /pair on the join screen even so.
+  if (pathname === "/pair" && /^code=/.test(requested)) requested = "";
   if (!requested && pathname === "/pair") requested = "household/people";
   requested = ALIASES[requested] ?? requested;
   const [pageCandidate, segmentCandidate] = requested.split("/");

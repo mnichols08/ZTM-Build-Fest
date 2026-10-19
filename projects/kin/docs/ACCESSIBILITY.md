@@ -1,12 +1,24 @@
 # Accessibility Contract
 
+Identity setup must expose **Invite a person** and **Add my device** as native,
+keyboard-operable controls with persistent text explaining whether the result
+is a new member or another device for the same member. “You”, “This device”,
+notification state and errors must not rely on color alone. Focus returns to
+the initiating control after Cancel and moves to the outcome heading after a
+completed ceremony. The 320 px, 200% zoom, forced-colors, reduced-motion and
+assistive-technology checks are recorded in
+[Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md).
+
 ## Household workspace shell (unversioned candidate)
 
 The five primary destinations are links in a `nav` labelled "Main": a sticky
 left rail from 720px and a fixed bottom bar with five equal tracks below. The
 current destination carries `aria-current="page"`; secondary destinations are
 links in a labelled `nav` with `aria-current="true"`; the resolved route is
-on `kin-app[data-route]` and in `document.title`. The header exposes Search
+on `kin-app[data-route]` and in `document.title`. While unlocked, the header's
+brand link is named with the private household name and shows its decorative
+icon; locked and unauthorized views keep the generic Kin name and K. The mark
+retains a visible forced-colors boundary and does not animate. The header exposes Search
 and Lock as labelled controls on every width. Item rows separate the
 complete control (a `button` with `aria-pressed`) from the text control that
 opens details. The detail view is one `section` labelled by its heading; on
@@ -103,6 +115,31 @@ is not claimed without direct assistive-technology testing.
 - Respect `prefers-reduced-motion`; avoid unnecessary motion.
 - Use ARIA only when native HTML cannot express the needed semantics.
 - Test custom elements and shadow-boundary event behavior with keyboard and assistive technology where practical.
+
+## QR codes, the scanner and sign-in codes (v1.1, #93)
+
+- **QR codes are an enhancement.** Every QR code has a typed alternative
+  beside it (an invitation's code with Copy), except a computer's sign-in
+  code, whose alternatives are signing in with a passkey or a pairing code.
+  The canvas has `role="img"` and a label that says what it is for. Modules
+  are drawn at whole device pixels, black on white in every colour scheme.
+- **No per-second announcements.** Countdowns are plain text, outside any
+  live region. Errors that stop the flow use the household panel's alert.
+- **Focus and status.** Opening the sign-in or Add a computer screen, and
+  each change of step, moves focus to the step's heading; the 6-digit field
+  takes focus when it appears, and again after a wrong code (cleared). On the
+  computer, approval, a wrong code and a short code are also announced in a
+  polite status, set just after the region appears. The invitation scanner
+  takes focus on its start button, and closing it returns focus to the code
+  field; on Add a computer, Cancel closes the whole flow.
+- **Code entry.** `inputmode="numeric"` and `autocomplete="one-time-code"`;
+  spaces and dashes are ignored; a short code is caught before sending, with
+  a status saying all 6 digits are needed.
+- **The phone's code** is large selectable text, not a live region; screen
+  readers hear it spelled out ("Code 0 4 2 9 1 7") from visually hidden text.
+- **The camera** is used only after a tap, says in words what each state
+  means, and is never the only way forward: "Type the code instead" is always
+  offered.
 
 ## Mobile interaction contract
 

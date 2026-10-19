@@ -2,8 +2,9 @@
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { loadCachedHouseholdSettings } from "../../sync/sync-coordinator.js";
 import { paletteCss, paletteForSeed } from "../../appearance/palette.js";
-import { saveAppearance } from "../../appearance/store.js";
-import { DEFAULT_HOUSEHOLD_NAME, personalAppearanceFromDraft, resolveAppearance } from "../../appearance/household.js";
+import { DEFAULT_APPEARANCE, saveAppearance } from "../../appearance/store.js";
+import { DEFAULT_HOUSEHOLD_BRAND, DEFAULT_HOUSEHOLD_NAME, personalAppearanceFromDraft, resolveAppearance } from "../../appearance/household.js";
+import { firstGrapheme, letterColors } from "../../appearance/install-icons.js";
 
 export class AppearanceController {
   constructor(ctx) {
@@ -89,12 +90,73 @@ export class AppearanceController {
   applyEffectiveAppearance() {
     const effective = resolveAppearance(this.app.personalAppearance, this.app.householdSettings);
     this.ctx.appearance.applyAppearance(effective);
-    this.setHouseholdIdentity(this.app.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME);
+    this.setHouseholdIdentity(this.app.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME, this.app.householdSettings);
   }
-  setHouseholdIdentity(name) {
+  setHouseholdIdentity(name, settings = this.app.householdSettings) {
     this.app.householdName = name;
     if (this.app.brandTitle) { this.app.brandTitle.textContent = name; this.app.brandTitle.title = name; }
+    this.app.brandLink?.setAttribute("aria-label", `${name} — Today`);
+    this.setHouseholdBrand(settings, name);
     if (this.app.vault && !this.app.vault.locked) document.title = `${name} — Kin`;
+  }
+  setHouseholdBrand(settings, name) {
+    if (!this.app.brandGenericMark) return;
+    const brand = settings?.brand;
+    if (!settings || !brand) { this.showGenericBrand(); return; }
+    const { background, foreground } = letterColors(settings.appearance?.seed);
+    this.app.brandLetterMark.textContent = firstGrapheme(name);
+    this.app.brandLetterMark.style.background = background;
+    this.app.brandLetterMark.style.color = foreground;
+    this.app.brandGenericMark.hidden = true;
+    this.app.brandLetterMark.hidden = false;
+    if (brand.iconSource !== "upload" || !brand.icon) {
+      this.clearUploadedBrand();
+      this.app.brandRevision = `${settings.revision}:letter`;
+      return;
+    }
+    const revision = `${settings.revision}:upload`;
+    if (this.app.brandRevision === revision && this.app.brandObjectUrl) {
+      this.app.brandLetterMark.hidden = !this.app.brandUploadedMark.hidden;
+      return;
+    }
+    this.clearUploadedBrand();
+    const generation = (this.app.brandGeneration = (this.app.brandGeneration ?? 0) + 1);
+    const objectUrl = URL.createObjectURL(new Blob([brand.icon.bytes], { type: brand.icon.type }));
+    this.app.brandObjectUrl = objectUrl;
+    this.app.brandRevision = revision;
+    const image = this.app.brandUploadedMark;
+    image.onload = () => {
+      if (generation !== this.app.brandGeneration || objectUrl !== this.app.brandObjectUrl || !this.app.vault || this.app.vault.locked) return;
+      image.hidden = false;
+      this.app.brandLetterMark.hidden = true;
+    };
+    image.onerror = () => {
+      if (generation !== this.app.brandGeneration || objectUrl !== this.app.brandObjectUrl) return;
+      this.clearUploadedBrand();
+      this.app.brandRevision = null;
+      this.app.brandGenericMark.hidden = false;
+      this.app.brandLetterMark.hidden = true;
+    };
+    image.src = objectUrl;
+  }
+  clearUploadedBrand() {
+    this.app.brandGeneration = (this.app.brandGeneration ?? 0) + 1;
+    if (this.app.brandObjectUrl) URL.revokeObjectURL(this.app.brandObjectUrl);
+    this.app.brandObjectUrl = null;
+    if (this.app.brandUploadedMark) {
+      this.app.brandUploadedMark.onload = null;
+      this.app.brandUploadedMark.onerror = null;
+      this.app.brandUploadedMark.removeAttribute("src");
+      this.app.brandUploadedMark.hidden = true;
+    }
+  }
+  showGenericBrand() {
+    this.clearUploadedBrand();
+    this.app.brandRevision = null;
+    this.app.brandGenericMark.hidden = false;
+    this.app.brandLetterMark.hidden = true;
+    this.app.brandLetterMark.textContent = "";
+    this.app.brandLetterMark.removeAttribute("style");
   }
   async refreshHouseholdDefaults() {
     if (!this.app.syncCoordinator || !this.app.vault || this.app.vault.locked) return;
@@ -114,14 +176,19 @@ export class AppearanceController {
       // Only admins can see or change the chat policy; others don't ask.
       if (!result.offline) this.app.chatPolicy?.show(result.admin ? result.chatPolicy ?? null : null);
       if (draftPreserved) return;
-      if (this.app.appearance?.dirty) this.ctx.appearance.setHouseholdIdentity(this.app.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME);
+      if (this.app.appearance?.dirty) this.ctx.appearance.setHouseholdIdentity(this.app.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME, this.app.householdSettings);
       else {
         const effective = resolveAppearance(this.app.personalAppearance, this.app.householdSettings);
         this.app.appearance.initialize(effective);
         this.ctx.appearance.applyAppearance(effective);
-        this.ctx.appearance.setHouseholdIdentity(this.app.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME);
+        this.ctx.appearance.setHouseholdIdentity(this.app.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME, this.app.householdSettings);
       }
-    } catch { if (this.ctx.session.isCurrentSession(session) && refreshGeneration === this.householdDefaultsRefreshGeneration) this.ctx.status.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded."); }
+    } catch {
+      if (this.ctx.session.isCurrentSession(session) && refreshGeneration === this.householdDefaultsRefreshGeneration) {
+        this.showGenericBrand();
+        this.ctx.status.setStatus("Kin kept the last verified household appearance because the latest shared settings could not be loaded.");
+      }
+    }
   }
   async restoreCachedHouseholdDefaults(identity, session = this.ctx.session.captureSession()) {
     if (!identity) return;
@@ -132,7 +199,10 @@ export class AppearanceController {
       this.app.householdDefaults.initialize({ admin: false, adminRecorded: false, value: this.app.householdSettings });
       this.ctx.appearance.applyEffectiveAppearance();
     } catch {
-      if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setStatus("Kin couldn't restore the last shared appearance. Local household information is still available.");
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.showGenericBrand();
+        this.ctx.status.setStatus("Kin couldn't restore the last shared appearance. Local household information is still available.");
+      }
     }
   }
   // The published install identity (#78) for admins. Loaded once per
@@ -156,18 +226,50 @@ export class AppearanceController {
     const { complete } = event.detail;
     if (!this.app.syncCoordinator) { complete(null, new Error("Connect household sync before changing what home screens show.")); return; }
     const session = this.ctx.session.captureSession();
+    let privateBrandSaved = false;
+    let cacheWarning = null;
     try {
+      if (!withdraw) {
+        const current = this.app.householdSettings ?? { version: 1, revision: 0, name: DEFAULT_HOUSEHOLD_NAME,
+          appearance: { ...DEFAULT_APPEARANCE, owner: "household" }, brand: { ...DEFAULT_HOUSEHOLD_BRAND } };
+        let saved;
+        try {
+          saved = await this.app.syncCoordinator.saveHouseholdSettings({ ...current, brand: event.detail.brand });
+        } catch (error) {
+          if (error.code !== "household_settings_cache_partial" || !error.savedValue) throw error;
+          saved = error.savedValue;
+          cacheWarning = error;
+        }
+        privateBrandSaved = true;
+        this.ctx.session.assertCurrentSession(session);
+        if ((this.app.householdSettings?.revision ?? -1) <= saved.revision) this.app.householdSettings = saved;
+        this.app.householdDefaults.initialize({ admin: true, adminRecorded: true, value: saved });
+        this.ctx.appearance.applyEffectiveAppearance();
+      }
       const result = withdraw
         ? await this.app.syncCoordinator.withdrawInstallIdentity(event.detail.expectedRev)
+        : event.detail.publish === false ? { private: true }
         : await this.app.syncCoordinator.publishInstallIdentity(event.detail.value);
       this.ctx.session.assertCurrentSession(session);
-      await this.refreshInstallIdentity();
-      complete(result, null);
+      if (withdraw || event.detail.publish !== false) await this.refreshInstallIdentity();
+      complete(result, cacheWarning);
     } catch (error) {
       // A lock or re-open mid-write still releases the panel's writing state.
-      if (!this.ctx.session.isCurrentSession(session)) { complete(null, new Error("Kin locked before the home screen details finished saving.")); return; }
+      if (!this.ctx.session.isCurrentSession(session)) {
+        const message = privateBrandSaved
+          ? "Your household icon was saved inside Kin, but Kin locked before the remaining home-screen details finished. Unlock Kin to review the latest settings."
+          : "Kin locked before the home screen details finished saving.";
+        const interrupted = new Error(message);
+        if (privateBrandSaved) interrupted.code = "install_identity_partial";
+        complete(null, interrupted);
+        return;
+      }
       if (error.code === "install_identity_stale") await this.refreshInstallIdentity();
-      complete(null, error);
+      if (privateBrandSaved && event.detail.publish !== false) {
+        const partial = new Error("Your household icon was saved inside Kin, but the home-screen copy was not published. Check the latest home-screen details and try publishing again.");
+        partial.code = "install_identity_partial";
+        complete(null, partial);
+      } else complete(null, error);
     }
   }
   async handleSaveHouseholdDefaults(event) {
@@ -175,11 +277,19 @@ export class AppearanceController {
     if (!this.app.syncCoordinator) { complete(null, new Error("Connect household sync before changing shared settings.")); return; }
     const session = this.ctx.session.captureSession();
     try {
-      const saved = await this.app.syncCoordinator.saveHouseholdSettings(value);
+      let saved;
+      let cacheWarning = null;
+      try {
+        saved = await this.app.syncCoordinator.saveHouseholdSettings(value);
+      } catch (error) {
+        if (error.code !== "household_settings_cache_partial" || !error.savedValue) throw error;
+        saved = error.savedValue;
+        cacheWarning = error;
+      }
       this.ctx.session.assertCurrentSession(session);
       if ((this.app.householdSettings?.revision ?? -1) <= saved.revision) this.app.householdSettings = saved;
       this.ctx.appearance.applyEffectiveAppearance();
-      complete(saved, null);
+      complete(saved, cacheWarning);
     } catch (error) {
       // A save settling after lock or a household re-open (including the
       // stale-session assert above) reports nothing: a re-open keeps the same
@@ -193,6 +303,8 @@ export class AppearanceController {
     this.app.householdSettings = null;
     this.app.householdName = null;
     if (this.app.brandTitle) { this.app.brandTitle.textContent = "Kin"; this.app.brandTitle.title = "Kin"; }
+    this.app.brandLink?.setAttribute("aria-label", "Kin — Today");
+    this.showGenericBrand();
     document.title = "Kin";
     delete document.documentElement.dataset.kinAppearance;
     document.querySelector('meta[name="theme-color"]')?.setAttribute("content", "#684033");

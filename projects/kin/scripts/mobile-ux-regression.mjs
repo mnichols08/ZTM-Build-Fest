@@ -143,8 +143,8 @@ export async function mobileUxRegressions(recovery) {
   check(onboardingDetails?.open === false && onboardingDetails.querySelector("summary")?.textContent === "Connect this device to a household",
     "Get started collapses after local household activity so Today stays visible");
   const onboardingLabels = [...app.onboarding.querySelectorAll("button")].map((button) => button.textContent);
-  check(JSON.stringify(onboardingLabels) === JSON.stringify(["Create a household", "Join an existing household", "Add this device to my existing membership"]),
-    `Get started offers create, join and add-device: ${onboardingLabels.join("|")}`);
+  check(JSON.stringify(onboardingLabels) === JSON.stringify(["Create a household", "Join an existing household", "Sign in with your phone", "Add this device to my existing membership"]),
+    `Get started offers create, join, sign in with a phone (#100) and add-device: ${onboardingLabels.join("|")}`);
   visit("today");
   check(visible(onboardingDetails.querySelector("summary")), "the compact Get started summary stays visible on Today");
   window.scrollTo(0, 0);

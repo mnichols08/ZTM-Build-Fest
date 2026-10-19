@@ -48,13 +48,13 @@ test("nothing in the engine, chat, archives, storage, sync or server routes ment
   }
 });
 
-test("no WebRTC, screen capture or call code, and getUserMedia only records voice messages", () => {
+test("no WebRTC, screen capture or call code, and getUserMedia only records voice messages and scans QR codes", () => {
   const forbidden = /RTCPeerConnection|RTCSessionDescription|RTCIceCandidate|RTCDataChannel|createOffer|createAnswer|getDisplayMedia|setRemoteDescription/;
   const files = [...sources(join(root, "web"), [".js", ".html"]), ...sources(join(root, "server"), [".mjs", ".js"])];
   for (const path of files) {
     const source = text(path);
     assert.doesNotMatch(source, forbidden, rel(path));
-    if (/getUserMedia/.test(source)) assert.equal(rel(path), "web/chat/chat-voice.js", `${rel(path)} uses getUserMedia`);
+    if (/getUserMedia/.test(source)) assert.ok(["web/chat/chat-voice.js", "web/components/kin-qr-scanner.js"].includes(rel(path)), `${rel(path)} uses getUserMedia`);
   }
 });
 

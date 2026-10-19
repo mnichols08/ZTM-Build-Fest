@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Current implementation line: `v1.0.0` — Stable Kin Platform.** Kin's first stable release, `kin-v1.0.0`, was released on 2026-10-17. The last release before it was `v0.10.3`. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
+**Current implementation line: `v1.1.2` — Private Household Branding.** Released as `kin-v1.1.2` on 2026-10-18, this patch shows the private household name and icon in the unlocked shell and keeps that identity synchronized across session transitions. Locked and unassociated surfaces retain generic Kin branding. It builds on v1.1.1 without changing persistent formats or protocol versions. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Exports are encrypted history recovery and do not restore server membership, device trust, credentials, or sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
@@ -31,18 +31,26 @@ protocol, or persistent index.
 
 October 2026 took Kin from the v0.11 durable service through more than thirty capability lines to v1.0. The [roadmap](docs/ROADMAP.md) records that path; the [planned release contracts](docs/releases/) describe each line.
 
-After v1.0, planned work is tracked as GitHub issues, not dated versions:
+Post-v1.0 work is tracked as GitHub issues, not dated versions. v1.1 completed
+device names (#71), household home-screen identity (#78), push notifications
+(#85), QR pairing/phone sign-in (#93), and service sandboxing (#106). Remaining
+planned work includes:
 
-- Device names and nicknames as encrypted household data (#71); v1.0 already names new devices automatically
-- The household's own app name and icon on home screens (#78)
-- Push notifications with per-device settings (#85)
-- QR pairing and signing in on a computer with your phone (#93)
-- Household chat (#104), starting with the rest of the Node 24 groundwork in #106
+- Household chat (#104)
 
 AI runtime features, gamification, surveillance, and enterprise workflows stay out of scope.
 
 ## Release history
 
+- `v1.1.2` — Private Household Branding: private household name/icon in the
+  unlocked shell with correct refresh and clearing across session transitions.
+  Released 2026-10-18 (`kin-v1.1.2`).
+- `v1.1.1` — Member and Notification Clarity: clearer member/device grouping,
+  pairing choices, device trust, and push-recipient diagnostics. Released
+  2026-10-18 (`kin-v1.1.1`).
+- `v1.1.0` — Connected Household Devices: device names, installed-app identity,
+  opt-in push, a sandboxed service, and QR pairing/phone sign-in. Released
+  2026-10-18 (`kin-v1.1.0`).
 - `v1.0.0` — Stable Kin Platform: everything below since v0.10.3, plus the v1.0 readiness work. Released 2026-10-17 (`kin-v1.0.0`).
 - `v0.21.0`–`v0.47.0` — Household modes, planning dates, calendar export, history, search, pins, playbooks, reminders, offline install, reference and maintenance records, encrypted attachments, responsibility, more adults, Limited and Temporary members, portable export and restore, mobile experience, personal and household appearance, household admins. These were development candidates and were never tagged; they ship in v1.0.0.
 - `v0.11.0`–`v0.20.1` — Durable service, household deletion, recovery and continuity, UX/UI consolidation, Areas, Notes, checklist steps, routine scheduling, shopping lists and staples. Tagged review lines (`kin-v0.11.0`–`kin-v0.20.1`, some versions untagged); not published on their own.

@@ -2644,6 +2644,8 @@ function syncIdentityFromContext(context) {
   return context.sync_household_id
     ? {
         householdId: idToHex(context.sync_household_id),
+        memberId: idToHex(context.sync_member_id),
+        deviceId: idToHex(context.sync_device_id),
         bindings: context.sync_identity_bindings,
       }
     : null;

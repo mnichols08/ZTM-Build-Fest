@@ -1,7 +1,7 @@
 import "./kin-appearance.js";
 import "./kin-install-identity.js";
 import { DEFAULT_APPEARANCE } from "../appearance/store.js";
-import { DEFAULT_HOUSEHOLD_NAME, normalizeHouseholdName } from "../appearance/household.js";
+import { DEFAULT_HOUSEHOLD_BRAND, DEFAULT_HOUSEHOLD_NAME, normalizeHouseholdName } from "../appearance/household.js";
 
 export class KinHouseholdDefaults extends HTMLElement {
   connectedCallback() { if (!this.firstElementChild) this.build(); }
@@ -37,7 +37,7 @@ export class KinHouseholdDefaults extends HTMLElement {
       this.disabled = this.busy;
       return false;
     }
-    const incoming = value ?? { version: 1, revision: 0, name: DEFAULT_HOUSEHOLD_NAME, appearance: { ...DEFAULT_APPEARANCE, owner: "household" } };
+    const incoming = value ?? { version: 1, revision: 0, name: DEFAULT_HOUSEHOLD_NAME, appearance: { ...DEFAULT_APPEARANCE, owner: "household" }, brand: { ...DEFAULT_HOUSEHOLD_BRAND } };
     if (this.dirty && this.saved) {
       if (incoming.revision > this.saved.revision) {
         this.pending = structuredClone(incoming);
@@ -67,7 +67,7 @@ export class KinHouseholdDefaults extends HTMLElement {
       this.install = document.createElement("kin-install-identity");
       this.append(this.install);
     }
-    this.install.initialize({ ...state, householdName: this.saved?.name, seed: this.saved?.appearance?.seed });
+    this.install.initialize({ ...state, householdName: this.saved?.name, seed: this.saved?.appearance?.seed, brand: this.saved?.brand ?? DEFAULT_HOUSEHOLD_BRAND });
     this.install.disabled = this.busy;
   }
   installActions() {
@@ -98,7 +98,7 @@ export class KinHouseholdDefaults extends HTMLElement {
   save() {
     if (this.pending) { this.feedback.textContent = "Newer household settings arrived. Cancel your draft to load them before making another change."; return; }
     let name; try { name = normalizeHouseholdName(this.nameInput.value); this.nameError.textContent = ""; } catch (error) { this.nameError.textContent = error.message; this.nameInput.focus(); return; }
-    this.dispatchEvent(new CustomEvent("kin:save-household-defaults", { bubbles: true, detail: { value: { version: 1, revision: this.saved.revision, name, appearance: { ...structuredClone(this.draftAppearance), owner: "household" } }, complete: (saved, error) => {
+    this.dispatchEvent(new CustomEvent("kin:save-household-defaults", { bubbles: true, detail: { value: { version: 1, revision: this.saved.revision, name, appearance: { ...structuredClone(this.draftAppearance), owner: "household" }, brand: structuredClone(this.saved.brand ?? DEFAULT_HOUSEHOLD_BRAND) }, complete: (saved, error) => {
       this.feedback.textContent = error?.message ?? "Household settings saved. Other online members receive them when they sync.";
       if (saved) {
         const newerPending = this.pending?.revision > saved.revision;

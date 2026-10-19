@@ -93,7 +93,8 @@ These hold today and are guarded by `scripts/ephemeral-isolation.test.mjs`,
    ephemeral messages.
 4. No WebRTC API (`RTCPeerConnection`, session descriptions, ICE candidates),
    no screen capture, and no `getUserMedia` outside `web/chat/chat-voice.js`
-   (voice messages).
+   (voice messages) and `web/components/kin-qr-scanner.js` (video-only QR
+   scanning, no audio, nothing recorded).
 5. Routing uses member and device IDs only; the sender is never read from the
    message; foreign, unknown, offline and revoked targets receive nothing.
 6. Zero third-party packages and crates; the ABI stays manual and versioned.

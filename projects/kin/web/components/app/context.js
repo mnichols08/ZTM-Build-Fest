@@ -26,6 +26,7 @@
 // - The vault's security epoch: persisted lock counter shared by all tabs
 //   (EventStore.checkSecurityEpoch); a newer epoch means another tab locked.
 // - The event arena's `generation` and `epoch`: see storage/event-arena.js.
+import { captureInvitationCode } from "../../pairing-link.js";
 import { AppearanceController } from "./appearance.js";
 import { AppendCommands } from "./commands/append.js";
 import { AttachmentController } from "./attachments.js";
@@ -48,6 +49,7 @@ import { ViewBuilder } from "./views.js";
 import { LocalReminders } from "../../reminders.js";
 import { EventStore } from "../../storage/event-store.js";
 import { readAutoLockPreference } from "./constants.js";
+import { reconnectLostAuthorization } from "../shared/session-guard.js";
 
 export function createAppContext(app) {
   const ctx = { app };
@@ -83,6 +85,7 @@ export function initializeAppState(app) {
     // bindings of attachment IDs to records, which Rust derives from events.
     app.attachmentRows = [];
     app.syncCoordinator = null;
+    app.hasLocalSyncBinding = false;
     app.state = null;
     app.localReminders = new LocalReminders();
     app.deferredInstallPrompt = null;
@@ -141,12 +144,20 @@ export function initializeAppState(app) {
       app.stateNotice.hidden = false;
       app.ctx.sync.updateSyncChip();
     };
-    app.onOnline = () => {
+    app.onOnline = async () => {
       app.offline = false;
       app.stateNotice.hidden = true;
       app.ctx.sync.updateSyncChip();
       if (!app.vault || app.vault.locked || !app.store) return;
+      const session = app.ctx.session.captureSession();
+      const wasBound = Boolean(app.syncCoordinator || app.hasLocalSyncBinding);
       app.ctx.status.setStatus(app.syncCoordinator ? "Back online. Syncing…" : "Back online.");
+      const authorization = await app.household?.load?.();
+      if (!app.ctx.session.isCurrentSession(session)) return;
+      if (reconnectLostAuthorization(authorization, wasBound)) {
+        app.ctx.session.lockHousehold(true, { endSession: true });
+        return;
+      }
       if (app.syncCoordinator) void app.syncCoordinator.syncNow();
       else void app.ctx.sync.configureSyncCoordinator();
     };
@@ -210,7 +221,12 @@ export function initializeAppState(app) {
       app.ctx.status.setStatus(event.detail?.message ?? "Household sync has stopped.");
     };
     app.onSyncState = (value) => app.ctx.sync.handleSyncState(value);
-    app.onHashChange = () => app.ctx.navigation.showPageFromLocation();
+    app.onHashChange = () => {
+      // A same-page jump to an invitation link (/pair#code=…) takes its code
+      // first, so it never lingers in the address bar or history (#97).
+      if (captureInvitationCode()) app.household?.offerInvitationCode?.();
+      app.ctx.navigation.showPageFromLocation();
+    };
     app.onNavigationClick = (event) => {
       const link = event.target.closest?.("a[href^='#']");
       if (

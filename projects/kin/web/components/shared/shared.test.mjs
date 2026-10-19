@@ -5,7 +5,7 @@ import { button, field, message, section, text } from "./dom.js";
 import { OperationGuard } from "./operation.js";
 import { asArray, defineProps } from "./props.js";
 import { captureFocus, restoreFocus } from "./focus.js";
-import { assertCurrentSession, captureSession, isCurrentSession } from "./session-guard.js";
+import { assertCurrentSession, captureSession, isCurrentSession, reconnectLostAuthorization } from "./session-guard.js";
 
 // Minimal DOM stand-ins; only what the shared helpers use.
 class Node {
@@ -43,6 +43,13 @@ class Node {
   focus() { globalThis.document.activeElement = this; }
 }
 globalThis.document = { createElement: (name) => new Node(name), activeElement: null };
+
+test("a persisted sync binding locks on reconnect even without cached household settings", () => {
+  assert.equal(reconnectLostAuthorization({ loaded: true, identity: null }, true), true);
+  assert.equal(reconnectLostAuthorization({ loaded: true, identity: null }, false), false);
+  assert.equal(reconnectLostAuthorization({ loaded: false, identity: null }, true), false);
+  assert.equal(reconnectLostAuthorization({ loaded: true, identity: { householdId: "current" } }, true), false);
+});
 
 test("dom builders create native elements with text content only", () => {
   const host = new Node("div");

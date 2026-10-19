@@ -13,7 +13,7 @@ function assertFramingDenied(response) {
   );
   assert.equal(response.headers.get("x-frame-options"), "DENY");
   // Voice messages (#134) record with the microphone: this origin only.
-  assert.equal(response.headers.get("permissions-policy"), "camera=(), microphone=(self), geolocation=()");
+  assert.equal(response.headers.get("permissions-policy"), "camera=(self), microphone=(self), geolocation=()");
 }
 
 test("the shell fingerprint hashes served content deterministically and ignores test files", () => {
@@ -70,5 +70,26 @@ test("index.html is served with the release plus fingerprint while the static fi
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
     store.close();
+  }
+});
+
+test("served pages permit same-origin camera access and deny unused capabilities", async () => {
+  const { server } = createKinServer({
+    port: 0,
+    host: "127.0.0.1",
+    origin: "http://localhost:8000",
+    store: false,
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/`);
+    assert.equal(response.status, 200);
+    assert.equal(
+      response.headers.get("permissions-policy"),
+      "camera=(self), microphone=(self), geolocation=()",
+    );
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
   }
 });

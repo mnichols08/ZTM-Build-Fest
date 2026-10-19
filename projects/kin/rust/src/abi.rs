@@ -441,6 +441,18 @@ pub extern "C" fn kin_archive_layout(pointer: u32, length: u32) -> i32 {
     operate(pointer, length, crate::archive::layout_request)
 }
 
+/// UTF-8 text -> KQRM matrix of a QR symbol (qr/wire.rs). The browser draws it.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_qr_encode(pointer: u32, length: u32) -> i32 {
+    operate(pointer, length, crate::qr::wire::encode_request)
+}
+
+/// width, height and 8-bit luma of a camera frame -> the QR payload bytes.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_qr_decode(pointer: u32, length: u32) -> i32 {
+    operate(pointer, length, crate::qr::wire::decode_request)
+}
+
 /// The import plan (KIMP) for the instance's history, which the host has
 /// filled with a decrypted archive's records, in the context of a
 /// record-less KINE request.
@@ -548,6 +560,7 @@ pub extern "C" fn kin_result_ptr() -> u32 {
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
 pub extern "C" fn kin_clear() {
     lock_state().clear();
+    crate::qr::wire::release_scratch();
 }
 
 #[cfg_attr(target_arch = "wasm32", no_mangle)]

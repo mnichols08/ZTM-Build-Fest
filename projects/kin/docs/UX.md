@@ -961,6 +961,19 @@ Not:
 
 ## 8.4 Pairing
 
+People & devices starts with two explicit actions before any scanner or code:
+
+- **Invite a person** explains that Kin creates a separate household member
+  identity with role-based access.
+- **Add my device** explains that this remains the same person and member ID on
+  another phone or computer, and that a member is not notified of their own
+  changes on another device.
+
+The chosen outcome remains visible during QR and manual entry. A generic
+“Pair” action must not make the member/device result implicit. The complete
+onboarding and platform checks are in
+[Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md).
+
 Pairing should make the sequence understandable:
 
 ```text
@@ -1048,6 +1061,60 @@ else):
   the service's copy and returns focus to the toggle.
 - After a household rename, the status says home screens still show the old
   name until Save.
+
+## 8.9 QR codes and signing in with a phone (v1.1, #93)
+
+**Invitation QR (#97).** Shown on a waiting invitation, labelled "QR code for
+this invitation. Scan it with the joining device's camera.", beside the typed
+code, Copy code and Share invitation. The QR code goes once the invitation is
+claimed (the code, Copy and Share stay while the claim awaits approval). An
+expired or revoked invitation shows "This invitation ended: it expired." /
+"…: it was revoked.", with no QR code and no code. On the join screen, "Scan invitation" opens the
+scanner in place; a scanned invitation fills the field ("Code filled in from
+the invitation. Check it, then continue."), and any other Kin code says
+"That Kin code isn't an invitation. Scan the invitation's code, or type it."
+
+**Scanner (#96).** The camera starts only on "Scan a code" and stops on a
+result, Cancel, leaving the view or locking. Every state says what to do next
+(starting, looking, blocked, no camera, insecure, lost, reader failed), and
+"Type the code instead" is always offered.
+
+**Computer: Sign in with your phone (#100).** A choice on the signed-out
+screen ("You're already signed in to Kin on a phone. Scan this computer's code
+with it, then type the 6-digit code it shows.") and a button on `/pair`.
+
+- Waiting: "On your phone, open Kin → People & devices → Add a computer →
+  Scan.", the QR code, "This code changes in 01:52" (updated silently) and
+  Cancel. The code replaces itself four times, then "The sign-in code
+  expired. Nothing was signed in." with "Show a new code".
+- Approved: "Your phone approved this computer. Type the 6-digit code shown on
+  your phone.", a "6-digit code" field and "Sign in", "The code works for
+  01:40", Cancel. A wrong code, from the service: "That code didn't match. 2
+  tries left. Check the code on your phone and type it again." Three: "That code was wrong too many times,
+  so the sign-in request ended. Nothing was signed in."
+- Ended (cancelled on the phone, expired, refused): "This sign-in request
+  ended. Nothing was signed in." with "Show a new code" and Back, and "Sign in
+  as someone else" when the computer offered a device it already had.
+- A sign-in link opened in the browser of a device that's signed in, rather
+  than scanned in Kin: "That was a computer's sign-in code. To approve it, choose Add a computer below
+  and scan it there."
+
+**Phone: Add a computer (#101).** In People & devices, for Adults whose device
+has its sync key.
+
+- Scan: "On the computer, open Kin and choose Sign in with your phone. Then
+  scan the code it shows." An invitation code or anything else is explained;
+  "Type the code instead" says a computer needs its QR code.
+- Review: "Approve this computer?", the computer's automatic name, "It will be
+  signed in as you…" (new, or already one of your devices), the warning
+  **"Only approve a computer that's in front of you."**, "Approve with
+  passkey" and Cancel. A dismissed passkey leaves the review open: "…The
+  computer was not approved."
+- Code: "Type this code on the computer", the code in large selectable text,
+  "Only type it on “Chrome on Windows”, the one in front of you.", "The code
+  works for 01:58", Cancel.
+- Done: "The computer is signed in" and Done. Ended: what happened, "Scan
+  again" and Done.
 
 ---
 

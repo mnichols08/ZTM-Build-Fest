@@ -105,6 +105,8 @@ export function createEngine(instanceExports) {
     "kin_chat_search",
     "kin_chat_text",
     "kin_chat_texts_clear",
+    "kin_qr_encode",
+    "kin_qr_decode",
     "kin_clear",
     "kin_result_ptr",
     "kin_result_len",

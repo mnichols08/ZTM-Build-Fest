@@ -18,7 +18,7 @@ import {
   discardChatSection, importChatSection, MAX_ARCHIVE_CHAT_BLOBS, MAX_ARCHIVE_CHAT_EVENTS, openChatSection, validateChatSection,
 } from "../chat/chat-archive.js";
 
-const KIN_VERSION = "1.0.0";
+const KIN_VERSION = "1.1.2";
 const PACKAGE_FORMAT = 3;
 const MAX_ARCHIVE_BYTES = 160 * 1024 * 1024;
 const MAX_EVENT_COUNT = 10_000;

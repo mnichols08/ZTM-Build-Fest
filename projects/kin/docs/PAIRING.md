@@ -1,10 +1,18 @@
 # Pairing and Device Enrollment
 
-**Status:** Current as of v1.0.0. Manual adult and same-member device pairing use one-time codes, passkey claim/approval/activation, locally generated device keys and compared fingerprints. A queued signed device-key successor completes before pairing/provisioning proceeds. Private transport material is available only while the local household is unlocked. Pairing codes, claims and ceremony flows remain process-local and are cancelled by restart; identity and trusted-device authority are durable. Household deletion discards household pairing/claim flows immediately and invalidates devices at finalization. Local encrypted archive restore does not restore device trust.
+**Status:** Current as of v1.1.2, including invitations by QR code (#97) and phone-approved computer sign-in (#98) below. Manual adult and same-member device pairing use one-time codes, passkey claim/approval/activation, locally generated device keys and compared fingerprints. A queued signed device-key successor completes before pairing/provisioning proceeds. Private transport material is available only while the local household is unlocked. Pairing codes, claims and ceremony flows remain process-local and are cancelled by restart; identity and trusted-device authority are durable. Household deletion discards household pairing/claim flows immediately and invalidates devices at finalization. Local encrypted archive restore does not restore device trust.
 
 ## Distinct operations
 
 Inviting another household member changes household membership. Adding a device authorizes another installation for an existing member. They are separate operations with different confirmation and recovery requirements.
+
+Before either QR or manual-code UI appears, Kin names the choices **Invite a
+person** and **Add my device** and states whether a new member ID will be
+created. Keeping that explanation visible throughout approval and completion
+is tracked by #219; the current approval screens retain their existing generic
+pairing copy. Back or Cancel grants nothing. Platform, offline, migration and
+accessibility evidence is tracked in
+[Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md).
 
 ## Invite a household member
 
@@ -83,6 +91,151 @@ Authorize device and provision its household-key access
 ```
 
 This flow does not create another member. It requires proof of the existing member's authority, binds the locally generated device key to that member/device, compares the fingerprint on both devices, and separately provisions household key epochs. Same-member devices receive retained history. If no authorized device remains, there is no recovery path; possession of an old pairing code is not recovery.
+
+## Invite by QR code (v1.1, #97)
+
+A waiting invitation also shows a QR code. It adds a way to carry the code, not
+a way around any gate.
+
+```text
+Adult creates an invitation (as above)
+        |
+        v
+Invitation screen: QR code + the typed code, Copy and Share
+        |
+        v
+Joining device opens /pair#code=… (camera app) or scans it in Kin
+        |
+        v
+Join screen with the code filled in (nothing is claimed yet)
+        |
+        v
+Joining person creates a passkey; fingerprints compared; Adult approves
+```
+
+- **The code stays in the fragment.** The QR code and Share carry
+  `/pair#code=F7KM-Q2DX`. Browsers never send a fragment to a server, so the
+  code can't reach a request URL, a server log or a `Referer`
+  (`Referrer-Policy: no-referrer` is set as well). Kin takes the code out of
+  the address as the app loads and resets the address to `/pair`; a code in a
+  query (links from before #97) is removed and not used, because it has
+  already travelled to the server (`web/pairing-link.js`).
+- **Opening or scanning fills the field, nothing more.** The person still
+  checks the code, creates a fresh passkey, and an Adult still approves after
+  both compare fingerprints. A device that is already a member drops the code
+  and says so.
+- **Shown only while it can work.** The QR code appears only while the
+  invitation is Pending and before its expiry, and goes once it is claimed.
+  An expired or revoked invitation shows "This invitation ended", never a
+  stale code.
+- The typed code, Copy and Share stay beside the QR code, so a person who
+  can't scan has the whole path.
+
+## Sign in on a computer with your phone (v1.1, #98)
+
+A member already signed in on a phone signs a computer in by scanning the
+computer's QR code and approving with a passkey. The computer finishes by
+typing a 6-digit code shown on the phone.
+
+```text
+Computer: Sign in with your phone
+        |
+        v
+Computer makes its keys and a link request; shows a QR code
+        |                 (/link#r=<request>&s=<secret>&f=<fingerprint>&c=<nonce>)
+        v
+Phone: People & devices → Add a computer → Scan
+        |
+        v
+Phone shows the computer's automatic name, "you", and the warning
+        |
+        v
+Phone approves with a fresh passkey (and signs the device certificate)
+        |
+        v
+Phone shows a random 6-digit code (2 minutes); it sent the service the
+code and a tag binding its key to the code and the QR nonce
+        |
+        v
+Computer types the code → service releases the approver and the tag →
+computer checks the tag, pins the phone's key → signed in →
+phone says Done and provisions keys
+```
+
+**Gates, in order:**
+
+1. **Request.** The computer generates its device keys locally and asks the
+   service for a request with its public keys and its automatic name
+   (`POST /api/link/requests`, unauthenticated). The service keeps a SHA-256
+   verifier of a 256-bit secret, never the secret, and chooses the computer's
+   device ID. Requests last 2 minutes. Every request counts against the
+   client's limit (12 a minute), a client holds at most 4 live requests, and
+   the service holds at most 512 in all.
+2. **Scan.** The QR code carries the request ID, the secret, the key
+   fingerprint and a 16-byte nonce, all in the fragment. Kin's scanner accepts
+   only a `/link` for its own origin. The phone sends the secret and the
+   scanned fingerprint in request bodies only; the nonce never leaves the two
+   devices. A sign-in link opened in a browser instead (a phone's camera app)
+   is dropped from the address at once, and explained on a device that is
+   signed in.
+3. **Approval.** Only an Adult's session on a trusted device approves, the same
+   rule as adding a device. The scanned fingerprint must match the keys the
+   service holds, or the request ends. Approval needs a fresh passkey
+   assertion bound to the request and the member. For a new computer the phone
+   checks the keys against the fingerprint itself, signs the device certificate
+   with its own device key and pins the computer's key. Failures count against
+   the member's limit.
+4. **Code.** The phone picks the 6-digit code at random and sends it with its
+   approval, along with a tag: HMAC-SHA-256 keyed by
+   SHA-256(`kin-link-key-v1|nonce|code`), over the request ID, the phone's device ID and key fingerprint,
+   and the computer's fingerprint (`linkTag` in `web/device-link.js`). The
+   service keeps only the code's hash and the tag, and its status says
+   nothing about the approver. The code works for 2 minutes, three wrong tries
+   end the request, and it reaches only the computer in front of the person,
+   so a QR code shown somewhere else can't be completed.
+5. **Completion.** A correct code releases which device approved, its
+   fingerprint and the tag. The service checks again that the member is
+   active, the phone is still trusted and the household isn't being deleted,
+   and, for a new computer, that the household is under its 16-device limit. Tokens go out
+   only as cookies. The computer checks the tag with the QR nonce and the
+   code the person typed, then checks the directory's copy of that phone's
+   key against the fingerprint and pins it, so its first sync can verify the
+   household from that phone. If either check fails it signs itself out.
+
+**Two results** ([Identity](IDENTITY.md#signing-in-with-a-phone)):
+
+- **A new computer** becomes a trusted device of the approving member and
+  receives retained history, like a device added with a code. The phone syncs
+  once the computer finishes, which provisions the household's keys for it.
+- **A computer already trusted for that member** offers its existing device's
+  keys. When its device cookie names that device with those keys, the service
+  says it is returning, and completing gives it a new session and a rotated
+  device token, as after a passkey login. Approval as anyone else, or of keys
+  any device already has or had, is refused: two devices never share keys.
+  "Sign in as someone else" on the computer then starts again with fresh keys
+  (a shared computer).
+
+**Either side ends it.** Cancel or Back on either device, starting again,
+Kin locking, or closing the page on the computer ends the request with the
+service; moving to another view in Kin doesn't, and it then ends when it
+expires. Requests are
+process-local, like pairings, and end when the service restarts. Errors about
+a request are generic: an unknown, expired, cancelled or used request, and a
+wrong secret, all look the same. A fingerprint mismatch, a computer already
+set up for another account, a code before approval and a wrong code each say
+so.
+
+**Audit.** `device_link_requested`, `device_link_approved`,
+`device_link_completed`, `device_link_failed` (with a reason) and
+`device_link_rate_limited`, plus `device_trusted` for a new computer, hold IDs
+and outcomes only. Approval, completion and any end after approval are saved
+with the household, except for a household being deleted. A request that was
+never approved belongs to no household, so its events stay in the service's
+in-memory log.
+
+**Limited and Temporary members** can't approve, as they can't add devices.
+A computer that is already theirs signs back in with their passkey, and an
+Adult adds a new one.
 
 ## Revocation
 

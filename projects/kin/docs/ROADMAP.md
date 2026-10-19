@@ -1,10 +1,11 @@
 # Roadmap
 
-Current release: `v1.0.0 — Stable Kin Platform`, released 2026-10-17 as
-`kin-v1.0.0`. The last release before it was `v0.10.3 — Bounded Storage/Archive
-Hardening & Architecture Closure`. The work between them shipped in v1.0.0, per
-the owner's [review-gate decisions](audits/V1.0_REVIEW_GATES.md); this page
-records how Kin got there. Work after v1.0 is tracked as GitHub issues.
+Current release: `v1.1.2 — Private Household Branding`, released 2026-10-18
+as `kin-v1.1.2`. The release before it was `v1.1.1 — Member and Notification Clarity`.
+The work between v0.10.3 and v1.0.0 shipped per the owner's
+[review-gate decisions](audits/V1.0_REVIEW_GATES.md); this page records how Kin
+got there and continues through v1.1. Work after v1.0 is tracked as GitHub
+issues.
 
 ```text
 v0.9.3 — Encrypted Event Sync Stabilization
@@ -48,6 +49,12 @@ v0.47.0 — Household Identity & Shared Appearance
 v1.0 readiness — security fixes, sync quarantine, recovery-key labels, Node 24, frozen formats, real-device testing
 	↓
 v1.0.0 — Stable Kin Platform
+	↓
+v1.1.0 — Connected Household Devices
+	↓
+v1.1.1 — Member and Notification Clarity
+	↓
+v1.1.2 — Private Household Branding
 ```
 
 Kin supports encrypted local storage, recovery/optional PRF unlock, verified migration, Rust commands/codecs, encrypted archives and a static offline shell alongside opt-in encrypted sync. The v0.11 candidate adds durable server identity/relay state and service database backup/restore. Archives recover local history, not server identity. Independent security review and broader browser/authenticator coverage remain outstanding.
@@ -59,6 +66,16 @@ v0.47.0 added encrypted revisioned household identity/default appearance plus
 recorded admin authority. v0.21.0–v0.47.0 were never tagged; they shipped in
 v1.0.0. The v0.42.x–v0.45.x documents were planning contracts that were never
 activated; v1.0 readiness (epic #150) took their place.
+
+v1.1.0 delivers device names and nicknames (#71), household identity on home
+screens (#78), opt-in content-free push notifications (#85), QR pairing and
+phone-approved computer sign-in (#93), and the Node service sandbox (#106).
+v1.1.1 clarifies member/device identity, pairing choices, device trust, and
+push-recipient diagnostics (#221).
+v1.1.2 keeps private household branding synchronized across the unlocked shell,
+installed-app identity, and session transitions (#231–#233).
+The next unshipped product capability is tracked in GitHub rather than assigned
+a version here.
 
 ## October direction
 

@@ -1,5 +1,13 @@
 # Testing Contracts
 
+Member-versus-device onboarding, push-recipient expectations and the required
+platform/migration evidence are defined in
+[Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md).
+`scripts/identity-docs.test.mjs` keeps the security, copy and matrix contracts
+linked from every affected document. Automation does not certify physical
+mobile cameras, vendor push delivery, assistive technology or comprehension;
+those rows require named manual release evidence.
+
 ## Refactor track gates
 
 - **Projection-equivalence oracle.** `projectionOracle` in

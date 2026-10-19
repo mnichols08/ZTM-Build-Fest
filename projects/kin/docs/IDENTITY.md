@@ -1,6 +1,6 @@
 # Identity and Trusted Devices
 
-**Status:** Current as of v1.0.0. Server member/passkey/device authorization remains distinct from the local encryption unlock. The service persists identity and device-token verifiers; raw tokens and sessions remain ephemeral. Household deletion is a separate lifecycle and an encrypted local archive restores local history, not an authenticated server household.
+**Status:** Current as of v1.1.2. Server member/passkey/device authorization remains distinct from the local encryption unlock. The service persists identity and device-token verifiers; raw tokens and sessions remain ephemeral. Household deletion is a separate lifecycle and an encrypted local archive restores local history, not an authenticated server household.
 
 ## Placeholder identities and bindings
 
@@ -15,6 +15,15 @@ them would make every household created before pairing unreplayable after
 sync. The refactor track's protocol reset (Slice 2) therefore keeps them.
 
 ## Separate identities
+
+The identity-presentation contract requires the stable member ID to remain the
+authority and treats a future optional preferred name only as presentation.
+“You” identifies the signed-in member; “This device” identifies the active
+installation. Neither label, a preferred name nor a device name may change
+permissions, event authorship or push filtering. When preferred member names
+are implemented, existing members without one must keep a deterministic
+fallback and must never be forced to rename. See the cross-platform contract in
+[Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md).
 
 ```text
 Household
@@ -84,6 +93,34 @@ Only authorized devices may submit or receive encrypted household events. Device
 An open browser checks authorization on focus/return and every 30 seconds while visible. Once the service can be reached, a revoked session clears its session cookie and a removed/revoked device also clears its device cookie; the UI stops sync and shows the signed-out state while retaining local household data. A disconnected device cannot learn of revocation until it reconnects or returns to the service.
 
 Historical key entitlement is explicit: a new device for an existing member can receive retained history; a newly joined/replacement adult starts at its membership-time/current epoch and later epochs. v0.9.x does not grant pre-join epoch keys. Kin has no encrypted snapshots, so earlier shared history remains unavailable rather than being reconstructed from plaintext server state.
+
+## Signing in with a phone
+
+Since v1.1 (#98) a member signed in on a phone can sign a computer in by
+scanning its QR code ([Pairing](PAIRING.md#sign-in-on-a-computer-with-your-phone-v11-98)
+has the flow and its gates). The result depends on what the computer already
+is:
+
+- **A new device.** A computer the service doesn't know, or one whose device
+  cookie doesn't name a trusted device with the keys it offers, becomes a new
+  trusted device of the approving member. Its keys were generated on it; the
+  phone signs its certificate and pins its key, and it pins the phone's key,
+  checked through the tag that comes with the 6-digit code. It receives the member's
+  retained history, as a same-member device added with a code does. It has
+  no passkey of its own: it signs in again with a phone, or with a passkey
+  the member can use on it.
+- **A new session.** A computer whose cookie names one of the approving
+  member's trusted devices, with the same keys, keeps that device. It gets a
+  new session and a rotated device token, exactly what a passkey login gives
+  it. Its keys and history are unchanged.
+
+Signing in with a phone is a second way to reach the same states as a passkey
+login and adding a device; it grants nothing either of them couldn't. The
+approving phone's fresh passkey assertion stands in for the computer's own,
+and the 6-digit code ties the approval to the computer in front of the person.
+Only Adults approve, because only Adults add devices. Two devices never share
+keys: a computer set up for another account, or offering keys any device has
+had, is refused; "Sign in as someone else" then starts again with fresh keys.
 
 ## Device names
 

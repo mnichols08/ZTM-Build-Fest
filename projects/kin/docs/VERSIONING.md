@@ -1,7 +1,7 @@
 # Persistent Contract Versioning
 
-**Status:** Application version 1.0.0 — Stable Kin Platform, released
-2026-10-17 as `kin-v1.0.0` (the release before it was v0.10.3). Household
+**Status:** Application version 1.1.2 — Private Household Branding, released
+2026-10-18 as `kin-v1.1.2` (the release before it was v1.1.1). Household
 membership is bounded to 12 total participants (four Adults and eight Limited
 Members); Temporary Members require expiry. Earlier version sections preserve
 historical data contracts.
@@ -16,17 +16,17 @@ historical.
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | v1.0.0 | Governs |
+| Version axis | v1.1.2 | Governs |
 | --- | --- | --- |
-| Application | `1.0.0` | The product release; the service-worker cache name advances with the release |
-| Server database schema | `9` (`PRAGMA user_version`) | SQLite identity, authorization, recorded founder/admin authority, opaque relay, coordination, lifecycle, encrypted settings/attachment records and their uploaders, member kind, Temporary expiry, and authoritative membership status |
+| Application | `1.1.2` | The product release; the service-worker cache name advances with the release |
+| Server database schema | `11` (`PRAGMA user_version`; migrates 9→10→11) | SQLite identity, authorization, recorded founder/admin authority, opaque relay, coordination, lifecycle, encrypted settings/attachment records and their uploaders, member kind, Temporary expiry, authoritative membership status, installed-app identity, and push subscriptions |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v24; writes v24 for local and synchronized requests | Request context and projection semantics |
 | Manual WASM ABI | Existing exports plus additive command/metadata/archive/import APIs | Host ownership and calls; new command packet v1 |
 | IndexedDB schema | Event DB 2→4; key DB 3→4 | Journalled upgrade to encrypted records; protected attachment rows |
 | Local envelope | v1 for original roots; v2 for rotated roots | v2 authenticates rootVersion in addition to purpose/routing |
 | Security manifest / rotation journal | Manifest v1/root 1; v2/root 2+; journal v1 | Monotonic root replacement, CAS and exact restart |
-| Portable archive | KARC v1; body formats 1 and 2 | Bounded encrypted archive; format 2 includes protected attachments |
+| Portable archive | KARC v1; writes body format 3, reads 2 and 3 | Bounded encrypted archive; format 2 added protected attachments and format 3 streams bounded segments |
 | Sync envelope | v1 unchanged | Relay encryption/signature/provisioning contracts; Note plaintext remains only in encrypted event content |
 | Device-key successor | v1 with monotonic generation, maximum 16 transitions | Signed replacement of legacy transport capabilities |
 

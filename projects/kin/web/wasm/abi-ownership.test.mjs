@@ -46,6 +46,8 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_chat_search: status,
       kin_chat_text: status,
       kin_chat_texts_clear: () => 0,
+      kin_qr_encode: status,
+      kin_qr_decode: status,
       kin_clear() {},
       kin_result_ptr: () => (output.length ? 32 : 0),
       kin_result_len: () => output.length,

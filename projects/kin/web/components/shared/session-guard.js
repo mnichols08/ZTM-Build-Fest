@@ -30,3 +30,7 @@ export function assertCurrentSession(host, session) {
   if (!isCurrentSession(host, session))
     throw new VaultError("Kin was locked or reopened during the operation.", "locked");
 }
+
+export function reconnectLostAuthorization(authorization, wasBound) {
+  return authorization?.loaded === true && wasBound && !authorization.identity;
+}

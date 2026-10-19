@@ -1,10 +1,9 @@
 # Release Process
 
-**Status:** Current release: v1.0.0 — Stable Kin Platform, released
-2026-10-17 as `kin-v1.0.0` (release candidate `kin-v1.0.0-rc.1` on the same
-commit). The release before it was v0.10.3 Bounded Storage/Archive Hardening &
-Architecture Closure. Neither is production certification or an independent
-audit.
+**Status:** Current release: v1.1.2 — Private Household Branding, released
+2026-10-18 as `kin-v1.1.2`. The release before it was v1.1.1 — Member and
+Notification Clarity (`kin-v1.1.1`). Neither is production certification or an
+independent audit.
 
 Before any v1.x release, check it against the
 [v1.0 compatibility commitment](V1.0-COMPATIBILITY.md): a release may add
@@ -32,6 +31,21 @@ and [V0.10.0](V0.10.0.md); do not manufacture patch releases or knowingly defer 
 necessary correctness fix. Create tags only after completed validation and
 requested approval, never at development start. A specifically authorized
 review-candidate tag does not represent a published release.
+
+v1.1.0 adds device names, household home-screen identity, opt-in content-free
+push notifications, a sandboxed Node service, and QR pairing/phone-approved
+computer sign-in. It preserves the v1.0 formats and reads v1.0 data under the
+[compatibility commitment](V1.0-COMPATIBILITY.md); server schemas 10 and 11
+are forward migrations, so keep a pre-upgrade backup if rollback matters.
+
+v1.1.2 shows the private household name and icon in the unlocked shell and keeps
+that identity synchronized across session transitions. Locked and unassociated
+surfaces retain generic Kin branding. It introduces no persistent-format or
+protocol version changes.
+
+v1.1.1 clarifies member/device identity, pairing choices and device trust, and push
+recipients and diagnostics. It introduces no persistent-format or protocol
+version changes.
 
 ```text
 scope complete
@@ -119,7 +133,7 @@ Follow [V0.7.0](V0.7.0.md) for capability, correctness, resilience/accessibility
 
 The v0.7.x line completed at `kin-v0.7.4`, validated commit `a8ded079be6fdbedba8738a64a5f0fb753e7fdd6`, pushed to the fork. The v0.8 record is [V0.8.0](V0.8.0.md); `kin-v0.8.8` corrected active-member slots. The v0.9 record is [V0.9.0](V0.9.0.md). The merged v0.9.3 base and completed v0.10 implementation line are recorded in [V0.10.0](V0.10.0.md). v1.0 remains gated by local security, durable service, lifecycle/deletion, recovery/continuity and UX/UI readiness. Later implementation candidates do not change the last-published v0.10.3 status.
 
-For v1.0.0, see the [changelog](../CHANGELOG.md), the
+For v1.0.0 and later releases, see the [changelog](../CHANGELOG.md), the
 [versioning matrix](VERSIONING.md) and the
 [v1.0 compatibility commitment](V1.0-COMPATIBILITY.md). The root verification
 workflow is release evidence, not a publication or tag.

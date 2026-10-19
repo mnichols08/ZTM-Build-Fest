@@ -1,6 +1,6 @@
 # Security Policy
 
-**Current security status:** Kin v1.0.0 (`kin-v1.0.0`, released 2026-10-17)
+**Current security status:** Kin v1.1.2 (`kin-v1.1.2`, released 2026-10-18)
 includes encrypted local household storage,
 recovery/optional-PRF unlock, journalled root replacement, encrypted archives,
 passkey-authenticated pairing, client-encrypted sync, durable identity/relay
@@ -15,7 +15,7 @@ data, keys or archives already copied. See [THREAT-MODEL](docs/THREAT-MODEL.md),
 [CRYPTOGRAPHY](docs/CRYPTOGRAPHY.md), [VERSIONING](docs/VERSIONING.md), and the
 [v0.47 contract](docs/HOUSEHOLD-IDENTITY-DEFAULTS.md).
 
-## Known limitations at v1.0
+## Known limitations carried into v1.1
 
 Kin v1.0 ships with these known limitations, each explained in plain language
 in [THREAT-MODEL](docs/THREAT-MODEL.md#known-limitations-at-v10):
@@ -33,7 +33,7 @@ in [THREAT-MODEL](docs/THREAT-MODEL.md#known-limitations-at-v10):
 
 Security fixes go into the latest v1.x release only; there are no separate
 maintenance branches for older versions. v0.x pre-releases are not supported:
-v1.0 starts fresh ([V1.0-COMPATIBILITY](docs/V1.0-COMPATIBILITY.md)). What v1.0
+v1.0 starts fresh ([V1.0-COMPATIBILITY](docs/V1.0-COMPATIBILITY.md)). What v1.1
 does not protect against is listed under
 [known limitations](docs/THREAT-MODEL.md#known-limitations-at-v10).
 

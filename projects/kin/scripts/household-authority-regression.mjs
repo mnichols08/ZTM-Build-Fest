@@ -11,6 +11,7 @@
 //
 // Usage: node scripts/household-authority-regression.mjs <browser executable>
 import { waitForOrigin } from "./cdp-page.mjs";
+import { setViewport } from "./cdp-viewport.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -132,6 +133,181 @@ async function pageClaim({ code, deviceLabel }) {
   };
 }
 
+// Invite by QR (#97). The inviter's QR is read back from its canvas pixels by
+// the real engine; the joining browser opens the link as a phone's camera app
+// would, and a scanner result is stubbed (the camera itself is covered by
+// qr-regression.mjs in the browser regression).
+async function pageInvitationQr() {
+  const h = document.querySelector("kin-app").household;
+  const qr = h.querySelector("kin-qr.pairing-qr");
+  if (!qr) throw new Error("The invitation shows no QR code");
+  for (let i = 0; i < 400 && qr.querySelector(".kin-qr-frame")?.hidden !== false; i++) await new Promise((r) => setTimeout(r, 25));
+  const canvas = qr.querySelector("canvas");
+  if (!canvas || qr.querySelector(".kin-qr-frame").hidden) throw new Error("The invitation QR was not drawn: " + qr.textContent);
+  const { qrCodec } = await import("/wasm/kin-qr.js");
+  const codec = await qrCodec();
+  const { width, height } = canvas;
+  const rgba = canvas.getContext("2d").getImageData(0, 0, width, height).data;
+  const readBack = codec.decodeFrame(width, height, (target) => {
+    for (let pixel = 0, byte = 0; pixel < target.length; pixel += 1, byte += 4)
+      target[pixel] = (rgba[byte] * 77 + rgba[byte + 1] * 150 + rgba[byte + 2] * 29) >> 8;
+  });
+  return { value: qr.value, readBack, label: canvas.getAttribute("aria-label"), codeShown: h.querySelector(".pairing-code")?.textContent ?? null };
+}
+
+// Sign in with your phone (#100, #101). The computer's QR code is read back
+// from its canvas by the real engine, and A's phone approves through its real
+// screens, with a real passkey and its real device key.
+async function pageStartPhoneSignIn() {
+  const app = document.querySelector("kin-app");
+  const h = app.household;
+  // On People & devices, as a person would be: focus can't move into a
+  // hidden view.
+  location.hash = "#household/people";
+  app.ctx.navigation.showPageFromLocation();
+  const choice = [...h.querySelectorAll("button")].find((button) => button.textContent === "Sign in with your phone");
+  if (!choice) throw new Error("The signed-out screen offers no Sign in with your phone: " + h.textContent.slice(0, 300));
+  choice.click();
+  for (let i = 0; i < 400 && !h.querySelector("kin-qr.sign-in-qr"); i++) await new Promise((r) => setTimeout(r, 25));
+  const qr = h.querySelector("kin-qr.sign-in-qr");
+  if (!qr) throw new Error("The sign-in screen shows no QR code: " + h.textContent.slice(0, 300));
+  for (let i = 0; i < 400 && qr.querySelector(".kin-qr-frame")?.hidden !== false; i++) await new Promise((r) => setTimeout(r, 25));
+  const canvas = qr.querySelector("canvas");
+  if (!canvas || qr.querySelector(".kin-qr-frame").hidden) throw new Error("The sign-in QR was not drawn: " + qr.textContent);
+  const { qrCodec } = await import("/wasm/kin-qr.js");
+  const codec = await qrCodec();
+  const { width, height } = canvas;
+  const rgba = canvas.getContext("2d").getImageData(0, 0, width, height).data;
+  const readBack = codec.decodeFrame(width, height, (target) => {
+    for (let pixel = 0, byte = 0; pixel < target.length; pixel += 1, byte += 4)
+      target[pixel] = (rgba[byte] * 77 + rgba[byte + 1] * 150 + rgba[byte + 2] * 29) >> 8;
+  });
+  const request = h.ctx.link.request;
+  return {
+    value: qr.value, readBack, label: canvas.getAttribute("aria-label"), keys: request?.keys ?? null,
+    steps: h.textContent.includes("On your phone, open Kin → People & devices → Add a computer → Scan."),
+    countdown: h.querySelector(".sign-in-countdown")?.textContent ?? "",
+    countdownLive: h.querySelector(".sign-in-countdown")?.hasAttribute("role") ?? true,
+    focused: document.activeElement === h.querySelector(".sign-in-heading"),
+  };
+}
+
+// Add a computer (#101) on A's phone, through its real screens; only the
+// scanner's result is stubbed (the camera is covered by qr-regression.mjs).
+async function pagePhoneApprove(link) {
+  const h = document.querySelector("kin-app").household;
+  h.pairing = null;
+  h.render();
+  const add = [...h.querySelectorAll("button")].find((button) => button.textContent === "Add a computer");
+  if (!add) throw new Error("People & devices offers no Add a computer: " + h.textContent.slice(0, 300));
+  add.click();
+  const scanner = h.querySelector("kin-qr-scanner");
+  if (!scanner) throw new Error("Add a computer did not open the scanner");
+  const cameraOff = scanner.state === "idle";
+  scanner.dispatchEvent(new CustomEvent("kin-qr-scan", { bubbles: true, detail: { url: link } }));
+  for (let i = 0; i < 400 && !h.querySelector(".link-approval-warning"); i++) await new Promise((r) => setTimeout(r, 25));
+  const warning = h.querySelector(".link-approval-warning")?.textContent ?? "";
+  const deviceName = h.querySelector(".link-approval-device")?.textContent ?? "";
+  const asYou = h.textContent.includes("signed in as you");
+  const view = h.ctx.linkApproval.flow?.view;
+  if (!view) throw new Error("The phone shows no approval screen: " + h.textContent.slice(0, 300));
+  const approve = [...h.querySelectorAll("button")].find((button) => button.textContent === "Approve with passkey");
+  approve.click();
+  for (let i = 0; i < 400 && !h.querySelector(".link-approval-code"); i++) await new Promise((r) => setTimeout(r, 25));
+  const shown = h.querySelector(".link-approval-code");
+  if (!shown) throw new Error("The phone shows no code: " + h.textContent.slice(0, 300));
+  return {
+    code: shown.querySelector("[aria-hidden=true]")?.textContent ?? "", existingDevice: view.existingDevice, deviceId: view.deviceId, deviceLabel: view.deviceLabel,
+    secret: h.ctx.linkApproval.flow.scanned.secret, nonce: h.ctx.linkApproval.flow.scanned.nonce, warning, deviceName, asYou, cameraOff,
+    countdown: h.querySelector(".link-approval-countdown")?.textContent ?? "",
+  };
+}
+
+async function pagePhoneApprovalDone() {
+  const h = document.querySelector("kin-app").household;
+  for (let i = 0; i < 400 && h.querySelector(".link-approval-heading")?.textContent !== "The computer is signed in"; i++)
+    await new Promise((r) => setTimeout(r, 25));
+  const heading = h.querySelector(".link-approval-heading")?.textContent ?? "";
+  const done = [...h.querySelectorAll("button")].find((button) => button.textContent === "Done");
+  done?.click();
+  return { heading, closed: !h.ctx.linkApproval.open };
+}
+
+async function pageSignInCodeField() {
+  const h = document.querySelector("kin-app").household;
+  for (let i = 0; i < 400 && !h.querySelector(".sign-in-code input"); i++) await new Promise((r) => setTimeout(r, 25));
+  const field = h.querySelector(".sign-in-code input");
+  if (!field) throw new Error("The computer never asked for the code: " + h.textContent.slice(0, 300));
+  // The status is announced just after the field appears, so the region
+  // exists first and screen readers hear it change.
+  for (let i = 0; i < 80 && !h.querySelector(".sign-in-status")?.textContent; i++) await new Promise((r) => setTimeout(r, 25));
+  return {
+    inputMode: field.inputMode, autocomplete: field.autocomplete, focused: document.activeElement === field,
+    qrGone: !h.querySelector("kin-qr"), status: h.querySelector(".sign-in-status")?.textContent ?? "",
+  };
+}
+
+async function pageTypeSignInCode({ code, navigates }) {
+  const h = document.querySelector("kin-app").household;
+  const field = h.querySelector(".sign-in-code input");
+  field.value = code;
+  if (navigates) {
+    // A new device starts Kin afresh: submit after returning, as pageActivate does.
+    setTimeout(() => field.form.requestSubmit(), 100);
+    return { submitted: true };
+  }
+  field.form.requestSubmit();
+  for (let i = 0; i < 400 && (h.busy || !h.identity); i++) await new Promise((r) => setTimeout(r, 25));
+  if (!h.identity) throw new Error("The computer was not signed in: " + h.textContent.slice(0, 300));
+  return { identity: h.identity, path: location.pathname };
+}
+
+async function pageJoinField() {
+  const h = document.querySelector("kin-app").household;
+  for (let i = 0; i < 400 && !h.querySelector('input[name="code"]'); i++) await new Promise((r) => setTimeout(r, 25));
+  const field = h.querySelector('input[name="code"]');
+  if (!field) throw new Error("The join screen has no code field: " + h.textContent.slice(0, 300));
+  return { value: field.value, path: location.pathname, hash: location.hash, search: location.search, claimed: Boolean(h.claim) };
+}
+
+async function pageScanInvitation(link) {
+  const h = document.querySelector("kin-app").household;
+  const field = h.querySelector('input[name="code"]');
+  field.value = "";
+  const scan = [...h.querySelectorAll("button")].find((button) => button.textContent === "Scan invitation");
+  if (!scan) throw new Error("The join screen offers no Scan invitation button");
+  scan.click();
+  const scanner = h.querySelector("kin-qr-scanner");
+  if (!scanner) throw new Error("Scan invitation did not open the scanner");
+  const offersTyping = [...scanner.querySelectorAll("button")].some((button) => button.textContent === "Type the code instead");
+  const cameraOff = scanner.state === "idle";
+  // The stub: the scanner reports the link as it would from the camera.
+  scanner.dispatchEvent(new CustomEvent("kin-qr-scan", { bubbles: true, detail: { url: link } }));
+  return {
+    value: field.value,
+    offersTyping,
+    cameraOff,
+    scannerClosed: !h.querySelector("kin-qr-scanner"),
+    claimed: Boolean(h.claim),
+    status: h.querySelector(".pairing-scan [role=status]")?.textContent ?? "",
+    stillJoining: Boolean([...h.querySelectorAll("button")].find((button) => button.textContent === "Create passkey and request approval")),
+  };
+}
+
+async function pageRevokeInvitation() {
+  const h = document.querySelector("kin-app").household;
+  const revoke = [...h.querySelectorAll("button")].find((button) => button.textContent === "Revoke");
+  if (!revoke) throw new Error("The invitation has no Revoke button");
+  revoke.click();
+  for (let i = 0; i < 400 && (h.busy || h.pairing?.state !== "Revoked"); i++) await new Promise((r) => setTimeout(r, 25));
+  return {
+    state: h.pairing?.state,
+    stateText: h.querySelector(".pairing-state")?.textContent ?? "",
+    qrShown: Boolean(h.querySelector("kin-qr")),
+    codeShown: Boolean(h.querySelector(".pairing-code")),
+  };
+}
+
 async function pageCreatePairing({ kind, expiresAt }) {
   const app = document.querySelector("kin-app");
   const h = app.household;
@@ -240,7 +416,8 @@ async function pageTrustDevice(deviceLabel) {
   // The row shows the device's synced name (#71), which can differ from the
   // server label, so it is found by device ID.
   const item = h.querySelector(`li[data-device-id="${device.id}"]`);
-  if (!item?.textContent.includes("Trusted")) throw new Error(`Trusted-device row is missing for ${deviceLabel}`);
+  if (!item?.textContent.includes("Untrusted"))
+    throw new Error(`Untrusted device row is missing for ${deviceLabel}`);
   const verify = [...(item?.querySelectorAll("button") ?? [])].find(
     (button) => button.textContent === "Verify device",
   );
@@ -280,18 +457,45 @@ async function pageTrustDevice(deviceLabel) {
   const pinnedAfterConfirmation = Boolean(
     await h.syncKeyStore.getPinnedDevice(h.identity.householdId, device.id),
   );
+  await h.showDevices();
+  const trustedAfterConfirmation = Boolean(
+    h.querySelector(`li[data-device-id="${device.id}"]`)?.textContent.includes("Trusted"),
+  );
   return {
     visuallyGated,
     gateSurvivedBusyCycle,
     refusedBeforeConfirmation,
     unpinnedBeforeConfirmation,
     pinnedAfterConfirmation,
+    trustedAfterConfirmation,
   };
 }
 
 async function pageHousehold() {
   const app = document.querySelector("kin-app");
   return app.household.api("/api/household");
+}
+
+async function pagePeopleDevicesLayout() {
+  const app = document.querySelector("kin-app");
+  const h = app.household;
+  location.hash = "#household/people";
+  app.ctx.navigation.showPageFromLocation();
+  await h.showDevices();
+  const firstName = h.querySelector(".device-name-line strong");
+  if (firstName)
+    firstName.textContent = "Alex's very long shared household tablet name that must wrap";
+  const groups = [...h.querySelectorAll(".device-group")];
+  const lines = [...h.querySelectorAll(".device-name-line")];
+  const actions = [...h.querySelectorAll(".people-device-actions button")];
+  return {
+    width: innerWidth,
+    overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    groupCount: groups.length,
+    linesFit: lines.every((line) => line.getBoundingClientRect().right <= innerWidth + 0.5),
+    actions: actions.map((button) => button.textContent),
+    targetHeights: actions.map((button) => button.getBoundingClientRect().height),
+  };
 }
 
 // `bytes` (an array of byte values) sends a binary body, as sync event
@@ -316,6 +520,13 @@ async function pagePauseAutomaticSync() {
 async function pageResumeAutomaticSync() {
   const app = document.querySelector("kin-app");
   delete app.ctx.sync.configureSyncCoordinator;
+}
+
+async function pageReconnectAutomaticSync() {
+  const app = document.querySelector("kin-app");
+  for (let i = 0; i < 400 && !(app.syncCoordinator && app.household?.localFingerprint); i++)
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  return Boolean(app.syncCoordinator && app.household?.localFingerprint);
 }
 
 async function pageShiftClock(offsetMs) {
@@ -443,7 +654,7 @@ async function pageRevokeDeviceButton(label) {
 // #78: Adult A publishes the household's home-screen identity through the
 // admin-only Home screen section; the manifest and icons then follow A's
 // device cookie. Non-admins have no section and the service refuses them.
-async function pagePublishInstallIdentity({ shortName }) {
+async function pagePublishInstallIdentity({ shortName, upload = false }) {
   const app = document.querySelector("kin-app");
   await app.ctx.appearance.refreshHouseholdDefaults();
   await app.ctx.appearance.refreshInstallIdentity();
@@ -455,6 +666,15 @@ async function pagePublishInstallIdentity({ shortName }) {
   };
   panel.toggle.click();
   await wait(() => panel.icons, "first-letter icons");
+  if (upload) {
+    const source = panel.icons.icon512;
+    panel.uploadChoice.input.click();
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([source], "household-icon.png", { type: "image/png" }));
+    panel.file.files = transfer.files;
+    panel.file.dispatchEvent(new Event("change"));
+    await wait(() => panel.icons && panel.uploadChoice.input.checked, "uploaded icons");
+  }
   const privacyShown = !panel.privacy.hidden && panel.privacy.textContent.includes("without encryption");
   const gatedBeforeConfirm = panel.save.disabled;
   panel.shortName.value = shortName;
@@ -462,6 +682,7 @@ async function pagePublishInstallIdentity({ shortName }) {
   panel.confirm.click();
   panel.save.click();
   await wait(() => panel.status.textContent.startsWith("Saved"), "the publish");
+  await wait(() => !app.brandUploadedMark.hidden, "the private uploaded header icon");
   const manifest = await (await fetch("/manifest.webmanifest", { credentials: "same-origin", cache: "no-store" })).json();
   const icon = new Uint8Array(await (await fetch(manifest.icons[1].src, { credentials: "same-origin" })).arrayBuffer());
   const view = new DataView(icon.buffer);
@@ -469,6 +690,9 @@ async function pagePublishInstallIdentity({ shortName }) {
     section: true, privacyShown, gatedBeforeConfirm,
     shortName: manifest.short_name, name: manifest.name, id: manifest.id, iconSrc: manifest.icons[1].src,
     iconSize: [view.getUint32(16), view.getUint32(20)], withdrawShown: !panel.withdraw.hidden,
+    privateBrand: app.householdSettings?.brand?.iconSource,
+    header: { name: app.brandTitle.textContent, label: app.brandLink.getAttribute("aria-label"), genericHidden: app.brandGenericMark.hidden,
+      letterHidden: app.brandLetterMark.hidden, uploadHidden: app.brandUploadedMark.hidden },
     cached: (await caches.keys()).length ? await Promise.all((await caches.keys()).map(async (key) => Boolean(await (await caches.open(key)).match("/manifest.webmanifest")))) : [],
   };
 }
@@ -479,10 +703,80 @@ async function pageInstallIdentityAsMember() {
   await app.ctx.appearance.refreshInstallIdentity();
   const put = await fetch("/api/household/install-identity", { method: "PUT", headers: { "Content-Type": "application/json" }, body: "{}" });
   const manifest = await (await fetch("/manifest.webmanifest", { credentials: "same-origin", cache: "no-store" })).json();
-  return { section: Boolean(app.householdDefaults.install || document.querySelector("kin-install-identity")), putStatus: put.status, shortName: manifest.short_name };
+  for (let i = 0; i < 400 && app.brandUploadedMark.hidden; i++) await new Promise((resolve) => setTimeout(resolve, 25));
+  return { section: Boolean(app.householdDefaults.install || document.querySelector("kin-install-identity")), putStatus: put.status, shortName: manifest.short_name,
+    privateBrand: app.householdSettings?.brand?.iconSource,
+    header: { name: app.brandTitle.textContent, label: app.brandLink.getAttribute("aria-label"), genericHidden: app.brandGenericMark.hidden,
+      letterHidden: app.brandLetterMark.hidden, uploadHidden: app.brandUploadedMark.hidden } };
 }
 
-// #85: turn notifications on and off through the real panel, with the
+async function pageWithdrawInstallIdentity() {
+  const app = document.querySelector("kin-app");
+  const panel = app.householdDefaults.install;
+  const originalConfirm = globalThis.confirm;
+  globalThis.confirm = () => true;
+  try {
+    panel.stopShowing();
+    for (let i = 0; i < 400 && panel.state.published; i++) await new Promise((resolve) => setTimeout(resolve, 25));
+  } finally { globalThis.confirm = originalConfirm; }
+  const manifest = await (await fetch("/manifest.webmanifest", { credentials: "same-origin", cache: "no-store" })).json();
+  return { published: Boolean(panel.state.published), shortName: manifest.short_name, privateBrand: app.householdSettings?.brand?.iconSource,
+    header: { name: app.brandTitle.textContent, genericHidden: app.brandGenericMark.hidden,
+      letterHidden: app.brandLetterMark.hidden, uploadHidden: app.brandUploadedMark.hidden } };
+}
+
+async function pageHeaderBrandModes() {
+  const app = document.querySelector("kin-app");
+  const previous = structuredClone(app.currentAppearance);
+  const results = [];
+  for (const mode of ["light", "dark"]) {
+    app.ctx.appearance.applyAppearance({ ...previous, mode });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const mark = app.brandMark.getBoundingClientRect();
+    const header = app.header.getBoundingClientRect();
+    results.push({ mode, width: innerWidth, mark: [mark.width, mark.height], headerFits: header.right <= innerWidth,
+      uploadVisible: !app.brandUploadedMark.hidden, genericHidden: app.brandGenericMark.hidden,
+      background: getComputedStyle(app.header).backgroundColor, color: getComputedStyle(app.header).color });
+  }
+  app.ctx.appearance.applyAppearance(previous);
+  return results;
+}
+
+async function pagePrivateBrandState() {
+  const app = document.querySelector("kin-app");
+  for (let i = 0; i < 400 && app.brandUploadedMark.hidden && app.householdSettings?.brand?.iconSource === "upload"; i++)
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  return { locked: !app.vault || app.vault.locked, name: app.brandTitle.textContent,
+    label: app.brandLink.getAttribute("aria-label"), revision: app.householdSettings?.revision ?? null,
+    privateBrand: app.householdSettings?.brand?.iconSource ?? null, genericHidden: app.brandGenericMark.hidden,
+    letterHidden: app.brandLetterMark.hidden, uploadHidden: app.brandUploadedMark.hidden };
+}
+
+async function pageFailPrivateBrandAsset() {
+  const app = document.querySelector("kin-app");
+  app.brandUploadedMark.onerror?.(new Event("error"));
+  return { genericHidden: app.brandGenericMark.hidden, letterHidden: app.brandLetterMark.hidden,
+    uploadHidden: app.brandUploadedMark.hidden, hasObjectUrl: Boolean(app.brandObjectUrl) };
+}
+
+async function pageLockAndReadBrand() {
+  const app = document.querySelector("kin-app");
+  app.ctx.session.lockHousehold(false);
+  for (let i = 0; i < 400 && app.store !== null; i++) await new Promise((resolve) => setTimeout(resolve, 25));
+  return { locked: !app.vault, title: document.title, name: app.brandTitle.textContent,
+    label: app.brandLink.getAttribute("aria-label"), genericHidden: app.brandGenericMark.hidden,
+    letterHidden: app.brandLetterMark.hidden, uploadHidden: app.brandUploadedMark.hidden };
+}
+
+async function pageWaitForLockedBrand() {
+  const app = document.querySelector("kin-app");
+  for (let i = 0; i < 400 && app.vault; i++) await new Promise((resolve) => setTimeout(resolve, 25));
+  return { locked: !app.vault, name: app.brandTitle.textContent, label: app.brandLink.getAttribute("aria-label"),
+    genericHidden: app.brandGenericMark.hidden, letterHidden: app.brandLetterMark.hidden,
+    uploadHidden: app.brandUploadedMark.hidden };
+}
+
+// #85, #90, #227: turn notifications on and off through the real panel, with the
 // browser's permission prompt and PushManager stubbed (no push service).
 async function pageNotifications(action) {
   const app = document.querySelector("kin-app");
@@ -519,7 +813,15 @@ async function pageNotifications(action) {
     button("Turn on notifications").click();
     await wait(() => panel.state.textContent === "On.", "notifications on");
     return { state: panel.state.textContent, promptedOnlyOnPress: stub.prompts === promptsBefore + 1, userVisibleOnly: stub.userVisibleOnly,
-      status: await (await fetch("/api/push/subscription")).json(), explained: panel.textContent.includes("never include what it is") };
+      status: await (await fetch("/api/push/subscription")).json(),
+      recipientExplanation: panel.textContent.includes("other household members") && panel.textContent.includes("never receive notifications for changes you make"),
+      localChecks: [...panel.querySelectorAll(".notification-checks dd")].map((entry) => entry.textContent),
+      testGuide: panel.textContent.includes("two distinct household members") && ![...panel.querySelectorAll("button")].some((entry) => /send.*test/i.test(entry.textContent)),
+      accessibleDiagnostics: panel.querySelectorAll(".notification-checks dt").length === 3 && (() => {
+        const summary = panel.querySelector(".notification-test-guide > summary");
+        return summary?.tagName === "SUMMARY" && getComputedStyle(summary).minHeight === "48px";
+      })(),
+    };
   }
   button("Turn off notifications").click();
   await wait(() => panel.state.textContent === "Off.", "notifications off");
@@ -811,7 +1113,7 @@ async function launchProfile(executable, label, origin) {
 // The drill.
 // ---------------------------------------------------------------------------
 
-export async function householdAuthorityDrill({ executable, origin, service, syncService, clock, pushes = [] }) {
+export async function householdAuthorityDrill({ executable, origin, service, syncService, clock, pushes = [], requests = [] }) {
   let checks = 0;
   const check = (condition, message) => {
     assert.ok(condition, message);
@@ -890,6 +1192,36 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
 
     // ---- Profile B: second Adult -----------------------------------------
     const b = await launch("adult-b");
+
+    // Invite by QR (#97), with an invitation that is then revoked; B joins
+    // below with a fresh one.
+    const qrInvitation = await a.call(pageCreatePairing, { kind: "adult" });
+    const shownQr = await a.call(pageInvitationQr);
+    check(shownQr.value === `${origin}/pair#code=${encodeURIComponent(qrInvitation.code)}` && shownQr.readBack === shownQr.value &&
+      shownQr.codeShown === qrInvitation.code && /QR code for this invitation/.test(shownQr.label ?? ""),
+      "the invitation shows a labelled QR code, beside its code, that reads back as the fragment link");
+    await b.send("Page.navigate", { url: shownQr.value });
+    await b.waitForReloadAndUnlock();
+    const opened = await b.callStable(pageJoinField);
+    check(opened.value === qrInvitation.code && opened.path === "/pair" && opened.hash === "" && opened.search === "" && !opened.claimed,
+      "opening the invitation link fills in the code and clears it from the address bar: " + JSON.stringify(opened));
+    const scanned = await b.call(pageScanInvitation, shownQr.value);
+    check(scanned.value === qrInvitation.code && scanned.scannerClosed && scanned.offersTyping && scanned.cameraOff && scanned.stillJoining && !scanned.claimed &&
+      /Code filled in/.test(scanned.status),
+      "a scanned invitation fills in the code; the camera waits for a tap, typing is offered, and joining still needs a passkey: " + JSON.stringify(scanned));
+    const codeForms = [qrInvitation.code, qrInvitation.code.replaceAll("-", "")].map((value) => value.toLowerCase());
+    const leaked = requests.filter(({ url, referer }) => codeForms.some((value) => url.toLowerCase().includes(value) || referer.toLowerCase().includes(value)));
+    // The service also sends Referrer-Policy: no-referrer, so the Referer half
+    // is a second line of defence; the request URLs are the real check.
+    check(requests.length > 0 && leaked.length === 0, "the invitation code never appears in a request URL or Referer: " + JSON.stringify(leaked.slice(0, 3)));
+    // Opening the link and scanning it filled in a field and nothing more.
+    const untouched = await a.call(pageFetch, { path: `/api/pairings/${qrInvitation.pairingId}` });
+    check(untouched.status === 200 && untouched.body?.state === "Pending",
+      "opening or scanning an invitation claims nothing: the service still has it pending: " + JSON.stringify(untouched.body?.state));
+    const ended = await a.call(pageRevokeInvitation);
+    check(ended.state === "Revoked" && ended.stateText === "This invitation ended: it was revoked." && !ended.qrShown && !ended.codeShown,
+      "a revoked invitation is replaced by \"This invitation ended\", never a stale QR or code: " + JSON.stringify(ended));
+    pass("invite by QR assertions (#97)");
     const bIdentity = await join({ inviter: a, invitee: b, kind: "adult", deviceLabel: "Edge on Windows" });
     let household = await b.callStable(pageHousehold);
     const bMember = household.members.find((member) => member.current);
@@ -897,6 +1229,15 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(household.adminRecorded && !bMember.admin && !household.canManageMembers &&
       household.members.some((member) => !member.current && member.kind === "adult" && member.admin),
       "the founding Adult A is the household admin and Adult B is not");
+    await setViewport(a, { width: 320, height: 720, deviceScaleFactor: 1, mobile: true });
+    const peopleDevicesLayout = await a.call(pagePeopleDevicesLayout);
+    check(peopleDevicesLayout.width === 320 && !peopleDevicesLayout.overflow &&
+      peopleDevicesLayout.groupCount >= 2 && peopleDevicesLayout.linesFit &&
+      peopleDevicesLayout.actions.includes("Invite person") && peopleDevicesLayout.actions.includes("Add my device") &&
+      peopleDevicesLayout.targetHeights.every((height) => height >= 44),
+    "People & devices groups members, wraps a long label, and keeps both actions tappable without 320px overflow: " +
+      JSON.stringify(peopleDevicesLayout));
+    await setViewport(a, { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
     const bPairing = await b.call(pageFetch, { path: "/api/pairings", method: "POST", body: { kind: "limited" } });
     check(bPairing.status === 403 && bPairing.body?.error === "household_admin_required",
       "non-admin Adult B cannot create invitations: " + JSON.stringify(bPairing));
@@ -904,8 +1245,9 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(result.last?.state !== "paused", "Adult A rotates and provisions after B joins: " + JSON.stringify(result.last));
     const notificationsOn = await b.call(pageNotifications, "on");
     check(notificationsOn.state === "On." && notificationsOn.promptedOnlyOnPress && notificationsOn.userVisibleOnly === true &&
-      notificationsOn.status.subscribed && notificationsOn.explained,
-      "Adult B turns notifications on: one permission prompt after pressing Turn on, a visible-only subscription, the content-free promise stated");
+      notificationsOn.status.subscribed && notificationsOn.recipientExplanation && notificationsOn.testGuide && notificationsOn.accessibleDiagnostics &&
+      notificationsOn.localChecks.includes("Allowed") && notificationsOn.localChecks.includes("On for this device") && notificationsOn.localChecks.includes("Not muted"),
+      "Adult B turns notifications on: one permission prompt after pressing Turn on, a visible-only subscription, recipient rules and local diagnostics stated");
     const pushesBefore = pushes.length;
     await a.call(pageAddItem, "A2 after B joined");
     result = await a.call(pageSync);
@@ -918,17 +1260,66 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       "Adult B turns notifications off: the browser subscription and the service's copy are both removed");
     check(!result.items.includes("A1 before anyone joins"),
       "new Adult B receives current and later epochs only; pre-join A1 is not provisioned (PAIRING contract)");
-    const published = await a.call(pagePublishInstallIdentity, { shortName: "Nichols" });
+    await setViewport(a, { width: 320, height: 720, deviceScaleFactor: 1, mobile: true });
+    const published = await a.call(pagePublishInstallIdentity, { shortName: "Nichols", upload: true });
     check(published.section && published.privacyShown && published.gatedBeforeConfirm,
       "admin A's Home screen section states what the service will store and requires confirmation before the first publish");
     check(published.shortName === "Nichols" && published.id === "/" && /^\/install-icon\/512\.png\?v=[a-f0-9]{16}$/.test(published.iconSrc),
       "A's device receives the published manifest with a stable id and content-versioned icons: " + JSON.stringify(published));
-    check(published.iconSize[0] === 512 && published.iconSize[1] === 512, "the first-letter icon is a real 512x512 PNG drawn in the browser");
+    check(published.iconSize[0] === 512 && published.iconSize[1] === 512, "the uploaded icon is a real 512x512 PNG redrawn in the browser");
+    check(published.privateBrand === "upload" && published.header.name && published.header.label === `${published.header.name} — Today` &&
+      published.header.genericHidden && published.header.letterHidden && !published.header.uploadHidden,
+      "admin A's unlocked header uses the uploaded icon from encrypted household settings: " + JSON.stringify(published.header));
+    await a.setOffline(true);
+    await a.send("Page.reload", {});
+    await a.waitForReloadAndUnlock();
+    const offlineBrand = await a.call(pagePrivateBrandState);
+    check(!offlineBrand.locked && offlineBrand.privateBrand === "upload" && offlineBrand.revision > 0 &&
+      offlineBrand.genericHidden && offlineBrand.letterHidden && !offlineBrand.uploadHidden,
+      "an immediate offline hard reload restores the accepted private icon from the protected revision cache: " + JSON.stringify(offlineBrand));
+    await a.setOffline(false);
+    check(await a.call(pageReconnectAutomaticSync), "A reconnects household sync after the offline identity restore");
+    const mobileBrandModes = await a.call(pageHeaderBrandModes);
+    check(mobileBrandModes.every((entry) => entry.width === 320 && entry.mark[0] === 32 && entry.mark[1] === 32 && entry.headerFits &&
+      entry.uploadVisible && entry.genericHidden && entry.background !== entry.color),
+      "the private brand fits the 320px header in light and dark modes: " + JSON.stringify(mobileBrandModes));
+    await setViewport(a, { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+    const desktopBrandModes = await a.call(pageHeaderBrandModes);
+    check(desktopBrandModes.every((entry) => entry.width === 1280 && entry.mark[0] === 32 && entry.mark[1] === 32 && entry.headerFits &&
+      entry.uploadVisible && entry.genericHidden && entry.background !== entry.color),
+      "the private brand fits the desktop header in light and dark modes: " + JSON.stringify(desktopBrandModes));
     check(published.withdrawShown && !published.cached.some(Boolean), "Stop showing is offered and the service worker never caches the manifest");
     const memberView = await b.call(pageInstallIdentityAsMember);
     check(!memberView.section && memberView.putStatus === 403,
       "non-admin B has no Home screen section and the service refuses B's publish");
     check(memberView.shortName === "Nichols", "B's device in the same household receives the published manifest");
+    check(memberView.privateBrand === "upload" && memberView.header.name === published.header.name && memberView.header.label === published.header.label &&
+      memberView.header.genericHidden && memberView.header.letterHidden && !memberView.header.uploadHidden,
+      "non-admin B's unlocked header receives the private household icon and accessible name: " + JSON.stringify(memberView.header));
+    const failedBrand = await b.call(pageFailPrivateBrandAsset);
+    check(!failedBrand.genericHidden && failedBrand.letterHidden && failedBrand.uploadHidden && !failedBrand.hasObjectUrl,
+      "a failed private icon asset falls back to the generic Kin mark without retaining its object URL: " + JSON.stringify(failedBrand));
+    const recoveredBrand = await b.call(pageInstallIdentityAsMember);
+    check(recoveredBrand.header.genericHidden && recoveredBrand.header.letterHidden && !recoveredBrand.header.uploadHidden,
+      "the next verified household refresh replaces an asset failure with the current private icon");
+    const lockedBrand = await b.call(pageLockAndReadBrand);
+    check(lockedBrand.locked && lockedBrand.title.endsWith("— Kin") && !lockedBrand.title.includes(published.header.name) &&
+      lockedBrand.name === "Kin" && lockedBrand.label === "Kin — Today" &&
+      !lockedBrand.genericHidden && lockedBrand.letterHidden && lockedBrand.uploadHidden,
+      "locking clears the private household identity before the locked shell is exposed: " + JSON.stringify(lockedBrand));
+    await b.call(pageUnlock, b.recovery);
+    await b.callStable(pageWaitHousehold);
+    const reopenedBrand = await b.call(pagePrivateBrandState);
+    check(reopenedBrand.privateBrand === "upload" && reopenedBrand.genericHidden && reopenedBrand.letterHidden && !reopenedBrand.uploadHidden,
+      "reopening the household restores its private identity without retaining the locked fallback: " + JSON.stringify(reopenedBrand));
+    const withdrawn = await a.call(pageWithdrawInstallIdentity);
+    check(!withdrawn.published && withdrawn.shortName === "Kin" && withdrawn.privateBrand === "upload" &&
+      withdrawn.header.genericHidden && withdrawn.header.letterHidden && !withdrawn.header.uploadHidden,
+      "withdrawing plaintext home-screen identity leaves A's encrypted in-app icon intact: " + JSON.stringify(withdrawn));
+    const memberAfterWithdrawal = await b.call(pageInstallIdentityAsMember);
+    check(memberAfterWithdrawal.shortName === "Kin" && memberAfterWithdrawal.privateBrand === "upload" &&
+      memberAfterWithdrawal.header.genericHidden && memberAfterWithdrawal.header.letterHidden && !memberAfterWithdrawal.header.uploadHidden,
+      "B keeps the private in-app icon after normal refresh while the manifest returns to Kin: " + JSON.stringify(memberAfterWithdrawal));
     pass(`${checks} Adult admission assertions (profiles A and B)`);
 
     // ---- Profile C: Limited member ---------------------------------------
@@ -960,6 +1351,8 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       "Adult B's forced unconfirmed device-trust click is refused without pinning Client C");
     check(bTrustsC.pinnedAfterConfirmation,
       "Adult B pins Client C exactly after confirming the displayed device code");
+    check(bTrustsC.trustedAfterConfirmation,
+      "Adult B sees Client C change from Untrusted to Trusted after confirmation");
     await c.call(pageAddItem, "C1 limited member item");
     result = await c.call(pageSync);
     result = await a.call(pageSync);
@@ -1080,9 +1473,10 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(syncService.status(relaySession(aBoot.identity.memberId, aBoot.identity.deviceId)).currentEpoch === committedEpoch + 1,
       "Adult A obtains the committed epoch before completing the required post-revocation rotation");
     await b.setOffline(false);
-    result = await b.call(pageSync);
-    check(result.last?.state === "paused" && ["authentication_required", "device_not_trusted"].includes(result.last.code),
-      "revoked B's reconnect sync is refused: " + JSON.stringify(result.last));
+    const revokedBrand = await b.call(pageWaitForLockedBrand);
+    check(revokedBrand.locked && revokedBrand.name === "Kin" && revokedBrand.label === "Kin — Today" &&
+      !revokedBrand.genericHidden && revokedBrand.letterHidden && revokedBrand.uploadHidden,
+      "revoked B is locked and private branding is cleared immediately on reconnect: " + JSON.stringify(revokedBrand));
     const bPush = await b.call(pageFetch, { path: "/api/sync/events", method: "POST", bytes: [75, 83, 69, 86, 1, 0, 0, 0] });
     check([401, 403].includes(bPush.status), `revoked B cannot push its stale outbox (${bPush.status})`);
     const bLogin = await b.call(pageFetch, { path: "/api/login/options", method: "POST", body: {} });
@@ -1191,6 +1585,63 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       "repeated syncs do not duplicate items");
     check(relayEvents(aRelay).length === relayTotal + 3, "relay gained exactly the two concurrent events");
     pass(`${checks} two-client reconciliation assertions (profiles A and D)`);
+    // ---- Profile E: a computer signed in with A's phone (#100) ------------
+    const e = await launch("computer-e");
+    const requestsBefore = requests.length;
+    const shownSignIn = await e.call(pageStartPhoneSignIn);
+    check(shownSignIn.readBack === shownSignIn.value && /^http:\/\/localhost:\d+\/link#r=[a-f0-9]{32}&s=[A-Za-z0-9_-]{43}&f=[A-Za-z0-9_-]{43}&c=[A-Za-z0-9_-]{22}$/.test(shownSignIn.value),
+      "the computer shows a QR code that reads back as its fragment sign-in link: " + shownSignIn.value);
+    check(shownSignIn.steps && /QR code to sign in on this computer/.test(shownSignIn.label ?? "") && shownSignIn.keys === "pending",
+      "the sign-in screen tells the person what to do on the phone, and a new computer offers fresh keys");
+    check(/^This code changes in 0[12]:\d\d$/.test(shownSignIn.countdown) && !shownSignIn.countdownLive && shownSignIn.focused,
+      "the countdown is visible but not a live region, and focus moves to the screen: " + JSON.stringify(shownSignIn));
+    const firstApproval = await a.call(pagePhoneApprove, shownSignIn.value);
+    check(/^\d{6}$/.test(firstApproval.code) && !firstApproval.existingDevice, "A's phone approves the new computer with a passkey and gets a 6-digit code");
+    check(firstApproval.warning === "Only approve a computer that's in front of you." && firstApproval.deviceName === firstApproval.deviceLabel &&
+      firstApproval.asYou && firstApproval.cameraOff && /^The code works for 0[12]:\d\d$/.test(firstApproval.countdown),
+      "the phone names the computer, says it signs in as you, warns before approving, and counts the code down: " + JSON.stringify(firstApproval));
+    const codeField = await e.call(pageSignInCodeField);
+    check(codeField.inputMode === "numeric" && codeField.autocomplete === "one-time-code" && codeField.focused && codeField.qrGone &&
+      /approved this computer/.test(codeField.status),
+      "the computer notices the approval and asks for the code in a focused numeric field: " + JSON.stringify(codeField));
+    await e.call(pageTypeSignInCode, { code: firstApproval.code, navigates: true });
+    const eLoaded = await e.waitForReloadAndUnlock();
+    const phoneDone = await a.call(pagePhoneApprovalDone);
+    check(phoneDone.heading === "The computer is signed in" && phoneDone.closed, "the phone sees the computer finish and closes with Done");
+    check(eLoaded.identity?.memberId === aBoot.identity.memberId && eLoaded.identity?.deviceId === firstApproval.deviceId,
+      "the computer is signed in as a new device of A's membership");
+    const aDevices = await a.call(pageFetch, { path: "/api/devices" });
+    check(aDevices.body?.devices?.some((device) => device.id === firstApproval.deviceId && device.label === firstApproval.deviceLabel),
+      "A's trusted devices list the computer under its automatic name");
+    result = await a.call(pageSync); // provisioning for the computer
+    check(result.last?.state !== "paused", "A provisions the computer: " + JSON.stringify(result.last));
+    result = await e.call(pageSync);
+    if (result.last?.state === "paused") result = await e.call(pageSync);
+    const eLocal = await e.callStable(pageLocal);
+    check(result.last?.state !== "paused" && eLocal.items.includes("A4 offline concurrent") && eLocal.items.includes("A3 after export"),
+      "the computer receives the household's retained history: " + JSON.stringify(result.last));
+
+    // The session ends; the same computer signs back in as the same device.
+    await e.call(pageFetch, { path: "/api/logout", method: "POST", body: {} });
+    await e.send("Page.reload", {});
+    const eSignedOut = await e.waitForReloadAndUnlock();
+    check(!eSignedOut.identity, "after signing out, the computer has no session");
+    const again = await e.call(pageStartPhoneSignIn);
+    check(again.keys === "existing", "a returning computer offers its own device's keys");
+    const secondApproval = await a.call(pagePhoneApprove, again.value);
+    check(secondApproval.existingDevice && secondApproval.deviceId === firstApproval.deviceId, "A's phone sees the computer as A's existing device");
+    await e.call(pageSignInCodeField);
+    const back = await e.call(pageTypeSignInCode, { code: secondApproval.code, navigates: false });
+    check(back.identity.deviceId === firstApproval.deviceId && back.path === "/", "the computer is signed back in as the same device, without a restart");
+    const devicesAfter = await a.call(pageFetch, { path: "/api/devices" });
+    check(devicesAfter.body.devices.filter((device) => device.id === firstApproval.deviceId).length === 1 &&
+      devicesAfter.body.devices.length === aDevices.body.devices.length, "signing back in adds no device");
+    const secrets = [firstApproval.secret, secondApproval.secret, firstApproval.code, secondApproval.code, firstApproval.nonce, secondApproval.nonce];
+    check(requests.slice(requestsBefore).every(({ url, referer }) => secrets.every((value) => !url.includes(value) && !referer.includes(value))),
+      "no sign-in secret or code ever reaches a request URL or Referer");
+    check((await a.call(pagePhoneApprovalDone)).closed, "the phone closes once the returning computer finishes");
+    pass(`${checks} phone sign-in assertions (profile E with A's phone)`);
+    await retire(e);
     console.log(`PASS ${checks} live household authority and recovery assertions across independent browser profiles`);
     return checks;
   } finally {
@@ -1214,6 +1665,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     store: new DurableStore(":memory:"),
     now: () => clock.now(),
   });
+  // Every request URL and Referer the service receives, so the drill can show
+  // that an invitation code never travels in either (#97).
+  const requests = [];
+  server.on("request", (request) => requests.push({ url: request.url ?? "", referer: request.headers.referer ?? "" }));
   await new Promise((resolveListen) => server.listen(applicationPort, "127.0.0.1", resolveListen));
   // Push services are not reachable from the drill: record what would be sent.
   const pushes = [];
@@ -1222,7 +1677,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   // VAPID subject; name one as an operator would (KIN_PUSH_SUBJECT).
   pushService.subject = "mailto:drill@example.org";
   try {
-    await householdAuthorityDrill({ executable, origin, service, syncService, clock, pushes });
+    await householdAuthorityDrill({ executable, origin, service, syncService, clock, pushes, requests });
   } finally {
     server.closeAllConnections();
     try {
