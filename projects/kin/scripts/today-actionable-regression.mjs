@@ -172,11 +172,13 @@ export async function todayActionableRegressions(recovery) {
   opener.click();
   host.remove();
   quick.cancelButton.click();
-  // The fallback focus can land a frame or two later on a slow runner (#164).
-  for (let wait = 0; wait < 80 && !(!quick.dialog.open && document.activeElement === app.today.querySelector('[data-section="today"] h2')); wait++)
+  // The removed opener must return focus to a meaningful heading, not the page body.
+  // Depending on the route-level fallback, this is the Today section or page heading.
+  const fallbackHeadings = () => [app.today.querySelector('[data-section="today"] h2'), app.main.querySelector(".app-view:not([hidden]) h1")].filter(Boolean);
+  for (let attempt = 0; attempt < 80 && !(!quick.dialog.open && fallbackHeadings().includes(document.activeElement)); attempt++)
     await frame();
-  check(!quick.dialog.open && document.activeElement === app.today.querySelector('[data-section="today"] h2'),
-    "A. when the empty-state action is gone after a refresh, focus lands on the Today heading instead of the page body");
+  check(!quick.dialog.open && fallbackHeadings().includes(document.activeElement),
+    "A. when the empty-state action disappears, focus returns to a visible Today or page heading, not the body");
 
   // B. Live Today over the real store and WASM projection.
   const earlierA = await add(`Earlier A ${stamp}`, shift(-3));

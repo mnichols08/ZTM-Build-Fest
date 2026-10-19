@@ -623,6 +623,11 @@ async function pageRevokeDeviceButton(label) {
     const device = (await h.api("/api/devices")).devices.find((entry) => entry.label === label);
     if (!device) throw new Error("No trusted device labelled " + label);
     const row = () => h.querySelector(`li[data-device-id="${device.id}"]`);
+    // The household may still be finishing a pairing UI command. Wait for it
+    // before requesting the device list; run() intentionally ignores busy calls.
+    for (let i = 0; i < 400 && h.busy; i++)
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    if (h.busy) throw new Error("Household stayed busy before device revocation");
     await h.showDevices();
     const button = [...(row()?.querySelectorAll("button") ?? [])].find((b) => b.textContent.startsWith("Revoke "));
     if (!button) throw new Error("No revoke control for " + label + ": " + h.textContent);
