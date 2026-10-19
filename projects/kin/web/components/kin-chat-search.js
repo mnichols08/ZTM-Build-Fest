@@ -13,12 +13,28 @@ const DEBOUNCE_MS = 160;
 const PAGE_LIMIT = 50;
 const DATE_TIME = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 
-/** Local midnight of a yyyy-mm-dd value, in ms; null when empty or invalid. */
-function dayStart(value) {
+/** Local midnight of a yyyy-mm-dd value (plus `days` days, by the calendar so
+ * a daylight-saving day keeps its length), in ms; null when empty or
+ * invalid. Before 1970 it is 0: the engine takes no earlier bound. */
+function dayStart(value, days = 0) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return null;
-  const time = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])).getTime();
-  return Number.isFinite(time) ? time : null;
+  const time = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days).getTime();
+  return Number.isFinite(time) ? Math.max(0, time) : null;
+}
+
+/** `text` cut to at most `max` UTF-8 bytes on a character boundary. */
+function clipBytes(text, max) {
+  const encoder = new TextEncoder();
+  if (encoder.encode(text).length <= max) return text;
+  let out = "";
+  let bytes = 0;
+  for (const character of text) {
+    bytes += encoder.encode(character).length;
+    if (bytes > max) break;
+    out += character;
+  }
+  return out;
 }
 
 class KinChatSearch extends HTMLElement {
@@ -201,10 +217,12 @@ class KinChatSearch extends HTMLElement {
     if (!this.status) return;
     this.cancel();
     const searching = this.text.trim() || this.files?.checked;
-    if (!this.chatRoom || !searching) {
+    // A member shut out of chat can't search it, whatever this device holds.
+    const allowed = this.chatRoom && (this.chatRoom.access ?? "write") !== "none";
+    if (!allowed || !searching) {
       this.clearResults();
-      if (this.chatRoom && this.input) this.status.textContent = "Enter text above to search the chat.";
-      this.hidden = !this.input && !this.chatRoom;
+      if (allowed && this.input) this.status.textContent = "Enter text above to search the chat.";
+      this.hidden = !this.input;
       return;
     }
     this.hidden = false;
@@ -213,22 +231,22 @@ class KinChatSearch extends HTMLElement {
 
   options() {
     const from = dayStart(this.since?.value ?? "");
-    const until = dayStart(this.until?.value ?? "");
+    const until = dayStart(this.until?.value ?? "", 1);
     const person = this.fromPerson?.value;
     return {
-      query: this.text.trim(),
+      query: clipBytes(this.text.trim(), 256),
       limit: PAGE_LIMIT,
       attachmentsOnly: Boolean(this.files?.checked),
       authors: person ? [person] : [],
       from: from ?? 0,
       // "On or before" includes that whole day.
-      to: until === null ? 0 : until + 24 * 60 * 60 * 1000,
+      to: until === null ? 0 : Math.max(1, until),
     };
   }
 
   async run({ quiet = false } = {}) {
     const room = this.chatRoom;
-    if (!room) return;
+    if (!room || (room.access ?? "write") === "none") return;
     const token = ++this.token;
     const options = this.options();
     if (options.to && options.from && options.to <= options.from) {

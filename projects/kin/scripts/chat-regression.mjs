@@ -940,7 +940,7 @@ export async function chatRegressions() {
     dates[1].value = "2026-10-20";
     dates[1].dispatchEvent(new Event("change", { bubbles: true }));
     await new Promise((resolve) => setTimeout(resolve, 400));
-    check(calls.search.at(-1).to === new Date(2026, 9, 20).getTime() + 86_400_000, "an end date includes that whole day");
+    check(calls.search.at(-1).to === new Date(2026, 9, 21).getTime(), "an end date includes that whole day (to the next local midnight)");
     dates[0].value = "";
     dates[1].value = "";
     from.value = "";

@@ -289,6 +289,12 @@ impl Replay {
 
     /// The household state at `as_of` (UTC milliseconds) on `civil_date`.
     /// Copies the replayed state; the replay itself is unchanged.
+    /// The chat domain as replayed so far, without finalizing the rest of the
+    /// household (searching needs only this).
+    pub fn chat(&self) -> &crate::chat::ChatState {
+        &self.chat
+    }
+
     pub fn finalize(&self, as_of: i64, civil_date: CivilDate) -> Result<HouseholdState, KinError> {
         if !valid_timestamp(as_of) {
             return Err(KinError::MalformedProtocol);

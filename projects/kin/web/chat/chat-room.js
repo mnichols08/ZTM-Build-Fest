@@ -565,6 +565,8 @@ export class ChatRoom {
    * Options: query, from, to (ms), authors (member IDs), attachmentsOnly, limit.
    */
   async search(options = {}, onUpdate = () => {}, stopped = () => false) {
+    // Chat the member may not open can't be searched, whatever this device still holds.
+    if (this.access === "none") throw new ChatRoomError("Chat isn't available to you.", "chat_no_access");
     const { query = "", from = 0, to = 0, authors = [], attachmentsOnly = false, limit = 50 } = options;
     // Messages whose text couldn't be opened: left out of later rounds so
     // they don't crowd out older ones the engine lists next.
@@ -574,7 +576,7 @@ export class ChatRoom {
       this.assertOpen();
       const { asOf, civilDate } = projectionContext(this.now());
       const found = this.engine.chatSearch(this.records.view(), {
-        query, from, to, authors, attachmentsOnly, limit, admins: this.admins, excluded: [...this.hidden, ...unopened].slice(0, MAX_HIDDEN_MESSAGES),
+        query, from, to, authors, attachmentsOnly, limit, admins: this.admins, excluded: [...unopened, ...this.hidden].slice(0, MAX_HIDDEN_MESSAGES),
       }, asOf, civilDate, this.syncIdentity());
       const wanted = found.missing;
       const more = wanted.length > 0 && !stopped();

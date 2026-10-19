@@ -430,11 +430,13 @@ revision is meaningful only within one instance.
   message IDs (messages the member hid for themselves), 16 bytes each and
   non-zero for the admins and authors, then a record-less KINE context.
   Texts of retired blobs are forgotten first, as for a page, so a deleted
-  message never matches. The search folds case and accents (Latin letters,
-  combining accents and emoji selectors are ignored) and matches substrings
-  over Unicode scalars, but never ends inside an emoji sequence (a ZWJ
-  joiner, skin tone, keycap or tag after the match) nor begins after a
-  joiner. An empty query lists the messages that pass the filters; a query
+  message never matches. The search folds case and accents (Latin letters
+  including Latin-1, Latin Extended-A, Romanian ș/ț and Vietnamese, Greek
+  final sigma; combining accents and emoji selectors are ignored) and
+  matches substrings over Unicode scalars, but never splits a grapheme
+  (a joiner, skin tone, keycap, tag or combining mark continuing the match
+  or starting it, a match after a joiner, or half of a flag). A query that
+  folds to nothing (only a combining mark, say) matches nothing. An empty query lists the messages that pass the filters; a query
   matches text messages only. Nothing is indexed or kept between calls.
 - **KCHR v1** (chat search result): `"KCHR"`, version 1, reserved u16, then
   u32s: total matches, results listed, unsearched total, unsearched listed

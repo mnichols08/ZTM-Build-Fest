@@ -15,7 +15,7 @@
 //! decrypted texts in a separate append-only arena referenced by offset and
 //! length. The arena lives on the engine instance, only while it is
 //! unlocked (`kin_clear` drops it with everything else).
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::error::KinError;
@@ -130,7 +130,8 @@ impl ChatState {
     /// if no live or edited message shows it. However a log came to hold a
     /// blob reference twice, a blob a page shows is never retired.
     pub fn retired_blobs(&self, admins: &[ActorId]) -> Vec<[u8; 32]> {
-        let mut shown = BTreeSet::new();
+        let mut shown: HashSet<[u8; 32], BuildHasherDefault<RefHasher>> =
+            HashSet::with_capacity_and_hasher(self.messages.len(), BuildHasherDefault::new());
         let mut removed = Vec::new();
         for message in &self.messages {
             match self.shown_status(message, admins) {

@@ -2419,3 +2419,52 @@ fn search_excerpts_hold_the_first_match_on_character_boundaries() {
     assert_eq!(excerpts[0], (0, "short needle".to_owned()));
     assert!(excerpts[1].0 > 0 && excerpts[1].1.len() <= 160 + 4);
 }
+
+/// The whole `kin_chat_search` path (replay checkpoint, retired blobs, search)
+/// over a hundred thousand real chat events stays under 50 ms once warm.
+/// Release builds only: a debug build is an order of magnitude slower.
+#[test]
+#[cfg_attr(debug_assertions, ignore = "timing needs a release build")]
+fn search_over_a_hundred_thousand_events_stays_under_fifty_milliseconds() {
+    const COUNT: u32 = 100_000;
+    let records: Vec<Vec<u8>> = (1..=COUNT)
+        .map(|n| {
+            let mut payload = [0u8; 16].to_vec();
+            payload[..4].copy_from_slice(&n.to_le_bytes());
+            payload.extend_from_slice(&[1, 0, 0, 0]);
+            let mut blob_ref = [0u8; 32];
+            blob_ref[..4].copy_from_slice(&n.to_le_bytes());
+            payload.extend_from_slice(&blob_ref);
+            payload.extend_from_slice(&[7u8; 32]);
+            record(44, n, MEMBER_1, 0x11, &payload)
+        })
+        .collect();
+    let mut history = history_of(&records);
+    let mut texts = ChatTexts::new();
+    for n in 1..=COUNT {
+        let mut blob_ref = [0u8; 32];
+        blob_ref[..4].copy_from_slice(&n.to_le_bytes());
+        texts
+            .put(blob_ref, format!("grocery list {n}").as_bytes())
+            .ok();
+    }
+    let context = kine(&[], 0, TEST_DATE, None);
+    let request = kchf(
+        &Find {
+            query: "grocery",
+            limit: 50,
+            ..Find::default()
+        },
+        &context,
+    );
+    // The first search replays the log; the ones after reuse the checkpoint.
+    crate::core::chat_search(&request, &mut history, &mut texts).unwrap();
+    let mut best = std::time::Duration::MAX;
+    for _ in 0..5 {
+        let started = std::time::Instant::now();
+        let bytes = crate::core::chat_search(&request, &mut history, &mut texts).unwrap();
+        best = best.min(started.elapsed());
+        assert_eq!(found(&bytes).0, COUNT);
+    }
+    assert!(best.as_millis() < 50, "took {best:?}");
+}

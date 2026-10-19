@@ -86,10 +86,7 @@ pub fn chat_search(
 ) -> Result<Vec<u8>, KinError> {
     let request = crate::chat_search::decode_search_request(input)?;
     let context = decode_context(request.context)?;
-    let state = history
-        .replay(&context)?
-        .finalize(context.as_of, context.civil_date)?;
-    let chat = &state.chat;
+    let chat = history.replay(&context)?.chat();
     for blob in &chat.retired_blobs(&request.admins) {
         texts.forget(blob);
     }

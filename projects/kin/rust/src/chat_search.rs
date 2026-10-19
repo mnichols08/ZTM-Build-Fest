@@ -162,6 +162,16 @@ fn base(c: char) -> Option<&'static str> {
         code @ 0xe0..=0xff => Some(LATIN_1[(code - 0xe0) as usize]),
         0x132 | 0x133 => Some("ij"),
         0x152 | 0x153 => Some("oe"),
+        0x219 => Some("s"),
+        0x21b => Some("t"),
+        0x3c2 => Some("\u{3c3}"),
+        // Latin Extended Additional (Vietnamese): runs of one base letter.
+        0x1ea0..=0x1eb7 => Some("a"),
+        0x1eb8..=0x1ec7 => Some("e"),
+        0x1ec8..=0x1ecb => Some("i"),
+        0x1ecc..=0x1ee3 => Some("o"),
+        0x1ee4..=0x1ef1 => Some("u"),
+        0x1ef2..=0x1ef9 => Some("y"),
         code @ 0x100..=0x17f => {
             let letter = LATIN_EXTENDED_A[(code - 0x100) as usize];
             LETTERS.find(letter as char).map(|at| &LETTERS[at..at + 1])
@@ -178,14 +188,82 @@ fn ignorable(c: char) -> bool {
 }
 
 /// Scalars that continue the grapheme before them: a match may not end right
-/// before one, nor start right after a joiner.
+/// before one, start with one, nor start right after a joiner.
 fn extends(c: char) -> bool {
-    matches!(c as u32, 0x200d | 0x20e3 | 0x1f3fb..=0x1f3ff | 0xe0020..=0xe007f)
+    matches!(
+        c as u32,
+        0x200c
+            | 0x200d
+            | 0x300..=0x36f
+            | 0x1ab0..=0x1aff
+            | 0x1dc0..=0x1dff
+            | 0x20d0..=0x20ff
+            | 0xfe00..=0xfe0f
+            | 0xfe20..=0xfe2f
+            | 0x1f3fb..=0x1f3ff
+            | 0xe0020..=0xe007f
+    )
+}
+
+fn regional(c: char) -> bool {
+    matches!(c as u32, 0x1f1e6..=0x1f1ff)
+}
+
+/// Whether a match of `text[start..end]` begins or ends inside a grapheme:
+/// after a joiner, before a continuing scalar, starting with one, or
+/// splitting a pair of regional indicators (a flag).
+fn splits_grapheme(text: &str, start: usize, end: usize) -> bool {
+    let first = text[start..].chars().next();
+    if text[..start]
+        .chars()
+        .next_back()
+        .is_some_and(|c| c as u32 == 0x200d)
+        || first.is_some_and(|c| extends(c) && c as u32 != 0x200d)
+        || text[end..].chars().next().is_some_and(extends)
+    {
+        return true;
+    }
+    // Flags are pairs: a run of indicators splits into two at a time.
+    if first.is_some_and(regional) {
+        let before = text[..start]
+            .chars()
+            .rev()
+            .take_while(|&c| regional(c))
+            .count();
+        if before % 2 == 1 {
+            return true;
+        }
+    }
+    if text[..end].chars().next_back().is_some_and(regional) {
+        let inside = text[start..end]
+            .chars()
+            .rev()
+            .take_while(|&c| regional(c))
+            .count();
+        let before = text[..start]
+            .chars()
+            .rev()
+            .take_while(|&c| regional(c))
+            .count();
+        let run = if inside == end - start {
+            inside + before
+        } else {
+            inside
+        };
+        if run % 2 == 1 && text[end..].chars().next().is_some_and(regional) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Folds `c`, calling `push` for each resulting scalar.
 fn fold(c: char, mut push: impl FnMut(char)) {
     for lower in c.to_lowercase() {
+        // A lowercase form may carry its own accent (İ is i and a dot).
+        if ignorable(lower) {
+            continue;
+        }
         match base(lower) {
             Some(letters) => letters.chars().for_each(&mut push),
             None => push(lower),
@@ -265,12 +343,7 @@ pub fn find(text: &str, query: &[char], scratch: &mut Vec<Folded>) -> (Vec<(u32,
         }
         let start = scratch[at].start as usize;
         let end = scratch[at + query.len() - 1].end as usize;
-        let before_joined = text[..start]
-            .chars()
-            .next_back()
-            .is_some_and(|c| c as u32 == 0x200d);
-        let after_extended = text[end..].chars().next().is_some_and(extends);
-        if before_joined || after_extended {
+        if splits_grapheme(text, start, end) {
             at += 1;
             continue;
         }
@@ -345,6 +418,8 @@ pub fn encode_search(
 ) -> Result<Vec<u8>, KinError> {
     let query = fold_query(request.query);
     let searching = !query.is_empty();
+    // A query of nothing but accents or selectors says nothing to find.
+    let empty_result = !request.query.is_empty() && !searching;
     let mut scratch = Vec::new();
     let mut total = 0u32;
     let mut results: Vec<Hit> = Vec::new();
@@ -352,6 +427,9 @@ pub fn encode_search(
     let mut unsearched_listed: Vec<usize> = Vec::new();
     // Newest first, so the limit and the unsearched list favor recent talk.
     for (index, message) in state.messages.iter().enumerate().rev() {
+        if empty_result {
+            break;
+        }
         let shown = if request.admins.is_empty() {
             message.status
         } else {
