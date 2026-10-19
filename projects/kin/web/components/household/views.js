@@ -76,9 +76,9 @@ export class HouseholdViews {
     choices.className = "household-choices";
     for (const [label, description, action, className] of [
       ["Create a household", "Start a brand-new household on this device. Only one person in a household does this.", () => this.host.startIntent("create"), "primary-action"],
-      ["Join an existing household", "Someone in your household sends you an invitation code and approves this device.", () => this.host.startIntent("join"), ""],
+      ["Join an existing household", "Someone in the household invited you. You'll get your own member identity, with access set by your role, and approve this device.", () => this.host.startIntent("join"), ""],
+      ["Add my device", "You already use Kin on another device, such as a phone. This stays under your member identity, so you won't be notified about your own changes.", () => this.host.startIntent("device"), ""],
       ["Sign in with your phone", "You're already signed in to Kin on a phone. Scan this computer's code with it, then type the 6-digit code it shows.", () => this.host.startIntent("phone"), ""],
-      ["Add this device to my existing membership", "You already use Kin on another device and want this one too.", () => this.host.startIntent("device"), ""],
     ].filter(([label]) => label !== "Sign in with your phone" || !this.host.claim)) {
       const choice = document.createElement("div");
       choice.className = "household-choice";

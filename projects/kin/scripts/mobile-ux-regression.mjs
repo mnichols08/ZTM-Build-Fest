@@ -143,7 +143,7 @@ export async function mobileUxRegressions(recovery) {
   check(onboardingDetails?.open === false && onboardingDetails.querySelector("summary")?.textContent === "Connect this device to a household",
     "Get started collapses after local household activity so Today stays visible");
   const onboardingLabels = [...app.onboarding.querySelectorAll("button")].map((button) => button.textContent);
-  check(JSON.stringify(onboardingLabels) === JSON.stringify(["Create a household", "Join an existing household", "Sign in with your phone", "Add this device to my existing membership"]),
+  check(JSON.stringify(onboardingLabels) === JSON.stringify(["Create a household", "Join an existing household", "Add my device", "Sign in with your phone"]),
     `Get started offers create, join, sign in with a phone (#100) and add-device: ${onboardingLabels.join("|")}`);
   visit("today");
   check(visible(onboardingDetails.querySelector("summary")), "the compact Get started summary stays visible on Today");
@@ -175,7 +175,7 @@ export async function mobileUxRegressions(recovery) {
   app.household.startIntent(null);
   const chooser = [...app.household.querySelectorAll("button")].map((button) => button.textContent);
   check(chooser.includes("Create a household") && chooser.includes("Join an existing household") &&
-    chooser.includes("Add this device to my existing membership") && chooser.includes("Log in with passkey"),
+    chooser.includes("Add my device") && chooser.includes("Log in with passkey"),
     `the household chooser offers every path: ${chooser.join("|")}`);
   check(app.household.textContent.includes("Household membership is separate"),
     "device protection and household membership are distinguished in plain language");
