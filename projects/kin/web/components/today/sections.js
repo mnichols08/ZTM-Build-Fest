@@ -168,11 +168,16 @@ export class TodaySections {
     add.dataset.action = "open-quick-add";
     add.disabled = this.host.isDisabled;
     add.addEventListener("click", () => this.host.dispatchEvent(new CustomEvent("kin:open-quick-add", { detail: { opener: add }, bubbles: true, composed: true })));
-    const shopping = document.createElement("a");
-    shopping.className = "today-shopping-link";
-    shopping.href = "#lists/shopping";
-    shopping.textContent = "Open shopping list";
-    empty.append(message, add, shopping);
+    empty.append(message, add);
+    // The populated empty state already links to Shopping in its explanation.
+    // On a brand-new household, give Shopping an equally visible first step.
+    if (!view.hasItems) {
+      const shopping = document.createElement("a");
+      shopping.className = "today-shopping-link";
+      shopping.href = "#lists/shopping";
+      shopping.textContent = "Open shopping list";
+      empty.append(shopping);
+    }
     return empty;
   }
 
