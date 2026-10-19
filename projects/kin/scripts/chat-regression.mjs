@@ -918,11 +918,11 @@ export async function chatRegressions() {
     check(found()[1].textContent.includes("Café42") && found()[1].getAttribute("aria-label").includes("Open chat message from Adult 2"), "a result names its author and text");
     check(!panel.querySelector(".search-result-text").innerHTML.includes("<script"), "results are built from text nodes");
     // Choosing the old result loads that stretch of the chat and highlights the match by text range.
-    check(!chat.querySelector(`[data-message-id="${old}"]`), "the old message is not on screen yet");
+    check(!chat.querySelector(`.chat-row[data-message-id="${old}"]`), "the old message is not on screen yet");
     found()[1].click();
     await settle();
     await settle();
-    const arrived = chat.querySelector(`[data-message-id="${old}"]`);
+    const arrived = chat.querySelector(`.chat-row[data-message-id="${old}"]`);
     check(arrived && arrived.classList.contains("chat-highlight"), "choosing a result jumps to the message and marks its row");
     const marked = globalThis.CSS?.highlights?.get("chat-search");
     if (marked) {
