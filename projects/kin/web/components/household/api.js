@@ -54,6 +54,10 @@ export class HouseholdApi {
   }
 
   async load() {
+    // A refresh started under one view must not replace a view opened since
+    // (People & devices): it still updates the state below and notifies,
+    // and the next render (Back) shows it.
+    const generation = this.host.viewGeneration;
     try {
       const status = await this.host.api("/api/status");
       this.host.identity = status.identity;
@@ -77,7 +81,7 @@ export class HouseholdApi {
       if (this.host.claim?.state === "Claimed") this.ctx.pairing.schedulePoll();
       else clearTimeout(this.host.poll);
       if (this.host.identity) this.host.intent = null;
-      this.host.render();
+      if (this.host.viewGeneration === generation) this.host.render();
       this.notifyStatus();
       return { loaded: true, identity: this.host.identity };
     } catch (error) {
