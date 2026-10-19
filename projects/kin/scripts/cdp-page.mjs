@@ -49,6 +49,10 @@ export const REGRESSION_DEFAULTS_SCRIPT =
   'try { if (localStorage.getItem("kin.reload-resume-enabled") === null) localStorage.setItem("kin.reload-resume-enabled", "off"); } catch {}';
 
 /** Installs REGRESSION_DEFAULTS_SCRIPT for every later page load in a tab. */
-export function applyRegressionDefaults(send) {
-  return send("Page.addScriptToEvaluateOnNewDocument", { source: REGRESSION_DEFAULTS_SCRIPT });
+export async function applyRegressionDefaults(send) {
+  // The Page domain must be on, or the script may not be installed.
+  await send("Page.enable");
+  await send("Page.addScriptToEvaluateOnNewDocument", { source: REGRESSION_DEFAULTS_SCRIPT });
+  // The tab may already have loaded Kin before the script existed.
+  await send("Runtime.evaluate", { expression: REGRESSION_DEFAULTS_SCRIPT }).catch(() => {});
 }
