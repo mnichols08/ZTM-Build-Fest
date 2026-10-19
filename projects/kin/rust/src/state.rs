@@ -403,6 +403,9 @@ pub struct HouseholdState {
     /// Named devices in device-ID order. Not part of the KINS projection;
     /// hosts read it through `kin_device_names`.
     pub devices: Vec<DeviceNameState>,
+    /// Household chat (chat.rs). Not part of the KINS projection; hosts read
+    /// pages through `kin_chat_page`. Shared with the replay, not copied.
+    pub chat: std::sync::Arc<crate::chat::ChatState>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

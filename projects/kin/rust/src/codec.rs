@@ -49,6 +49,13 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::ResponsibilityChanged { .. } => 41,
         EventKind::DeviceDescribed { .. } => 42,
         EventKind::DeviceNicknamed { .. } => 43,
+        EventKind::ChatMessagePosted { .. } => 44,
+        EventKind::ChatMessageEdited { .. } => 45,
+        EventKind::ChatMessageDeleted { .. } => 46,
+        EventKind::ChatReactionSet { .. } => 47,
+        EventKind::ChatPinSet { .. } => 48,
+        EventKind::ChatPollVote { .. } => 49,
+        EventKind::ChatPollClosed { .. } => 50,
     }
 }
 
@@ -301,6 +308,112 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
                 }
                 None => payload.extend_from_slice(&0u32.to_le_bytes()),
             }
+        }
+        // Chat (#109): message ID, then the blob reference and key.
+        EventKind::ChatMessagePosted {
+            message_id,
+            content_kind,
+            blob_ref,
+            blob_key,
+            reply_to,
+            mentions,
+        } => {
+            if message_id.0 == [0; 16]
+                || *blob_ref == [0; 32]
+                || *blob_key == [0; 32]
+                || !mentions.is_valid()
+                || reply_to.is_some_and(|reply| reply.0 == [0; 16] || reply == *message_id)
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            // A poll (#135) keeps its option count and multiple-choice flag in
+            // the bytes that are zero for every other kind.
+            let (options, multiple) = match content_kind {
+                crate::event::ChatContentKind::Poll(spec) if spec.is_valid() => {
+                    (spec.options, u8::from(spec.multiple))
+                }
+                crate::event::ChatContentKind::Poll(_) => return Err(KinError::MalformedProtocol),
+                _ => (0, 0),
+            };
+            payload.extend_from_slice(&[content_kind.code(), options, multiple, 0]);
+            payload.extend_from_slice(blob_ref);
+            payload.extend_from_slice(blob_key);
+            // A reply adds the quoted message's ID (#129), mentions their
+            // list (#130).
+            payload.extend_from_slice(&mentions.encode_tail(reply_to.as_ref()));
+        }
+        EventKind::ChatMessageEdited {
+            message_id,
+            blob_ref,
+            blob_key,
+            mentions,
+        } => {
+            if message_id.0 == [0; 16]
+                || *blob_ref == [0; 32]
+                || *blob_key == [0; 32]
+                || !mentions.is_valid()
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            payload.extend_from_slice(blob_ref);
+            payload.extend_from_slice(blob_key);
+            payload.extend_from_slice(&mentions.encode_tail(None));
+        }
+        EventKind::ChatMessageDeleted {
+            message_id,
+            by_admin,
+        } => {
+            if message_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            payload.extend_from_slice(&[u8::from(*by_admin), 0, 0, 0]);
+        }
+        // Reaction (#127): message ID, on u8 and 3 reserved, emoji length
+        // u32, the emoji's UTF-8.
+        EventKind::ChatReactionSet {
+            message_id,
+            emoji,
+            on,
+        } => {
+            if message_id.0 == [0; 16] || crate::chat::check_emoji(emoji).is_err() {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            payload.extend_from_slice(&[u8::from(*on), 0, 0, 0]);
+            payload.extend_from_slice(&(emoji.len() as u32).to_le_bytes());
+            payload.extend_from_slice(emoji.as_bytes());
+        }
+        // Pin (#131): message ID, on u8 and 3 reserved.
+        EventKind::ChatPinSet { message_id, on } => {
+            if message_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            payload.extend_from_slice(&[u8::from(*on), 0, 0, 0]);
+        }
+        // Poll vote (#135): message ID, the chosen options as a u16 bit set
+        // and 2 reserved.
+        EventKind::ChatPollVote {
+            message_id,
+            options,
+        } => {
+            if message_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            payload.extend_from_slice(&options.to_le_bytes());
+            payload.extend_from_slice(&[0, 0]);
+        }
+        // Poll closed (#135): message ID and 4 reserved.
+        EventKind::ChatPollClosed { message_id } => {
+            if message_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            payload.extend_from_slice(&[0; 4]);
         }
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());

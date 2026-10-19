@@ -5,7 +5,7 @@
 // accepted an encrypted event, and from which member. The payload is fixed
 // ({"v":1,"kind":"new"}): no content, event type, author or count. Nothing
 // about delivery or clicks is recorded.
-import { PairingError, canParticipate } from "./pairing-service.mjs";
+import { PairingError, canParticipate, chatAccess } from "./pairing-service.mjs";
 import { createHash } from "node:crypto";
 import { allowedPushEndpoint, b64url, fromB64url, generateVapidKeys, PUSH_TOPIC, rawPublicKey, sendPush } from "./web-push.mjs";
 
@@ -184,11 +184,13 @@ export class PushService {
 
   /** A sync batch from `authorMemberId` committed new events. Returns at
    * once; sending happens in the background and never affects sync. */
-  eventsAccepted(householdId, authorMemberId) {
+  eventsAccepted(householdId, authorMemberId, { chat = false } = {}) {
     const household = this.pairingService.households.get(householdId);
     if (household?.lifecycleState !== "active" || !this.available) return;
     for (const row of this.storage.householdPushSubscriptions(householdId)) {
       if (row.memberId === authorMemberId || !this.trusted(row) || this.muted(row)) continue;
+      // A member the chat policy (#123) shuts out isn't told chat is active.
+      if (chat && chatAccess(this.pairingService.members.get(row.memberId), household, this.now()) === "none") continue;
       this.deviceHousehold.set(row.deviceId, householdId);
       this.schedule(row.deviceId);
     }

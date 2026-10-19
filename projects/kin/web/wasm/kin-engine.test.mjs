@@ -211,6 +211,132 @@ test("device names describe, nickname, clear and replay outside the projection (
   assert.equal(engine.applyEvents(records, asOf, null, day).items.length, 0);
 });
 
+test("chat posts, edits, deletes and pages from its own log through real WASM (#109)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const member = new Uint8Array(16).fill(0xbb), other = new Uint8Array(16).fill(0xbe), admin = new Uint8Array(16).fill(0xbf);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const context = (sequence, actorId = member) => ({ eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId, deviceId: new Uint8Array(16).fill(actorId[0] - 0x10), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) });
+  const asOf = 1_791_475_200_100, day = 20261009;
+  const blob = (byte) => byte.toString(16).padStart(2, "0").repeat(32);
+  const chat = [];
+  const run = (command, ctx) => {
+    const result = engine.executeChatCommand(command, ctx, chat, asOf, day);
+    chat.push(result.encodedEvent);
+    return result;
+  };
+  const posted = run({ type: "post-chat-message", messageId: "01".repeat(16), blobRef: blob(0xa1), blobKey: blob(0xc1) }, context(1));
+  assert.equal(new DataView(posted.encodedEvent.buffer).getUint16(2, true), 44);
+  assert.equal(posted.metadata.kind, "CHAT_MESSAGE_POSTED");
+  run({ type: "post-chat-message", messageId: "02".repeat(16), blobRef: blob(0xa2), blobKey: blob(0xc2) }, context(2, other));
+  run({ type: "edit-chat-message", messageId: "01".repeat(16), blobRef: blob(0xa3), blobKey: blob(0xc3) }, context(3));
+  // Only the author edits; your own message is not deleted "as admin".
+  assert.throws(() => engine.executeChatCommand({ type: "edit-chat-message", messageId: "01".repeat(16), blobRef: blob(0xa4), blobKey: blob(0xc4) }, context(4, other), chat, asOf, day), (error) => error.code === 4);
+  assert.throws(() => engine.executeChatCommand({ type: "delete-chat-message", messageId: "01".repeat(16), byAdmin: true }, context(4), chat, asOf, day, null, [hex(member)]), (error) => error.code === 4);
+  // A removal needs its actor among the admins the host names.
+  assert.throws(() => engine.executeChatCommand({ type: "delete-chat-message", messageId: "02".repeat(16), byAdmin: true }, context(4, admin), chat, asOf, day), (error) => error.code === 4);
+  chat.push(engine.executeChatCommand({ type: "delete-chat-message", messageId: "02".repeat(16), byAdmin: true }, context(4, admin), chat, asOf, day, null, [hex(admin)]).encodedEvent);
+  assert.deepEqual(engine.putChatTexts([{ blobRef: blob(0xa3), text: "Dinner at 6" }, { blobRef: blob(0xa2), text: "\u0007" }]), [true, false]);
+  const page = engine.chatPage(chat, { includeRetired: true, admins: [hex(admin)] }, asOf, day);
+  assert.equal(page.total, 2);
+  assert.deepEqual(page.messages.map(({ status, text }) => [status, text]), [["edited", "Dinner at 6"], ["removed-by-admin", null]]);
+  assert.equal(page.messages[0].blobRef, blob(0xa3));
+  assert.deepEqual(page.messages[0].blobKey, new Uint8Array(32).fill(0xc3));
+  assert.deepEqual(page.retired, [blob(0xa1), blob(0xa2)]);
+  // Without that admin named, the removal doesn't count.
+  assert.equal(engine.chatPage(chat, {}, asOf, day).messages[1].status, "live");
+  run({ type: "delete-chat-message", messageId: "01".repeat(16) }, context(5));
+  assert.equal(engine.chatPage(chat, { limit: 1, before: 1 }, asOf, day).messages[0].status, "deleted");
+  // The logs stay apart: chat events never enter the household history, and
+  // chat commands never run against it.
+  assert.throws(() => engine.applyEvents(chat, asOf, null, day), (error) => error.code === 4);
+  assert.throws(() => engine.executeCommand({ type: "post-chat-message", messageId: "09".repeat(16), blobRef: blob(0xa9), blobKey: blob(0xc9) }, context(6), [], asOf, null, day), (error) => error.code === 4);
+  assert.throws(() => engine.executeChatCommand({ type: "add", text: "Milk" }, context(6), chat, asOf, day), (error) => error.code === 2);
+  assert.equal(engine.applyEvents([], asOf, null, day).items.length, 0);
+  // Texts last until lock, or until cleared.
+  engine.putChatTexts([{ blobRef: blob(0xa5), text: "kept" }]);
+  engine.clearChatTexts();
+  assert.equal(engine.chatPage(chat, {}, asOf, day).messages.some((message) => message.text !== null), false);
+});
+
+test("chat reactions toggle, list and drop with their message through real WASM (#127)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const member = new Uint8Array(16).fill(0xbb), other = new Uint8Array(16).fill(0xbe);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const context = (sequence, actorId = member) => ({ eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId, deviceId: new Uint8Array(16).fill(actorId[0] - 0x10), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) });
+  const asOf = 1_791_475_200_100, day = 20261009;
+  const blob = (byte) => byte.toString(16).padStart(2, "0").repeat(32);
+  const chat = [];
+  const run = (command, ctx) => {
+    const result = engine.executeChatCommand(command, ctx, chat, asOf, day);
+    chat.push(result.encodedEvent);
+    return result;
+  };
+  const message = "01".repeat(16);
+  run({ type: "post-chat-message", messageId: message, blobRef: blob(0xa1), blobKey: blob(0xc1) }, context(1));
+  const reacted = run({ type: "react-chat-message", messageId: message, emoji: "\u{1F44D}", on: true }, context(2, other));
+  assert.equal(new DataView(reacted.encodedEvent.buffer).getUint16(2, true), 47);
+  assert.equal(reacted.metadata.kind, "CHAT_REACTION_SET");
+  run({ type: "react-chat-message", messageId: message, emoji: "\u{1F44D}", on: true }, context(3));
+  run({ type: "react-chat-message", messageId: message, emoji: "\u2764\uFE0F", on: true }, context(4));
+  // Redundant, unknown and malformed reactions are refused.
+  for (const command of [
+    { type: "react-chat-message", messageId: message, emoji: "\u{1F44D}", on: true },
+    { type: "react-chat-message", messageId: message, emoji: "\u{1F602}", on: false },
+    { type: "react-chat-message", messageId: "09".repeat(16), emoji: "\u{1F44D}", on: true },
+    { type: "react-chat-message", messageId: message, emoji: "hi", on: true },
+  ]) assert.throws(() => engine.executeChatCommand(command, context(9), chat, asOf, day), (error) => error.code === 4);
+  assert.throws(() => engine.executeChatCommand({ type: "react-chat-message", messageId: message, emoji: "\u{1F44D}" }, context(9), chat, asOf, day), (error) => error.code === 2);
+  // Pages carry reactions only when asked.
+  assert.deepEqual(engine.chatPage(chat, {}, asOf, day).messages[0].reactions, []);
+  const page = engine.chatPage(chat, { includeReactions: true }, asOf, day);
+  assert.deepEqual(page.messages[0].reactions, [
+    { emoji: "\u{1F44D}", actors: [hex(other), hex(member)] },
+    { emoji: "\u2764\uFE0F", actors: [hex(member)] },
+  ]);
+  // Taking one back; deleting the message drops them all.
+  run({ type: "react-chat-message", messageId: message, emoji: "\u{1F44D}", on: false }, context(5, other));
+  assert.deepEqual(engine.chatPage(chat, { includeReactions: true }, asOf, day).messages[0].reactions.map(({ emoji }) => emoji), ["\u{1F44D}", "\u2764\uFE0F"]);
+  assert.deepEqual(engine.chatPage(chat, { includeReactions: true }, asOf, day).messages[0].reactions[0].actors, [hex(member)]);
+  run({ type: "delete-chat-message", messageId: message }, context(6));
+  assert.deepEqual(engine.chatPage(chat, { includeReactions: true }, asOf, day).messages[0].reactions, []);
+});
+
+test("a chat reply quotes its original through real WASM (#129)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const member = new Uint8Array(16).fill(0xbb), other = new Uint8Array(16).fill(0xbe);
+  const context = (sequence, actorId = member) => ({ eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId, deviceId: new Uint8Array(16).fill(actorId[0] - 0x10), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) });
+  const asOf = 1_791_475_200_100, day = 20261009;
+  const blob = (byte) => byte.toString(16).padStart(2, "0").repeat(32);
+  const chat = [];
+  const run = (command, ctx) => {
+    const result = engine.executeChatCommand(command, ctx, chat, asOf, day);
+    chat.push(result.encodedEvent);
+    return result;
+  };
+  const original = "01".repeat(16), answer = "02".repeat(16);
+  run({ type: "post-chat-message", messageId: original, blobRef: blob(0xa1), blobKey: blob(0xc1) }, context(1));
+  // A reply to nothing, or to itself, is refused.
+  for (const replyTo of ["09".repeat(16), answer])
+    assert.throws(() => engine.executeChatCommand({ type: "post-chat-message", messageId: answer, blobRef: blob(0xa2), blobKey: blob(0xc2), replyTo }, context(2, other), chat, asOf, day), (error) => error.code === 4 || error.code === 2);
+  assert.throws(() => engine.executeChatCommand({ type: "post-chat-message", messageId: answer, blobRef: blob(0xa2), blobKey: blob(0xc2), replyTo: "00".repeat(16) }, context(2, other), chat, asOf, day), (error) => error.code === 2);
+  const posted = run({ type: "post-chat-message", messageId: answer, blobRef: blob(0xa2), blobKey: blob(0xc2), replyTo: original }, context(2, other));
+  assert.equal(posted.encodedEvent.length, 88 + 100);
+  engine.putChatTexts([{ blobRef: blob(0xa1), text: "Dinner at 6" }]);
+  let page = engine.chatPage(chat, {}, asOf, day);
+  assert.equal(page.messages[0].replyTo, null);
+  assert.deepEqual(
+    { ...page.messages[1].replyTo, blobKey: [...page.messages[1].replyTo.blobKey].every((byte) => byte === 0xc1) },
+    { messageId: original, state: "live", contentKind: "text", authorId: "bb".repeat(16), index: 0, blobRef: blob(0xa1), blobKey: true, text: "Dinner at 6" },
+  );
+  // Without texts the quote has none; once the original is deleted it has no blob either.
+  assert.equal(engine.chatPage(chat, { includeText: false }, asOf, day).messages[1].replyTo.text, null);
+  run({ type: "delete-chat-message", messageId: original }, context(3));
+  page = engine.chatPage(chat, {}, asOf, day);
+  assert.deepEqual([page.messages[1].replyTo.state, page.messages[1].replyTo.blobRef, page.messages[1].replyTo.text], ["deleted", null, null]);
+  // Replying to a deleted message is refused.
+  assert.throws(() => engine.executeChatCommand({ type: "post-chat-message", messageId: "03".repeat(16), blobRef: blob(0xa3), blobKey: blob(0xc3), replyTo: original }, context(4), chat, asOf, day), (error) => error.code === 4);
+});
+
 test("Attachment bind and remove intent payloads roundtrip through real WASM", async () => {
   const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
   const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -1221,4 +1347,139 @@ test("10,000-event history permits bounded summary records and copied results", 
     assert.deepEqual(engine.applyEvents(records, 1_760_000_020_000), snapshot);
   }
   assert.deepEqual(state, snapshot, "host-owned summary survives later calls");
+});
+
+test("the chat search folds case and accents over the real text arena (#124)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const member = new Uint8Array(16).fill(0xbb), other = new Uint8Array(16).fill(0xbe);
+  const context = (sequence, actorId = member) => ({ eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId, deviceId: new Uint8Array(16).fill(actorId[0] - 0x10), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) });
+  const asOf = 1_791_475_200_100, day = 20261009;
+  const blob = (byte) => byte.toString(16).padStart(2, "0").repeat(32);
+  const chat = [];
+  const post = (byte, actorId, text, held = true) => {
+    const result = engine.executeChatCommand({ type: "post-chat-message", messageId: byte.toString(16).padStart(2, "0").repeat(16), blobRef: blob(0xa0 + byte), blobKey: blob(0xc0 + byte) }, context(byte, actorId), chat, asOf, day);
+    chat.push(result.encodedEvent);
+    if (held) engine.putChatTexts([{ blobRef: blob(0xa0 + byte), text }]);
+  };
+  post(1, member, "The Café opens at 9");
+  post(2, other, "pick up the CAFE order 👍");
+  post(3, member, "not here");
+  post(4, other, "cafe after lunch", false);
+  const search = (options) => engine.chatSearch(chat, { limit: 10, ...options }, asOf, day);
+  const found = search({ query: "cafe" });
+  assert.equal(found.total, 2);
+  assert.deepEqual(found.results.map((result) => result.messageId), ["02".repeat(16), "01".repeat(16)]);
+  // "Café" is bytes 4..9: the accent takes two.
+  assert.deepEqual(found.results[1].ranges, [[4, 9]]);
+  assert.equal(found.results[1].excerpt, "The Café opens at 9");
+  // The fourth message's text isn't in the arena yet: listed for the host.
+  assert.equal(found.unsearched, 1);
+  assert.deepEqual(found.missing.map((entry) => [entry.messageId, entry.blobRef]), [["04".repeat(16), blob(0xa4)]]);
+  assert.equal(search({ query: "CAFÉ" }).total, 2);
+  assert.equal(search({ query: "👍" }).total, 1);
+  assert.equal(search({ query: "cafe", authors: ["be".repeat(16)] }).total, 1);
+  assert.equal(search({ query: "cafe", excluded: ["02".repeat(16)] }).total, 1);
+  assert.equal(search({ query: "", attachmentsOnly: true }).total, 0);
+  // Deleting a message forgets its text: it never matches again.
+  const deleted = engine.executeChatCommand({ type: "delete-chat-message", messageId: "01".repeat(16) }, context(9), chat, asOf, day);
+  chat.push(deleted.encodedEvent);
+  assert.deepEqual(search({ query: "cafe" }).results.map((result) => result.messageId), ["02".repeat(16)]);
+});
+
+test("chat mentions are checked against the readers and come back in pages and search (#130)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const member = new Uint8Array(16).fill(0xbb), friend = new Uint8Array(16).fill(0xbe);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const context = (sequence) => ({ eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId: member, deviceId: new Uint8Array(16).fill(0xab), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) });
+  const asOf = 1_791_475_200_100, day = 20261009;
+  const blob = (byte) => byte.toString(16).padStart(2, "0").repeat(32);
+  const post = (mentions, members) => engine.executeChatCommand(
+    { type: "post-chat-message", messageId: "01".repeat(16), blobRef: blob(0xa1), blobKey: blob(0xc1), mentions }, context(1), [], asOf, day, null, [], members);
+  // Someone who cannot read chat cannot be mentioned.
+  assert.throws(() => post({ everyone: false, members: [hex(friend)] }, []), (error) => error.code === 4);
+  const posted = post({ everyone: true, members: [hex(friend)] }, [hex(friend)]);
+  const page = engine.chatPage([posted.encodedEvent], {}, asOf, day);
+  assert.deepEqual(page.messages[0].mentions, { everyone: true, members: [hex(friend)] });
+  const plain = engine.executeChatCommand({ type: "post-chat-message", messageId: "02".repeat(16), blobRef: blob(0xa2), blobKey: blob(0xc2) }, context(2), [], asOf, day);
+  assert.deepEqual(engine.chatPage([plain.encodedEvent], {}, asOf, day).messages[0].mentions ?? { everyone: false, members: [] }, { everyone: false, members: [] });
+});
+
+test("chat pins are commands, limited to ten, and listed by a page that asks for them (#131)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const member = new Uint8Array(16).fill(0xbb);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  let sequence = 0;
+  const context = () => { sequence += 1; return { eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId: member, deviceId: new Uint8Array(16).fill(0xab), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) }; };
+  const asOf = 1_791_475_200_900, day = 20261009;
+  const blob = (byte) => byte.toString(16).padStart(2, "0").repeat(32);
+  const chat = [];
+  const run = (command) => { const result = engine.executeChatCommand(command, context(), chat, asOf, day); chat.push(result.encodedEvent); return result; };
+  const ids = Array.from({ length: 11 }, (_, index) => (index + 1).toString(16).padStart(2, "0").repeat(16));
+  ids.forEach((messageId, index) => run({ type: "post-chat-message", messageId, blobRef: blob(0xa0 + index), blobKey: blob(0xc0 + index) }));
+  assert.equal(new DataView(run({ type: "pin-chat-message", messageId: ids[0], on: true }).encodedEvent.buffer).getUint16(2, true), 48);
+  for (const messageId of ids.slice(1, 10)) run({ type: "pin-chat-message", messageId, on: true });
+  // The eleventh, a repeat, and an unpin of something not pinned are refused.
+  assert.throws(() => run({ type: "pin-chat-message", messageId: ids[10], on: true }), (error) => error.code === 4);
+  assert.throws(() => run({ type: "pin-chat-message", messageId: ids[0], on: true }), (error) => error.code === 4);
+  assert.throws(() => run({ type: "pin-chat-message", messageId: ids[10], on: false }), (error) => error.code === 4);
+  const page = engine.chatPage(chat, { includePins: true }, asOf, day);
+  assert.deepEqual(page.pins.map((pin) => pin.messageId), ids.slice(0, 10));
+  assert.equal(page.pins[0].pinnedBy, hex(member));
+  assert.equal(page.pins[0].state, "live");
+  assert.deepEqual(engine.chatPage(chat, {}, asOf, day).pins, [], "pins only when asked for");
+  run({ type: "pin-chat-message", messageId: ids[0], on: false });
+  assert.equal(engine.chatPage(chat, { includePins: true }, asOf, day).pins.length, 9);
+});
+
+test("chat polls are posted, voted in and closed through the engine, and a page lists the votes (#135)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const author = new Uint8Array(16).fill(0xbb), friend = new Uint8Array(16).fill(0xbc);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  let sequence = 0;
+  const as = (actorId) => { sequence += 1; return { eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId, deviceId: new Uint8Array(16).fill(0xab), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) }; };
+  const asOf = 1_791_475_200_900, day = 20261009;
+  const blob = (byte) => byte.toString(16).padStart(2, "0").repeat(32);
+  const chat = [];
+  const run = (command, actor = author) => { const result = engine.executeChatCommand(command, as(actor), chat, asOf, day); chat.push(result.encodedEvent); return result; };
+  const poll = "0a".repeat(16);
+  // The shape: 2 to 10 options.
+  for (const options of [1, 11]) assert.throws(() => run({ type: "post-chat-message", messageId: poll, blobRef: blob(0xa0), blobKey: blob(0xc0), contentKind: "poll", poll: { options } }), (error) => error.code === 2 || error.code === 4);
+  const posted = run({ type: "post-chat-message", messageId: poll, blobRef: blob(0xa0), blobKey: blob(0xc0), contentKind: "poll", poll: { options: 3, multiple: false } });
+  assert.equal(new DataView(posted.encodedEvent.buffer).getUint16(2, true), 44);
+  const page = (options = {}) => engine.chatPage(chat, { includePolls: true, ...options }, asOf, day);
+  assert.equal(page().messages[0].contentKind, "poll");
+  assert.deepEqual(page().messages[0].poll, { options: 3, multiple: false, closed: false, votes: [] });
+  assert.equal(engine.chatPage(chat, {}, asOf, day).messages[0].poll, undefined, "polls only when asked for");
+  // Votes: one answer, from the poll's options, and a change each time.
+  assert.equal(new DataView(run({ type: "vote-chat-poll", messageId: poll, choice: [1] }, friend).encodedEvent.buffer).getUint16(2, true), 49);
+  for (const choice of [[1], [0, 1], [3]]) assert.throws(() => run({ type: "vote-chat-poll", messageId: poll, choice }, friend), (error) => error.code === 2 || error.code === 4, JSON.stringify(choice));
+  run({ type: "vote-chat-poll", messageId: poll, choice: [2] }, author);
+  run({ type: "vote-chat-poll", messageId: poll, choice: [0] }, friend);
+  const votes = page().messages[0].poll.votes;
+  assert.deepEqual(Object.fromEntries(votes.map((vote) => [vote.memberId, vote.choice])), { [hex(author)]: [2], [hex(friend)]: [0] });
+  // Only the author closes it, and nothing counts after.
+  assert.throws(() => run({ type: "close-chat-poll", messageId: poll }, friend), (error) => error.code === 4);
+  assert.equal(new DataView(run({ type: "close-chat-poll", messageId: poll }).encodedEvent.buffer).getUint16(2, true), 50);
+  assert.throws(() => run({ type: "vote-chat-poll", messageId: poll, choice: [1] }, friend), (error) => error.code === 4);
+  assert.equal(page().messages[0].poll.closed, true);
+  // Deleting it for everyone takes the votes with it.
+  run({ type: "delete-chat-message", messageId: poll, byAdmin: false });
+  assert.equal(page().messages[0].poll, undefined);
+  assert.equal(page().messages[0].status, "deleted");
+});
+
+test("kin_audio_peaks reduces mono samples to 64 peaks", async () => {
+  const wasm = await readFile(new URL("./kin_engine.wasm", import.meta.url));
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${wasm.toString("base64")}`);
+  const samples = new Float32Array(6400);
+  samples[0] = 0.5;
+  samples[3200] = -1;
+  samples[6399] = 2;
+  const peaks = engine.audioPeaks(samples);
+  assert.equal(peaks.length, 64);
+  assert.equal(peaks[0], 128);
+  assert.equal(peaks[32], 255);
+  assert.equal(peaks[63], 255, "values over full scale are clamped");
+  assert.equal(peaks[1], 0);
+  assert.throws(() => engine.audioPeaks(new Float32Array(0)));
 });

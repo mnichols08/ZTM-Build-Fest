@@ -54,11 +54,15 @@ export class HistoryMirror {
    * @param append  (batch) => void, calls kin_history_append and throws a
    *                KinEngineError on failure (kin-engine.js callCore)
    * @param asBytes converts a stored record (Uint8Array or ArrayBuffer)
+   * @param names   the reset and truncate exports of the log mirrored: the
+   *                household history by default, or the chat log (#109)
    */
-  constructor(exports, append, asBytes) {
+  constructor(exports, append, asBytes, { reset = "kin_history_reset", truncate = "kin_history_truncate" } = {}) {
     this.exports = exports;
     this.appendBatch = append;
     this.asBytes = asBytes;
+    this.resetExport = reset;
+    this.truncateExport = truncate;
     this.forget();
   }
 
@@ -128,11 +132,11 @@ export class HistoryMirror {
 
   reset() {
     this.forget();
-    this.exports.kin_history_reset();
+    this.exports[this.resetExport]();
   }
 
   truncate(length) {
-    if (this.exports.kin_history_truncate(length) !== 0) {
+    if (this.exports[this.truncateExport](length) !== 0) {
       // Cannot happen while this mirror is accurate; forget the reset history.
       this.reset();
       return false;

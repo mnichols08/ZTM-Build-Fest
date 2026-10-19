@@ -9,6 +9,25 @@ export class RenderController {
     this.app = ctx.app;
   }
 
+  /** The Updates segments: handoffs waiting, and Chat's unread count (#133),
+   * which comes from the chat view and never leaves this device. */
+  renderUpdatesNav(waiting = (this.app.state?.handoffs ?? []).filter((record) => record.status === "unacknowledged").length) {
+    const updatesNav = this.app.segmentNavs?.get("updates");
+    if (!updatesNav) return;
+    const unread = this.app.chatUnread ?? { count: 0, mentions: 0, capped: false };
+    updatesNav.segments = SEGMENTS.updates.filter((entry) => !(entry.id === "chat" && this.app.chatAccess === "none")).map((entry) => {
+      const base = { id: entry.id, label: entry.label, hash: routeHash("updates", entry.id) };
+      if (entry.id === "chat") {
+        // An "@" marks unread messages that mention this member (#130).
+        const number = unread.capped || unread.count > 99 ? "99+" : String(unread.count);
+        const mentioned = (unread.mentions ?? 0) > 0;
+        return { ...base, count: unread.count, countText: mentioned ? `@ ${number}` : number, countLabel: "unread", ...(mentioned ? { countAria: `${number} unread, includes mentions of you` } : {}) };
+      }
+      return { ...base, count: entry.id === "handoffs" ? waiting : 0, countLabel: "waiting" };
+    });
+    if (this.app.route?.page === "updates") updatesNav.current = this.app.route.segment;
+  }
+
   renderState() {
     if (!this.app.vault || this.app.vault.locked || !this.app.state) return;
     // Rendering reconciles the whole unlocked workspace and is also used for
@@ -67,7 +86,7 @@ export class RenderController {
     });
     const waiting = (this.app.state.handoffs ?? []).filter((record) => record.status === "unacknowledged").length;
     const updatesNav = this.app.segmentNavs?.get("updates");
-    if (updatesNav) updatesNav.segments = SEGMENTS.updates.map((entry) => ({ id: entry.id, label: entry.label, hash: routeHash("updates", entry.id), count: entry.id === "handoffs" ? waiting : 0, countLabel: "waiting" }));
+    this.renderUpdatesNav(waiting);
     if (updatesNav && this.app.route?.page === "updates") updatesNav.current = this.app.route.segment;
     const activePulse = this.app.state.pulses.find((pulse) => pulse.actorId === this.app.store?.actorId && pulse.status === "active");
     if (this.app.householdGlance) this.app.householdGlance.textContent = `Household mode: ${{ normal: "Normal", vacation: "Vacation", guests: "Guests", rest: "Rest" }[mode] ?? mode}${mode !== "normal" ? " (routines paused)" : ""}. Your pulse: ${activePulse ? activePulse.value.replace("-", " ") : "not set"}.`;

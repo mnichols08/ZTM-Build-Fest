@@ -15,10 +15,12 @@ import {
   verifyDeviceAuthorizationCertificate,
 } from "./crypto.js";
 import { SyncKeyStore } from "./key-store.js";
+import { LIVE_TYPE, LiveChannel, liveUrl } from "./live-channel.js";
 import { QUARANTINE_MESSAGE, quarantineMessage } from "../storage/quarantine.js";
 import { idToHex } from "../wasm/kin-engine.js";
 import { reconcileAttachments } from "../attachments/attachment-lifecycle.js";
 import { decryptHouseholdSettings, encryptHouseholdSettings } from "../appearance/household.js";
+import { openBrowserChatRoom } from "../chat/chat-room.js";
 
 export function activeResponsibilityMemberIds(devices, now = Date.now()) {
   return [...new Set(devices
@@ -129,9 +131,35 @@ const REQUEST_WINDOW_MS = 60_000;
 const RATE_LIMIT_RETRY_MS = 5_000;
 const CATCH_UP_CONTEXT_MAX_AGE_MS = 30_000;
 const KEY_GRANT_TTL_MS = 10 * 60_000;
+// How often to poll: while the live channel is up, hints bring new events at
+// once and polling is only a safety net; otherwise every five seconds.
+export const POLL_MS = 5_000;
+export const LIVE_POLL_MS = 30_000;
+// Hint-driven syncs run at most this often: a hint during a sync runs one
+// more after it, no sooner than this after the last one started.
+export const MIN_HINT_GAP_MS = 1_000;
+// Requests a chat pass may make at most: status, 2 push batches of 20 blob
+// uploads and a post each (42), blob retires (2), 5 pulls, the member list,
+// and up to 6 for the hidden-messages record (two rounds of read, read and
+// write). A pass waits when fewer remain: it schedules nothing itself, and
+// the next hint or poll runs chat again.
+const CHAT_PASS_REQUESTS = 60;
+// And what a household pass needs, kept free for the next one.
+const HOUSEHOLD_PASS_RESERVE = 30;
+// Sync errors that mean this session can't hold a live channel.
+const ACCESS_ERRORS = new Set(["authentication_required", "device_not_trusted", "membership_removed"]);
+// Errors a chat pass leaves to the household sync's own handling: the
+// session or household is gone, so the whole pass must stop.
+const CHAT_PASS_STOPS = new Set([...ACCESS_ERRORS, "household_deleted", "household_deletion_pending"]);
+
+/** The live channel for a browser page, or null elsewhere (tests, workers). */
+function browserLiveChannel(options) {
+  if (typeof WebSocket === "undefined" || typeof location === "undefined" || !location.href) return null;
+  return new LiveChannel({ url: liveUrl(location), ...options });
+}
 
 export class SyncCoordinator {
-  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now() }) {
+  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {} }) {
     this.store = store;
     this.engine = engine;
     this.identity = identity;
@@ -151,6 +179,23 @@ export class SyncCoordinator {
     this.stopped = false;
     this.terminal = false;
     this.abortController = new AbortController();
+    this.createLiveChannel = liveChannel;
+    this.live = null;
+    this.pollMs = POLL_MS;
+    this.liveUp = false;
+    this.lastSyncOk = false;
+    this.lastSyncStartedAt = -Infinity;
+    this.lastSyncEndedAt = -Infinity;
+    this.syncAgain = false;
+    this.hintTimer = null;
+    // The household chat room (#111), opened once this device's keys are
+    // ready; chat syncs after each full household pass.
+    this.openChatRoom = chatRoom;
+    this.chat = null;
+    this.chatOpening = null;
+    this.chatOpenError = null;
+    // Told the chat room once it opens, and null when it closes (the view).
+    this.onChatRoom = onChatRoom;
   }
 
   async start() {
@@ -175,19 +220,115 @@ export class SyncCoordinator {
       });
     }
     if (this.stopped) return;
+    // Chat opens alongside the first sync (not before it: decrypting a long
+    // chat log mustn't hold up household sync), so messages kept on this
+    // device show, and can be written, while offline.
+    void this.openChat().catch(() => {});
     await this.syncNow();
     if (this.stopped) return;
-    if (!this.terminal) this.timer = setInterval(() => void this.syncNow(), 5_000);
+    if (!this.terminal) {
+      this.timer = setInterval(() => void this.syncNow(), this.pollMs);
+      this.startLive();
+    }
+  }
+
+  /** Opens the live channel (#108): hints and reconnects sync at once, and
+   * polling slows while it is up. HTTP sync stays the source of truth. */
+  startLive() {
+    if (this.live || this.stopped || this.terminal) return;
+    this.live = this.createLiveChannel?.({
+      lockName: `kin-live:${this.identity.deviceId}`,
+      onHint: () => this.hinted(),
+      // Typing frames and receipt changes go to the chat room (#120).
+      onTyping: (bytes) => void this.chat?.receiveTyping(bytes),
+      onPresence: (bytes) => void this.chat?.receivePresence(bytes),
+      onReceipts: () => this.chat?.receiptsChanged(),
+      onUp: () => {
+        this.liveUp = true;
+        this.chat?.liveUp();
+        this.updatePollInterval();
+        // Catch up on anything missed while disconnected (including events
+        // accepted before the service registered this socket), and send
+        // what the outbox kept meanwhile. hinted() keeps it cheap.
+        this.hinted();
+      },
+      onDown: () => {
+        this.liveUp = false;
+        this.updatePollInterval();
+      },
+      // Access was lost: the next HTTP sync meets the same refusal and
+      // reports the signed-out or deleted state. A later successful sync
+      // starts a new channel.
+      onEnd: () => {
+        // Stop it properly, so its Web Lock and listeners are released and
+        // a later channel (in this tab or another) can take the lock.
+        this.stopLive();
+        this.updatePollInterval();
+        void this.syncNow();
+      },
+    }) ?? null;
+    this.live?.start();
+  }
+
+  stopLive() {
+    this.live?.stop();
+    this.live = null;
+    this.liveUp = false;
+    clearTimeout(this.hintTimer);
+    this.hintTimer = null;
+  }
+
+  /** A hint (or HELLO): sync now, or once more after the running sync,
+   * never sooner than MIN_HINT_GAP_MS after the last one started. */
+  hinted() {
+    if (this.stopped || this.terminal) return;
+    if (this.running) {
+      this.syncAgain = true;
+      return;
+    }
+    if (this.hintTimer !== null) return;
+    const wait = this.lastSyncStartedAt + MIN_HINT_GAP_MS - this.now();
+    if (wait <= 0) {
+      void this.syncNow();
+      return;
+    }
+    this.hintTimer = setTimeout(() => {
+      this.hintTimer = null;
+      void this.syncNow();
+    }, wait);
+  }
+
+  /** Polling slows only while the channel is up and sync is healthy: a
+   * paused sync, or one waiting on keys, keeps polling every 5 s. */
+  updatePollInterval() {
+    this.setPollInterval(this.liveUp && this.lastSyncOk ? LIVE_POLL_MS : POLL_MS);
+  }
+
+  setPollInterval(ms) {
+    if (this.stopped || this.terminal || this.pollMs === ms) return;
+    this.pollMs = ms;
+    if (this.timer === null) return;
+    clearInterval(this.timer);
+    this.timer = setInterval(() => void this.syncNow(), ms);
   }
 
   async syncNow() {
     if (this.stopped || this.terminal || !this.identity) return;
     if (this.running) return this.running;
+    this.lastSyncStartedAt = this.now();
+    this.syncAgain = false;
     this.running = this.runOnce()
       .then((result) => {
         const hasMore = typeof result === "object" ? result.hasMore : result;
         const advanced = typeof result === "object" ? result.advanced : hasMore;
+        // Healthy only if the pass finished without pausing: a pass that
+        // made no progress, found sync off, or was cut short isn't.
+        this.lastSyncOk = result !== undefined && result !== null && !result.disabled && !(hasMore && !advanced);
+        // A channel that ended on lost access comes back once this session
+        // syncs again (a new session after signing in elsewhere, say).
+        if (this.lastSyncOk && !this.live && !this.terminal) this.startLive();
         if (hasMore && advanced) this.scheduleContinuation();
+        else if (!hasMore && result?.chatMore) this.scheduleContinuation();
         else if (hasMore) {
           this.catchUp = null;
           this.onState({
@@ -199,8 +340,15 @@ export class SyncCoordinator {
       })
       .catch(async (error) => {
         if (this.stopped) return;
+        this.lastSyncOk = false;
+        // Chat syncs after a full household pass, so a failed pass pauses
+        // chat too: tell the chat room why (offline, say).
+        if (!["sync_rate_limited", "sync_client_rate_budget"].includes(error.code)) this.chat?.reportSync(error);
         let message = error.message || "Device sync is paused.";
         let code = error.code;
+        // This session can't hold a socket either: stop reconnecting (an
+        // upgrade refused with 401/403 reaches the browser only as 1006).
+        if (ACCESS_ERRORS.has(code)) this.stopLive();
         if (["sync_rate_limited", "sync_client_rate_budget"].includes(code)) {
           clearTimeout(this.continuationTimer);
           this.continuationTimer = null;
@@ -255,6 +403,7 @@ export class SyncCoordinator {
           this.continuationTimer = null;
           clearInterval(this.timer);
           this.timer = null;
+          this.stopLive();
           this.onState({
             state: "deleted",
             lifecycleState: lifecycle.state,
@@ -270,6 +419,12 @@ export class SyncCoordinator {
       })
       .finally(() => {
         this.running = null;
+        this.lastSyncEndedAt = this.now();
+        this.updatePollInterval();
+        if (this.syncAgain) {
+          this.syncAgain = false;
+          this.hinted();
+        }
       });
     return this.running;
   }
@@ -303,7 +458,7 @@ export class SyncCoordinator {
     let status = await this.request("/api/sync/status");
     if (!status.enabled) {
       this.onState({ state: "disabled", message: "Device sync is off." });
-      return;
+      return { disabled: true, hasMore: false };
     }
     await this.store.requeueAfterRelayReset(status.latestCursor);
     await this.store.updateSyncServerState(status);
@@ -466,6 +621,7 @@ export class SyncCoordinator {
       update.snapshotBoundary = latestCommitted.snapshotBoundary;
     }
     let attachmentRows;
+    let chatMore = false;
     if (!hasMore) {
       await this.acknowledgeRemoteDuplicateEvents(status.currentEpoch);
       if (!(await this.store.getSyncState())?.initialized)
@@ -480,6 +636,7 @@ export class SyncCoordinator {
       if (pendingOutbox.length === 0 && pendingBindings.length === 0)
         await this.store.markSyncInitialized();
       this.catchUp = null;
+      chatMore = (await this.syncChat(context)).hasMore;
     } else if (!lastPageAdvanced) {
       this.catchUp = null;
     }
@@ -500,7 +657,85 @@ export class SyncCoordinator {
           : "Household sync paused because the relay made no progress. Kin will try again on the next normal sync check."
         : "Device sync is up to date.",
     });
-    return { hasMore, advanced: !hasMore || lastPageAdvanced };
+    return { hasMore, advanced: !hasMore || lastPageAdvanced, chatMore };
+  }
+
+  /** Opens the chat room once (#111); null where chat storage isn't
+   * available. A failure leaves it closed for the next pass to retry. */
+  async openChat() {
+    if (this.chat || !this.openChatRoom || this.stopped) return this.chat;
+    this.chatOpening ??= Promise.resolve().then(() => this.openChatRoom({
+      identity: this.identity,
+      keyStore: this.keyStore,
+      deviceKeys: this.deviceKeys,
+      engine: this.engine,
+      request: (path, options) => this.request(path, options),
+      blobFetch: (path, init) => this.blobFetch(path, init),
+      // A message sent here goes out at once, like a hint.
+      onLocalChange: () => this.hinted(),
+    })).then((room) => {
+      if (this.stopped) { room?.close(); return null; }
+      if (!room) this.openChatRoom = null;
+      this.chat = room;
+      this.chatOpenError = null;
+      // Typing frames go out on the live channel when this tab holds it.
+      room?.setLiveSender((bytes, kind) => this.live?.send(kind === "presence" ? LIVE_TYPE.PRESENCE : LIVE_TYPE.TYPING, bytes) ?? false);
+      if (room) {
+        try { this.onChatRoom(room); } catch { /* the view's trouble isn't sync's */ }
+      }
+      return room;
+    }, (error) => {
+      // Kept for the chat view to explain (a missing key epoch, say); the
+      // next pass tries again.
+      this.chatOpenError = error;
+      throw error;
+    }).finally(() => { this.chatOpening = null; });
+    return this.chatOpening;
+  }
+
+  /** Chat blob requests (#110), held to the same rules as request(): only
+   * while unlocked and running, within the request budget, and aborted when
+   * sync stops. */
+  async blobFetch(path, init = {}) {
+    if (this.stopped) throw new Error("Device sync was stopped.");
+    const budgetDelay = this.requestBudgetDelay();
+    if (budgetDelay > 0) {
+      const error = new Error("Catching up after a short wait.");
+      error.code = "sync_client_rate_budget";
+      error.retryAfterMs = budgetDelay;
+      throw error;
+    }
+    this.keyStore?.vault.assertUnlocked();
+    await this.keyStore?.vault.checkSecurityEpoch?.();
+    this.recordRequest();
+    const response = await fetch(path, { ...init, signal: this.abortController.signal });
+    if (this.stopped) throw new Error("Device sync was stopped.");
+    await this.keyStore?.vault.checkSecurityEpoch?.();
+    if (this.stopped) throw new Error("Device sync was stopped.");
+    this.keyStore?.vault.assertUnlocked();
+    return response;
+  }
+
+  /** One chat pass after a full household pass. Chat trouble pauses chat,
+   * not household sync: it is reported to the chat room instead, unless
+   * the session or household itself is gone. */
+  async syncChat({ status, devices }) {
+    let room = null;
+    try {
+      room = await this.openChat();
+      if (!room || this.stopped) return { hasMore: false };
+      // Household sync comes first: when the request budget runs low, chat
+      // waits for a later pass rather than leave the next household pass
+      // short of requests.
+      if (this.requestBudgetDelay(CHAT_PASS_REQUESTS + HOUSEHOLD_PASS_RESERVE) > 0) return { hasMore: false };
+      const result = await room.sync({ status, devices, deviceKeys: this.deviceKeys });
+      room.reportSync(null);
+      return result;
+    } catch (error) {
+      if (CHAT_PASS_STOPS.has(error.code)) throw error;
+      room?.reportSync(error);
+      return { hasMore: false };
+    }
   }
 
   async loadDeviceDirectory() {
@@ -1141,11 +1376,12 @@ export class SyncCoordinator {
       const value = await this.loadCachedHouseholdSettings();
       return { admin: false, adminRecorded: false, value, offline: true };
     }
-    if (!response.settings) return { admin: response.admin, adminRecorded: response.adminRecorded, value: null };
+    const chatPolicy = response.chatPolicy ?? null;
+    if (!response.settings) return { admin: response.admin, adminRecorded: response.adminRecorded, chatPolicy, value: null };
     const candidate = { householdId: this.identity.householdId, ...response.settings };
     const value = await this.decryptCachedHouseholdSettings(candidate);
     const cached = await this.keyStore.cacheHouseholdSettings(candidate);
-    return { admin: response.admin, adminRecorded: response.adminRecorded,
+    return { admin: response.admin, adminRecorded: response.adminRecorded, chatPolicy,
       value: cached.revision === candidate.revision ? value : await this.decryptCachedHouseholdSettings(cached) };
   }
 
@@ -1202,11 +1438,17 @@ export class SyncCoordinator {
 
   stop() {
     this.stopped = true;
+    this.stopLive();
     this.abortController.abort();
     clearInterval(this.timer);
     this.timer = null;
     clearTimeout(this.continuationTimer);
     this.continuationTimer = null;
+    if (this.chat) {
+      this.chat.close();
+      try { this.onChatRoom(null); } catch { /* the view's trouble isn't sync's */ }
+    }
+    this.chat = null;
     this.keyStore?.close();
     this.keyStore = null;
     this.deviceKeys = null;

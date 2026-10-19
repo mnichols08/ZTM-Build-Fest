@@ -22,6 +22,13 @@
 //! with a new archive, so those rebuild instead. A different context, or a
 //! truncation below N, also rebuilds. Either way the result equals a replay
 //! of the whole history.
+//!
+//! Two logs: an engine instance holds the household history and, apart from
+//! it, the chat log (#109). Chat events are encrypted under the chat key, are
+//! far more numerous than household events, and never enter the KINS
+//! projection, so they get their own log with its own cap
+//! (`MAX_CHAT_EVENT_COUNT`) and their own checkpoint. Each log refuses the
+//! other's events, so neither count eats into the other's.
 use crate::error::KinError;
 use crate::event::HouseholdId;
 use crate::event::IdentityBinding;
@@ -31,7 +38,17 @@ use crate::request::DecodedRequest;
 use crate::state::{summarize, CatchUpSummary, HouseholdState, SummaryInput};
 use crate::wire::{read_u32, MAX_EVENT_COUNT, MAX_PROTOCOL_BYTES};
 
+/// Which events a history holds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Log {
+    /// Every event but chat; at most `MAX_EVENT_COUNT`.
+    Household,
+    /// Chat events only; at most `MAX_CHAT_EVENT_COUNT`.
+    Chat,
+}
+
 pub struct History {
+    log: Log,
     bytes: Vec<u8>,
     spans: Vec<(u32, u32)>,
     checkpoint: Option<Checkpoint>,
@@ -56,7 +73,17 @@ impl Default for History {
 
 impl History {
     pub const fn new() -> Self {
+        Self::of(Log::Household)
+    }
+
+    /// An empty chat log.
+    pub const fn chat() -> Self {
+        Self::of(Log::Chat)
+    }
+
+    const fn of(log: Log) -> Self {
         Self {
+            log,
             bytes: Vec::new(),
             spans: Vec::new(),
             checkpoint: None,
@@ -67,6 +94,18 @@ impl History {
 
     pub fn len(&self) -> usize {
         self.spans.len()
+    }
+
+    pub fn log(&self) -> Log {
+        self.log
+    }
+
+    /// Most records this history holds.
+    pub fn limit(&self) -> usize {
+        match self.log {
+            Log::Household => MAX_EVENT_COUNT,
+            Log::Chat => crate::chat::MAX_CHAT_EVENT_COUNT,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -91,7 +130,7 @@ impl History {
     pub fn append(&mut self, batch: &[u8]) -> Result<(), KinError> {
         let count = read_u32(batch, 0)? as usize;
         let total = self.len().checked_add(count).ok_or(KinError::SizeLimit)?;
-        if total > MAX_EVENT_COUNT {
+        if total > self.limit() {
             return Err(KinError::SizeLimit);
         }
         let table_end = count
@@ -112,7 +151,9 @@ impl History {
                 .checked_add(length)
                 .ok_or(KinError::MalformedProtocol)?;
             let record = batch.get(offset..end).ok_or(KinError::MalformedProtocol)?;
-            decode_event(record)?;
+            if decode_event(record)?.kind.is_chat() != (self.log == Log::Chat) {
+                return Err(KinError::InvalidEvent);
+            }
             lengths.push(length);
             offset = end;
         }

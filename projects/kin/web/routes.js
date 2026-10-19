@@ -25,6 +25,7 @@ export const SEGMENTS = Object.freeze({
   updates: Object.freeze([
     Object.freeze({ id: "handoffs", label: "Handoffs" }),
     Object.freeze({ id: "talk", label: "Talk" }),
+    Object.freeze({ id: "chat", label: "Chat" }),
   ]),
   household: Object.freeze([
     Object.freeze({ id: "hub", label: "Household" }),

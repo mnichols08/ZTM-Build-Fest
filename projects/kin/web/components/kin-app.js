@@ -3,12 +3,16 @@ import "./kin-areas.js";
 import "./kin-notes.js";
 import "./kin-compose.js";
 import "./kin-quick-add.js";
+import "./kin-chat-share.js";
 import "./kin-command-palette.js";
 import "./kin-item.js";
 import "./kin-item-detail.js";
 import "./kin-today.js";
 import "./kin-handoff-list.js";
 import "./kin-talk-list.js";
+import "./kin-chat.js";
+import "./kin-chat-settings.js";
+import "./kin-chat-policy.js";
 import "./kin-search.js";
 import "./kin-segment-nav.js";
 import "./kin-sync-status.js";
@@ -57,7 +61,7 @@ const ELEMENT_EVENTS = [
   ["kin:open-quick-add", "onOpenQuickAdd"], ["kin:bulk-item-action", "onBulkItemAction"],
   ["kin:bulk-undo", "onBulkUndo"], ["kin:bulk-retry", "onBulkRetry"],
   ["kin:bulk-dismiss", "onBulkDismiss"], ["kin:open-item", "onOpenItem"],
-  ["kin:close-item-detail", "onCloseItemDetail"], ["kin:open-search-result", "onOpenSearchResult"],
+  ["kin:close-item-detail", "onCloseItemDetail"], ["kin:open-search-result", "onOpenSearchResult"], ["kin:open-chat-message", "onOpenChatMessage"], ["kin:chat-to-record", "onChatToRecord"],
   ["kin:area-intent", "onAreaIntent"], ["kin:add-handoff", "onAddHandoff"],
   ["kin:acknowledge-handoff", "onAcknowledgeHandoff"], ["kin:archive-handoff", "onArchiveHandoff"],
   ["kin:add-talk", "onAddTalk"], ["kin:resolve-talk", "onResolveTalk"],

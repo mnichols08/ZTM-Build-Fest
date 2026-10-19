@@ -3,7 +3,9 @@
 // leaves no decrypted attachment reachable from this page by URL. Content
 // already showing in another tab is that tab's to close; Kin cannot reach it.
 export class ObjectUrlRegistry {
-  constructor({ lifetimeMs = 60_000, url = URL, setTimer = setTimeout, clearTimer = clearTimeout } = {}) {
+  // The default timers are wrappers: a browser's setTimeout refuses to run
+  // with this registry as its receiver ("Illegal invocation").
+  constructor({ lifetimeMs = 60_000, url = URL, setTimer = (callback, ms) => setTimeout(callback, ms), clearTimer = (id) => clearTimeout(id) } = {}) {
     this.lifetimeMs = lifetimeMs;
     this.url = url;
     this.setTimer = setTimer;

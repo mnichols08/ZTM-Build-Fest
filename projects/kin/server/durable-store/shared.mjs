@@ -2,13 +2,40 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const SERVER_SCHEMA_VERSION = 11;
+export const SERVER_SCHEMA_VERSION = 17;
 
 export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024 + 4096;
 
 export const MAX_HOUSEHOLD_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 
 export const MAX_HOUSEHOLD_ATTACHMENTS = 64;
+
+// Chat content blobs (#110): one message's encrypted text or attachment,
+// addressed by the SHA-256 of its bytes. Format 1 is a version byte, a
+// 12-byte AES-GCM nonce and the sealed content with its 16-byte tag.
+export const MIN_CHAT_BLOB_BYTES = 29;
+export const MAX_CHAT_BLOB_BYTES = 4 * 1024 * 1024 + 4096;
+// Per household: live blob bytes and live blobs, which uploads must fit in;
+// and retired tombstones and pre-upload claims, which never block anything:
+// past their bound the oldest go. #125 revisits all four with measured chat
+// volume.
+export const MAX_HOUSEHOLD_CHAT_BLOB_BYTES = 256 * 1024 * 1024;
+export const MAX_HOUSEHOLD_CHAT_BLOBS = 250_000;
+export const MAX_HOUSEHOLD_CHAT_TOMBSTONES = 500_000;
+// Claims are bounded per member, and pruning only ever drops the claiming
+// member's own oldest claims, so nobody's flood pushes out another
+// member's (or an admin's) claim.
+export const MAX_MEMBER_CHAT_CLAIMS = 20_000;
+
+// The chat relay (#111): at most this many chat events per household, the
+// engine's chat log bound (rust/src/chat.rs MAX_CHAT_EVENT_COUNT).
+export const MAX_HOUSEHOLD_CHAT_EVENTS = 250_000;
+
+// "Delete for me" (#119): the most one member's sealed hidden-messages record
+// may hold (about 10,000 message IDs, sealed and base64url-encoded).
+export const MAX_CHAT_HIDDEN_RECORD_BYTES = 256 * 1024;
+/** A member's sealed read-receipt slot (#121): one small signed envelope. */
+export const MAX_CHAT_RECEIPT_BYTES = 4096;
 
 export const MAX_AUDIT_ROWS = 10_000;
 

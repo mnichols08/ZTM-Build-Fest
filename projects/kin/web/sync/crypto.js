@@ -727,6 +727,27 @@ export async function decryptEvent({ envelope, householdKey, signingKey }) {
   }
 }
 
+/**
+ * Decrypts an envelope this device already authenticated when it arrived
+ * and then kept as it was (the chat log, #111). The household key's AES-GCM
+ * tag still binds the bytes to their metadata; the signature was checked
+ * once, on receipt, so reopening the log doesn't verify every event again.
+ */
+export async function decryptStoredEvent({ envelope, householdKey }) {
+  validateEnvelope(envelope);
+  try {
+    return new Uint8Array(
+      await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: fromBase64Url(envelope.nonce), additionalData: associatedData(envelope), tagLength: 128 },
+        householdKey,
+        fromBase64Url(envelope.ciphertext),
+      ),
+    );
+  } catch (error) {
+    throw new SyncCryptoError("decrypt_failed", "A stored event could not be decrypted.", error);
+  }
+}
+
 export async function encryptIdentityBinding({
   binding,
   householdId,

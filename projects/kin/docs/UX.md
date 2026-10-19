@@ -849,6 +849,8 @@ It should not evolve into:
 
 Its purpose is simply to keep quick household conversation near household context when useful.
 
+Household chat is separate and sits beside Talk under Updates → Chat ([ADR 0008](decisions/0008-household-chat.md)); this list still holds for Talk.
+
 ---
 
 # 8. Security, sync, and continuity UX
@@ -1154,6 +1156,8 @@ Never add by default:
 - exact activity timelines;
 - "Sam opened this at 8:42";
 - completion-performance analytics.
+
+Exception: household chat's read receipts, typing and "online now" are visible, switchable per member, reciprocal and never kept as history ([ADR 0008](decisions/0008-household-chat.md)). "Last seen" and location stay out.
 
 ---
 
@@ -1791,7 +1795,7 @@ For any significant UI PR:
 
 - [ ] No scoring.
 - [ ] No surveillance.
-- [ ] No passive read receipts.
+- [ ] No passive read receipts (chat's visible, switchable receipts follow [ADR 0008](decisions/0008-household-chat.md)).
 - [ ] No judgmental copy.
 - [ ] Attribution is factual.
 
@@ -1843,3 +1847,164 @@ secondary native select. Keep it labeled “Area for [item text]”, keyboard
 operable, at least 48px tall, and reflowing at 320px and 200% zoom. Names are
 plain text. Conflicting offline duplicate names remain separate stable Areas
 and receive a short ID suffix in selection/management labels until renamed.
+
+# 23. Chat unread marker and badges (#133)
+
+- Where the member left off is a private read position, kept apart from read
+  receipts: it works with receipts off and is shown to no one.
+- Opening Chat scrolls to a "New messages" divider above the first unread
+  message, with "Jump to latest" to skip to the end. The divider stays while
+  the member reads and is placed again the next time they return.
+- **Updates → Chat** shows the unread count (`99+` past 99) with the
+  accessible name "N unread". Reading on one device clears it on the member's
+  other devices once they sync. When any unread message mentions the member
+  (or everyone), the count starts with "@" and the name becomes "N unread,
+  includes mentions of you".
+- **Mentions (#130).** Typing "@" in the message box opens a list (a
+  combobox: Up/Down, Enter or Tab, Escape; tap to choose) of the members who
+  can read chat, plus @everyone. The text stays plain "@Name"; the sent event
+  records who was meant. Mentions show in bold underline, a message that
+  mentions you has a mark on its row, and search can show only messages that
+  mention you. Limitation: a mention is highlighted by its current label, so
+  a member renamed later no longer matches the old "@Name" text, which then
+  shows as plain text. Push notifications stay generic ([ADR 0008](decisions/0008-household-chat.md)).
+- Where the browser supports the Badging API, the installed app's icon shows
+  the same count, set on the device from decrypted state.
+- **Decision: the home-screen badge clears when Kin locks.** The badge is only
+  a number, but a number on a locked app still tells anyone who sees the
+  screen that the household is active. Locking stops the chat room, which
+  clears the count and the badge; unlocking brings both back from the saved
+  position. Messages that arrive while locked are counted at the next unlock.
+
+# 24. Pinned chat messages (#131)
+
+- **Pin** and **Unpin** are in a message's actions for anyone who can post.
+  Up to 10 messages are pinned per household; pinning an 11th says "You can
+  pin up to 10 messages. Unpin one first." and sends nothing.
+- A **Pinned messages** region sits above the conversation when anything is
+  pinned. Its bar is one button showing the latest pin; pressing it opens the
+  list of all pins (newest first), each with who pinned it, a button that
+  goes to the message (loading the stretch around it if needed) and **Unpin**.
+  Escape closes the list. The bar and list are plain buttons in the tab
+  order.
+- Deleting a pinned message for everyone (or an admin removing it) takes it
+  off the list. "Delete for me" only hides it from this member's list.
+
+# 25. Online now (#128)
+
+- A green dot and "Online now" mark members who have Kin unlocked and visible
+  on any device: a line at the top of Chat ("Online now: Sam, Alex") and a dot
+  after an author's name on their messages (with "online now" for screen
+  readers). The line is plain text, not announced on every change.
+- Nothing says when someone was last here, and nothing is kept: a member is
+  online for at most 70 seconds after their last heartbeat, a hidden or locked
+  device says "away" at once where it can (not when the page is closed or Kin
+  locks: the keys go first, so the others see it run out within 70 seconds),
+  and a reload starts empty.
+- **Settings → Chat → Show when I'm online** (on by default) syncs to all of
+  a member's devices. Turning it off stops sending and also hides everyone
+  else's status, and the copy says so. Members with no chat access neither
+  send nor see it; read-only members can do both.
+
+# 26. Turn a message into a task, handoff or note (#132)
+
+- A message's ⋯ menu offers **Add to Shopping**, **Add to To do**, **Make a
+  handoff** and **Save as a note** to any member who can read the chat
+  (read-only members too: the records are the household's, not the chat's).
+  Each opens one dialog with the message's text, editable. Items and handoffs
+  take it as one line; a note takes the message's first line as its title and
+  all of it as the body.
+- The dialog says everyone in the household will see the result, including
+  members who can't read the chat when there are any, and that it is a copy.
+- A photo or file on the message is offered as an unchecked box per file
+  (items and notes only; handoffs take text). Chosen files are re-encrypted as
+  ordinary household attachments of the new record; unchosen files are not
+  copied. A file that fails is named after the record is saved.
+- Saving goes through the same commands as typing the record in. Nothing about
+  the message (its id, author or time) is stored with it, so deleting the
+  message or the record never touches the other. The dialog then says
+  "Added to Shopping." with **Open it** (items) and a link to the list.
+
+# 27. Quick polls (#135)
+
+- The composer has a **Poll** button for members who can post. It opens a
+  dialog with a question, two to ten options (add and remove buttons, each
+  option a labelled text field) and a "Allow choosing more than one answer"
+  checkbox.
+- A poll is a message. Its options are a native `fieldset` of radio buttons
+  (or checkboxes for multiple choice) with a legend of the question. Choosing
+  votes at once; a member can change or clear their vote while it is open.
+- Results are text, not only bars: each option shows its count and who voted
+  for it by name, so nothing depends on colour. Your own vote, clearing and closing are announced politely.
+- The poll's author has **Close poll**; a closed poll shows "Closed" and its
+  final result, and its options are disabled.
+- Read-only members see the results and cannot vote. Deleting a poll for
+  everyone removes the question, options and votes. Replying to a poll shows its
+  question.
+
+# 28. Chat in export and restore (#136)
+
+- Under **Backup and move**, a device that can read chat shows a checkbox,
+  **Include chat (messages, photos, files, voice)**, checked by default. Under
+  it, a polite status line gives the size before anything is made: how many
+  chat events and photos or files, and about how many megabytes. The box is
+  absent when there is no chat yet or the device has no chat access.
+- Messages deleted for everyone are only deleted placeholders in the export,
+  and the line says so; "delete for me" lists are the exporter's own.
+- If the archive's size limit leaves older photos and files out, the message
+  after the export says how many were left out and that they stay in Kin.
+- Restore checks the whole file first. The summary names the chat it holds
+  (events, photos, files). After restoring, the message says the chat will
+  appear once the device is approved. If only the chat could not be saved, the
+  household is still restored and the message says to restore the same export
+  again to finish the chat.
+- The checkbox is a native control with its label and the size line as its
+  description; the progress bar covers household and chat events together.
+
+# 29. Voice messages (#134)
+
+- The composer has a **Voice** button. The first tap asks the browser for the
+  microphone; Kin asks for nothing at page load. If it is refused, missing or
+  in use, a plain message says which, with a Close button; if the browser
+  can't record in a format Kin can send, the message says so.
+- Recording shows a running time and **Stop** and **Discard** buttons, and
+  stops by itself at five minutes (announced). The microphone is released the
+  moment recording stops, is discarded, or the page is hidden or locked.
+  Hiding the page keeps what was said for review; locking drops it.
+- After stopping, the recording can be played back with the browser's native
+  audio controls, then **Send voice message** or **Discard**. A failed send
+  keeps the recording.
+- In the log a voice message is a group named "Voice message from Sam, 0:42"
+  with a Play/Pause button, a waveform that is also a native slider (arrow
+  keys move through the message; the slider reads "0:21 of 0:42"), the time,
+  and a 1×/1.5×/2× speed button. Nothing is downloaded or decrypted until it
+  is played. If it can't be played the message says so beside it.
+- There is no transcription and no automatic captioning; the waveform is drawn
+  by the engine from the recording on the sender's device. A voice message is
+  an ordinary attachment: it is sealed, kept, expires, exports and is deleted
+  exactly like any other file.
+
+# 30. Attaching in chat: paste, drop, camera, progress, retry (#115, #116)
+
+- **Paste.** Pasting a picture or file into the message box adds it to the
+  files to send. When files can't be added (read-only, editing, recording,
+  sending) the message box says so. A dropped folder is refused by name as
+  empty. Pasted text, including text that also carries a picture (as a
+  spreadsheet does), pastes as text.
+- **Drop.** On a desktop, dragging files over the chat outlines the composer
+  and dropping adds them. When the member can't post, is editing or
+  recording, or is already sending, no outline shows and the drop is
+  refused with a message (the browser never opens the file in the tab).
+- **Camera.** On a phone or tablet (a touch screen as the main pointer) a
+  **Camera** button beside Attach opens the device's camera for one photo. It
+  is not shown on a desktop.
+- **Every addition is announced** ("2 files added.") and limited like the
+  Attach button: up to ten files, 25 MB each.
+- **Progress and Cancel.** While Send prepares the files, each listed file
+  shows a native progress bar named "Preparing <name>", and **Cancel sending**
+  stops it. Cancelling leaves the files and the caption where they were and
+  says so.
+- **Retry.** If sending fails, the caption and files stay, the message says
+  so, and a **Retry** button beside Send tries again with the same draft.
+  Removing the last file hides it.
+

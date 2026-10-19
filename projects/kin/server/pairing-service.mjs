@@ -30,6 +30,9 @@ import {
 export {
   canManageTrust,
   canParticipate,
+  chatAccess,
+  chatPolicyOf,
+  CHAT_ACCESS,
   CLAIM_TTL_MS,
   isHouseholdAdmin,
   isTemporaryMember,

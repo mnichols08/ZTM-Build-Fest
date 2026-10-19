@@ -7,6 +7,12 @@ const MAX_CIPHERTEXT = 4 * 1024 * 1024 + 4096;
 // The wording names the actual problem so a person can pick a different file.
 export function attachmentFileProblem(file) {
   if (!(file instanceof Blob)) return "Choose a photo or PDF to attach.";
+  return attachmentMetaProblem(file);
+}
+
+/** The same rules from a file's type and size alone (a chat attachment that
+ * hasn't been opened yet, #132). */
+export function attachmentMetaProblem(file) {
   if (file.size < 1) return "That file is empty. Choose a photo or PDF that has content.";
   if (!ALLOWED_ATTACHMENT_TYPES.has(file.type)) {
     const kind = typeof file.type === "string" && file.type ? ` (${file.type})` : "";

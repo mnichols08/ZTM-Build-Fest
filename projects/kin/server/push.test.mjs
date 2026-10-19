@@ -114,9 +114,9 @@ function household({ store = null } = {}) {
   });
   sync.pushService = push;
   const adult = pairing.bootstrap({ credential: credential("adult") });
-  const join = (id) => {
+  const join = (id, options) => {
     now += 60_001;
-    const invitation = pairing.createPairing(adult.sessionToken);
+    const invitation = pairing.createPairing(adult.sessionToken, options);
     const claim = pairing.claimPairing({ code: invitation.code, credential: credential(id), deviceLabel: "Edge on Windows" });
     pairing.approvePairing(adult.sessionToken, invitation.pairingId, claim.version);
     return pairing.activateClaim(claim.claimToken);
@@ -195,6 +195,23 @@ test("a sync-accepted batch notifies only other members' unmuted devices, conten
   assert.deepEqual(h.sent.map((entry) => entry.deviceId), [partner.deviceId], "member_id excludes every author's device; mute excludes the other member");
   assert.equal(h.sent[0].options.payload, '{"v":1,"kind":"new"}');
   assert.equal(h.sent[0].options.topic, "kin-new");
+});
+
+test("a chat push skips a member the chat policy shuts out; other pushes still reach them", async () => {
+  const h = household();
+  const child = h.join("child", { kind: "limited" });
+  const partner = h.join("partner");
+  h.subscribe(child);
+  h.subscribe(partner);
+  h.pairing.setChatPolicy(h.adult.sessionToken, { limited: "none", temporary: "write" }, h.adult.memberId);
+  h.push.eventsAccepted(h.adult.householdId, h.adult.memberId, { chat: true });
+  await h.settle();
+  assert.deepEqual(h.sent.map((entry) => entry.deviceId), [partner.deviceId], "no chat notification for no access");
+  await h.advance(PUSH_COALESCE_MS + 1);
+  h.sent.length = 0;
+  h.push.eventsAccepted(h.adult.householdId, h.adult.memberId);
+  await h.settle();
+  assert.deepEqual(h.sent.map((entry) => entry.deviceId).sort(), [child.deviceId, partner.deviceId].sort(), "household changes still notify everyone");
 });
 
 test("notifications coalesce to one per device per two minutes, with one trailing send", async () => {

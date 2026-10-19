@@ -36,8 +36,9 @@ export class ConversationCommands {
             : "Handoff archived.",
       );
       this.ctx.peers.broadcastEventChange();
+      return true;
     } catch (error) {
-      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return;
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return false;
       if (error.code === 4 && submitted.handoffId) this.app.pendingRefresh = true;
       this.ctx.status.showAlert(
         error.userMessage ?? SAVE_ERROR,
@@ -45,6 +46,7 @@ export class ConversationCommands {
         submitted.handoffId ? submitted : null,
       );
       this.ctx.status.setStatus("");
+      return false;
     } finally {
       if (this.ctx.session.isCurrentSession(session)) {
         this.ctx.status.setBusy(false);

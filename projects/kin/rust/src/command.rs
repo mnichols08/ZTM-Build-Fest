@@ -154,6 +154,56 @@ pub enum HouseholdCommand {
         device_id: DeviceId,
         nickname: Option<String>,
     },
+    /// Posts a chat message whose content is the blob `blob_ref` (its
+    /// SHA-256), encrypted with `blob_key` (#109, #110).
+    PostChatMessage {
+        id: ChatMessageId,
+        content_kind: ChatContentKind,
+        blob_ref: [u8; 32],
+        blob_key: [u8; 32],
+        /// The message this one answers (#129).
+        reply_to: Option<ChatMessageId>,
+        /// Who it mentions (#130).
+        mentions: crate::chat::ChatMentions,
+    },
+    /// The author replaces a text message's content blob (and the mentions
+    /// it carries).
+    EditChatMessage {
+        id: ChatMessageId,
+        blob_ref: [u8; 32],
+        blob_key: [u8; 32],
+        mentions: crate::chat::ChatMentions,
+    },
+    /// The author deletes for everyone (`by_admin` false), or an admin
+    /// removes another member's message (`by_admin` true).
+    DeleteChatMessage {
+        id: ChatMessageId,
+        by_admin: bool,
+    },
+    /// Turns the context member's reaction `emoji` to a message on or off
+    /// (#127). It must change what the member's reaction is.
+    ReactChatMessage {
+        id: ChatMessageId,
+        emoji: String,
+        on: bool,
+    },
+    /// Pins a message or unpins one (#131). A pin needs a message that shows
+    /// and room under the limit; an unpin needs a message that is pinned.
+    PinChatMessage {
+        id: ChatMessageId,
+        on: bool,
+    },
+    /// The context member votes in a poll (#135): `options` is the choice as
+    /// a bit set (bit n is option n), replacing their earlier vote; none
+    /// clears it. The poll must be open and the vote must change something.
+    VoteChatPoll {
+        id: ChatMessageId,
+        options: u16,
+    },
+    /// The poll's author closes it (#135).
+    CloseChatPoll {
+        id: ChatMessageId,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -375,6 +425,50 @@ pub fn create_event(
                 .map(crate::state::normalize_device_nickname)
                 .transpose()?,
         },
+        PostChatMessage {
+            id,
+            content_kind,
+            blob_ref,
+            blob_key,
+            reply_to,
+            mentions,
+        } => EventKind::ChatMessagePosted {
+            message_id: *id,
+            content_kind: *content_kind,
+            blob_ref: *blob_ref,
+            blob_key: *blob_key,
+            reply_to: *reply_to,
+            mentions: mentions.clone(),
+        },
+        EditChatMessage {
+            id,
+            blob_ref,
+            blob_key,
+            mentions,
+        } => EventKind::ChatMessageEdited {
+            message_id: *id,
+            blob_ref: *blob_ref,
+            blob_key: *blob_key,
+            mentions: mentions.clone(),
+        },
+        DeleteChatMessage { id, by_admin } => EventKind::ChatMessageDeleted {
+            message_id: *id,
+            by_admin: *by_admin,
+        },
+        ReactChatMessage { id, emoji, on } => EventKind::ChatReactionSet {
+            message_id: *id,
+            emoji: emoji.clone(),
+            on: *on,
+        },
+        PinChatMessage { id, on } => EventKind::ChatPinSet {
+            message_id: *id,
+            on: *on,
+        },
+        VoteChatPoll { id, options } => EventKind::ChatPollVote {
+            message_id: *id,
+            options: *options,
+        },
+        CloseChatPoll { id } => EventKind::ChatPollClosed { message_id: *id },
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -397,6 +491,8 @@ pub fn create_event(
 #[derive(Debug)]
 pub struct CommandResult {
     pub event: EventEnvelope,
+    /// The household with the event applied. For a chat command against the
+    /// chat log: the state before it, and `encoded_projection` is empty.
     pub projection: HouseholdState,
     pub encoded_projection: Vec<u8>,
 }
@@ -409,6 +505,25 @@ pub trait CommandHistory {
     fn context(&self) -> &DecodedRequest;
     /// How many events the history holds.
     fn event_count(&self) -> usize;
+    /// Most events it may hold.
+    fn limit(&self) -> usize {
+        MAX_EVENT_COUNT
+    }
+    /// Whether it is the chat log, which takes chat commands only; every
+    /// other history takes every other command.
+    fn is_chat(&self) -> bool {
+        false
+    }
+    /// The household admins the host names for a chat command
+    /// (`kin_chat_execute`); an admin removal needs its actor among them.
+    fn chat_admins(&self) -> &[ActorId] {
+        &[]
+    }
+    /// The members the host names as able to read chat (#130): the only ones
+    /// a message may mention by name.
+    fn chat_members(&self) -> &[ActorId] {
+        &[]
+    }
     /// Whether some event rules out a new event with `context`: it belongs to
     /// another household, is not earlier, or has the same event ID.
     fn conflicts_with(&self, context: &CommandContext) -> bool;
@@ -453,6 +568,8 @@ impl CommandHistory for WholeRequest {
 pub struct HeldHistory<'h> {
     history: &'h mut crate::history::History,
     context: DecodedRequest,
+    admins: Vec<ActorId>,
+    members: Vec<ActorId>,
 }
 
 impl<'h> HeldHistory<'h> {
@@ -462,7 +579,24 @@ impl<'h> HeldHistory<'h> {
         context: DecodedRequest,
     ) -> Result<Self, KinError> {
         history.replay(&context)?;
-        Ok(Self { history, context })
+        Ok(Self {
+            history,
+            context,
+            admins: Vec::new(),
+            members: Vec::new(),
+        })
+    }
+
+    /// Names the household admins for chat commands.
+    pub fn with_admins(mut self, admins: Vec<ActorId>) -> Self {
+        self.admins = admins;
+        self
+    }
+
+    /// Names the members who may be mentioned in chat commands (#130).
+    pub fn with_members(mut self, members: Vec<ActorId>) -> Self {
+        self.members = members;
+        self
     }
 
     fn replay(&self) -> Result<&crate::replay::Replay, KinError> {
@@ -476,6 +610,18 @@ impl CommandHistory for HeldHistory<'_> {
     }
     fn event_count(&self) -> usize {
         self.history.len()
+    }
+    fn limit(&self) -> usize {
+        self.history.limit()
+    }
+    fn is_chat(&self) -> bool {
+        self.history.log() == crate::history::Log::Chat
+    }
+    fn chat_admins(&self) -> &[ActorId] {
+        &self.admins
+    }
+    fn chat_members(&self) -> &[ActorId] {
+        &self.members
     }
     // Every applied event shares the replay's household, its last logical
     // time is the greatest, and it knows every applied event ID.
@@ -493,6 +639,13 @@ impl CommandHistory for HeldHistory<'_> {
             .finalize(self.context.as_of, self.context.civil_date)
     }
     fn with_event(&mut self, event: &EventEnvelope) -> Result<(HouseholdState, Vec<u8>), KinError> {
+        if self.is_chat() {
+            // A chat event changes no projection. Applying it to a copy would
+            // copy the whole chat (copy-on-write), so the result carries the
+            // state before the event and no KINS bytes; the host reads the
+            // chat through a page once it has stored the event.
+            return Ok((self.current()?, Vec::new()));
+        }
         let mut candidate = self.replay()?.clone();
         candidate.note_archives(std::slice::from_ref(event));
         candidate.apply(event)?;
@@ -521,7 +674,18 @@ pub fn execute_with(
     context: CommandContext,
     history: &mut dyn CommandHistory,
 ) -> Result<CommandResult, KinError> {
-    if history.event_count() >= MAX_EVENT_COUNT
+    let chat_command = matches!(
+        command,
+        HouseholdCommand::PostChatMessage { .. }
+            | HouseholdCommand::EditChatMessage { .. }
+            | HouseholdCommand::DeleteChatMessage { .. }
+            | HouseholdCommand::ReactChatMessage { .. }
+            | HouseholdCommand::PinChatMessage { .. }
+            | HouseholdCommand::VoteChatPoll { .. }
+            | HouseholdCommand::CloseChatPoll { .. }
+    );
+    if history.event_count() >= history.limit()
+        || chat_command != history.is_chat()
         || !valid_timestamp(context.timestamp)
         || context.logical_time == 0
         || context.logical_time > crate::state::MAX_LOGICAL_TIME
@@ -602,6 +766,158 @@ pub fn execute_with(
                     && device.member_id == context.actor_id
                     && device.nickname != nickname
             }) {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        _ => {}
+    }
+    // Chat: a command must change the chat, under the rules replay applies
+    // (replay/chat.rs). Whether a remover is an admin is the service's to
+    // say; the host offers removal only to admins, and a page counts a
+    // removal only while its claimant is one.
+    match command {
+        // A blob reference is used once in a log (chat.rs `seen`).
+        HouseholdCommand::PostChatMessage {
+            id,
+            content_kind,
+            blob_ref,
+            reply_to,
+            mentions,
+            ..
+        } => {
+            if current.chat.get(id).is_some() || current.chat.seen.contains(blob_ref) {
+                return Err(KinError::InvalidEvent);
+            }
+            // A poll stands alone: no reply, no mentions, a valid shape.
+            if let ChatContentKind::Poll(spec) = content_kind {
+                if !spec.is_valid() || reply_to.is_some() || !mentions.is_empty() {
+                    return Err(KinError::InvalidEvent);
+                }
+            }
+            check_mentions(mentions, history.chat_members())?;
+            // A reply answers a message this log holds that still shows.
+            if let Some(original) = reply_to {
+                let message = current.chat.get(original).ok_or(KinError::InvalidEvent)?;
+                if !matches!(
+                    current.chat.shown_status(message, history.chat_admins()),
+                    crate::chat::ChatMessageStatus::Live | crate::chat::ChatMessageStatus::Edited
+                ) {
+                    return Err(KinError::InvalidEvent);
+                }
+            }
+        }
+        HouseholdCommand::EditChatMessage {
+            id,
+            blob_ref,
+            mentions,
+            ..
+        } => {
+            check_mentions(mentions, history.chat_members())?;
+            if current.chat.seen.contains(blob_ref)
+                || !current.chat.get(id).is_some_and(|message| {
+                    message.author == context.actor_id
+                        && message.status != crate::chat::ChatMessageStatus::Deleted
+                        && message.content_kind == ChatContentKind::Text
+                })
+            {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::DeleteChatMessage { id, by_admin } => {
+            let message = current.chat.get(id).ok_or(KinError::InvalidEvent)?;
+            let own = message.author == context.actor_id;
+            if message.status == crate::chat::ChatMessageStatus::Deleted
+                || *by_admin == own
+                || *by_admin
+                    && (!history.chat_admins().contains(&context.actor_id)
+                        || current
+                            .chat
+                            .admin_claims
+                            .get(id)
+                            .is_some_and(|claims| claims.contains(&context.actor_id)))
+            {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::ReactChatMessage { id, emoji, on } => {
+            crate::chat::check_emoji(emoji)?;
+            let message = current.chat.get(id).ok_or(KinError::InvalidEvent)?;
+            if !matches!(
+                current.chat.shown_status(message, history.chat_admins()),
+                crate::chat::ChatMessageStatus::Live | crate::chat::ChatMessageStatus::Edited
+            ) {
+                return Err(KinError::InvalidEvent);
+            }
+            let groups = current
+                .chat
+                .reactions
+                .get(id)
+                .map_or(&[][..], Vec::as_slice);
+            let group = groups.iter().find(|group| group.emoji == *emoji);
+            let mine = group.is_some_and(|group| group.actors.contains(&context.actor_id));
+            if mine == *on
+                || *on && group.is_none() && groups.len() >= crate::chat::MAX_REACTION_GROUPS
+            {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::PinChatMessage { id, on } => {
+            let pinned = current.chat.is_pinned(id);
+            if *on {
+                let message = current.chat.get(id).ok_or(KinError::InvalidEvent)?;
+                if pinned
+                    || !matches!(
+                        current.chat.shown_status(message, history.chat_admins()),
+                        crate::chat::ChatMessageStatus::Live
+                            | crate::chat::ChatMessageStatus::Edited
+                    )
+                    || current.chat.pins.len() >= crate::chat::MAX_PIN_RECORDS
+                    || current.chat.shown_pins(history.chat_admins()).len() >= crate::chat::MAX_PINS
+                {
+                    return Err(KinError::InvalidEvent);
+                }
+            } else if !pinned {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::VoteChatPoll { id, options } => {
+            let message = current.chat.get(id).ok_or(KinError::InvalidEvent)?;
+            let (spec, closed) = current.chat.poll_of(id).ok_or(KinError::InvalidEvent)?;
+            let earlier = current
+                .chat
+                .polls
+                .get(id)
+                .and_then(|poll| poll.votes.get(&context.actor_id))
+                .copied()
+                .unwrap_or(0);
+            let full = earlier == 0
+                && current
+                    .chat
+                    .polls
+                    .get(id)
+                    .is_some_and(|poll| poll.votes.len() >= crate::chat::MAX_POLL_VOTERS);
+            if closed
+                || full
+                || !spec.allows(*options)
+                || earlier == *options
+                || !matches!(
+                    current.chat.shown_status(message, history.chat_admins()),
+                    crate::chat::ChatMessageStatus::Live
+                )
+            {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::CloseChatPoll { id } => {
+            let message = current.chat.get(id).ok_or(KinError::InvalidEvent)?;
+            let (_, closed) = current.chat.poll_of(id).ok_or(KinError::InvalidEvent)?;
+            if closed
+                || message.author != context.actor_id
+                || !matches!(
+                    current.chat.shown_status(message, history.chat_admins()),
+                    crate::chat::ChatMessageStatus::Live
+                )
+            {
                 return Err(KinError::InvalidEvent);
             }
         }
@@ -911,22 +1227,27 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
     if bytes.len() != 128 + text_length {
         return Err(KinError::MalformedProtocol);
     }
-    let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41) {
+    let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41 | 44..=46 | 48..=50) {
         String::new()
     } else {
         std::str::from_utf8(&bytes[128..])
             .map_err(|_| KinError::MalformedProtocol)?
             .to_owned()
     };
-    let accepts_payload = matches!(kind, 1 | 5 | 8 | 14 | 18 | 19 | 42 | 43)
+    let accepts_payload = matches!(kind, 1 | 5 | 8 | 14 | 18 | 19 | 42 | 43 | 47)
         || kind == 21 && text_length == 16
         || matches!(kind, 22 | 23) && text_length >= 24
         || kind == 25 && (17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
         || kind == 39 && text_length == 16
-        || kind == 41 && text_length == 16;
+        || kind == 41 && text_length == 16
+        || matches!(kind, 44 | 45)
+            && (64..=64 + 2 + 16 * crate::chat::MAX_CHAT_MENTIONS + 16).contains(&text_length);
     if !text.is_empty() && !accepts_payload
-        || !matches!(kind, 14..=16 | 30) && date != 0
-        || !matches!(kind, 1 | 12 | 14 | 29 | 31 | 32 | 39 | 41) && option != 0
+        || !(matches!(kind, 14..=16 | 30 | 49) || kind == 44 && option == 3) && date != 0
+        || !matches!(
+            kind,
+            1 | 12 | 14 | 29 | 31 | 32 | 39 | 41 | 44 | 46 | 47 | 48
+        ) && option != 0
         || kind != 12 && expires != 0
         || matches!(kind, 12 | 13 | 29) && id != [0; 16]
         || kind == 21 && text_length != 16
@@ -943,6 +1264,18 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 42 && (id != [0; 16] || text.is_empty())
         || kind == 43 && id == [0; 16]
         || matches!(kind, 42 | 43) && text_length > crate::state::MAX_DEVICE_NAME_BYTES
+        || matches!(kind, 44..=50) && id == [0; 16]
+        || kind == 49 && date > u32::from(u16::MAX)
+        || matches!(kind, 49 | 50) && text_length != 0
+        || kind == 47
+            && (option > 1 || text.is_empty() || text_length > crate::chat::MAX_EMOJI_BYTES)
+        || matches!(kind, 44 | 45) && text_length < 64
+        || kind == 44 && !matches!(option, 1..=3)
+        || kind == 44 && option == 3 && date > 0x1ff
+        || kind == 44 && option == 3 && date >> 8 > 1
+        || kind == 44 && option == 3 && !(2..=10).contains(&(date & 0xff))
+        || matches!(kind, 46 | 48) && (text_length != 0 || option > 1)
+        || matches!(kind, 44 | 45) && (bytes[128..160] == [0; 32] || bytes[160..192] == [0; 32])
     {
         return Err(KinError::MalformedProtocol);
     }
@@ -1283,6 +1616,59 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             device_id: DeviceId(id),
             nickname: (!text.is_empty()).then_some(text),
         },
+        44 | 45 => {
+            let blob_ref = field(bytes, 128)?;
+            let blob_key = field(bytes, 160)?;
+            // After the blob: a reply's ID and/or mentions (#129, #130).
+            let (mentions, reply_to) =
+                crate::chat::ChatMentions::decode_tail(&bytes[192..], kind == 44)?;
+            if kind == 44 {
+                PostChatMessage {
+                    id: ChatMessageId(id),
+                    content_kind: match option {
+                        1 => ChatContentKind::Text,
+                        2 => ChatContentKind::Attachment,
+                        // A poll: the option count in the low byte of the
+                        // date field and a multiple-choice flag in the next.
+                        _ => ChatContentKind::Poll(crate::chat::PollSpec {
+                            options: (date & 0xff) as u8,
+                            multiple: date >> 8 == 1,
+                        }),
+                    },
+                    blob_ref,
+                    blob_key,
+                    reply_to,
+                    mentions,
+                }
+            } else {
+                EditChatMessage {
+                    id: ChatMessageId(id),
+                    blob_ref,
+                    blob_key,
+                    mentions,
+                }
+            }
+        }
+        46 => DeleteChatMessage {
+            id: ChatMessageId(id),
+            by_admin: option == 1,
+        },
+        47 => ReactChatMessage {
+            id: ChatMessageId(id),
+            emoji: text,
+            on: option == 1,
+        },
+        48 => PinChatMessage {
+            id: ChatMessageId(id),
+            on: option == 1,
+        },
+        49 => VoteChatPoll {
+            id: ChatMessageId(id),
+            options: date as u16,
+        },
+        50 => CloseChatPoll {
+            id: ChatMessageId(id),
+        },
         _ => return Err(KinError::UnsupportedVersion),
     };
     let context = CommandContext {
@@ -1320,6 +1706,82 @@ pub fn execute_history(
     let replay_context =
         crate::request::decode_context(bytes.get(end..).ok_or(KinError::MalformedProtocol)?)?;
     let mut held = HeldHistory::new(history, replay_context)?;
+    command_result(execute_with(&command, context, &mut held)?)
+}
+
+/// A message may mention only members the host names as able to read chat
+/// (#130); `@everyone` needs no list.
+fn check_mentions(
+    mentions: &crate::chat::ChatMentions,
+    members: &[ActorId],
+) -> Result<(), KinError> {
+    if mentions
+        .members
+        .iter()
+        .all(|member| members.contains(member))
+    {
+        Ok(())
+    } else {
+        Err(KinError::InvalidEvent)
+    }
+}
+
+/// A chat command against the instance's chat log (`kin_chat_execute`): u32
+/// intent length, the KCMD intent, u32 admin count (at most 16), the
+/// household admins' member IDs (16 bytes each, non-zero), u32 member count
+/// (at most 64) and the IDs of members who can read chat (#130), then a
+/// record-less KINE context. The admins are the service's word on who may
+/// remove other members' messages; an honest client offers removal only to
+/// them, and Rust refuses a removal by anyone else.
+pub fn execute_chat_history(
+    bytes: &[u8],
+    history: &mut crate::history::History,
+) -> Result<Vec<u8>, KinError> {
+    if bytes.len() > MAX_PROTOCOL_BYTES {
+        return Err(KinError::SizeLimit);
+    }
+    let command_length = u32::from_le_bytes(field(bytes, 0)?) as usize;
+    let end = 4usize
+        .checked_add(command_length)
+        .ok_or(KinError::MalformedProtocol)?;
+    let (command, context) = decode_command(bytes.get(4..end).ok_or(KinError::MalformedProtocol)?)?;
+    let admin_count = u32::from_le_bytes(field(bytes, end)?) as usize;
+    if admin_count > crate::chat::MAX_CHAT_ADMINS {
+        return Err(KinError::MalformedProtocol);
+    }
+    let admins_end = end + 4 + admin_count * 16;
+    let admins = bytes
+        .get(end + 4..admins_end)
+        .ok_or(KinError::MalformedProtocol)?
+        .chunks_exact(16)
+        .map(|chunk| ActorId(chunk.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    if admins.iter().any(|admin| admin.0 == [0; 16]) {
+        return Err(KinError::MalformedProtocol);
+    }
+    // The members able to read chat (#130), after the admins.
+    let member_count = u32::from_le_bytes(field(bytes, admins_end)?) as usize;
+    if member_count > crate::chat::MAX_CHAT_MEMBERS {
+        return Err(KinError::MalformedProtocol);
+    }
+    let members_end = admins_end + 4 + member_count * 16;
+    let members = bytes
+        .get(admins_end + 4..members_end)
+        .ok_or(KinError::MalformedProtocol)?
+        .chunks_exact(16)
+        .map(|chunk| ActorId(chunk.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    if members.iter().any(|member| member.0 == [0; 16]) {
+        return Err(KinError::MalformedProtocol);
+    }
+    let replay_context = crate::request::decode_context(
+        bytes
+            .get(members_end..)
+            .ok_or(KinError::MalformedProtocol)?,
+    )?;
+    let mut held = HeldHistory::new(history, replay_context)?
+        .with_admins(admins)
+        .with_members(members);
     command_result(execute_with(&command, context, &mut held)?)
 }
 

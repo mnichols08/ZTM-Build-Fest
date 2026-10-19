@@ -30,6 +30,7 @@ import { captureInvitationCode } from "../../pairing-link.js";
 import { AppearanceController } from "./appearance.js";
 import { AppendCommands } from "./commands/append.js";
 import { AttachmentController } from "./attachments.js";
+import { ChatShareController } from "./chat-share.js";
 import { BulkCommands } from "./commands/bulk.js";
 import { ConversationCommands } from "./commands/conversations.js";
 import { DetailController } from "./detail.js";
@@ -63,6 +64,7 @@ export function createAppContext(app) {
   ctx.routines = new RoutineCommands(ctx);
   ctx.records = new RecordCommands(ctx);
   ctx.attachments = new AttachmentController(ctx);
+  ctx.chatShare = new ChatShareController(ctx);
   ctx.navigation = new NavigationController(ctx);
   ctx.detail = new DetailController(ctx);
   ctx.appearance = new AppearanceController(ctx);
@@ -199,6 +201,8 @@ export function initializeAppState(app) {
     app.onOpenItem = (event) => app.ctx.detail.openItemDetail(event.detail.itemId, { opener: event.detail.opener ?? event.target });
     app.onCloseItemDetail = () => app.ctx.detail.closeItemDetail({ restoreFocus: true });
     app.onOpenSearchResult = (event) => app.ctx.navigation.handleOpenSearchResult(event.detail);
+    app.onChatToRecord = (event) => app.ctx.chatShare.open({ ...event.detail, opener: event.detail?.opener ?? null });
+    app.onOpenChatMessage = (event) => app.ctx.navigation.handleOpenChatMessage(event.detail);
     app.onPlaybookIntent = (event) => app.ctx.routines.handlePlaybookIntent(event);
     app.onLocalReminder = (event) => app.ctx.records.handleLocalReminder(event.detail);
     app.onCancelLocalReminder = (event) => { app.localReminders.cancel(event.detail.id); app.ctx.records.renderReminders(); app.ctx.status.setStatus("Reminder canceled on this device."); };
