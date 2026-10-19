@@ -928,7 +928,7 @@ async function api(request, response, url, context) {
   }
   if (url.pathname === "/api/chat/events" && request.method === "POST") {
     const auth = syncService.authorize(session);
-    json(response, 200, withTransaction(context, () => context.chatRelayService.push(auth, body)));
+    json(response, 200, withTransaction(context, () => context.chatRelayService.push(auth, body, { chatEpoch: Number(request.headers["x-kin-chat-epoch"] ?? 0) })));
     return;
   }
   if (url.pathname === "/api/chat/hidden" && request.method === "GET") {
@@ -956,6 +956,10 @@ async function api(request, response, url, context) {
   if (url.pathname === "/api/chat/keys" && request.method === "POST") {
     const auth = syncService.authorize(session);
     json(response, 200, withTransaction(context, () => context.chatRelayService.putKeys(auth, body)));
+    return;
+  }
+  if (url.pathname === "/api/chat/keys/reject" && request.method === "POST") {
+    json(response, 200, context.chatRelayService.rejectKey(syncService.authorize(session), body));
     return;
   }
   if (url.pathname === "/api/chat/status" && request.method === "GET") {

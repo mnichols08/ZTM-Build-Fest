@@ -695,6 +695,8 @@ export const schemaMethods = {
           this.db.exec(`
             ALTER TABLE households ADD COLUMN chat_key_epoch INTEGER NOT NULL DEFAULT 0
               CHECK (chat_key_epoch >= 0 AND chat_key_epoch <= 128);
+            ALTER TABLE households ADD COLUMN chat_key_since INTEGER NOT NULL DEFAULT 0
+              CHECK (chat_key_since >= 0);
             CREATE TABLE chat_key_packages (
               household_id TEXT NOT NULL REFERENCES households(id),
               key_epoch INTEGER NOT NULL CHECK (key_epoch >= 1 AND key_epoch <= 128),

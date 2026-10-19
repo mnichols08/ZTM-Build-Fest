@@ -96,8 +96,12 @@ class MemoryChatRelayStore {
     return expectedRevision + 1;
   }
   chatKeyEpoch(householdId) { return this.state(householdId).keyEpoch ?? 0; }
-  chatKeyHolders(householdId, keyEpoch) {
-    return [...(this.state(householdId).keyPackages ?? new Map())].filter(([, row]) => row.keyEpoch === keyEpoch).map(([, row]) => row.deviceId);
+  chatKeySince(householdId) { return this.state(householdId).keySince ?? 0; }
+  chatKeyHolderPairs(householdId) {
+    return [...(this.state(householdId).keyPackages ?? new Map()).values()].map((row) => ({ keyEpoch: row.keyEpoch, deviceId: row.deviceId }));
+  }
+  deleteChatKeyPackage(householdId, deviceId, keyEpoch) {
+    this.state(householdId).keyPackages?.delete(`${keyEpoch}:${deviceId}`);
   }
   chatKeyPackageEpochs(householdId, deviceId) {
     return this.chatKeyPackagesFor(householdId, deviceId).map((row) => row.keyEpoch);
@@ -106,9 +110,10 @@ class MemoryChatRelayStore {
     return [...(this.state(householdId).keyPackages ?? new Map()).values()].filter((row) => row.deviceId === deviceId)
       .sort((a, b) => a.keyEpoch - b.keyEpoch).map((row) => structuredClone(row));
   }
-  commitChatKeys(householdId, { expectedEpoch, epoch, packages }) {
+  commitChatKeys(householdId, { expectedEpoch, epoch, packages, since = 0 }) {
     const state = this.state(householdId);
     if ((state.keyEpoch ?? 0) !== expectedEpoch) throw new DurableConflictError("chat_keys_stale", "The chat key changed meanwhile.");
+    if (expectedEpoch === 0 && epoch === 1) state.keySince = since;
     state.keyEpoch = epoch;
     state.keyPackages ??= new Map();
     for (const entry of packages) {
@@ -167,7 +172,7 @@ export class ChatRelayService {
       throw new PairingError("chat_read_only", "Your household has set chat to read-only for you.", 403);
   }
 
-  push(auth, envelopes) {
+  push(auth, envelopes, { chatEpoch = 0 } = {}) {
     this.assertCanChat(auth, "write");
     const sync = this.syncService.state(auth.household.id);
     if (!sync.enabled)
@@ -178,6 +183,11 @@ export class ChatRelayService {
     // has lost chat access still holds: wait for an adult's device to rotate.
     if (this.keyState(auth).rotate)
       throw new PairingError("chat_key_rotation_pending", "Chat is paused until its key is updated.", 409);
+    // The sender says which chat key its events are sealed under; the service
+    // can't look, but a sender whose view is behind (it was sealed before a
+    // rotation) must seal again, not put plain events into a keyed chat.
+    if (chatEpoch !== this.storage.chatKeyEpoch(auth.household.id))
+      throw new PairingError("chat_key_stale", "The chat key changed. Chat will send again after the next sync.", 409);
     if (!Array.isArray(envelopes) || envelopes.length < 1 || envelopes.length > MAX_EVENTS_PER_BATCH)
       throw new PairingError("sync_batch_invalid", "That chat batch is invalid.", 400);
     const householdId = auth.household.id;
@@ -343,25 +353,30 @@ export class ChatRelayService {
     const eligibleIds = new Set(eligible.map((device) => device.id));
     let rotate = false;
     const missing = new Map();
+    // Epochs no device that may read still holds: messages sealed under them
+    // can never be opened again.
+    const lost = [];
     if (epoch === 0) {
       // No chat key yet: one is needed as soon as someone is shut out of chat.
       rotate = live.length > eligible.length;
     } else {
       const held = new Map();
-      for (let keyEpoch = 1; keyEpoch <= epoch; keyEpoch += 1) held.set(keyEpoch, new Set(this.storage.chatKeyHolders(householdId, keyEpoch)));
+      for (let keyEpoch = 1; keyEpoch <= epoch; keyEpoch += 1) held.set(keyEpoch, new Set());
+      for (const { keyEpoch, deviceId } of this.storage.chatKeyHolderPairs(householdId)) held.get(keyEpoch)?.add(deviceId);
       rotate = [...held.get(epoch)].some((deviceId) => !eligibleIds.has(deviceId));
+      for (const [keyEpoch, holders] of held) if (![...holders].some((deviceId) => eligibleIds.has(deviceId))) lost.push(keyEpoch);
       for (const device of eligible) {
         const lacks = [...held].filter(([, holders]) => !holders.has(device.id)).map(([keyEpoch]) => keyEpoch);
         if (lacks.length) missing.set(device.id, lacks);
       }
     }
-    return { epoch, rotate, missing, eligible };
+    return { epoch, rotate, missing, eligible, lost };
   }
 
   /** What a status check tells this device about the chat key. */
   keySummary(auth) {
     const access = chatAccess(auth.member, auth.household, this.syncService.now());
-    if (access === "none") return { epoch: 0, pending: false, action: null, held: 0 };
+    if (access === "none") return { epoch: 0, pending: false, action: null, held: 0, since: 0, lost: [] };
     const state = this.keyState(auth);
     const held = this.storage.chatKeyPackageEpochs(auth.household.id, auth.device.id);
     let action = null;
@@ -370,7 +385,7 @@ export class ChatRelayService {
       const mine = new Set(held);
       if ([...state.missing.values()].some((epochs) => epochs.some((keyEpoch) => mine.has(keyEpoch)))) action = "grant";
     }
-    return { epoch: state.epoch, pending: state.rotate, action, held: held.length };
+    return { epoch: state.epoch, pending: state.rotate, action, held: held.length, since: this.storage.chatKeySince(auth.household.id), lost: state.lost };
   }
 
   /** This device's chat key packages, and what it can do for the others. */
@@ -414,7 +429,7 @@ export class ChatRelayService {
     if (rotation) {
       if (!state.rotate || !canManageTrust(auth.member) || !state.eligible.some((device) => device.id === auth.device.id)) throw stale();
       if (body.epoch > MAX_CHAT_KEY_EPOCHS) throw new PairingError("chat_key_epoch_limit", "This household reached its chat key rotation limit.", 409);
-    } else if (body.epoch !== state.epoch || state.rotate || state.epoch === 0) throw stale();
+    } else if (body.epoch !== state.epoch || state.rotate || state.epoch === 0 || !canManageTrust(auth.member)) throw stale();
     const devices = new Map(state.eligible.map((device) => [device.id, device]));
     const mine = new Set(this.storage.chatKeyPackageEpochs(householdId, auth.device.id));
     const seen = new Set(), staged = [];
@@ -436,9 +451,12 @@ export class ChatRelayService {
       staged.push({ deviceId: device.id, keyEpoch: entry.keyEpoch, senderDeviceId: auth.device.id, package: keyPackage });
     }
     // A rotation reaches every device that may read, no more and no fewer.
-    if (rotation && (staged.length !== devices.size)) throw invalid();
+    if (rotation && staged.length !== devices.size) throw stale();
     try {
-      this.storage.commitChatKeys(householdId, { expectedEpoch: body.expectedEpoch, epoch: body.epoch, packages: staged });
+      this.storage.commitChatKeys(householdId, {
+        expectedEpoch: body.expectedEpoch, epoch: body.epoch, packages: staged,
+        since: this.storage.chatRelayState(householdId).nextSequence,
+      });
     } catch (error) {
       if (error instanceof DurableConflictError) throw stale();
       throw error;
@@ -449,6 +467,17 @@ export class ChatRelayService {
     }
     this.syncService.hintHousehold(householdId, auth.device.id);
     return { epoch: body.epoch, ...this.keySummary(auth) };
+  }
+
+  /** A device that could not open one of its own packages drops it, so a
+   * holder shares the key with it again. */
+  rejectKey(auth, body) {
+    this.assertCanChat(auth);
+    if (!Number.isSafeInteger(body?.keyEpoch) || body.keyEpoch < 1 || body.keyEpoch > MAX_CHAT_KEY_EPOCHS)
+      throw new PairingError("chat_keys_invalid", "Those chat keys could not be verified.", 400);
+    this.storage.deleteChatKeyPackage(auth.household.id, auth.device.id, body.keyEpoch);
+    this.syncService.hintHousehold(auth.household.id, auth.device.id);
+    return this.keySummary(auth);
   }
 
   /** In-memory mode only: the durable store purges with the household. */

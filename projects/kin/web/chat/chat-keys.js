@@ -41,9 +41,16 @@ export const chatKeyFamily = (householdId) => `chat:${householdId}`;
 export class ChatKeyError extends Error {
   constructor(message, code = "chat_key_missing") {
     super(message);
-    this.name = "ChatRoomError";
+    this.name = "ChatKeyError";
     this.code = code;
   }
+}
+
+/** The relay sequence a pull cursor (8 bytes, big-endian, base64url) names. */
+export function cursorSequence(cursor) {
+  const text = String(cursor).replace(/-/g, "+").replace(/_/g, "/");
+  const bytes = Uint8Array.from(atob(text.padEnd(Math.ceil(text.length / 4) * 4, "=")), (char) => char.charCodeAt(0));
+  return bytes.length === 8 ? Number(new DataView(bytes.buffer).getBigUint64(0)) : 0;
 }
 
 const randomIdHex = () => [...crypto.getRandomValues(new Uint8Array(16))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -62,6 +69,10 @@ export class ChatKeys {
     this.epoch = 0;
     /** The service wants the key replaced before anything more is sent. */
     this.pending = false;
+    /** The relay position from which events must be sealed (0: none yet), and
+     * the epochs no device that may read still holds. */
+    this.since = 0;
+    this.lost = new Set();
     this.keys = new Map();
     this.fetched = 0;
   }
@@ -103,11 +114,25 @@ export class ChatKeys {
 
   /** The encoded event inside decrypted envelope bytes, and the chat key
    * epoch it was sealed under (0 for an event from before the chat key).
-   * The input is wiped when a new array is returned. */
-  async open(bytes, eventId) {
-    if (!isSealed(bytes)) return { plaintext: bytes, keyEpoch: 0 };
+   * `sequence` is the event's relay position when it is being checked as it
+   * arrives: from the position the first chat key began, an event must be
+   * sealed, or anyone holding only the household key could have written (and
+   * could read) it. The input is wiped when a new array is returned. */
+  async open(bytes, eventId, { sequence = null } = {}) {
+    if (!isSealed(bytes)) {
+      if (sequence !== null && this.since > 0 && sequence >= this.since)
+        throw new ChatKeyError("A chat message wasn't sealed under the chat key.", "chat_event_refused");
+      return { plaintext: bytes, keyEpoch: 0 };
+    }
     const keyEpoch = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(4);
     if (keyEpoch < 1) throw new ChatKeyError("A chat message names an invalid chat key.", "chat_event_refused");
+    // A key epoch the household hasn't reached is wrong, or newer than this
+    // device's last look (the next pass tells which); one no device that may
+    // read still holds can never be opened.
+    if (sequence !== null && this.epoch > 0 && keyEpoch > this.epoch)
+      throw new ChatKeyError("A chat message names a chat key that doesn't exist yet.", "chat_key_future");
+    if (this.lost.has(keyEpoch) && !this.keys.has(keyEpoch) && !(await this.keyStore.getEpoch(this.family, keyEpoch)))
+      throw new ChatKeyError("A chat message was sealed under a chat key no device has any more.", "chat_event_refused");
     const key = await this.key(keyEpoch);
     let plaintext;
     try {
@@ -130,6 +155,8 @@ export class ChatKeys {
     const summary = status.chat?.key ?? { epoch: 0, pending: false, action: null, held: 0 };
     this.epoch = summary.epoch;
     this.pending = summary.pending === true;
+    this.since = Number.isSafeInteger(summary.since) ? summary.since : 0;
+    this.lost = new Set(Array.isArray(summary.lost) ? summary.lost : []);
     if (!deviceKeys?.keys || (summary.epoch === 0 && !summary.action)) return;
     const behind = summary.epoch > 0 &&
       ((summary.held ?? 0) > this.fetched || !(await this.keyStore.getEpoch(this.family, summary.epoch)));
@@ -166,20 +193,32 @@ export class ChatKeys {
           keyPackage?.senderDeviceId !== row.senderDeviceId || keyPackage?.recipientDeviceId !== this.identity.deviceId) continue;
       const sender = devices.find((device) => device.deviceId === row.senderDeviceId);
       if (!sender?.publicKeys) continue;
-      let received;
-      for (const entry of [...(sender.verifiedKeyHistory ?? [{ publicKeys: sender.publicKeys }])].reverse()) {
-        const signer = await importDevicePublicKeys(entry.publicKeys);
-        try {
-          received = await unwrapEpochKey({
-            package: keyPackage, deviceKeys: deviceKeys.keys, householdId: this.family, deviceId: this.identity.deviceId,
-            deviceFingerprint: deviceKeys.fingerprint, senderSigningKey: signer.signing,
-            // The service only stores packages it accepted; an old one is still good.
-            allowExpiredCommittedRotation: true,
-          });
-          break;
-        } catch (error) { if (error.code !== "provisioning_signature_invalid") throw error; }
+      let received, broken = false;
+      try {
+        for (const entry of [...(sender.verifiedKeyHistory ?? [{ publicKeys: sender.publicKeys }])].reverse()) {
+          const signer = await importDevicePublicKeys(entry.publicKeys);
+          try {
+            received = await unwrapEpochKey({
+              package: keyPackage, deviceKeys: deviceKeys.keys, householdId: this.family, deviceId: this.identity.deviceId,
+              deviceFingerprint: deviceKeys.fingerprint, senderSigningKey: signer.signing,
+              // The service only stores packages it accepted; an old one is still good.
+              allowExpiredCommittedRotation: true,
+            });
+            break;
+          } catch (error) { if (error.code !== "provisioning_signature_invalid") throw error; }
+        }
+        broken = !received;
+      } catch (error) {
+        // A package this device can't open (made for an older key of this
+        // device, or damaged): leave it, carry on with the others.
+        if (!String(error?.code ?? "").startsWith("provisioning_")) throw error;
+        broken = true;
       }
-      if (!received) continue;
+      if (broken) {
+        // Dropped, so a device that holds the key shares it again.
+        try { await this.request("/api/chat/keys/reject", { method: "POST", body: JSON.stringify({ keyEpoch: row.keyEpoch }) }); } catch { /* the next pass tries again */ }
+        continue;
+      }
       await this.keyStore.saveEpoch({ householdId: this.family, keyEpoch: row.keyEpoch, ...received });
       held.add(row.keyEpoch);
     }

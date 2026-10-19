@@ -115,6 +115,7 @@ test("server schema v1 upgrades transactionally through chat preferences schema 
     try {
       legacy.exec(`
         DROP TABLE chat_key_packages;
+        ALTER TABLE households DROP COLUMN chat_key_since;
         ALTER TABLE households DROP COLUMN chat_key_epoch;
         DELETE FROM server_migrations WHERE version = 17;
         ALTER TABLE households DROP COLUMN chat_policy_revision;
@@ -493,6 +494,7 @@ test("household admins persist across restart and the v8 migration promotes only
     try {
       legacy.exec(`
         DROP TABLE chat_key_packages;
+        ALTER TABLE households DROP COLUMN chat_key_since;
         ALTER TABLE households DROP COLUMN chat_key_epoch;
         DELETE FROM server_migrations WHERE version = 17;
         ALTER TABLE households DROP COLUMN chat_policy_revision;

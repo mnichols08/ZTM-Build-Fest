@@ -776,6 +776,23 @@ devices of members allowed to read are given.
   a device revoked. A device that gains access, or is added, is **granted** the
   keys it lacks by any device that holds them (`action = "grant"`), so it can
   read history, including what was sent while it had no access.
+- **Plain events are refused once the key begins.** The service records the relay
+  position where the first chat key took effect (`chat.key.since`). From there
+  on a reader refuses an event that isn't sealed (anyone holding only the
+  household key could have written it), so a modified client cannot slip
+  readable chat into a keyed household. A push carries the chat key epoch it
+  was sealed under (`X-Kin-Chat-Epoch`); the service answers
+  `chat_key_stale` (409) for a sender whose view is behind, which seals again
+  and sends on the next pass. A sealed event naming an epoch beyond the
+  household's is looked at a second time before it is skipped, and one sealed
+  under an epoch no device that may read still holds (`chat.key.lost`) is
+  skipped at once, so neither stalls chat.
+- **Who may share keys.** A rotation and a grant both need an Adult's device
+  that is allowed to chat, the same trust the household key has. The service
+  cannot check a package's signature or contents, so a device that finds it
+  cannot open one of its own drops it (`POST /api/chat/keys/reject`) and is
+  offered a fresh one; a malicious Adult could still hand out a wrong key, as
+  they could with the household key.
 - **Devices** fetch their packages with `GET /api/chat/keys`, verify the signer
   against the verified device directory, and store the key sealed in the device
   key store under the family label, so root rotation re-seals it with the
@@ -787,7 +804,10 @@ devices of members allowed to read are given.
   records still use the household key: the service refuses them to no-access
   members, but that is enforcement, not encryption. A rotation needs an Adult's
   device that is allowed to chat to be online; until then chat is paused for
-  everyone so nothing is sent under a key a shut-out device holds.
+  everyone so nothing is sent under a key a shut-out device holds. A household
+  that already shuts a class out when it upgrades is paused the same way until
+  an updated Adult device rotates. The key epoch count is capped at 128, as the
+  household key's is; there is no recovery path past it.
 
 ## Privacy boundary
 

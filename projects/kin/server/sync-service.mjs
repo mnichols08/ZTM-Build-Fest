@@ -75,7 +75,7 @@ export class EncryptedSyncService {
       chat: {
         access: chatAccess(auth.member, auth.household, this.now()),
         policyRevision: policy.revision,
-        key: this.chatRelayService?.keySummary(auth) ?? { epoch: 0, pending: false, action: null, held: 0 },
+        key: this.chatRelayService?.keySummary(auth) ?? { epoch: 0, pending: false, action: null, held: 0, since: 0, lost: [] },
         ...(isHouseholdAdmin(auth.member, this.now()) ? { policy: { limited: policy.limited, temporary: policy.temporary } } : {}),
       },
       currentEpoch: state.currentEpoch,

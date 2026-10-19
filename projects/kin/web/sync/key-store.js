@@ -24,6 +24,10 @@ const KEY_DEFINITIONS = {
 };
 const DEVICE_STORE = "devices";
 const EPOCH_STORE = "epochs";
+// Epoch rows are labelled with a key family: a household ID, or "chat:<id>"
+// for the household's dedicated chat key (#123). Either is held by the
+// devices of that household.
+const deviceHouseholdOf = (label) => (typeof label === "string" && label.startsWith("chat:") ? label.slice(5) : label);
 const TRUSTED_DEVICE_STORE = "trusted_devices";
 const HOUSEHOLD_SETTINGS_STORE = "household_settings";
 const PENDING_DEVICE_ID = "pending";
@@ -338,7 +342,7 @@ export class SyncKeyStore {
     const request = tx.objectStore(DEVICE_STORE).getAll();
     const devices = await transactionResult(tx, finish => { request.onsuccess = () => finish(request.result); });
     for (const stored of devices) {
-      if (stored.householdId && stored.householdId !== record.householdId) continue;
+      if (stored.householdId && stored.householdId !== deviceHouseholdOf(record.householdId)) continue;
       const device = await hydrateDevice(stored, this.vault);
       try {
         const householdKey = await restoreHouseholdEpochKey({ sealed: record.sealed, deviceKeys: device.keys });
@@ -551,7 +555,7 @@ export async function migrateSyncKeys(vault, { prepareOnly = true, check = async
 
 async function resealForMigration(sealed, oldDevices, newDevices, legacyEpoch = null) {
   for (const old of oldDevices) {
-    if (old.householdId && old.householdId !== sealed.householdId) continue;
+    if (old.householdId && old.householdId !== deviceHouseholdOf(sealed.householdId)) continue;
     const replacement = newDevices.find(record => record.deviceId === old.deviceId);
     if (!replacement) continue;
     const newDeviceKeys = await importProtectedDeviceKeys(replacement.serializedKeys);
@@ -769,7 +773,7 @@ async function verifyPrivateCapabilities(keys) {
 
 async function verifyEpochWithDevices(record, devices) {
   for (const device of devices) {
-    if (device.householdId && device.householdId !== record.householdId) continue;
+    if (device.householdId && device.householdId !== deviceHouseholdOf(record.householdId)) continue;
     try { return await verifyStoredHouseholdEpoch({ record, deviceKeys: device.keys }); }
     catch (error) { if (error.code !== "stored_key_invalid") throw error; }
   }

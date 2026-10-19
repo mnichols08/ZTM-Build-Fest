@@ -34,7 +34,7 @@ import { ChatRecords } from "./chat-records.js";
 import { memberLabels } from "../components/household/member-labels.js";
 import { MAX_HIDDEN_MESSAGES, openHiddenRecord, sealHiddenRecord } from "./chat-hidden.js";
 import { ChatPresence } from "./chat-presence.js";
-import { ChatKeys } from "./chat-keys.js";
+import { ChatKeys, cursorSequence } from "./chat-keys.js";
 
 
 
@@ -62,7 +62,9 @@ const FINAL_RETIRE_REFUSALS = new Set(["chat_blob_retire_forbidden", "chat_blob_
  * else (an unknown device, a missing key epoch, a storage error) pauses chat
  * for a retry. */
 const FINAL_REFUSALS = new Set(["chat_event_refused"]);
-const SECOND_LOOK_REFUSALS = new Set(["event_signature_invalid"]);
+// A chat key epoch the household hasn't reached may only be newer than this
+// pass's look at the service, so it gets a second look like a signature.
+const SECOND_LOOK_REFUSALS = new Set(["event_signature_invalid", "chat_key_future"]);
 const CHAT_KINDS = new Set(["CHAT_MESSAGE_POSTED", "CHAT_MESSAGE_EDITED", "CHAT_MESSAGE_DELETED"]);
 const REF = /^[a-f0-9]{64}$/;
 
@@ -873,7 +875,19 @@ export class ChatRoom {
       this.notify();
     }
     await this.refresh();
-    const pushMore = status.rotationPending || this.chatKeys.pending || access !== "write" ? false : await this.push();
+    let pushMore = false, pushError = null;
+    if (!(status.rotationPending || this.chatKeys.pending || access !== "write")) {
+      try {
+        pushMore = await this.push();
+      } catch (error) {
+        // The service wants the chat key rotated, or this device's view of it
+        // is behind: sending resumes on a later pass. A chat key this device
+        // doesn't have yet must not hold up reading what it can.
+        if (error?.code === "chat_key_stale" || error?.code === "chat_key_rotation_pending") pushMore = true;
+        else if (error?.code === "chat_key_missing") pushError = error;
+        else throw error;
+      }
+    }
     const pullMore = await this.pull(status, devices);
     await this.retireReplaced();
     // "Delete for me" is a nicety beside the chat itself: its trouble is
@@ -893,6 +907,7 @@ export class ChatRoom {
     } catch (error) {
       if (error?.code === "chat_locked") throw error;
     }
+    if (pushError) throw pushError;
     return { hasMore: pushMore || pullMore };
   }
 
@@ -941,10 +956,12 @@ export class ChatRoom {
         if (row.blobRef) await this.blobs.upload(row.blobRef);
         envelopes.push(await this.pendingEnvelope(row));
       }
+      // Which chat key the batch is sealed under, for the service to check.
+      const chatEpoch = Math.min(...batch.map((row) => this.chatEpochById.get(row.eventId) ?? 0));
       await this.request("/api/chat/events", {
         method: "POST",
         body: encodeEnvelopeBatch(envelopes),
-        headers: { "Content-Type": ENVELOPE_CONTENT_TYPE },
+        headers: { "Content-Type": ENVELOPE_CONTENT_TYPE, "X-Kin-Chat-Epoch": String(chatEpoch) },
       });
       await this.finishSent(batch);
     }
@@ -1043,7 +1060,7 @@ export class ChatRoom {
           continue;
         }
         try {
-          await this.authenticate(envelope, status, devices);
+          await this.authenticate(envelope, status, devices, cursorSequence(at));
           verified.push(envelope);
         } catch (error) {
           // An event no retry can fix is skipped and remembered, so one bad
@@ -1079,7 +1096,7 @@ export class ChatRoom {
   /** Checks a relayed chat event as household sync checks its events: from
    * a trusted device of this household, signed by it, under a key epoch it
    * may use, and carrying the same identity inside as outside. */
-  async authenticate(envelope, status, devices) {
+  async authenticate(envelope, status, devices, sequence = null) {
     const refuse = (message) => { throw new ChatRoomError(message, "chat_event_refused"); };
     if (envelope.householdId !== this.identity.householdId) refuse("A chat message came from another household.");
     const signer = devices.find((device) => device.deviceId === envelope.deviceId);
@@ -1090,7 +1107,7 @@ export class ChatRoom {
     const outer = await decryptWithDeviceHistory({ device: signer, envelope, householdKey: await this.epochKey(envelope.keyEpoch) });
     let encodedEvent;
     try {
-      encodedEvent = (await this.chatKeys.open(outer, envelope.eventId)).plaintext;
+      encodedEvent = (await this.chatKeys.open(outer, envelope.eventId, { sequence })).plaintext;
     } catch (error) {
       outer.fill(0);
       throw error;
