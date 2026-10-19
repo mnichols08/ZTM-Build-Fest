@@ -73,7 +73,16 @@ export async function chatRegressions() {
           text: message.blobRef ? held.get(message.blobRef) ?? null : null,
         })),
         retired: [],
+        pins: (this.pinned ?? []).map((id) => log.findIndex((message) => message.messageId === id)).filter((at) => at >= 0).map((at) => ({
+          messageId: log[at].messageId, state: "live", contentKind: "text", authorId: log[at].authorId, index: at,
+          blobRef: log[at].blobRef, blobKey: new Uint8Array(32).fill(1), text: held.get(log[at].blobRef) ?? null, pinnedBy: third,
+        })),
       };
+    },
+    async pin(message, on) {
+      this.pinned = (this.pinned ?? []).filter((id) => id !== message.messageId);
+      if (on) this.pinned.push(message.messageId);
+      listeners.forEach((listener) => listener());
     },
     async loadTexts(messages) {
       const results = new Map();
@@ -340,7 +349,7 @@ export async function chatRegressions() {
   await settle();
   const menu = chat.querySelector(`[data-message-id="${ownRow.dataset.messageId}"] .chat-menu`);
   check(menu && document.activeElement === menu.querySelector("button"), "menu opens with focus");
-  check([...menu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,reply,edit,delete", "own message actions (not Delete for me while it waits to send)");
+  check([...menu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,reply,pin,edit,delete", "own message actions (not Delete for me while it waits to send)");
   menu.querySelector('[data-action="edit"]').click();
   await settle();
   check(input.value === "Send button" && chat.querySelector(".chat-cancel").hidden === false, "editing in the composer");
@@ -359,7 +368,7 @@ export async function chatRegressions() {
   theirs.querySelector(".chat-menu-button").click();
   await settle();
   const theirMenu = chat.querySelector(`[data-message-id="${theirs.dataset.messageId}"] .chat-menu`);
-  check([...theirMenu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,reply,remove,hide", "an admin may remove others' messages");
+  check([...theirMenu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,reply,pin,remove,hide", "an admin may remove others' messages");
   const realConfirm = window.confirm;
   const questions = [];
   window.confirm = (question) => { questions.push(question); return true; };
@@ -1098,6 +1107,31 @@ export async function chatRegressions() {
     chat.room = room;
     await settle();
     check(counts.at(-1).count === 2, "and it returns with the room");
+  }
+
+  // Pinned messages (#131): a region with a bar for the latest pin, a list of
+  // all pins that go to their messages, and Pin/Unpin in the message actions.
+  {
+    const target = room.page().messages.find((entry) => entry.blobRef && room.page().messages.indexOf(entry) < 4);
+    room.pinned = [];
+    notify();
+    await settle();
+    const region = chat.querySelector(".chat-pins");
+    check(region.hidden, "no pins: no pinned bar");
+    check(region.getAttribute("aria-label") === "Pinned messages" && region.tagName === "SECTION", "the pinned bar is a labelled region");
+    await chat.act("pin", target);
+    await settle();
+    check(!region.hidden && room.pinned.includes(target.messageId), "pinning shows the bar");
+    const bar = chat.querySelector(".chat-pin-bar");
+    check(bar.getAttribute("aria-expanded") === "false" && chat.querySelector(".chat-pin-list").hidden, "the list starts closed");
+    bar.click();
+    check(bar.getAttribute("aria-expanded") === "true" && !chat.querySelector(".chat-pin-list").hidden, "pressing the bar opens the list");
+    const item = chat.querySelector(".chat-pin-item");
+    check(item?.textContent.includes("Pinned by Adult 3") && item.querySelector(".chat-pin-unpin"), "each pin shows who pinned it and can be unpinned");
+    item.querySelector(".chat-pin-unpin").click();
+    await settle();
+    await settle();
+    check(region.hidden, "unpinning the last pin hides the bar");
   }
 
   // Mentions (#130): "@" offers members who can read chat; picking one writes

@@ -187,6 +187,19 @@ pub struct ReactionGroup {
     pub actors: Vec<ActorId>,
 }
 
+/// Most messages a household can have pinned at once (#131).
+pub const MAX_PINS: usize = 10;
+/// Most pins a log keeps, shown or not: commands stop at `MAX_PINS` shown
+/// pins, so only concurrent pins or removed messages reach past it.
+pub const MAX_PIN_RECORDS: usize = 64;
+
+/// A pinned message and who pinned it (#131).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ChatPin {
+    pub message_id: ChatMessageId,
+    pub by: ActorId,
+}
+
 /// The chat domain of a replay.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ChatState {
@@ -212,9 +225,34 @@ pub struct ChatState {
     /// A message with none has no entry. A page leaves out those of messages
     /// it shows as deleted or removed.
     pub reactions: BTreeMap<ChatMessageId, Vec<ReactionGroup>>,
+    /// Pins in the order replay applied them (#131). A message its author
+    /// deleted is dropped from here; one an admin removed stays but is not
+    /// shown (`shown_pins`).
+    pub pins: Vec<ChatPin>,
 }
 
 impl ChatState {
+    pub fn is_pinned(&self, message_id: &ChatMessageId) -> bool {
+        self.pins.iter().any(|pin| pin.message_id == *message_id)
+    }
+
+    /// The pins a page shows, given the household's admins: those whose
+    /// message still shows, oldest pin first, at most `MAX_PINS`.
+    pub fn shown_pins(&self, admins: &[ActorId]) -> Vec<&ChatPin> {
+        self.pins
+            .iter()
+            .filter(|pin| {
+                self.get(&pin.message_id).is_some_and(|message| {
+                    matches!(
+                        self.shown_status(message, admins),
+                        ChatMessageStatus::Live | ChatMessageStatus::Edited
+                    )
+                })
+            })
+            .take(MAX_PINS)
+            .collect()
+    }
+
     pub fn get(&self, message_id: &ChatMessageId) -> Option<&ChatMessage> {
         self.positions.get(message_id).map(|&at| &self.messages[at])
     }
@@ -528,7 +566,7 @@ impl ChatTexts {
 /// KCHQ v1, a page request: "KCHQ", version u16 (1), reserved u16 (0),
 /// before u32 (page ends before this index; u32::MAX for the newest),
 /// limit u16 (1..=500), flags u8 (bit 0: include texts the arena holds;
-/// bit 1: include retired blobs; bit 2: include reactions), reserved u8
+/// bit 1: include retired blobs; bit 2: include reactions; bit 3: include pins), reserved u8
 /// (0), admin count u32 (at most
 /// 16), then 16 bytes per admin actor ID, then the record-less KINE context.
 pub struct PageRequest<'a> {
@@ -537,6 +575,7 @@ pub struct PageRequest<'a> {
     pub include_text: bool,
     pub include_retired: bool,
     pub include_reactions: bool,
+    pub include_pins: bool,
     pub admins: Vec<ActorId>,
     pub context: &'a [u8],
 }
@@ -554,7 +593,7 @@ pub fn decode_page_request(bytes: &[u8]) -> Result<PageRequest<'_>, KinError> {
         return Err(KinError::UnsupportedVersion);
     }
     let flags = bytes[14];
-    if bytes[6..8] != [0; 2] || bytes[15] != 0 || flags & !0b111 != 0 {
+    if bytes[6..8] != [0; 2] || bytes[15] != 0 || flags & !0b1111 != 0 {
         return Err(KinError::MalformedProtocol);
     }
     let before = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
@@ -580,6 +619,7 @@ pub fn decode_page_request(bytes: &[u8]) -> Result<PageRequest<'_>, KinError> {
         include_text: flags & 1 != 0,
         include_retired: flags & 2 != 0,
         include_reactions: flags & 4 != 0,
+        include_pins: flags & 8 != 0,
         admins,
         context: &bytes[context_at..],
     })
@@ -702,6 +742,10 @@ fn shown_reactions<'a>(
 /// non-blank line, at most 256 bytes). Last of all, the named mentions (#130):
 /// for each record with a count at 116, in record order, that many 16-byte
 /// member IDs in ascending order.
+/// When the request asked for pins (#131), the page ends with them: a count
+/// u32 (at most `MAX_PINS`), then per pin, oldest first, who pinned it (16)
+/// and the message as a quote entry; only messages that still show are
+/// pinned here.
 pub fn encode_page(
     state: &ChatState,
     request: &PageRequest<'_>,
@@ -736,6 +780,24 @@ pub fn encode_page(
         .filter_map(|message| shown_mentions(message, status(message)))
         .map(|mentions| mentions.members.len() * 16)
         .sum::<usize>();
+    // Pins (#131) are asked for: a count, then per shown pin who pinned it and
+    // the message as a quote entry.
+    let pins = if request.include_pins {
+        state.shown_pins(&request.admins)
+    } else {
+        Vec::new()
+    };
+    let pin_bytes = if request.include_pins {
+        4 + pins
+            .iter()
+            .map(|pin| {
+                16 + PAGE_QUOTE_BYTES
+                    + quote_text(state, request, texts, &pin.message_id).map_or(0, <[u8]>::len)
+            })
+            .sum::<usize>()
+    } else {
+        0
+    };
     let mut text_bytes = 0usize;
     if request.include_text {
         for message in page {
@@ -753,6 +815,7 @@ pub fn encode_page(
         .and_then(|size| size.checked_add(reaction_bytes))
         .and_then(|size| size.checked_add(reply_bytes))
         .and_then(|size| size.checked_add(mention_bytes))
+        .and_then(|size| size.checked_add(pin_bytes))
         .ok_or(KinError::SizeLimit)?;
     let mut bytes = Vec::new();
     bytes
@@ -838,32 +901,7 @@ pub fn encode_page(
         let Some(original) = quoted(message, status(message)) else {
             continue;
         };
-        bytes.extend_from_slice(&original.0);
-        match state.get(&original) {
-            Some(found) => {
-                let shown = state.shown_status(found, &request.admins);
-                let visible = matches!(shown, ChatMessageStatus::Live | ChatMessageStatus::Edited);
-                let code = match shown {
-                    ChatMessageStatus::Live => 1u8,
-                    ChatMessageStatus::Edited => 2,
-                    ChatMessageStatus::Deleted => 3,
-                    ChatMessageStatus::RemovedByAdmin => 4,
-                };
-                bytes.extend_from_slice(&[code, found.content_kind as u8, 0, 0]);
-                bytes.extend_from_slice(&found.author.0);
-                bytes.extend_from_slice(if visible { &found.blob_ref } else { &[0; 32] });
-                bytes.extend_from_slice(if visible { &found.blob_key } else { &[0; 32] });
-                bytes.extend_from_slice(&(state.positions[&original] as u32).to_le_bytes());
-            }
-            None => {
-                bytes.extend_from_slice(&[0; 4]);
-                bytes.extend_from_slice(&[0; 16 + 32 + 32]);
-                bytes.extend_from_slice(&u32::MAX.to_le_bytes());
-            }
-        }
-        let text = quote_text(state, request, texts, &original).unwrap_or(&[]);
-        bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(text);
+        write_quote(&mut bytes, state, request, texts, &original);
     }
     for message in page {
         if let Some(mentions) = shown_mentions(message, status(message)) {
@@ -872,8 +910,51 @@ pub fn encode_page(
             }
         }
     }
+    if request.include_pins {
+        bytes.extend_from_slice(&(pins.len() as u32).to_le_bytes());
+        for pin in &pins {
+            bytes.extend_from_slice(&pin.by.0);
+            write_quote(&mut bytes, state, request, texts, &pin.message_id);
+        }
+    }
     debug_assert_eq!(bytes.len(), size);
     Ok(bytes)
+}
+
+/// One quote entry (#129), also used by pins (#131): see `encode_page`.
+fn write_quote(
+    bytes: &mut Vec<u8>,
+    state: &ChatState,
+    request: &PageRequest<'_>,
+    texts: &ChatTexts,
+    original: &ChatMessageId,
+) {
+    bytes.extend_from_slice(&original.0);
+    match state.get(original) {
+        Some(found) => {
+            let shown = state.shown_status(found, &request.admins);
+            let visible = matches!(shown, ChatMessageStatus::Live | ChatMessageStatus::Edited);
+            let code = match shown {
+                ChatMessageStatus::Live => 1u8,
+                ChatMessageStatus::Edited => 2,
+                ChatMessageStatus::Deleted => 3,
+                ChatMessageStatus::RemovedByAdmin => 4,
+            };
+            bytes.extend_from_slice(&[code, found.content_kind as u8, 0, 0]);
+            bytes.extend_from_slice(&found.author.0);
+            bytes.extend_from_slice(if visible { &found.blob_ref } else { &[0; 32] });
+            bytes.extend_from_slice(if visible { &found.blob_key } else { &[0; 32] });
+            bytes.extend_from_slice(&(state.positions[original] as u32).to_le_bytes());
+        }
+        None => {
+            bytes.extend_from_slice(&[0; 4]);
+            bytes.extend_from_slice(&[0; 16 + 32 + 32]);
+            bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+        }
+    }
+    let text = quote_text(state, request, texts, original).unwrap_or(&[]);
+    bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(text);
 }
 
 /// KCHT v1, texts for the arena (`kin_chat_text`): "KCHT", version u16 (1),

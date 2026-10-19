@@ -1808,3 +1808,17 @@ and receive a short ID suffix in selection/management labels until renamed.
   screen that the household is active. Locking stops the chat room, which
   clears the count and the badge; unlocking brings both back from the saved
   position. Messages that arrive while locked are counted at the next unlock.
+
+# 24. Pinned chat messages (#131)
+
+- **Pin** and **Unpin** are in a message's actions for anyone who can post.
+  Up to 10 messages are pinned per household; pinning an 11th says "You can
+  pin up to 10 messages. Unpin one first." and sends nothing.
+- A **Pinned messages** region sits above the conversation when anything is
+  pinned. Its bar is one button showing the latest pin; pressing it opens the
+  list of all pins (newest first), each with who pinned it, a button that
+  goes to the message (loading the stretch around it if needed) and **Unpin**.
+  Escape closes the list. The bar and list are plain buttons in the tab
+  order.
+- Deleting a pinned message for everyone (or an admin removing it) takes it
+  off the list. "Delete for me" only hides it from this member's list.

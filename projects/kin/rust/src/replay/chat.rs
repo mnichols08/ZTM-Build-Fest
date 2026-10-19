@@ -133,6 +133,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 message.blob_key = [0; 32];
                 message.status = ChatMessageStatus::Deleted;
                 chat.retired.push(old);
+                chat.pins.retain(|pin| pin.message_id != *message_id);
             } else if *by_admin {
                 let claims = chat.admin_claims.entry(*message_id).or_default();
                 if !claims.contains(&event.actor_id) {
@@ -180,6 +181,26 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
             }
             if groups.is_empty() {
                 chat.reactions.remove(message_id);
+            }
+        }
+        EventKind::ChatPinSet { message_id, on } => {
+            // A pin of a message this history lacks, or of one already
+            // pinned, changes nothing (the first pinner stays). Commands keep
+            // the shown pins to `MAX_PINS`; replay only bounds the record.
+            if *on {
+                if chat
+                    .get(message_id)
+                    .is_some_and(|message| message.status != ChatMessageStatus::Deleted)
+                    && !chat.is_pinned(message_id)
+                    && chat.pins.len() < crate::chat::MAX_PIN_RECORDS
+                {
+                    chat.pins.push(crate::chat::ChatPin {
+                        message_id: *message_id,
+                        by: event.actor_id,
+                    });
+                }
+            } else {
+                chat.pins.retain(|pin| pin.message_id != *message_id);
             }
         }
         _ => return Err(KinError::Internal),

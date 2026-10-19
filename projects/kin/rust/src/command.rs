@@ -187,6 +187,12 @@ pub enum HouseholdCommand {
         emoji: String,
         on: bool,
     },
+    /// Pins a message or unpins one (#131). A pin needs a message that shows
+    /// and room under the limit; an unpin needs a message that is pinned.
+    PinChatMessage {
+        id: ChatMessageId,
+        on: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -443,6 +449,10 @@ pub fn create_event(
             emoji: emoji.clone(),
             on: *on,
         },
+        PinChatMessage { id, on } => EventKind::ChatPinSet {
+            message_id: *id,
+            on: *on,
+        },
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -654,6 +664,7 @@ pub fn execute_with(
             | HouseholdCommand::EditChatMessage { .. }
             | HouseholdCommand::DeleteChatMessage { .. }
             | HouseholdCommand::ReactChatMessage { .. }
+            | HouseholdCommand::PinChatMessage { .. }
     );
     if history.event_count() >= history.limit()
         || chat_command != history.is_chat()
@@ -822,6 +833,25 @@ pub fn execute_with(
             if mine == *on
                 || *on && group.is_none() && groups.len() >= crate::chat::MAX_REACTION_GROUPS
             {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::PinChatMessage { id, on } => {
+            let pinned = current.chat.is_pinned(id);
+            if *on {
+                let message = current.chat.get(id).ok_or(KinError::InvalidEvent)?;
+                if pinned
+                    || !matches!(
+                        current.chat.shown_status(message, history.chat_admins()),
+                        crate::chat::ChatMessageStatus::Live
+                            | crate::chat::ChatMessageStatus::Edited
+                    )
+                    || current.chat.pins.len() >= crate::chat::MAX_PIN_RECORDS
+                    || current.chat.shown_pins(history.chat_admins()).len() >= crate::chat::MAX_PINS
+                {
+                    return Err(KinError::InvalidEvent);
+                }
+            } else if !pinned {
                 return Err(KinError::InvalidEvent);
             }
         }
@@ -1131,7 +1161,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
     if bytes.len() != 128 + text_length {
         return Err(KinError::MalformedProtocol);
     }
-    let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41 | 44..=46) {
+    let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41 | 44..=46 | 48) {
         String::new()
     } else {
         std::str::from_utf8(&bytes[128..])
@@ -1148,7 +1178,10 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             && (64..=64 + 2 + 16 * crate::chat::MAX_CHAT_MENTIONS + 16).contains(&text_length);
     if !text.is_empty() && !accepts_payload
         || !matches!(kind, 14..=16 | 30) && date != 0
-        || !matches!(kind, 1 | 12 | 14 | 29 | 31 | 32 | 39 | 41 | 44 | 46 | 47) && option != 0
+        || !matches!(
+            kind,
+            1 | 12 | 14 | 29 | 31 | 32 | 39 | 41 | 44 | 46 | 47 | 48
+        ) && option != 0
         || kind != 12 && expires != 0
         || matches!(kind, 12 | 13 | 29) && id != [0; 16]
         || kind == 21 && text_length != 16
@@ -1165,12 +1198,12 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 42 && (id != [0; 16] || text.is_empty())
         || kind == 43 && id == [0; 16]
         || matches!(kind, 42 | 43) && text_length > crate::state::MAX_DEVICE_NAME_BYTES
-        || matches!(kind, 44..=47) && id == [0; 16]
+        || matches!(kind, 44..=48) && id == [0; 16]
         || kind == 47
             && (option > 1 || text.is_empty() || text_length > crate::chat::MAX_EMOJI_BYTES)
         || matches!(kind, 44 | 45) && text_length < 64
         || kind == 44 && !matches!(option, 1 | 2)
-        || kind == 46 && (text_length != 0 || option > 1)
+        || matches!(kind, 46 | 48) && (text_length != 0 || option > 1)
         || matches!(kind, 44 | 45) && (bytes[128..160] == [0; 32] || bytes[160..192] == [0; 32])
     {
         return Err(KinError::MalformedProtocol);
@@ -1547,6 +1580,10 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         47 => ReactChatMessage {
             id: ChatMessageId(id),
             emoji: text,
+            on: option == 1,
+        },
+        48 => PinChatMessage {
+            id: ChatMessageId(id),
             on: option == 1,
         },
         _ => return Err(KinError::UnsupportedVersion),

@@ -323,6 +323,12 @@ pub enum EventKind {
         emoji: String,
         on: bool,
     },
+    /// A member pins a message, or unpins one (#131). Pinning a message that
+    /// is already pinned changes nothing; any member may unpin.
+    ChatPinSet {
+        message_id: ChatMessageId,
+        on: bool,
+    },
 }
 
 impl EventKind {
@@ -335,6 +341,7 @@ impl EventKind {
                 | EventKind::ChatMessageEdited { .. }
                 | EventKind::ChatMessageDeleted { .. }
                 | EventKind::ChatReactionSet { .. }
+                | EventKind::ChatPinSet { .. }
         )
     }
 }

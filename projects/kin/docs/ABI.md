@@ -94,7 +94,7 @@ history. `kin_execute` uses it and applies the command's event to a copy.
 
 **The chat log (v1.1, #109).** Each instance also holds a second history,
 the chat log, with the same layout, batches, checkpoint and mirror
-(`kin_chat_history_*`). It takes chat records (kinds 44–47) only, and the
+(`kin_chat_history_*`). It takes chat records (kinds 44–48) only, and the
 household history takes every other kind; either refuses the other's with
 code 4, as does a whole KINE request carrying a chat record. The chat log
 holds up to 250,000 records and 64 MiB. `kin_chat_execute` runs chat
@@ -227,6 +227,7 @@ N  payload
 | 45 | CHAT_MESSAGE_EDITED (v1.1, chat log) | message ID, blob ref (32), blob key (32): 80 bytes |
 | 46 | CHAT_MESSAGE_DELETED (v1.1, chat log) | message ID, by_admin u8 (0 or 1), 3 reserved: 20 bytes |
 | 47 | CHAT_REACTION_SET (v1.1, chat log) | message ID, on u8 (0 or 1), 3 reserved, emoji length u32, the emoji's UTF-8 (one emoji grapheme, 1–32 bytes) |
+| 48 | CHAT_PIN_SET (v1.1, chat log) | message ID, on u8 (0 or 1), 3 reserved: 20 bytes |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -246,7 +247,7 @@ nickname in replay order win. Commands enforce the strict rules. Device names ar
 only through `kin_device_names`. An engine older than v1.1 fails both kinds
 with code 3 (unsupported).
 
-Chat events (kinds 44–47, v1.1, no protocol change) belong to the chat log
+Chat events (kinds 44–48, v1.1, no protocol change) belong to the chat log
 (above). A zero message ID, blob ref or key, an unknown content kind, a
 `by_admin` other than 0 or 1, or a non-zero reserved byte fails with code 2.
 Once decoded, a chat event never fails replay (`replay/chat.rs`): one that
@@ -396,7 +397,7 @@ revision is meaningful only within one instance.
   payload and a zero entity ID; action 43 (`nickname-device`) carries the
   target device as its entity ID and the nickname as its payload (empty
   clears). Executing either rejects a name that would change nothing.
-- **Chat commands (KCMD 44–47, v1.1).** The entity ID is the message ID.
+- **Chat commands (KCMD 44–48, v1.1).** The entity ID is the message ID. Action 48 (`pin-chat-message`) carries `on` (0 or 1) in the u8 field and no payload.
   Action 44 (`post-chat-message`) carries the content kind in the u8 field
   (1 text, 2 attachment) and a 64-byte payload: blob ref, then blob key; a
   reply adds a third 16 bytes, the ID of the message it answers (80 in all).
@@ -419,7 +420,7 @@ revision is meaningful only within one instance.
 - **KCHQ v1** (chat page request, `kin_chat_page`): `"KCHQ"`, version 1,
   reserved u16, before u32 (the page ends before this message index;
   `0xFFFFFFFF` for the newest), limit u16 (1–500), flags u8 (bit 0: texts the
-  arena holds; bit 1: retired blobs; bit 2: reactions), reserved u8, admin count u32 (at most
+  arena holds; bit 1: retired blobs; bit 2: reactions; bit 3: pins), reserved u8, admin count u32 (at most
   16), the admins' member IDs (16 bytes each, non-zero), then a record-less
   KINE context as for `kin_project`.
 - **KCHF v1** (chat search request, `kin_chat_search`, #124): `"KCHF"`,
@@ -484,7 +485,11 @@ revision is meaningful only within one instance.
   the arena's texts for those blobs, so a deleted message's text never comes
   back out. Message indexes
   are positions in posting (replay) order, so a late-arriving older message
-  shifts them; hosts re-read from the newest after a sync.
+  shifts them; hosts re-read from the newest after a sync. When the request
+  asked for pins (#131, flag bit 3), the page ends with them, after the
+  named mentions: a count u32 (at most 10), then per pin, oldest pinned
+  first, who pinned it (16) and the message as a quote entry (same layout and
+  rules as above; only messages that show are listed).
 - **KCHT v1 / KCHS v1** (chat texts, `kin_chat_text`): `"KCHT"`, version 1,
   reserved u16, count u32 (1–500), then per text: blob ref (32, non-zero),
   length u32, the UTF-8 text. Every entry is framed before any is stored. The

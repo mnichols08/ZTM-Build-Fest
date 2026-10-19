@@ -62,7 +62,7 @@ const DOWNLOAD_URL_MS = 60_000;
 const TIME = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 const DATE_TIME = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const FULL = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "short" });
-const ACTION_LABELS = { copy: "Copy text", reply: "Reply", details: "See who reacted", edit: "Edit", delete: "Delete for everyone", remove: "Remove as admin", hide: "Delete for me" };
+const ACTION_LABELS = { copy: "Copy text", reply: "Reply", details: "See who reacted", edit: "Edit", delete: "Delete for everyone", remove: "Remove as admin", hide: "Delete for me", pin: "Pin", unpin: "Unpin" };
 /** How long a press on a reaction chip must last to list who reacted. */
 const LONG_PRESS_MS = 500;
 const NO_RECALL = "Copies people already saved, screenshotted or downloaded can't be recalled.";
@@ -144,6 +144,8 @@ class KinChat extends HTMLElement {
     // Until the first render of a room, what's there is history, not news.
     this.primed = false;
     this.list?.replaceChildren();
+    this.pins = [];
+    if (this.pinRegion) this.pinRegion.hidden = true;
   }
 
   connectedCallback() {
@@ -196,6 +198,32 @@ class KinChat extends HTMLElement {
     this.scroller.setAttribute("aria-live", "off");
     this.scroller.setAttribute("aria-labelledby", "chat-heading");
     this.scroller.tabIndex = 0;
+    // Pinned messages (#131): a region above the log. The bar shows the latest
+    // pin; pressing it opens the list of all pins, each of which goes to its
+    // message.
+    this.pinRegion = document.createElement("section");
+    this.pinRegion.className = "chat-pins";
+    this.pinRegion.setAttribute("aria-label", "Pinned messages");
+    this.pinRegion.hidden = true;
+    this.pinBar = document.createElement("button");
+    this.pinBar.type = "button";
+    this.pinBar.className = "chat-pin-bar";
+    this.pinBar.setAttribute("aria-expanded", "false");
+    this.pinBar.setAttribute("aria-controls", "chat-pin-list");
+    this.pinBar.addEventListener("click", () => this.togglePins());
+    this.pinList = document.createElement("ol");
+    this.pinList.id = "chat-pin-list";
+    this.pinList.className = "chat-pin-list";
+    this.pinList.hidden = true;
+    this.pinRegion.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !this.pinList.hidden) {
+        event.preventDefault();
+        this.togglePins(false);
+        this.pinBar.focus();
+      }
+    });
+    this.pinRegion.append(this.pinBar, this.pinList);
+    this.pins = [];
     this.older = document.createElement("button");
     this.older.type = "button";
     this.older.className = "chat-older";
@@ -402,7 +430,7 @@ class KinChat extends HTMLElement {
     this.readOnly.setAttribute("role", "status");
     this.readOnly.textContent = "Your household has set chat to read-only for you.";
     this.readOnly.hidden = true;
-    section.append(top, this.searchPanel, this.notice, this.scroller, this.typingLine, this.jump, form, this.readOnly, this.announcer, this.viewer, this.details);
+    section.append(top, this.searchPanel, this.notice, this.pinRegion, this.scroller, this.typingLine, this.jump, form, this.readOnly, this.announcer, this.viewer, this.details);
     this.replaceChildren(section);
     this.queueRender("reset");
   }
@@ -841,18 +869,19 @@ class KinChat extends HTMLElement {
     // otherwise the window as it stands.
     let page;
     if (mode === "reset") {
-      page = room.page({ limit: PAGE });
+      page = room.page({ limit: PAGE, includePins: true });
     } else if (this.following) {
       // The window as it stands plus room for what arrived since, then
       // trimmed back to where the window starts (and to its size).
-      const wide = room.page({ limit: Math.min(WINDOW_MAX + ARRIVAL_CHECK, this.end - this.start + ARRIVAL_CHECK) });
+      const wide = room.page({ limit: Math.min(WINDOW_MAX + ARRIVAL_CHECK, this.end - this.start + ARRIVAL_CHECK), includePins: true });
       const from = Math.max(this.start, wide.total - WINDOW_MAX);
       const messages = wide.messages.filter((message) => message.index >= from);
       page = { ...wide, start: messages[0]?.index ?? wide.total, messages };
     } else {
-      page = room.page({ before: this.end, limit: Math.max(1, this.end - this.start) });
+      page = room.page({ before: this.end, limit: Math.max(1, this.end - this.start), includePins: true });
     }
     this.total = page.total;
+    this.pins = page.pins ?? [];
     // Messages this member deleted for themselves don't show (#119); the
     // window still counts them, as the engine does.
     this.messages = page.messages.filter((message) => !room.isHidden?.(message.messageId));
@@ -900,6 +929,7 @@ class KinChat extends HTMLElement {
       this.say("The message you were replying to is gone.");
     }
     this.loadMissingQuotes();
+    this.renderPins();
     const missing = this.messages.filter((message) => message.text === null && message.blobRef && message.contentKind === "text" && !this.textStatus.has(message.messageId));
     if (!missing.length) return;
     for (const message of missing) this.textStatus.set(message.messageId, { loading: true });
@@ -923,16 +953,18 @@ class KinChat extends HTMLElement {
    * demand when it isn't in the engine yet. */
   loadMissingQuotes() {
     const room = this.chatRoom;
-    const replies = this.messages.filter((message) => {
+    // Pinned messages (#131) are opened the same way as quotes.
+    const pinned = this.pins.map((pin) => ({ replyTo: pin, pin: true }));
+    const replies = [...this.messages.filter((message) => message.replyTo && visible(message)), ...pinned].filter((message) => {
       const original = message.replyTo;
-      return original && visible(message) && original.contentKind === "text" && original.blobRef && original.text === null &&
+      return original && original.contentKind === "text" && original.blobRef && original.text === null &&
         !room.isHidden?.(original.messageId) && !this.textStatus.has(`quote:${original.messageId}`);
     });
     // A quoted attachment says "Photo" or its file name once its list is open.
-    const files = [...new Map(this.messages
+    const files = [...new Map([...this.messages.filter((message) => visible(message)), ...pinned]
       .filter((message) => {
         const original = message.replyTo;
-        return original && visible(message) && original.contentKind === "attachment" && original.blobRef &&
+        return original && original.contentKind === "attachment" && original.blobRef &&
           !room.isHidden?.(original.messageId) && !this.attachments.has(original.messageId) &&
           !this.messages.some((shown) => shown.messageId === original.messageId);
       })
@@ -1097,6 +1129,7 @@ class KinChat extends HTMLElement {
       message.replyTo ? [message.replyTo.index, message.replyTo.state, message.replyTo.text ?? "", message.replyTo.blobRef ?? "", room.isHidden?.(message.replyTo.messageId) ?? false, this.attachments.get(message.replyTo.messageId)?.status ?? "", this.attachments.get(message.replyTo.messageId)?.files[0]?.name ?? "", Object.keys(this.textStatus.get(`quote:${message.replyTo.messageId}`) ?? {})[0] ?? ""].join("\u0001") : "",
       this.highlighted === message.messageId, this.divider === message.messageId,
       room.mentionsOf ? JSON.stringify(room.mentionsOf(message)) : "",
+      this.pins.some((pin) => pin.messageId === message.messageId),
     ].join("\u0000");
   }
 
@@ -1255,6 +1288,98 @@ class KinChat extends HTMLElement {
     }
     const line = original.text.split("\n").find((part) => part.trim()) ?? "";
     return { text: clip(line, 100), gone: false };
+  }
+
+  /** The pinned bar and its list (#131). Pins this member deleted for
+   * themselves don't show. */
+  renderPins() {
+    const room = this.chatRoom;
+    const pins = room ? this.pins.filter((pin) => !room.isHidden?.(pin.messageId)) : [];
+    this.shownPins = pins;
+    if (!pins.length) {
+      this.pinRegion.hidden = true;
+      this.pinList.hidden = true;
+      this.pinBar.setAttribute("aria-expanded", "false");
+      return;
+    }
+    this.pinRegion.hidden = false;
+    const latest = pins[pins.length - 1];
+    const { text } = this.quoteLine(latest, room);
+    const count = pins.length === 1 ? "1 pinned message" : `${pins.length} pinned messages`;
+    this.pinBar.textContent = "";
+    const icon = document.createElement("span");
+    icon.className = "chat-pin-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = "📌";
+    const line = document.createElement("span");
+    line.className = "chat-pin-line";
+    line.textContent = text;
+    const total = document.createElement("span");
+    total.className = "chat-pin-count";
+    total.textContent = pins.length > 1 ? `${pins.length} pinned` : "Pinned";
+    this.pinBar.append(icon, " ", total, " · ", line);
+    this.pinBar.setAttribute("aria-label", `${count}. Latest: ${text}. ${this.pinList.hidden ? "Show" : "Hide"} all pinned messages`);
+    const canPost = (room.access ?? "write") === "write";
+    // A render replaces the list; keep the focus where it was (by pin and button).
+    const focused = this.pinList.contains(document.activeElement) ? document.activeElement : null;
+    const focusKey = focused ? `${focused.closest(".chat-pin-item")?.dataset.messageId}:${focused.className}` : null;
+    this.pinList.replaceChildren(...[...pins].reverse().map((pin) => {
+      const item = document.createElement("li");
+      item.className = "chat-pin-item";
+      item.dataset.messageId = pin.messageId;
+      const who = room.authorLabel(pin.pinnedBy);
+      const jump = document.createElement("button");
+      jump.type = "button";
+      jump.className = "chat-pin-jump";
+      const { text: pinText } = this.quoteLine(pin, room);
+      const author = pin.authorId ? room.authorLabel(pin.authorId) : "";
+      jump.textContent = `${author ? `${author}: ` : ""}${pinText}`;
+      const by = document.createElement("span");
+      by.className = "chat-pin-by";
+      by.textContent = `Pinned by ${who === "You" ? "you" : who}`;
+      jump.setAttribute("aria-label", `${author ? `${author}: ` : ""}${pinText}. Pinned by ${who === "You" ? "you" : who}. Go to the message`);
+      jump.addEventListener("click", () => {
+        this.togglePins(false);
+        void this.jumpTo(pin);
+      });
+      item.append(jump, by);
+      if (canPost) {
+        const unpin = document.createElement("button");
+        unpin.type = "button";
+        unpin.className = "chat-pin-unpin";
+        unpin.textContent = "Unpin";
+        unpin.setAttribute("aria-label", `Unpin: ${pinText}`);
+        unpin.addEventListener("click", () => void this.setPin(pin, false));
+        item.append(unpin);
+      }
+      return item;
+    }));
+    if (focusKey) {
+      const same = [...this.pinList.querySelectorAll("button")].find((button) => `${button.closest(".chat-pin-item")?.dataset.messageId}:${button.className}` === focusKey);
+      // The pin is gone (unpinned or removed): the bar is the next stop.
+      (same ?? this.pinBar).focus({ preventScroll: true });
+    }
+  }
+
+  togglePins(open = this.pinList.hidden) {
+    this.pinList.hidden = !open;
+    this.pinBar.setAttribute("aria-expanded", String(open));
+    this.renderPins();
+  }
+
+  /** Pins or unpins a message; the engine and the room say why when they refuse. */
+  async setPin(message, on) {
+    const room = this.chatRoom;
+    if (!room) return;
+    try {
+      await room.pin(message, on);
+      this.say(on ? "Pinned." : "Unpinned.");
+      await this.queueRender("update");
+      if (!on && !this.shownPins?.length) this.input.focus();
+    } catch (error) {
+      const plain = error?.code === "chat_pin_limit" || error?.code === "chat_text_invalid";
+      this.message.textContent = plain ? error.message : "Kin couldn't change the pin right now. Try again.";
+    }
   }
 
   /** A compact quote above a reply; pressing it goes to the original. */
@@ -1736,6 +1861,7 @@ class KinChat extends HTMLElement {
     if (message.text !== null) actions.push("copy");
     if (message.reactions?.length) actions.push("details");
     if ((room.access ?? "write") === "write") actions.push("reply");
+    if ((room.access ?? "write") === "write") actions.push(this.pins.some((pin) => pin.messageId === message.messageId) ? "unpin" : "pin");
     // Read-only members (#123) can copy and hide for themselves, nothing else.
     const canPost = (room.access ?? "write") === "write";
     if (canPost && own && message.text !== null && message.contentKind === "text") actions.push("edit");
@@ -1822,6 +1948,9 @@ class KinChat extends HTMLElement {
         this.openDetails(message);
       } else if (action === "reply") {
         this.startReplying(message);
+      } else if (action === "pin" || action === "unpin") {
+        await this.setPin(message, action === "pin");
+        this.rowFor(message.messageId)?.querySelector(".chat-menu-button")?.focus({ preventScroll: true });
       } else if (action === "copy") {
         await navigator.clipboard.writeText(message.text);
         this.say("Copied.");
