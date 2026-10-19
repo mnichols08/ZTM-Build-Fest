@@ -96,17 +96,17 @@ export class StatusController {
       const details = document.createElement("details");
       details.className = "onboarding-details";
       const summary = document.createElement("summary");
-      summary.textContent = "Connect this device to a household";
+      summary.textContent = "Join or set up your household";
       heading.textContent = "Get started";
       const intro = document.createElement("p");
-      intro.textContent = "This device is protected. Next, connect it to your household so it can sync with other people and devices.";
+      intro.textContent = "Kin is ready on this device. Join your family\u0027s existing household, or start a new one if nobody has set it up yet.";
       const choices = document.createElement("div");
       choices.className = "household-choices";
       for (const [label, intent, className] of [
-        ["Create a household", "create", "primary-action"],
-        ["Join an existing household", "join", ""],
-        ["Sign in with your phone", "phone", ""],
-        ["Add this device to my existing membership", "device", ""],
+        ["Start a new household", "create", ""],
+        ["Join my household", "join", "primary-action"],
+        ["Sign in using my phone", "phone", ""],
+        ["Use Kin on another device", "device", ""],
       ]) {
         const button = document.createElement("button");
         button.type = "button";
@@ -159,6 +159,29 @@ export class StatusController {
       later.textContent = "Not now";
       later.addEventListener("click", () => { this.app.passkeyPromptDismissed = true; this.renderOnboarding(); });
       card.append(heading, intro, turnOn, later);
+      card.hidden = false;
+      return;
+    }
+    // The connection and optional passkey prompts take priority. Once a new
+    // household is ready, offer one real first action rather than a tutorial.
+    // No sample household events or persisted activity-tracking flag is added.
+    if (status?.identity && this.app.state && !this.hasHouseholdContent() && !this.app.firstActionWelcomeDismissed) {
+      heading.textContent = "Welcome home";
+      const intro = document.createElement("p");
+      intro.textContent = "Kin helps your household keep track of tasks, shopping, and things to share. Start by adding one thing you'd like to remember.";
+      const start = document.createElement("button");
+      start.type = "button";
+      start.className = "primary-action";
+      start.textContent = "Add something";
+      start.addEventListener("click", () => this.app.compose?.input?.focus());
+      const later = document.createElement("button");
+      later.type = "button";
+      later.textContent = "Not now";
+      later.addEventListener("click", () => {
+        this.app.firstActionWelcomeDismissed = true;
+        this.renderOnboarding();
+      });
+      card.append(heading, intro, start, later);
       card.hidden = false;
       return;
     }
