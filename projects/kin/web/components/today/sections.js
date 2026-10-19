@@ -148,7 +148,7 @@ export class TodaySections {
       return empty;
     }
     if (!view.hasItems) {
-      message.textContent = "No household tasks yet. Add the first thing that needs handling, and plan it for today or another day.";
+      message.textContent = "Nothing to do yet. Add your first task, or start a shopping list.";
     } else {
       message.append(document.createTextNode("Nothing planned for today. Browse "));
       const todoLink = document.createElement("a");
@@ -168,7 +168,11 @@ export class TodaySections {
     add.dataset.action = "open-quick-add";
     add.disabled = this.host.isDisabled;
     add.addEventListener("click", () => this.host.dispatchEvent(new CustomEvent("kin:open-quick-add", { detail: { opener: add }, bubbles: true, composed: true })));
-    empty.append(message, add);
+    const shopping = document.createElement("a");
+    shopping.className = "today-shopping-link";
+    shopping.href = "#lists/shopping";
+    shopping.textContent = "Open shopping list";
+    empty.append(message, add, shopping);
     return empty;
   }
 
