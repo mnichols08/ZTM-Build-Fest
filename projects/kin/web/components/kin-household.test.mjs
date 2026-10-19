@@ -716,3 +716,35 @@ test("nobody else can pose as You, and you can't save You as your name (#225)", 
   assert.deepEqual(saved, []);
   assert.match(component.lastError, /rather than “You”/);
 });
+
+// A pairing poll that re-renders while People & devices is still building
+// must not leave a half-built page (rows lost, actions appended to the other
+// view). Seen intermittently in CI as "No revoke control".
+test("People & devices stops writing when another render takes the panel mid-build", async () => {
+  const component = new KinHousehold();
+  component.identity = { memberId: "me", deviceId: "phone" };
+  component.localFingerprint = "SELF";
+  component.run = async (action) => action();
+  component.ctx.api.openSyncKeyStore = async () => component.syncKeyStore;
+  component.api = async (path) => path === "/api/devices"
+    ? { canManageMembers: true, devices: [
+      { id: "phone", memberId: "me", label: "Chrome on iPhone", revokedAt: null },
+      { id: "laptop", memberId: "me", label: "Edge on Windows", revokedAt: null },
+    ] }
+    : { devices: [{ deviceId: "laptop", memberId: "me", fingerprint: "ABCD", publicKeys: {} }] };
+  const marker = { tagName: "p", textContent: "Pairing confirmed.", children: [] };
+  component.syncKeyStore = {
+    getPinnedDevice: async () => {
+      // The poll's render lands while the device rows are being built.
+      component.viewGeneration += 1;
+      component.replaceChildren(marker);
+      return true;
+    },
+  };
+  let polled = false;
+  component.poll = setTimeout(() => { polled = true; }, 5);
+  await component.showDevices();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(component.children, [marker], "the newer render keeps the panel; nothing is appended after it");
+  assert.equal(polled, false, "opening People & devices cancels a pending pairing poll");
+});
