@@ -53,6 +53,12 @@ export const LIVE_TYPE = Object.freeze({
   /** A member's read-receipt slot changed (#121): fetch /api/chat/receipts.
    * Empty payload; like a sync hint it says nothing about what changed. */
   RECEIPTS: 0x04,
+  /** Online now (#128), both ways. A client sends a sealed heartbeat frame
+   * (the same kind of signed household-key envelope as typing) every 30
+   * seconds while Kin is unlocked and visible, and an "away" frame when it
+   * stops; the service relays it unchanged to the household's other
+   * connected, chat-allowed devices. It is never stored, counted or logged. */
+  PRESENCE: 0x05,
 });
 
 /** A typing frame is one small envelope; anything larger isn't one. */
@@ -61,6 +67,9 @@ export const MAX_TYPING_BYTES = 2048;
  * client sends one every 3 seconds, plus one when it stops. */
 export const TYPING_BURST = 4;
 export const TYPING_REFILL_MS = 1_000;
+/** Presence frames (#128) are rarer: one per 30 seconds, a few on connect. */
+export const PRESENCE_BURST = 6;
+export const PRESENCE_REFILL_MS = 2_000;
 /** Frames dropped in a row before the connection is closed as abusive. */
 export const MAX_TYPING_DROPS = 60;
 
@@ -106,6 +115,9 @@ class LiveConnection {
     this.typingTokens = TYPING_BURST;
     this.typingRefilledAt = 0;
     this.typingDrops = 0;
+    this.presenceTokens = PRESENCE_BURST;
+    this.presenceRefilledAt = 0;
+    this.presenceDrops = 0;
     this.queuedReceipts = false;
     this.closing = false;
     this.disposed = false;
@@ -307,6 +319,7 @@ export class LiveService {
     /** Kin record type → handler(connection, record), for client messages. */
     this.handlers = new Map();
     this.handlers.set(LIVE_TYPE.TYPING, (connection, record) => this.relayTyping(connection, record));
+    this.handlers.set(LIVE_TYPE.PRESENCE, (connection, record) => this.relayPresence(connection, record));
   }
 
   /** What the connection's member may do in chat now (#123): "write",
@@ -353,6 +366,40 @@ export class LiveService {
     if (this.chatLevel(connection) !== "write") return;
     for (const other of this.households.get(connection.householdId) ?? [])
       if (other !== connection && this.chatAllowed(other)) other.sendEphemeral(LIVE_TYPE.TYPING, payload);
+  }
+
+  /**
+   * Relays one presence frame (#128) like a typing frame: to the household's
+   * other connected, chat-allowed devices, unchanged. Nothing about it is
+   * stored, counted per member or logged; a member with no chat access
+   * neither sends nor receives it (a read-only member may: presence is not
+   * posting).
+   */
+  relayPresence(connection, record) {
+    const payload = record.payload;
+    if (payload.length < 1 || payload.length > MAX_TYPING_BYTES) return connection.close(CLOSE.TOO_BIG, "Bad presence frame");
+    const now = this.service.now();
+    const elapsed = Math.max(0, now - connection.presenceRefilledAt);
+    connection.presenceTokens = Math.min(PRESENCE_BURST, connection.presenceTokens + Math.floor(elapsed / PRESENCE_REFILL_MS));
+    if (elapsed >= PRESENCE_REFILL_MS) connection.presenceRefilledAt = now;
+    if (connection.presenceTokens < 1) {
+      connection.presenceDrops += 1;
+      if (connection.presenceDrops > MAX_TYPING_DROPS) connection.close(CLOSE.POLICY, "Too many presence frames");
+      return;
+    }
+    connection.presenceTokens -= 1;
+    connection.presenceDrops = 0;
+    let frame;
+    try {
+      frame = JSON.parse(payload.toString("utf8"));
+    } catch {
+      return connection.close(CLOSE.INVALID_DATA, "Bad presence frame");
+    }
+    if (!frame || typeof frame !== "object" || frame.householdId !== connection.householdId || frame.deviceId !== connection.deviceId)
+      return connection.close(CLOSE.POLICY, "Bad presence frame");
+    if (!this.chatAllowed(connection)) return;
+    for (const other of this.households.get(connection.householdId) ?? [])
+      if (other !== connection && this.chatAllowed(other)) other.sendEphemeral(LIVE_TYPE.PRESENCE, payload);
   }
 
   /** node:http's "upgrade" event. */

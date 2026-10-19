@@ -8,7 +8,9 @@ export const RECEIPTS_LABEL = "Send read receipts";
 export const TYPING_LABEL = "Show when I'm typing";
 export const RECEIPTS_HINT = "People see when you've read their messages. If you turn this off, you also stop seeing when others have read yours.";
 export const TYPING_HINT = "People see \"typing…\" while you write. Turning this off doesn't stop you seeing when others are typing.";
-export const SETTINGS_NOTE = "These apply to you on all of your devices. Neither is ever sent or kept unencrypted, and a message counts as read only when you've had it on screen in an open, active window.";
+export const ONLINE_LABEL = "Show when I'm online";
+export const ONLINE_HINT = "People see a green dot and \"Online now\" while Kin is open and visible on any of your devices. If you turn this off, you also stop seeing when others are online. Nothing is kept about when you were last here.";
+export const SETTINGS_NOTE = "These apply to you on all of your devices. None of it is ever sent or kept unencrypted, and a message counts as read only when you've had it on screen in an open, active window.";
 
 class KinChatSettings extends HTMLElement {
   constructor() {
@@ -39,10 +41,11 @@ class KinChatSettings extends HTMLElement {
     note.textContent = SETTINGS_NOTE;
     this.receipts = this.toggle("chat-setting-receipts", RECEIPTS_LABEL, RECEIPTS_HINT, (checked) => ({ receipts: checked }));
     this.typing = this.toggle("chat-setting-typing", TYPING_LABEL, TYPING_HINT, (checked) => ({ typing: checked }));
+    this.online = this.toggle("chat-setting-online", ONLINE_LABEL, ONLINE_HINT, (checked) => ({ online: checked }));
     this.error = document.createElement("p");
     this.error.className = "field-error";
     this.error.setAttribute("role", "alert");
-    this.append(heading, note, this.receipts.field, this.typing.field, this.error);
+    this.append(heading, note, this.receipts.field, this.typing.field, this.online.field, this.error);
   }
 
   toggle(id, label, hint, change) {
@@ -100,10 +103,14 @@ class KinChatSettings extends HTMLElement {
     const presence = this.chatRoom?.presence;
     // Receipts and typing go with posting: a member the household set to
     // read only (or no access) has nothing to choose (#123).
-    this.hidden = !presence || (this.chatRoom.access ?? "write") !== "write";
+    // Online status needs chat access only; the other two go with posting.
+    const access = this.chatRoom?.access ?? "write";
+    this.hidden = !presence || access === "none";
     if (this.hidden) return;
+    this.receipts.field.hidden = this.typing.field.hidden = access !== "write";
     this.receipts.input.checked = presence.settings.receipts;
     this.typing.input.checked = presence.settings.typing;
+    this.online.input.checked = presence.settings.online;
   }
 }
 

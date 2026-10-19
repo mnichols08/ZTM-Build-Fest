@@ -666,3 +666,91 @@ test("a read-receipt change nudges the household's other devices with an empty r
     await r.close();
   }
 });
+
+// ---- Online now (#128) ---------------------------------------------------------------
+
+const presenceRecords = (client) => client.records().filter((record) => record.type === LIVE_TYPE.PRESENCE);
+
+test("a presence frame is relayed unchanged to the household's other devices, validated like typing", async () => {
+  const r = await rig();
+  try {
+    const phone = await open(r.port, { session: r.adult.sessionToken });
+    const laptop = await open(r.port, { session: r.laptop.sessionToken });
+    await phone.until(() => phone.records().length === 1);
+    await laptop.until(() => laptop.records().length === 1);
+    const frame = typingFrame(r.adult);
+    sendRecord(phone, LIVE_TYPE.PRESENCE, frame);
+    await laptop.until(() => presenceRecords(laptop).length === 1);
+    assert.deepEqual(Buffer.from(presenceRecords(laptop)[0].payload), frame, "relayed byte for byte");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(presenceRecords(phone).length, 0, "not echoed to the sender");
+    for (const [payload, code] of [
+      [Buffer.alloc(3000, 0x61), CLOSE.TOO_BIG],
+      [Buffer.from("not json"), CLOSE.INVALID_DATA],
+      [typingFrame(r.laptop), CLOSE.POLICY],
+      [typingFrame(r.adult, { householdId: "other" }), CLOSE.POLICY],
+    ]) {
+      const client = await open(r.port, { session: r.adult.sessionToken });
+      await client.until(() => client.records().length === 1);
+      sendRecord(client, LIVE_TYPE.PRESENCE, payload);
+      await client.until(() => client.ended);
+      assert.equal(client.closeFrame()?.code, code);
+    }
+  } finally {
+    await r.close();
+  }
+});
+
+test("presence is relayed and forgotten: nothing is written to the database or the logs", async () => {
+  const r = await rig();
+  const output = [];
+  const originals = { log: console.log, warn: console.warn, error: console.error, info: console.info, write: process.stdout.write, errWrite: process.stderr.write };
+  try {
+    const phone = await open(r.port, { session: r.adult.sessionToken });
+    const laptop = await open(r.port, { session: r.laptop.sessionToken });
+    await phone.until(() => phone.records().length === 1);
+    await laptop.until(() => laptop.records().length === 1);
+    const changes = () => r.application.store.db.prepare("SELECT total_changes() AS n").get().n;
+    const before = changes();
+    for (const name of ["log", "warn", "error", "info"]) console[name] = (...args) => { output.push(args.join(" ")); };
+    process.stdout.write = (chunk) => { output.push(String(chunk)); return true; };
+    process.stderr.write = (chunk) => { output.push(String(chunk)); return true; };
+    for (let count = 0; count < 5; count += 1) sendRecord(phone, LIVE_TYPE.PRESENCE, typingFrame(r.adult, { n: count }));
+    await laptop.until(() => presenceRecords(laptop).length === 5);
+    Object.assign(console, { log: originals.log, warn: originals.warn, error: originals.error, info: originals.info });
+    process.stdout.write = originals.write;
+    process.stderr.write = originals.errWrite;
+    assert.equal(changes(), before, "no row was written");
+    assert.deepEqual(output.filter((line) => !line.includes("ok") && line.trim()).filter((line) => /presence|online|heartbeat/i.test(line)), [], "and nothing about it was logged");
+    assert.deepEqual(Object.keys(r.application.liveService).filter((key) => /presence|online/i.test(key)), [], "the service holds no presence state");
+  } finally {
+    Object.assign(console, { log: originals.log, warn: originals.warn, error: originals.error, info: originals.info });
+    process.stdout.write = originals.write;
+    process.stderr.write = originals.errWrite;
+    await r.close();
+  }
+});
+
+test("a member with no chat access neither sends nor receives presence", async () => {
+  const r = await rig();
+  try {
+    const invitation = r.service.createPairing(r.adult.sessionToken, { kind: "limited" });
+    const claim = r.service.claimPairing({ code: invitation.code, credential: credential("child"), deviceLabel: "Tablet" });
+    r.service.approvePairing(r.adult.sessionToken, invitation.pairingId, claim.version);
+    const child = r.service.activateClaim(claim.claimToken);
+    r.service.setChatPolicy(r.adult.sessionToken, { limited: "none", temporary: "write" }, r.adult.memberId);
+    const phone = await open(r.port, { session: r.adult.sessionToken });
+    const tablet = await open(r.port, { session: child.sessionToken });
+    await phone.until(() => phone.records().length >= 1);
+    await tablet.until(() => tablet.records().length >= 1 || tablet.ended);
+    if (!tablet.ended) {
+      sendRecord(phone, LIVE_TYPE.PRESENCE, typingFrame(r.adult));
+      sendRecord(tablet, LIVE_TYPE.PRESENCE, typingFrame(child));
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.equal(presenceRecords(tablet).length, 0, "receives none");
+      assert.equal(presenceRecords(phone).length, 0, "and its frame goes nowhere");
+    }
+  } finally {
+    await r.close();
+  }
+});

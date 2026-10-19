@@ -198,6 +198,11 @@ class KinChat extends HTMLElement {
     this.scroller.setAttribute("aria-live", "off");
     this.scroller.setAttribute("aria-labelledby", "chat-heading");
     this.scroller.tabIndex = 0;
+    // Online now (#128): who has Kin open and visible right now. Plain text,
+    // not a live region (it would be announced on every change).
+    this.onlineLine = document.createElement("p");
+    this.onlineLine.className = "chat-online";
+    this.onlineLine.hidden = true;
     // Pinned messages (#131): a region above the log. The bar shows the latest
     // pin; pressing it opens the list of all pins, each of which goes to its
     // message.
@@ -430,7 +435,7 @@ class KinChat extends HTMLElement {
     this.readOnly.setAttribute("role", "status");
     this.readOnly.textContent = "Your household has set chat to read-only for you.";
     this.readOnly.hidden = true;
-    section.append(top, this.searchPanel, this.notice, this.pinRegion, this.scroller, this.typingLine, this.jump, form, this.readOnly, this.announcer, this.viewer, this.details);
+    section.append(top, this.searchPanel, this.notice, this.onlineLine, this.pinRegion, this.scroller, this.typingLine, this.jump, form, this.readOnly, this.announcer, this.viewer, this.details);
     this.replaceChildren(section);
     this.queueRender("reset");
   }
@@ -693,10 +698,32 @@ class KinChat extends HTMLElement {
 
   /** The presence changed: redraw the "Seen by" line and the typing line,
    * not the messages. */
+  /** Who is online now, as one line; a member this device shows no status
+   * for (their own setting is off) sees nothing. */
+  onlineMembers() {
+    const room = this.chatRoom;
+    return room?.presence?.online?.() ?? [];
+  }
+
+  renderOnline() {
+    const room = this.chatRoom;
+    const names = room ? this.onlineMembers().map((memberId) => room.authorLabel(memberId)) : [];
+    this.onlineLine.hidden = !names.length;
+    if (!names.length) {
+      this.onlineLine.textContent = "";
+      return;
+    }
+    const dot = document.createElement("span");
+    dot.className = "chat-online-dot";
+    dot.setAttribute("aria-hidden", "true");
+    this.onlineLine.replaceChildren(dot, ` Online now: ${names.join(", ")}`);
+  }
+
   presenceChanged() {
     const room = this.chatRoom;
     if (!room || !this.list) return;
     this.reconcile();
+    this.renderOnline();
     const text = typingText(room.presence.typing().map((memberId) => room.authorLabel(memberId)));
     if (this.typingLine.textContent !== text) this.typingLine.textContent = text;
     this.typingLine.hidden = !text;
@@ -930,6 +957,7 @@ class KinChat extends HTMLElement {
     }
     this.loadMissingQuotes();
     this.renderPins();
+    this.renderOnline();
     const missing = this.messages.filter((message) => message.text === null && message.blobRef && message.contentKind === "text" && !this.textStatus.has(message.messageId));
     if (!missing.length) return;
     for (const message of missing) this.textStatus.set(message.messageId, { loading: true });
@@ -1130,6 +1158,7 @@ class KinChat extends HTMLElement {
       this.highlighted === message.messageId, this.divider === message.messageId,
       room.mentionsOf ? JSON.stringify(room.mentionsOf(message)) : "",
       this.pins.some((pin) => pin.messageId === message.messageId),
+      this.onlineMembers().includes(message.authorId),
     ].join("\u0000");
   }
 
@@ -1166,6 +1195,15 @@ class KinChat extends HTMLElement {
     const name = document.createElement("span");
     name.className = "chat-author";
     name.textContent = author;
+    if (this.onlineMembers().includes(message.authorId)) {
+      const dot = document.createElement("span");
+      dot.className = "chat-online-dot";
+      dot.setAttribute("aria-hidden", "true");
+      const sr = document.createElement("span");
+      sr.className = "visually-hidden";
+      sr.textContent = " (online now)";
+      name.append(" ", dot, sr);
+    }
     const time = document.createElement("time");
     const posted = new Date(message.postedAt);
     time.dateTime = posted.toISOString();
