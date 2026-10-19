@@ -737,6 +737,83 @@ the live channel and nothing else: the service relays it and keeps nothing.
 - **Limit.** The live channel is held by one tab of a browser; if that tab is
   hidden while another tab of Kin is visible, the device reads as away.
 
+## Ephemeral envelope (v1.1, #257, #258)
+
+The live channel carries two things that must not be confused: notices and
+household data pointers (durable, with HTTP as the source of truth), and
+messages that exist only while a socket is open. This section is the second
+kind; [ADR 0009](decisions/0009-ephemeral-signaling-boundary.md) explains why
+they are kept apart. It is plumbing only: production accepts no category, no
+feature uses it, and no calling, media or signaling feature ships with it.
+
+**What is generic and what is chat.** Generic transport, which knows nothing
+about chat: the handshake, framing, pings, the one-socket-per-device rule,
+loss-of-access closing, backpressure and the connection limit
+(`server/live/websocket.mjs` and the connection class). Chat-specific, which
+sits on top: `SYNC_HINT` after accepted chat events, `RECEIPTS`, and the
+`TYPING` and `PRESENCE` relays, which check chat access and the sealed frame's
+household and device. The ephemeral path is generic like the first group and
+gates on a category's declared access level, not on chat internals.
+
+**Record.** Type `EPHEMERAL` (6), both ways. A request is `[u8 version =
+1][u8 category][u8 scope][u8 0][16 correlation id][16 target id][u32 payload
+length][payload]`; a delivery replaces the target with the **sender's member
+and device IDs, stamped by the service** from the sender's session, and keeps
+the correlation id, so a receiver can match a reply. Little-endian, 4096 bytes
+of payload at most, a category's limit often lower. The payload is opaque to
+the service; a payload that must be hidden from it is sealed under the
+household key and bound to the sender's device, as typing frames are.
+
+**Categories.** The service holds a closed table of categories, each with a
+payload limit, a rate, the scopes it may use and an access level (`chat` to see
+chat, or `write` to post in it). It is empty in production. A client cannot
+invent one.
+
+**Routing (#258).** A scope names who may receive: `household` (every other
+open, allowed socket of the sender's household), `member` (every open trusted
+device of one member of it, including the sender's other devices if the target
+is the sender's own member) or `device` (exactly one trusted device). IDs are
+the canonical member and device IDs pairing issues, never a display name or
+role. A member with several devices gets one copy on each connected one, so a
+receiver that wants one answer dedupes on the correlation id; there is no
+acknowledgement. A device holds one socket, so a second tab does not receive
+a second copy: the newer socket replaces the older (close 4409).
+
+**Checked on the server, at dispatch, both sides.** Before relaying, the
+service re-validates the sender's session and device, and for each receiver
+that its device is not revoked, its member is active and not expired and its
+household not being deleted, and that sender and receiver may take part under
+the category's access level and the admin's chat policy. (A receiver's own
+session expiring closes its socket on its own timer; only the sender's session
+is re-read per message.) None of this is left to the browser.
+
+**What the sender learns.** Nothing about delivery. A target that is in another
+household, unknown, offline, revoked or not allowed gets nothing and the
+sender gets no error, no acknowledgement and no different response, so the path
+cannot be used to find out who is online, to scan device IDs or to learn a
+device exists. Presence for people to see remains the opt-in "Online now"
+feature (#128).
+
+**Invalid envelopes fail closed.** Too short, nonzero reserved byte, a payload
+length that doesn't match, or a scope without or with an unexpected target
+closes the socket with 1007; an unknown version, category or a scope the
+category doesn't allow with 1003; a payload over the limit with 1009. A message
+over its category's rate is dropped, and a connection that keeps sending them
+is closed with 1008. Version 1 is the only one; a client sending another is
+treated like one sending an unknown record type, and falls back to polling.
+
+**Lifetime.** A message goes to sockets open at that moment and is sent only
+if the receiver's socket can take it: it is never queued, never retried and
+never replayed after a reconnect, and nothing is written to a table, an event
+log, an export, a log line or a push. Locking, signing out, removing a trusted
+device or a member, deleting the household, and a key or authority change
+that revalidates a household's sockets all close the sockets involved
+(4401/4403, see Live channel), so nothing can be routed to them after that.
+
+**Browser.** `web/sync/ephemeral-envelope.js` is only the codec for these
+bytes; the live channel client ignores the record type until a feature adds a
+consumer.
+
 ## Read receipts and typing (v1.1, #120)
 
 Two small signals for the household chat, neither of them a chat event, and

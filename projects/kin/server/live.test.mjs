@@ -11,7 +11,7 @@ import { createKinServer } from "./server.mjs";
 import {
   acceptKey, CLOSE, closePayload, encodeFrame, encodeMessage, FrameParser, isClientKey, isValidCloseCode, OPCODE, parseMessage,
 } from "./live/websocket.mjs";
-import { LIVE_TYPE } from "./live/live-service.mjs";
+import { LIVE_TYPE, LiveService } from "./live/live-service.mjs";
 
 const credential = (id) => ({ id, publicKey: `key-${id}`, algorithm: -7 });
 
@@ -753,4 +753,334 @@ test("a member with no chat access neither sends nor receives presence", async (
   } finally {
     await r.close();
   }
+});
+
+// ---- Ephemeral envelope (#257, #258) ------------------------------------------------
+
+import { EPHEMERAL_VERSION, SCOPE, decodeRequest, encodeDelivery, encodeRequest, CATEGORIES, EphemeralError } from "./live/ephemeral.mjs";
+
+const SIGNAL = 7;
+const categories = (extra = {}) => new Map([[SIGNAL, { name: "test", maxPayload: 64, burst: 3, refillMs: 60_000, scopes: [SCOPE.HOUSEHOLD, SCOPE.MEMBER, SCOPE.DEVICE], access: "chat", ...extra }]]);
+const envelope = (scope, targetId, payload = "hi", extra = {}) => encodeRequest({ category: SIGNAL, scope, targetId, correlation: randomBytes(16), payload: Buffer.from(payload), ...extra });
+const ephemeral = (client) => client.records().filter((record) => record.type === LIVE_TYPE.EPHEMERAL);
+const quiet = () => new Promise((resolve) => setTimeout(resolve, 150));
+
+async function household(options = {}) {
+  const r = await rig({ ephemeralCategories: categories(options) });
+  const invitation = r.service.createPairing(r.adult.sessionToken, { kind: "limited" });
+  const claim = r.service.claimPairing({ code: invitation.code, credential: credential("tablet"), deviceLabel: "Tablet" });
+  r.service.approvePairing(r.adult.sessionToken, invitation.pairingId, claim.version);
+  r.tablet = r.service.activateClaim(claim.claimToken);
+  r.phone = await open(r.port, { session: r.adult.sessionToken });
+  r.laptopSocket = await open(r.port, { session: r.laptop.sessionToken });
+  r.tabletSocket = await open(r.port, { session: r.tablet.sessionToken });
+  for (const client of [r.phone, r.laptopSocket, r.tabletSocket]) await client.until(() => client.records().length >= 1);
+  return r;
+}
+
+test("the envelope reads only what a category allows, and the sender is never taken from it", () => {
+  const table = categories();
+  const good = envelope(SCOPE.MEMBER, "ab".repeat(16));
+  const request = decodeRequest(good, table);
+  assert.equal(request.scope, SCOPE.MEMBER);
+  assert.equal(request.targetId, "ab".repeat(16));
+  assert.equal(request.payload.toString(), "hi");
+  const bad = (bytes, reason) => assert.throws(() => decodeRequest(bytes, table), (error) => error instanceof EphemeralError && error.reason === reason, reason);
+  const mutate = (change) => { const copy = Buffer.from(good); change(copy); return copy; };
+  bad(good.subarray(0, 39), "malformed");
+  bad(mutate((b) => { b[0] = 2; }), "version");
+  bad(mutate((b) => { b[1] = 99; }), "category");
+  bad(mutate((b) => { b[2] = 3; }), "scope");
+  bad(mutate((b) => { b[3] = 1; }), "malformed");
+  bad(Buffer.concat([good, Buffer.from("x")]), "malformed");
+  bad(envelope(SCOPE.HOUSEHOLD, "ab".repeat(16)), "malformed");
+  bad(envelope(SCOPE.DEVICE, null), "malformed");
+  bad(envelope(SCOPE.HOUSEHOLD, null, "x".repeat(65)), "too_big");
+  assert.throws(() => decodeRequest(good, CATEGORIES), (error) => error.reason === "category", "production has no categories");
+  assert.equal(CATEGORIES.size, 0);
+  const delivery = encodeDelivery({ categoryId: SIGNAL, scope: SCOPE.MEMBER, correlation: Buffer.alloc(16, 1), senderMemberId: "cd".repeat(16), senderDeviceId: "ef".repeat(16), payload: Buffer.from("yo") });
+  assert.equal(delivery[0], EPHEMERAL_VERSION);
+  assert.equal(delivery.subarray(20, 36).toString("hex"), "cd".repeat(16));
+  assert.equal(delivery.subarray(36, 52).toString("hex"), "ef".repeat(16));
+  assert.equal(delivery.subarray(56).toString(), "yo");
+});
+
+test("production accepts no ephemeral category: a client that sends one is closed", async () => {
+  const r = await rig();
+  try {
+    const phone = await open(r.port, { session: r.adult.sessionToken });
+    await phone.until(() => phone.records().length === 1);
+    sendRecord(phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.HOUSEHOLD, null));
+    await phone.until(() => phone.ended);
+    assert.equal(phone.closeFrame().code, CLOSE.UNSUPPORTED_DATA);
+  } finally {
+    await r.close();
+  }
+});
+
+test("malformed, unknown-version and oversized envelopes close the socket with a code that says why", async () => {
+  const r = await household();
+  try {
+    const cases = [
+      [Buffer.alloc(10), CLOSE.INVALID_DATA],
+      [(() => { const b = envelope(SCOPE.HOUSEHOLD, null); b[0] = 9; return b; })(), CLOSE.UNSUPPORTED_DATA],
+      [(() => { const b = envelope(SCOPE.HOUSEHOLD, null); b[1] = 200; return b; })(), CLOSE.UNSUPPORTED_DATA],
+      [envelope(SCOPE.HOUSEHOLD, null, "x".repeat(65)), CLOSE.TOO_BIG],
+    ];
+    for (const [payload, code] of cases) {
+      const client = await open(r.port, { session: r.adult.sessionToken });
+      await client.until(() => client.records().length >= 1);
+      sendRecord(client, LIVE_TYPE.EPHEMERAL, payload);
+      await client.until(() => client.ended);
+      assert.equal(client.closeFrame().code, code);
+    }
+  } finally {
+    await r.close();
+  }
+});
+
+test("household, member and device scopes reach exactly the sockets they name, stamped with the sender", async () => {
+  const r = await household();
+  try {
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.HOUSEHOLD, null, "everyone"));
+    await r.laptopSocket.until(() => ephemeral(r.laptopSocket).length === 1);
+    await r.tabletSocket.until(() => ephemeral(r.tabletSocket).length === 1);
+    const delivered = ephemeral(r.laptopSocket)[0].payload;
+    assert.equal(delivered.subarray(20, 36).toString("hex"), r.adult.memberId, "the sender is the session's member");
+    assert.equal(delivered.subarray(36, 52).toString("hex"), r.adult.deviceId, "and its device");
+    assert.equal(delivered.subarray(56).toString(), "everyone");
+    assert.equal(ephemeral(r.phone).length, 0, "never back to the sender");
+
+    // A member's own other device gets a member-addressed message too.
+    sendRecord(r.tabletSocket, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.MEMBER, r.adult.memberId, "to the adult"));
+    await r.phone.until(() => ephemeral(r.phone).length === 1);
+    await r.laptopSocket.until(() => ephemeral(r.laptopSocket).length === 2);
+    assert.equal(ephemeral(r.tabletSocket).length, 1, "the other member's device is not addressed");
+
+    // One device only.
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.DEVICE, r.laptop.deviceId, "just the laptop"));
+    await r.laptopSocket.until(() => ephemeral(r.laptopSocket).length === 3);
+    await quiet();
+    assert.equal(ephemeral(r.tabletSocket).length, 1);
+    assert.equal(ephemeral(r.phone).length, 1);
+  } finally {
+    await r.close();
+  }
+});
+
+test("a member or device that is foreign, unknown, offline or revoked gets nothing, and the sender is told nothing", async () => {
+  const r = await household();
+  try {
+    const stranger = "11".repeat(16);
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.MEMBER, stranger));
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.DEVICE, stranger));
+    // A device named by its member's id (or the reverse) is not a match.
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.DEVICE, r.tablet.memberId));
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.MEMBER, r.tablet.deviceId));
+    await quiet();
+    for (const client of [r.laptopSocket, r.tabletSocket, r.phone]) assert.equal(ephemeral(client).length, 0);
+    assert.equal(r.phone.ended, false, "the sender is not closed or told");
+
+    // Revoked: its socket closes, and a message to it goes nowhere.
+    r.service.revokeDevice(r.adult.sessionToken, r.laptop.deviceId, r.adult.memberId);
+    r.application.liveService.revalidate(r.adult.householdId);
+    await r.laptopSocket.until(() => r.laptopSocket.ended);
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.DEVICE, r.laptop.deviceId));
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.MEMBER, r.adult.memberId));
+    await quiet();
+    assert.equal(r.phone.ended, false);
+    assert.equal(ephemeral(r.tabletSocket).length, 0);
+  } finally {
+    await r.close();
+  }
+});
+
+test("a second socket for a device replaces the first, so only the newest receives", async () => {
+  const r = await household();
+  try {
+    const tab = await open(r.port, { session: r.laptop.sessionToken });
+    await tab.until(() => tab.records().length >= 1);
+    await r.laptopSocket.until(() => r.laptopSocket.ended);
+    assert.equal(r.laptopSocket.closeFrame().code, CLOSE.REPLACED);
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.DEVICE, r.laptop.deviceId, "once"));
+    await tab.until(() => ephemeral(tab).length === 1);
+    assert.equal(ephemeral(r.laptopSocket).length, 0);
+  } finally {
+    await r.close();
+  }
+});
+
+test("a message is never queued for a receiver that can't take it, and a sender over the rate is dropped", async () => {
+  const r = await household({ burst: 2 });
+  try {
+    const connection = r.application.liveService.connections.get(r.laptop.deviceId);
+    connection.blocked = true;
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.DEVICE, r.laptop.deviceId));
+    await quiet();
+    assert.equal(connection.queue.length, 0, "dropped, not queued");
+    connection.blocked = false;
+    for (let count = 0; count < 5; count += 1) sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.DEVICE, r.tablet.deviceId, `n${count}`));
+    await r.tabletSocket.until(() => ephemeral(r.tabletSocket).length >= 1);
+    await quiet();
+    assert.equal(ephemeral(r.tabletSocket).length, 1, "one token was spent above; the burst of two leaves one");
+  } finally {
+    await r.close();
+  }
+});
+
+test("access to the chat gates both sending and receiving, and a write category needs write", async () => {
+  const r = await household({ access: "write" });
+  try {
+    r.service.setChatPolicy(r.adult.sessionToken, { limited: "read", temporary: "write" }, r.adult.memberId);
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.HOUSEHOLD, null, "to a reader"));
+    sendRecord(r.tabletSocket, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.HOUSEHOLD, null, "from a reader"));
+    await quiet();
+    assert.equal(ephemeral(r.tabletSocket).length, 0, "a read-only member receives no write-category message");
+    assert.equal(ephemeral(r.phone).length, 0, "and sends none");
+    assert.equal(ephemeral(r.laptopSocket).length, 1, "the adult's laptop still gets the adult's");
+  } finally {
+    await r.close();
+  }
+});
+
+test("ephemeral messages write nothing: no row, no log line, no state in the service", async () => {
+  const r = await household();
+  const output = [];
+  const originals = { log: console.log, warn: console.warn, error: console.error, info: console.info, write: process.stdout.write, errWrite: process.stderr.write };
+  try {
+    const changes = () => r.application.store.db.prepare("SELECT total_changes() AS n").get().n;
+    const before = changes();
+    for (const name of ["log", "warn", "error", "info"]) console[name] = (...args) => { output.push(args.join(" ")); };
+    process.stdout.write = (chunk) => { output.push(String(chunk)); return true; };
+    process.stderr.write = (chunk) => { output.push(String(chunk)); return true; };
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.HOUSEHOLD, null, "secret-signal"));
+    await r.tabletSocket.until(() => ephemeral(r.tabletSocket).length === 1);
+    Object.assign(console, { log: originals.log, warn: originals.warn, error: originals.error, info: originals.info });
+    process.stdout.write = originals.write;
+    process.stderr.write = originals.errWrite;
+    assert.equal(changes(), before, "no row was written");
+    assert.deepEqual(output.filter((line) => /secret-signal/.test(line)), [], "nothing was logged");
+    assert.deepEqual(Object.keys(r.application.liveService).filter((key) => /ephemeral|signal/i.test(key)), ["ephemeralCategories"], "the service holds only its category table");
+  } finally {
+    Object.assign(console, { log: originals.log, warn: originals.warn, error: originals.error, info: originals.info });
+    process.stdout.write = originals.write;
+    process.stderr.write = originals.errWrite;
+    await r.close();
+  }
+});
+
+test("an unauthenticated or cross-origin socket cannot reach the ephemeral path at all", async () => {
+  const r = await household();
+  try {
+    assert.equal((await open(r.port, {})).status, 401);
+    assert.equal((await open(r.port, { session: r.adult.sessionToken, origin: "http://evil.example" })).status, 403);
+  } finally {
+    await r.close();
+  }
+});
+
+test("a device or member of another household is never reached, even by its real ids", async () => {
+  const r = await household();
+  try {
+    const foreign = r.service.bootstrap({ credential: credential("elsewhere"), deviceLabel: "Elsewhere" });
+    const outsider = await open(r.port, { session: foreign.sessionToken });
+    await outsider.until(() => outsider.records().length >= 1);
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.DEVICE, foreign.deviceId));
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.MEMBER, foreign.memberId));
+    // And the other way: a foreign sender naming this household's ids.
+    sendRecord(outsider, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.DEVICE, r.laptop.deviceId));
+    sendRecord(outsider, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.MEMBER, r.adult.memberId));
+    sendRecord(outsider, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.HOUSEHOLD, null));
+    await quiet();
+    assert.equal(ephemeral(outsider).length, 0);
+    for (const client of [r.phone, r.laptopSocket, r.tabletSocket]) assert.equal(ephemeral(client).length, 0);
+    assert.equal(outsider.ended || r.phone.ended, false, "nobody was told anything");
+  } finally {
+    await r.close();
+  }
+});
+
+test("access is re-checked at dispatch, even when nothing has closed the socket yet", async () => {
+  const r = await household();
+  try {
+    // The receiver's device is revoked in the service; its socket is still open.
+    r.service.revokeDevice(r.adult.sessionToken, r.laptop.deviceId, r.adult.memberId);
+    assert.equal(r.laptopSocket.ended, false);
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.DEVICE, r.laptop.deviceId, "to a revoked device"));
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.HOUSEHOLD, null, "to the household"));
+    await r.tabletSocket.until(() => ephemeral(r.tabletSocket).length === 1);
+    await quiet();
+    assert.equal(ephemeral(r.laptopSocket).length, 0, "the revoked device got neither");
+
+    // The sender's own device is revoked: its message goes nowhere and its socket closes.
+    r.service.revokeDevice(r.adult.sessionToken, r.tablet.deviceId, r.adult.memberId);
+    sendRecord(r.tabletSocket, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.HOUSEHOLD, null, "from a revoked device"));
+    await r.tabletSocket.until(() => r.tabletSocket.ended);
+    await quiet();
+    assert.equal(ephemeral(r.phone).length, 0);
+  } finally {
+    await r.close();
+  }
+});
+
+test("the rate refills as time passes, keeps the part of an interval not yet earned, and a flood closes the connection", async () => {
+  const r = await household({ burst: 2, refillMs: 1_000 });
+  try {
+    let time = 1_000_000;
+    r.service.now = () => time;
+    const sendOne = async (n) => { sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.DEVICE, r.tablet.deviceId, `m${n}`)); await quiet(); };
+    const got = () => ephemeral(r.tabletSocket).length;
+    await sendOne(1); await sendOne(2); await sendOne(3);
+    assert.equal(got(), 2, "a burst of two");
+    time += 1_500;
+    await sendOne(4);
+    assert.equal(got(), 3, "one token came back after 1.5 intervals");
+    await sendOne(5);
+    assert.equal(got(), 3, "and only one");
+    time += 500; // the half interval carried over makes a whole one
+    await sendOne(6);
+    assert.equal(got(), 4, "the remainder was kept");
+    // Buckets are per category and per connection: another connection has its own.
+    sendRecord(r.laptopSocket, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.DEVICE, r.tablet.deviceId, "other sender"));
+    await r.tabletSocket.until(() => got() === 5);
+    // A flood is closed as abusive.
+    for (let count = 0; count < 70; count += 1) sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.DEVICE, r.tablet.deviceId));
+    await r.phone.until(() => r.phone.ended);
+    assert.equal(r.phone.closeFrame().code, CLOSE.POLICY);
+  } finally {
+    await r.close();
+  }
+});
+
+test("a member whose chat is switched off neither sends nor receives, and the service keeps no message", async () => {
+  const r = await household();
+  try {
+    r.service.setChatPolicy(r.adult.sessionToken, { limited: "none", temporary: "write" }, r.adult.memberId);
+    if (!r.tabletSocket.ended) {
+      sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.MEMBER, r.tablet.memberId, "to a member without chat"));
+      sendRecord(r.tabletSocket, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.HOUSEHOLD, null, "from a member without chat"));
+      await quiet();
+      assert.equal(ephemeral(r.tabletSocket).length, 0);
+      assert.equal(ephemeral(r.phone).length, 0);
+    }
+    // After delivering, nothing the service holds contains the message.
+    sendRecord(r.phone, LIVE_TYPE.EPHEMERAL, envelope(SCOPE.DEVICE, r.laptop.deviceId, "findme-1234"));
+    await r.laptopSocket.until(() => ephemeral(r.laptopSocket).length === 1);
+    for (const connection of r.application.liveService.connections.values()) {
+      assert.equal(connection.queue.length, 0);
+      for (const bucket of connection.ephemeralBuckets.values()) assert.deepEqual(Object.keys(bucket).sort(), ["drops", "refilledAt", "tokens"]);
+    }
+  } finally {
+    await r.close();
+  }
+});
+
+test("a category table with a missing or unsafe limit stops the service from starting", () => {
+  const good = { name: "x", maxPayload: 64, burst: 2, refillMs: 1000, scopes: [SCOPE.HOUSEHOLD], access: "chat" };
+  const start = (category, id = 3) => new LiveService({ service: {}, origin: "http://localhost", readSession() {}, ephemeralCategories: new Map([[id, category]]) });
+  start(good);
+  for (const bad of [{ ...good, maxPayload: undefined }, { ...good, maxPayload: 100_000 }, { ...good, burst: 0 }, { ...good, refillMs: undefined },
+    { ...good, scopes: [] }, { ...good, scopes: [9] }, { ...good, access: "any" }, null])
+    assert.throws(() => start(bad), RangeError);
+  assert.throws(() => start(good, 300), RangeError);
 });
