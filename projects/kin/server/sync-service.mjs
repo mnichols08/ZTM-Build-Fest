@@ -134,7 +134,10 @@ export class EncryptedSyncService {
   householdSettings(sessionToken) {
     const auth = this.authorize(sessionToken);
     const row = this.store?.getHouseholdSettings(auth.household.id) ?? auth.household.settings ?? null;
-    return { admin: isHouseholdAdmin(auth.member, this.now()), adminRecorded: this.pairingService.hasHouseholdAdmin(auth.household), settings: row ? { ...row, ciphertext: Buffer.from(row.ciphertext).toString("base64url") } : null };
+    const admin = isHouseholdAdmin(auth.member, this.now());
+    const policy = chatPolicyOf(auth.household);
+    // The chat policy (#123) rides along for admins, who alone may see it.
+    return { admin, ...(admin ? { chatPolicy: { limited: policy.limited, temporary: policy.temporary } } : {}), adminRecorded: this.pairingService.hasHouseholdAdmin(auth.household), settings: row ? { ...row, ciphertext: Buffer.from(row.ciphertext).toString("base64url") } : null };
   }
 
   updateHouseholdSettings(sessionToken, value) {

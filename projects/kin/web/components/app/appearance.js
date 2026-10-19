@@ -112,8 +112,7 @@ export class AppearanceController {
       if (result.admin) void this.refreshInstallIdentity({ onlyFirst: true });
       else this.installIdentitySession = null;
       // Only admins can see or change the chat policy; others don't ask.
-      if (result.admin) void this.app.chatPolicy?.load();
-      else this.app.chatPolicy?.show(null);
+      if (!result.offline) this.app.chatPolicy?.show(result.admin ? result.chatPolicy ?? null : null);
       if (draftPreserved) return;
       if (this.app.appearance?.dirty) this.ctx.appearance.setHouseholdIdentity(this.app.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME);
       else {
