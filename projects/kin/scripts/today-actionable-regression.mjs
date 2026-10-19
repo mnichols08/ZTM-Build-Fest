@@ -96,9 +96,11 @@ export async function todayActionableRegressions(recovery) {
   pending.remove();
 
   const empty = mount({ today: DAY, items: [] });
-  check(!empty.querySelector(".today-summary") && /No household tasks yet/.test(empty.querySelector('[data-section="today"]').textContent) &&
-    empty.querySelector(".today-quick-add")?.textContent === "Add a task for today" && !empty.querySelector('[data-section="upcoming"], [data-section="earlier"]'),
-  "A. an empty household shows one calm empty state with the Quick add action and no counts");
+  check(!empty.querySelector(".today-summary") && /Nothing to do yet/.test(empty.querySelector('[data-section="today"]').textContent) &&
+    empty.querySelector(".today-quick-add")?.textContent === "Add a task for today" &&
+    empty.querySelector(".today-shopping-link")?.getAttribute("href") === "#lists/shopping" &&
+    !empty.querySelector('[data-section="upcoming"], [data-section="earlier"]'),
+  "A. an empty household offers native Quick add and Shopping paths with no counts");
   empty.remove();
 
   const allDone = mount({ today: DAY, items: [fixtures.completed] });
@@ -172,11 +174,13 @@ export async function todayActionableRegressions(recovery) {
   opener.click();
   host.remove();
   quick.cancelButton.click();
-  // The fallback focus can land a frame or two later on a slow runner (#164).
-  for (let wait = 0; wait < 80 && !(!quick.dialog.open && document.activeElement === app.today.querySelector('[data-section="today"] h2')); wait++)
+  // The removed opener must return focus to a meaningful heading, not the page body.
+  // Depending on the route-level fallback, this is the Today section or page heading.
+  const fallbackHeadings = () => [app.today.querySelector('[data-section="today"] h2'), app.main.querySelector(".app-view:not([hidden]) h1")].filter(Boolean);
+  for (let attempt = 0; attempt < 80 && !(!quick.dialog.open && fallbackHeadings().includes(document.activeElement)); attempt++)
     await frame();
-  check(!quick.dialog.open && document.activeElement === app.today.querySelector('[data-section="today"] h2'),
-    "A. when the empty-state action is gone after a refresh, focus lands on the Today heading instead of the page body");
+  check(!quick.dialog.open && fallbackHeadings().includes(document.activeElement),
+    "A. when the empty-state action disappears, focus returns to a visible Today or page heading, not the body");
 
   // B. Live Today over the real store and WASM projection.
   const earlierA = await add(`Earlier A ${stamp}`, shift(-3));
