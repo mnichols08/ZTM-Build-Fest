@@ -111,7 +111,9 @@ export class AppearanceController {
       // A demotion removes the section; a later promotion loads it again.
       if (result.admin) void this.refreshInstallIdentity({ onlyFirst: true });
       else this.installIdentitySession = null;
-      void this.app.chatPolicy?.load();
+      // Only admins can see or change the chat policy; others don't ask.
+      if (result.admin) void this.app.chatPolicy?.load();
+      else this.app.chatPolicy?.show(null);
       if (draftPreserved) return;
       if (this.app.appearance?.dirty) this.ctx.appearance.setHouseholdIdentity(this.app.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME);
       else {
