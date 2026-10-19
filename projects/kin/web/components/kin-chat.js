@@ -539,7 +539,11 @@ class KinChat extends HTMLElement {
     const access = this.chatRoom?.access ?? "write";
     this.form.hidden = access !== "write";
     this.readOnly.hidden = access !== "read";
+    // A hidden scroller loses its position: start again at the latest message
+    // when access comes back.
+    const reappearing = this.scroller.hidden && access !== "none";
     this.scroller.hidden = access === "none";
+    if (reappearing) queueMicrotask(() => this.queueRender("reset"));
     this.jump.hidden = this.jump.hidden || access === "none";
     if (access === "none" && this.details.open) this.details.close();
     if (access === "none" && this.viewer.open) this.viewer.close();

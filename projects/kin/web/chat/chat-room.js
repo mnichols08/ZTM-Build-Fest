@@ -52,7 +52,7 @@ const MAX_CHAT_PUSH_BATCHES = 2;
 const LOAD_BATCH = 500;
 /** Retire refusals that retrying can't fix: the blob stays on the service
  * and the event is sent anyway. */
-const FINAL_RETIRE_REFUSALS = new Set(["chat_blob_retire_forbidden", "chat_blob_invalid"]);
+const FINAL_RETIRE_REFUSALS = new Set(["chat_blob_retire_forbidden", "chat_blob_invalid", "chat_read_only", "chat_unavailable"]);
 /** Authentication failures that skip an event at once: what the event
  * itself says can never pass (not a chat event, an identity that doesn't
  * match, a revoked or not-yet-granted device). A signature that doesn't
