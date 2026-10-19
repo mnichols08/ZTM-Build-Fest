@@ -748,3 +748,29 @@ test("People & devices stops writing when another render takes the panel mid-bui
   assert.deepEqual(component.children, [marker], "the newer render keeps the panel; nothing is appended after it");
   assert.equal(polled, false, "opening People & devices cancels a pending pairing poll");
 });
+
+test("a pairing poll answered after People & devices opened leaves that view alone", async () => {
+  const component = new KinHousehold();
+  component.pairing = { pairingId: "p1", state: "Claimed", version: 1 };
+  component.viewGeneration = 7;
+  let renders = 0, errors = 0;
+  component.render = () => { renders += 1; };
+  component.renderError = () => { errors += 1; };
+  let answer;
+  component.api = () => new Promise((resolve) => { answer = resolve; });
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback) => realSetTimeout(callback, 0);
+  try {
+    component.ctx.pairing.pollPairing();
+    await new Promise((resolve) => realSetTimeout(resolve, 5));
+    // People & devices takes the panel while the request is in flight.
+    component.viewGeneration += 1;
+    answer({ state: "Confirmed", version: 2 });
+    await new Promise((resolve) => realSetTimeout(resolve, 5));
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+  assert.equal(component.pairing.state, "Confirmed", "the new pairing state is still recorded");
+  assert.equal(renders, 0, "but the newer view is not replaced");
+  assert.equal(errors, 0);
+});
