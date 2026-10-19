@@ -72,6 +72,8 @@ struct AbiState {
     chat_history: History,
     /// Decrypted chat texts, while unlocked (chat.rs).
     chat_texts: crate::chat::ChatTexts,
+    /// The fridge log (#317, board.rs), apart from the other two.
+    board_history: History,
     result: Vec<u8>,
     error: Vec<u8>,
     /// Where `result` holds a projection, when it does.
@@ -90,6 +92,7 @@ impl AbiState {
             history: History::new(),
             chat_history: History::chat(),
             chat_texts: crate::chat::ChatTexts::new(),
+            board_history: History::board(),
             result: Vec::new(),
             error: Vec::new(),
             projection: None,
@@ -135,6 +138,7 @@ impl AbiState {
         self.history.clear();
         self.chat_history.clear();
         self.chat_texts.clear();
+        self.board_history.clear();
         self.result = Vec::new();
         self.error = Vec::new();
         self.projection = None;
@@ -393,6 +397,46 @@ pub extern "C" fn kin_chat_text(pointer: u32, length: u32) -> i32 {
     })
 }
 
+/// Empties the instance's fridge log (#317). Always succeeds.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_board_history_reset() -> i32 {
+    lock_state().board_history.clear();
+    0
+}
+
+/// Appends a batch of board records to the fridge log, as
+/// `kin_history_append` does; every log refuses the others' events.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_board_history_append(pointer: u32, length: u32) -> i32 {
+    run_board(pointer, length, |input, board| {
+        board.append(input).map(|()| Vec::new())
+    })
+}
+
+/// Keeps the fridge log's first `count` records.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_board_history_truncate(count: u32) -> i32 {
+    match lock_state().board_history.truncate(count as usize) {
+        Ok(()) => 0,
+        Err(error) => error.code(),
+    }
+}
+
+/// Validates a fridge command against the board log (u32 command length,
+/// KCMD with action 52–58, record-less KINE context; command.rs
+/// `execute_board_history`) and publishes KCMT. The log is not changed.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_board_execute(pointer: u32, length: u32) -> i32 {
+    run_board(pointer, length, crate::command::execute_board_history)
+}
+
+/// The fridge as drawn: a record-less KINE context against the board log;
+/// publishes KBRD (board.rs).
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_board_state(pointer: u32, length: u32) -> i32 {
+    run_board(pointer, length, crate::core::board_state)
+}
+
 /// Reduces decoded voice-message samples to 64 waveform peaks (#134):
 /// KAPQ -> KAPR. Touches no household or chat state.
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
@@ -509,11 +553,25 @@ fn run_chat(
     )
 }
 
+fn run_board(
+    pointer: u32,
+    length: u32,
+    operation: impl FnOnce(&[u8], &mut History) -> Result<Vec<u8>, KinError>,
+) -> i32 {
+    run_parts(
+        pointer,
+        length,
+        |input, parts| operation(input, parts.board_history),
+        None,
+    )
+}
+
 /// The instance's logs and arena, borrowed for one operation.
 struct Parts<'a> {
     history: &'a mut History,
     chat_history: &'a mut History,
     chat_texts: &'a mut crate::chat::ChatTexts,
+    board_history: &'a mut History,
 }
 
 fn run_parts(
@@ -530,6 +588,7 @@ fn run_parts(
         history,
         chat_history,
         chat_texts,
+        board_history,
         ..
     } = &mut *state;
     let outcome = if !request_length_is_supported(length) {
@@ -549,6 +608,7 @@ fn run_parts(
                             history,
                             chat_history,
                             chat_texts,
+                            board_history,
                         },
                     )
                 }

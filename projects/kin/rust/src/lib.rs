@@ -1,6 +1,7 @@
 pub mod abi;
 pub mod archive;
 pub mod audio;
+pub mod board;
 pub mod chat;
 pub mod chat_search;
 pub mod codec;
@@ -66,6 +67,9 @@ mod member_name_tests;
 
 #[cfg(test)]
 mod chat_tests;
+
+#[cfg(test)]
+mod board_tests;
 
 #[cfg(test)]
 mod recurring_task_tests;

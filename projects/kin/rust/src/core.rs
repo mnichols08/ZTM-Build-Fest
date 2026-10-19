@@ -164,3 +164,10 @@ pub fn encode_device_names(devices: &[state::DeviceNameState]) -> Result<Vec<u8>
     }
     Ok(bytes)
 }
+
+/// The fridge (`kin_board_state`, #317): the record-less KINE context against
+/// the board log; publishes KBRD (board.rs).
+pub fn board_state(input: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let context = decode_context(input)?;
+    crate::board::encode_board(history.replay(&context)?.board())
+}

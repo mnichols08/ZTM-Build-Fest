@@ -428,6 +428,9 @@ pub struct HouseholdState {
     /// Household chat (chat.rs). Not part of the KINS projection; hosts read
     /// pages through `kin_chat_page`. Shared with the replay, not copied.
     pub chat: std::sync::Arc<crate::chat::ChatState>,
+    /// The fridge (board.rs). Not part of the KINS projection; hosts read it
+    /// through `kin_board_state`. Shared with the replay, not copied.
+    pub board: std::sync::Arc<crate::board::BoardState>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

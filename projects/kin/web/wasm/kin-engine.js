@@ -17,6 +17,7 @@ import {
 } from "./wire.js";
 import { decodeAttachmentBindings, decodeProjection } from "./projection-decode.js";
 import { HistoryMirror } from "./history-mirror.js";
+import { BOARD_COMMANDS, BOARD_EVENT_KINDS, MAX_BOARD_EVENT_COUNT, BoardFormatError, decodeBoard, encodeBoardIntent } from "./kin-board.js";
 
 export { idToHex, KinEngineError };
 
@@ -106,6 +107,11 @@ export function createEngine(instanceExports) {
     "kin_chat_search",
     "kin_chat_text",
     "kin_chat_texts_clear",
+    "kin_board_history_reset",
+    "kin_board_history_append",
+    "kin_board_history_truncate",
+    "kin_board_execute",
+    "kin_board_state",
     "kin_qr_encode",
     "kin_qr_decode",
     "kin_clear",
@@ -145,12 +151,20 @@ export function createEngine(instanceExports) {
     asBytes,
     { reset: "kin_chat_history_reset", truncate: "kin_chat_history_truncate" },
   );
+  // The fridge log, a third history (#317, ADR 0011).
+  const boardMirror = new HistoryMirror(
+    exports,
+    (batch) => callCore(exports, "kin_board_history_append", batch, { statusOnly: true }),
+    asBytes,
+    { reset: "kin_board_history_reset", truncate: "kin_board_history_truncate" },
+  );
   return {
     dispose() {
       if (exports) {
         exports.kin_clear();
         mirror.forget();
         chatMirror.forget();
+        boardMirror.forget();
         if (sharedCodec === exports) sharedCodec = null;
         exports = null;
         lastState = null;
@@ -317,7 +331,61 @@ export function createEngine(instanceExports) {
     clearChatTexts: () => {
       if (exports) exports.kin_chat_texts_clear();
     },
+    // The fridge (#317). `boardRecords` is the board log (a history view or
+    // an array of canonical board records). A board command (kin-board.js
+    // BOARD_COMMANDS) validated against it: { encodedEvent, metadata }.
+    executeBoardCommand: (command, identity, boardRecords, asOf, civilDate, syncIdentity = null) =>
+      executeBoardCommand(exports, boardMirror, command, identity, boardRecords, asOf, civilDate, syncIdentity),
+    // The fridge as drawn (KBRD): { strokes, magnets, openClear }.
+    boardState: (boardRecords, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeBoard(boardStateBytes(exports, boardMirror, boardRecords, asOf, civilDate, syncIdentity))),
   };
+}
+
+function executeBoardCommand(exports, boardMirror, command, identity, boardRecords, asOf, civilDate, syncIdentity) {
+  if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
+  if (boardRecords.length > MAX_BOARD_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  let intent;
+  try { intent = encodeBoardIntent(command, identity); }
+  catch (error) {
+    if (error instanceof BoardFormatError) throw new KinEngineError(2, error.message);
+    throw error;
+  }
+  // u32 intent length, KCMD, then the record-less KINE context.
+  const prefix = 4 + intent.length;
+  const request = encodeRequest([], asOf, null, civilDate, syncIdentity, prefix);
+  new DataView(request.buffer).setUint32(0, intent.length, true);
+  request.set(intent, 4);
+  const release = boardMirror.hold(boardRecords);
+  let bytes;
+  try {
+    bytes = callCore(exports, "kin_board_execute", request);
+  } finally {
+    release();
+  }
+  const invalid = () => new KinEngineError(6, "Kin received an invalid command result.");
+  if (bytes.length < 20 || readAscii(bytes, 0, 4) !== "KCMT") throw invalid();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const eventLength = view.getUint32(8, true), metadataLength = view.getUint32(12, true);
+  if (view.getUint16(4, true) !== 1 || view.getUint16(6, true) !== 0 || view.getUint32(16, true) !== 0 ||
+    20 + eventLength + metadataLength !== bytes.length)
+    throw invalid();
+  return {
+    encodedEvent: bytes.slice(20, 20 + eventLength),
+    metadata: decodeMetadata(bytes.subarray(20 + eventLength)),
+  };
+}
+
+function boardStateBytes(exports, boardMirror, boardRecords, asOf, civilDate, syncIdentity) {
+  if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
+  if (boardRecords.length > MAX_BOARD_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  const request = encodeRequest([], asOf, null, civilDate, syncIdentity);
+  const release = boardMirror.hold(boardRecords);
+  try {
+    return callCore(exports, "kin_board_state", request);
+  } finally {
+    release();
+  }
 }
 
 const CHAT_QUOTE_STATES = ["unknown", "live", "edited", "deleted", "removed-by-admin"];
@@ -900,6 +968,8 @@ const COMMAND_TYPES = [
   "close-chat-poll",
   // A member's own preferred display name (#224): KCMD action 51.
   "name-member",
+  // The fridge (#317): KCMD actions 52–58, encoded by kin-board.js.
+  ...BOARD_COMMANDS,
 ];
 const EVENT_KINDS = [
   null,
@@ -954,6 +1024,7 @@ const EVENT_KINDS = [
   "CHAT_POLL_VOTE",
   "CHAT_POLL_CLOSED",
   "MEMBER_NAMED",
+  ...BOARD_EVENT_KINDS,
 ];
 
 // The command field that names each event's own entity (packet offset 92).
@@ -1028,7 +1099,8 @@ function encodeIntent(type, value) {
 
 function encodeIntentPacket(command, identity) {
   const kind = COMMAND_TYPES.indexOf(command.type);
-  if (kind < 1)
+  // Fridge actions (52+) have their own encoder and log (kin-board.js).
+  if (kind < 1 || kind >= 52)
     throw new KinEngineError(2, "Kin received an invalid household action.");
   const hasText = [1, 5, 8, 14, 18, 19, 47].includes(kind);
   // A reaction's text is its emoji; Rust checks it is one emoji.

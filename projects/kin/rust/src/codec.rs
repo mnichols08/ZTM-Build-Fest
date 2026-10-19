@@ -57,6 +57,13 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::ChatPollVote { .. } => 49,
         EventKind::ChatPollClosed { .. } => 50,
         EventKind::MemberNamed { .. } => 51,
+        EventKind::BoardStrokeAdded { .. } => crate::board::STROKE_ADDED,
+        EventKind::BoardStrokeHidden { .. } => crate::board::STROKE_HIDDEN,
+        EventKind::BoardMagnetPlaced { .. } => crate::board::MAGNET_PLACED,
+        EventKind::BoardMagnetMoved { .. } => crate::board::MAGNET_MOVED,
+        EventKind::BoardMagnetHidden { .. } => crate::board::MAGNET_HIDDEN,
+        EventKind::BoardCleared { .. } => crate::board::CLEARED,
+        EventKind::BoardClearUndone { .. } => crate::board::CLEAR_UNDONE,
     }
 }
 
@@ -425,6 +432,16 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             }
             payload.extend_from_slice(&message_id.0);
             payload.extend_from_slice(&[0; 4]);
+        }
+        // The fridge (#317): board.rs owns the payloads.
+        kind @ (EventKind::BoardStrokeAdded { .. }
+        | EventKind::BoardStrokeHidden { .. }
+        | EventKind::BoardMagnetPlaced { .. }
+        | EventKind::BoardMagnetMoved { .. }
+        | EventKind::BoardMagnetHidden { .. }
+        | EventKind::BoardCleared { .. }
+        | EventKind::BoardClearUndone { .. }) => {
+            payload = crate::board::encode_payload(kind)?;
         }
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());
