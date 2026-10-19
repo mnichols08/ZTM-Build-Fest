@@ -64,7 +64,7 @@ function fakeEngine() {
       for (const { command, actorId, deviceId, timestamp } of events(source)) {
         const message = messages.get(command.messageId);
         if (command.type === "post-chat-message" && !message)
-          messages.set(command.messageId, { messageId: command.messageId, authorId: actorId, deviceId, postedAt: timestamp, status: "live", contentKind: command.contentKind ?? "text", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey) });
+          messages.set(command.messageId, { reply: command.replyTo ?? null, messageId: command.messageId, authorId: actorId, deviceId, postedAt: timestamp, status: "live", contentKind: command.contentKind ?? "text", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey) });
         else if (command.type === "react-chat-message") {
           if (!message) continue;
           const groups = message.reactions ??= [];
@@ -82,8 +82,20 @@ function fakeEngine() {
           else Object.assign(message, { status: command.byAdmin ? "removed-by-admin" : "deleted", blobRef: null, blobKey: null });
         }
       }
+      const order = [...messages.keys()];
+      const quote = (message) => {
+        if (!message.reply || !["live", "edited"].includes(message.status)) return null;
+        const original = messages.get(message.reply);
+        if (!original) return { messageId: message.reply, state: "unknown", contentKind: null, authorId: null, index: null, blobRef: null, blobKey: null, text: null };
+        const shown = ["live", "edited"].includes(original.status);
+        return {
+          messageId: original.messageId, state: original.status, contentKind: original.contentKind, authorId: original.authorId, index: order.indexOf(original.messageId),
+          blobRef: shown ? original.blobRef : null, blobKey: shown ? original.blobKey : null,
+          text: shown && options.includeText !== false ? this.texts.get(original.blobRef) ?? null : null,
+        };
+      };
       const list = [...messages.values()].map((message, index) => ({
-        ...message, index,
+        ...message, index, replyTo: quote(message),
         reactions: options.includeReactions && (message.status === "live" || message.status === "edited") ? message.reactions ?? [] : [],
         text: options.includeText === false ? null : this.texts.get(message.blobRef) ?? null,
       }));
@@ -1082,4 +1094,49 @@ test("members react to a message, take it back, and a deletion drops the reactio
   // A member who can only read may not react.
   b.room.access = "read";
   await assert.rejects(() => b.room.react(b.room.page().messages[0], "\u{1F44D}", true), (error) => error.code === "chat_read_only" || /read/i.test(error.message));
+});
+
+test("a reply quotes its original, and the quote follows the original's edits, deletion and late text (#129)", { timeout: 30_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs, householdAdmin: true });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs, memberKind: "limited" });
+  const devices = [phone.entry, laptop.entry];
+  const a = await openRoom(phone, s), b = await openRoom(laptop, s);
+  await a.room.send("Dinner at 6");
+  await a.room.sync({ status: STATUS, devices });
+  await b.room.sync({ status: STATUS, devices });
+  const [dinner] = b.room.page().messages;
+  assert.equal(dinner.replyTo, null);
+  await b.room.send("Sounds good", { replyTo: dinner.messageId });
+  await b.room.sync({ status: STATUS, devices });
+  await a.room.sync({ status: STATUS, devices });
+  let [original, reply] = a.room.page().messages;
+  assert.equal(reply.replyTo.messageId, original.messageId);
+  assert.equal(reply.replyTo.state, "live");
+  assert.equal(reply.replyTo.authorId, s.admin.memberId);
+  assert.equal(reply.replyTo.index, 0);
+  // The quote's text isn't copied into the reply: it is opened like a message's, on demand.
+  const fresh = await openRoom(laptop, s);
+  await fresh.room.sync({ status: STATUS, devices });
+  [, reply] = fresh.room.page().messages;
+  assert.equal(reply.replyTo.text, null);
+  const opened = await fresh.room.loadQuoteTexts([reply]);
+  assert.equal(opened.get(original.messageId).text, "Dinner at 6");
+  assert.equal(fresh.room.page().messages[1].replyTo.text, "Dinner at 6");
+  // Editing the original is reflected; deleting it turns the quote into a deleted one.
+  await a.room.edit(original, "Dinner at 7");
+  await a.room.sync({ status: STATUS, devices });
+  await b.room.sync({ status: STATUS, devices });
+  await b.room.loadQuoteTexts(b.room.page().messages);
+  assert.equal(b.room.page().messages[1].replyTo.state, "edited");
+  assert.equal(b.room.page().messages[1].replyTo.text, "Dinner at 7");
+  await a.room.remove(a.room.page().messages[0]);
+  await a.room.sync({ status: STATUS, devices });
+  await b.room.sync({ status: STATUS, devices });
+  const gone = b.room.page().messages[1].replyTo;
+  assert.deepEqual([gone.state, gone.blobRef, gone.text], ["deleted", null, null]);
+  // A reply to a message nobody holds still sends; its quote is "unknown".
+  await b.room.send("Who said that?", { replyTo: "ab".repeat(16) });
+  assert.equal(b.room.page().messages[2].replyTo.state, "unknown");
 });

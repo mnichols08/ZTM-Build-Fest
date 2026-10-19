@@ -494,6 +494,17 @@ export class ChatRoom {
     return this.admins.includes(this.identity.memberId);
   }
 
+  /** What a reply quotes: the original's text, opened like a message's when
+   * the engine doesn't hold it yet (#129). Takes page entries, returns the
+   * same Map as loadTexts keyed by the original's ID. */
+  async loadQuoteTexts(messages) {
+    const originals = new Map();
+    for (const { replyTo } of messages)
+      if (replyTo?.contentKind === "text" && replyTo.blobRef && replyTo.text === null && !originals.has(replyTo.messageId))
+        originals.set(replyTo.messageId, { messageId: replyTo.messageId, contentKind: "text", blobRef: replyTo.blobRef, blobKey: replyTo.blobKey, text: null });
+    return this.loadTexts([...originals.values()]);
+  }
+
   /**
    * Opens the text of each page message the engine doesn't hold yet (from
    * this device's blob store, else the service) and hands it to the engine,
@@ -543,11 +554,11 @@ export class ChatRoom {
 
   /** Sends a text message. Resolves with { messageId, eventId } once it is
    * stored on this device; it reaches the relay on the next sync. */
-  async send(text) {
+  async send(text, { replyTo = null } = {}) {
     this.assertCanPost();
     const messageId = randomIdHex();
     const sealed = await this.sealText(text);
-    const eventId = await this.author({ type: "post-chat-message", messageId, blobRef: sealed.ref, blobKey: sealed.key }, { blobRef: sealed.ref });
+    const eventId = await this.author({ type: "post-chat-message", messageId, blobRef: sealed.ref, blobKey: sealed.key, ...(replyTo ? { replyTo } : {}) }, { blobRef: sealed.ref });
     return { messageId, eventId };
   }
 
@@ -557,7 +568,7 @@ export class ChatRoom {
    * whole), then the manifest that names them. Resolves with
    * { messageId, eventId } like send().
    */
-  async sendAttachments({ text = "", files }) {
+  async sendAttachments({ text = "", files, replyTo = null }) {
     this.assertOpen();
     this.assertCanPost();
     const problem = attachmentProblem(files);
@@ -587,7 +598,7 @@ export class ChatRoom {
     }
     const hex = refHex(manifest.key);
     manifest.key.fill(0);
-    const eventId = await this.author({ type: "post-chat-message", messageId, blobRef: manifest.ref, blobKey: hex, contentKind: "attachment" },
+    const eventId = await this.author({ type: "post-chat-message", messageId, blobRef: manifest.ref, blobKey: hex, contentKind: "attachment", ...(replyTo ? { replyTo } : {}) },
       { blobRef: manifest.ref });
     return { messageId, eventId };
   }

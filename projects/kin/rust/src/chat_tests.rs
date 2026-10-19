@@ -141,6 +141,7 @@ fn chat_records_decode_as_documented() {
             content_kind: ChatContentKind::Text,
             blob_ref: blob(7, 0),
             blob_key: key(7, 0),
+            reply_to: None,
         }
     );
     assert_eq!(event.canonical_bytes.len(), 88 + 84);
@@ -168,6 +169,7 @@ fn chat_records_decode_as_documented() {
             content_kind: ChatContentKind::Attachment,
             blob_ref: blob(7, 0),
             blob_key: key(7, 0),
+            reply_to: None,
         }
     );
 }
@@ -250,6 +252,7 @@ fn a_message_is_posted_edited_and_deleted() {
             content_kind: ChatContentKind::Text,
             blob_ref: blob(1, 2),
             blob_key: key(1, 2),
+            reply_to: None,
         }
     );
     let second = &state.messages[1];
@@ -520,6 +523,7 @@ fn post(id: u8, content_kind: ChatContentKind) -> C {
         content_kind,
         blob_ref: blob(id, 0),
         blob_key: key(id, 0),
+        reply_to: None,
     }
 }
 
@@ -581,6 +585,7 @@ fn commands_post_edit_and_delete_and_reject_what_replay_would_ignore() {
             content_kind: ChatContentKind::Text,
             blob_ref,
             blob_key,
+            reply_to: None,
         };
         assert_eq!(
             run(&mut events, command, context(3, MEMBER_1, 0x11, 3)),
@@ -619,6 +624,7 @@ fn commands_post_edit_and_delete_and_reject_what_replay_would_ignore() {
                 content_kind: ChatContentKind::Text,
                 blob_ref: blob(1, 1),
                 blob_key: key(5, 0),
+                reply_to: None,
             },
             context(4, MEMBER_2, 0x21, 4)
         ),
@@ -1682,4 +1688,216 @@ fn replay_ignores_a_new_emoji_past_the_cap() {
     assert_eq!(groups.len(), MAX_REACTION_GROUPS);
     assert!(groups.iter().all(|(emoji, _)| *emoji != first));
     assert_eq!(groups.last().unwrap().0, extra);
+}
+
+// Replies (#129).
+
+/// A post of message `id` (text, blob version 0) that answers `original`.
+fn replied(event: u32, actor: [u8; 16], device: u8, id: u8, original: [u8; 16]) -> Vec<u8> {
+    let mut payload = message(id).to_vec();
+    payload.extend_from_slice(&[1, 0, 0, 0]);
+    payload.extend_from_slice(&blob(id, 0));
+    payload.extend_from_slice(&key(id, 0));
+    payload.extend_from_slice(&original);
+    record(44, event, actor, device, &payload)
+}
+
+#[test]
+fn reply_records_decode_as_documented() {
+    let event = decode_event(&replied(2, MEMBER_2, 0x21, 2, message(1))).unwrap();
+    assert_eq!(
+        event.kind,
+        EventKind::ChatMessagePosted {
+            message_id: ChatMessageId(message(2)),
+            content_kind: ChatContentKind::Text,
+            blob_ref: blob(2, 0),
+            blob_key: key(2, 0),
+            reply_to: Some(ChatMessageId(message(1))),
+        }
+    );
+    assert_eq!(event.canonical_bytes.len(), 88 + 100);
+    // The encoder writes the same bytes, and a post without a reply keeps
+    // its 84-byte payload.
+    assert_eq!(
+        crate::codec::encode_event(&event).unwrap(),
+        replied(2, MEMBER_2, 0x21, 2, message(1))
+    );
+    assert_eq!(
+        decode_event(&posted(1, MEMBER_1, 0x11, 1, 1))
+            .unwrap()
+            .canonical_bytes
+            .len(),
+        88 + 84
+    );
+    // Zero, itself, and a payload of the wrong length are malformed.
+    let payload_of = |reply: [u8; 16]| replied(2, MEMBER_2, 0x21, 2, reply);
+    let mut short = payload_of(message(1));
+    short.truncate(short.len() - 8);
+    let new_length = (short.len() - 88) as u32;
+    short[84..88].copy_from_slice(&new_length.to_le_bytes());
+    for bytes in [payload_of([0; 16]), payload_of(message(2)), short] {
+        assert!(decode_event(&bytes).is_err());
+    }
+}
+
+#[test]
+fn replay_stores_the_reply_and_a_page_quotes_the_original_live() {
+    let records = vec![
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        edited(2, MEMBER_1, 0x11, 1, 1),
+        replied(3, MEMBER_2, 0x21, 2, message(1)),
+        // The original is deleted, and one answers a message this log lacks.
+        posted(4, MEMBER_1, 0x11, 3, 1),
+        replied(5, MEMBER_2, 0x21, 4, message(3)),
+        deleted(6, MEMBER_1, 0x11, 3, false),
+        replied(7, MEMBER_2, 0x21, 5, message(9)),
+    ];
+    let state = chat(&records);
+    assert_eq!(
+        state.get(&ChatMessageId(message(2))).unwrap().reply_to,
+        Some(ChatMessageId(message(1)))
+    );
+    let mut history = history_of(&records);
+    let mut texts = ChatTexts::new();
+    put_texts(&kcht(&[(blob(1, 1), b"Edited original")]), &mut texts).unwrap();
+    let context = kine(&[], 0, TEST_DATE, None);
+    let page = chat_page(
+        &kchq(u32::MAX, 10, 0b01, &[], &context),
+        &mut history,
+        &mut texts,
+    )
+    .unwrap();
+    let count = u32_at(&page, 16) as usize;
+    assert_eq!(count, 5);
+    // Flags at byte 70: replies 2 (message 2), 4 (message 4) show a quote;
+    // the deleted original's own record has none, and message 5's original
+    // is unknown but the reply still quotes.
+    let flags: Vec<u8> = (0..count)
+        .map(|index| page[28 + index * 128 + 70])
+        .collect();
+    assert_eq!(flags, [0, 1, 0, 1, 1]);
+    let texts_len = u32_at(&page, 20) as usize;
+    let mut at = 28 + count * 160 + texts_len;
+    let quote = |at: usize| {
+        (
+            page[at + 16],
+            page[at + 17],
+            u32_at(&page, at + 100),
+            u32_at(&page, at + 104) as usize,
+        )
+    };
+    // Message 2 quotes message 1, edited, with its text.
+    assert_eq!(&page[at..at + 16], &message(1));
+    let (state_byte, kind, index, length) = quote(at);
+    assert_eq!((state_byte, kind, index, length), (2, 1, 0, 15));
+    assert_eq!(&page[at + 20..at + 36], &MEMBER_1);
+    assert_eq!(&page[at + 36..at + 68], &blob(1, 1));
+    assert_eq!(&page[at + 68..at + 100], &key(1, 1));
+    assert_eq!(&page[at + 108..at + 108 + length], b"Edited original");
+    at += 108 + length;
+    // Message 4 quotes message 3, deleted: no blob, no text.
+    assert_eq!(&page[at..at + 16], &message(3));
+    assert_eq!(quote(at), (3, 1, 2, 0));
+    assert_eq!(&page[at + 36..at + 100], &[0; 64]);
+    at += 108;
+    // Message 5 quotes a message this log lacks.
+    assert_eq!(&page[at..at + 16], &message(9));
+    assert_eq!(quote(at), (0, 0, u32::MAX, 0));
+    assert_eq!(&page[at + 20..at + 100], &[0; 80]);
+    at += 108;
+    assert_eq!(at, page.len());
+    // Texts not asked for: the quote has none.
+    let bare = chat_page(
+        &kchq(u32::MAX, 10, 0, &[], &context),
+        &mut history,
+        &mut texts,
+    )
+    .unwrap();
+    let from = 28 + count * 160;
+    assert_eq!(u32_at(&bare, from + 104), 0);
+    // A removed original, once its remover is a named admin.
+    let removed = vec![
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        replied(2, MEMBER_2, 0x21, 2, message(1)),
+        deleted(3, ADMIN, 0x31, 1, true),
+    ];
+    let mut history = history_of(&removed);
+    let page = chat_page(
+        &kchq(u32::MAX, 10, 0, &[ADMIN], &context),
+        &mut history,
+        &mut texts,
+    )
+    .unwrap();
+    assert_eq!(page[28 + 128 + 70], 1);
+    assert_eq!(page[28 + 2 * 160 + 16], 4);
+}
+
+#[test]
+fn a_command_replies_only_to_a_message_that_still_shows() {
+    let mut events = History::chat();
+    run(
+        &mut events,
+        post(1, ChatContentKind::Text),
+        context(1, MEMBER_1, 0x11, 1),
+    )
+    .unwrap();
+    run(
+        &mut events,
+        post(2, ChatContentKind::Text),
+        context(2, MEMBER_1, 0x11, 2),
+    )
+    .unwrap();
+    let reply = |id: u8, original: u8| C::PostChatMessage {
+        id: ChatMessageId(message(id)),
+        content_kind: ChatContentKind::Text,
+        blob_ref: blob(id, 0),
+        blob_key: key(id, 0),
+        reply_to: Some(ChatMessageId(message(original))),
+    };
+    run(&mut events, reply(3, 1), context(3, MEMBER_2, 0x21, 3)).unwrap();
+    run(&mut events, delete(2, false), context(4, MEMBER_1, 0x11, 4)).unwrap();
+    assert!(
+        run(&mut events, reply(4, 2), context(5, MEMBER_2, 0x21, 5)).is_err(),
+        "deleted"
+    );
+    assert!(
+        run(&mut events, reply(4, 9), context(5, MEMBER_2, 0x21, 5)).is_err(),
+        "unknown"
+    );
+    assert!(
+        run(&mut events, reply(4, 4), context(5, MEMBER_2, 0x21, 5)).is_err(),
+        "itself"
+    );
+    // A reply to a reply is fine: no threads, only a quote.
+    run(&mut events, reply(4, 3), context(5, MEMBER_1, 0x11, 5)).unwrap();
+}
+
+#[test]
+fn the_wire_command_posts_a_reply() {
+    let mut payload = blob(1, 0).to_vec();
+    payload.extend_from_slice(&key(1, 0));
+    payload.extend_from_slice(&message(7));
+    let (command, _) = decode_command(&kcmd(44, message(1), 1, &payload)).unwrap();
+    assert_eq!(
+        command,
+        C::PostChatMessage {
+            id: ChatMessageId(message(1)),
+            content_kind: ChatContentKind::Text,
+            blob_ref: blob(1, 0),
+            blob_key: key(1, 0),
+            reply_to: Some(ChatMessageId(message(7))),
+        }
+    );
+    for bad in [
+        [&payload[..64], &[0u8; 16][..]].concat(),
+        payload[..72].to_vec(),
+        [payload.as_slice(), &[0]].concat(),
+    ] {
+        assert_eq!(
+            decode_command(&kcmd(44, message(1), 1, &bad)).unwrap_err(),
+            KinError::MalformedProtocol
+        );
+    }
+    // Edits take no reply.
+    assert!(decode_command(&kcmd(45, message(1), 0, &payload)).is_err());
 }

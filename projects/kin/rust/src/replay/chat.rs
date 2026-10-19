@@ -15,6 +15,9 @@
 //!   blob a visible message still shows (`ChatState::retired_blobs`). A copy
 //!   can then only show the content as its author's own message; it can't
 //!   hide or delete the original.
+//! - A reply (#129) names the message it answers; replay stores the name and
+//!   nothing else. The original need not be in this log, and a page looks it
+//!   up when it is read.
 //! - A post adds a message, unless a message with that ID exists (the first
 //!   post wins; the second post's blob becomes a retirement candidate).
 //! - Only the author edits, only a text message, and never a deleted one. An
@@ -58,6 +61,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
             content_kind,
             blob_ref,
             blob_key,
+            reply_to,
         } => {
             chat.seen.insert(*blob_ref);
             if chat.positions.contains_key(message_id) {
@@ -75,6 +79,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 content_kind: *content_kind,
                 blob_ref: *blob_ref,
                 blob_key: *blob_key,
+                reply_to: *reply_to,
             });
         }
         EventKind::ChatMessageEdited {

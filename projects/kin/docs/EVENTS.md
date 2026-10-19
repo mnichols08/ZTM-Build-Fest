@@ -289,6 +289,13 @@ the product decisions).
   hands it over: 1 to 4,000 Unicode scalar values, valid UTF-8, not only
   whitespace, and no control characters other than tab and line feed. It is
   plain text, rendered with `textContent`.
+- **Replies (#129).** A post may name the message it answers. The event
+  carries only that ID; the quoted text is looked up from the original each
+  time a page is read, so an edit shows and a deletion turns the quote into
+  "deleted" (and the original's blob and text are gone with it). Replay
+  stores the ID and never validates it: the original may be absent from a
+  log (a member who joined later), and the page then marks it unknown.
+  Commands answer only a message that still shows. There are no threads.
 - **Reactions (#127).** `CHAT_REACTION_SET` (47) turns one emoji on or off
   for the event's actor on one message. The emoji is a single grapheme from
   the emoji ranges (a pictograph with optional variation selector and skin

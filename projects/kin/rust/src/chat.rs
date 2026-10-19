@@ -62,6 +62,8 @@ pub struct ChatMessage {
     /// The current content blob. Zero once deleted.
     pub blob_ref: [u8; 32],
     pub blob_key: [u8; 32],
+    /// The message this one answers, if it is a reply (#129).
+    pub reply_to: Option<ChatMessageId>,
 }
 
 /// One emoji on one message and the members who chose it, in the order replay
@@ -448,6 +450,37 @@ pub fn decode_page_request(bytes: &[u8]) -> Result<PageRequest<'_>, KinError> {
     })
 }
 
+/// Bytes of the fixed part of a reply's quote entry in a page.
+pub const PAGE_QUOTE_BYTES: usize = 108;
+
+/// Whether a page record carries a quote: a reply that still shows.
+fn quoted(message: &ChatMessage, shown: ChatMessageStatus) -> Option<ChatMessageId> {
+    match shown {
+        ChatMessageStatus::Live | ChatMessageStatus::Edited => message.reply_to,
+        _ => None,
+    }
+}
+
+/// The text a quote shows: the original's, if it is visible text the arena
+/// holds and the request asked for texts.
+fn quote_text<'a>(
+    state: &ChatState,
+    request: &PageRequest<'_>,
+    texts: &'a ChatTexts,
+    original: &ChatMessageId,
+) -> Option<&'a [u8]> {
+    let message = state.get(original)?;
+    let visible = matches!(
+        state.shown_status(message, &request.admins),
+        ChatMessageStatus::Live | ChatMessageStatus::Edited
+    );
+    if request.include_text && visible && message.content_kind == ChatContentKind::Text {
+        texts.get(&message.blob_ref)
+    } else {
+        None
+    }
+}
+
 fn shown_reactions<'a>(
     state: &'a ChatState,
     request: &PageRequest<'_>,
@@ -478,6 +511,9 @@ fn shown_reactions<'a>(
 /// 112 reaction groups u32  116 reserved (12)
 /// ```
 ///
+/// Byte 70 is a flag: 1 when the message is a reply that still shows (a
+/// quote follows the page, below), else 0; byte 71 is reserved
+///
 /// The blob ref is zero for a deleted or removed message; a text length of
 /// 0 means the arena doesn't hold that message's text (texts are never
 /// empty). Then 32 bytes of blob key per message, in the same order (zero
@@ -487,7 +523,13 @@ fn shown_reactions<'a>(
 /// record's count of them): emoji length u8, the emoji's UTF-8, member count
 /// u32, then 16 bytes per member's actor ID. A deleted or removed message
 /// shows none, and a page that didn't ask for them has a count of 0
-/// everywhere.
+/// everywhere. Last come the quotes (#129), one per record with byte 70 set,
+/// in record order: the original's message ID (16), its state u8 (0 this log
+/// doesn't hold it, 1 live, 2 edited, 3 deleted, 4 removed by a named admin),
+/// its content kind u8 (0 if unknown), 2 reserved, its author (16), blob ref
+/// (32) and blob key (32) (zero unless live or edited), its index u32
+/// (`0xFFFFFFFF` if unknown), then text length u32 and the text (the arena's,
+/// only for visible text and only if the request asked for texts).
 pub fn encode_page(
     state: &ChatState,
     request: &PageRequest<'_>,
@@ -510,6 +552,13 @@ pub fn encode_page(
         .flat_map(|message| shown_reactions(state, request, status(message), message))
         .map(|group| 1 + group.emoji.len() + 4 + group.actors.len() * 16)
         .sum::<usize>();
+    let reply_bytes = page
+        .iter()
+        .filter_map(|message| quoted(message, status(message)))
+        .map(|original| {
+            PAGE_QUOTE_BYTES + quote_text(state, request, texts, &original).map_or(0, <[u8]>::len)
+        })
+        .sum::<usize>();
     let mut text_bytes = 0usize;
     if request.include_text {
         for message in page {
@@ -525,6 +574,7 @@ pub fn encode_page(
         .and_then(|size| size.checked_add(text_bytes))
         .and_then(|size| size.checked_add(retired.len() * 32))
         .and_then(|size| size.checked_add(reaction_bytes))
+        .and_then(|size| size.checked_add(reply_bytes))
         .ok_or(KinError::SizeLimit)?;
     let mut bytes = Vec::new();
     bytes
@@ -558,7 +608,7 @@ pub fn encode_page(
         bytes.extend_from_slice(&((start + index) as u32).to_le_bytes());
         bytes.push(shown as u8);
         bytes.push(message.content_kind as u8);
-        bytes.extend_from_slice(&0u16.to_le_bytes());
+        bytes.extend_from_slice(&[u8::from(quoted(message, shown).is_some()), 0]);
         bytes.extend_from_slice(if visible { &message.blob_ref } else { &[0; 32] });
         match text {
             Some(text) => {
@@ -596,6 +646,37 @@ pub fn encode_page(
                 bytes.extend_from_slice(&actor.0);
             }
         }
+    }
+    for message in page {
+        let Some(original) = quoted(message, status(message)) else {
+            continue;
+        };
+        bytes.extend_from_slice(&original.0);
+        match state.get(&original) {
+            Some(found) => {
+                let shown = state.shown_status(found, &request.admins);
+                let visible = matches!(shown, ChatMessageStatus::Live | ChatMessageStatus::Edited);
+                let code = match shown {
+                    ChatMessageStatus::Live => 1u8,
+                    ChatMessageStatus::Edited => 2,
+                    ChatMessageStatus::Deleted => 3,
+                    ChatMessageStatus::RemovedByAdmin => 4,
+                };
+                bytes.extend_from_slice(&[code, found.content_kind as u8, 0, 0]);
+                bytes.extend_from_slice(&found.author.0);
+                bytes.extend_from_slice(if visible { &found.blob_ref } else { &[0; 32] });
+                bytes.extend_from_slice(if visible { &found.blob_key } else { &[0; 32] });
+                bytes.extend_from_slice(&(state.positions[&original] as u32).to_le_bytes());
+            }
+            None => {
+                bytes.extend_from_slice(&[0; 4]);
+                bytes.extend_from_slice(&[0; 16 + 32 + 32]);
+                bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+            }
+        }
+        let text = quote_text(state, request, texts, &original).unwrap_or(&[]);
+        bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(text);
     }
     debug_assert_eq!(bytes.len(), size);
     Ok(bytes)

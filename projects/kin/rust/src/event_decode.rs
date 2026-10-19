@@ -545,7 +545,7 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
         }
         // Chat (#109). IDs, blob references and keys are never zero.
         (1, 44) => {
-            if payload.len() != 84
+            if !matches!(payload.len(), 84 | 100)
                 || payload[17..20] != [0; 3]
                 || !valid_timestamp(read_i64(record, 68)?)
             {
@@ -559,7 +559,16 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
             };
             let blob_ref = read_32(payload, 20)?;
             let blob_key = read_32(payload, 52)?;
-            if message_id.0 == [0; 16] || blob_ref == [0; 32] || blob_key == [0; 32] {
+            let reply_to = if payload.len() == 100 {
+                Some(ChatMessageId(read_id(payload, 84)?))
+            } else {
+                None
+            };
+            if message_id.0 == [0; 16]
+                || blob_ref == [0; 32]
+                || blob_key == [0; 32]
+                || reply_to.is_some_and(|reply| reply.0 == [0; 16] || reply == message_id)
+            {
                 return Err(KinError::MalformedProtocol);
             }
             EventKind::ChatMessagePosted {
@@ -567,6 +576,7 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
                 content_kind,
                 blob_ref,
                 blob_key,
+                reply_to,
             }
         }
         (1, 45) => {

@@ -829,6 +829,19 @@ kin-household, kin-security, kin-areas, kin-notes, kin-search, kin-item, kin-att
 .chat-react-bar button[aria-pressed="true"] { background: var(--surface-secondary); }
 .chat-react-bar button:hover, .chat-react-bar button:focus-visible { background: var(--surface-secondary); }
 .chat-react-bar .chat-react-more { padding-inline: 12px; font-size: 14px; }
+.chat-quote { display: block; box-sizing: border-box; max-width: 100%; margin: 4px 0 2px; padding: 4px 8px; border: 0; border-inline-start: 3px solid var(--line-strong); border-radius: 0 var(--r-control) var(--r-control) 0; background: var(--surface-secondary); color: var(--ink-muted); font: inherit; font-size: 13px; text-align: start; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.chat-quote { min-height: var(--tap); cursor: pointer; }
+button.chat-quote:hover, button.chat-quote:focus-visible { color: var(--ink); }
+.chat-quote.chat-gone { font-style: italic; }
+.chat-quote-author { color: var(--ink); font-weight: 600; }
+.chat-replying { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; padding: 4px 8px; border-inline-start: 3px solid var(--line-strong); border-radius: 0 var(--r-control) var(--r-control) 0; background: var(--surface-secondary); }
+.chat-replying[hidden] { display: none; }
+.chat-replying-text { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.chat-replying-cancel { min-height: var(--tap); padding-inline: 10px; border: 0; border-radius: var(--r-control); background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
+.chat-replying-cancel:hover, .chat-replying-cancel:focus-visible { background: var(--surface); }
+.chat-row.chat-highlight { background: var(--surface-secondary); outline: 2px solid var(--line-strong); transition: background-color .4s; }
+.chat-row:focus { outline: none; }
+.chat-row.chat-highlight:focus { outline: 2px solid var(--line-strong); }
 .chat-react-grid { display: flex; flex-wrap: wrap; flex-basis: 100%; gap: 2px; max-height: 190px; overflow-y: auto; }
 .chat-jump { justify-self: center; min-height: var(--tap); padding-inline: 16px; border: 1px solid var(--accent); border-radius: 999px; background: var(--surface); color: var(--accent); font: inherit; font-weight: 650; }
 .chat-jump[hidden] { display: none; }
@@ -1321,6 +1334,7 @@ kin-app > .security-panel {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .chat-row.chat-highlight { transition: none; }
   *, *::before, *::after {
     scroll-behavior: auto !important;
     animation-duration: .01ms !important;
