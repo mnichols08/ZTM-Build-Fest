@@ -51,6 +51,9 @@ export class HouseholdViews {
   }
 
   render() {
+    // Each render owns the panel; a slower view (People & devices) that
+    // started before it stops writing once it sees a newer generation.
+    this.host.viewGeneration = (this.host.viewGeneration ?? 0) + 1;
     clearInterval(this.host.timer);
     this.host.replaceChildren();
     const heading = document.createElement("h2");

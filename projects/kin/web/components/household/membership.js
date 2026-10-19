@@ -35,6 +35,15 @@ export class HouseholdMembership {
 
   async showDevices() {
     await this.host.run(async () => {
+      // People & devices takes the panel: a pairing poll left from the view
+      // underneath must not re-render it mid-build (the device rows would be
+      // lost and only the actions appended). Back re-renders and restarts any
+      // live pairing poll; a poll already in flight is caught by the
+      // generation check below.
+      clearTimeout(this.host.poll);
+      clearInterval(this.host.timer);
+      const generation = this.host.viewGeneration = (this.host.viewGeneration ?? 0) + 1;
+      const superseded = () => this.host.viewGeneration !== generation;
       let deviceResponse;
       let showingCachedDevices = false;
       try {
@@ -121,6 +130,7 @@ export class HouseholdMembership {
           .filter((entry) => entry.memberId === this.host.identity.memberId || !misleadingMemberName(entry.preferredName))
           .map((entry) => [entry.memberId, entry.preferredName.trim()]),
       );
+      if (superseded()) return;
       this.host.replaceChildren();
       const heading = document.createElement("h2");
       heading.textContent = "People & devices";
@@ -185,6 +195,7 @@ export class HouseholdMembership {
             this.host.identity.householdId,
             device.id,
           ));
+        if (superseded()) return;
         const text = document.createElement("span");
         text.className = "device-name-line";
         const strong = document.createElement("strong");
@@ -317,6 +328,7 @@ export class HouseholdMembership {
         }
         list.append(item);
       }
+      if (superseded()) return;
       const actions = document.createElement("section");
       actions.className = "people-device-actions";
       const actionsHeading = document.createElement("h3");
