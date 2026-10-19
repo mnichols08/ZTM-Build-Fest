@@ -174,15 +174,20 @@ export class ChatBlobService {
       ciphertext.length > MAX_CHAT_BLOB_BYTES || createHash("sha256").update(ciphertext).digest("hex") !== ref)
       throw invalid();
     // An upload the service already holds costs nothing.
-    if (!this.storage.chatBlobMeta(auth.household.id, ref)) {
-      if (!this.uploadWindow.spend(auth.device.id, 1) || !this.byteWindow.spend(auth.device.id, ciphertext.length))
-        throw chatRateLimited("many uploads");
-    }
+    // Checked now, charged once the blob is stored: a refused upload (full,
+    // deleted) never uses up the allowance.
+    const held = Boolean(this.storage.chatBlobMeta(auth.household.id, ref));
+    if (!held && !(this.uploadWindow.allows(auth.device.id, 1) && this.byteWindow.allows(auth.device.id, ciphertext.length)))
+      throw chatRateLimited("many uploads");
     const outcome = this.storage.putChatBlob(auth.household.id, ref, ciphertext, {
       memberId: auth.member.id, deviceId: auth.device.id, now: this.now(),
     });
     if (outcome === "deleted") throw deleted();
     if (outcome === "full") throw new PairingError("chat_storage_full", "This household's chat storage is full.", 409);
+    if (outcome === "accepted") {
+      this.uploadWindow.spend(auth.device.id, 1);
+      this.byteWindow.spend(auth.device.id, ciphertext.length);
+    }
     return { accepted: outcome === "accepted", size: ciphertext.length };
   }
 

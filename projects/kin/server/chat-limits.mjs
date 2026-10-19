@@ -27,6 +27,14 @@ export class DeviceWindow {
     this.spends = new Map();
   }
 
+  /** Whether `spend(deviceId, weight)` would succeed, without spending. */
+  allows(deviceId, weight = 1) {
+    const cutoff = this.now() - this.windowMs;
+    let used = 0;
+    for (const [time, amount] of this.spends.get(deviceId) ?? []) if (time > cutoff) used += amount;
+    return used + weight <= this.limit;
+  }
+
   /** Spends `weight` for `deviceId`, or returns false without spending when
    * the window is full. */
   spend(deviceId, weight = 1) {

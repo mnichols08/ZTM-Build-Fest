@@ -294,3 +294,11 @@ bothStores("an admin sees the household's chat event total (#125)", (h) => {
   h.relay.push(auth, [envelope(h.adult, { eventId: hex(1), deviceSequence: 1 }), envelope(h.adult, { eventId: hex(2), deviceSequence: 2 })]);
   assert.deepEqual(h.relay.eventUsage(auth), { events: 2, eventLimit: 250_000 });
 });
+
+bothStores("a batch that fails doesn't use up the sending allowance (#125)", (h) => {
+  const auth = h.auth(h.adult);
+  // A gap in the device sequence is refused after the rate check.
+  for (let attempt = 0; attempt < 10; attempt += 1)
+    assert.throws(() => h.relay.push(auth, Array.from({ length: 20 }, (_, i) => envelope(h.adult, { eventId: hex(attempt * 20 + i + 1, 16), deviceSequence: 50 + i }))), rejects("sync_sequence_gap", 409));
+  assert.equal(h.relay.push(auth, [envelope(h.adult, { eventId: hex(250), deviceSequence: 1 })]).accepted, 1, "still allowed to send");
+});

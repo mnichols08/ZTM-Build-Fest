@@ -496,11 +496,13 @@ dropped silently, and refused messages stay on the sender's device.
 | Other sync requests | 256 a minute per device (unchanged) | `sync_rate_limited` |
 
 Re-sent events and blobs the service already holds cost nothing, so a retry
-after a lost acknowledgement is never refused for it. Windows are in memory
+after a lost acknowledgement is never refused for it. A request is checked
+against the window first and charged only once its events or blob are stored,
+so a refused or failed one never uses up the allowance. Windows are in memory
 per device (at most 4,096 tracked) and reset on restart. A rate-limited
 device keeps its outbox and sends again on its next pass.
 
-**Volume model.** A busy household of six sending 300 events a day (messages,
+**Volume model.** A busy household of six sending 300 events a day in all (messages,
 edits, deletes and reactions) reaches 250,000 events in about 2.3 years; the
 blob quota, not the event count, is the earlier limit for households that
 share photos and files. These bounds stand; the figures above are the model

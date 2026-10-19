@@ -200,9 +200,11 @@ export class ChatRelayService {
     if (!Array.isArray(envelopes) || envelopes.length < 1 || envelopes.length > MAX_EVENTS_PER_BATCH)
       throw new PairingError("sync_batch_invalid", "That chat batch is invalid.", 400);
     const householdId = auth.household.id;
-    // New events only count: a retry of events the service already holds is free.
+    // New events only count: a retry of events the service already holds is
+    // free. Checked here, charged only once they are stored, so a batch that
+    // fails (full, conflict, invalid) never uses up the allowance.
     const fresh = envelopes.filter((envelope) => !this.storage.findChatEvent(householdId, envelope.eventId)).length;
-    if (fresh && !this.eventWindow.spend(auth.device.id, fresh)) throw chatRateLimited("many messages");
+    if (fresh && !this.eventWindow.allows(auth.device.id, fresh)) throw chatRateLimited("many messages");
     const relay = this.storage.chatRelayState(householdId);
     const expectedDeviceSequence = this.storage.chatDeviceSequence(householdId, auth.device.id);
     let deviceSequence = expectedDeviceSequence;
@@ -245,6 +247,7 @@ export class ChatRelayService {
           throw new PairingError("chat_relay_conflict", "Chat changed meanwhile; retry.", 409);
         throw error;
       }
+      this.eventWindow.spend(auth.device.id, staged.length);
       // After the commit, in the background: the household's other devices
       // hear about it at once (#107) and members get a push (#85).
       try { this.syncService.pushService?.eventsAccepted(householdId, auth.member.id, { chat: true }); } catch { /* best effort */ }

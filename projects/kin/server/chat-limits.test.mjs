@@ -35,3 +35,12 @@ test("the byte window is sized for several large photos, not for a flood", () =>
   for (let part = 0; part < 64; part += 1) assert.equal(window.spend("a", 4 * 1024 * 1024), true);
   assert.equal(window.spend("a", 1), false);
 });
+
+test("allows() peeks at the window without spending", () => {
+  const window = new DeviceWindow({ limit: 5, windowMs: 60_000, now: () => 1000 });
+  assert.equal(window.allows("a", 5), true);
+  assert.equal(window.allows("a", 5), true, "peeking costs nothing");
+  assert.equal(window.spend("a", 3), true);
+  assert.equal(window.allows("a", 3), false);
+  assert.equal(window.allows("a", 2), true);
+});

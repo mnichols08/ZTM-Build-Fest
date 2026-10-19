@@ -948,7 +948,7 @@ export class ChatRoom {
         // is behind: sending resumes on a later pass. A chat key this device
         // doesn't have yet must not hold up reading what it can.
         if (error?.code === "chat_key_stale" || error?.code === "chat_key_rotation_pending") pushMore = false;
-        else if (error?.code === "chat_key_missing") pushError = error;
+        else if (["chat_key_missing", "chat_rate_limited", "chat_storage_full", "chat_limit"].includes(error?.code)) pushError = error;
         else throw error;
       }
     }
@@ -986,11 +986,12 @@ export class ChatRoom {
   async trimCache() {
     const now = this.now();
     if (this.trimmedAt && now - this.trimmedAt < CACHE_TRIM_EVERY_MS) return 0;
-    this.trimmedAt = now;
     const keep = new Set();
     for (const row of await this.store.outbox()) if (row.blobRef) keep.add(row.blobRef);
     for (const parts of (await this.blobs.store.partsOf([...keep])).values()) for (const part of parts) keep.add(part);
-    return this.blobs.store.evictOlderThan(now - CHAT_CACHE_DAYS * 24 * 60 * 60 * 1000, { keep });
+    const dropped = await this.blobs.store.evictOlderThan(now - CHAT_CACHE_DAYS * 24 * 60 * 60 * 1000, { keep });
+    this.trimmedAt = now;
+    return dropped;
   }
 
   /** The household's chat storage use, for an admin (#125): bytes and blobs

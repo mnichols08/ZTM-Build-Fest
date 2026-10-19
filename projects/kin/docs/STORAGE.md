@@ -241,8 +241,8 @@ deletion with a "close other tabs" error. Calling it when the household
 leaves the device is still to come; today local household data stays on the
 device as before.
 
-**Cache trim (#125).** A device keeps the content it downloaded for 90 days
-(`CHAT_CACHE_DAYS`). At the end of a sync pass, at most every six hours,
+**Cache trim (#125).** A device keeps chat content (downloaded or sent from it) for 90 days
+(`CHAT_CACHE_DAYS`). During a sync pass (after pulling), at most every six hours,
 `ChatBlobStore.evictOlderThan` drops the bytes of blobs stored longer ago,
 except those of the outbox and the parts of their attachment manifests. It
 writes no `retired` row: the message stays, and opening it fetches the blob
