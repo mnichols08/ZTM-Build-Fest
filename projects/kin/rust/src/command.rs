@@ -174,6 +174,13 @@ pub enum HouseholdCommand {
         id: ChatMessageId,
         by_admin: bool,
     },
+    /// Turns the context member's reaction `emoji` to a message on or off
+    /// (#127). It must change what the member's reaction is.
+    ReactChatMessage {
+        id: ChatMessageId,
+        emoji: String,
+        on: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -419,6 +426,11 @@ pub fn create_event(
             message_id: *id,
             by_admin: *by_admin,
         },
+        ReactChatMessage { id, emoji, on } => EventKind::ChatReactionSet {
+            message_id: *id,
+            emoji: emoji.clone(),
+            on: *on,
+        },
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -613,6 +625,7 @@ pub fn execute_with(
         HouseholdCommand::PostChatMessage { .. }
             | HouseholdCommand::EditChatMessage { .. }
             | HouseholdCommand::DeleteChatMessage { .. }
+            | HouseholdCommand::ReactChatMessage { .. }
     );
     if history.event_count() >= history.limit()
         || chat_command != history.is_chat()
@@ -735,6 +748,28 @@ pub fn execute_with(
                             .admin_claims
                             .get(id)
                             .is_some_and(|claims| claims.contains(&context.actor_id)))
+            {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::ReactChatMessage { id, emoji, on } => {
+            crate::chat::check_emoji(emoji)?;
+            let message = current.chat.get(id).ok_or(KinError::InvalidEvent)?;
+            if !matches!(
+                current.chat.shown_status(message, history.chat_admins()),
+                crate::chat::ChatMessageStatus::Live | crate::chat::ChatMessageStatus::Edited
+            ) {
+                return Err(KinError::InvalidEvent);
+            }
+            let groups = current
+                .chat
+                .reactions
+                .get(id)
+                .map_or(&[][..], Vec::as_slice);
+            let group = groups.iter().find(|group| group.emoji == *emoji);
+            let mine = group.is_some_and(|group| group.actors.contains(&context.actor_id));
+            if mine == *on
+                || *on && group.is_none() && groups.len() >= crate::chat::MAX_REACTION_GROUPS
             {
                 return Err(KinError::InvalidEvent);
             }
@@ -1052,7 +1087,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             .map_err(|_| KinError::MalformedProtocol)?
             .to_owned()
     };
-    let accepts_payload = matches!(kind, 1 | 5 | 8 | 14 | 18 | 19 | 42 | 43)
+    let accepts_payload = matches!(kind, 1 | 5 | 8 | 14 | 18 | 19 | 42 | 43 | 47)
         || kind == 21 && text_length == 16
         || matches!(kind, 22 | 23) && text_length >= 24
         || kind == 25 && (17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
@@ -1061,7 +1096,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || matches!(kind, 44 | 45) && text_length == 64;
     if !text.is_empty() && !accepts_payload
         || !matches!(kind, 14..=16 | 30) && date != 0
-        || !matches!(kind, 1 | 12 | 14 | 29 | 31 | 32 | 39 | 41 | 44 | 46) && option != 0
+        || !matches!(kind, 1 | 12 | 14 | 29 | 31 | 32 | 39 | 41 | 44 | 46 | 47) && option != 0
         || kind != 12 && expires != 0
         || matches!(kind, 12 | 13 | 29) && id != [0; 16]
         || kind == 21 && text_length != 16
@@ -1078,7 +1113,9 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 42 && (id != [0; 16] || text.is_empty())
         || kind == 43 && id == [0; 16]
         || matches!(kind, 42 | 43) && text_length > crate::state::MAX_DEVICE_NAME_BYTES
-        || matches!(kind, 44..=46) && id == [0; 16]
+        || matches!(kind, 44..=47) && id == [0; 16]
+        || kind == 47
+            && (option > 1 || text.is_empty() || text_length > crate::chat::MAX_EMOJI_BYTES)
         || matches!(kind, 44 | 45) && text_length != 64
         || kind == 44 && !matches!(option, 1 | 2)
         || kind == 46 && (text_length != 0 || option > 1)
@@ -1448,6 +1485,11 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         46 => DeleteChatMessage {
             id: ChatMessageId(id),
             by_admin: option == 1,
+        },
+        47 => ReactChatMessage {
+            id: ChatMessageId(id),
+            emoji: text,
+            on: option == 1,
         },
         _ => return Err(KinError::UnsupportedVersion),
     };

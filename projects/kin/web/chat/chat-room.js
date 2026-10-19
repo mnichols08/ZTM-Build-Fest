@@ -65,7 +65,7 @@ const FINAL_REFUSALS = new Set(["chat_event_refused"]);
 // A chat key epoch the household hasn't reached may only be newer than this
 // pass's look at the service, so it gets a second look like a signature.
 const SECOND_LOOK_REFUSALS = new Set(["event_signature_invalid", "chat_key_future", "chat_key_lost"]);
-const CHAT_KINDS = new Set(["CHAT_MESSAGE_POSTED", "CHAT_MESSAGE_EDITED", "CHAT_MESSAGE_DELETED"]);
+const CHAT_KINDS = new Set(["CHAT_MESSAGE_POSTED", "CHAT_MESSAGE_EDITED", "CHAT_MESSAGE_DELETED", "CHAT_REACTION_SET"]);
 const REF = /^[a-f0-9]{64}$/;
 
 export class ChatRoomError extends Error {
@@ -538,7 +538,7 @@ export class ChatRoom {
   page(options = {}) {
     this.assertOpen();
     const { asOf, civilDate } = projectionContext(this.now());
-    return this.engine.chatPage(this.records.view(), { ...options, admins: this.admins }, asOf, civilDate, this.syncIdentity());
+    return this.engine.chatPage(this.records.view(), { includeReactions: true, ...options, admins: this.admins }, asOf, civilDate, this.syncIdentity());
   }
 
   /** Sends a text message. Resolves with { messageId, eventId } once it is
@@ -757,7 +757,14 @@ export class ChatRoom {
       { retireRef: message.blobRef, retireParts });
   }
 
-  async author(command, { blobRef = null, retireRef = null, retireParts = [] }) {
+  /** Turns this member's emoji reaction to `message` on or off (#127). The
+   * engine refuses a reaction that changes nothing. */
+  async react(message, emoji, on) {
+    this.assertCanPost();
+    return this.author({ type: "react-chat-message", messageId: message.messageId, emoji, on }, { track: false });
+  }
+
+  async author(command, { blobRef = null, retireRef = null, retireParts = [], track = true }) {
     this.assertOpen();
     if (retireRef !== null && !REF.test(retireRef)) retireRef = null;
     retireParts = retireParts.filter((ref) => REF.test(ref));
@@ -799,7 +806,8 @@ export class ChatRoom {
         result.encodedEvent.fill(0);
       }
       this.assertOpen();
-      await this.store.addLocal(envelope, { blobRef, retireRef, retireParts, messageId: command.messageId });
+      // A reaction doesn't make its message "sending" (pendingMessages).
+      await this.store.addLocal(envelope, { blobRef, retireRef, retireParts, messageId: track ? command.messageId : null });
       await this.refresh();
       return eventId;
     };

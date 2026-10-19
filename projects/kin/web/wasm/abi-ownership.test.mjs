@@ -204,6 +204,32 @@ function kchp({ total, start, messages, retired = [] }) {
   return out;
 }
 
+test("a chat page carries reactions after its retired blobs (#127)", () => {
+  const base = kchp({
+    total: 1, start: 0,
+    messages: [{ id: 0x01, author: 0x11, device: 0x21, postedAt: 1_791_475_200_001, status: 0, blob: 0xb1, key: 0xc1 }],
+  });
+  const thumbs = new TextEncoder().encode("\u{1F44D}");
+  const section = (members) => Uint8Array.of(thumbs.length, ...thumbs, members.length, 0, 0, 0, ...members.flatMap((member) => new Array(16).fill(member)));
+  const withGroups = (groups, ...sections) => {
+    const bytes = Uint8Array.of(...base, ...sections.flatMap((part) => [...part]));
+    new DataView(bytes.buffer).setUint32(28 + 112, groups, true);
+    return bytes;
+  };
+  const decode = (bytes) => createEngine(substituteExports({ operation: () => 0, result: bytes }).exports).chatPage([], { includeReactions: true }, 1_760_000_000_000, 20261003);
+  assert.deepEqual(decode(withGroups(1, section([0x11, 0x12]))).messages[0].reactions, [{ emoji: "\u{1F44D}", actors: ["11".repeat(16), "12".repeat(16)] }]);
+  assert.equal(decode(withGroups(2, section([0x11]), section([0x12]))).messages[0].reactions.length, 2);
+  for (const bytes of [
+    withGroups(1),
+    withGroups(1, section([])),
+    withGroups(2, section([0x11])),
+    withGroups(0, section([0x11])),
+    withGroups(1, Uint8Array.of(0, 1, 0, 0, 0, ...new Array(16).fill(1))),
+    withGroups(1, Uint8Array.of(33, ...new Array(33).fill(0x41), 1, 0, 0, 0, ...new Array(16).fill(1))),
+    withGroups(1, Uint8Array.of(1, 0xff, 1, 0, 0, 0, ...new Array(16).fill(1))),
+  ]) assert.throws(() => decode(bytes), (error) => error instanceof KinEngineError && error.code === 6);
+});
+
 test("chat pages decode from KCHP and malformed pages are refused (#109)", () => {
   const page = kchp({
     total: 5,
@@ -222,12 +248,12 @@ test("chat pages decode from KCHP and malformed pages are refused (#109)", () =>
   assert.deepEqual(decoded.messages[0], {
     messageId: "01".repeat(16), authorId: "11".repeat(16), deviceId: "21".repeat(16),
     postedAt: 1_791_475_200_001, editedAt: 1_791_475_200_009, index: 3, status: "edited", contentKind: "text",
-    blobRef: "b1".repeat(32), blobKey: new Uint8Array(32).fill(0xc1), text: "Dinner at 6 🍝",
+    blobRef: "b1".repeat(32), blobKey: new Uint8Array(32).fill(0xc1), text: "Dinner at 6 🍝", reactions: [],
   });
   assert.deepEqual(decoded.messages[1], {
     messageId: "02".repeat(16), authorId: "12".repeat(16), deviceId: "22".repeat(16),
     postedAt: 1_791_475_200_002, editedAt: null, index: 4, status: "removed-by-admin", contentKind: "text",
-    blobRef: null, blobKey: null, text: null,
+    blobRef: null, blobKey: null, text: null, reactions: [],
   });
   const broken = [
     page.slice(0, -1),

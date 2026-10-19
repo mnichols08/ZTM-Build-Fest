@@ -52,6 +52,7 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::ChatMessagePosted { .. } => 44,
         EventKind::ChatMessageEdited { .. } => 45,
         EventKind::ChatMessageDeleted { .. } => 46,
+        EventKind::ChatReactionSet { .. } => 47,
     }
 }
 
@@ -341,6 +342,21 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             }
             payload.extend_from_slice(&message_id.0);
             payload.extend_from_slice(&[u8::from(*by_admin), 0, 0, 0]);
+        }
+        // Reaction (#127): message ID, on u8 and 3 reserved, emoji length
+        // u32, the emoji's UTF-8.
+        EventKind::ChatReactionSet {
+            message_id,
+            emoji,
+            on,
+        } => {
+            if message_id.0 == [0; 16] || crate::chat::check_emoji(emoji).is_err() {
+                return Err(KinError::MalformedProtocol);
+            }
+            payload.extend_from_slice(&message_id.0);
+            payload.extend_from_slice(&[u8::from(*on), 0, 0, 0]);
+            payload.extend_from_slice(&(emoji.len() as u32).to_le_bytes());
+            payload.extend_from_slice(emoji.as_bytes());
         }
     }
     let mut bytes = Vec::with_capacity(88 + payload.len());

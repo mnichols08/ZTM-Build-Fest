@@ -308,6 +308,14 @@ pub enum EventKind {
         message_id: ChatMessageId,
         by_admin: bool,
     },
+    /// A member turns one emoji reaction to a message on or off (#127). The
+    /// emoji is one grapheme (`chat::check_emoji`). The last write per
+    /// (member, message, emoji) in replay order wins.
+    ChatReactionSet {
+        message_id: ChatMessageId,
+        emoji: String,
+        on: bool,
+    },
 }
 
 impl EventKind {
@@ -319,6 +327,7 @@ impl EventKind {
             EventKind::ChatMessagePosted { .. }
                 | EventKind::ChatMessageEdited { .. }
                 | EventKind::ChatMessageDeleted { .. }
+                | EventKind::ChatReactionSet { .. }
         )
     }
 }

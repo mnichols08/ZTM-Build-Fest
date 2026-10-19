@@ -30,6 +30,11 @@ pub const MAX_CHAT_PAGE: usize = 500;
 pub const MAX_CHAT_EVENT_COUNT: usize = 250_000;
 /// Admins a page request may name.
 pub const MAX_CHAT_ADMINS: usize = 16;
+/// Most bytes one reaction emoji may have (#127).
+pub const MAX_EMOJI_BYTES: usize = 32;
+/// Most different emoji a message may collect; commands refuse a new one
+/// past it and replay ignores it.
+pub const MAX_REACTION_GROUPS: usize = 24;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -59,6 +64,14 @@ pub struct ChatMessage {
     pub blob_key: [u8; 32],
 }
 
+/// One emoji on one message and the members who chose it, in the order replay
+/// saw them (#127).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReactionGroup {
+    pub emoji: String,
+    pub actors: Vec<ActorId>,
+}
+
 /// The chat domain of a replay.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct ChatState {
@@ -80,6 +93,10 @@ pub struct ChatState {
     /// author is an admin, which only the service knows, so the host names
     /// the household's admins when it reads a page.
     pub admin_claims: BTreeMap<ChatMessageId, Vec<ActorId>>,
+    /// Reactions by message, groups in the order replay first saw each emoji.
+    /// A message with none has no entry. A page leaves out those of messages
+    /// it shows as deleted or removed.
+    pub reactions: BTreeMap<ChatMessageId, Vec<ReactionGroup>>,
 }
 
 impl ChatState {
@@ -151,6 +168,120 @@ pub fn check_text(bytes: &[u8]) -> Result<&str, KinError> {
         return Err(KinError::InvalidEvent);
     }
     Ok(text)
+}
+
+/// Whether `text` is one emoji grapheme of at most 32 bytes (#127): a
+/// pictograph with an optional variation selector and skin tone, a flag
+/// (two regional indicators, or a tag sequence), or a keycap, and several of
+/// those joined by zero-width joiners. Anything else, including plain text
+/// and more than one emoji, is refused.
+pub fn check_emoji(text: &str) -> Result<(), KinError> {
+    if text.is_empty() || text.len() > MAX_EMOJI_BYTES {
+        return Err(KinError::InvalidEvent);
+    }
+    let scalars: Vec<u32> = text.chars().map(|character| character as u32).collect();
+    let mut at = 0;
+    let mut joined = false;
+    loop {
+        let (end, pictograph) = emoji_element(&scalars, at).ok_or(KinError::InvalidEvent)?;
+        // A joiner sits between pictographs only (never beside a flag or
+        // keycap), as Unicode's grapheme rules join them.
+        if joined && !pictograph {
+            return Err(KinError::InvalidEvent);
+        }
+        at = end;
+        if at == scalars.len() {
+            return Ok(());
+        }
+        // Only a joiner continues the grapheme, and it needs an element after.
+        if scalars[at] != 0x200D || !pictograph {
+            return Err(KinError::InvalidEvent);
+        }
+        joined = true;
+        at += 1;
+    }
+}
+
+const fn is_regional_indicator(scalar: u32) -> bool {
+    matches!(scalar, 0x1F1E6..=0x1F1FF)
+}
+
+const fn is_pictograph(scalar: u32) -> bool {
+    matches!(
+        scalar,
+        0xA9 | 0xAE
+            | 0x203C
+            | 0x2049
+            | 0x2122
+            | 0x2139
+            | 0x2194..=0x21AA
+            | 0x231A..=0x231B
+            | 0x2328
+            | 0x23CF
+            | 0x23E9..=0x23F3
+            | 0x23F8..=0x23FA
+            | 0x24C2
+            | 0x25AA..=0x25AB
+            | 0x25B6
+            | 0x25C0
+            | 0x25FB..=0x25FE
+            | 0x2600..=0x27BF
+            | 0x2934..=0x2935
+            | 0x2B05..=0x2B07
+            | 0x2B1B..=0x2B1C
+            | 0x2B50
+            | 0x2B55
+            | 0x3030
+            | 0x303D
+            | 0x3297
+            | 0x3299
+            | 0x1F000..=0x1F0FF
+            | 0x1F10D..=0x1F10F
+            | 0x1F170..=0x1F1E5
+            | 0x1F200..=0x1F251
+            | 0x1F300..=0x1FAFF
+    )
+}
+
+/// The end of the emoji element starting at `at`, if one does, and whether it
+/// is a pictograph (the only kind a joiner may join).
+fn emoji_element(scalars: &[u32], at: usize) -> Option<(usize, bool)> {
+    let first = *scalars.get(at)?;
+    let is_tag = |scalar: &u32| matches!(*scalar, 0xE0020..=0xE007E);
+    if is_regional_indicator(first) {
+        return scalars
+            .get(at + 1)
+            .is_some_and(|next| is_regional_indicator(*next))
+            .then_some((at + 2, false));
+    }
+    if matches!(first, 0x23 | 0x2A | 0x30..=0x39) {
+        let mut next = at + 1;
+        if scalars.get(next) == Some(&0xFE0F) {
+            next += 1;
+        }
+        return (scalars.get(next) == Some(&0x20E3)).then_some((next + 1, false));
+    }
+    if first == 0x1F3F4 && scalars.get(at + 1).is_some_and(is_tag) {
+        let mut next = at + 1;
+        while scalars.get(next).is_some_and(is_tag) {
+            next += 1;
+        }
+        return (scalars.get(next) == Some(&0xE007F)).then_some((next + 1, false));
+    }
+    if !is_pictograph(first) {
+        return None;
+    }
+    let mut next = at + 1;
+    if scalars.get(next) == Some(&0xFE0F) {
+        next += 1;
+    }
+    if scalars
+        .get(next)
+        .is_some_and(|modifier| matches!(*modifier, 0x1F3FB..=0x1F3FF))
+    {
+        next += 1;
+    }
+    Some((next, true))
 }
 
 /// Decrypted message texts by blob, held only while the engine is unlocked.
@@ -260,13 +391,15 @@ impl ChatTexts {
 /// KCHQ v1, a page request: "KCHQ", version u16 (1), reserved u16 (0),
 /// before u32 (page ends before this index; u32::MAX for the newest),
 /// limit u16 (1..=500), flags u8 (bit 0: include texts the arena holds;
-/// bit 1: include retired blobs), reserved u8 (0), admin count u32 (at most
+/// bit 1: include retired blobs; bit 2: include reactions), reserved u8
+/// (0), admin count u32 (at most
 /// 16), then 16 bytes per admin actor ID, then the record-less KINE context.
 pub struct PageRequest<'a> {
     pub before: u32,
     pub limit: usize,
     pub include_text: bool,
     pub include_retired: bool,
+    pub include_reactions: bool,
     pub admins: Vec<ActorId>,
     pub context: &'a [u8],
 }
@@ -284,7 +417,7 @@ pub fn decode_page_request(bytes: &[u8]) -> Result<PageRequest<'_>, KinError> {
         return Err(KinError::UnsupportedVersion);
     }
     let flags = bytes[14];
-    if bytes[6..8] != [0; 2] || bytes[15] != 0 || flags & !0b11 != 0 {
+    if bytes[6..8] != [0; 2] || bytes[15] != 0 || flags & !0b111 != 0 {
         return Err(KinError::MalformedProtocol);
     }
     let before = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
@@ -309,9 +442,28 @@ pub fn decode_page_request(bytes: &[u8]) -> Result<PageRequest<'_>, KinError> {
         limit,
         include_text: flags & 1 != 0,
         include_retired: flags & 2 != 0,
+        include_reactions: flags & 4 != 0,
         admins,
         context: &bytes[context_at..],
     })
+}
+
+fn shown_reactions<'a>(
+    state: &'a ChatState,
+    request: &PageRequest<'_>,
+    shown: ChatMessageStatus,
+    message: &ChatMessage,
+) -> &'a [ReactionGroup] {
+    if request.include_reactions
+        && matches!(shown, ChatMessageStatus::Live | ChatMessageStatus::Edited)
+    {
+        state
+            .reactions
+            .get(&message.message_id)
+            .map_or(&[][..], Vec::as_slice)
+    } else {
+        &[]
+    }
 }
 
 /// KCHP v1, a page: "KCHP", version u16 (1), reserved u16 (0), then u32s:
@@ -323,14 +475,19 @@ pub fn decode_page_request(bytes: &[u8]) -> Result<PageRequest<'_>, KinError> {
 /// 48  posted at i64          56  edited at i64 (0)    64  index u32
 /// 68  status u8              69  content kind u8      70  reserved u16
 /// 72  blob ref (32)          104 text offset u32      108 text length u32
-/// 112 reserved (16)
+/// 112 reaction groups u32  116 reserved (12)
 /// ```
 ///
 /// The blob ref is zero for a deleted or removed message; a text length of
 /// 0 means the arena doesn't hold that message's text (texts are never
 /// empty). Then 32 bytes of blob key per message, in the same order (zero
 /// for a deleted or removed message), then the text bytes, then 32 bytes
-/// per retired blob.
+/// per retired blob. When the request asked for reactions, the page ends with
+/// them: for each message in order that shows reactions, per group (the
+/// record's count of them): emoji length u8, the emoji's UTF-8, member count
+/// u32, then 16 bytes per member's actor ID. A deleted or removed message
+/// shows none, and a page that didn't ask for them has a count of 0
+/// everywhere.
 pub fn encode_page(
     state: &ChatState,
     request: &PageRequest<'_>,
@@ -347,6 +504,12 @@ pub fn encode_page(
     } else {
         &[]
     };
+    // The reactions a page shows: those of visible messages, if asked for.
+    let reaction_bytes = page
+        .iter()
+        .flat_map(|message| shown_reactions(state, request, status(message), message))
+        .map(|group| 1 + group.emoji.len() + 4 + group.actors.len() * 16)
+        .sum::<usize>();
     let mut text_bytes = 0usize;
     if request.include_text {
         for message in page {
@@ -361,6 +524,7 @@ pub fn encode_page(
         .checked_add(page.len() * (PAGE_RECORD_BYTES + 32))
         .and_then(|size| size.checked_add(text_bytes))
         .and_then(|size| size.checked_add(retired.len() * 32))
+        .and_then(|size| size.checked_add(reaction_bytes))
         .ok_or(KinError::SizeLimit)?;
     let mut bytes = Vec::new();
     bytes
@@ -405,7 +569,10 @@ pub fn encode_page(
             }
             None => bytes.extend_from_slice(&[0; 8]),
         }
-        bytes.extend_from_slice(&[0; 16]);
+        bytes.extend_from_slice(
+            &(shown_reactions(state, request, status(message), message).len() as u32).to_le_bytes(),
+        );
+        bytes.extend_from_slice(&[0; 12]);
     }
     for message in page {
         let visible = matches!(
@@ -419,6 +586,16 @@ pub fn encode_page(
     }
     for blob in retired {
         bytes.extend_from_slice(blob);
+    }
+    for message in page {
+        for group in shown_reactions(state, request, status(message), message) {
+            bytes.push(group.emoji.len() as u8);
+            bytes.extend_from_slice(group.emoji.as_bytes());
+            bytes.extend_from_slice(&(group.actors.len() as u32).to_le_bytes());
+            for actor in &group.actors {
+                bytes.extend_from_slice(&actor.0);
+            }
+        }
     }
     debug_assert_eq!(bytes.len(), size);
     Ok(bytes)
