@@ -1,8 +1,8 @@
 # Release Process
 
-**Status:** Current release: v1.1.2 — Private Household Branding, released
-2026-10-18 as `kin-v1.1.2`. The release before it was v1.1.1 — Member and
-Notification Clarity (`kin-v1.1.1`). Neither is production certification or an
+**Status:** Current release: v1.2.0 — Household Chat, released 2026-10-19 as
+`kin-v1.2.0`. The release before it was v1.1.2 — Private Household Branding
+(`kin-v1.1.2`). Neither is production certification or an
 independent audit.
 
 Before any v1.x release, check it against the
@@ -37,6 +37,8 @@ push notifications, a sandboxed Node service, and QR pairing/phone-approved
 computer sign-in. It preserves the v1.0 formats and reads v1.0 data under the
 [compatibility commitment](V1.0-COMPATIBILITY.md); server schemas 10 and 11
 are forward migrations, so keep a pre-upgrade backup if rollback matters.
+
+v1.2.0 adds one household chat room, as decided in ADR 0008. It has its own event log, relay stream, content blobs and admin access policy, and it adds server schemas 12–17 as forward migrations. It changes no v1.0 format.
 
 v1.1.2 shows the private household name and icon in the unlocked shell and keeps
 that identity synchronized across session transitions. Locked and unassociated
