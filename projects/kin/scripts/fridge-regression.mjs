@@ -328,8 +328,11 @@ export async function fridgeRegressions(client, until) {
   })()`);
   await setViewport(client, { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   const light = await inkCheck();
-  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "dark" }] });
+  // Kin's own dark appearance (the page may have pinned light), then back.
+  const appearance = await page(`document.documentElement.dataset.kinAppearance ?? null`);
+  await page(`(document.documentElement.dataset.kinAppearance = "dark", true)`);
   const dark = await inkCheck();
+  await page(`(${JSON.stringify(appearance)} === null ? delete document.documentElement.dataset.kinAppearance : document.documentElement.dataset.kinAppearance = ${JSON.stringify(appearance)}, true)`);
   assert.notEqual(dark.door, light.door, "dark mode darkens the door");
   assert.notDeepEqual(dark.palette, light.palette, "dark mode remaps the ink colours");
   assert.ok(dark.inked > 0, "drawings stay visible in dark mode");
