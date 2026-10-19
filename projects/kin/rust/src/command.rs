@@ -1236,7 +1236,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || matches!(kind, 44 | 45)
             && (64..=64 + 2 + 16 * crate::chat::MAX_CHAT_MENTIONS + 16).contains(&text_length);
     if !text.is_empty() && !accepts_payload
-        || !matches!(kind, 14..=16 | 30 | 49) && !(kind == 44 && option == 3) && date != 0
+        || !(matches!(kind, 14..=16 | 30 | 49) || kind == 44 && option == 3) && date != 0
         || !matches!(
             kind,
             1 | 12 | 14 | 29 | 31 | 32 | 39 | 41 | 44 | 46 | 47 | 48
