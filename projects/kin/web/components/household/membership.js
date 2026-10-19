@@ -309,15 +309,17 @@ export class HouseholdMembership {
       const actions = document.createElement("section");
       actions.className = "people-device-actions";
       const actionsHeading = document.createElement("h3");
-      actionsHeading.textContent = "Add someone or another device";
+      actionsHeading.textContent = "Invite someone, or connect one of your own devices";
       actions.append(actionsHeading);
       if (canManageMembers === true) {
         const inviteCopy = document.createElement("p");
-        inviteCopy.textContent = "Invite person gives them their own household member identity and access for their role.";
-        actions.append(inviteCopy, this.host.makeButton("Invite person", () => this.host.createPairing("adult")));
+        // Choosing the person's role comes first, in Household access, so
+        // this entry point never silently creates an Adult invitation (#297).
+        inviteCopy.textContent = "Invite another person: choose their Adult, Limited, or Temporary role before creating an invitation. They get their own household member identity and role-based access.";
+        actions.append(inviteCopy, this.host.makeButton("Invite another person", () => this.host.showHousehold()));
       }
       const deviceCopy = document.createElement("p");
-      deviceCopy.textContent = "Add my device keeps you under this same member identity on another phone or computer.";
+      deviceCopy.textContent = "Add my device: connect your own phone or computer under this same member identity. Your other devices will not notify you about your own changes.";
       actions.append(deviceCopy, this.host.makeButton("Add my device", () => this.host.createDevicePairing(), "secondary"));
       this.host.append(actions);
       this.host.append(

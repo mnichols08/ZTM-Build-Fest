@@ -13,7 +13,7 @@ claim that its preferred-name or presentation behavior has shipped.
 Kin presents two separate actions before it shows a code, QR scanner or
 approval ceremony:
 
-- **Invite a person** — creates one new member ID. The person gets their own
+- **Invite another person** — creates one new member ID. The person gets their own
   household member identity, access according to their role, and can receive
   notifications about other members' changes after opting in on each device.
 - **Add my device** — keeps the same member ID. This is still you on another
@@ -25,6 +25,24 @@ The selection persists through QR and manual-code variants. A member must
 never have to infer the result from a generic “Pair” action. Back or Cancel
 returns to this choice without creating membership, trusting a device or
 provisioning keys.
+
+Both sides of a pairing name the path in progress before anyone confirms it
+(#223). The member who made the code sees **Adding your own device** or
+**Inviting another person** (with the invited role) beside the code, and the
+waiting status says who is expected to enter it. The device that entered the
+code sees **Adding this device to your membership** or **Joining as a new
+household member** while it waits for approval and again before activation.
+The joining device is not told a role, because the claim response does not
+carry one.
+
+A code never silently switches paths. If someone chose **Add my device** and
+then enters an invitation code, or chose to join and then enters a
+same-member device code, Kin explains the difference and keeps **Activate
+with passkey** disabled until they tick an explicit acknowledgement, in
+addition to the fingerprint comparison. If the choice is unknown (for
+example after a reload), only the path statement is shown. The service still
+decides every code's real purpose; this is presentation and a confirmation
+gate, not new authority.
 
 A preferred name is presentation only; it may be changed without changing the
 member ID. A device label or name is not proof of identity or authority. “You”
@@ -70,9 +88,9 @@ claiming physical-device, browser-vendor or assistive-technology coverage.
 
 | Scenario | Expected result | Evidence |
 |---|---|---|
-| Two members | Invite a person creates a distinct member ID; each person is grouped with only their devices; “You” follows the signed-in member; the other member's change is eligible for a content-free push. | `server/pairing-service.test.mjs` invitation tests and `server/push.test.mjs` author-member filtering; manual end-to-end two-profile drill. |
+| Two members | Invite another person creates a distinct member ID; each person is grouped with only their devices; “You” follows the signed-in member; the other member's change is eligible for a content-free push. | `server/pairing-service.test.mjs` invitation tests and `server/push.test.mjs` author-member filtering; manual end-to-end two-profile drill. |
 | One member, multiple devices | Add my device keeps one member ID, creates a distinct device ID/key pair, marks only the active installation “This device”, and sends no self-authored push to either device. | `server/pairing-sync-keys.test.mjs` same-member enrollment, `web/sync/crypto.test.mjs` recipient-bound encryption and `server/push.test.mjs` all-author-device exclusion; manual grouped-device check. |
-| QR invitation | The screen says Invite a person before scanning; the fragment remains local; scan alone grants nothing; both parties confirm the new-member outcome and compare fingerprints. | Automated QR/parser/pairing tests; physical-camera scan is manual. |
+| QR invitation | The screen says Invite another person before scanning; the fragment remains local; scan alone grants nothing; both parties confirm the new-member outcome and compare fingerprints. | Automated QR/parser/pairing tests; physical-camera scan is manual. |
 | Manual invitation | The same new-member explanation and authority checks apply when the short code is typed or copied. | Automated pairing service tests and manual copy entry. |
 | QR same-member pairing | The screen says Add my device or Sign in with my phone; no member is created; the device generates its own keys and requires trusted-device approval. | Automated link-request, fingerprint and provisioning tests; physical-camera scan is manual. |
 | Manual same-member pairing | Typed-code enrollment retains the member ID, creates a device identity, compares fingerprints and provisions retained epochs only after approval. | Automated pairing/provisioning tests and manual two-profile drill. |

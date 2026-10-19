@@ -162,8 +162,8 @@ export async function mobileUxRegressions(recovery) {
     [...app.household.querySelectorAll("button")].some((button) => button.textContent === "Back"),
     "Join shows the code form and states that a code never creates a second household");
   app.household.startIntent("device");
-  check(app.household.textContent.includes("Add another device") && Boolean(app.household.querySelector('input[name="code"]')),
-    "Add this device explains the existing-device step and uses the same approval flow");
+  check(app.household.textContent.includes("People & devices → Add my device") && Boolean(app.household.querySelector('input[name="code"]')),
+    "Add my device explains the existing-device step and uses the same approval flow");
   app.household.startIntent("create");
   check([...app.household.querySelectorAll("button")].some((button) => button.textContent === "Create household with passkey") &&
     app.household.textContent.includes("join theirs instead"),

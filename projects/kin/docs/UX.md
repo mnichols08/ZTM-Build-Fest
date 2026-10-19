@@ -963,7 +963,7 @@ Not:
 
 People & devices starts with two explicit actions before any scanner or code:
 
-- **Invite a person** explains that Kin creates a separate household member
+- **Invite another person** explains that Kin creates a separate household member
   identity with role-based access.
 - **Add my device** explains that this remains the same person and member ID on
   another phone or computer, and that a member is not notified of their own

@@ -4,6 +4,7 @@
 import { currentPlatform, householdDeviceName } from "../../platform.js";
 import { invitationCode, invitationLink } from "../../pairing-link.js";
 import { consumeOpenedSignInLink } from "../../device-link.js";
+import { intentConflict, inviterPathCopy, joinerPathCopy } from "./pairing-path.js";
 import "../kin-qr.js";
 import "../kin-qr-scanner.js";
 
@@ -17,6 +18,24 @@ export class HouseholdViews {
   constructor(ctx) {
     this.ctx = ctx;
     this.host = ctx.host;
+  }
+
+  /** States which pairing path is in progress and whose identity the device
+   * will carry, before anyone confirms anything (#223). */
+  showPath({ title, detail }) {
+    const heading = document.createElement("h3");
+    heading.className = "pairing-path";
+    heading.textContent = title;
+    const paragraph = document.createElement("p");
+    paragraph.className = "pairing-path-detail";
+    paragraph.textContent = detail;
+    this.host.append(heading, paragraph);
+  }
+
+  /** The path chosen before the code was entered, when it contradicts the
+   * code's real purpose; null otherwise. */
+  claimConflict() {
+    return intentConflict(this.host.claimIntent, this.host.claim?.purpose);
   }
 
   // The device's automatic name ("Chrome on iPhone"), shown so people know
@@ -151,8 +170,18 @@ export class HouseholdViews {
     scanner.querySelector?.("button.primary-action")?.focus();
   }
 
+  /** Activation needs the fingerprint comparison and, when the code's path
+   * contradicts the chosen one, an explicit acknowledgement. */
+  activationReady() {
+    return Boolean(this.host.verifiedInviterFingerprint) &&
+      (!this.claimConflict() || Boolean(this.host.acknowledgedPathConflict));
+  }
+
   renderJoin() {
     if (this.host.claim?.state === "Claimed") {
+      this.showPath(joinerPathCopy(this.host.claim.purpose));
+      const conflict = this.claimConflict();
+      if (conflict) this.host.message(conflict, true);
       this.host.message(
         ["device", "replacement"].includes(this.host.claim.purpose)
           ? "This device is ready. Your existing trusted device must approve it before access is restored."
@@ -184,6 +213,7 @@ export class HouseholdViews {
         this.host.message("This device key changed during security migration. Cancel this pairing and request a new invitation before activation.", true);
         return;
       }
+      this.showPath(joinerPathCopy(this.host.claim.purpose));
       this.host.message(
         "Approval succeeded. Use your passkey once more to activate this device.",
       );
@@ -201,18 +231,35 @@ export class HouseholdViews {
           " I compared this fingerprint on both devices.",
         ),
       );
+      // A code on a different path than the one chosen is never activated
+      // silently: the person must acknowledge the switch first (#223).
+      const conflict = this.claimConflict();
+      let acknowledgement = null;
+      if (conflict) {
+        this.host.message(conflict, true);
+        const accepted = document.createElement("input");
+        accepted.type = "checkbox";
+        accepted.name = "path-acknowledged";
+        accepted.checked = Boolean(this.host.acknowledgedPathConflict);
+        acknowledgement = document.createElement("label");
+        acknowledgement.append(
+          accepted,
+          document.createTextNode(` I understand: ${joinerPathCopy(this.host.claim.purpose).title.toLowerCase()}.`),
+        );
+        accepted.addEventListener("change", () => {
+          this.host.acknowledgedPathConflict = accepted.checked;
+          this.host.setControlDisabled(activate, !this.activationReady());
+        });
+      }
       const activate = this.host.makeButton("Activate with passkey", () =>
         this.host.activateClaim(),
       );
-      this.host.setControlDisabled(
-        activate,
-        !this.host.verifiedInviterFingerprint,
-      );
+      this.host.setControlDisabled(activate, !this.activationReady());
       confirmation.addEventListener("change", () => {
         this.host.verifiedInviterFingerprint = confirmation.checked;
-        this.host.setControlDisabled(activate, !confirmation.checked);
+        this.host.setControlDisabled(activate, !this.activationReady());
       });
-      this.host.append(label, activate);
+      this.host.append(label, ...(acknowledgement ? [acknowledgement] : []), activate);
       return;
     }
     if (this.host.claim) {
@@ -233,7 +280,7 @@ export class HouseholdViews {
     }
     if (this.host.intent === "device")
       this.host.text(
-        "On a device where you're already in the household, open More → Household → Add another device. Enter the code it shows here, then approve this device from there after comparing the device keys.",
+        "On a device where you're already in the household, open People & devices → Add my device. Enter the code it shows here, then approve this device from there after comparing the device keys.",
       );
     else if (this.host.intent === "join")
       this.host.text(
@@ -275,6 +322,10 @@ export class HouseholdViews {
     form.append(codeLabel, help, scanArea, device.element, submit);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
+      // Remember the path chosen before the code was entered, so a code on a
+      // different path can be flagged instead of silently switching (#223).
+      this.host.claimIntent = this.host.intent;
+      this.host.acknowledgedPathConflict = false;
       this.host.register("claim", { code: code.value, deviceLabel: device.value() });
     });
     this.host.append(form);
@@ -312,7 +363,7 @@ export class HouseholdViews {
     if (!this.host.pairing) {
       if (this.host.syncStatus?.memberKind === "adult" && !this.host.syncKeyError) {
         this.host.button(
-          "Add another device",
+          "Add my device",
           () => this.host.createDevicePairing(),
           "secondary",
         );
@@ -330,12 +381,14 @@ export class HouseholdViews {
     const lapsed = this.host.pairing.state === "Pending" &&
       Number.isFinite(this.host.pairing.expiresAt) && this.host.pairing.expiresAt <= Date.now();
     const pairingState = lapsed ? "Expired" : this.host.pairing.state;
+    const path = inviterPathCopy(this.host.pairing.purpose, this.host.pairing.memberKind);
+    if (["Pending", "Claimed"].includes(pairingState)) this.showPath(path);
     const state = document.createElement("p");
     state.className = "pairing-state";
     state.setAttribute("role", "status");
     state.textContent =
       pairingState === "Pending"
-        ? "Waiting for another trusted adult to claim this code."
+        ? path.waiting
         : this.host.pairing.state === "Claimed"
           ? ["device", "replacement"].includes(this.host.pairing.purpose)
             ? `${this.host.pairing.deviceLabel || "This device"} is awaiting approval for your account.`
