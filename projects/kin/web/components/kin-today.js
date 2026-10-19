@@ -23,7 +23,7 @@ const LISTS = {
   shopping: {
     title: "Shopping",
     hint: "Things to buy. Staples can be added here with one tap.",
-    empty: "Nothing to buy right now.",
+    empty: "Nothing to buy right now. Add something above when you notice it running low.",
     includes: (record) => record.classification === "shopping",
   },
   staple: {

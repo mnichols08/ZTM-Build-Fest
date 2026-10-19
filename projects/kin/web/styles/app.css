@@ -1558,3 +1558,6 @@ kin-qr-scanner { display: block; }
 .member-name-form label, .device-rename-form label { display: grid; gap: 4px; flex: 1 1 14rem; min-width: 0; }
 .member-name-form input, .device-rename-form input { width: 100%; min-width: 0; min-height: var(--tap); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); }
 .member-name-form .hint { flex-basis: 100%; margin: 0; }
+/* Long member names and device labels wrap instead of widening the page at
+   320 px (#268): a 32-character name may have no spaces at all. */
+.device-group > h3, .device-name-line, .member-name-form input { overflow-wrap: anywhere; }

@@ -5,6 +5,7 @@ import { describePartialCapture, remainingCaptureSteps } from "../../../capture-
 import { describeRecurringCapture, isCadence, remainingRecurringSteps } from "../../../recurrence.js";
 import { randomId } from "../../../wasm/kin-engine.js";
 import { INLINE_SAVE_FAILED, SAVE_ERROR } from "../constants.js";
+import { itemActionFeedback, pendingActionShare } from "../feedback.js";
 
 export class ItemCommands {
   constructor(ctx) {
@@ -137,6 +138,8 @@ export class ItemCommands {
     }
     const session = this.ctx.session.captureSession();
     const submittedItemId = itemId;
+    // Named before the action: an archived item leaves the projection.
+    const itemText = this.app.state?.items?.find((item) => item.itemId === submittedItemId)?.text ?? "";
     const activeList = [this.app.today, this.app.needs, this.app.shopping, this.app.staples].find((list) =>
       list.contains(document.activeElement),
     );
@@ -153,13 +156,11 @@ export class ItemCommands {
       if (["complete", "archive"].includes(type))
         this.app.localReminders.cancel(`item:${submittedItemId}`);
       this.ctx.render.renderState();
-      this.ctx.status.setStatus(
-        type === "complete"
-          ? "Marked complete."
-          : type === "reopen"
-            ? "Reopened."
-            : "Archived.",
-      );
+      // Name the item and say how far the change has gone (#267); with sync,
+      // "Sent to your household." follows once the relay accepts it.
+      const syncing = Boolean(this.app.syncCoordinator);
+      this.ctx.status.setStatus(itemActionFeedback({ type, text: itemText, syncing, offline: navigator.onLine === false }));
+      if (syncing) (this.app.pendingShares ??= new Set()).add(pendingActionShare());
       this.ctx.peers.broadcastEventChange();
       restoreComposeFocus = true;
     } catch (error) {
