@@ -1184,7 +1184,20 @@ try {
   }
   async function ready(client) {
     // 30 s: a new tab's first start can exceed 10 s on the Windows runner (#164).
-    await until(() => client.evaluate('Boolean(document.querySelector("kin-app")?.security?.heading)'), { attempts: 600 });
+    try {
+      await until(() => client.evaluate('Boolean(document.querySelector("kin-app")?.security?.heading)'), { attempts: 600 });
+    } catch (error) {
+      // Say what the tab was doing, so a slow start can be told from a stuck
+      // one (#327): where it is, how far it loaded, and recent page errors.
+      const state = await client.evaluate(`({
+        href: location.href, readyState: document.readyState, app: Boolean(document.querySelector("kin-app")),
+        security: Boolean(document.querySelector("kin-app")?.security), phase: document.querySelector("kin-app")?.security?.phase ?? null,
+        starting: Boolean(document.querySelector("kin-app")?.starting), busy: document.querySelector("kin-app")?.busy ?? null,
+        status: document.querySelector("kin-app")?.status?.textContent ?? null, body: document.body?.innerText?.slice(0, 200) ?? null,
+      })`).catch((reason) => ({ unreadable: String(reason?.message ?? reason) }));
+      error.message += ` — tab state ${JSON.stringify(state)}; recent problems ${JSON.stringify(problems.slice(-5)).slice(0, 2000)}`;
+      throw error;
+    }
     const locked = await client.evaluate('document.querySelector("kin-app").security.phase !== "unlocked"');
     if (locked) await client.evaluate(`(async () => {
       const security = document.querySelector("kin-app").security;
