@@ -53,3 +53,14 @@ test("matching or unknown choices raise no conflict", () => {
   assert.equal(intentConflict("phone", "device"), null);
   assert.equal(intentConflict("device", "member-recovery"), null);
 });
+
+test("the joining device always learns the next step and who takes it (#264)", async () => {
+  const { CODE_ARRIVAL_COPY } = await import("./pairing-path.js");
+  assert.match(joinerPathCopy("device").next, /^Next: on your other device/);
+  assert.match(joinerPathCopy("adult").next, /^Next: the person who invited you/);
+  assert.match(joinerPathCopy("member-recovery").next, /^Next: the other household adult/);
+  for (const purpose of ["device", "replacement", "adult", "limited", "temporary", "member-recovery"])
+    assert.match(joinerPathCopy(purpose).next, /key below matches/, purpose);
+  assert.match(CODE_ARRIVAL_COPY, /never creates a new household/);
+  assert.match(CODE_ARRIVAL_COPY, /approves it before anything is shared/);
+});

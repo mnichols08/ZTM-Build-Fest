@@ -6,6 +6,18 @@ export const SAVE_ERROR =
 export const ATTACHMENT_OPEN_ERROR =
   "We couldn't open this attachment. Your existing household information hasn't been deleted.";
 export const AUTO_LOCK_KEY = "kin.auto-lock-minutes";
+// One plain-language line under each destination's heading (#261, #266), so
+// a new member learns what lives where without learning Kin's vocabulary
+// first. The five destinations keep their names, order and routes; Today's
+// line is its date.
+export const DESTINATION_DESCRIPTIONS = Object.freeze({
+  lists: "Things to do, your shopping list, and staples you buy again and again.",
+  routines: "Things that come round again, like bins night, plus checklists you reuse.",
+  updates: "Handoffs pass something on to a person, Talk saves a topic for a calm moment, and Chat is for quick back-and-forth.",
+  // When the household's chat policy leaves this member without Chat (#123).
+  updatesWithoutChat: "Handoffs pass something on to a person, and Talk saves a topic for a calm moment.",
+  household: "Notes, areas, people and devices, privacy and recovery, and how Kin looks for your household.",
+});
 export const INLINE_SAVE_FAILED = "Couldn't save. Your text is still here.";
 
 // Plain-language explanations for sync pauses. The code is kept on the state

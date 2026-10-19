@@ -151,7 +151,14 @@ class KinCompose extends HTMLElement {
       const options = document.createElement("div");
       options.className = "compose-options";
       options.append(this.classificationField, this.planField, this.planDateField, this.pinLabel);
-      this.form.append(options);
+      // Where the item will go, stated before Add and read with the field
+      // (#265): "Adds to Shopping, planned for today."
+      this.destination = document.createElement("p");
+      this.destination.id = `compose-destination${suffix}`;
+      this.destination.className = "compose-destination";
+      this.input.setAttribute("aria-describedby", this.destination.id);
+      this.form.append(options, this.destination);
+      this.renderDestination();
     } else {
       const destination = CLASSIFICATION_LABELS[this.fixedClassification] ?? "list";
       this.classification.value = this.fixedClassification ?? "need";
@@ -168,6 +175,22 @@ class KinCompose extends HTMLElement {
       control.addEventListener("input", () => this.noteDraftChange());
       control.addEventListener("change", () => this.noteDraftChange());
     }
+    for (const control of [this.classification, this.plan, this.planDate])
+      control.addEventListener("change", () => this.renderDestination());
+  }
+
+  /** The destination line for the Today capture: the list it joins and when
+   * it is planned, in words. Presentation only; the submit still sends the
+   * same classification and planning date. */
+  renderDestination() {
+    if (!this.destination) return;
+    const list = CLASSIFICATION_LABELS[this.currentClassification] ?? "To do";
+    const when = {
+      today: "planned for today",
+      tomorrow: "planned for tomorrow",
+      none: "with no date",
+    }[this.plan.value] ?? (this.planDate.value ? `planned for ${this.planDate.value}` : "on the date you pick");
+    this.destination.textContent = `Adds to ${list}, ${when}.`;
   }
 
   set disabled(value) {
@@ -210,6 +233,7 @@ class KinCompose extends HTMLElement {
     this.plan.value = "today";
     this.planDate.value = "";
     this.pin.checked = false;
+    this.renderDestination?.();
   }
 
   saveDraft() {
@@ -231,7 +255,20 @@ class KinCompose extends HTMLElement {
     }
     this.result.hidden = false;
     clearTimeout(this.resultTimer);
+    // "pending-sync" (saved here, not yet sent) stays visible until the app
+    // confirms the relay accepted it (markShared) or the next capture starts;
+    // only a settled "saved" line fades on its own (#267).
     if (kind === "saved") this.resultTimer = setTimeout(() => { if (this.result.dataset.kind === "saved") this.clearResult(); }, 6_000);
+  }
+
+  /** Called once the relay has accepted everything this device had waiting,
+   * so "saved here, waiting to sync" can truthfully become "sent" (#267). It
+   * never says the household has seen or read it. A line that has moved on
+   * (an error, a newer capture) is left alone. Returns whether it changed. */
+  markShared() {
+    if (this.result?.dataset.kind !== "pending-sync") return false;
+    this.showResult("Saved and sent to your household.", { kind: "saved" });
+    return true;
   }
 
   noteDraftChange() {

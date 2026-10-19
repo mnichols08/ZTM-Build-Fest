@@ -185,6 +185,7 @@ export class SessionController {
     this.app.commandGeneration = null;
     this.ctx.bulk.clearBulkOutcome();
     this.app.pendingCapture = null;
+    this.app.pendingShares?.clear();
     // pendingScheduleChange holds only random ids and a cadence. It survives
     // a lock so that unlocking the same vault can finish a half-saved change
     // instead of starting a second replacement; other vaults never see it.

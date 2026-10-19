@@ -117,6 +117,7 @@ export class SyncController {
   handleSyncState(value) {
     if (!this.app.vault || this.app.vault.locked) return;
     if (value.state) { this.app.syncState = value; this.updateSyncChip(); }
+    if (value.state === "ready") void this.settlePendingShares();
     if (value.state === "paused") {
       const attention = SYNC_PAUSE_MESSAGES[value.code] ?? value.message;
       if (attention) {
@@ -178,6 +179,30 @@ export class SyncController {
     if (value.message && value.state !== "paused" &&
         (value.quarantined > 0 || !["syncing", "ready", "disabled"].includes(value.state)))
       this.ctx.status.setStatus(value.message);
+  }
+  // Captures that said "Saved here. Waiting to sync." become "sent" only once
+  // a ready cycle leaves nothing unaccepted in this device's outbox, so the
+  // message never claims more than the relay confirmed (#267). Nothing is
+  // said about other devices receiving or reading it.
+  async settlePendingShares() {
+    const waiting = this.app.pendingShares;
+    if (!waiting?.size || this.settlingShares) return false;
+    const session = this.ctx.session.captureSession();
+    if (!session.store) return false;
+    this.settlingShares = true;
+    try {
+      const unsent = await session.store.getPendingOutbox(1);
+      if (!this.ctx.session.isCurrentSession(session) || unsent.length) return false;
+      const composers = [...waiting];
+      waiting.clear();
+      const changed = composers.filter((composer) => composer.isConnected !== false && composer.markShared?.());
+      if (changed.length) this.ctx.status.setStatus("Sent to your household.");
+      return changed.length > 0;
+    } catch {
+      return false; // The next ready cycle checks again.
+    } finally {
+      this.settlingShares = false;
+    }
   }
   updateSyncChip() {
     if (!this.app.syncChip) return;

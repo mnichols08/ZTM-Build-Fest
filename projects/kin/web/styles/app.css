@@ -436,6 +436,10 @@ kin-segment-nav { display: block; margin: 0 0 16px; }
 .compose-result { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0; color: var(--ink-muted); font-size: 14px; }
 .compose-result[data-kind="saved"] { color: var(--accent); }
 .compose-result[data-kind="error"] { color: var(--danger); font-weight: 560; }
+/* Saved here but not yet sent stays plain; "sent" uses the saved accent (#267). */
+.compose-result[data-kind="pending-sync"] { color: var(--ink-muted); }
+/* Where a Today capture will go, stated before Add (#265). */
+.compose-destination { grid-column: 1 / -1; margin: 0; color: var(--ink-muted); font-size: 14px; }
 .compose-retry { padding-inline: 12px; font-size: 14px; }
 .app-feedback-inline .error-message, .app-feedback-inline .retry-button { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; padding: 0; margin: -1px; }
 .compose-form-compact { margin: 10px 0 14px; padding: 10px 12px; border-color: var(--line); }
@@ -1529,3 +1533,15 @@ kin-qr-scanner { display: block; }
 .household-panel .pairing-qr { margin: var(--space-2) 0; }
 .pairing-scan { display: grid; gap: var(--space-1); justify-items: start; }
 .pairing-scan kin-qr-scanner { width: 100%; }
+
+/* Identity and pairing (#218; #261/#268): one consistent look for the path
+   statements, next steps and inline name forms, from the existing tokens. */
+.pairing-path { margin: var(--space-2) 0 var(--space-1); font-size: 1.05rem; }
+.pairing-path-detail { margin: 0 0 var(--space-2); color: var(--ink-muted); }
+.pairing-next-step { margin: 0 0 var(--space-2); font-weight: 560; }
+.member-name { margin: 0 0 var(--space-2); }
+.member-name-form, .device-rename-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-1) var(--space-2); margin-top: var(--space-1); }
+.member-name-form[hidden], .device-rename-form[hidden] { display: none; }
+.member-name-form label, .device-rename-form label { display: grid; gap: 4px; flex: 1 1 14rem; min-width: 0; }
+.member-name-form input, .device-rename-form input { width: 100%; min-width: 0; min-height: var(--tap); padding: 9px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); }
+.member-name-form .hint { flex-basis: 100%; margin: 0; }

@@ -57,19 +57,26 @@ export function joinerPathCopy(purpose) {
       return {
         title: "Adding this device to your membership",
         detail: "This device joins as you, under your existing member identity. It doesn't create a new member.",
+        next: "Next: on your other device, check that the key below matches, then approve this one.",
       };
     case "recovery":
       return {
         title: "Recovering your access",
         detail: "This device restores your membership. Your old devices will stop working.",
+        next: "Next: the other household adult checks that the key below matches, then authorizes your recovery.",
       };
     default:
       return {
         title: "Joining as a new household member",
         detail: "You'll get your own member identity, with the access the inviting adult chose for you, separate from the person who invited you.",
+        next: "Next: the person who invited you checks that the key below matches, then approves this device.",
       };
   }
 }
+
+/** For someone who opened a Kin code link without choosing a path first
+ * (#264): what happens next, in plain words. */
+export const CODE_ARRIVAL_COPY = "You opened a Kin code. Check it below, then create a passkey on this device. Someone already in the household approves it before anything is shared. Opening a code never creates a new household.";
 
 /** A warning when the path the person chose before entering the code
  * differs from the code's real purpose, or null when they agree (or when the
