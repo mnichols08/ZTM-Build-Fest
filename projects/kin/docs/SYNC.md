@@ -745,9 +745,49 @@ access**; Adults always read and post.
   of when the policy changed, so a client cannot tell a post made before a
   member became read only from one made after; the service, which sees each
   push when it happens, is the check. Clients show what the service accepted.
-- **Cryptographic separation** (a dedicated chat key that devices of members
-  with no access never receive, rotated when a group loses access) follows in
-  the next change.
+- **Cryptographic separation** is the dedicated chat key, below.
+
+## Dedicated chat key (v1.1, #123)
+
+Chat travels in household envelopes, which every trusted device can open. So
+that a member with no access cannot read chat sent after they lose it, the
+event inside each envelope is sealed again under a **chat key** that only
+devices of members allowed to read are given.
+
+- **Format.** The decrypted envelope plaintext is either the engine's event
+  (starts `KINE`, from before the household had a chat key) or
+  `KCK1 | chat key epoch (u32 BE) | nonce (12) | AES-GCM(event)`, bound to the
+  household, event ID and epoch. The envelope's outer fields (sender, time,
+  sizes) remain visible to anyone with the household key; the message content,
+  which sits in blobs whose keys are inside the event, does not.
+- **When there is a key.** A household has none (epoch 0, chat as before) until
+  the policy shuts someone out. The service then reports `chat.key.pending` on
+  `GET /api/sync/status` and refuses chat pushes (`chat_key_rotation_pending`,
+  409) until an Adult's device, which sees `chat.key.action = "rotate"`, makes
+  the key and uploads one wrapped package per device allowed to read
+  (`POST /api/chat/keys`). Packages are the existing key transfer (ECDH P-256
+  to the device, signed by the sender) labelled with the family
+  `chat:<household>`, so one cannot pass for a household key. The service
+  checks each package against the device it names, that the set is exactly the
+  devices allowed to read, and compare-and-sets the epoch; it never sees a
+  key.
+- **Rotation triggers**, all computed from who holds a package versus who may:
+  a class set to no access (or a Temporary member expiring), a member removed,
+  a device revoked. A device that gains access, or is added, is **granted** the
+  keys it lacks by any device that holds them (`action = "grant"`), so it can
+  read history, including what was sent while it had no access.
+- **Devices** fetch their packages with `GET /api/chat/keys`, verify the signer
+  against the verified device directory, and store the key sealed in the device
+  key store under the family label, so root rotation re-seals it with the
+  household keys. A device without a key at some epoch pauses chat with a
+  plain notice until one is shared. Messages queued before a rotation are
+  sealed again under the new key before they leave.
+- **Limits, honestly.** A device that lost access keeps what it already
+  decrypted and every chat key it held. Read receipts, typing and delete-for-me
+  records still use the household key: the service refuses them to no-access
+  members, but that is enforcement, not encryption. A rotation needs an Adult's
+  device that is allowed to chat to be online; until then chat is paused for
+  everyone so nothing is sent under a key a shut-out device holds.
 
 ## Privacy boundary
 

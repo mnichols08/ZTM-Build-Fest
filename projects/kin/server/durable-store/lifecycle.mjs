@@ -22,6 +22,7 @@ export function purgeHouseholdData(database, householdId) {
     database.prepare("DELETE FROM chat_relay_state WHERE household_id = ?").run(householdId);
     database.prepare("DELETE FROM chat_hidden WHERE household_id = ?").run(householdId);
     database.prepare("DELETE FROM chat_receipts WHERE household_id = ?").run(householdId);
+    database.prepare("DELETE FROM chat_key_packages WHERE household_id = ?").run(householdId);
   } finally {
     database.exec(`PRAGMA secure_delete = ${secureDelete ? "ON" : "OFF"}`);
   }
@@ -108,7 +109,7 @@ export const lifecycleMethods = {
         "SELECT COUNT(*) AS count FROM sync_attachments WHERE household_id = ?",
       ),
       chatEvents: count(
-        "SELECT (SELECT COUNT(*) FROM chat_events WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_device_sequences WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_relay_state WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_hidden WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_receipts WHERE household_id = ?1) AS count",
+        "SELECT (SELECT COUNT(*) FROM chat_events WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_device_sequences WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_relay_state WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_hidden WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_receipts WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_key_packages WHERE household_id = ?1) AS count",
       ),
       chatBlobs: count(
         "SELECT (SELECT COUNT(*) FROM chat_blobs WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_blob_claims WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_blob_usage WHERE household_id = ?1) AS count",

@@ -29,6 +29,7 @@ import { pushMethods } from "./durable-store/push.mjs";
 import { chatBlobMethods } from "./durable-store/chat-blobs.mjs";
 import { chatEventMethods } from "./durable-store/chat-events.mjs";
 import { chatHiddenMethods } from "./durable-store/chat-hidden.mjs";
+import { chatKeyMethods } from "./durable-store/chat-keys.mjs";
 import { chatReceiptMethods } from "./durable-store/chat-receipts.mjs";
 import { lifecycleMethods } from "./durable-store/lifecycle.mjs";
 import {
@@ -455,4 +456,4 @@ export class DurableStore {
   }
 }
 
-addMethods(DurableStore, schemaMethods, validationMethods, identityMethods, installIdentityMethods, pushMethods, chatBlobMethods, chatEventMethods, chatHiddenMethods, chatReceiptMethods, lifecycleMethods, authorityMethods, envelopeMethods);
+addMethods(DurableStore, schemaMethods, validationMethods, identityMethods, installIdentityMethods, pushMethods, chatBlobMethods, chatEventMethods, chatHiddenMethods, chatKeyMethods, chatReceiptMethods, lifecycleMethods, authorityMethods, envelopeMethods);

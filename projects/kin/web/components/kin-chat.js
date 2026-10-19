@@ -523,6 +523,7 @@ class KinChat extends HTMLElement {
     const room = this.chatRoom;
     if (!room) return "Chat works once this device syncs with your household. Turn on sync under Household → People & devices.";
     if (room.access === "none") return "Chat isn't available to you in this household.";
+    if (room.chatKeys?.pending) return "Chat is paused until an adult's device updates the chat key. Messages you send wait on this device.";
     if (room.syncError?.code === "connection_unavailable") return "Offline. Messages you send wait on this device and go out when you reconnect.";
     if (room.syncError) return "Chat is paused until household sync can continue. Messages you send wait on this device.";
     if (room.retireRefusal) return "A message was deleted here, but Kin couldn't delete its content on the household service.";

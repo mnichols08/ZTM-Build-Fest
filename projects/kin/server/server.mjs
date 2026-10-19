@@ -949,6 +949,15 @@ async function api(request, response, url, context) {
     json(response, 200, context.chatRelayService.putReceipt(auth, body));
     return;
   }
+  if (url.pathname === "/api/chat/keys" && request.method === "GET") {
+    json(response, 200, context.chatRelayService.keys(syncService.authorize(session)));
+    return;
+  }
+  if (url.pathname === "/api/chat/keys" && request.method === "POST") {
+    const auth = syncService.authorize(session);
+    json(response, 200, withTransaction(context, () => context.chatRelayService.putKeys(auth, body)));
+    return;
+  }
   if (url.pathname === "/api/chat/status" && request.method === "GET") {
     json(response, 200, context.chatRelayService.status(syncService.authorize(session)));
     return;

@@ -114,6 +114,9 @@ test("server schema v1 upgrades transactionally through chat preferences schema 
     const legacy = openTestDatabase(databasePath);
     try {
       legacy.exec(`
+        DROP TABLE chat_key_packages;
+        ALTER TABLE households DROP COLUMN chat_key_epoch;
+        DELETE FROM server_migrations WHERE version = 17;
         ALTER TABLE households DROP COLUMN chat_policy_revision;
         ALTER TABLE households DROP COLUMN chat_temporary;
         ALTER TABLE households DROP COLUMN chat_limited;
@@ -170,13 +173,13 @@ test("server schema v1 upgrades transactionally through chat preferences schema 
     }
     const migrated = new DurableStore(databasePath);
     try {
-      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 16);
+      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 17);
       assert.deepEqual(
         migrated.db
           .prepare("SELECT version FROM server_migrations ORDER BY version")
           .all()
           .map(({ version }) => version),
-        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16],
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
       );
       assert.equal(migrated.validate(), true);
     } finally {
@@ -233,7 +236,7 @@ test("a database with a newer schema fails closed without modification", () => {
   const databasePath = join(directory, "kin.sqlite");
   try {
     const database = openTestDatabase(databasePath);
-    sqlitePragma(database, "user_version = 17");
+    sqlitePragma(database, "user_version = 18");
     database.close();
 
     assert.throws(
@@ -241,7 +244,7 @@ test("a database with a newer schema fails closed without modification", () => {
       /newer server version/,
     );
     const inspection = openTestDatabase(databasePath, { readonly: true });
-    assert.equal(sqlitePragma(inspection, "user_version", { simple: true }), 17);
+    assert.equal(sqlitePragma(inspection, "user_version", { simple: true }), 18);
     inspection.close();
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -489,6 +492,9 @@ test("household admins persist across restart and the v8 migration promotes only
     const legacy = openTestDatabase(databasePath);
     try {
       legacy.exec(`
+        DROP TABLE chat_key_packages;
+        ALTER TABLE households DROP COLUMN chat_key_epoch;
+        DELETE FROM server_migrations WHERE version = 17;
         ALTER TABLE households DROP COLUMN chat_policy_revision;
         ALTER TABLE households DROP COLUMN chat_temporary;
         ALTER TABLE households DROP COLUMN chat_limited;
@@ -524,7 +530,7 @@ test("household admins persist across restart and the v8 migration promotes only
 
     const migrated = new DurableStore(databasePath);
     try {
-      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 16);
+      assert.equal(sqlitePragma(migrated.db, "user_version", { simple: true }), 17);
       const reloaded = new PairingService({ store: migrated });
       assert.equal(reloaded.members.get(owned.memberId).householdAdmin, true);
       assert.equal(reloaded.members.get(ownerless.memberId).householdAdmin, undefined);
