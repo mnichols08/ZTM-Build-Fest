@@ -1,7 +1,7 @@
 # Persistent Contract Versioning
 
-**Status:** Application version 1.2.0 — Household Chat, released 2026-10-19 as
-`kin-v1.2.0` (the release before it was v1.1.2). Household
+**Status:** Application version 1.3.0 — Member Names and Clearer Setup,
+released 2026-10-19 as `kin-v1.3.0` (the release before it was v1.2.0). Household
 membership is bounded to 12 total participants (four Adults and eight Limited
 Members); Temporary Members require expiry. Earlier version sections preserve
 historical data contracts.
@@ -16,9 +16,9 @@ historical.
 
 Kin version numbers describe product releases; they do not version every persistent or transport contract.
 
-| Version axis | v1.2.0 | Governs |
+| Version axis | v1.3.0 | Governs |
 | --- | --- | --- |
-| Application | `1.2.0` | The product release; the service-worker cache name advances with the release |
+| Application | `1.3.0` | The product release; the service-worker cache name advances with the release |
 | Server database schema | `17` (`PRAGMA user_version`; migrates 9→10→11→…→17, adding chat relay, content blobs, delete-for-me, receipts, access policy and the dedicated chat key in 12–17) | SQLite identity, authorization, recorded founder/admin authority, opaque relay, coordination, lifecycle, encrypted settings/attachment records and their uploaders, member kind, Temporary expiry, authoritative membership status, installed-app identity, and push subscriptions |
 | Canonical event schema | Item add 1/2; other kinds 1 | Immutable event interpretation; original bytes retained |
 | Replay protocol | Reads v1–v24; writes v24 for local and synchronized requests | Request context and projection semantics |

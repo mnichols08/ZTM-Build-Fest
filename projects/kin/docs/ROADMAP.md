@@ -1,7 +1,7 @@
 # Roadmap
 
-Current release: `v1.2.0 — Household Chat`, released 2026-10-19 as
-`kin-v1.2.0`. The release before it was `v1.1.2 — Private Household Branding`.
+Current release: `v1.3.0 — Member Names and Clearer Setup`, released
+2026-10-19 as `kin-v1.3.0`. The release before it was `v1.2.0 — Household Chat`.
 The work between v0.10.3 and v1.0.0 shipped per the owner's
 [review-gate decisions](audits/V1.0_REVIEW_GATES.md); this page records how Kin
 got there and continues through v1.1. Work after v1.0 is tracked as GitHub
@@ -462,4 +462,6 @@ starts from GitHub issues. Household chat (#104), decided in
 [ADR 0008](decisions/0008-household-chat.md) (#105), is the v1.2.0 minor
 release. It was completed on `kin-testing` and merged into `kin-development`
 through the v1.2.0 release PR. Each new capability is a minor release with the
-stabilization patches described above.
+stabilization patches described above. v1.3.0 closes the member identity and
+device pairing epic (#218) and starts the usability epic (#261), whose tester
+sessions (#262, #269) remain open.

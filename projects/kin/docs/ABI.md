@@ -13,7 +13,7 @@ kin_history_append(ptr, len)         append a record batch to the history
 kin_history_truncate(count) -> status   keep the first `count` records
 kin_project(ptr, len)                replay the history: KINE context -> KINS
 kin_device_names(ptr, len)           replay the history: KINE context -> KDEV (v1.1)
-kin_member_names(ptr, len)           replay the history: KINE context -> KMNM (after v1.2)
+kin_member_names(ptr, len)           replay the history: KINE context -> KMNM (v1.3)
 kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
 kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
 kin_chat_history_truncate(count) -> status   keep the chat log's first `count`
@@ -236,7 +236,7 @@ N  payload
 | 48 | CHAT_PIN_SET (v1.1, chat log) | message ID, on u8 (0 or 1), 3 reserved: 20 bytes |
 | 49 | CHAT_POLL_VOTE (v1.1, chat log) | message ID, choice u16 (bit n is option n; 0 clears), 2 reserved: 20 bytes |
 | 50 | CHAT_POLL_CLOSED (v1.1, chat log) | message ID, 4 reserved: 20 bytes |
-| 51 | MEMBER_NAMED (after v1.2) | name length u32 (zero clears), the header actor's own preferred name (1–32 characters) |
+| 51 | MEMBER_NAMED (v1.3) | name length u32 (zero clears), the header actor's own preferred name (1–32 characters) |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -256,7 +256,7 @@ nickname in replay order win. Commands enforce the strict rules. Device names ar
 only through `kin_device_names`. An engine older than v1.1 fails both kinds
 with code 3 (unsupported).
 
-A member's preferred name (kind 51, #224, added after v1.2 without a protocol
+A member's preferred name (kind 51, #224, added in v1.3 without a protocol
 change) follows the same canonical-name rules, at most 32 characters, and an
 empty name clears it. It always names the event's own header actor (after
 identity bindings), so no event can name another member. Once decoded it never

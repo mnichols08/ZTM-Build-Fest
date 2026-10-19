@@ -76,7 +76,7 @@ Use uppercase entity/action-past-tense names consistently. The milestone column 
 | `ITEM_PLANNING_DATE_CHANGED`    | v0.22.0           | Set or clear an Item's optional fixed civil planning date.     |
 | `DEVICE_DESCRIBED`              | v1.1.0            | Record the automatic name a device reports for itself.         |
 | `DEVICE_NICKNAMED`              | v1.1.0            | Set or clear the nickname a member gives one of their devices. |
-| `MEMBER_NAMED`                  | after v1.2.0      | Set or clear a member's own preferred display name.            |
+| `MEMBER_NAMED`                  | v1.3.0            | Set or clear a member's own preferred display name.            |
 | `CHAT_MESSAGE_POSTED`           | v1.1.0 (chat log) | Post a chat message whose content is a separate encrypted blob. |
 | `CHAT_MESSAGE_EDITED`           | v1.1.0 (chat log) | The author replaces a text message's content blob.             |
 | `CHAT_MESSAGE_DELETED`          | v1.1.0 (chat log) | The author deletes a message for everyone, or an admin removes it. |
@@ -232,7 +232,7 @@ the server never learns a name anyone typed ([PRIVACY](PRIVACY.md),
 
 ## Member preferred names
 
-`MEMBER_NAMED` (kind 51, #224) is schema 1 and was added after v1.2.0 without
+`MEMBER_NAMED` (kind 51, #224) is schema 1 and was added in v1.3.0 without
 changing replay protocol 24 ([ABI](ABI.md) has the payload). Like device
 names it lives only inside the encrypted household history, so the relay never
 learns it ([PRIVACY](PRIVACY.md), [IDENTITY](IDENTITY.md#preferred-member-names)).
