@@ -889,7 +889,11 @@ export async function chatRegressions() {
     const lazy = add(other, "Pick up the cafe order", { incoming: true, at: 9 });
     notify();
     await settle();
-    await chat.jumpToLatest();
+    // A fresh view shows only the newest window.
+    chat.room = null;
+    await settle();
+    chat.room = room;
+    await settle();
     await settle();
     const panel = chat.querySelector(".chat-search-panel");
     const toggle = chat.querySelector(".chat-search-toggle");
