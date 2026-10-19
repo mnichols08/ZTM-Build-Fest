@@ -13,7 +13,8 @@ async function readDoc(name) {
 test("identity choices keep separate member and device outcomes", async () => {
   const acceptance = await readDoc("IDENTITY-PAIRING-ACCEPTANCE.md");
 
-  assert.match(acceptance, /Invite a person[\s\S]*creates one new member ID/i);
+  assert.match(acceptance, /Invite another person[\s\S]*creates one new member ID/i);
+  assert.match(acceptance, /never silently switches paths/i);
   assert.match(acceptance, /Add my device[\s\S]*keeps the same member ID/i);
   assert.match(acceptance, /preferred name[\s\S]*presentation only/i);
   assert.match(acceptance, /device (?:label|name)[\s\S]*(?:not proof|does not prove).*authority/i);

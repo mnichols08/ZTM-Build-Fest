@@ -323,6 +323,25 @@ pub fn normalize_device_nickname(nickname: &str) -> Result<String, KinError> {
     normalize_device_text(nickname, MAX_DEVICE_NICKNAME_CHARS)
 }
 
+/// A member's preferred display name (#224) is at most 32 characters, under
+/// the same rules as a device nickname: trimmed, nonempty, no control or
+/// disguising format characters.
+pub const MAX_MEMBER_NAME_CHARS: usize = 32;
+
+/// A member's preferred display name, such as "Mikey".
+pub fn normalize_member_name(name: &str) -> Result<String, KinError> {
+    normalize_device_text(name, MAX_MEMBER_NAME_CHARS)
+}
+
+/// One member's preferred display name. Presentation only: it is never a
+/// permission, a push filter or proof of identity, and the member ID stays
+/// the stable key.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemberNameState {
+    pub member_id: ActorId,
+    pub name: String,
+}
+
 /// One named device: the member it belongs to, the automatic name it last
 /// announced and the nickname its member gave it, if any. `auto_name` is None
 /// when this history holds a nickname for the device but not its description
@@ -403,6 +422,9 @@ pub struct HouseholdState {
     /// Named devices in device-ID order. Not part of the KINS projection;
     /// hosts read it through `kin_device_names`.
     pub devices: Vec<DeviceNameState>,
+    /// Members' preferred display names in member-ID order (#224). Not part
+    /// of the KINS projection; hosts read it through `kin_member_names`.
+    pub member_names: Vec<MemberNameState>,
     /// Household chat (chat.rs). Not part of the KINS projection; hosts read
     /// pages through `kin_chat_page`. Shared with the replay, not copied.
     pub chat: std::sync::Arc<crate::chat::ChatState>,

@@ -62,6 +62,9 @@ mod responsibility_tests;
 mod device_name_tests;
 
 #[cfg(test)]
+mod member_name_tests;
+
+#[cfg(test)]
 mod chat_tests;
 
 #[cfg(test)]

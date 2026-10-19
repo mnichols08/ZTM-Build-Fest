@@ -2,7 +2,7 @@
 // invitations, device replacement, recovery, removal and admin changes.
 // Part of <kin-household>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
-import { MEMBER_KIND_LABELS, memberLabels } from "./member-labels.js";
+import { MAX_MEMBER_NAME_CHARS, MEMBER_KIND_LABELS, friendlyDeviceLabel, memberLabels, misleadingMemberName } from "./member-labels.js";
 import { authenticationOptions, credentialJson } from "./auth.js";
 
 const MAX_ACTIVE_ADULTS = 4;
@@ -35,6 +35,15 @@ export class HouseholdMembership {
 
   async showDevices() {
     await this.host.run(async () => {
+      // People & devices takes the panel: a pairing poll left from the view
+      // underneath must not re-render it mid-build (the device rows would be
+      // lost and only the actions appended). Back re-renders and restarts any
+      // live pairing poll; a poll already in flight is caught by the
+      // generation check below.
+      clearTimeout(this.host.poll);
+      clearInterval(this.host.timer);
+      const generation = this.host.viewGeneration = (this.host.viewGeneration ?? 0) + 1;
+      const superseded = () => this.host.viewGeneration !== generation;
       let deviceResponse;
       let showingCachedDevices = false;
       try {
@@ -117,8 +126,11 @@ export class HouseholdMembership {
       const preferredNameByMember = new Map(
         memberNames
           .filter((entry) => typeof entry?.memberId === "string" && typeof entry?.preferredName === "string" && entry.preferredName.trim())
+          // Nobody else may pass for "You" here, beside the trust controls.
+          .filter((entry) => entry.memberId === this.host.identity.memberId || !misleadingMemberName(entry.preferredName))
           .map((entry) => [entry.memberId, entry.preferredName.trim()]),
       );
+      if (superseded()) return;
       this.host.replaceChildren();
       const heading = document.createElement("h2");
       heading.textContent = "People & devices";
@@ -152,7 +164,11 @@ export class HouseholdMembership {
         const list = document.createElement("ul");
         list.className = "device-list";
         list.setAttribute("aria-labelledby", title.id);
-        section.append(title, list);
+        section.append(title);
+        // Only you can set your own name (#225); it changes no access.
+        if (isYou && this.host.memberNames?.rename && this.host.syncStatus?.enabled)
+          section.append(this.nameControl(preferredName ?? null));
+        section.append(list);
         this.host.append(section);
         lists.set(memberId, list);
       }
@@ -166,14 +182,20 @@ export class HouseholdMembership {
         const name = named.get(device.id);
         const automatic = name?.autoName ?? (device.label !== "Device" ? device.label : null);
         const fingerprint = syncDevice?.fingerprint ?? device.syncKeyFingerprint ?? "";
-        const displayName = name?.nickname ?? automatic ??
-          (fingerprint ? `New device · ${fingerprint.slice(0, 4).toUpperCase()}` : "New device");
+        // Nickname first, then the owner's name beside the automatic name
+        // ("Mikey · Chrome on iPhone", #225), derived here and never stored.
+        const displayName = friendlyDeviceLabel({
+          nickname: name?.nickname,
+          automatic,
+          preferredName: preferredNameByMember.get(device.memberId),
+        }) ?? (fingerprint ? `New device · ${fingerprint.slice(0, 4).toUpperCase()}` : "New device");
         const isThisDevice = device.id === this.host.identity.deviceId;
         const pinned = !syncDevice?.publicKeys || isThisDevice ||
           (await this.host.syncKeyStore.getPinnedDevice(
             this.host.identity.householdId,
             device.id,
           ));
+        if (superseded()) return;
         const text = document.createElement("span");
         text.className = "device-name-line";
         const strong = document.createElement("strong");
@@ -306,24 +328,99 @@ export class HouseholdMembership {
         }
         list.append(item);
       }
+      if (superseded()) return;
       const actions = document.createElement("section");
       actions.className = "people-device-actions";
       const actionsHeading = document.createElement("h3");
-      actionsHeading.textContent = "Add someone or another device";
+      actionsHeading.textContent = "Invite someone, or connect one of your own devices";
       actions.append(actionsHeading);
       if (canManageMembers === true) {
         const inviteCopy = document.createElement("p");
-        inviteCopy.textContent = "Invite person gives them their own household member identity and access for their role.";
-        actions.append(inviteCopy, this.host.makeButton("Invite person", () => this.host.createPairing("adult")));
+        // Choosing the person's role comes first, in Household access, so
+        // this entry point never silently creates an Adult invitation (#297).
+        inviteCopy.textContent = "Invite another person: choose their Adult, Limited, or Temporary role before creating an invitation. They get their own household member identity and role-based access.";
+        actions.append(inviteCopy, this.host.makeButton("Invite another person", () => this.host.showHousehold()));
       }
       const deviceCopy = document.createElement("p");
-      deviceCopy.textContent = "Add my device keeps you under this same member identity on another phone or computer.";
+      deviceCopy.textContent = "Add my device: connect your own phone or computer under this same member identity. Your other devices will not notify you about your own changes.";
       actions.append(deviceCopy, this.host.makeButton("Add my device", () => this.host.createDevicePairing(), "secondary"));
       this.host.append(actions);
       this.host.append(
         this.host.makeButton("Back", () => this.host.render(), "secondary"),
       );
     });
+  }
+
+  // "Set my name" / "Edit my name" opens an inline field for your own
+  // preferred name (#224, #225). Saving records an encrypted MEMBER_NAMED
+  // event that only ever names its author; an empty field, or "Remove my
+  // name", goes back to the fallback label. A name is presentation only: it
+  // changes no member ID, role, device trust or notification audience.
+  nameControl(preferredName, { onSaved = () => this.host.showDevices() } = {}) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "member-name";
+    const open = this.host.makeButton(preferredName ? "Edit my name" : "Set my name", () => {
+      open.hidden = true;
+      form.hidden = false;
+      input.focus();
+      input.select?.();
+    }, "secondary");
+    const form = document.createElement("form");
+    form.className = "member-name-form";
+    form.hidden = true;
+    const label = document.createElement("label");
+    label.textContent = "Your name in this household";
+    const input = document.createElement("input");
+    input.name = "member-name";
+    // 32 characters, checked on save: maxLength counts UTF-16 units.
+    input.maxLength = MAX_MEMBER_NAME_CHARS * 4;
+    input.autocomplete = "nickname";
+    input.value = preferredName ?? "";
+    input.placeholder = "Mikey";
+    input.setAttribute("aria-describedby", "member-name-help");
+    label.append(input);
+    const help = document.createElement("p");
+    help.id = "member-name-help";
+    help.className = "hint";
+    help.textContent = "Your household sees this instead of “You” or “Household member”. It doesn't change your access, and your devices show it beside their names unless you've given them nicknames.";
+    const save = document.createElement("button");
+    save.type = "submit";
+    save.textContent = "Save name";
+    const close = () => {
+      form.hidden = true;
+      open.hidden = false;
+      input.value = preferredName ?? "";
+      open.focus();
+    };
+    const cancel = this.host.makeButton("Cancel", close, "secondary");
+    const rename = async (value) => {
+      let saved = false;
+      await this.host.run(async () => {
+        const next = value.trim();
+        if ([...next].length > MAX_MEMBER_NAME_CHARS)
+          throw new Error(`Use a name of ${MAX_MEMBER_NAME_CHARS} characters or fewer.`);
+        if (misleadingMemberName(next))
+          throw new Error("Choose your own name rather than “You”.");
+        if ((next || null) === (preferredName ?? null)) { saved = true; return; }
+        await this.host.memberNames.rename(next);
+        saved = true;
+      });
+      if (saved) await onSaved();
+    };
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void rename(input.value);
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.preventDefault(); close(); }
+    });
+    form.append(label, help, save, cancel);
+    if (preferredName) {
+      const remove = this.host.makeButton("Remove my name", () => rename(""), "secondary");
+      form.append(remove);
+    }
+    wrapper.append(open, form);
+    return wrapper;
   }
 
   // "Rename" opens an inline nickname field for one of your devices; saving

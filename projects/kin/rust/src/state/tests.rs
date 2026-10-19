@@ -103,6 +103,7 @@ fn event(event_number: u8, logical_time: u64, kind: EventKind) -> EventEnvelope 
         | EventKind::ResponsibilityChanged { .. }
         | EventKind::DeviceDescribed { .. }
         | EventKind::DeviceNicknamed { .. }
+        | EventKind::MemberNamed { .. }
         | EventKind::ChatMessagePosted { .. }
         | EventKind::ChatMessageEdited { .. }
         | EventKind::ChatMessageDeleted { .. }

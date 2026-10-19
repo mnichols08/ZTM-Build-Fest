@@ -119,7 +119,7 @@ export async function mobileUxRegressions(recovery) {
   await idle();
   const completedRow = [...app.shopping.querySelectorAll("kin-item")].find((node) => node.record?.itemId === eggs.itemId);
   check(completedRow.querySelector(".item-completed") && completedRow.querySelector(".reopen-button")?.getAttribute("aria-pressed") === "true", "completion is visibly marked on the row");
-  check(app.selection?.itemId === eggs.itemId && app.detail.querySelector(".reopen-button") && app.status.textContent === "Marked complete.",
+  check(app.selection?.itemId === eggs.itemId && app.detail.querySelector(".reopen-button") && /^Marked “.+” done\./.test(app.status.textContent),
     "completion keeps details open for the same record, offers Reopen and confirms");
   app.detail.querySelector(".reopen-button").click();
   await idle();
@@ -140,10 +140,10 @@ export async function mobileUxRegressions(recovery) {
     app.onboarding.querySelector("h2")?.textContent === "Get started",
     "a device without a household sees Get started on Today");
   const onboardingDetails = app.onboarding.querySelector(".onboarding-details");
-  check(onboardingDetails?.open === false && onboardingDetails.querySelector("summary")?.textContent === "Connect this device to a household",
+  check(onboardingDetails?.open === false && onboardingDetails.querySelector("summary")?.textContent === "Join or set up your household",
     "Get started collapses after local household activity so Today stays visible");
   const onboardingLabels = [...app.onboarding.querySelectorAll("button")].map((button) => button.textContent);
-  check(JSON.stringify(onboardingLabels) === JSON.stringify(["Create a household", "Join an existing household", "Sign in with your phone", "Add this device to my existing membership"]),
+  check(JSON.stringify(onboardingLabels) === JSON.stringify(["Start a new household", "Join my household", "Add my device", "Sign in using my phone"]),
     `Get started offers create, join, sign in with a phone (#100) and add-device: ${onboardingLabels.join("|")}`);
   visit("today");
   check(visible(onboardingDetails.querySelector("summary")), "the compact Get started summary stays visible on Today");
@@ -162,8 +162,8 @@ export async function mobileUxRegressions(recovery) {
     [...app.household.querySelectorAll("button")].some((button) => button.textContent === "Back"),
     "Join shows the code form and states that a code never creates a second household");
   app.household.startIntent("device");
-  check(app.household.textContent.includes("Add another device") && Boolean(app.household.querySelector('input[name="code"]')),
-    "Add this device explains the existing-device step and uses the same approval flow");
+  check(app.household.textContent.includes("People & devices → Add my device") && Boolean(app.household.querySelector('input[name="code"]')),
+    "Add my device explains the existing-device step and uses the same approval flow");
   app.household.startIntent("create");
   check([...app.household.querySelectorAll("button")].some((button) => button.textContent === "Create household with passkey") &&
     app.household.textContent.includes("join theirs instead"),
@@ -174,10 +174,11 @@ export async function mobileUxRegressions(recovery) {
     "Create names the device automatically and asks nobody to type a name (#71)");
   app.household.startIntent(null);
   const chooser = [...app.household.querySelectorAll("button")].map((button) => button.textContent);
-  check(chooser.includes("Create a household") && chooser.includes("Join an existing household") &&
-    chooser.includes("Add this device to my existing membership") && chooser.includes("Log in with passkey"),
+  check(chooser.includes("Start a new household") && chooser.includes("Join my household") &&
+    chooser.includes("Add my device") && chooser.includes("Sign in using my phone") &&
+    chooser.includes("Sign in with my passkey"),
     `the household chooser offers every path: ${chooser.join("|")}`);
-  check(app.household.textContent.includes("Household membership is separate"),
+  check(app.household.textContent.includes("a member must approve you before anything is shared"),
     "device protection and household membership are distinguished in plain language");
 
   // 5. Sync pauses, offline and attachment failures speak plainly and keep codes.

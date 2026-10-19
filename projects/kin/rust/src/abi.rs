@@ -314,6 +314,13 @@ pub extern "C" fn kin_device_names(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::device_names, None)
 }
 
+/// The member-name table (KMNM v1, #224) of the instance's history, in the
+/// context of a record-less KINE request, as `kin_device_names`.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_member_names(pointer: u32, length: u32) -> i32 {
+    run(pointer, length, crate::core::member_names, None)
+}
+
 /// Empties the instance's chat log. Always succeeds. The text arena stays:
 /// its texts are content-addressed and independent of the log, and the
 /// history mirror resets the log whenever it is handed a plain array, so

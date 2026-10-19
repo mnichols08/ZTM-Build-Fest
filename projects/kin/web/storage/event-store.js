@@ -1225,6 +1225,15 @@ export class EventStore {
     return this.engine.deviceNames(events, asOf, civilDate, syncIdentity);
   }
 
+  /** Members' preferred display names (#224), replayed from the current
+   * history under its sync identity: [{ memberId, name }]. */
+  async memberNames() {
+    if (!this.engine) throw new EventStoreError("Kin could not read member names.");
+    const { events, syncIdentity } = await this.getCatchUpState();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.memberNames(events, asOf, civilDate, syncIdentity);
+  }
+
   updateSyncServerState(status) {
     const transaction = this.database.transaction(
       [SYNC_STATE_STORE, SYNC_OUTBOX_STORE],

@@ -1,6 +1,6 @@
 # Accessibility Contract
 
-Identity setup must expose **Invite a person** and **Add my device** as native,
+Identity setup must expose **Invite another person** and **Add my device** as native,
 keyboard-operable controls with persistent text explaining whether the result
 is a new member or another device for the same member. “You”, “This device”,
 notification state and errors must not rely on color alone. Focus returns to

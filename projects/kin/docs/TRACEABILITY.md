@@ -128,6 +128,7 @@ No capability was added. Real-WASM tests validate all truncated v6 summary/resul
 | Names are canonical and cannot hide characters | [ABI](ABI.md), [TEST-VECTORS](TEST-VECTORS.md#device-names-v11) | Vector 026; KCMD bounds in `device_name_tests.rs`. |
 | Device names stay out of KINS; replay protocol stays 24 | [ABI](ABI.md), [V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md) | Vector 027; unchanged golden fixtures; `scripts/v1-compatibility.test.mjs`. |
 | KDEV export decodes exactly | [ABI](ABI.md) | Vector 028; KDEV decode and broken-table tests in `web/wasm/abi-ownership.test.mjs`. |
+| KMNM export decodes exactly; members name only themselves | [ABI](ABI.md), [EVENTS](EVENTS.md#member-preferred-names) | `rust/src/member_name_tests.rs`; KMNM decode and broken-table tests in `web/wasm/member-names.test.mjs`; real-engine test in `web/wasm/kin-engine.test.mjs`. |
 | Nobody types a device name; Trusted devices groups, marks and renames | [UX](UX.md) §8.1–8.2, [ACCESSIBILITY](ACCESSIBILITY.md) | `web/components/kin-household.test.mjs`; `scripts/mobile-ux-regression.mjs`; `scripts/household-authority-regression.mjs` (relay counts include each device's name). |
 
 ## v1.1.0 Household app name and icon on home screens (#78)

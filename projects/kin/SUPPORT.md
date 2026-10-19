@@ -1,7 +1,7 @@
 # Support
 
-Kin's current release is v1.1.2 — Private Household Branding (`kin-v1.1.2`,
-2026-10-18). It is a Build Fest project, not a
+Kin's current release is v1.2.0 — Household Chat (`kin-v1.2.0`,
+2026-10-19). It is a Build Fest project, not a
 supported service: there is no staffed runtime support channel or guaranteed
 response time.
 

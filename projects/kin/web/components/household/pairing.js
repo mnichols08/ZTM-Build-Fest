@@ -211,14 +211,20 @@ export class HouseholdPairing {
   pollPairing() {
     if (!["Pending", "Claimed"].includes(this.host.pairing?.state)) return;
     clearTimeout(this.host.poll);
+    // The view this poll belongs to. If another view (People & devices) has
+    // taken the panel by the time the answer arrives, the poll still records
+    // the new pairing state but leaves that view alone; Back re-renders it.
+    const generation = this.host.viewGeneration;
     this.host.poll = setTimeout(async () => {
       try {
         const latest = await this.host.api(`/api/pairings/${this.host.pairing.pairingId}`);
         const changed = latest.version !== this.host.pairing.version;
         this.host.pairing = { ...this.host.pairing, ...latest };
+        if (this.host.viewGeneration !== generation) return;
         if (changed) this.host.render();
         else this.pollPairing();
       } catch (error) {
+        if (this.host.viewGeneration !== generation) return;
         this.host.renderError(error);
       }
     }, 2000);

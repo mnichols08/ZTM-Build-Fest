@@ -165,8 +165,8 @@ async function pageStartPhoneSignIn() {
   // hidden view.
   location.hash = "#household/people";
   app.ctx.navigation.showPageFromLocation();
-  const choice = [...h.querySelectorAll("button")].find((button) => button.textContent === "Sign in with your phone");
-  if (!choice) throw new Error("The signed-out screen offers no Sign in with your phone: " + h.textContent.slice(0, 300));
+  const choice = [...h.querySelectorAll("button")].find((button) => button.textContent === "Sign in using my phone");
+  if (!choice) throw new Error("The signed-out screen offers no Sign in using my phone: " + h.textContent.slice(0, 300));
   choice.click();
   for (let i = 0; i < 400 && !h.querySelector("kin-qr.sign-in-qr"); i++) await new Promise((r) => setTimeout(r, 25));
   const qr = h.querySelector("kin-qr.sign-in-qr");
@@ -639,6 +639,11 @@ async function pageRevokeDeviceButton(label) {
     const device = (await h.api("/api/devices")).devices.find((entry) => entry.label === label);
     if (!device) throw new Error("No trusted device labelled " + label);
     const row = () => h.querySelector(`li[data-device-id="${device.id}"]`);
+    // The household may still be finishing a pairing UI command. Wait for it
+    // before requesting the device list; run() intentionally ignores busy calls.
+    for (let i = 0; i < 400 && h.busy; i++)
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    if (h.busy) throw new Error("Household stayed busy before device revocation");
     await h.showDevices();
     const button = [...(row()?.querySelectorAll("button") ?? [])].find((b) => b.textContent.startsWith("Revoke "));
     if (!button) throw new Error("No revoke control for " + label + ": " + h.textContent);
@@ -1245,7 +1250,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     const peopleDevicesLayout = await a.call(pagePeopleDevicesLayout);
     check(peopleDevicesLayout.width === 320 && !peopleDevicesLayout.overflow &&
       peopleDevicesLayout.groupCount >= 2 && peopleDevicesLayout.linesFit &&
-      peopleDevicesLayout.actions.includes("Invite person") && peopleDevicesLayout.actions.includes("Add my device") &&
+      peopleDevicesLayout.actions.includes("Invite another person") && peopleDevicesLayout.actions.includes("Add my device") &&
       peopleDevicesLayout.targetHeights.every((height) => height >= 44),
     "People & devices groups members, wraps a long label, and keeps both actions tappable without 320px overflow: " +
       JSON.stringify(peopleDevicesLayout));
@@ -1382,9 +1387,17 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
       "server marks Limited C removed through the Adult UI control");
     check(Boolean(service.devices.get(cDevice.id).revokedAt), "removal revokes Limited C's device");
     await c.setOffline(false);
-    result = await c.call(pageSync);
-    check(result.last?.state === "paused" && ["authentication_required", "membership_removed", "device_not_trusted"].includes(result.last.code),
-      "removed Limited C's reconnect sync is refused: " + JSON.stringify(result.last));
+    // Coming back online re-checks authorization, and a removed device locks
+    // and ends its session (context.js onOnline). That lock races this sync:
+    // it can land before the call (the profile is locked) or during it (the
+    // coordinator stops without a state). Either way the device is refused.
+    result = await c.call(pageSync).catch((error) => {
+      if (/Cannot sync a locked profile/.test(error.message)) return { locked: true };
+      throw error;
+    });
+    const cLocked = result.locked === true || await c.call(() => !document.querySelector("kin-app").store);
+    check(cLocked || (result.last?.state === "paused" && ["authentication_required", "membership_removed", "device_not_trusted"].includes(result.last.code)),
+      "removed Limited C's reconnect sync is refused: " + JSON.stringify({ locked: cLocked, last: result.last ?? null }));
     const cStatus = await c.call(pageFetch, { path: "/api/sync/status" });
     check([401, 403].includes(cStatus.status), `removed Limited C's stale session cannot read sync status (${cStatus.status})`);
     // An empty event batch: "KSEV", version 1, count 0.

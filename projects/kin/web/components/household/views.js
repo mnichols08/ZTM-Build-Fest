@@ -4,6 +4,7 @@
 import { currentPlatform, householdDeviceName } from "../../platform.js";
 import { invitationCode, invitationLink } from "../../pairing-link.js";
 import { consumeOpenedSignInLink } from "../../device-link.js";
+import { CODE_ARRIVAL_COPY, intentConflict, inviterPathCopy, joinerPathCopy } from "./pairing-path.js";
 import "../kin-qr.js";
 import "../kin-qr-scanner.js";
 
@@ -19,6 +20,24 @@ export class HouseholdViews {
     this.host = ctx.host;
   }
 
+  /** States which pairing path is in progress and whose identity the device
+   * will carry, before anyone confirms anything (#223). */
+  showPath({ title, detail }) {
+    const heading = document.createElement("h3");
+    heading.className = "pairing-path";
+    heading.textContent = title;
+    const paragraph = document.createElement("p");
+    paragraph.className = "pairing-path-detail";
+    paragraph.textContent = detail;
+    this.host.append(heading, paragraph);
+  }
+
+  /** The path chosen before the code was entered, when it contradicts the
+   * code's real purpose; null otherwise. */
+  claimConflict() {
+    return intentConflict(this.host.claimIntent, this.host.claim?.purpose);
+  }
+
   // The device's automatic name ("Chrome on iPhone"), shown so people know
   // how it will appear. Nobody types a name here: it is the only name the
   // server learns, and a nickname is set later in Trusted devices, where it
@@ -32,6 +51,9 @@ export class HouseholdViews {
   }
 
   render() {
+    // Each render owns the panel; a slower view (People & devices) that
+    // started before it stops writing once it sees a newer generation.
+    this.host.viewGeneration = (this.host.viewGeneration ?? 0) + 1;
     clearInterval(this.host.timer);
     this.host.replaceChildren();
     const heading = document.createElement("h2");
@@ -68,18 +90,18 @@ export class HouseholdViews {
     if (this.host.intent === "create") return this.renderCreate();
     if (this.host.intent === "join" || this.host.intent === "device") return this.renderJoin();
     this.host.text(
-      "Your recovery key and passkey protect this device's copy of Kin. Household membership is separate: an existing member approves this device, and then it syncs with theirs.",
+      "Kin keeps your household information private. You'll set up a passkey to protect this device. If you're joining someone else's household, a member must approve you before anything is shared.",
     );
-    const prompt = this.host.text("How would you like to get started?");
+    const prompt = this.host.text("What are you here to do?");
     prompt.className = "household-prompt";
     const choices = document.createElement("div");
     choices.className = "household-choices";
     for (const [label, description, action, className] of [
-      ["Create a household", "Start a brand-new household on this device. Only one person in a household does this.", () => this.host.startIntent("create"), "primary-action"],
-      ["Join an existing household", "Someone in your household sends you an invitation code and approves this device.", () => this.host.startIntent("join"), ""],
-      ["Sign in with your phone", "You're already signed in to Kin on a phone. Scan this computer's code with it, then type the 6-digit code it shows.", () => this.host.startIntent("phone"), ""],
-      ["Add this device to my existing membership", "You already use Kin on another device and want this one too.", () => this.host.startIntent("device"), ""],
-    ].filter(([label]) => label !== "Sign in with your phone" || !this.host.claim)) {
+      ["Start a new household", "Choose this only if nobody in your household has set up Kin yet.", () => this.host.startIntent("create"), "primary-action"],
+      ["Join my household", "Someone invited you to their Kin household. You'll get your own member identity, and you'll need their code and approval.", () => this.host.startIntent("join"), ""],
+      ["Add my device", "You already belong to a household. This phone or computer stays under your member identity, so you won't be notified about your own changes.", () => this.host.startIntent("device"), ""],
+      ["Sign in using my phone", "Already using Kin on your phone? Use it to sign in here without joining again.", () => this.host.startIntent("phone"), ""],
+    ].filter(([label]) => label !== "Sign in using my phone" || !this.host.claim)) {
       const choice = document.createElement("div");
       choice.className = "household-choice";
       const button = this.host.makeButton(label, action, className);
@@ -90,9 +112,9 @@ export class HouseholdViews {
       choices.append(choice);
     }
     this.host.append(choices);
-    const note = this.host.text("Already a member on this device but logged out?");
+    const note = this.host.text("Used Kin on this device before?");
     note.className = "household-choice-hint";
-    this.host.button("Log in with passkey", () => this.host.login(), "secondary");
+    this.host.button("Sign in with my passkey", () => this.host.login(), "secondary");
   }
 
   renderCreate() {
@@ -151,8 +173,21 @@ export class HouseholdViews {
     scanner.querySelector?.("button.primary-action")?.focus();
   }
 
+  /** Activation needs the fingerprint comparison and, when the code's path
+   * contradicts the chosen one, an explicit acknowledgement. */
+  activationReady() {
+    return Boolean(this.host.verifiedInviterFingerprint) &&
+      (!this.claimConflict() || Boolean(this.host.acknowledgedPathConflict));
+  }
+
   renderJoin() {
     if (this.host.claim?.state === "Claimed") {
+      const path = joinerPathCopy(this.host.claim.purpose);
+      this.showPath(path);
+      const conflict = this.claimConflict();
+      if (conflict) this.host.message(conflict, true);
+      const next = this.host.text(path.next);
+      if (next) next.className = "pairing-next-step";
       this.host.message(
         ["device", "replacement"].includes(this.host.claim.purpose)
           ? "This device is ready. Your existing trusted device must approve it before access is restored."
@@ -184,6 +219,7 @@ export class HouseholdViews {
         this.host.message("This device key changed during security migration. Cancel this pairing and request a new invitation before activation.", true);
         return;
       }
+      this.showPath(joinerPathCopy(this.host.claim.purpose));
       this.host.message(
         "Approval succeeded. Use your passkey once more to activate this device.",
       );
@@ -201,18 +237,35 @@ export class HouseholdViews {
           " I compared this fingerprint on both devices.",
         ),
       );
+      // A code on a different path than the one chosen is never activated
+      // silently: the person must acknowledge the switch first (#223).
+      const conflict = this.claimConflict();
+      let acknowledgement = null;
+      if (conflict) {
+        this.host.message(conflict, true);
+        const accepted = document.createElement("input");
+        accepted.type = "checkbox";
+        accepted.name = "path-acknowledged";
+        accepted.checked = Boolean(this.host.acknowledgedPathConflict);
+        acknowledgement = document.createElement("label");
+        acknowledgement.append(
+          accepted,
+          document.createTextNode(` I understand: ${joinerPathCopy(this.host.claim.purpose).title.toLowerCase()}.`),
+        );
+        accepted.addEventListener("change", () => {
+          this.host.acknowledgedPathConflict = accepted.checked;
+          this.host.setControlDisabled(activate, !this.activationReady());
+        });
+      }
       const activate = this.host.makeButton("Activate with passkey", () =>
         this.host.activateClaim(),
       );
-      this.host.setControlDisabled(
-        activate,
-        !this.host.verifiedInviterFingerprint,
-      );
+      this.host.setControlDisabled(activate, !this.activationReady());
       confirmation.addEventListener("change", () => {
         this.host.verifiedInviterFingerprint = confirmation.checked;
-        this.host.setControlDisabled(activate, !confirmation.checked);
+        this.host.setControlDisabled(activate, !this.activationReady());
       });
-      this.host.append(label, activate);
+      this.host.append(label, ...(acknowledgement ? [acknowledgement] : []), activate);
       return;
     }
     if (this.host.claim) {
@@ -233,18 +286,21 @@ export class HouseholdViews {
     }
     if (this.host.intent === "device")
       this.host.text(
-        "On a device where you're already in the household, open More → Household → Add another device. Enter the code it shows here, then approve this device from there after comparing the device keys.",
+        "On a device where you already use Kin, go to Household → People & devices → Add my device. Enter the code here, then approve this device there. Compare the device keys on both screens to keep your household safe.",
       );
     else if (this.host.intent === "join")
       this.host.text(
-        "Ask an adult in the household to open Kin → More → Household access and add you as an Adult or Limited Member. Enter the code they get here. They approve this device after you both compare the device keys.",
+        "Ask a household adult to open Kin → Household → People & devices and invite you. Enter their invitation code here. They must approve your request after you both compare the device keys.",
       );
+    else if (location.pathname === "/pair")
+      // Arrived from a code link without choosing a path first (#264).
+      this.host.text(CODE_ARRIVAL_COPY);
     this.host.text(
       "A code starts a short-lived invitation or recovery request. You must create a fresh passkey, and an existing trusted adult must still approve this device. No household details or encryption keys are shown before approval. Entering a code never creates a second household.",
     );
     const form = document.createElement("form");
     const codeLabel = document.createElement("label");
-    codeLabel.textContent = "Pairing code";
+    codeLabel.textContent = "Invitation or device code";
     const code = document.createElement("input");
     code.name = "code";
     code.required = true;
@@ -275,6 +331,10 @@ export class HouseholdViews {
     form.append(codeLabel, help, scanArea, device.element, submit);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
+      // Remember the path chosen before the code was entered, so a code on a
+      // different path can be flagged instead of silently switching (#223).
+      this.host.claimIntent = this.host.intent;
+      this.host.acknowledgedPathConflict = false;
       this.host.register("claim", { code: code.value, deviceLabel: device.value() });
     });
     this.host.append(form);
@@ -286,6 +346,19 @@ export class HouseholdViews {
     if (this.host.intent && location.pathname !== "/pair")
       this.host.button("Back", () => this.host.startIntent(null), "secondary");
     requestAnimationFrame(() => code.focus());
+  }
+
+  /** Puts the name editor in `slot` once this member's current name is
+   * known. A failed read still offers it (as "Set my name"); a slot the
+   * panel has since replaced is left alone. */
+  async fillNameSlot(slot) {
+    let current = null;
+    try {
+      const names = (await this.host.memberNames.load()) ?? [];
+      current = names.find((entry) => entry?.memberId === this.host.identity?.memberId)?.preferredName ?? null;
+    } catch { /* Offer the editor without the current name. */ }
+    if (slot.isConnected === false) return;
+    slot.replaceChildren(this.ctx.membership.nameControl(current, { onSaved: () => this.host.render() }));
   }
 
   renderMember() {
@@ -312,7 +385,7 @@ export class HouseholdViews {
     if (!this.host.pairing) {
       if (this.host.syncStatus?.memberKind === "adult" && !this.host.syncKeyError) {
         this.host.button(
-          "Add another device",
+          "Add my device",
           () => this.host.createDevicePairing(),
           "secondary",
         );
@@ -321,6 +394,17 @@ export class HouseholdViews {
       }
       if (this.host.syncStatus?.memberKind === "adult")
         this.host.button("Trusted devices", () => this.host.showDevices(), "secondary");
+      // Any member can choose the name their household sees (#225), here on
+      // the panel every member reaches: the trusted-device list is Adults
+      // only. Names are read back from synced history, so this needs sync.
+      if (this.host.memberNames?.rename && this.host.syncStatus?.enabled) {
+        const hint = this.host.text("Choose the name your household sees. It changes no access.");
+        if (hint) hint.className = "household-choice-hint";
+        const slot = document.createElement("div");
+        slot.className = "member-name-slot";
+        this.host.append(slot);
+        void this.fillNameSlot(slot);
+      }
       this.host.button("Household access", () => this.host.showHousehold(), "secondary");
       this.host.button("Log out", () => this.ctx.auth.logout(), "secondary");
       return;
@@ -330,12 +414,14 @@ export class HouseholdViews {
     const lapsed = this.host.pairing.state === "Pending" &&
       Number.isFinite(this.host.pairing.expiresAt) && this.host.pairing.expiresAt <= Date.now();
     const pairingState = lapsed ? "Expired" : this.host.pairing.state;
+    const path = inviterPathCopy(this.host.pairing.purpose, this.host.pairing.memberKind);
+    if (["Pending", "Claimed"].includes(pairingState)) this.showPath(path);
     const state = document.createElement("p");
     state.className = "pairing-state";
     state.setAttribute("role", "status");
     state.textContent =
       pairingState === "Pending"
-        ? "Waiting for another trusted adult to claim this code."
+        ? path.waiting
         : this.host.pairing.state === "Claimed"
           ? ["device", "replacement"].includes(this.host.pairing.purpose)
             ? `${this.host.pairing.deviceLabel || "This device"} is awaiting approval for your account.`

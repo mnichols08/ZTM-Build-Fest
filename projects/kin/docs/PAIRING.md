@@ -1,16 +1,21 @@
 # Pairing and Device Enrollment
 
-**Status:** Current as of v1.1.2, including invitations by QR code (#97) and phone-approved computer sign-in (#98) below. Manual adult and same-member device pairing use one-time codes, passkey claim/approval/activation, locally generated device keys and compared fingerprints. A queued signed device-key successor completes before pairing/provisioning proceeds. Private transport material is available only while the local household is unlocked. Pairing codes, claims and ceremony flows remain process-local and are cancelled by restart; identity and trusted-device authority are durable. Household deletion discards household pairing/claim flows immediately and invalidates devices at finalization. Local encrypted archive restore does not restore device trust.
+**Status:** Current as of v1.2.0, including invitations by QR code (#97) and phone-approved computer sign-in (#98) below. Manual adult and same-member device pairing use one-time codes, passkey claim/approval/activation, locally generated device keys and compared fingerprints. A queued signed device-key successor completes before pairing/provisioning proceeds. Private transport material is available only while the local household is unlocked. Pairing codes, claims and ceremony flows remain process-local and are cancelled by restart; identity and trusted-device authority are durable. Household deletion discards household pairing/claim flows immediately and invalidates devices at finalization. Local encrypted archive restore does not restore device trust.
 
 ## Distinct operations
 
 Inviting another household member changes household membership. Adding a device authorizes another installation for an existing member. They are separate operations with different confirmation and recovery requirements.
 
-Before either QR or manual-code UI appears, Kin names the choices **Invite a
-person** and **Add my device** and states whether a new member ID will be
-created. Keeping that explanation visible throughout approval and completion
-is tracked by #219; the current approval screens retain their existing generic
-pairing copy. Back or Cancel grants nothing. Platform, offline, migration and
+Before either QR or manual-code UI appears, Kin distinguishes **Invite
+another person** from **Add my device** and states whether a new member ID will
+be created. An authorized inviter chooses the recipient's role under Household
+access before any invitation is created, so the People & devices entry point
+never silently defaults to Adult. Adding your own device uses the existing
+same-member endpoint and never creates another member. Both the code's creator
+and the joining device keep the chosen path visible through approval and
+activation, and a code whose real purpose contradicts the path the person
+chose cannot be activated until they acknowledge the switch (#219, #223). Back
+or Cancel grants nothing. Platform, offline, migration and
 accessibility evidence is tracked in
 [Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md).
 

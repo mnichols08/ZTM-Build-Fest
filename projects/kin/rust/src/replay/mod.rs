@@ -100,6 +100,8 @@ pub struct Replay {
     pub(super) playbook_archive_events: BTreeMap<PlaybookId, BTreeSet<(u64, DeviceId)>>,
     /// Named devices by ID (replay/devices.rs).
     pub(super) devices: BTreeMap<DeviceId, DeviceNameState>,
+    /// Preferred member names by member ID (replay/devices.rs, #224).
+    pub(super) member_names: BTreeMap<ActorId, String>,
     /// Household chat (replay/chat.rs), shared with finalized states until
     /// it changes.
     pub(super) chat: Arc<crate::chat::ChatState>,
@@ -275,7 +277,9 @@ impl Replay {
             | K::PinAdded { .. }
             | K::PinRemoved { .. }
             | K::ResponsibilityChanged { .. } => household::apply(self, event)?,
-            K::DeviceDescribed { .. } | K::DeviceNicknamed { .. } => devices::apply(self, event)?,
+            K::DeviceDescribed { .. } | K::DeviceNicknamed { .. } | K::MemberNamed { .. } => {
+                devices::apply(self, event)?
+            }
             K::ChatMessagePosted { .. }
             | K::ChatMessageEdited { .. }
             | K::ChatMessageDeleted { .. }
@@ -366,6 +370,14 @@ impl Replay {
             attachments: self.attachments.clone(),
             responsibilities: self.responsibilities.clone(),
             devices: self.devices.values().cloned().collect(),
+            member_names: self
+                .member_names
+                .iter()
+                .map(|(member_id, name)| MemberNameState {
+                    member_id: *member_id,
+                    name: name.clone(),
+                })
+                .collect(),
             chat: Arc::clone(&self.chat),
         })
     }

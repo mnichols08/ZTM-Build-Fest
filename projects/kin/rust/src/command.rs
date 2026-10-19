@@ -154,6 +154,11 @@ pub enum HouseholdCommand {
         device_id: DeviceId,
         nickname: Option<String>,
     },
+    /// Sets (Some) or clears (None) the context member's own preferred
+    /// display name (#224). There is no target: a member names only themselves.
+    NameMember {
+        name: Option<String>,
+    },
     /// Posts a chat message whose content is the blob `blob_ref` (its
     /// SHA-256), encrypted with `blob_key` (#109, #110).
     PostChatMessage {
@@ -423,6 +428,12 @@ pub fn create_event(
             nickname: nickname
                 .as_deref()
                 .map(crate::state::normalize_device_nickname)
+                .transpose()?,
+        },
+        NameMember { name } => EventKind::MemberNamed {
+            name: name
+                .as_deref()
+                .map(crate::state::normalize_member_name)
                 .transpose()?,
         },
         PostChatMessage {
@@ -766,6 +777,22 @@ pub fn execute_with(
                     && device.member_id == context.actor_id
                     && device.nickname != nickname
             }) {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        // A preferred name must change something: setting the name a member
+        // already has, or clearing one they never set, records nothing.
+        HouseholdCommand::NameMember { name } => {
+            let name = name
+                .as_deref()
+                .map(crate::state::normalize_member_name)
+                .transpose()?;
+            let current_name = current
+                .member_names
+                .iter()
+                .find(|entry| entry.member_id == context.actor_id)
+                .map(|entry| entry.name.as_str());
+            if current_name == name.as_deref() {
                 return Err(KinError::InvalidEvent);
             }
         }
@@ -1234,7 +1261,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             .map_err(|_| KinError::MalformedProtocol)?
             .to_owned()
     };
-    let accepts_payload = matches!(kind, 1 | 5 | 8 | 14 | 18 | 19 | 42 | 43 | 47)
+    let accepts_payload = matches!(kind, 1 | 5 | 8 | 14 | 18 | 19 | 42 | 43 | 47 | 51)
         || kind == 21 && text_length == 16
         || matches!(kind, 22 | 23) && text_length >= 24
         || kind == 25 && (17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
@@ -1263,7 +1290,8 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 41 && (!matches!(option, 1..=2) || text_length != 16)
         || kind == 42 && (id != [0; 16] || text.is_empty())
         || kind == 43 && id == [0; 16]
-        || matches!(kind, 42 | 43) && text_length > crate::state::MAX_DEVICE_NAME_BYTES
+        || matches!(kind, 42 | 43 | 51) && text_length > crate::state::MAX_DEVICE_NAME_BYTES
+        || kind == 51 && id != [0; 16]
         || matches!(kind, 44..=50) && id == [0; 16]
         || kind == 49 && date > u32::from(u16::MAX)
         || matches!(kind, 49 | 50) && text_length != 0
@@ -1615,6 +1643,9 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         43 => NicknameDevice {
             device_id: DeviceId(id),
             nickname: (!text.is_empty()).then_some(text),
+        },
+        51 => NameMember {
+            name: (!text.is_empty()).then_some(text),
         },
         44 | 45 => {
             let blob_ref = field(bytes, 128)?;

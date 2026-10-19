@@ -28,6 +28,7 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_history_truncate: () => 0,
       kin_project: status,
       kin_device_names: status,
+      kin_member_names: status,
       kin_event_metadata: status,
       kin_event_metadata_batch: status,
       kin_audio_peaks: status,

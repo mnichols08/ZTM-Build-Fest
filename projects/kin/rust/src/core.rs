@@ -53,6 +53,46 @@ pub fn device_names(context: &[u8], history: &mut History) -> Result<Vec<u8>, Ki
     encode_device_names(&state.devices)
 }
 
+/// KMNM v1, the member-name table (`kin_member_names`, #224): "KMNM",
+/// version u16, reserved u16 (0), record count u32, then per member in
+/// member-ID order: member ID (16 bytes), name length u16, then the name
+/// (UTF-8, nonempty). Members without a preferred name are absent; hosts
+/// fall back to their existing labels.
+pub const MEMBER_NAMES_VERSION: u16 = 1;
+
+/// The preferred member names in the history an engine instance holds, in
+/// the context of a record-less KINE request (as `device_names`).
+pub fn member_names(context: &[u8], history: &mut History) -> Result<Vec<u8>, KinError> {
+    let context = decode_context(context)?;
+    let state = history
+        .replay(&context)?
+        .finalize(context.as_of, context.civil_date)?;
+    encode_member_names(&state.member_names)
+}
+
+pub fn encode_member_names(members: &[state::MemberNameState]) -> Result<Vec<u8>, KinError> {
+    let size = members.iter().try_fold(12usize, |size, member| {
+        size.checked_add(18 + member.name.len())
+    });
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(size.ok_or(KinError::SizeLimit)?)
+        .map_err(|_| KinError::SizeLimit)?;
+    bytes.extend_from_slice(b"KMNM");
+    bytes.extend_from_slice(&MEMBER_NAMES_VERSION.to_le_bytes());
+    bytes.extend_from_slice(&0u16.to_le_bytes());
+    let count = u32::try_from(members.len()).map_err(|_| KinError::SizeLimit)?;
+    bytes.extend_from_slice(&count.to_le_bytes());
+    for member in members {
+        // Canonical names are at most MAX_MEMBER_NAME_CHARS * 4 bytes.
+        let length = u16::try_from(member.name.len()).map_err(|_| KinError::Internal)?;
+        bytes.extend_from_slice(&member.member_id.0);
+        bytes.extend_from_slice(&length.to_le_bytes());
+        bytes.extend_from_slice(member.name.as_bytes());
+    }
+    Ok(bytes)
+}
+
 /// A chat page (`kin_chat_page`): a KCHQ request (chat.rs) carrying the
 /// record-less KINE context, against the instance's history. Texts of
 /// retired blobs, and of messages the page shows as deleted or removed, are

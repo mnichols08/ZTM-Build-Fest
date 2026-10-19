@@ -5,6 +5,46 @@ development candidates that never received a release tag; their changes
 ship in v1.0.0. The project's planning releases v0.0.1–v0.0.12 are
 documentation only.
 
+## v1.2.0 — Household Chat
+
+Released 2026-10-19 as `kin-v1.2.0`. This minor release adds one household chat
+room beside Talk, under Updates → Chat, as decided in
+[ADR 0008](docs/decisions/0008-household-chat.md) (#104, #105). Chat is for the
+members of one household only: there are no conversations with people outside
+it, no public rooms and no anonymous sharing.
+
+### Added
+
+- Text and emoji messages, with editing, replies, mentions, emoji reactions and
+  pinned messages.
+- Photos and files, voice messages, quick polls, and message search.
+- Read receipts, typing indicators and "online now". Each is visible to the
+  members it applies to, each member can switch off sending their own, and none
+  is kept as history.
+- Chat access policy: everyone can chat by default, including Limited and
+  Temporary members. A household admin can restrict either group.
+- Delete for yourself, or delete for everyone as the author. A household admin
+  can delete any message for everyone, shown to members as "Removed by an admin".
+- Chat is included in encrypted exports and restores.
+
+### Changed
+
+- Message text and attachments are stored as encrypted content blobs outside the
+  event log, so deleting a message removes its content from the relay and every
+  device. The log keeps the message event only.
+- Chat has its own event log, relay stream and cap, separate from household
+  history.
+- Short-lived signaling has a separate, closed boundary (ADR 0009). No calls are
+  built.
+
+### Compatibility
+
+- Adds the chat formats listed in [V1.0-COMPATIBILITY](docs/V1.0-COMPATIBILITY.md)
+  under v1.2.0. Existing v1.0 and v1.1 formats are unchanged, and every release
+  still reads them.
+- Server schemas 12 through 17 are forward migrations. Keep a pre-upgrade backup
+  if rollback matters.
+
 ## v1.1.2 — Private Household Branding
 
 Released 2026-10-18 as `kin-v1.1.2`. This patch shows the private household

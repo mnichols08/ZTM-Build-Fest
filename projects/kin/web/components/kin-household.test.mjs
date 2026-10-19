@@ -389,6 +389,7 @@ test("People & devices groups by stable member ID and labels people and device s
     getPinnedDevice: async (_householdId, deviceId) => deviceId === "phone",
   };
   const pairingActions = [];
+  component.showHousehold = () => pairingActions.push(["choose-person-role"]);
   component.createPairing = (kind) => pairingActions.push(["person", kind]);
   component.createDevicePairing = () => pairingActions.push(["device"]);
   component.memberNames = { load: async () => [
@@ -416,17 +417,19 @@ test("People & devices groups by stable member ID and labels people and device s
     return row.children.find((child) => child.className === "device-name-line").children.map((part) => part.textContent ?? part).join("");
   };
   assert.equal(line("phone"), "Kitchen phone — Chrome on iPhone · This device · Trusted");
-  assert.equal(line("laptop"), "Firefox on Windows — Trusted");
+  // Without a nickname, the owner's preferred name sits beside the automatic
+  // name (#225); a nickname still wins, and an unnamed device keeps its code.
+  assert.equal(line("laptop"), "Alex · Firefox on Windows — Trusted");
   assert.equal(line("partner-mac"), "New device · ABCD — Untrusted");
-  assert.equal(line("partner-tablet"), "Safari on iPad — Revoked");
+  assert.equal(line("partner-tablet"), "Riley · Safari on iPad — Revoked");
   const buttons = descendants(component.children).filter((child) => child.tagName === "button");
-  await buttons.find((button) => button.textContent === "Invite person").listeners.click();
+  await buttons.find((button) => button.textContent === "Invite another person").listeners.click();
   await buttons.find((button) => button.textContent === "Add my device").listeners.click();
-  assert.deepEqual(pairingActions, [["person", "adult"], ["device"]]);
+  assert.deepEqual(pairingActions, [["choose-person-role"], ["device"]], "invitation selection must not silently create an Adult invitation");
   assert.ok(descendants(component.children).some((child) => child.textContent?.includes("own household member identity")));
   assert.ok(descendants(component.children).some((child) => child.textContent?.includes("same member identity")));
   const renameButtons = descendants(component.children).filter((child) => child.textContent === "Rename");
-  assert.deepEqual(renameButtons.map((button) => button.attributes["aria-label"]), ["Rename Kitchen phone", "Rename Firefox on Windows"],
+  assert.deepEqual(renameButtons.map((button) => button.attributes["aria-label"]), ["Rename Kitchen phone", "Rename Alex · Firefox on Windows"],
     "only your own named devices can be renamed");
   const forms = descendants(component.children).filter((child) => child.className === "device-rename-form");
   const laptopForm = forms[1];
@@ -466,14 +469,14 @@ test("People & devices remains useful offline when encrypted names are unavailab
   const groups = component.children.filter((child) => child.className === "device-group");
   assert.deepEqual(groups.map((group) => group.children[0].textContent), ["Alex (You)", "Riley"]);
   const buttons = descendants(component.children).filter((child) => child.tagName === "button");
-  assert.equal(buttons.some((button) => button.textContent === "Invite person"), false,
+  assert.equal(buttons.some((button) => button.textContent === "Invite another person"), false,
     "inviting another person remains limited to server-authorized managers");
   assert.equal(buttons.some((button) => button.textContent === "Add my device"), true);
   const messages = descendants(component.children).filter((child) => child.className === "household-message");
   assert.ok(messages.some((message) => message.textContent.includes("connection is unavailable")));
   const deviceLines = descendants(component.children).filter((child) => child.className === "device-name-line");
   assert.deepEqual(deviceLines.map((line) => line.children.map((part) => part.textContent ?? part).join("")), [
-    "Chrome on Android — This device · Status unavailable offline",
+    "Alex · Chrome on Android — This device · Status unavailable offline",
     "Shared tablet — Safari on iPad · Status unavailable offline",
   ]);
   assert.equal(buttons.some((button) => /Replace|Revoke/.test(button.textContent)), false,
@@ -518,4 +521,281 @@ test("an invitation code arriving after connection fills the join screen (#97)",
   assert.deepEqual(calls, ["/pair"], "the address was cleared when the code was taken");
   component.offerInvitationCode();
   assert.equal(renders, 1, "nothing more to offer");
+});
+
+// #223: a code on a different path than the one chosen is never activated
+// silently, and both screens say which path is in progress.
+function confirmedClaim({ intent, purpose }) {
+  const component = new KinHousehold();
+  component.localFingerprint = "f".repeat(64);
+  component.claimIntent = intent;
+  component.claim = {
+    state: "Confirmed",
+    purpose,
+    syncKeyFingerprint: component.localFingerprint,
+    inviterKeyFingerprint: "e".repeat(64),
+  };
+  component.ctx.views.renderJoin();
+  const all = (node) => [node, ...(node.children ?? []).flatMap(all)];
+  const nodes = all(component);
+  const activate = nodes.find((node) => node.tagName === "button" && node.textContent === "Activate with passkey");
+  const boxes = nodes.filter((node) => node.tagName === "input" && node.type === "checkbox");
+  const text = nodes.map((node) => node.textContent).join(" ");
+  return { activate, boxes, text, component };
+}
+
+test("Add my device with an invitation code stays blocked until the switch is acknowledged (#223)", () => {
+  const { activate, boxes, text } = confirmedClaim({ intent: "device", purpose: "adult" });
+  assert.match(text, /Joining as a new household member/);
+  assert.match(text, /You chose Add my device, but this code is an invitation/);
+  assert.equal(boxes.length, 2, "fingerprint comparison and path acknowledgement");
+  const [fingerprint, acknowledgement] = boxes;
+  assert.equal(acknowledgement.name, "path-acknowledged");
+  assert.equal(activate.disabled, true);
+  fingerprint.checked = true;
+  fingerprint.listeners.change();
+  assert.equal(activate.disabled, true, "a compared fingerprint alone does not accept a different path");
+  acknowledgement.checked = true;
+  acknowledgement.listeners.change();
+  assert.equal(activate.disabled, false);
+});
+
+test("a joiner whose code matches their choice sees the path and only the fingerprint gate (#223)", () => {
+  const { activate, boxes, text } = confirmedClaim({ intent: "device", purpose: "device" });
+  assert.match(text, /Adding this device to your membership/);
+  assert.doesNotMatch(text, /You chose/);
+  assert.equal(boxes.length, 1);
+  boxes[0].checked = true;
+  boxes[0].listeners.change();
+  assert.equal(activate.disabled, false);
+});
+
+test("an inviter's code says whether it adds their own device or a new person (#222)", () => {
+  for (const [pairing, title, waiting] of [
+    [{ purpose: "device" }, "Adding your own device", "Waiting for your other device to enter this code."],
+    [{ memberKind: "limited" }, "Inviting another person", "Waiting for the person you invited to enter this code."],
+  ]) {
+    const component = new KinHousehold();
+    component.syncStatus = { enabled: true, memberKind: "adult" };
+    component.pairing = { state: "Pending", code: "F7KM-Q2DX", expiresAt: Date.now() + 60_000, ...pairing };
+    component.ctx.pairing.pollPairing = () => {};
+    component.ctx.pairing.updateCountdown = () => {};
+    component.ctx.views.renderMember();
+    clearInterval(component.timer);
+    const all = (node) => [node, ...(node.children ?? []).flatMap(all)];
+    const text = all(component).map((node) => node.textContent).join(" ");
+    assert.match(text, new RegExp(title), title);
+    assert.ok(text.includes(waiting), waiting);
+    if (pairing.memberKind) assert.match(text, /Limited \(child or teen\) access/);
+  }
+});
+
+// #225: a member sets, edits and removes only their own preferred name, and
+// their devices pick it up without losing nicknames.
+async function peopleWithNames(names, saved = [], { syncEnabled = true } = {}) {
+  const component = new KinHousehold();
+  component.identity = { memberId: "me", deviceId: "phone" };
+  component.syncStatus = { enabled: syncEnabled, memberKind: "adult" };
+  component.localFingerprint = "SELF";
+  component.run = async (action) => {
+    try { await action(); } catch (error) { component.lastError = error.message; }
+  };
+  component.ctx.api.openSyncKeyStore = async () => component.syncKeyStore;
+  component.api = async (path) => path === "/api/devices"
+    ? { canManageMembers: false, devices: [
+      { id: "phone", memberId: "me", label: "Chrome on iPhone", revokedAt: null },
+      { id: "laptop", memberId: "me", label: "Firefox on Windows", revokedAt: null },
+      { id: "partner-mac", memberId: "partner", label: "Safari on Mac", revokedAt: null },
+    ] }
+    : { devices: [] };
+  component.syncKeyStore = { getPinnedDevice: async () => true };
+  component.memberNames = {
+    load: async () => names.map(([memberId, preferredName]) => ({ memberId, preferredName })),
+    rename: async (name) => { saved.push(name); },
+  };
+  component.deviceNames = { load: async () => [
+    { deviceId: "phone", memberId: "me", autoName: "Chrome on iPhone", nickname: "Kitchen phone" },
+    { deviceId: "laptop", memberId: "me", autoName: "Firefox on Windows", nickname: null },
+    { deviceId: "partner-mac", memberId: "partner", autoName: "Safari on Mac", nickname: null },
+  ], rename: async () => {} };
+  await component.showDevices();
+  const all = (node) => [node, ...(node.children ?? []).flatMap(all)];
+  const nodes = all(component);
+  const groups = component.children.filter((child) => child.className === "device-group");
+  return { component, nodes, groups, saved };
+}
+
+test("only your own group offers Set my name, and saving trims it (#225)", async () => {
+  const { nodes, groups, saved, component } = await peopleWithNames([["partner", "Sam"]]);
+  const nameButtons = nodes.filter((node) => node.tagName === "button" && /my name$/.test(node.textContent));
+  assert.deepEqual(nameButtons.map((button) => button.textContent), ["Set my name"]);
+  const yours = groups.find((group) => group.dataset.memberId === "me");
+  const theirs = groups.find((group) => group.dataset.memberId === "partner");
+  const inGroup = (group) => [group, ...group.children.flatMap(function walk(node) { return [node, ...(node.children ?? []).flatMap(walk)]; })];
+  assert.ok(inGroup(yours).some((node) => node.className === "member-name"));
+  assert.equal(inGroup(theirs).some((node) => node.className === "member-name"), false, "nobody names another member");
+  assert.equal(groups.map((group) => group.children[0].textContent).join("|"), "You|Sam");
+  const form = nodes.find((node) => node.className === "member-name-form");
+  const input = form.children.find((child) => child.tagName === "label").children.find((child) => child.tagName === "input");
+  input.value = "  Mikey  ";
+  form.listeners.submit({ preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(saved, ["Mikey"]);
+  input.value = "M".repeat(33);
+  form.listeners.submit({ preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(saved, ["Mikey"], "a name over 32 characters is not sent");
+  assert.match(component.lastError, /32 characters or fewer/);
+});
+
+test("a named member can edit or remove their name, and devices follow it (#225)", async () => {
+  const { nodes, groups, saved } = await peopleWithNames([["me", "Mikey"], ["partner", "Sam"]]);
+  assert.equal(groups[0].children[0].textContent, "Mikey (You)");
+  assert.ok(nodes.some((node) => node.tagName === "button" && node.textContent === "Edit my name"));
+  const lines = nodes.filter((node) => node.className === "device-name-line")
+    .map((line) => line.children.map((part) => part.textContent ?? part).join(""));
+  assert.ok(lines.includes("Kitchen phone — Chrome on iPhone · This device · Trusted"), "a nickname is never overwritten");
+  assert.ok(lines.includes("Mikey · Firefox on Windows — Trusted"));
+  assert.ok(lines.includes("Sam · Safari on Mac — Trusted"));
+  const remove = nodes.find((node) => node.tagName === "button" && node.textContent === "Remove my name");
+  await remove.listeners.click();
+  assert.deepEqual(saved, [""]);
+});
+
+test("every member gets the name editor on the household panel, without the Adult-only device list (#225)", async () => {
+  const component = new KinHousehold();
+  component.identity = { memberId: "me", deviceId: "phone" };
+  component.syncStatus = { enabled: true, memberKind: "limited" };
+  component.run = async (action) => action();
+  const saved = [];
+  let renders = 0;
+  component.render = () => { renders += 1; };
+  component.memberNames = { load: async () => [{ memberId: "me", preferredName: "Mikey" }, { memberId: "other", preferredName: "Sam" }], rename: async (name) => { saved.push(name); } };
+  let listed = 0;
+  component.showDevices = async () => { listed += 1; };
+  component.ctx.views.renderMember();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const all = (node) => [node, ...(node.children ?? []).flatMap(all)];
+  const nodes = all(component);
+  assert.ok(nodes.some((node) => node.tagName === "button" && node.textContent === "Edit my name"), "the current name is loaded into the editor");
+  const form = nodes.find((node) => node.className === "member-name-form");
+  const input = form.children.find((child) => child.tagName === "label").children.find((child) => child.tagName === "input");
+  assert.equal(input.value, "Mikey");
+  input.value = "Mike";
+  form.listeners.submit({ preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(saved, ["Mike"]);
+  assert.equal(renders, 1, "saving refreshes the panel");
+  assert.equal(listed, 0, "the trusted-device list (Adults only) is never needed");
+});
+
+test("without device sync no name editor is offered, since names can't be read back (#225)", async () => {
+  const component = new KinHousehold();
+  component.identity = { memberId: "me", deviceId: "phone" };
+  component.syncStatus = { enabled: false, memberKind: "adult" };
+  component.memberNames = { load: async () => [], rename: async () => {} };
+  component.ctx.views.renderMember();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const all = (node) => [node, ...(node.children ?? []).flatMap(all)];
+  assert.equal(all(component).some((node) => node.className === "member-name"), false);
+  const people = await peopleWithNames([], [], { syncEnabled: false });
+  assert.equal(people.nodes.some((node) => node.className === "member-name"), false);
+});
+
+test("nobody else can pose as You, and you can't save You as your name (#225)", async () => {
+  const { groups, nodes, saved, component } = await peopleWithNames([["partner", "Mikey (You)"]]);
+  assert.equal(groups.map((group) => group.children[0].textContent).join("|"), "You|Household member 1");
+  const lines = nodes.filter((node) => node.className === "device-name-line")
+    .map((line) => line.children.map((part) => part.textContent ?? part).join(""));
+  assert.ok(lines.includes("Safari on Mac — Trusted"), "the impostor name never reaches a device label");
+  const form = nodes.find((node) => node.className === "member-name-form");
+  const input = form.children.find((child) => child.tagName === "label").children.find((child) => child.tagName === "input");
+  input.value = " you ";
+  form.listeners.submit({ preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(saved, []);
+  assert.match(component.lastError, /rather than “You”/);
+});
+
+// A pairing poll that re-renders while People & devices is still building
+// must not leave a half-built page (rows lost, actions appended to the other
+// view). Seen intermittently in CI as "No revoke control".
+test("People & devices stops writing when another render takes the panel mid-build", async () => {
+  const component = new KinHousehold();
+  component.identity = { memberId: "me", deviceId: "phone" };
+  component.localFingerprint = "SELF";
+  component.run = async (action) => action();
+  component.ctx.api.openSyncKeyStore = async () => component.syncKeyStore;
+  component.api = async (path) => path === "/api/devices"
+    ? { canManageMembers: true, devices: [
+      { id: "phone", memberId: "me", label: "Chrome on iPhone", revokedAt: null },
+      { id: "laptop", memberId: "me", label: "Edge on Windows", revokedAt: null },
+    ] }
+    : { devices: [{ deviceId: "laptop", memberId: "me", fingerprint: "ABCD", publicKeys: {} }] };
+  const marker = { tagName: "p", textContent: "Pairing confirmed.", children: [] };
+  component.syncKeyStore = {
+    getPinnedDevice: async () => {
+      // The poll's render lands while the device rows are being built.
+      component.viewGeneration += 1;
+      component.replaceChildren(marker);
+      return true;
+    },
+  };
+  let polled = false;
+  component.poll = setTimeout(() => { polled = true; }, 5);
+  await component.showDevices();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(component.children, [marker], "the newer render keeps the panel; nothing is appended after it");
+  assert.equal(polled, false, "opening People & devices cancels a pending pairing poll");
+});
+
+test("a pairing poll answered after People & devices opened leaves that view alone", async () => {
+  const component = new KinHousehold();
+  component.pairing = { pairingId: "p1", state: "Claimed", version: 1 };
+  component.viewGeneration = 7;
+  let renders = 0, errors = 0;
+  component.render = () => { renders += 1; };
+  component.renderError = () => { errors += 1; };
+  let answer;
+  component.api = () => new Promise((resolve) => { answer = resolve; });
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (callback) => realSetTimeout(callback, 0);
+  try {
+    component.ctx.pairing.pollPairing();
+    await new Promise((resolve) => realSetTimeout(resolve, 5));
+    // People & devices takes the panel while the request is in flight.
+    component.viewGeneration += 1;
+    answer({ state: "Confirmed", version: 2 });
+    await new Promise((resolve) => realSetTimeout(resolve, 5));
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+  assert.equal(component.pairing.state, "Confirmed", "the new pairing state is still recorded");
+  assert.equal(renders, 0, "but the newer view is not replaced");
+  assert.equal(errors, 0);
+});
+
+test("a household refresh that finishes after People & devices opened leaves that view alone", async () => {
+  const component = new KinHousehold();
+  component.viewGeneration = 3;
+  let renders = 0, notified = 0;
+  component.render = () => { renders += 1; };
+  component.addEventListener("kin:household-status", () => { notified += 1; });
+  component.ctx.api.notifyStatus = () => { notified += 1; };
+  let release;
+  component.api = async (path) => {
+    if (path === "/api/status") {
+      await new Promise((resolve) => { release = resolve; });
+      return { identity: null, householdLifecycle: null, claim: null };
+    }
+    return {};
+  };
+  const loading = component.ctx.api.load();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  component.viewGeneration += 1; // People & devices opens meanwhile.
+  release();
+  const result = await loading;
+  assert.equal(result.loaded, true);
+  assert.equal(renders, 0, "the newer view is not replaced");
+  assert.equal(notified, 1, "the app still hears the new status");
 });
