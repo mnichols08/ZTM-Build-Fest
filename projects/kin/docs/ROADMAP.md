@@ -1,7 +1,7 @@
 # Roadmap
 
-Current release: `v1.1.2 — Private Household Branding`, released 2026-10-18
-as `kin-v1.1.2`. The release before it was `v1.1.1 — Member and Notification Clarity`.
+Current release: `v1.2.0 — Household Chat`, released 2026-10-19 as
+`kin-v1.2.0`. The release before it was `v1.1.2 — Private Household Branding`.
 The work between v0.10.3 and v1.0.0 shipped per the owner's
 [review-gate decisions](audits/V1.0_REVIEW_GATES.md); this page records how Kin
 got there and continues through v1.1. Work after v1.0 is tracked as GitHub
