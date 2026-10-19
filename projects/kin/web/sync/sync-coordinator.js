@@ -1367,11 +1367,12 @@ export class SyncCoordinator {
       const value = await this.loadCachedHouseholdSettings();
       return { admin: false, adminRecorded: false, value, offline: true };
     }
-    if (!response.settings) return { admin: response.admin, adminRecorded: response.adminRecorded, value: null };
+    const chatPolicy = response.chatPolicy ?? null;
+    if (!response.settings) return { admin: response.admin, adminRecorded: response.adminRecorded, chatPolicy, value: null };
     const candidate = { householdId: this.identity.householdId, ...response.settings };
     const value = await this.decryptCachedHouseholdSettings(candidate);
     const cached = await this.keyStore.cacheHouseholdSettings(candidate);
-    return { admin: response.admin, adminRecorded: response.adminRecorded,
+    return { admin: response.admin, adminRecorded: response.adminRecorded, chatPolicy,
       value: cached.revision === candidate.revision ? value : await this.decryptCachedHouseholdSettings(cached) };
   }
 

@@ -108,6 +108,11 @@ export const identityMethods = {
           deletionFinalizeAt: row.deletion_finalize_at,
           deletedAt: row.deleted_at,
           ownerMemberId: row.owner_member_id ?? null,
+          chatPolicy: {
+            limited: row.chat_limited ?? "write",
+            temporary: row.chat_temporary ?? "write",
+            revision: row.chat_policy_revision ?? 0,
+          },
         });
       }
       for (const row of this.db.prepare("SELECT * FROM members").all()) {
@@ -233,9 +238,14 @@ export const identityMethods = {
     this.transaction(() => {
       this.db
         .prepare(
-          "INSERT INTO households(id, version, owner_member_id) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET version = excluded.version, owner_member_id = excluded.owner_member_id",
+          `INSERT INTO households(id, version, owner_member_id, chat_limited, chat_temporary, chat_policy_revision) VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET version = excluded.version, owner_member_id = excluded.owner_member_id,
+             chat_limited = excluded.chat_limited, chat_temporary = excluded.chat_temporary, chat_policy_revision = excluded.chat_policy_revision`,
         )
-        .run(household.id, household.version, household.ownerMemberId ?? null);
+        .run(
+          household.id, household.version, household.ownerMemberId ?? null,
+          household.chatPolicy?.limited ?? "write", household.chatPolicy?.temporary ?? "write", household.chatPolicy?.revision ?? 0,
+        );
 
       for (const memberId of household.members) {
         const member = service.members.get(memberId);

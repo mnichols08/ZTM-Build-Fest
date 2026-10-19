@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { DurableConflictError, MAX_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "./durable-store.mjs";
-import { canManageTrust, canParticipate, isHouseholdAdmin, PairingError, requireTrustAuthority } from "./pairing-service.mjs";
+import { canManageTrust, canParticipate, chatAccess, chatPolicyOf, isHouseholdAdmin, PairingError, requireTrustAuthority } from "./pairing-service.mjs";
 import { INSTALL_ICONS, installContentTag, installIconUrl, validateInstallIdentity } from "./install-identity.mjs";
 import {
   canonicalEventEnvelope,
@@ -49,6 +49,13 @@ export class EncryptedSyncService {
     });
   }
 
+  /** The admin changed who can chat: members online learn it now, and the
+   * chat signals they may no longer see stop. */
+  chatPolicyChanged(householdId) {
+    this.liveService?.revalidate(householdId);
+    this.hintHousehold(householdId);
+  }
+
   forgetHousehold(householdId) {
     this.households.delete(householdId);
     this.pushService?.removeUntrusted(householdId);
@@ -60,9 +67,16 @@ export class EncryptedSyncService {
   status(sessionToken) {
     const auth = this.authorize(sessionToken);
     const state = this.state(auth.household.id);
+    const policy = chatPolicyOf(auth.household);
     return {
       memberKind: auth.member.kind ?? "adult",
       ...(auth.member.expiresAt == null ? {} : { memberExpiresAt: auth.member.expiresAt }),
+      // Chat access (#123): this member's own, and the policy for an admin.
+      chat: {
+        access: chatAccess(auth.member, auth.household, this.now()),
+        policyRevision: policy.revision,
+        ...(isHouseholdAdmin(auth.member, this.now()) ? { policy: { limited: policy.limited, temporary: policy.temporary } } : {}),
+      },
       currentEpoch: state.currentEpoch,
       enabled: state.enabled,
       rotationPending: state.rotationPending,
@@ -120,7 +134,10 @@ export class EncryptedSyncService {
   householdSettings(sessionToken) {
     const auth = this.authorize(sessionToken);
     const row = this.store?.getHouseholdSettings(auth.household.id) ?? auth.household.settings ?? null;
-    return { admin: isHouseholdAdmin(auth.member, this.now()), adminRecorded: this.pairingService.hasHouseholdAdmin(auth.household), settings: row ? { ...row, ciphertext: Buffer.from(row.ciphertext).toString("base64url") } : null };
+    const admin = isHouseholdAdmin(auth.member, this.now());
+    const policy = chatPolicyOf(auth.household);
+    // The chat policy (#123) rides along for admins, who alone may see it.
+    return { admin, ...(admin ? { chatPolicy: { limited: policy.limited, temporary: policy.temporary } } : {}), adminRecorded: this.pairingService.hasHouseholdAdmin(auth.household), settings: row ? { ...row, ciphertext: Buffer.from(row.ciphertext).toString("base64url") } : null };
   }
 
   updateHouseholdSettings(sessionToken, value) {

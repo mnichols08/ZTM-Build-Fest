@@ -892,3 +892,47 @@ test("read receipts travel through the real receipt route, sealed, and survive t
   b.room.close();
   a.room.close();
 });
+
+test("the chat policy: read-only can't post and sends nothing; no access stops the pass; lifting it resumes", { timeout: 30_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs });
+  const devices = [phone.entry, laptop.entry];
+  const a = await openRoom(phone, s), b = await openRoom(laptop, s);
+  const status = (access) => ({ ...STATUS, chat: { access } });
+  await a.room.send("Dinner at 6");
+  await a.room.sync({ status: status("write"), devices });
+  assert.equal(a.room.access, "write");
+
+  // Read only: a message written before the change waits instead of sending,
+  // new ones are refused, and the presence stays quiet.
+  await a.room.send("Running late");
+  await a.room.sync({ status: status("read"), devices });
+  assert.equal(a.room.access, "read");
+  assert.equal(a.room.pending.size, 1, "the unsent message waits rather than fail");
+  await assert.rejects(a.room.send("more"), (error) => error.code === "chat_read_only");
+  await assert.rejects(a.room.edit(a.room.page().messages[0], "x"), (error) => error.code === "chat_read_only");
+  await assert.rejects(a.room.remove(a.room.page().messages[0]), (error) => error.code === "chat_read_only");
+  assert.equal(a.room.presence.sendsReceipts, false);
+  assert.equal(a.room.presence.sendsTyping, false);
+  assert.equal(a.room.page().messages.length, 2, "still readable");
+
+  // No access: the pass does nothing, and nothing new arrives.
+  await b.room.sync({ status: status("write"), devices });
+  await b.room.send("Okay!");
+  await b.room.sync({ status: status("write"), devices });
+  const before = a.room.page().total;
+  const result = await a.room.sync({ status: status("none"), devices });
+  assert.deepEqual(result, { hasMore: false });
+  assert.equal(a.room.access, "none");
+  assert.equal(a.room.page().total, before, "nothing fetched");
+
+  // Restored: the waiting message goes out and the new one arrives.
+  await a.room.sync({ status: status("write"), devices });
+  assert.equal(a.room.access, "write");
+  assert.equal(a.room.pending.size, 0);
+  assert.equal(a.room.page().total, before + 1);
+  a.room.close();
+  b.room.close();
+});

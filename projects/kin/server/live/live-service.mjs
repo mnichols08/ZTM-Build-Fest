@@ -25,7 +25,7 @@
 import {
   acceptKey, CLOSE, closePayload, encodeFrame, encodeMessage, FrameParser, isClientKey, MAX_MESSAGE_BYTES, OPCODE, parseMessage,
 } from "./websocket.mjs";
-import { PairingError, canParticipate } from "../pairing-service/shared.mjs";
+import { PairingError, canParticipate, chatAccess } from "../pairing-service/shared.mjs";
 
 export const LIVE_PATH = "/api/live";
 export const PING_INTERVAL_MS = 25_000;
@@ -309,9 +309,15 @@ export class LiveService {
     this.handlers.set(LIVE_TYPE.TYPING, (connection, record) => this.relayTyping(connection, record));
   }
 
-  /** Whether the connection's member may take part in chat now. */
+  /** What the connection's member may do in chat now (#123): "write",
+   * "read" or "none". Read comes from the admin's policy, live. */
+  chatLevel(connection) {
+    return chatAccess(this.service.members.get(connection.memberId), this.service.households.get(connection.householdId), this.service.now());
+  }
+
+  /** Whether the connection's member may see chat signals (typing, receipts). */
   chatAllowed(connection) {
-    return canParticipate(this.service.members.get(connection.memberId), this.service.now());
+    return this.chatLevel(connection) !== "none";
   }
 
   /**
@@ -343,7 +349,8 @@ export class LiveService {
     }
     if (!frame || typeof frame !== "object" || frame.householdId !== connection.householdId || frame.deviceId !== connection.deviceId)
       return connection.close(CLOSE.POLICY, "Bad typing frame");
-    if (!this.chatAllowed(connection)) return;
+    // Typing is posting-adjacent: only a member who can post sends it.
+    if (this.chatLevel(connection) !== "write") return;
     for (const other of this.households.get(connection.householdId) ?? [])
       if (other !== connection && this.chatAllowed(other)) other.sendEphemeral(LIVE_TYPE.TYPING, payload);
   }
@@ -440,9 +447,9 @@ export class LiveService {
   }
 
   /** New events were accepted: tell the household's other devices. */
-  eventsAccepted(householdId, authorDeviceId) {
+  eventsAccepted(householdId, authorDeviceId, { chat = false } = {}) {
     for (const connection of this.households.get(householdId) ?? [])
-      if (connection.deviceId !== authorDeviceId) connection.send(LIVE_TYPE.SYNC_HINT);
+      if (connection.deviceId !== authorDeviceId && (!chat || this.chatAllowed(connection))) connection.send(LIVE_TYPE.SYNC_HINT);
   }
 
   /** A member's read-receipt slot changed: tell the household's other

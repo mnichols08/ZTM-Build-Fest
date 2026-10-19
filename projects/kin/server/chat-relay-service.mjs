@@ -14,7 +14,7 @@
 // device's chat sequence has no gaps; a repeated event ID is accepted only
 // with identical bytes; a page only shows events from epochs the reading
 // device may read. Pushes wait out a household key rotation.
-import { PairingError, canParticipate } from "./pairing-service.mjs";
+import { PairingError, chatAccess } from "./pairing-service.mjs";
 import { canonicalEventEnvelope, MAX_LOGICAL_TIME_ADVANCE } from "./sync-contract.mjs";
 import { decodeCursor, encodeCursor, MAX_EVENTS_PER_BATCH, validateEventEnvelope } from "./sync-service.mjs";
 import { DurableConflictError, MAX_CHAT_HIDDEN_RECORD_BYTES, MAX_CHAT_RECEIPT_BYTES, MAX_HOUSEHOLD_CHAT_EVENTS } from "./durable-store.mjs";
@@ -132,15 +132,18 @@ export class ChatRelayService {
     this.receiptWrites = new Map();
   }
 
-  /** Chat is open to every member who may take part in the household; the
-   * admin's chat policy (#123) narrows this later. */
-  assertCanChat(auth) {
-    if (!canParticipate(auth.member, this.syncService.now()))
+  /** What the admin's chat policy (#123) lets this member do. `need` is
+   * "read" or "write" (post, edit, delete, receipts, uploads). */
+  assertCanChat(auth, need = "read") {
+    const access = chatAccess(auth.member, auth.household, this.syncService.now());
+    if (access === "none")
       throw new PairingError("chat_unavailable", "Chat isn't available to you in this household.", 403);
+    if (need === "write" && access !== "write")
+      throw new PairingError("chat_read_only", "Your household has set chat to read-only for you.", 403);
   }
 
   push(auth, envelopes) {
-    this.assertCanChat(auth);
+    this.assertCanChat(auth, "write");
     const sync = this.syncService.state(auth.household.id);
     if (!sync.enabled)
       throw new PairingError("chat_sync_unavailable", "Chat is unavailable until household sync is set up.", 409);
@@ -193,8 +196,8 @@ export class ChatRelayService {
       }
       // After the commit, in the background: the household's other devices
       // hear about it at once (#107) and members get a push (#85).
-      try { this.syncService.pushService?.eventsAccepted(householdId, auth.member.id); } catch { /* best effort */ }
-      try { this.syncService.liveService?.eventsAccepted(householdId, auth.device.id); } catch { /* best effort */ }
+      try { this.syncService.pushService?.eventsAccepted(householdId, auth.member.id, { chat: true }); } catch { /* best effort */ }
+      try { this.syncService.liveService?.eventsAccepted(householdId, auth.device.id, { chat: true }); } catch { /* best effort */ }
     }
     const after = this.storage.chatRelayState(householdId);
     return { accepted: envelopes.length, latestCursor: encodeCursor(after.nextSequence - 1) };
@@ -264,7 +267,7 @@ export class ChatRelayService {
   /** Replaces this member's slot compare-and-set, from one of their own
    * devices, at a bounded rate. */
   putReceipt(auth, body) {
-    this.assertCanChat(auth);
+    this.assertCanChat(auth, "write");
     const expectedRevision = body?.expectedRevision;
     const sync = this.syncService.state(auth.household.id);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || !isReceiptSlotValid(body.record, auth, sync.currentEpoch, expectedRevision + 1))

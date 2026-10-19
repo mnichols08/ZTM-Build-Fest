@@ -52,7 +52,7 @@ const MAX_CHAT_PUSH_BATCHES = 2;
 const LOAD_BATCH = 500;
 /** Retire refusals that retrying can't fix: the blob stays on the service
  * and the event is sent anyway. */
-const FINAL_RETIRE_REFUSALS = new Set(["chat_blob_retire_forbidden", "chat_blob_invalid"]);
+const FINAL_RETIRE_REFUSALS = new Set(["chat_blob_retire_forbidden", "chat_blob_invalid", "chat_read_only", "chat_unavailable"]);
 /** Authentication failures that skip an event at once: what the event
  * itself says can never pass (not a chat event, an identity that doesn't
  * match, a revoked or not-yet-granted device). A signature that doesn't
@@ -204,11 +204,15 @@ export class ChatRoom {
       sendingEpoch: () => this.sendingEpoch(),
       signingKey: () => this.signingKey(),
       devices: () => this.directory,
+      canPost: () => this.access === "write",
       sendLive: (bytes) => Boolean(this.liveSender?.(bytes)),
       store,
       now: () => this.now(),
       onChange: () => this.notifyPresence(),
     });
+    // What the admin's chat policy lets this member do (#123): "write"
+    // (read and post), "read" or "none". The service says so on every pass.
+    this.access = "write";
     this.syncError = null;
     this.onClose = null;
     this.closed = false;
@@ -261,6 +265,12 @@ export class ChatRoom {
   /** The service says a read-receipt slot changed (live channel). */
   receiptsChanged() {
     this.presence.hint();
+  }
+
+  /** Posting, editing and deleting need "write" access (#123). */
+  assertCanPost() {
+    if (this.access !== "write")
+      throw new ChatRoomError("Your household has set chat to read-only for you.", "chat_read_only");
   }
 
   assertOpen() {
@@ -348,6 +358,7 @@ export class ChatRoom {
     this.retiredThrough = state.retiredThrough ?? 0;
     this.refused = state.refused ?? [];
     this.hidden = new Set(state.hidden ?? []);
+    if (["write", "read", "none"].includes(state.access)) this.access = state.access;
   }
 
   /** Whether this member hid `messageId` for themselves ("delete for me"). */
@@ -522,6 +533,7 @@ export class ChatRoom {
   /** Sends a text message. Resolves with { messageId, eventId } once it is
    * stored on this device; it reaches the relay on the next sync. */
   async send(text) {
+    this.assertCanPost();
     const messageId = randomIdHex();
     const sealed = await this.sealText(text);
     const eventId = await this.author({ type: "post-chat-message", messageId, blobRef: sealed.ref, blobKey: sealed.key }, { blobRef: sealed.ref });
@@ -536,6 +548,7 @@ export class ChatRoom {
    */
   async sendAttachments({ text = "", files }) {
     this.assertOpen();
+    this.assertCanPost();
     const problem = attachmentProblem(files);
     if (problem) throw new ChatRoomError(problem, "chat_attachment_invalid");
     if (text !== "" && chatTextProblem(text)) throw new ChatRoomError(chatTextProblem(text), "chat_text_invalid");
@@ -717,6 +730,7 @@ export class ChatRoom {
 
   /** Replaces a message's text. `message` is the page entry being edited. */
   async edit(message, text) {
+    this.assertCanPost();
     // Attachments are deleted, not edited (the engine refuses the edit too).
     if (message.contentKind !== "text") throw new ChatRoomError("Attachments can't be edited.", "chat_attachment_invalid");
     const sealed = await this.sealText(text);
@@ -726,6 +740,7 @@ export class ChatRoom {
 
   /** Deletes a message for everyone: the author's own, or as an admin. */
   async remove(message, { byAdmin = false } = {}) {
+    this.assertCanPost();
     const retireParts = await this.attachmentParts(message);
     return this.author({ type: "delete-chat-message", messageId: message.messageId, byAdmin },
       { retireRef: message.blobRef, retireParts });
@@ -795,6 +810,17 @@ export class ChatRoom {
     if (deviceKeys) this.deviceKeys = deviceKeys;
     this.currentEpoch = status.currentEpoch;
     this.directory = devices;
+    const access = ["write", "read", "none"].includes(status.chat?.access) ? status.chat.access : "write";
+    if (access !== this.access) {
+      this.access = access;
+      try { await this.store.saveAccess(access); } catch { /* the next pass says it again */ }
+      this.presence.accessChanged();
+      this.notify();
+      this.notifyPresence();
+    }
+    // No access: nothing is fetched, sent or kept fresh until the admin
+    // changes it back; what this device already decrypted stays.
+    if (access === "none") return { hasMore: false };
     const admins = chatAdmins(devices, this.now());
     const adminsChanged = admins.join() !== this.admins.join();
     const signature = chatMembershipSignature(devices);
@@ -825,7 +851,7 @@ export class ChatRoom {
       this.notify();
     }
     await this.refresh();
-    const pushMore = status.rotationPending ? false : await this.push();
+    const pushMore = status.rotationPending || access !== "write" ? false : await this.push();
     const pullMore = await this.pull(status, devices);
     await this.retireReplaced();
     // "Delete for me" is a nicety beside the chat itself: its trouble is

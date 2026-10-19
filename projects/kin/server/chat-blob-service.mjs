@@ -19,7 +19,7 @@
 // deletion removes every blob, tombstone and claim. Tombstones and claims are
 // bounded and the oldest go first, so retiring never fails for space.
 import { createHash } from "node:crypto";
-import { PairingError, canParticipate, isHouseholdAdmin } from "./pairing-service.mjs";
+import { PairingError, chatAccess, isHouseholdAdmin } from "./pairing-service.mjs";
 import {
   MAX_CHAT_BLOB_BYTES,
   MAX_HOUSEHOLD_CHAT_BLOB_BYTES,
@@ -140,16 +140,19 @@ export class ChatBlobService {
     this.now = now;
   }
 
-  /** Chat is open to every member who may take part in the household; the
-   * admin's chat policy (#123) narrows this later. */
-  assertCanChat(auth) {
-    if (!canParticipate(auth.member, this.now()))
+  /** What the admin's chat policy (#123) lets this member do. `need` is
+   * "read" or "write" (post, edit, delete, receipts, uploads). */
+  assertCanChat(auth, need = "read") {
+    const access = chatAccess(auth.member, auth.household, this.now());
+    if (access === "none")
       throw new PairingError("chat_unavailable", "Chat isn't available to you in this household.", 403);
+    if (need === "write" && access !== "write")
+      throw new PairingError("chat_read_only", "Your household has set chat to read-only for you.", 403);
   }
 
   /** Stores a blob. Uploading the same blob again is a no-op. */
   put(auth, ref, ciphertext) {
-    this.assertCanChat(auth);
+    this.assertCanChat(auth, "write");
     if (!isRef(ref) || !Buffer.isBuffer(ciphertext) || ciphertext.length < MIN_CHAT_BLOB_BYTES ||
       ciphertext.length > MAX_CHAT_BLOB_BYTES || createHash("sha256").update(ciphertext).digest("hex") !== ref)
       throw invalid();
@@ -181,7 +184,7 @@ export class ChatBlobService {
    * (see above); already-retired ones are skipped.
    */
   retire(auth, refs) {
-    this.assertCanChat(auth);
+    this.assertCanChat(auth, "write");
     if (!Array.isArray(refs) || refs.length < 1 || refs.length > MAX_RETIRE_REFS || !refs.every(isRef) ||
       new Set(refs).size !== refs.length)
       throw invalid();

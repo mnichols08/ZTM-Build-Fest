@@ -280,7 +280,12 @@ class KinChat extends HTMLElement {
       }, { root: this.scroller, threshold: [0, 0.5, 1] });
     }
 
-    section.append(heading, this.notice, this.scroller, this.typingLine, this.jump, form, this.announcer, this.viewer, this.details);
+    this.readOnly = document.createElement("p");
+    this.readOnly.className = "section-hint chat-read-only";
+    this.readOnly.setAttribute("role", "status");
+    this.readOnly.textContent = "Your household has set chat to read-only for you.";
+    this.readOnly.hidden = true;
+    section.append(heading, this.notice, this.scroller, this.typingLine, this.jump, form, this.readOnly, this.announcer, this.viewer, this.details);
     this.replaceChildren(section);
     this.queueRender("reset");
   }
@@ -517,6 +522,7 @@ class KinChat extends HTMLElement {
   noticeText() {
     const room = this.chatRoom;
     if (!room) return "Chat works once this device syncs with your household. Turn on sync under Household → People & devices.";
+    if (room.access === "none") return "Chat isn't available to you in this household.";
     if (room.syncError?.code === "connection_unavailable") return "Offline. Messages you send wait on this device and go out when you reconnect.";
     if (room.syncError) return "Chat is paused until household sync can continue. Messages you send wait on this device.";
     if (room.retireRefusal) return "A message was deleted here, but Kin couldn't delete its content on the household service.";
@@ -527,9 +533,31 @@ class KinChat extends HTMLElement {
     return "";
   }
 
+  /** The admin's chat policy for this member (#123): read-only swaps the
+   * composer for a note; no access hides the chat itself. */
+  applyAccess() {
+    const access = this.chatRoom?.access ?? "write";
+    this.form.hidden = access !== "write";
+    this.readOnly.hidden = access !== "read";
+    // A hidden scroller loses its position: start again at the latest message
+    // when access comes back.
+    const reappearing = this.scroller.hidden && access !== "none";
+    this.scroller.hidden = access === "none";
+    if (reappearing) queueMicrotask(() => this.queueRender("reset"));
+    this.jump.hidden = this.jump.hidden || access === "none";
+    if (access === "none" && this.details.open) this.details.close();
+    if (access === "none" && this.viewer.open) this.viewer.close();
+    this.typingLine.hidden = access === "none" || this.typingLine.hidden;
+    if (access !== this.announcedAccess) {
+      this.announcedAccess = access;
+      this.dispatchEvent(new CustomEvent("kin:chat-access", { bubbles: true, composed: true, detail: { access } }));
+    }
+  }
+
   render(mode) {
     if (!this.list) return;
     this.applyDisabled();
+    this.applyAccess();
     this.showNotice(this.noticeText());
     const room = this.chatRoom;
     if (!room) {
@@ -814,7 +842,7 @@ class KinChat extends HTMLElement {
     const notes = [];
     // A grouped row's time is visually hidden: show "edited" with the notes.
     if (message.status === "edited" && grouped) notes.push("Edited");
-    if (room.pendingMessages?.has(message.messageId)) notes.push("Waiting to send");
+    if (room.pendingMessages?.has(message.messageId)) notes.push((room.access ?? "write") === "write" ? "Waiting to send" : "Not sent: chat is read-only for you");
     if (notes.length) {
       const note = document.createElement("p");
       note.className = "chat-note";
@@ -1023,9 +1051,11 @@ class KinChat extends HTMLElement {
     const own = message.authorId === room.identity.memberId;
     const actions = [];
     if (message.text !== null) actions.push("copy");
-    if (own && message.text !== null && message.contentKind === "text") actions.push("edit");
-    if (own) actions.push("delete");
-    else if (room.isAdmin) actions.push("remove");
+    // Read-only members (#123) can copy and hide for themselves, nothing else.
+    const canPost = (room.access ?? "write") === "write";
+    if (canPost && own && message.text !== null && message.contentKind === "text") actions.push("edit");
+    if (canPost && own) actions.push("delete");
+    else if (canPost && room.isAdmin) actions.push("remove");
     // Your own message still waiting to send would go out anyway.
     if (!(own && room.pendingMessages?.has(message.messageId))) actions.push("hide");
     return actions;

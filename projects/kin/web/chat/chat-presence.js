@@ -254,8 +254,16 @@ export class ChatPresence {
     } catch { /* kept in memory; the next change saves it */ }
   }
 
-  get sendsReceipts() { return this.settings.receipts && !this.unverified; }
-  get sendsTyping() { return this.settings.typing && !this.unverified; }
+  /** The admin's policy (#123): receipts and typing are posting-adjacent, so
+   * a member who can't post sends neither. */
+  get mayPost() { return this.env.canPost ? this.env.canPost() : true; }
+  get sendsReceipts() { return this.settings.receipts && !this.unverified && this.mayPost; }
+  get sendsTyping() { return this.settings.typing && !this.unverified && this.mayPost; }
+
+  /** The access level changed: stop any typing at once. */
+  accessChanged() {
+    if (!this.mayPost) this.stopTyping();
+  }
 
   /** Reciprocity: someone who sends no receipts sees no one else's. */
   get showsReceipts() { return this.sendsReceipts; }
@@ -309,7 +317,7 @@ export class ChatPresence {
     while (this.writing) await this.writing.catch(() => {});
     // Unverified: this device doesn't know the member's settings, so whatever
     // it holds would overwrite them with defaults. Nothing is written.
-    if (this.closed || !this.dirty || this.unverified) return;
+    if (this.closed || !this.dirty || this.unverified || !this.mayPost) return;
     this.writing = this.write({ retried }).finally(() => { this.writing = null; });
     return this.writing;
   }
