@@ -627,7 +627,7 @@ export async function chatRegressions() {
   await choose([photo]);
   const textBox = chat.querySelector("textarea");
   textBox.value = "Sign by Friday";
-  chat.querySelector("form").requestSubmit();
+  chat.querySelector(".chat-form").requestSubmit();
   await settle();
   check(calls.attach.length === 1 && calls.attach[0][0] === "Sign by Friday" && calls.attach[0][1].join() === "Permission slip.pdf,IMG_2041.jpg", "sent with its caption and files");
   check(chat.querySelector(".chat-pending").hidden && textBox.value === "", "the composer clears after sending");
@@ -755,7 +755,7 @@ export async function chatRegressions() {
   composer.value = "sent now";
   composer.dispatchEvent(new Event("input", { bubbles: true }));
   presence.stoppedCount = 0;
-  chat.querySelector("form").requestSubmit();
+  chat.querySelector(".chat-form").requestSubmit();
   await settle();
   check(presence.stoppedCount >= 1, "sending stops it");
 
