@@ -207,7 +207,7 @@ class KinChatSearch extends HTMLElement {
   roomChanged() {
     // New messages, edits and deletions change what matches.
     this.updatePeople();
-    if (this.text.trim() || this.files?.checked) this.refresh({ quiet: true });
+    if (this.text.trim() || this.files?.checked || this.mine?.checked) this.refresh({ quiet: true });
   }
 
   cancel() {
@@ -225,7 +225,7 @@ class KinChatSearch extends HTMLElement {
   refresh({ quiet = false } = {}) {
     if (!this.status) return;
     this.cancel();
-    const searching = this.text.trim() || this.files?.checked;
+    const searching = this.text.trim() || this.files?.checked || this.mine?.checked;
     // A member shut out of chat can't search it, whatever this device holds.
     const allowed = this.chatRoom && (this.chatRoom.access ?? "write") !== "none";
     if (!allowed || !searching) {

@@ -2944,3 +2944,33 @@ fn search_can_list_only_messages_that_mention_a_member() {
     };
     assert!(crate::core::chat_search(&kchf(&find, &kctx), &mut log, &mut texts).is_err());
 }
+
+#[test]
+fn malformed_mention_tails_are_refused() {
+    let id = |byte: u8| [byte; 16];
+    let tail = |flags: u8, count: u8, ids: &[[u8; 16]]| {
+        let mut out = vec![flags, count];
+        for one in ids {
+            out.extend_from_slice(one);
+        }
+        out
+    };
+    // Unknown flag bits, nothing mentioned, a reply flag where none is allowed.
+    assert!(ChatMentions::decode_tail(&tail(4, 0, &[]), true).is_err());
+    assert!(ChatMentions::decode_tail(&tail(2, 0, &[]), true).is_err());
+    assert!(ChatMentions::decode_tail(&tail(1, 0, &[id(1)]), false).is_err());
+    assert!(ChatMentions::decode_tail(&tail(3, 0, &[id(1)]), false).is_err());
+    // Too many, unsorted, duplicate, zero, and truncated or trailing bytes.
+    let many: Vec<[u8; 16]> = (1..=21).map(id).collect();
+    assert!(ChatMentions::decode_tail(&tail(0, 21, &many), false).is_err());
+    assert!(ChatMentions::decode_tail(&tail(0, 2, &[id(2), id(1)]), false).is_err());
+    assert!(ChatMentions::decode_tail(&tail(0, 2, &[id(1), id(1)]), false).is_err());
+    assert!(ChatMentions::decode_tail(&tail(0, 1, &[id(0)]), false).is_err());
+    let mut short = tail(0, 1, &[id(1)]);
+    short.pop();
+    assert!(ChatMentions::decode_tail(&short, false).is_err());
+    let mut long = tail(0, 1, &[id(1)]);
+    long.push(0);
+    assert!(ChatMentions::decode_tail(&long, false).is_err());
+    assert!(ChatMentions::decode_tail(&tail(0, 1, &[id(1)]), false).is_ok());
+}

@@ -28,3 +28,9 @@ test("only mentions still in the text are sent", () => {
   assert.deepEqual(resolveMentions("hi @Maya", chosen, true), { everyone: false, members: ["b2"] });
   assert.deepEqual(resolveMentions("@everyone @Ben", chosen, true), { everyone: true, members: ["a1"] });
 });
+
+test("a mention of me matches the label others see, and typed labels count", () => {
+  const entries = [{ id: "me", label: "Adult 2" }];
+  assert.deepEqual(splitMentions("ping @Adult 2 now", entries, false).filter((p) => p.mention).map((p) => p.text), ["@Adult 2"]);
+  assert.deepEqual(resolveMentions("hi @Adult 2", new Map([["Adult 2", "me"]]), true), { everyone: false, members: ["me"] });
+});

@@ -1589,12 +1589,6 @@ pub fn execute_history(
     command_result(execute_with(&command, context, &mut held)?)
 }
 
-/// A chat command against the instance's chat log (`kin_chat_execute`): u32
-/// intent length, the KCMD intent, u32 admin count (at most 16), the
-/// household admins' member IDs (16 bytes each, non-zero), then a
-/// record-less KINE context. The admins are the service's word on who may
-/// remove other members' messages; an honest client offers removal only to
-/// them, and Rust refuses a removal by anyone else.
 /// A message may mention only members the host names as able to read chat
 /// (#130); `@everyone` needs no list.
 fn check_mentions(
@@ -1612,6 +1606,13 @@ fn check_mentions(
     }
 }
 
+/// A chat command against the instance's chat log (`kin_chat_execute`): u32
+/// intent length, the KCMD intent, u32 admin count (at most 16), the
+/// household admins' member IDs (16 bytes each, non-zero), u32 member count
+/// (at most 64) and the IDs of members who can read chat (#130), then a
+/// record-less KINE context. The admins are the service's word on who may
+/// remove other members' messages; an honest client offers removal only to
+/// them, and Rust refuses a removal by anyone else.
 pub fn execute_chat_history(
     bytes: &[u8],
     history: &mut crate::history::History,
