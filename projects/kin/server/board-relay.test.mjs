@@ -173,6 +173,8 @@ bothStoresWith(withLimited, "the admin decides whether Limited members draw, loo
   assert.equal(h.sync.status(h.child.sessionToken).board.access, "write");
   assert.deepEqual(h.sync.status(h.adult.sessionToken).board.policy, { limited: "write", temporary: "write" }, "the admin sees the policy");
   assert.equal(h.sync.status(h.child.sessionToken).board.policy, undefined, "others don't");
+  assert.deepEqual(h.sync.householdSettings(h.adult.sessionToken).boardPolicy, { limited: "write", temporary: "write" }, "it comes with the household settings");
+  assert.equal(h.sync.householdSettings(h.child.sessionToken).boardPolicy, undefined);
   // Only the admin, with a fresh passkey, changes it.
   assert.throws(() => h.pairing.setBoardPolicy(h.child.sessionToken, { limited: "none", temporary: "write" }, h.child.memberId), (error) => error.code === "household_admin_required" || error.status === 403);
   assert.throws(() => h.pairing.setBoardPolicy(h.adult.sessionToken, { limited: "read", temporary: "write" }, "someone-else"), (error) => error.code === "fresh_auth_required");

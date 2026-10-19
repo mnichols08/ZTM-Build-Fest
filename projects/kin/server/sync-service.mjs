@@ -147,7 +147,8 @@ export class EncryptedSyncService {
     const admin = isHouseholdAdmin(auth.member, this.now());
     const policy = chatPolicyOf(auth.household);
     // The chat policy (#123) rides along for admins, who alone may see it.
-    return { admin, ...(admin ? { chatPolicy: { limited: policy.limited, temporary: policy.temporary } } : {}), adminRecorded: this.pairingService.hasHouseholdAdmin(auth.household), settings: row ? { ...row, ciphertext: Buffer.from(row.ciphertext).toString("base64url") } : null };
+    const board = boardPolicyOf(auth.household);
+    return { admin, ...(admin ? { chatPolicy: { limited: policy.limited, temporary: policy.temporary }, boardPolicy: { limited: board.limited, temporary: board.temporary } } : {}), adminRecorded: this.pairingService.hasHouseholdAdmin(auth.household), settings: row ? { ...row, ciphertext: Buffer.from(row.ciphertext).toString("base64url") } : null };
   }
 
   updateHouseholdSettings(sessionToken, value) {

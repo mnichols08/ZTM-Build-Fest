@@ -1429,12 +1429,12 @@ export class SyncCoordinator {
       const value = await this.loadCachedHouseholdSettings();
       return { admin: false, adminRecorded: false, value, offline: true };
     }
-    const chatPolicy = response.chatPolicy ?? null;
-    if (!response.settings) return { admin: response.admin, adminRecorded: response.adminRecorded, chatPolicy, value: null };
+    const chatPolicy = response.chatPolicy ?? null, boardPolicy = response.boardPolicy ?? null;
+    if (!response.settings) return { admin: response.admin, adminRecorded: response.adminRecorded, chatPolicy, boardPolicy, value: null };
     const candidate = { householdId: this.identity.householdId, ...response.settings };
     const value = await this.decryptCachedHouseholdSettings(candidate);
     const cached = await this.keyStore.cacheHouseholdSettings(candidate);
-    return { admin: response.admin, adminRecorded: response.adminRecorded, chatPolicy,
+    return { admin: response.admin, adminRecorded: response.adminRecorded, chatPolicy, boardPolicy,
       value: cached.revision === candidate.revision ? value : await this.decryptCachedHouseholdSettings(cached) };
   }
 
