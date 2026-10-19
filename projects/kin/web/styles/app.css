@@ -525,6 +525,19 @@ span.today-summary-entry { color: var(--ink-muted); }
 .today-summary-count { flex: none; min-width: 1.6em; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .today-empty p { margin: 0 0 10px; }
 .today-quick-add { min-height: var(--tap); }
+.today-shopping-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tap);
+  padding: 8px 12px;
+  margin-inline-start: 8px;
+  color: var(--accent);
+  font-weight: 650;
+  text-underline-offset: 3px;
+}
+.today-shopping-link:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: var(--r-control); }
+@media (max-width: 460px) { .today-shopping-link { margin-inline-start: 0; } }
 .routine-period { margin: 10px 0 2px; color: var(--ink-muted); font-size: 13px; font-weight: 640; text-transform: uppercase; letter-spacing: .05em; }
 .item-list { margin: 0; padding: 0; list-style: none; }
 .item-list > li + li { border-top: 1px solid var(--line); }

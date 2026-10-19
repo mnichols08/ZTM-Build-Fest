@@ -45,7 +45,7 @@ export class ViewBuilder {
 
     // Today: a practical heading (the date), the capture field, catch-up, the
     // onboarding card while it applies, and the composition.
-    const today = page("today", "Today");
+    const today = page("today", "Today", "See what needs doing, or add something for your household to remember.");
     this.app.todayDate = document.createElement("p");
     this.app.todayDate.className = "page-lead today-date";
     today.querySelector(".page-intro").append(this.app.todayDate);

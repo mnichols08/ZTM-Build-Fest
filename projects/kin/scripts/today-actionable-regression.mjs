@@ -96,9 +96,11 @@ export async function todayActionableRegressions(recovery) {
   pending.remove();
 
   const empty = mount({ today: DAY, items: [] });
-  check(!empty.querySelector(".today-summary") && /No household tasks yet/.test(empty.querySelector('[data-section="today"]').textContent) &&
-    empty.querySelector(".today-quick-add")?.textContent === "Add a task for today" && !empty.querySelector('[data-section="upcoming"], [data-section="earlier"]'),
-  "A. an empty household shows one calm empty state with the Quick add action and no counts");
+  check(!empty.querySelector(".today-summary") && /Nothing to do yet/.test(empty.querySelector('[data-section="today"]').textContent) &&
+    empty.querySelector(".today-quick-add")?.textContent === "Add a task for today" &&
+    empty.querySelector(".today-shopping-link")?.getAttribute("href") === "#lists/shopping" &&
+    !empty.querySelector('[data-section="upcoming"], [data-section="earlier"]'),
+  "A. an empty household offers native Quick add and Shopping paths with no counts");
   empty.remove();
 
   const allDone = mount({ today: DAY, items: [fixtures.completed] });
