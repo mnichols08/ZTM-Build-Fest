@@ -1464,6 +1464,6 @@ test("chat polls are posted, voted in and closed through the engine, and a page 
   assert.equal(page().messages[0].poll.closed, true);
   // Deleting it for everyone takes the votes with it.
   run({ type: "delete-chat-message", messageId: poll, byAdmin: false });
-  assert.equal(page().messages[0].poll, null);
+  assert.equal(page().messages[0].poll, undefined);
   assert.equal(page().messages[0].status, "deleted");
 });
