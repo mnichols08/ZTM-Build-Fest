@@ -190,6 +190,8 @@ export class ShellBuilder {
     };
     this.app.commandPalette.onDismiss = ({ opener }) => this.ctx.append.restoreCommandFocus(opener);
     this.app.append(this.app.commandPalette);
+    this.app.chatShare = document.createElement("kin-chat-share");
+    this.app.append(this.app.chatShare);
     this.app.attachmentInput = this.ctx.attachments.buildAttachmentInput();
     this.app.append(this.app.attachmentInput);
     this.ctx.navigation.showPageFromLocation();

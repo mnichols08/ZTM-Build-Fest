@@ -349,7 +349,7 @@ export async function chatRegressions() {
   await settle();
   const menu = chat.querySelector(`[data-message-id="${ownRow.dataset.messageId}"] .chat-menu`);
   check(menu && document.activeElement === menu.querySelector("button"), "menu opens with focus");
-  check([...menu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,reply,pin,edit,delete", "own message actions (not Delete for me while it waits to send)");
+  check([...menu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,reply,to-shopping,to-todo,to-handoff,to-note,pin,edit,delete", "own message actions (not Delete for me while it waits to send)");
   menu.querySelector('[data-action="edit"]').click();
   await settle();
   check(input.value === "Send button" && chat.querySelector(".chat-cancel").hidden === false, "editing in the composer");
@@ -368,7 +368,7 @@ export async function chatRegressions() {
   theirs.querySelector(".chat-menu-button").click();
   await settle();
   const theirMenu = chat.querySelector(`[data-message-id="${theirs.dataset.messageId}"] .chat-menu`);
-  check([...theirMenu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,reply,pin,remove,hide", "an admin may remove others' messages");
+  check([...theirMenu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,reply,to-shopping,to-todo,to-handoff,to-note,pin,remove,hide", "an admin may remove others' messages");
   const realConfirm = window.confirm;
   const questions = [];
   window.confirm = (question) => { questions.push(question); return true; };
@@ -1185,6 +1185,46 @@ export async function chatRegressions() {
     box.value = "";
     box.dispatchEvent(new Event("input", { bubbles: true }));
     chat.resetMentions();
+  }
+
+  // A message becomes a record (#132): four actions hand its text to the app,
+  // and the dialog says who will see it, edits, and keeps files opt-in.
+  {
+    const heard = [];
+    chat.addEventListener("kin:chat-to-record", (event) => heard.push(event.detail));
+    const target = rows().findLast((row) => !row.classList.contains("own") && row.querySelector(".chat-menu-button") && !row.querySelector(".chat-gone"));
+    target.querySelector(".chat-menu-button").click();
+    await settle();
+    const menuNow = chat.querySelector(`[data-message-id="${target.dataset.messageId}"] .chat-menu`);
+    const labelsNow = [...menuNow.querySelectorAll("button")].map((button) => button.textContent);
+    check(["Add to Shopping", "Add to To do", "Make a handoff", "Save as a note"].every((label) => labelsNow.includes(label)), `the four actions are offered (${labelsNow})`);
+    menuNow.querySelector('[data-action="to-shopping"]').click();
+    await settle();
+    check(heard.length === 1 && heard[0].kind === "shopping" && typeof heard[0].text === "string" && heard[0].text.length > 0 && Array.isArray(heard[0].files), "Add to Shopping hands the text to the app");
+    check(!JSON.stringify(Object.keys(heard[0])).match(/messageId|authorId/u), "and nothing that names the message or its author");
+    if (customElements.get("kin-chat-share")) {
+      const share = document.createElement("kin-chat-share");
+      document.body.append(share);
+      const saved = [];
+      const files = [{ name: "boiler.png", size: 10, type: "image/png", load: async () => null }];
+      share.open({ kind: "note", text: "Boiler code is 4821\nFront door sticks", files, limited: true, submit: async (payload) => { saved.push(payload); return { ok: true, itemId: null, problems: [] }; } });
+      check(share.dialog.open && share.input.value === "Boiler code is 4821" && share.body.value.includes("Front door sticks"), "the note opens with a title and the text");
+      check(share.audience.textContent.includes("including members who can't read the chat"), "and says who will see it, including members without chat");
+      check(!share.files.hidden && share.files.querySelector("input").checked === false, "files are offered, unchecked");
+      share.form.requestSubmit();
+      await settle();
+      check(saved.length === 1 && saved[0].kind === "note" && saved[0].title === "Boiler code is 4821" && saved[0].files.length === 0, "saving copies no file unless chosen");
+      check(share.querySelector(".chat-share-link")?.getAttribute("href") === "#household/notes", "a link to the new note");
+      share.cancel.click();
+      check(!share.dialog.open, "Done closes it");
+      share.open({ kind: "handoff", text: "Milk\nplease", files, submit: async () => ({ ok: false, message: "No luck." }) });
+      check(share.input.value === "Milk please" && share.files.hidden, "a handoff is one line and takes no files");
+      share.form.requestSubmit();
+      await settle();
+      check(share.error.textContent === "No luck." && share.dialog.open, "a failed save stays open with the reason");
+      share.reset();
+      share.remove();
+    }
   }
 
   chat.room = null;
