@@ -22,6 +22,13 @@ written anywhere. Locking, closing the tab, or a lock from another tab
 zero-fills and drops it; see [THREAT-MODEL](THREAT-MODEL.md) for what that
 does and does not guarantee.
 
+A refresh of the same tab can reopen the household without unlocking again
+([ADR 0010](decisions/0010-reload-resume.md)). For that, the tab keeps a
+non-extractable key in IndexedDB while unlocked and, only while the page
+unloads, writes the root sealed with that key to its own sessionStorage. Both
+are deleted when used, after two minutes, on any real lock, and when the
+setting is off. No household plaintext or raw key is stored.
+
 Local reminders are in-memory timers in one tab only and are never persisted.
 A lock suspends them. While locked, Kin keeps only each reminder's record id,
 due time and local vault id; it keeps no title and no timer, so nothing can

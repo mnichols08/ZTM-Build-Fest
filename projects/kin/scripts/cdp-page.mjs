@@ -41,3 +41,14 @@ export async function waitForOrigin(evaluate, origin, { timeoutMs = PAGE_TIMEOUT
     await delay(50);
   }
 }
+
+// Browser regressions reload pages and expect the lock screen, so every
+// regression tab starts with refresh-resume (#351) off. The check that wants
+// it on sets the preference to "on" itself; this only fills an unset value.
+export const REGRESSION_DEFAULTS_SCRIPT =
+  'try { if (localStorage.getItem("kin.reload-resume-enabled") === null) localStorage.setItem("kin.reload-resume-enabled", "off"); } catch {}';
+
+/** Installs REGRESSION_DEFAULTS_SCRIPT for every later page load in a tab. */
+export function applyRegressionDefaults(send) {
+  return send("Page.addScriptToEvaluateOnNewDocument", { source: REGRESSION_DEFAULTS_SCRIPT });
+}

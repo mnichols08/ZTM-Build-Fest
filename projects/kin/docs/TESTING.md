@@ -339,8 +339,11 @@ controls, and a 320px Today layout check asserts no overflow, 48px targets,
 fixed bottom navigation, and collapsed details.
 The same mobile suite checks that time spent with the page hidden counts toward
 the configured inactivity limit and that an expired limit locks before the
-person can continue; pointer and scroll activity reset the deadline. Closing or
-reloading always locks immediately. First-run
+person can continue; pointer and scroll activity reset the deadline. Closing the
+tab always locks immediately; a refresh of the same tab stays unlocked unless
+the person turned that off ([ADR 0010](decisions/0010-reload-resume.md)), and
+the main browser regression checks refresh, Lock, navigation and the setting.
+Regression tabs start with refresh-resume off (`scripts/cdp-page.mjs`). First-run
 copy explains that passkey-first describes everyday unlock; initial encryption
 setup still starts with the recovery key.
 

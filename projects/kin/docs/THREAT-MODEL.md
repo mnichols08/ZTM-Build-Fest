@@ -78,6 +78,15 @@ its canonical events, draft text and usable sync CryptoKeys survive logout.
 The [v0.10 record](V0.10.0.md) gates this claim on complete migration, including
 outbox duplicates and legacy provisioning/decryption capabilities.
 
+**Exception, refresh resume (#351, [ADR 0010](decisions/0010-reload-resume.md)).**
+For two minutes after an unlocked tab unloads, that tab's sessionStorage holds
+the root sealed with a non-extractable key kept in IndexedDB. Someone with the
+person's browser profile in that window could use the browser to combine them
+and unlock. The owner accepted this: access to the person's own browser is the
+person's responsibility. Both halves are deleted on use, on expiry, on every
+real lock and when the device setting is off; only a `reload` of the same tab
+with a matching vault, root version and lock epoch can use them.
+
 This does not protect a compromised unlocked browser runtime, privileged malicious
 extensions, OS malware, resident-key memory forensics, a compromised origin/build,
 XSS while unlocked, someone able to satisfy the configured authenticator/recovery

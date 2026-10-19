@@ -2,6 +2,7 @@
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { PRIMARY_DESTINATIONS, routeHash } from "../../routes.js";
 import { clearLegacyDrafts } from "../kin-security.js";
+import { currentNavigationType, readReloadResumePreference, writeReloadResumePreference } from "../../security/reload-resume.js";
 import { LOCK_ICON, NAV_ICONS, SEARCH_ICON } from "../shared/icons.js";
 
 export class ShellBuilder {
@@ -165,6 +166,18 @@ export class ShellBuilder {
       notifyPeerLock: (lockEpoch) => this.ctx.session.notifyPeerLock(lockEpoch),
       lockHousehold: (broadcast, options) => this.ctx.session.lockHousehold(broadcast, options),
       setAutoLockMinutes: (minutes) => this.ctx.session.setAutoLockMinutes(minutes),
+      takeReloadResume: async (readManifest) => {
+        const resumed = await this.app.reloadResume.take({ navigationType: currentNavigationType(), readManifest });
+        void this.app.reloadResume.sweep();
+        if (resumed) this.app.resumeAutoLockAt = resumed.autoLockAt;
+        return resumed;
+      },
+      reloadResumeEnabled: () => readReloadResumePreference(),
+      setReloadResume: (enabled) => {
+        writeReloadResumePreference(enabled);
+        if (!enabled) void this.app.reloadResume.disarm();
+        else if (this.app.vault && !this.app.vault.locked) void this.app.reloadResume.arm(this.app.vault).catch(() => {});
+      },
     };
     this.app.replaceChildren(this.app.appearanceBackground, header, this.app.security, shell, feedback, this.app.routeAnnouncement);
     this.app.updateNotice = document.createElement("section");
