@@ -613,8 +613,8 @@ test("the chat log store keeps each event once and one sequence per send", async
   // hidden meanwhile, due for the next write; compaction drops deleted ones.
   await one.addHidden(["01".repeat(16)]);
   await two.addHidden(["02".repeat(16)]);
-  assert.deepEqual(await one.settleHidden({ ids: ["01".repeat(16)], revision: 1 }), { ids: ["01".repeat(16), "02".repeat(16)], revision: 1, dirty: true });
-  assert.deepEqual(await one.settleHidden({ ids: ["01".repeat(16), "02".repeat(16)], revision: 2, dropped: ["01".repeat(16)] }), { ids: ["02".repeat(16)], revision: 2, dirty: false });
+  assert.deepEqual(await one.settleHidden({ ids: ["01".repeat(16)], revision: 1 }), { ids: ["01".repeat(16), "02".repeat(16)], revision: 1, dirty: true, read: null });
+  assert.deepEqual(await one.settleHidden({ ids: ["01".repeat(16), "02".repeat(16)], revision: 2, dropped: ["01".repeat(16)] }), { ids: ["02".repeat(16)], revision: 2, dirty: false, read: null });
   assert.ok(indexedDB.databases.has(chatLogDatabaseName(householdId)));
   await assert.rejects(ChatLogStore.open("nope", { indexedDB, keyRange: fakeKeyRange }), (error) => error.code === "chat_log_unavailable");
 });
@@ -647,6 +647,50 @@ test("a message must follow the engine's text rule before it is sent", async () 
   const { room } = await openRoom(phone, { householdId, request: offline });
   await assert.rejects(room.send(" "), (error) => error.code === "chat_text_invalid");
   assert.equal(room.records.length, 0, "nothing stored");
+});
+
+test("the private read position counts unread messages and follows me between my devices (#133)", { timeout: 60_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs, householdAdmin: true });
+  const tablet = await device(s.pairDevice(s.admin), { householdId: s.householdId, epochs, householdAdmin: true });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs });
+  const devices = [phone.entry, tablet.entry, laptop.entry];
+  const a = await openRoom(phone, s), b = await openRoom(tablet, s), c = await openRoom(laptop, s);
+  const syncAll = async () => { for (const { room } of [a, b, c]) await room.sync({ status: STATUS, devices }); };
+  for (const text of ["one", "two", "three"]) { await c.room.send(text); await new Promise((resolve) => setTimeout(resolve, 3)); }
+  await a.room.send("mine");
+  await syncAll();
+  await syncAll();
+  const byText = new Map();
+  for (const message of a.room.page().messages) byText.set((await a.blobs.openText({ ref: message.blobRef, key: message.blobKey })).text, message);
+  const [one, two, three] = ["one", "two", "three"].map((text) => byText.get(text));
+  assert.deepEqual(a.room.unread().count, 3, "mine doesn't count");
+  assert.equal(a.room.unread().first, null, "no position yet: nothing to mark a divider at");
+  assert.equal(c.room.unread().count, 1, "the partner has only my message to read");
+  assert.equal(await a.room.markReadPosition(two), true);
+  assert.equal(await a.room.markReadPosition(one), false, "it only moves forward");
+  const after = a.room.unread();
+  assert.equal(after.count, 1);
+  assert.equal(after.first.messageId, three.messageId);
+  await syncAll();
+  await syncAll();
+  assert.equal(b.room.unread().count, 1, "my other device agrees");
+  assert.equal(b.room.unread().first.messageId, three.messageId);
+  assert.equal(c.room.unread().count, 1, "nobody else's count changes");
+  // The service holds it sealed, with the hidden-messages record.
+  const stored = s.app.chatRelayService.hidden(s.app.syncService.authorize(s.admin.sessionToken));
+  assert.equal(JSON.stringify(stored.record).includes(two.messageId), false);
+  // Reading on the tablet clears it on the phone.
+  await b.room.markReadPosition(three);
+  await syncAll();
+  await syncAll();
+  assert.equal(a.room.unread().count, 0);
+  // A deleted message is not unread, and survives a lock.
+  a.room.close();
+  const reopened = await openRoom(phone, s);
+  assert.equal(reopened.room.unread().count, 0);
+  assert.deepEqual(reopened.room.readPosition, { postedAt: three.postedAt, messageId: three.messageId });
 });
 
 test("delete for me hides a message on all of my devices and nowhere else (#119)", { timeout: 60_000 }, async (t) => {
@@ -1220,4 +1264,27 @@ test("searching opens older texts in rounds, leaves out hidden messages and refu
   const before = b.engine.calls.search.length;
   await assert.rejects(b.room.search({ query: "dinner" }), (error) => error.code === "chat_no_access");
   assert.equal(b.engine.calls.search.length, before);
+});
+
+test("unread skips hidden, deleted and future-dated messages, and a future position is ignored (#133)", { timeout: 60_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs, householdAdmin: true });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs });
+  const devices = [phone.entry, laptop.entry];
+  const a = await openRoom(phone, s), c = await openRoom(laptop, s);
+  for (const text of ["one", "two", "three"]) { await c.room.send(text); await new Promise((resolve) => setTimeout(resolve, 3)); }
+  for (const { room } of [a, c]) await room.sync({ status: STATUS, devices });
+  for (const { room } of [a, c]) await room.sync({ status: STATUS, devices });
+  const [one, two] = a.room.page().messages;
+  assert.equal(a.room.unread().count, 3);
+  await a.room.hide(one);
+  assert.equal(a.room.unread().count, 2, "hidden is not unread");
+  await c.room.remove(c.room.page().messages.find((message) => message.messageId === two.messageId));
+  for (const { room } of [c, a, c, a]) await room.sync({ status: STATUS, devices });
+  assert.equal(a.room.unread().count, 1, "deleted is not unread");
+  const real = a.room.now;
+  a.room.now = () => real() - 3_600_000;
+  assert.equal(a.room.unread().count, 0, "dated ahead of this clock: not counted yet");
+  a.room.now = real;
 });

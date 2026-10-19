@@ -641,6 +641,42 @@ sees only the record's size, timing and revision. It can't read, forge or
 move one; it could withhold one (fewer hidden messages on a device that
 hasn't kept them, until a device that has writes again).
 
+## Unread position (v1.1, #133)
+
+Unread tracking is a **private read position**: the cursor
+(`postedAt`, `messageId`) of the newest message this member has had on
+screen in a visible, focused window. It is separate from the read receipt
+cursor ([receipts](#read-receipts-and-typing-v11-120)): it is kept whether
+receipts are on or off, and nobody else ever sees it.
+
+It travels in the member's own sealed record, the one that holds the hidden
+messages above, so it is readable only by the member's trusted devices and
+the service learns nothing from it but timing and size. Inside the record's
+ciphertext the packed message IDs may be followed by a 24-byte trailer,
+`postedAt` (u64, big-endian) then the message ID (16 bytes). A plaintext
+whose length is a multiple of 16 has no position; one that is 8 more than a
+multiple of 16 has one. Nothing else changes: version, additional data,
+signature and the `PUT /api/chat/hidden` route are as before. Devices merge
+by taking the later position (it only moves forward), so any order of
+writes gives one result, and a device that read a message after the record
+was built writes it on its next pass.
+
+Everything else is computed on the device from the decrypted log: the count
+of messages from others, not deleted or hidden, after the position, over the
+newest 100 messages (`99+` past that); the "New messages" divider above the
+first of them, placed when the chat is opened or returned to and not moved
+while reading; the count on **Updates → Chat**; and the installed app's
+badge through `navigator.setAppBadge`. No count is sent to the service. The service sees each position change as a
+new revision of the record, so it can tell when a member reads, though not
+what; with no position yet (a new device, or before the first sync) every
+message from others counts until the chat is opened.
+
+Known limits of measuring by the posted time: a message written offline and
+delivered after the member read past its time is not counted; a message dated
+more than five minutes ahead of the clock is not counted until its time comes
+(and a position that far ahead is ignored); and exactly 100 unread already
+shows `99+`.
+
 ## Read receipts and typing (v1.1, #120)
 
 Two small signals for the household chat, neither of them a chat event, and

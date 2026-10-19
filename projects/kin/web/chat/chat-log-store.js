@@ -23,7 +23,7 @@
 //                                          and the message it concerns
 //   meta    { key: "state", nextOrder, cursor, deviceSequence, provisional,
 //             admins, members, membersSignature, retiredThrough, refused,
-//             hidden, hiddenRevision, hiddenDirty, hiddenSealedFor,
+//             hidden, hiddenRevision, hiddenDirty, hiddenSealedFor, read,
 //             presence }
 //
 // `cursor` is the relay position read up to. `deviceSequence` is the last
@@ -34,9 +34,13 @@
 // events' replaced blobs this device already deleted, and `refused` the
 // relay events it skipped because they failed authentication. `hidden` are
 // the messages this member hid for themselves (#119; chat-hidden.js).
-// `presence` is this member's read cursor and receipt and typing settings,
+// `read` is this member's private read position, { postedAt, messageId } (#133):
+// unread tracking that works with read receipts off, synced in the same
+// sealed record as `hidden`. `presence` is this member's read cursor and receipt and typing settings,
 // with the revision of their slot on the service (#121; chat-presence.js).
 // Removing the household from the device deletes the whole database.
+
+import { compareCursors, mergeCursors } from "./chat-presence.js";
 
 const DATABASE_VERSION = 1;
 const EVENTS = "events";
@@ -289,6 +293,20 @@ export class ChatLogStore {
     });
   }
 
+  /** Moves this member's private read position forward (#133), to be written
+   * to the member's record on the next pass. Returns the position held. */
+  async markReadPosition(cursor) {
+    return transact(this.db, [META], "readwrite", async ({ meta }) => {
+      const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
+      if (compareCursors(cursor, state.read ?? null) > 0) {
+        state.read = { postedAt: cursor.postedAt, messageId: cursor.messageId };
+        state.hiddenDirty = true;
+        await settle(meta.put(state));
+      }
+      return state.read ?? null;
+    });
+  }
+
   /**
    * After a pass read (and maybe wrote) the member's record at `revision`:
    * keeps `ids` plus anything hidden here meanwhile (hiding only adds, so a
@@ -296,7 +314,7 @@ export class ChatLogStore {
    * everyone). Still due for writing when something hidden here isn't in
    * `ids` (or `dirty` says so).
    */
-  async settleHidden({ ids, revision, dirty = false, dropped = [], sealedFor = null }) {
+  async settleHidden({ ids, revision, dirty = false, dropped = [], sealedFor = null, read = null }) {
     return transact(this.db, [META], "readwrite", async ({ meta }) => {
       const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
       const gone = new Set(dropped);
@@ -304,10 +322,13 @@ export class ChatLogStore {
       const merged = [...new Set([...(state.hidden ?? []), ...ids])].filter((id) => !gone.has(id)).sort();
       state.hidden = merged;
       state.hiddenRevision = revision;
-      state.hiddenDirty = dirty || merged.some((id) => !written.has(id));
+      // The read position only moves forward; one read here since the record
+      // was built is still due for writing.
+      state.read = mergeCursors(state.read ?? null, read);
+      state.hiddenDirty = dirty || merged.some((id) => !written.has(id)) || compareCursors(state.read, read) > 0;
       if (sealedFor) state.hiddenSealedFor = sealedFor;
       await settle(meta.put(state));
-      return { ids: state.hidden, revision, dirty: state.hiddenDirty };
+      return { ids: state.hidden, revision, dirty: state.hiddenDirty, read: state.read ?? null };
     });
   }
 

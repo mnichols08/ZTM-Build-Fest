@@ -1045,6 +1045,61 @@ export async function chatRegressions() {
     check(!rowOf().querySelector(".chat-reactions") && !rowOf().querySelector('[data-action="react-open"]'), "a deleted message has no reactions");
   }
 
+  // Unread marker and badges (#133): the divider goes where the member left
+  // off when they open the chat, stays while they read, and goes when they
+  // leave; the count reaches the Chat link and clears with no room.
+  {
+    const counts = [];
+    chat.addEventListener("kin:chat-unread", (event) => counts.push(event.detail));
+    const firstUnread = log[log.length - 5].messageId;
+    Object.assign(room, {
+      unreadCount: 3, unreadFirst: firstUnread, positions: [],
+      unread() { return { count: this.unreadCount, capped: false, first: this.unreadFirst ? { messageId: this.unreadFirst } : null }; },
+      async markReadPosition(message) { this.positions.push(message.messageId); return true; },
+    });
+    chat.room = null;
+    await settle();
+    chat.room = room;
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    check(counts.at(-1)?.count === 3, `the chat publishes its unread count (${JSON.stringify(counts.at(-1))})`);
+    const link = app?.segmentNavs?.get("updates")?.querySelector('[data-segment="chat"] .segment-count');
+    if (app) check(link?.textContent === "3" && link.getAttribute("aria-label") === "3 unread", "Updates → Chat shows the count");
+    const realRead = chat.canRead.bind(chat);
+    chat.canRead = () => false;
+    chat.windowChanged();
+    await settle();
+    check(!chat.querySelector(".chat-unread-divider"), "no divider while the chat isn't being read");
+    chat.canRead = () => true;
+    chat.windowChanged();
+    await settle();
+    await settle();
+    const divider = chat.querySelector(".chat-unread-divider");
+    check(divider?.textContent === "New messages" && divider.getAttribute("role") === "separator", "a New messages divider appears on opening");
+    check(divider.closest(".chat-row")?.dataset.messageId === firstUnread, "above the first unread message");
+    check(room.positions.length > 0, "the private read position follows what is on screen");
+    // Reading moves the count, not the divider.
+    Object.assign(room, { unreadCount: 0, unreadFirst: null });
+    notify();
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    check(counts.at(-1).count === 0, "reading clears the count");
+    check(chat.querySelector(".chat-unread-divider"), "the divider stays while reading");
+    chat.canRead = () => false;
+    chat.windowChanged();
+    await settle();
+    check(!chat.querySelector(".chat-unread-divider"), "leaving the chat clears the divider");
+    chat.canRead = realRead;
+    // No room (locked): no count.
+    room.unreadCount = 2;
+    chat.room = null;
+    await settle();
+    check(counts.at(-1).count === 0, "with no room (Kin locked) there is no count");
+    chat.room = room;
+    await settle();
+    check(counts.at(-1).count === 2, "and it returns with the room");
+  }
+
   chat.room = null;
   await settle();
   if (!app) chat.remove();

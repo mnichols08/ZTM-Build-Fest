@@ -8,7 +8,10 @@
 //
 //   { version: 1, householdId, memberId, revision, senderDeviceId,
 //     nonce, ciphertext,            the hidden message IDs (16 bytes each,
-//                                   sorted, back to back), AES-256-GCM
+//                                   sorted, back to back), then optionally
+//                                   the private read position (#133):
+//                                   postedAt u64 big-endian + message ID
+//                                   (24 bytes), AES-256-GCM
 //     recipients: [{ deviceId, fingerprint, ephemeralPublicKey, salt,
 //                    nonce, wrappedKey }],   the content key for each of
 //                                            the member's devices
@@ -30,6 +33,8 @@ const encoder = new TextEncoder();
 /** Most IDs one record holds: 160 KB packed, about 213 KB in base64url,
  * inside the service's 256 KiB bound with room for 64 recipients. */
 export const MAX_HIDDEN_MESSAGES = 10_000;
+/** The private read position after the IDs: postedAt (8) + message ID (16). */
+const READ_TRAILER = 24;
 
 export class ChatHiddenError extends Error {
   constructor(message, code = "chat_hidden_invalid") {
@@ -89,7 +94,7 @@ async function wrappingKey(sharedSecret, salt, info, usage) {
  * the member's trusted devices from the verified directory ({ deviceId,
  * fingerprint, publicKeys }), the sender among them.
  */
-export async function sealHiddenRecord({ ids, householdId, memberId, revision, senderDeviceId, signingKey, recipients }) {
+export async function sealHiddenRecord({ ids, read = null, householdId, memberId, revision, senderDeviceId, signingKey, recipients }) {
   const list = [...new Set(ids)].sort();
   if (!list.every(isId) || list.length > MAX_HIDDEN_MESSAGES) throw new ChatHiddenError("Too many hidden messages to keep.", "chat_hidden_full");
   if (!recipients.length || recipients.length > 64 || !recipients.some((entry) => entry.deviceId === senderDeviceId)) throw invalid();
@@ -98,10 +103,16 @@ export async function sealHiddenRecord({ ids, householdId, memberId, revision, s
   try {
     const contentKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt"]);
     const nonce = crypto.getRandomValues(new Uint8Array(12));
-    const packed = new Uint8Array(list.length * 16);
+    if (read && !(Number.isSafeInteger(read.postedAt) && read.postedAt >= 0 && isId(read.messageId))) throw invalid();
+    const packed = new Uint8Array(list.length * 16 + (read ? READ_TRAILER : 0));
     list.forEach((value, index) => {
       for (let byte = 0; byte < 16; byte += 1) packed[index * 16 + byte] = Number.parseInt(value.slice(byte * 2, byte * 2 + 2), 16);
     });
+    if (read) {
+      const at = list.length * 16;
+      new DataView(packed.buffer).setBigUint64(at, BigInt(read.postedAt));
+      for (let byte = 0; byte < 16; byte += 1) packed[at + 8 + byte] = Number.parseInt(read.messageId.slice(byte * 2, byte * 2 + 2), 16);
+    }
     const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
       { name: "AES-GCM", iv: nonce, additionalData: contentAad(header) }, contentKey, packed));
     const wrapped = [];
@@ -141,7 +152,13 @@ export async function sealHiddenRecord({ ids, householdId, memberId, revision, s
  * member's devices write it afresh), and `chat_hidden_not_for_me` (not
  * sealed to this device's current key: added, or rekeyed, since).
  */
-export async function openHiddenRecord({ record, householdId, memberId, revision, deviceId, deviceFingerprint = "", agreementPrivateKey, senders }) {
+export async function openHiddenRecord(options) {
+  return (await openHiddenState(options)).ids;
+}
+
+/** Like openHiddenRecord, and also the private read position (#133): `{ ids,
+ * read }` with `read` a `{ postedAt, messageId }` or null. */
+export async function openHiddenState({ record, householdId, memberId, revision, deviceId, deviceFingerprint = "", agreementPrivateKey, senders }) {
   if (!record || record.version !== VERSION || record.householdId !== householdId || record.memberId !== memberId ||
       record.revision !== revision || !Array.isArray(record.recipients)) throw invalid();
   const untrusted = () => new ChatHiddenError("The device that saved the hidden messages is no longer trusted.", "chat_hidden_untrusted_sender");
@@ -177,11 +194,19 @@ export async function openHiddenRecord({ record, householdId, memberId, revision
     try {
       const contentKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["decrypt"]);
       const plain = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64Url(record.nonce), additionalData: contentAad(header) }, contentKey, fromBase64Url(record.ciphertext)));
-      if (plain.length % 16 || plain.length / 16 > MAX_HIDDEN_MESSAGES) throw invalid();
+      const hex = (bytes) => [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+      const trailer = plain.length % 16 === READ_TRAILER % 16 && plain.length >= READ_TRAILER ? READ_TRAILER : 0;
+      if (plain.length % 16 !== trailer % 16 || (plain.length - trailer) / 16 > MAX_HIDDEN_MESSAGES) throw invalid();
+      const count = plain.length - trailer;
       const ids = [];
-      for (let at = 0; at < plain.length; at += 16)
-        ids.push([...plain.subarray(at, at + 16)].map((byte) => byte.toString(16).padStart(2, "0")).join(""));
-      return ids;
+      for (let at = 0; at < count; at += 16) ids.push(hex(plain.subarray(at, at + 16)));
+      let read = null;
+      if (trailer) {
+        const postedAt = new DataView(plain.buffer, plain.byteOffset + count, 8).getBigUint64(0);
+        if (postedAt > BigInt(Number.MAX_SAFE_INTEGER)) throw invalid();
+        read = { postedAt: Number(postedAt), messageId: hex(plain.subarray(count + 8, count + 24)) };
+      }
+      return { ids, read };
     } finally {
       rawKey.fill(0);
     }

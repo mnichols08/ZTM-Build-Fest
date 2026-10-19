@@ -840,6 +840,8 @@ button.chat-quote:hover, button.chat-quote:focus-visible { color: var(--ink); }
 .chat-replying-cancel { min-height: var(--tap); padding-inline: 10px; border: 0; border-radius: var(--r-control); background: transparent; color: var(--ink); font: inherit; cursor: pointer; }
 .chat-replying-cancel:hover, .chat-replying-cancel:focus-visible { background: var(--surface); }
 .chat-row.chat-highlight { background: var(--surface-secondary); outline: 2px solid var(--line-strong); transition: background-color .4s; }
+.chat-unread-divider { display: flex; align-items: center; gap: 10px; margin: 6px 0 10px; color: var(--accent); font-size: 12px; font-weight: 700; }
+.chat-unread-divider::before, .chat-unread-divider::after { content: ""; flex: 1; border-top: 1px solid var(--accent); }
 .chat-row:focus:not(:focus-visible) { outline: none; }
 .chat-row.chat-highlight:focus { outline: 2px solid var(--line-strong); }
 .chat-react-grid { display: flex; flex-wrap: wrap; flex-basis: 100%; gap: 2px; max-height: 190px; overflow-y: auto; }

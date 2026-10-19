@@ -54,16 +54,19 @@ class KinSegmentNav extends HTMLElement {
       if (entry.count) {
         const count = document.createElement("span");
         count.className = "segment-count";
-        count.textContent = String(entry.count);
-        count.setAttribute("aria-label", `${entry.count} ${entry.countLabel ?? "open"}`);
+        count.textContent = entry.countText ?? String(entry.count);
+        count.setAttribute("aria-label", `${entry.countText ?? entry.count} ${entry.countLabel ?? "open"}`);
         link.append(" ", count);
       }
       item.append(link);
       list.append(item);
     }
     nav.append(list);
+    // A count changing rebuilds the links; keyboard focus stays on its link.
+    const focused = this.contains(document.activeElement) ? document.activeElement.dataset?.segment : null;
     this.dataset.current = this.currentId ?? "";
     this.replaceChildren(nav);
+    if (focused) nav.querySelector(`[data-segment="${CSS.escape(focused)}"]`)?.focus();
   }
 
   focusCurrent() { this.querySelector('[aria-current="true"]')?.focus(); }

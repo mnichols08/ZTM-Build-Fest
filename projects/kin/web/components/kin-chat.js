@@ -106,6 +106,12 @@ class KinChat extends HTMLElement {
     this.end = 0;
     this.total = 0;
     this.following = true;
+    // Where the member left off (#133): the message the "New messages"
+    // divider sits above, set when they open the chat; whether they are
+    // looking at it now; and whether to scroll to the divider once drawn.
+    this.divider = null;
+    this.reading = false;
+    this.dividerPending = false;
     this.messages = [];
     this.rows = new Map();
     this.menuFor = null;
@@ -391,6 +397,29 @@ class KinChat extends HTMLElement {
       this.unsubscribePresence = this.chatRoom.subscribePresence?.(() => this.presenceChanged()) ?? null;
     }
     this.queueRender("reset");
+    this.publishUnread({ now: true });
+  }
+
+  /** Tells the app how many messages are unread (#133), when that changed:
+   * the Chat link and the app icon badge show it. No room, no count. */
+  publishUnread({ now = false } = {}) {
+    // Several changes in a row (a message arriving, then read) make one
+    // update, so the link and the icon badge don't flicker.
+    if (!now) {
+      if (this.unreadTimer) return;
+      this.unreadTimer = setTimeout(() => { this.unreadTimer = null; this.publishUnread({ now: true }); }, 250);
+      return;
+    }
+    clearTimeout(this.unreadTimer);
+    this.unreadTimer = null;
+    let unread = { count: 0, capped: false };
+    try {
+      if (this.chatRoom) unread = this.chatRoom.unread();
+    } catch { /* a view that can't count shows none */ }
+    const key = `${unread.count}:${unread.capped}`;
+    if (key === this.publishedUnread) return;
+    this.publishedUnread = key;
+    this.dispatchEvent(new CustomEvent("kin:chat-unread", { bubbles: true, composed: true, detail: { count: unread.count, capped: unread.capped } }));
   }
 
   get room() {
@@ -443,13 +472,46 @@ class KinChat extends HTMLElement {
       this.offsetParent !== null && !this.closest("[hidden]");
   }
 
-  /** The newest message mostly on screen becomes the member's read cursor. */
+  /**
+   * The newest message mostly on screen becomes the member's read position
+   * (#133, private, kept even with read receipts off) and, if they send
+   * receipts, their read cursor. On opening the chat, or coming back to it,
+   * the "New messages" divider is placed first, from where they left off.
+   */
   evaluateRead() {
-    const presence = this.chatRoom?.presence;
-    if (!presence || !this.canRead()) return;
+    const room = this.chatRoom;
+    if (!room) return;
+    const reading = this.canRead();
+    if (reading !== this.reading) {
+      this.reading = reading;
+      const first = reading ? room.unread?.().first?.messageId ?? null : null;
+      if (first !== this.divider) {
+        this.divider = first;
+        this.dividerPending = Boolean(first);
+        this.queueRender("page");
+      }
+    }
+    if (!reading) return;
     let latest = null;
-    for (const message of this.messages) if (this.onScreen.has(message.messageId)) latest = message;
-    if (latest) presence.markRead(latest);
+    // A message dated in the future can't be read past: the newest sane one counts.
+    const horizon = (room.now?.() ?? Date.now()) + 5 * 60_000;
+    for (const message of this.messages) if (this.onScreen.has(message.messageId) && message.postedAt <= horizon) latest = message;
+    if (!latest) return;
+    void room.markReadPosition?.(latest).catch(() => {});
+    room.presence?.markRead(latest);
+  }
+
+  /** Scrolls to the divider, so the chat opens where the member left off. */
+  scrollToDivider() {
+    if (!this.dividerPending || !this.divider) return;
+    const row = this.rows.get(this.divider)?.row;
+    // One try: a divider outside the drawn rows (more unread than a page)
+    // must not pull the view later, when older rows are drawn.
+    this.dividerPending = false;
+    if (!row || !this.scroller.clientHeight) return;
+    this.scroller.scrollTop += row.getBoundingClientRect().top - this.scroller.getBoundingClientRect().top;
+    this.wasAtBottom = this.atBottom();
+    if (!this.wasAtBottom) this.jump.hidden = false;
   }
 
   windowChanged() {
@@ -567,6 +629,7 @@ class KinChat extends HTMLElement {
   }
 
   roomChanged() {
+    this.publishUnread();
     // Texts that weren't there yet, or couldn't be opened, get another try.
     for (const [messageId, status] of this.textStatus)
       if (status.pending || status.failed) this.textStatus.delete(messageId);
@@ -711,6 +774,7 @@ class KinChat extends HTMLElement {
       else if (this.atBottom()) this.jump.hidden = true;
     }
     this.wasAtBottom = measured ? this.atBottom() : atBottom;
+    this.scrollToDivider();
     if (arrived.length) this.toAnnounce.push(...arrived.map((message) => message.messageId));
     this.flushAnnouncements(newest);
     this.loadMissingTexts();
@@ -904,7 +968,7 @@ class KinChat extends HTMLElement {
       JSON.stringify(message.reactions ?? []), this.reacting === message.messageId ? (this.reactMore ? 2 : 1) : 0,
       (room.access ?? "write") === "write", this.emojiNames.size,
       message.replyTo ? [message.replyTo.index, message.replyTo.state, message.replyTo.text ?? "", message.replyTo.blobRef ?? "", room.isHidden?.(message.replyTo.messageId) ?? false, this.attachments.get(message.replyTo.messageId)?.status ?? "", this.attachments.get(message.replyTo.messageId)?.files[0]?.name ?? "", Object.keys(this.textStatus.get(`quote:${message.replyTo.messageId}`) ?? {})[0] ?? ""].join("\u0001") : "",
-      this.highlighted === message.messageId,
+      this.highlighted === message.messageId, this.divider === message.messageId,
     ].join("\u0000");
   }
 
@@ -953,6 +1017,17 @@ class KinChat extends HTMLElement {
       edited.className = "chat-edited";
       edited.textContent = " · edited";
       header.append(edited);
+    }
+    if (this.divider === message.messageId) {
+      const divider = document.createElement("div");
+      divider.className = "chat-unread-divider";
+      divider.setAttribute("role", "separator");
+      divider.setAttribute("aria-label", "New messages");
+      const label = document.createElement("span");
+      label.setAttribute("aria-hidden", "true");
+      label.textContent = "New messages";
+      divider.append(label);
+      item.append(divider);
     }
     item.append(header);
     if (this.highlighted === message.messageId) item.classList.add("chat-highlight");
