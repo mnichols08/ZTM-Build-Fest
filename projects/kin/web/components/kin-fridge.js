@@ -40,6 +40,7 @@ function changeProblem(error, board) {
   if ((board?.strokes?.length ?? 0) >= MAX_VISIBLE_STROKES) return "The fridge is full. Erase something or clear it to draw more.";
   if ((board?.magnets?.length ?? 0) >= MAX_VISIBLE_MAGNETS) return "The fridge has no room for another magnet. Take one down first.";
   if (error?.code === "board_locked") return "Unlock Kin to draw on the fridge.";
+  if (error?.code === "board_read_only") return "Your household has set the fridge to look only for you.";
   return error?.userMessage ?? "Kin couldn't save that to the fridge. Try again.";
 }
 
@@ -208,6 +209,9 @@ class KinFridge extends HTMLElement {
 
   updateTools() {
     if (!this.tools) return;
+    // Look only (#323): the fridge shows, its tools don't.
+    const drawing = this.room?.access !== "read";
+    this.tools.hidden = !drawing;
     this.colourButtons.forEach((button, index) => button.setAttribute("aria-pressed", String(this.tool === "pen" && index === this.colour)));
     this.widthButtons.forEach((button, index) => button.setAttribute("aria-pressed", String(index === this.width)));
     this.eraserButton.setAttribute("aria-pressed", String(this.tool === "eraser"));
@@ -237,7 +241,16 @@ class KinFridge extends HTMLElement {
       this.updateTools();
       return;
     }
+    if (room.access === "none") {
+      this.state = null;
+      this.summary.textContent = "The fridge isn't available to you in this household.";
+      this.door.hidden = true;
+      this.updateTools();
+      return;
+    }
+    this.door.hidden = false;
     this.door.removeAttribute("aria-disabled");
+    if (room.access === "read") this.door.setAttribute("aria-disabled", "true");
     try {
       this.state = room.board();
     } catch (error) {
@@ -246,6 +259,7 @@ class KinFridge extends HTMLElement {
       this.showStatus("Kin couldn't read the fridge on this device.");
     }
     let summary = fridgeSummary(this.state, this.labelOf);
+    if (room.access === "read") summary += " Your household has set the fridge to look only for you.";
     if (room.waiting) summary += " Waiting to send.";
     if (room.syncError) summary += " The fridge will sync again shortly.";
     this.summary.textContent = summary;
@@ -318,7 +332,7 @@ class KinFridge extends HTMLElement {
   }
 
   pointerDown(event) {
-    if (!this.room || event.button > 0) return;
+    if (!this.room || this.room.access !== "write" || event.button > 0) return;
     // A magnet handles its own pointer (drag or menu).
     if (event.target.closest?.(".fridge-magnet-item")) return;
     // Palm rejection: while a pen is drawing, touches don't count.
@@ -470,7 +484,7 @@ class KinFridge extends HTMLElement {
       button.addEventListener("pointerup", (event) => void this.magnetPointerUp(event, magnet, item));
       button.addEventListener("pointercancel", () => { this.drag = null; this.renderMagnets(); });
       button.addEventListener("click", (event) => {
-        if (event.detail === 0) this.openMagnetMenu(magnet, button);
+        if (event.detail === 0 && this.room?.access === "write") this.openMagnetMenu(magnet, button);
       });
       item.append(button);
       return item;
@@ -480,6 +494,7 @@ class KinFridge extends HTMLElement {
   }
 
   magnetKey(event, magnet) {
+    if (this.room?.access !== "write") return;
     if (event.key === "Delete" || event.key === "Backspace") {
       event.preventDefault();
       void this.removeMagnet(magnet);
@@ -524,7 +539,7 @@ class KinFridge extends HTMLElement {
   }
 
   magnetPointerDown(event, magnet, item) {
-    if (!this.room || event.button > 0) return;
+    if (!this.room || this.room.access !== "write" || event.button > 0) return;
     event.stopPropagation();
     try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* still moves inside the door */ }
     this.drag = { pointerId: event.pointerId, magnetId: magnet.id, startX: event.clientX, startY: event.clientY, moved: false };

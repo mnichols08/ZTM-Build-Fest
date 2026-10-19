@@ -752,6 +752,28 @@ export const schemaMethods = {
         throw new DurableStoreError("Kin could not complete the board relay migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 18) {
+      try {
+        this.transaction(() => {
+          // #323: who may use the fridge, plaintext authorization metadata the
+          // service enforces on the board relay. Everyone draws by default.
+          this.db.exec(`
+            ALTER TABLE households ADD COLUMN board_limited TEXT NOT NULL DEFAULT 'write'
+              CHECK (board_limited IN ('write', 'read', 'none'));
+            ALTER TABLE households ADD COLUMN board_temporary TEXT NOT NULL DEFAULT 'write'
+              CHECK (board_temporary IN ('write', 'read', 'none'));
+            ALTER TABLE households ADD COLUMN board_policy_revision INTEGER NOT NULL DEFAULT 0
+              CHECK (board_policy_revision >= 0);
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(19, Date.now());
+          sqlitePragma(this.db, "user_version = 19");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the fridge policy migration.", { cause: error });
+      }
+    }
   },
 
   verify() {

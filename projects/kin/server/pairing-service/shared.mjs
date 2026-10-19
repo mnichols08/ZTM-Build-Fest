@@ -83,6 +83,26 @@ export function chatPolicyOf(household) {
   };
 }
 
+/** Who may use the family fridge (#317, ADR 0011): "write" (draw and hang
+ * magnets), "read" (look only) or "none", for Limited and Temporary members.
+ * Adults always draw. A household that never set it lets everyone draw. */
+export function boardPolicyOf(household) {
+  const policy = household?.boardPolicy;
+  return {
+    limited: CHAT_ACCESS.includes(policy?.limited) ? policy.limited : "write",
+    temporary: CHAT_ACCESS.includes(policy?.temporary) ? policy.temporary : "write",
+    revision: Number.isSafeInteger(policy?.revision) && policy.revision >= 0 ? policy.revision : 0,
+  };
+}
+
+export function boardAccess(member, household, now = Date.now()) {
+  if (!canParticipate(member, now)) return "none";
+  const kind = normalizeMemberKind(member.kind);
+  if (kind === "adult") return "write";
+  const policy = boardPolicyOf(household);
+  return kind === "limited" ? policy.limited : policy.temporary;
+}
+
 export function chatAccess(member, household, now = Date.now()) {
   if (!canParticipate(member, now)) return "none";
   const kind = normalizeMemberKind(member.kind);

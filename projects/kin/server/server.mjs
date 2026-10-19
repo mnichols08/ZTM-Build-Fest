@@ -1432,6 +1432,33 @@ async function api(request, response, url, context) {
     );
     return;
   }
+  // Who can use the fridge (#323): the chat policy's flow, its own purpose.
+  if (request.method === "POST" && url.pathname === "/api/household/board-policy/options") {
+    const change = service.boardPolicyContext(session);
+    if (!CHAT_ACCESS.includes(body?.limited) || !CHAT_ACCESS.includes(body?.temporary)) throw badRequest();
+    json(response, 200, issueAuthenticationFlow(
+      { purpose: "set-board-policy", limited: body?.limited, temporary: body?.temporary, memberId: change.memberId, deviceId: change.deviceId },
+      change.credentialIds,
+      context,
+    ));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/household/board-policy/finish") {
+    const flow = consumeFlow(body.flow, context);
+    if (flow.purpose !== "set-board-policy") throw badRequest();
+    const auth = service.authorize(session);
+    if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+    const credential = service.credentials.get(body.credential?.id);
+    if (!credential || credential.memberId !== auth.member.id)
+      throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    const result = withTransaction(context, () =>
+      service.setBoardPolicy(session, { limited: flow.limited, temporary: flow.temporary }, auth.member.id),
+    );
+    if (result.changed) syncService.hintHousehold(auth.household.id);
+    json(response, 200, result);
+    return;
+  }
   if (request.method === "POST" && url.pathname === "/api/household/chat-policy/options") {
     const change = service.chatPolicyContext(session);
     if (!CHAT_ACCESS.includes(body?.limited) || !CHAT_ACCESS.includes(body?.temporary)) throw badRequest();

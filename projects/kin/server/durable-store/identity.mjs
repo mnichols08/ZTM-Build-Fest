@@ -113,6 +113,11 @@ export const identityMethods = {
             temporary: row.chat_temporary ?? "write",
             revision: row.chat_policy_revision ?? 0,
           },
+          boardPolicy: {
+            limited: row.board_limited ?? "write",
+            temporary: row.board_temporary ?? "write",
+            revision: row.board_policy_revision ?? 0,
+          },
         });
       }
       for (const row of this.db.prepare("SELECT * FROM members").all()) {
@@ -238,13 +243,16 @@ export const identityMethods = {
     this.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO households(id, version, owner_member_id, chat_limited, chat_temporary, chat_policy_revision) VALUES (?, ?, ?, ?, ?, ?)
+          `INSERT INTO households(id, version, owner_member_id, chat_limited, chat_temporary, chat_policy_revision,
+             board_limited, board_temporary, board_policy_revision) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(id) DO UPDATE SET version = excluded.version, owner_member_id = excluded.owner_member_id,
-             chat_limited = excluded.chat_limited, chat_temporary = excluded.chat_temporary, chat_policy_revision = excluded.chat_policy_revision`,
+             chat_limited = excluded.chat_limited, chat_temporary = excluded.chat_temporary, chat_policy_revision = excluded.chat_policy_revision,
+             board_limited = excluded.board_limited, board_temporary = excluded.board_temporary, board_policy_revision = excluded.board_policy_revision`,
         )
         .run(
           household.id, household.version, household.ownerMemberId ?? null,
           household.chatPolicy?.limited ?? "write", household.chatPolicy?.temporary ?? "write", household.chatPolicy?.revision ?? 0,
+          household.boardPolicy?.limited ?? "write", household.boardPolicy?.temporary ?? "write", household.boardPolicy?.revision ?? 0,
         );
 
       for (const memberId of household.members) {

@@ -30,6 +30,8 @@ import {
 export {
   canManageTrust,
   canParticipate,
+  boardAccess,
+  boardPolicyOf,
   chatAccess,
   chatPolicyOf,
   CHAT_ACCESS,

@@ -22,6 +22,10 @@ documentation only.
   desktop (#320, #321). Drawings live in a third encrypted log beside the
   household history and chat (event kinds 52–58, KBRD, #319) and travel in
   their own relay stream (server schema 18). Older devices never see them.
+  Magnets (emoji, Kin-drawn or a short note) move by keyboard, menu or drag
+  (#322); clearing asks first and anyone can bring it back (#323); the
+  household admin decides whether Limited and Temporary members draw, look
+  only or have no access (#323, server schema 19).
 
 ### Changed
 

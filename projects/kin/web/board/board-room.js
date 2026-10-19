@@ -80,6 +80,9 @@ export class BoardRoom {
     this.refreshQueue = Promise.resolve();
     this.listeners = new Set();
     this.syncError = null;
+    // What the household's fridge policy lets this member do (#323): "write"
+    // (draw), "read" (look only) or "none". The service says so each pass.
+    this.access = "write";
     this.closed = false;
   }
 
@@ -196,6 +199,8 @@ export class BoardRoom {
    */
   async change(command) {
     this.assertOpen();
+    if (this.access !== "write")
+      throw new BoardRoomError("Your household has set the fridge to look only for you.", "board_read_only");
     const write = async () => {
       await this.refresh();
       const state = await this.store.state();
@@ -249,9 +254,16 @@ export class BoardRoom {
     this.pass += 1;
     if (deviceKeys) this.deviceKeys = deviceKeys;
     this.currentEpoch = status.currentEpoch;
+    const access = ["write", "read", "none"].includes(status.board?.access) ? status.board.access : "write";
+    if (access !== this.access) {
+      this.access = access;
+      this.notify();
+    }
+    // No access: nothing is fetched or sent until the admin changes it back.
+    if (access === "none") return { hasMore: false };
     await this.refresh();
     let pushMore = false, pushError = null;
-    if (!status.rotationPending) {
+    if (!status.rotationPending && access === "write") {
       try {
         pushMore = await this.push();
       } catch (error) {

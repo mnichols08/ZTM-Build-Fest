@@ -154,3 +154,59 @@ test("the board routes move binary batches and pages", { timeout: 30_000 }, asyn
   const chat = await fetch(`${url}/api/chat/events?cursor=&limit=20`, { headers: { cookie } });
   assert.equal(decodeEventPage(new Uint8Array(await chat.arrayBuffer())).events.length, 0, "chat never sees the fridge");
 });
+
+// ---- Who can use the fridge (#323) -------------------------------------------
+
+/** A household with a Limited member's device beside the admin's. */
+function withLimited(store = null) {
+  const h = household(store);
+  const invitation = h.pairing.createPairing(h.adult.sessionToken, { kind: "limited" });
+  const claim = h.pairing.claimPairing({ code: invitation.code, credential: credential(`child-${Math.random()}`), deviceLabel: "Tablet" });
+  h.pairing.approvePairing(h.adult.sessionToken, invitation.pairingId, claim.version);
+  const child = h.pairing.activateClaim(claim.claimToken);
+  return { ...h, child };
+}
+
+bothStoresWith(withLimited, "the admin decides whether Limited members draw, look or have no access", (h) => {
+  const draw = (who, eventId, deviceSequence) => h.relay.push(h.auth(who), [envelope(who, { eventId, deviceSequence })]);
+  assert.equal(draw(h.child, hex(1), 1).accepted, 1, "everyone draws by default");
+  assert.equal(h.sync.status(h.child.sessionToken).board.access, "write");
+  assert.deepEqual(h.sync.status(h.adult.sessionToken).board.policy, { limited: "write", temporary: "write" }, "the admin sees the policy");
+  assert.equal(h.sync.status(h.child.sessionToken).board.policy, undefined, "others don't");
+  // Only the admin, with a fresh passkey, changes it.
+  assert.throws(() => h.pairing.setBoardPolicy(h.child.sessionToken, { limited: "none", temporary: "write" }, h.child.memberId), (error) => error.code === "household_admin_required" || error.status === 403);
+  assert.throws(() => h.pairing.setBoardPolicy(h.adult.sessionToken, { limited: "read", temporary: "write" }, "someone-else"), (error) => error.code === "fresh_auth_required");
+  assert.throws(() => h.pairing.setBoardPolicy(h.adult.sessionToken, { limited: "maybe", temporary: "write" }, h.adult.memberId), (error) => error.code === "board_policy_invalid");
+  assert.deepEqual(h.pairing.setBoardPolicy(h.adult.sessionToken, { limited: "read", temporary: "write" }, h.adult.memberId), { limited: "read", temporary: "write", revision: 1, changed: true });
+  // Look only: the fridge reads, but nothing new goes up.
+  assert.equal(h.sync.status(h.child.sessionToken).board.access, "read");
+  assert.throws(() => draw(h.child, hex(2), 2), rejects("board_read_only", 403));
+  assert.equal(h.relay.pull(h.auth(h.child), "", "20").events.length, 1);
+  // No access: not even reading.
+  h.pairing.setBoardPolicy(h.adult.sessionToken, { limited: "none", temporary: "write" }, h.adult.memberId);
+  assert.throws(() => h.relay.pull(h.auth(h.child), "", "20"), rejects("board_unavailable", 403));
+  assert.throws(() => h.relay.status(h.auth(h.child)), rejects("board_unavailable", 403));
+  // Adults always draw.
+  assert.equal(draw(h.adult, hex(3), 1).accepted, 1);
+});
+
+test("the fridge policy persists across a restart", () => {
+  const store = new DurableStore(":memory:");
+  try {
+    const h = withLimited(store);
+    h.pairing.setBoardPolicy(h.adult.sessionToken, { limited: "read", temporary: "none" }, h.adult.memberId);
+    const reloaded = new PairingService({ store });
+    assert.deepEqual(reloaded.households.get(h.adult.householdId).boardPolicy, { limited: "read", temporary: "none", revision: 1 });
+    assert.equal(store.validate(), true);
+  } finally {
+    store.close();
+  }
+});
+
+function bothStoresWith(make, name, body) {
+  test(`${name} (in memory)`, () => body(make()));
+  test(`${name} (durable)`, () => {
+    const store = new DurableStore(":memory:");
+    try { body(make(store)); } finally { store.close(); }
+  });
+}
