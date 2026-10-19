@@ -63,13 +63,13 @@ class KinCompose extends HTMLElement {
     this.form.noValidate = true;
     this.label = document.createElement("label");
     this.label.htmlFor = `item-text${suffix}`;
-    this.label.textContent = this.mode === "today" ? "What would you like to remember?" : this.labelText;
+    this.label.textContent = this.mode === "today" ? "What needs attention?" : this.labelText;
     this.input = document.createElement("input");
     this.input.id = `item-text${suffix}`;
     this.input.name = "item";
     this.input.type = "text";
     this.input.autocomplete = "off";
-    if (this.mode === "today") this.input.placeholder = "For example, milk, or take out the recycling";
+    if (this.mode === "today") this.input.placeholder = "For example, take out the recycling";
     this.input.maxLength = MAX_ITEM_TEXT_BYTES;
     this.input.required = true;
     this.input.setAttribute("aria-describedby", `compose-message${suffix}`);

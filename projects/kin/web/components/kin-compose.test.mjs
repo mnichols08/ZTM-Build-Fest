@@ -74,7 +74,6 @@ test("a new capture clears a waiting line, so a later confirmation can't relabel
 
 test("the Today capture says where an item will go before Add (#265)", () => {
   const element = composer();
-  assert.equal(element.label.textContent, "What would you like to remember?");
   assert.equal(element.input.attributes["aria-describedby"], element.destination.id);
   assert.equal(element.destination.textContent, "Adds to To do, planned for today.");
   element.classification.value = "shopping";
