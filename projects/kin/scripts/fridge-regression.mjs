@@ -88,29 +88,36 @@ export async function fridgeRegressions(client, until) {
   await setViewport(client, { width: 768, height: 1024, deviceScaleFactor: 2, mobile: true });
   assert.equal((await kitchen()).rail, false, "a portrait tablet keeps the stacked layout");
 
-  // Full screen shows the fridge alone; locking leaves it.
+  // Full screen shows the fridge alone; locking leaves it. The page's
+  // full-screen API is stood in for: a real full-screen window outlives this
+  // check and can stall tabs the regression opens later (#327).
   await setViewport(client, { width: 1024, height: 768, deviceScaleFactor: 2, mobile: true });
-  const entered = await client.send("Runtime.evaluate", {
-    expression: `document.querySelector("kin-fridge .fridge-fullscreen").click(), new Promise((resolve) => setTimeout(resolve, 400)).then(() => document.fullscreenElement === document.querySelector("kin-fridge"))`,
-    userGesture: true, awaitPromise: true, returnByValue: true,
-  });
-  if (entered.result?.value === true) {
-    const full = await kitchen();
-    assert.ok(full.rail && full.fullscreen, "full screen in landscape uses the rail");
-    assert.ok(full.doorHeight >= full.innerHeight - 40, `full screen: the door fills the height (${full.doorHeight} of ${full.innerHeight})`);
-    assert.equal(await page(`document.querySelector("kin-fridge .fridge-fullscreen").textContent`), "Leave full screen");
-    await page(`(async () => {
-      const app = document.querySelector("kin-app");
-      app.fridge.room = null;
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      app.fridge.room = window.__fridgeRoom;
-      return true;
-    })()`);
-    assert.equal((await kitchen()).fullscreen, false, "locking leaves full screen");
-  } else {
-    // A browser that refuses full screen says so instead of failing quietly.
-    assert.match((await kitchen()).status, /full screen/i, "a refused full screen is explained");
-  }
+  const full = await page(`(async () => {
+    const fridge = document.querySelector("kin-fridge");
+    let element = null;
+    const change = () => document.dispatchEvent(new Event("fullscreenchange"));
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => element });
+    fridge.requestFullscreen = async () => { element = fridge; change(); };
+    const exit = document.exitFullscreen;
+    document.exitFullscreen = async () => { element = null; change(); };
+    fridge.querySelector(".fridge-fullscreen").click();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const inside = { fullscreen: document.fullscreenElement === fridge, label: fridge.querySelector(".fridge-fullscreen").textContent,
+      rail: fridge.dataset.layout === "rail", note: fridge.querySelector(".fridge-kitchen-note").hidden ? "" : fridge.querySelector(".fridge-kitchen-note").textContent };
+    const app = document.querySelector("kin-app");
+    app.fridge.room = null;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const afterLock = document.fullscreenElement === fridge;
+    app.fridge.room = window.__fridgeRoom;
+    delete fridge.requestFullscreen;
+    document.exitFullscreen = exit;
+    delete document.fullscreenElement;
+    return { ...inside, afterLock, label2: fridge.querySelector(".fridge-fullscreen").textContent };
+  })()`);
+  assert.deepEqual([full.fullscreen, full.label, full.rail], [true, "Leave full screen", true], "full screen in landscape uses the rail");
+  assert.match(full.note, /lock/i, "full screen says how it locks");
+  assert.equal(full.afterLock, false, "locking leaves full screen");
+  assert.equal(full.label2, "Full screen");
 
   // ---- Drawing with a finger (phone) -------------------------------------
   await setViewport(client, { width: 375, height: 812, deviceScaleFactor: 2, mobile: true });
