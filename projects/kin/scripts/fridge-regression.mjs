@@ -332,8 +332,19 @@ export async function fridgeRegressions(client, until) {
   const appearance = await page(`document.documentElement.dataset.kinAppearance ?? null`);
   await page(`(document.documentElement.dataset.kinAppearance = "dark", true)`);
   const dark = await inkCheck();
+  const darkFacts = await page(`(() => {
+    const fridges = document.querySelectorAll("kin-fridge");
+    const fridge = fridges[0];
+    let rule = "none";
+    for (const sheet of document.styleSheets) {
+      try { for (const entry of sheet.cssRules) if (entry.selectorText === ':root[data-kin-appearance="dark"] kin-fridge') rule = sheet.href ?? "inline"; } catch { rule = "unreadable"; }
+    }
+    return { attribute: document.documentElement.getAttribute("data-kin-appearance"), fridges: fridges.length,
+      matches: fridge.matches(':root[data-kin-appearance="dark"] kin-fridge'), door: getComputedStyle(fridge).getPropertyValue("--fridge-door"),
+      rule, sheets: [...document.styleSheets].map((sheet) => sheet.href ?? "inline").join(" "), adopted: document.adoptedStyleSheets.length };
+  })()`);
   await page(`(${JSON.stringify(appearance)} === null ? delete document.documentElement.dataset.kinAppearance : document.documentElement.dataset.kinAppearance = ${JSON.stringify(appearance)}, true)`);
-  assert.notEqual(dark.door, light.door, "dark mode darkens the door");
+  assert.notEqual(dark.door, light.door, `dark mode darkens the door (${JSON.stringify(darkFacts)}; was ${JSON.stringify(appearance)})`);
   assert.notDeepEqual(dark.palette, light.palette, "dark mode remaps the ink colours");
   assert.ok(dark.inked > 0, "drawings stay visible in dark mode");
   await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "active" }, { name: "prefers-reduced-motion", value: "reduce" }] });
