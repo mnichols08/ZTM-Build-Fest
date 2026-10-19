@@ -318,7 +318,7 @@ the product decisions).
   than 10 pins show; any member who can post may pin or unpin. Pins from
   devices that raced past the limit stay in the log but a page lists the
   first 10 that show, so unpinning brings the next one back. Replay keeps at
-  most 64 records.
+  most 64 records, and a command that would exceed that is refused.
 - **Reactions (#127).** `CHAT_REACTION_SET` (47) turns one emoji on or off
   for the event's actor on one message. The emoji is a single grapheme from
   the emoji ranges (a pictograph with optional variation selector and skin

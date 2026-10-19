@@ -1320,9 +1320,13 @@ class KinChat extends HTMLElement {
     this.pinBar.append(icon, " ", total, " · ", line);
     this.pinBar.setAttribute("aria-label", `${count}. Latest: ${text}. ${this.pinList.hidden ? "Show" : "Hide"} all pinned messages`);
     const canPost = (room.access ?? "write") === "write";
+    // A render replaces the list; keep the focus where it was (by pin and button).
+    const focused = this.pinList.contains(document.activeElement) ? document.activeElement : null;
+    const focusKey = focused ? `${focused.closest(".chat-pin-item")?.dataset.messageId}:${focused.className}` : null;
     this.pinList.replaceChildren(...[...pins].reverse().map((pin) => {
       const item = document.createElement("li");
       item.className = "chat-pin-item";
+      item.dataset.messageId = pin.messageId;
       const who = room.authorLabel(pin.pinnedBy);
       const jump = document.createElement("button");
       jump.type = "button";
@@ -1350,6 +1354,11 @@ class KinChat extends HTMLElement {
       }
       return item;
     }));
+    if (focusKey) {
+      const same = [...this.pinList.querySelectorAll("button")].find((button) => `${button.closest(".chat-pin-item")?.dataset.messageId}:${button.className}` === focusKey);
+      // The pin is gone (unpinned or removed): the bar is the next stop.
+      (same ?? this.pinBar).focus({ preventScroll: true });
+    }
   }
 
   togglePins(open = this.pinList.hidden) {
