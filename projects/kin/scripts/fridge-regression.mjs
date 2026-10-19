@@ -58,6 +58,58 @@ export async function fridgeRegressions(client, until) {
     assert.deepEqual(layout.small, [], `${label}: every visible tool is at least 44px tall`);
   }
 
+  // ---- Kitchen-screen mode (#324) ------------------------------------------
+  const kitchen = () => page(`(() => {
+    const fridge = document.querySelector("kin-fridge");
+    const door = fridge.querySelector(".fridge-door").getBoundingClientRect();
+    const tools = fridge.querySelector(".fridge-tools").getBoundingClientRect();
+    const note = fridge.querySelector(".fridge-kitchen-note");
+    return { rail: fridge.dataset.layout === "rail", doorLeft: door.left, doorTop: door.top, doorHeight: door.height, doorBottom: door.bottom,
+      ratio: door.width / door.height, toolsRight: tools.right, toolsTop: tools.top,
+      note: note.hidden ? "" : note.textContent, innerHeight, innerWidth, scrollWidth: document.documentElement.scrollWidth,
+      fullscreen: document.fullscreenElement === fridge, status: fridge.querySelector(".fridge-status").textContent };
+  })()`);
+  for (const [label, metrics] of [
+    ["tablet landscape", { width: 1024, height: 768, deviceScaleFactor: 2, mobile: true }],
+    ["large tablet landscape", { width: 1180, height: 820, deviceScaleFactor: 2, mobile: true }],
+  ]) {
+    await setViewport(client, metrics);
+    await page(`document.querySelector("kin-fridge").scrollIntoView({ block: "start" })`);
+    const view = await kitchen();
+    assert.ok(view.rail, `${label}: a coarse-pointer landscape screen gets the side rail`);
+    assert.ok(view.toolsRight <= view.doorLeft, `${label}: the tools sit beside the door, not above it`);
+    assert.ok(Math.abs(view.ratio - 0.75) < 0.01, `${label}: the door keeps its 3:4 shape`);
+    assert.ok(view.doorHeight >= view.innerHeight - 160, `${label}: the door takes the height (${view.doorHeight} of ${view.innerHeight})`);
+    assert.ok(view.scrollWidth <= view.innerWidth, `${label}: no horizontal scroll`);
+    assert.match(view.note, /lock/i, `${label}: the screen says how it locks`);
+  }
+  await setViewport(client, { width: 768, height: 1024, deviceScaleFactor: 2, mobile: true });
+  assert.equal((await kitchen()).rail, false, "a portrait tablet keeps the stacked layout");
+
+  // Full screen shows the fridge alone; locking leaves it.
+  await setViewport(client, { width: 1024, height: 768, deviceScaleFactor: 2, mobile: true });
+  const entered = await client.send("Runtime.evaluate", {
+    expression: `document.querySelector("kin-fridge .fridge-fullscreen").click(), new Promise((resolve) => setTimeout(resolve, 400)).then(() => document.fullscreenElement === document.querySelector("kin-fridge"))`,
+    userGesture: true, awaitPromise: true, returnByValue: true,
+  });
+  if (entered.result?.value === true) {
+    const full = await kitchen();
+    assert.ok(full.rail && full.fullscreen, "full screen in landscape uses the rail");
+    assert.ok(full.doorHeight >= full.innerHeight - 40, `full screen: the door fills the height (${full.doorHeight} of ${full.innerHeight})`);
+    assert.equal(await page(`document.querySelector("kin-fridge .fridge-fullscreen").textContent`), "Leave full screen");
+    await page(`(async () => {
+      const app = document.querySelector("kin-app");
+      app.fridge.room = null;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      app.fridge.room = window.__fridgeRoom;
+      return true;
+    })()`);
+    assert.equal((await kitchen()).fullscreen, false, "locking leaves full screen");
+  } else {
+    // A browser that refuses full screen says so instead of failing quietly.
+    assert.match((await kitchen()).status, /full screen/i, "a refused full screen is explained");
+  }
+
   // ---- Drawing with a finger (phone) -------------------------------------
   await setViewport(client, { width: 375, height: 812, deviceScaleFactor: 2, mobile: true });
   await page(`document.querySelector("kin-fridge .fridge-door").scrollIntoView({ block: "center" })`);
@@ -251,5 +303,5 @@ export async function fridgeRegressions(client, until) {
   })()`);
   await client.send("Emulation.setTouchEmulationEnabled", { enabled: false });
   await client.send("Emulation.clearDeviceMetricsOverride");
-  return "PASS fridge: 3:4 door fits phone, tablet and desktop; finger, pen and mouse drawing; second-finger cancel; palm rejection; eraser, undo and redo; magnets by dialog, keyboard, menu and drag; clear and bring back, through the real engine (#317)";
+  return "PASS fridge: 3:4 door fits phone, tablet and desktop; finger, pen and mouse drawing; second-finger cancel; palm rejection; eraser, undo and redo; magnets by dialog, keyboard, menu and drag; clear and bring back; kitchen-screen rail, full screen and its lock note, through the real engine (#317, #324)";
 }

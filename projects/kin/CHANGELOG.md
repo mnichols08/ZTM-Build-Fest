@@ -26,7 +26,9 @@ documentation only.
   (#322); clearing asks first and anyone can bring it back (#323); the
   household admin decides whether Limited and Temporary members draw, look
   only or have no access (#323, server schema 19). Encrypted exports carry
-  the fridge and restore brings it back (#363).
+  the fridge and restore brings it back (#363). On a landscape tablet the
+  tools move to a side rail and the door takes the height, with optional full
+  screen; automatic lock is unchanged and the screen says how it locks (#324).
 
 ### Changed
 

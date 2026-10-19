@@ -20,9 +20,14 @@
 //   takes focus, moves with the arrow keys (1%, Shift 10%) or "Move to" one
 //   of nine regions, and can be dragged. Nothing needs dragging.
 // - Clearing (#323) asks first and can be undone by anyone.
+// - Kitchen-screen mode (#324): on a wide landscape touch screen (or in full
+//   screen in landscape) the tools move to a side rail and the door takes the
+//   height. Full screen shows the fridge alone. Neither changes automatic
+//   lock; a note says how this screen locks, and locking leaves full screen.
 import { MAX_VISIBLE_MAGNETS, MAX_VISIBLE_STROKES, BOARD_WIDTH, BOARD_HEIGHT, boardPoints, normalizeNote, simplifyStroke, splitStroke } from "../wasm/kin-board.js";
 import { newBoardId } from "../board/board-room.js";
-import { ERASE_REACH, FRIDGE_COLOURS, FRIDGE_WIDTHS, fridgeSummary, pathPoints, strokeAt } from "../board/fridge-view.js";
+import { ERASE_REACH, FRIDGE_COLOURS, FRIDGE_WIDTHS, KITCHEN_QUERY, fridgeSummary, kitchenScreenNote, pathPoints, strokeAt } from "../board/fridge-view.js";
+import { readAutoLockPreference } from "./app/constants.js";
 import { KIN_MAGNETS, MAGNET_REGIONS, magnetName, magnetPosition, magnetTilt, nudge, regionPoint } from "../board/fridge-magnets.js";
 import "./kin-emoji-picker.js";
 
@@ -66,17 +71,57 @@ class KinFridge extends HTMLElement {
     // Where each moving magnet started, for undo.
     this.moveFrom = new Map();
     this.drag = null;
+    this.onLayout = () => this.updateLayout();
   }
 
   connectedCallback() {
     if (!this.firstElementChild) this.build();
     this.resizeObserver ??= typeof ResizeObserver === "function" ? new ResizeObserver(this.onResize) : null;
     this.resizeObserver?.observe(this.door);
-    this.resize();
+    this.kitchenMedia ??= globalThis.matchMedia?.(KITCHEN_QUERY) ?? null;
+    this.landscapeMedia ??= globalThis.matchMedia?.("(orientation: landscape)") ?? null;
+    this.kitchenMedia?.addEventListener?.("change", this.onLayout);
+    this.landscapeMedia?.addEventListener?.("change", this.onLayout);
+    document.addEventListener("fullscreenchange", this.onLayout);
+    this.updateLayout();
   }
 
   disconnectedCallback() {
     this.resizeObserver?.disconnect();
+    this.kitchenMedia?.removeEventListener?.("change", this.onLayout);
+    this.landscapeMedia?.removeEventListener?.("change", this.onLayout);
+    document.removeEventListener("fullscreenchange", this.onLayout);
+    this.leaveFullscreen();
+  }
+
+  get fullscreen() {
+    return document.fullscreenElement === this;
+  }
+
+  /** The side-rail layout and the lock note (#324). */
+  updateLayout() {
+    if (!this.door) return;
+    const fullscreen = this.fullscreen;
+    const rail = Boolean(this.kitchenMedia?.matches) || (fullscreen && Boolean(this.landscapeMedia?.matches));
+    if (rail) this.dataset.layout = "rail";
+    else delete this.dataset.layout;
+    this.fullscreenButton.textContent = fullscreen ? "Leave full screen" : "Full screen";
+    this.kitchenNote.hidden = !(rail || fullscreen) || !this.room;
+    if (!this.kitchenNote.hidden) this.kitchenNote.textContent = kitchenScreenNote(readAutoLockPreference());
+    this.resize();
+  }
+
+  async toggleFullscreen() {
+    try {
+      if (this.fullscreen) await document.exitFullscreen();
+      else await this.requestFullscreen({ navigationUI: "hide" });
+    } catch {
+      this.showStatus("This browser didn't allow full screen.");
+    }
+  }
+
+  leaveFullscreen() {
+    if (this.fullscreen) document.exitFullscreen?.().catch(() => {});
   }
 
   get room() {
@@ -92,9 +137,13 @@ class KinFridge extends HTMLElement {
     this.undoStack = [];
     this.redoStack = [];
     this.cancelStroke();
+    // Locking (no room) leaves full screen: a shared screen goes back to
+    // the unlock screen, not a fridge that can't be used (#324).
+    if (!value) this.leaveFullscreen();
     if (value) this.unsubscribe = value.subscribe(() => this.render());
     if (!this.firstElementChild) this.build();
     this.render();
+    this.updateLayout();
   }
 
   build() {
@@ -172,6 +221,12 @@ class KinFridge extends HTMLElement {
     this.restoreButton.textContent = "Bring back what was cleared";
     this.restoreButton.hidden = true;
     this.restoreButton.addEventListener("click", () => void this.undoClear());
+    this.fullscreenButton = document.createElement("button");
+    this.fullscreenButton.type = "button";
+    this.fullscreenButton.className = "fridge-fullscreen";
+    this.fullscreenButton.textContent = "Full screen";
+    this.fullscreenButton.hidden = !(document.fullscreenEnabled && typeof this.requestFullscreen === "function");
+    this.fullscreenButton.addEventListener("click", () => void this.toggleFullscreen());
     this.tools.append(colours, widths, this.eraserButton, history, this.magnetButton, this.clearButton, this.restoreButton);
 
     this.door = document.createElement("div");
@@ -199,11 +254,14 @@ class KinFridge extends HTMLElement {
     this.status.className = "fridge-status";
     this.status.setAttribute("role", "status");
     this.status.hidden = true;
+    this.kitchenNote = document.createElement("p");
+    this.kitchenNote.className = "fridge-kitchen-note";
+    this.kitchenNote.hidden = true;
 
     const board = document.createElement("div");
     board.className = "fridge-board";
     board.append(this.door);
-    this.append(heading, lead, this.tools, board, this.summary, this.status, this.buildMagnetDialog(), this.buildClearDialog());
+    this.append(heading, lead, this.tools, this.fullscreenButton, board, this.summary, this.status, this.kitchenNote, this.buildMagnetDialog(), this.buildClearDialog());
     this.updateTools();
   }
 
