@@ -202,7 +202,7 @@ export async function todayActionableRegressions(recovery) {
   completeButton.click();
   await idle();
   const completeMs = performance.now() - started;
-  check(statusOf(dueToday.itemId) === "completed" && app.status.textContent === "Marked complete." && sectionOf(dueToday.itemId) === "completed" &&
+  check(statusOf(dueToday.itemId) === "completed" && /^Marked “.+” done\./.test(app.status.textContent) && sectionOf(dueToday.itemId) === "completed" &&
     document.activeElement === rowIn(app.today, dueToday.itemId)?.querySelector(".reopen-button"),
   "B. one click completes a task through the canonical command and focus moves to its Reopen action");
   const after = summary();
@@ -236,7 +236,7 @@ export async function todayActionableRegressions(recovery) {
   rowIn(app.today, later.itemId).querySelector(".complete-button").click();
   await idle();
   check(statusOf(later.itemId) === "active" && sectionOf(later.itemId) === "upcoming" && !app.alert.hidden &&
-    app.alert.textContent === "Kin could not save that change locally." && !app.retryButton.hidden && app.status.textContent !== "Marked complete." &&
+    app.alert.textContent === "Kin could not save that change locally." && !app.retryButton.hidden && !/^Marked “/.test(app.status.textContent) &&
     (await app.store.loadEvents()).length === eventsBeforeFailure && consistent() === true,
   "B. a local save failure reports the error, claims nothing, keeps the task pending and leaves counts unchanged");
   app.retryButton.click();
@@ -325,7 +325,7 @@ export async function todayActionableRegressions(recovery) {
   releaseLock();
   await new Promise((resolve) => setTimeout(resolve, 150));
   check(app.vault === null && app.state === null && app.main.hidden && !todayBeforeLock.isConnected && app.alert.hidden &&
-    app.status.textContent !== "Marked complete." && !document.body.textContent.includes(lockTask.text),
+    !/^Marked “/.test(app.status.textContent) && !document.body.textContent.includes(lockTask.text),
   "C. a completion settling after lock cannot update or reveal the locked interface");
   await app.security.run(() => app.security.unlockRecovery(recovery));
   await wait(() => app.store && app.state && !app.busy && !app.security.busy, "unlock after pending completion");
@@ -421,7 +421,7 @@ export async function todayLifecycleRegressions(client, { visit, ready }) {
         focus: document.activeElement?.dataset.itemId === id && document.activeElement.dataset.itemAction === "reopen",
       };
     }, offlineId);
-    check(state.status === "Marked complete." && state.chip === "Offline — saved here" && state.chipDescription.includes("saved on this device") && state.focus,
+    check(/^Marked “.+” done\./.test(state.status) && state.chip === "Offline — saved here" && state.chipDescription.includes("saved on this device") && state.focus,
       "offline: Enter completes the focused task locally, focus moves to Reopen, and status distinguishes local saving from sync", state);
 
     // Reload, then unlock locally while offline and render Today from the

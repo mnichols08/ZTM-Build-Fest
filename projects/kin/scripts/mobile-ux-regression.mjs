@@ -119,7 +119,7 @@ export async function mobileUxRegressions(recovery) {
   await idle();
   const completedRow = [...app.shopping.querySelectorAll("kin-item")].find((node) => node.record?.itemId === eggs.itemId);
   check(completedRow.querySelector(".item-completed") && completedRow.querySelector(".reopen-button")?.getAttribute("aria-pressed") === "true", "completion is visibly marked on the row");
-  check(app.selection?.itemId === eggs.itemId && app.detail.querySelector(".reopen-button") && app.status.textContent === "Marked complete.",
+  check(app.selection?.itemId === eggs.itemId && app.detail.querySelector(".reopen-button") && /^Marked “.+” done\./.test(app.status.textContent),
     "completion keeps details open for the same record, offers Reopen and confirms");
   app.detail.querySelector(".reopen-button").click();
   await idle();

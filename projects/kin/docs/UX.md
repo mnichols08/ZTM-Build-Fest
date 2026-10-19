@@ -2034,5 +2034,12 @@ tried them.
 - **Joining (#264).** While waiting for approval, the joining device says who
   checks the key and approves next. Opening a code link without choosing a path
   first explains what happens and that a code never creates a new household.
+- **Named, truthful action feedback (#267).** Completing, reopening or
+  archiving says which item changed ("Marked “Milk” done.", long names
+  shortened) and, with sync, "Waiting to sync." or "It will sync when you're
+  connected." Once the relay has accepted everything waiting, the status says
+  "Sent to your household." once. A lock replaces the line, so no item name
+  survives it. The empty Shopping list says how to add to it.
 - **Consistent identity forms (#268).** Path statements, next steps and the
-  name and nickname forms share spacing, 48 px targets and theme tokens.
+  name and nickname forms share spacing, 48 px targets and theme tokens; long
+  names and device labels wrap rather than widening a 320 px screen.
