@@ -35,13 +35,15 @@
 //! - A reaction (#127) turns one member's emoji on or off. The last write
 //!   per (member, message, emoji) in replay order wins, so a member's devices
 //!   converge. A reaction to a message this log lacks changes nothing; one
-//!   to a deleted message is kept and left out of the page.
+//!   to a deleted message is kept and left out of the page. A message holds
+//!   at most `MAX_REACTION_GROUPS` different emoji; a further one changes
+//!   nothing, in replay as in commands.
 //!
 //! Actors and devices are the event header's, after identity bindings.
 use std::sync::Arc;
 
 use super::*;
-use crate::chat::{ChatMessage, ChatMessageStatus, ReactionGroup};
+use crate::chat::{ChatMessage, ChatMessageStatus, ReactionGroup, MAX_REACTION_GROUPS};
 use crate::event::ChatContentKind;
 
 pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinError> {
@@ -145,6 +147,14 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
             let groups = chat.reactions.entry(*message_id).or_default();
             let found = groups.iter().position(|group| group.emoji == *emoji);
             if *on {
+                // The same cap commands apply: past it a new emoji changes
+                // nothing, so a log can't grow one message without bound.
+                if found.is_none() && groups.len() >= MAX_REACTION_GROUPS {
+                    if groups.is_empty() {
+                        chat.reactions.remove(message_id);
+                    }
+                    return Ok(());
+                }
                 match found {
                     Some(at) if groups[at].actors.contains(&event.actor_id) => {}
                     Some(at) => groups[at].actors.push(event.actor_id),

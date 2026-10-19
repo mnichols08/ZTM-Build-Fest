@@ -405,11 +405,11 @@ revision is meaningful only within one instance.
   for your own and 1 for another member's, once per admin and only with the
   actor among the admins named in the request. Action 47
   (`react-chat-message`) carries `on` (0 or 1) in the u8 field and the emoji
-  as its text payload (1–32 bytes, one emoji grapheme: a malformed one is
-  code 2). Executing requires a message the log holds that is neither
+  as its text payload (1–32 bytes; one emoji grapheme, which executing
+  checks, failing with code 4 otherwise). Executing requires a message the log holds that is neither
   deleted nor removed by a named admin, and a change: turning on a reaction
   the actor already has, or off one they lack, is refused, as is a 25th
-  different emoji on one message.
+  different emoji on one message (replay ignores one past the 24th too).
 - **KCHQ v1** (chat page request, `kin_chat_page`): `"KCHQ"`, version 1,
   reserved u16, before u32 (the page ends before this message index;
   `0xFFFFFFFF` for the newest), limit u16 (1–500), flags u8 (bit 0: texts the

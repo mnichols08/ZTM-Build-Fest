@@ -1276,6 +1276,10 @@ fn an_emoji_is_one_grapheme_from_the_emoji_ranges() {
         "1\u{20E3}\u{20E3}",
         "\u{0}",
         "<b>",
+        "\u{1F44D}\u{200D}\u{1F1FA}\u{1F1F8}",
+        "\u{1F1FA}\u{1F1F8}\u{200D}\u{1F1FA}\u{1F1F8}",
+        "1\u{20E3}\u{200D}\u{1F44D}",
+        "\u{1F44D}\u{1F3FD}\u{FE0F}",
         &too_long,
     ] {
         assert_eq!(check_emoji(emoji), Err(KinError::InvalidEvent), "{emoji:?}");
@@ -1654,4 +1658,28 @@ fn a_page_lists_reactions_and_drops_those_of_deleted_messages() {
     )
     .unwrap();
     assert_eq!(u32_at(&unnamed, 28 + 2 * 128 + 112), 1);
+}
+
+#[test]
+fn replay_ignores_a_new_emoji_past_the_cap() {
+    let mut records = vec![posted(1, MEMBER_1, 0x11, 1, 1)];
+    for index in 0..=MAX_REACTION_GROUPS as u32 {
+        let emoji = char::from_u32(0x1F600 + index).unwrap().to_string();
+        records.push(reacted(2 + index, MEMBER_2, 0x21, 1, &emoji, true));
+    }
+    let state = chat(&records);
+    assert_eq!(reactions_on(&state, 1).len(), MAX_REACTION_GROUPS);
+    // Taking one back makes room for the next to apply.
+    let first = char::from_u32(0x1F600).unwrap().to_string();
+    let extra = char::from_u32(0x1F600 + MAX_REACTION_GROUPS as u32)
+        .unwrap()
+        .to_string();
+    let n = records.len() as u32;
+    records.push(reacted(n + 2, MEMBER_2, 0x21, 1, &first, false));
+    records.push(reacted(n + 3, MEMBER_2, 0x21, 1, &extra, true));
+    let state = chat(&records);
+    let groups = reactions_on(&state, 1);
+    assert_eq!(groups.len(), MAX_REACTION_GROUPS);
+    assert!(groups.iter().all(|(emoji, _)| *emoji != first));
+    assert_eq!(groups.last().unwrap().0, extra);
 }

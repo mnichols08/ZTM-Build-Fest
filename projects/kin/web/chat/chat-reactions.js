@@ -34,7 +34,8 @@ export function reactionChips(reactions, memberId, { names = null, labelOf = (id
   return (reactions ?? []).map(({ emoji, actors }) => {
     const mine = actors.includes(memberId);
     const who = [...(mine ? ["You"] : []), ...actors.filter((actor) => actor !== memberId).map(labelOf)];
-    const name = names?.get(emoji) ?? emoji;
+    // A heart typed without its variation selector still has its name.
+    const name = names?.get(emoji) ?? names?.get(`${emoji}\uFE0F`) ?? emoji;
     return { emoji, name, count: actors.length, mine, who, label: reactionLabel(name, actors.length, mine) };
   });
 }

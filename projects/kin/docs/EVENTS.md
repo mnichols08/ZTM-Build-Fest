@@ -300,7 +300,8 @@ the product decisions).
   reactions of a message it shows as deleted or removed, and lists the rest
   grouped by emoji in the order replay first saw them. Commands refuse a
   reaction that would change nothing and a 25th different emoji on one
-  message; replay keeps whatever a log holds.
+  message; replay applies the same cap, so a log can't grow one message
+  without bound. A joiner joins only pictographs, never flags or keycaps.
 - Chat never appears in the KINS projection or the catch-up summary. Hosts
   read it with `kin_chat_page`.
 - An engine older than v1.1 does not know these kinds and rejects them with

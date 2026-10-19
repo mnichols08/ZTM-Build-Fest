@@ -915,6 +915,8 @@ class KinChat extends HTMLElement {
   reactionList(message, room) {
     const chips = reactionChips(message.reactions, room.identity.memberId, { names: this.emojiNames, labelOf: (id) => room.authorLabel(id) });
     if (!chips.length) return null;
+    // Names for emoji outside the quick set come from the picker's table.
+    if (!this.namesLoaded && chips.some((chip) => chip.name === chip.emoji)) void this.loadNames();
     const list = document.createElement("ul");
     list.className = "chat-reactions";
     list.setAttribute("aria-label", "Reactions");
@@ -927,7 +929,11 @@ class KinChat extends HTMLElement {
       button.dataset.action = `react-${chip.emoji}`;
       button.setAttribute("aria-pressed", String(chip.mine));
       button.setAttribute("aria-label", chip.label);
-      if (!canReact) button.setAttribute("aria-disabled", "true");
+      // Without write access the chip is a count, not a switch.
+      if (!canReact) {
+        button.setAttribute("aria-disabled", "true");
+        button.removeAttribute("aria-pressed");
+      }
       // Hover lists who reacted.
       button.title = `${chip.name}: ${chip.who.join(", ")}`;
       const emoji = document.createElement("span");
@@ -946,7 +952,8 @@ class KinChat extends HTMLElement {
         clear();
         timer = setTimeout(() => { held = true; this.openDetails(message); }, LONG_PRESS_MS);
       });
-      for (const type of ["pointerup", "pointerleave", "pointercancel"]) button.addEventListener(type, clear);
+      button.addEventListener("pointerup", clear);
+      for (const type of ["pointerleave", "pointercancel"]) button.addEventListener(type, () => { clear(); held = false; });
       button.addEventListener("contextmenu", (event) => { event.preventDefault(); });
       button.addEventListener("click", () => {
         if (held) { held = false; return; }
@@ -966,7 +973,7 @@ class KinChat extends HTMLElement {
     button.textContent = "🙂";
     button.setAttribute("aria-label", `Add a reaction to ${author === "You" ? "your" : `${author}'s`} message`);
     button.setAttribute("aria-expanded", String(this.reacting === message.messageId));
-    button.setAttribute("aria-controls", `chat-react-${message.messageId}`);
+    if (this.reacting === message.messageId) button.setAttribute("aria-controls", `chat-react-${message.messageId}`);
     button.addEventListener("click", () => {
       this.closeMenu();
       this.reacting = this.reacting === message.messageId ? null : message.messageId;
@@ -1041,6 +1048,7 @@ class KinChat extends HTMLElement {
     this.namesLoaded = true;
     try {
       this.emojiNames = reactionNames(await loadEmojiTable());
+      this.queueRender("update");
     } catch {
       this.namesLoaded = false;
     }

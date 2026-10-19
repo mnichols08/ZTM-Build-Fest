@@ -33,7 +33,7 @@ pub const MAX_CHAT_ADMINS: usize = 16;
 /// Most bytes one reaction emoji may have (#127).
 pub const MAX_EMOJI_BYTES: usize = 32;
 /// Most different emoji a message may collect; commands refuse a new one
-/// past it (replay keeps whatever a log holds).
+/// past it and replay ignores it.
 pub const MAX_REACTION_GROUPS: usize = 24;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -181,15 +181,23 @@ pub fn check_emoji(text: &str) -> Result<(), KinError> {
     }
     let scalars: Vec<u32> = text.chars().map(|character| character as u32).collect();
     let mut at = 0;
+    let mut joined = false;
     loop {
-        at = emoji_element(&scalars, at).ok_or(KinError::InvalidEvent)?;
+        let (end, pictograph) = emoji_element(&scalars, at).ok_or(KinError::InvalidEvent)?;
+        // A joiner sits between pictographs only (never beside a flag or
+        // keycap), as Unicode's grapheme rules join them.
+        if joined && !pictograph {
+            return Err(KinError::InvalidEvent);
+        }
+        at = end;
         if at == scalars.len() {
             return Ok(());
         }
         // Only a joiner continues the grapheme, and it needs an element after.
-        if scalars[at] != 0x200D {
+        if scalars[at] != 0x200D || !pictograph {
             return Err(KinError::InvalidEvent);
         }
+        joined = true;
         at += 1;
     }
 }
@@ -235,29 +243,30 @@ const fn is_pictograph(scalar: u32) -> bool {
     )
 }
 
-/// The end of the emoji element starting at `at`, if one does.
-fn emoji_element(scalars: &[u32], at: usize) -> Option<usize> {
+/// The end of the emoji element starting at `at`, if one does, and whether it
+/// is a pictograph (the only kind a joiner may join).
+fn emoji_element(scalars: &[u32], at: usize) -> Option<(usize, bool)> {
     let first = *scalars.get(at)?;
     let is_tag = |scalar: &u32| matches!(*scalar, 0xE0020..=0xE007E);
     if is_regional_indicator(first) {
         return scalars
             .get(at + 1)
             .is_some_and(|next| is_regional_indicator(*next))
-            .then_some(at + 2);
+            .then_some((at + 2, false));
     }
     if matches!(first, 0x23 | 0x2A | 0x30..=0x39) {
         let mut next = at + 1;
         if scalars.get(next) == Some(&0xFE0F) {
             next += 1;
         }
-        return (scalars.get(next) == Some(&0x20E3)).then_some(next + 1);
+        return (scalars.get(next) == Some(&0x20E3)).then_some((next + 1, false));
     }
     if first == 0x1F3F4 && scalars.get(at + 1).is_some_and(is_tag) {
         let mut next = at + 1;
         while scalars.get(next).is_some_and(is_tag) {
             next += 1;
         }
-        return (scalars.get(next) == Some(&0xE007F)).then_some(next + 1);
+        return (scalars.get(next) == Some(&0xE007F)).then_some((next + 1, false));
     }
     if !is_pictograph(first) {
         return None;
@@ -272,10 +281,7 @@ fn emoji_element(scalars: &[u32], at: usize) -> Option<usize> {
     {
         next += 1;
     }
-    if scalars.get(next) == Some(&0xFE0F) {
-        next += 1;
-    }
-    Some(next)
+    Some((next, true))
 }
 
 /// Decrypted message texts by blob, held only while the engine is unlocked.
