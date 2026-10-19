@@ -14,10 +14,15 @@ export class RenderController {
   renderUpdatesNav(waiting = (this.app.state?.handoffs ?? []).filter((record) => record.status === "unacknowledged").length) {
     const updatesNav = this.app.segmentNavs?.get("updates");
     if (!updatesNav) return;
-    const unread = this.app.chatUnread ?? { count: 0, capped: false };
+    const unread = this.app.chatUnread ?? { count: 0, mentions: 0, capped: false };
     updatesNav.segments = SEGMENTS.updates.filter((entry) => !(entry.id === "chat" && this.app.chatAccess === "none")).map((entry) => {
       const base = { id: entry.id, label: entry.label, hash: routeHash("updates", entry.id) };
-      if (entry.id === "chat") return { ...base, count: unread.count, countText: unread.capped || unread.count > 99 ? "99+" : String(unread.count), countLabel: "unread" };
+      if (entry.id === "chat") {
+        // An "@" marks unread messages that mention this member (#130).
+        const number = unread.capped || unread.count > 99 ? "99+" : String(unread.count);
+        const mentioned = (unread.mentions ?? 0) > 0;
+        return { ...base, count: unread.count, countText: mentioned ? `@ ${number}` : number, countLabel: "unread", ...(mentioned ? { countAria: `${number} unread, includes mentions of you` } : {}) };
+      }
       return { ...base, count: entry.id === "handoffs" ? waiting : 0, countLabel: "waiting" };
     });
     if (this.app.route?.page === "updates") updatesNav.current = this.app.route.segment;

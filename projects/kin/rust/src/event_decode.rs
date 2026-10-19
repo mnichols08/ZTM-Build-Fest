@@ -545,7 +545,7 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
         }
         // Chat (#109). IDs, blob references and keys are never zero.
         (1, 44) => {
-            if !matches!(payload.len(), 84 | 100)
+            if payload.len() < 84
                 || payload[17..20] != [0; 3]
                 || !valid_timestamp(read_i64(record, 68)?)
             {
@@ -559,15 +559,13 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
             };
             let blob_ref = read_32(payload, 20)?;
             let blob_key = read_32(payload, 52)?;
-            let reply_to = if payload.len() == 100 {
-                Some(ChatMessageId(read_id(payload, 84)?))
-            } else {
-                None
-            };
+            // After the fixed 84 bytes: a reply's ID and/or mentions (#129, #130).
+            let (mentions, reply_to) =
+                crate::chat::ChatMentions::decode_tail(&payload[84..], true)?;
             if message_id.0 == [0; 16]
                 || blob_ref == [0; 32]
                 || blob_key == [0; 32]
-                || reply_to.is_some_and(|reply| reply.0 == [0; 16] || reply == message_id)
+                || reply_to.is_some_and(|reply| reply == message_id)
             {
                 return Err(KinError::MalformedProtocol);
             }
@@ -577,15 +575,17 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
                 blob_ref,
                 blob_key,
                 reply_to,
+                mentions,
             }
         }
         (1, 45) => {
-            if payload.len() != 80 || !valid_timestamp(read_i64(record, 68)?) {
+            if payload.len() < 80 || !valid_timestamp(read_i64(record, 68)?) {
                 return Err(KinError::MalformedProtocol);
             }
             let message_id = ChatMessageId(read_id(payload, 0)?);
             let blob_ref = read_32(payload, 16)?;
             let blob_key = read_32(payload, 48)?;
+            let (mentions, _) = crate::chat::ChatMentions::decode_tail(&payload[80..], false)?;
             if message_id.0 == [0; 16] || blob_ref == [0; 32] || blob_key == [0; 32] {
                 return Err(KinError::MalformedProtocol);
             }
@@ -593,6 +593,7 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
                 message_id,
                 blob_ref,
                 blob_key,
+                mentions,
             }
         }
         (1, 46) => {

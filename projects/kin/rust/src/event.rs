@@ -298,12 +298,16 @@ pub enum EventKind {
         /// The message this one answers (#129). Its text is looked up at
         /// render time, never copied.
         reply_to: Option<ChatMessageId>,
+        /// Who it mentions (#130).
+        mentions: crate::chat::ChatMentions,
     },
     /// The author replaces a message's content with a new blob.
     ChatMessageEdited {
         message_id: ChatMessageId,
         blob_ref: [u8; 32],
         blob_key: [u8; 32],
+        /// Who the edited message mentions (#130): replaces the earlier list.
+        mentions: crate::chat::ChatMentions,
     },
     /// Deletes a message for everyone: by its author, or (`by_admin`) by a
     /// household admin.

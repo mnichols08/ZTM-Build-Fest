@@ -299,6 +299,14 @@ the product decisions).
   unknown. A quote carries the original's first non-blank line, at most 256
   bytes.
   Commands answer only a message that still shows. There are no threads.
+- **Mentions (#130).** A post (44) or edit (45) may carry mentions after its
+  fixed fields: flags u8 (1 everyone, 2 a reply ID follows), count u8 (at
+  most 20), that many member IDs (ascending, unique, 16 bytes each), then the
+  reply ID if flagged. Older events with nothing, or with just a reply ID,
+  still decode. The command is refused unless every named member is one the
+  host lists as able to read chat; replay does not check. An edit replaces
+  the message's mentions. The text is not changed: the mention is only a
+  record of who the writer meant.
 - **Reactions (#127).** `CHAT_REACTION_SET` (47) turns one emoji on or off
   for the event's actor on one message. The emoji is a single grapheme from
   the emoji ranges (a pictograph with optional variation selector and skin

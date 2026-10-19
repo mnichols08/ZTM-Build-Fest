@@ -137,6 +137,7 @@ fn chat_records_decode_as_documented() {
     assert_eq!(
         event.kind,
         EventKind::ChatMessagePosted {
+            mentions: Default::default(),
             message_id: ChatMessageId(message(7)),
             content_kind: ChatContentKind::Text,
             blob_ref: blob(7, 0),
@@ -148,6 +149,7 @@ fn chat_records_decode_as_documented() {
     assert_eq!(
         decode_event(&edited(2, MEMBER_1, 0x11, 7, 1)).unwrap().kind,
         EventKind::ChatMessageEdited {
+            mentions: Default::default(),
             message_id: ChatMessageId(message(7)),
             blob_ref: blob(7, 1),
             blob_key: key(7, 1),
@@ -165,6 +167,7 @@ fn chat_records_decode_as_documented() {
     assert_eq!(
         decode_event(&posted(1, MEMBER_1, 0x11, 7, 2)).unwrap().kind,
         EventKind::ChatMessagePosted {
+            mentions: Default::default(),
             message_id: ChatMessageId(message(7)),
             content_kind: ChatContentKind::Attachment,
             blob_ref: blob(7, 0),
@@ -243,6 +246,7 @@ fn a_message_is_posted_edited_and_deleted() {
     assert_eq!(
         state.messages[0],
         ChatMessage {
+            mentions: Default::default(),
             message_id: ChatMessageId(message(1)),
             author: ActorId(MEMBER_1),
             device: DeviceId([0x11; 16]),
@@ -519,6 +523,7 @@ fn run_named(
 
 fn post(id: u8, content_kind: ChatContentKind) -> C {
     C::PostChatMessage {
+        mentions: Default::default(),
         id: ChatMessageId(message(id)),
         content_kind,
         blob_ref: blob(id, 0),
@@ -529,6 +534,7 @@ fn post(id: u8, content_kind: ChatContentKind) -> C {
 
 fn edit(id: u8, version: u8) -> C {
     C::EditChatMessage {
+        mentions: Default::default(),
         id: ChatMessageId(message(id)),
         blob_ref: blob(id, version),
         blob_key: key(id, version),
@@ -581,6 +587,7 @@ fn commands_post_edit_and_delete_and_reject_what_replay_would_ignore() {
         ([0; 16], blob(3, 0), key(3, 0)),
     ] {
         let command = C::PostChatMessage {
+            mentions: Default::default(),
             id: ChatMessageId(id),
             content_kind: ChatContentKind::Text,
             blob_ref,
@@ -620,6 +627,7 @@ fn commands_post_edit_and_delete_and_reject_what_replay_would_ignore() {
         run(
             &mut events,
             C::PostChatMessage {
+                mentions: Default::default(),
                 id: ChatMessageId(message(5)),
                 content_kind: ChatContentKind::Text,
                 blob_ref: blob(1, 1),
@@ -704,6 +712,8 @@ fn chat_commands_run_against_the_chat_log_only() {
     let mut input = (intent.len() as u32).to_le_bytes().to_vec();
     input.extend_from_slice(&intent);
     input.extend_from_slice(&0u32.to_le_bytes());
+    // No members named (#130).
+    input.extend_from_slice(&0u32.to_le_bytes());
     input.extend_from_slice(&kine(&[], BASE_TIME + 100, TEST_DATE, None));
     let result = crate::command::execute_chat_history(&input, &mut log).unwrap();
     assert_eq!(&result[..8], b"KCMT\x01\0\0\0");
@@ -716,6 +726,7 @@ fn chat_commands_run_against_the_chat_log_only() {
         input.extend_from_slice(&intent);
         input.extend_from_slice(&count.to_le_bytes());
         input.extend_from_slice(&admin);
+        input.extend_from_slice(&0u32.to_le_bytes());
         input.extend_from_slice(&kine(&[], BASE_TIME + 100, TEST_DATE, None));
         assert!(crate::command::execute_chat_history(&input, &mut log).is_err());
     }
@@ -1708,6 +1719,7 @@ fn reply_records_decode_as_documented() {
     assert_eq!(
         event.kind,
         EventKind::ChatMessagePosted {
+            mentions: Default::default(),
             message_id: ChatMessageId(message(2)),
             content_kind: ChatContentKind::Text,
             blob_ref: blob(2, 0),
@@ -1848,6 +1860,7 @@ fn a_command_replies_only_to_a_message_that_still_shows() {
     )
     .unwrap();
     let reply = |id: u8, original: u8| C::PostChatMessage {
+        mentions: Default::default(),
         id: ChatMessageId(message(id)),
         content_kind: ChatContentKind::Text,
         blob_ref: blob(id, 0),
@@ -1881,6 +1894,7 @@ fn the_wire_command_posts_a_reply() {
     assert_eq!(
         command,
         C::PostChatMessage {
+            mentions: Default::default(),
             id: ChatMessageId(message(1)),
             content_kind: ChatContentKind::Text,
             blob_ref: blob(1, 0),
@@ -1939,12 +1953,14 @@ struct Find<'a> {
     to: i64,
     authors: Vec<[u8; 16]>,
     excluded: Vec<[u8; 16]>,
+    mentioning: Option<[u8; 16]>,
 }
 
 fn kchf(find: &Find<'_>, context: &[u8]) -> Vec<u8> {
     let mut bytes = b"KCHF\x01\0\0\0".to_vec();
     bytes.extend_from_slice(&find.limit.max(1).to_le_bytes());
-    bytes.extend_from_slice(&find.flags.to_le_bytes());
+    let flags = find.flags | if find.mentioning.is_some() { 2 } else { 0 };
+    bytes.extend_from_slice(&flags.to_le_bytes());
     bytes.extend_from_slice(&find.from.to_le_bytes());
     bytes.extend_from_slice(&find.to.to_le_bytes());
     bytes.extend_from_slice(&(find.query.len() as u32).to_le_bytes());
@@ -1954,6 +1970,9 @@ fn kchf(find: &Find<'_>, context: &[u8]) -> Vec<u8> {
     bytes.extend_from_slice(find.query.as_bytes());
     for id in find.authors.iter().chain(&find.excluded) {
         bytes.extend_from_slice(id);
+    }
+    if let Some(member) = find.mentioning {
+        bytes.extend_from_slice(&member);
     }
     bytes.extend_from_slice(context);
     bytes
@@ -2241,6 +2260,7 @@ fn all_of<'a>(find: &Find<'a>) -> Find<'a> {
         to: find.to,
         authors: find.authors.clone(),
         excluded: find.excluded.clone(),
+        mentioning: find.mentioning,
     }
 }
 
@@ -2350,6 +2370,7 @@ fn search_scans_a_hundred_thousand_messages_quickly() {
         texts.put(blob_ref, text.as_bytes()).ok();
         state.positions.insert(ChatMessageId(id), n as usize);
         state.messages.push(ChatMessage {
+            mentions: Default::default(),
             message_id: ChatMessageId(id),
             author: ActorId(MEMBER_1),
             device: DeviceId([0x11; 16]),
@@ -2543,4 +2564,383 @@ fn search_does_not_split_graphemes_at_either_end() {
         ids_of(&search(&mut history, &mut texts, &query("\u{1F468}"))),
         Vec::<u8>::new()
     );
+}
+
+// ---- mentions (#130) --------------------------------------------------
+
+fn mention(members: &[[u8; 16]], everyone: bool) -> crate::chat::ChatMentions {
+    crate::chat::ChatMentions {
+        everyone,
+        members: members.iter().copied().map(ActorId).collect(),
+    }
+}
+
+fn post_mentioning(id: u8, mentions: crate::chat::ChatMentions) -> C {
+    C::PostChatMessage {
+        mentions,
+        id: ChatMessageId(message(id)),
+        content_kind: ChatContentKind::Text,
+        blob_ref: blob(id, 0),
+        blob_key: key(id, 0),
+        reply_to: None,
+    }
+}
+
+fn reply_mentioning(id: u8, original: u8, mentions: crate::chat::ChatMentions) -> C {
+    match post_mentioning(id, mentions) {
+        C::PostChatMessage {
+            mentions,
+            id,
+            content_kind,
+            blob_ref,
+            blob_key,
+            ..
+        } => C::PostChatMessage {
+            mentions,
+            id,
+            content_kind,
+            blob_ref,
+            blob_key,
+            reply_to: Some(ChatMessageId(message(original))),
+        },
+        other => other,
+    }
+}
+
+/// `run` naming the members able to read chat.
+fn run_members(
+    log: &mut History,
+    command: C,
+    ctx: CommandContext,
+    members: &[[u8; 16]],
+) -> Result<(), KinError> {
+    let held = HeldHistory::new(log, local_context())?
+        .with_admins(vec![ActorId(ADMIN)])
+        .with_members(members.iter().copied().map(ActorId).collect());
+    let result = execute_with(&command, ctx, &mut { held })?;
+    log.append(&batch(&[result.event.canonical_bytes])).unwrap();
+    Ok(())
+}
+
+#[test]
+fn the_wire_command_carries_mentions() {
+    let mut base = blob(1, 0).to_vec();
+    base.extend_from_slice(&key(1, 0));
+    let tail = |flags: u8, ids: &[[u8; 16]], reply: Option<[u8; 16]>| {
+        let mut bytes = base.clone();
+        bytes.extend_from_slice(&[flags, ids.len() as u8]);
+        for id in ids {
+            bytes.extend_from_slice(id);
+        }
+        bytes.extend(reply.into_iter().flatten());
+        bytes
+    };
+    let (command, _) = decode_command(&kcmd(
+        44,
+        message(1),
+        1,
+        &tail(0b01, &[MEMBER_1, MEMBER_2], None),
+    ))
+    .unwrap();
+    assert_eq!(
+        command,
+        post_mentioning(1, mention(&[MEMBER_1, MEMBER_2], true))
+    );
+    // With a reply too.
+    let (command, _) = decode_command(&kcmd(
+        44,
+        message(1),
+        1,
+        &tail(0b10, &[MEMBER_2], Some(message(7))),
+    ))
+    .unwrap();
+    assert_eq!(command, reply_mentioning(1, 7, mention(&[MEMBER_2], false)));
+    // An edit carries mentions, never a reply.
+    let (command, _) = decode_command(&kcmd(45, message(1), 0, &tail(0b01, &[], None))).unwrap();
+    assert!(
+        matches!(command, C::EditChatMessage { mentions, .. } if mentions == mention(&[], true))
+    );
+    for bad in [
+        tail(0b01, &[MEMBER_2, MEMBER_1], None),   // out of order
+        tail(0b00, &[MEMBER_1, MEMBER_1], None),   // repeated
+        tail(0b00, &[[0; 16]], None),              // zero ID
+        tail(0b00, &[], None),                     // says nothing: not the one encoding
+        tail(0b100, &[MEMBER_1], None),            // unknown flag
+        tail(0b10, &[MEMBER_1], None),             // reply flagged, absent
+        tail(0b00, &[MEMBER_1], Some(message(7))), // reply present, unflagged
+        tail(0b10, &[MEMBER_1], Some([0; 16])),    // zero reply
+        tail(0b00, &vec![[9u8; 16]; 21], None),    // too many
+        [base.as_slice(), &[1]].concat(),          // one stray byte
+    ] {
+        assert_eq!(
+            decode_command(&kcmd(44, message(1), 1, &bad)).unwrap_err(),
+            KinError::MalformedProtocol,
+            "{bad:?}"
+        );
+    }
+    assert!(decode_command(&kcmd(
+        45,
+        message(1),
+        0,
+        &tail(0b10, &[MEMBER_1], Some(message(7)))
+    ))
+    .is_err());
+}
+
+#[test]
+fn mentions_round_trip_through_the_event_and_keep_older_events_readable() {
+    let ctx = || context(1, MEMBER_1, 0x11, 1);
+    let mentions = mention(&[MEMBER_2, ADMIN], true);
+    let event = crate::command::create_event(&post_mentioning(1, mentions.clone()), ctx()).unwrap();
+    let decoded = decode_event(&event.canonical_bytes).unwrap();
+    assert!(
+        matches!(&decoded.kind, EventKind::ChatMessagePosted { mentions: found, reply_to: None, .. } if *found == mentions)
+    );
+    // A reply with mentions, and an edit.
+    let both = reply_mentioning(1, 9, mention(&[MEMBER_2], false));
+    let decoded = decode_event(
+        &crate::command::create_event(&both, ctx())
+            .unwrap()
+            .canonical_bytes,
+    )
+    .unwrap();
+    assert!(
+        matches!(&decoded.kind, EventKind::ChatMessagePosted { mentions, reply_to: Some(_), .. } if mentions.members.len() == 1)
+    );
+    let edit = C::EditChatMessage {
+        id: ChatMessageId(message(1)),
+        blob_ref: blob(1, 1),
+        blob_key: key(1, 1),
+        mentions: mention(&[MEMBER_2], false),
+    };
+    let decoded = decode_event(
+        &crate::command::create_event(&edit, ctx())
+            .unwrap()
+            .canonical_bytes,
+    )
+    .unwrap();
+    assert!(
+        matches!(&decoded.kind, EventKind::ChatMessageEdited { mentions, .. } if mentions.members == vec![ActorId(MEMBER_2)])
+    );
+    // No mentions: the earlier 84- and 100-byte posts and 80-byte edits.
+    for command in [
+        post(1, ChatContentKind::Text),
+        reply_mentioning(1, 9, mention(&[], false)),
+    ] {
+        let bytes = crate::command::create_event(&command, ctx())
+            .unwrap()
+            .canonical_bytes;
+        assert!(
+            matches!(decode_event(&bytes).unwrap().kind, EventKind::ChatMessagePosted { mentions, .. } if mentions.is_empty())
+        );
+    }
+    // Refused when built: unsorted or zero member IDs.
+    for bad in [
+        mention(&[MEMBER_2, MEMBER_1], false),
+        mention(&[[0; 16]], false),
+        mention(&[MEMBER_1, MEMBER_1], false),
+    ] {
+        assert!(crate::command::create_event(&post_mentioning(1, bad), ctx()).is_err());
+    }
+}
+
+#[test]
+fn only_members_who_can_read_chat_may_be_mentioned() {
+    let mut log = History::chat();
+    let members = [MEMBER_1, MEMBER_2];
+    run_members(
+        &mut log,
+        post_mentioning(1, mention(&[MEMBER_2], false)),
+        context(1, MEMBER_1, 0x11, 1),
+        &members,
+    )
+    .unwrap();
+    // Someone the host did not name (left, or shut out of chat) is refused.
+    assert_eq!(
+        run_members(
+            &mut log,
+            post_mentioning(2, mention(&[ADMIN], false)),
+            context(2, MEMBER_1, 0x11, 2),
+            &members
+        ),
+        Err(KinError::InvalidEvent)
+    );
+    // With no list at all, nobody can be named; @everyone still can.
+    assert!(run(
+        &mut log,
+        post_mentioning(2, mention(&[MEMBER_2], false)),
+        context(2, MEMBER_1, 0x11, 2)
+    )
+    .is_err());
+    run(
+        &mut log,
+        post_mentioning(2, mention(&[], true)),
+        context(2, MEMBER_1, 0x11, 2),
+    )
+    .unwrap();
+    // An edit is checked the same way and replaces the list.
+    let edit = |mentions| C::EditChatMessage {
+        id: ChatMessageId(message(1)),
+        blob_ref: blob(1, 1),
+        blob_key: key(1, 1),
+        mentions,
+    };
+    assert!(run_members(
+        &mut log,
+        edit(mention(&[ADMIN], false)),
+        context(3, MEMBER_1, 0x11, 3),
+        &members
+    )
+    .is_err());
+    run_members(
+        &mut log,
+        edit(mention(&[MEMBER_1], false)),
+        context(3, MEMBER_1, 0x11, 3),
+        &members,
+    )
+    .unwrap();
+    let state = log.replay(&local_context()).unwrap().chat().clone();
+    assert_eq!(
+        state.get(&ChatMessageId(message(1))).unwrap().mentions,
+        mention(&[MEMBER_1], false)
+    );
+    assert_eq!(
+        state.get(&ChatMessageId(message(2))).unwrap().mentions,
+        mention(&[], true)
+    );
+}
+
+#[test]
+fn a_page_lists_mentions_of_messages_that_show() {
+    let mut log = History::chat();
+    let members = [MEMBER_1, MEMBER_2, ADMIN];
+    run_members(
+        &mut log,
+        post_mentioning(1, mention(&[MEMBER_2, ADMIN], false)),
+        context(1, MEMBER_1, 0x11, 1),
+        &members,
+    )
+    .unwrap();
+    run_members(
+        &mut log,
+        post_mentioning(2, mention(&[], true)),
+        context(2, MEMBER_1, 0x11, 2),
+        &members,
+    )
+    .unwrap();
+    run_members(
+        &mut log,
+        post(3, ChatContentKind::Text),
+        context(3, MEMBER_1, 0x11, 3),
+        &members,
+    )
+    .unwrap();
+    run_members(
+        &mut log,
+        post_mentioning(4, mention(&[MEMBER_1], true)),
+        context(4, MEMBER_2, 0x21, 4),
+        &members,
+    )
+    .unwrap();
+    let mut texts = ChatTexts::new();
+    let kctx = kine(&[], 0, TEST_DATE, None);
+    let page = chat_page(&kchq(u32::MAX, 10, 0, &[], &kctx), &mut log, &mut texts).unwrap();
+    let record = |n: usize| 28 + n * 128;
+    assert_eq!(page[record(0) + 71], 0b10, "names members");
+    assert_eq!(
+        u16::from_le_bytes([page[record(0) + 116], page[record(0) + 117]]),
+        2
+    );
+    assert_eq!(page[record(1) + 71], 0b01, "everyone");
+    assert_eq!(page[record(2) + 71], 0, "none");
+    assert_eq!(page[record(3) + 71], 0b11, "both");
+    // The named IDs close the page, in record order, ascending.
+    let tail = &page[page.len() - 3 * 16..];
+    // Record 0 names ADMIN and MEMBER_2 (stored ascending: 2, then 3), record 3 MEMBER_1.
+    assert_eq!(
+        tail,
+        [MEMBER_2.as_slice(), ADMIN.as_slice(), MEMBER_1.as_slice()]
+            .concat()
+            .as_slice()
+    );
+    // A deleted message shows none.
+    run_members(
+        &mut log,
+        delete(1, false),
+        context(5, MEMBER_1, 0x11, 5),
+        &members,
+    )
+    .unwrap();
+    let page = chat_page(&kchq(u32::MAX, 10, 0, &[], &kctx), &mut log, &mut texts).unwrap();
+    assert_eq!(page[record(0) + 71], 0);
+    assert_eq!(
+        u16::from_le_bytes([page[record(0) + 116], page[record(0) + 117]]),
+        0
+    );
+    assert_eq!(
+        page.len(),
+        28 + 4 * 160 + 16,
+        "only message 4 still names a member"
+    );
+}
+
+#[test]
+fn search_can_list_only_messages_that_mention_a_member() {
+    let mut log = History::chat();
+    let members = [MEMBER_1, MEMBER_2];
+    run_members(
+        &mut log,
+        post_mentioning(1, mention(&[MEMBER_2], false)),
+        context(1, MEMBER_1, 0x11, 1),
+        &members,
+    )
+    .unwrap();
+    run_members(
+        &mut log,
+        post_mentioning(2, mention(&[], true)),
+        context(2, MEMBER_1, 0x11, 2),
+        &members,
+    )
+    .unwrap();
+    run_members(
+        &mut log,
+        post_mentioning(3, mention(&[MEMBER_1], false)),
+        context(3, MEMBER_2, 0x21, 3),
+        &members,
+    )
+    .unwrap();
+    run_members(
+        &mut log,
+        post(4, ChatContentKind::Text),
+        context(4, MEMBER_1, 0x11, 4),
+        &members,
+    )
+    .unwrap();
+    let mut texts = ChatTexts::new();
+    let kctx = kine(&[], 0, TEST_DATE, None);
+    let mut list = |mentioning: Option<[u8; 16]>| {
+        let find = Find {
+            limit: 10,
+            mentioning,
+            ..Find::default()
+        };
+        let (total, results, ..) =
+            found(&crate::core::chat_search(&kchf(&find, &kctx), &mut log, &mut texts).unwrap());
+        (
+            total,
+            results.into_iter().map(|(id, ..)| id).collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(list(None).0, 4);
+    // Newest first; @everyone counts for everyone.
+    assert_eq!(list(Some(MEMBER_2)).1, vec![message(2), message(1)]);
+    assert_eq!(list(Some(MEMBER_1)).1, vec![message(3), message(2)]);
+    assert_eq!(list(Some(ADMIN)).1, vec![message(2)]);
+    // The member must be named, non-zero.
+    let find = Find {
+        limit: 10,
+        mentioning: Some([0; 16]),
+        ..Find::default()
+    };
+    assert!(crate::core::chat_search(&kchf(&find, &kctx), &mut log, &mut texts).is_err());
 }

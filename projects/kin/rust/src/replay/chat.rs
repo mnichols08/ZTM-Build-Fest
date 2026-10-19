@@ -62,6 +62,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
             blob_ref,
             blob_key,
             reply_to,
+            mentions,
         } => {
             chat.seen.insert(*blob_ref);
             if chat.positions.contains_key(message_id) {
@@ -80,12 +81,14 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 blob_ref: *blob_ref,
                 blob_key: *blob_key,
                 reply_to: *reply_to,
+                mentions: mentions.clone(),
             });
         }
         EventKind::ChatMessageEdited {
             message_id,
             blob_ref,
             blob_key,
+            mentions,
         } => {
             chat.seen.insert(*blob_ref);
             let Some(&at) = chat.positions.get(message_id) else {
@@ -111,6 +114,7 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
             message.blob_key = *blob_key;
             message.status = ChatMessageStatus::Edited;
             message.edited_at = event.timestamp;
+            message.mentions = mentions.clone();
             chat.retired.push(old);
         }
         EventKind::ChatMessageDeleted {

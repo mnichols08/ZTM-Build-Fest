@@ -125,9 +125,15 @@ class KinChatSearch extends HTMLElement {
     const filesLabel = document.createElement("label");
     filesLabel.className = "chat-search-files";
     filesLabel.append(this.files, " Only photos and files");
+    this.mine = document.createElement("input");
+    this.mine.type = "checkbox";
+    this.mine.addEventListener("change", () => this.refresh());
+    const mineLabel = document.createElement("label");
+    mineLabel.className = "chat-search-files";
+    mineLabel.append(this.mine, " Only messages that mention me");
     this.since = this.date(fieldset, "On or after");
     this.until = this.date(fieldset, "On or before");
-    fieldset.append(filesLabel);
+    fieldset.append(filesLabel, mineLabel);
     filters.append(summary, fieldset);
     this.filters = filters;
     form.append(label, this.input, filters);
@@ -240,6 +246,7 @@ class KinChatSearch extends HTMLElement {
       query: clipBytes(this.text.trim(), 256),
       limit: PAGE_LIMIT,
       attachmentsOnly: Boolean(this.files?.checked),
+      ...(this.mine?.checked && this.chatRoom?.identity?.memberId ? { mentioning: this.chatRoom.identity.memberId } : {}),
       authors: person ? [person] : [],
       from: from ?? 0,
       // "On or before" includes that whole day.

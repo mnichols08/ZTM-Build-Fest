@@ -7,13 +7,16 @@
 //! ```text
 //!  0  "KCHF"
 //!  4  u16 version (1)        6  u16 reserved (0)
-//!  8  u32 limit (1..=200)   12  u32 flags (bit 0: attachments only)
+//!  8  u32 limit (1..=200)   12  u32 flags (bit 0: attachments only,
+//!                               bit 1: mentioning one member, #130)
 //! 16  i64 from (posted at or after; 0 = no bound)
 //! 24  i64 to   (posted before; 0 = no bound)
 //! 32  u32 query bytes (at most 256)   36  u32 admin count (at most 16)
 //! 40  u32 author count (at most 16)   44  u32 excluded count (at most 10,000)
 //! 48  query (UTF-8), admins (16 each), authors (16 each),
-//!     excluded message IDs (16 each), then the record-less KINE context
+//!     excluded message IDs (16 each), the mentioned member (16, only with
+//!     flag bit 1: messages that mention them by name or `@everyone`), then
+//!     the record-less KINE context
 //! ```
 //!
 //! An empty query lists the messages that pass the filters. A query matches
@@ -50,6 +53,7 @@ pub const MAX_SEARCH_EXCLUDED: usize = 10_000;
 pub const MAX_UNSEARCHED_LISTED: usize = 256;
 pub const MAX_RANGES: usize = 4;
 const FLAG_ATTACHMENTS_ONLY: u32 = 1;
+const FLAG_MENTIONING: u32 = 2;
 
 /// A decoded KCHF request.
 #[derive(Debug)]
@@ -62,6 +66,8 @@ pub struct SearchRequest<'a> {
     pub admins: Vec<ActorId>,
     pub authors: Vec<ActorId>,
     pub excluded: BTreeSet<[u8; 16]>,
+    /// Only messages that mention this member (#130).
+    pub mentioning: Option<ActorId>,
     pub context: &'a [u8],
 }
 
@@ -89,7 +95,7 @@ pub fn decode_search_request(bytes: &[u8]) -> Result<SearchRequest<'_>, KinError
     let author_count = word(40) as usize;
     let excluded_count = word(44) as usize;
     if bytes[6..8] != [0; 2]
-        || flags & !FLAG_ATTACHMENTS_ONLY != 0
+        || flags & !(FLAG_ATTACHMENTS_ONLY | FLAG_MENTIONING) != 0
         || limit == 0
         || limit > MAX_SEARCH_RESULTS
         || from < 0
@@ -106,7 +112,8 @@ pub fn decode_search_request(bytes: &[u8]) -> Result<SearchRequest<'_>, KinError
     let admins_at = query_at + query_length;
     let authors_at = admins_at + admin_count * 16;
     let excluded_at = authors_at + author_count * 16;
-    let context_at = excluded_at + excluded_count * 16;
+    let mentioning_at = excluded_at + excluded_count * 16;
+    let context_at = mentioning_at + if flags & FLAG_MENTIONING != 0 { 16 } else { 0 };
     if bytes.len() < context_at {
         return Err(KinError::MalformedProtocol);
     }
@@ -122,6 +129,15 @@ pub fn decode_search_request(bytes: &[u8]) -> Result<SearchRequest<'_>, KinError
     {
         return Err(KinError::MalformedProtocol);
     }
+    let mentioning = if flags & FLAG_MENTIONING != 0 {
+        let id: [u8; 16] = bytes[mentioning_at..context_at].try_into().unwrap();
+        if id == [0; 16] {
+            return Err(KinError::MalformedProtocol);
+        }
+        Some(ActorId(id))
+    } else {
+        None
+    };
     Ok(SearchRequest {
         limit,
         attachments_only: flags & FLAG_ATTACHMENTS_ONLY != 0,
@@ -130,7 +146,10 @@ pub fn decode_search_request(bytes: &[u8]) -> Result<SearchRequest<'_>, KinError
         query,
         admins,
         authors,
-        excluded: ids(&bytes[excluded_at..context_at]).into_iter().collect(),
+        excluded: ids(&bytes[excluded_at..mentioning_at])
+            .into_iter()
+            .collect(),
+        mentioning,
         context: &bytes[context_at..],
     })
 }
@@ -439,6 +458,9 @@ pub fn encode_search(
             || (request.from != 0 && message.posted_at < request.from)
             || (request.to != 0 && message.posted_at >= request.to)
             || (!request.authors.is_empty() && !request.authors.contains(&message.author))
+            || request
+                .mentioning
+                .is_some_and(|member| !message.mentions.includes(&member))
         {
             continue;
         }

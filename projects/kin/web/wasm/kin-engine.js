@@ -269,8 +269,10 @@ export function createEngine(instanceExports) {
     // metadata }. The host stores the event, then reads a page. `admins`
     // are the household admins' member IDs (hex) as the service reports
     // them; removing another member's message needs the actor among them.
-    executeChatCommand: (command, identity, chatRecords, asOf, civilDate, syncIdentity = null, admins = []) =>
-      executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity, admins),
+    // `members` are the members who can read chat (hex, at most 64): the
+    // only ones a post or edit may mention by name (#130).
+    executeChatCommand: (command, identity, chatRecords, asOf, civilDate, syncIdentity = null, admins = [], members = []) =>
+      executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity, admins, members),
     // A page of messages, oldest first (KCHP, ABI.md). Options: before (an
     // index; omit for the newest), limit (1 to 500), includeText, includeRetired,
     // admins (the household admins' member IDs as hex; at most 16).
@@ -307,6 +309,22 @@ const CHAT_CONTENT_KINDS = [null, "text", "attachment"];
 export const MAX_CHAT_EVENT_COUNT = 250_000;
 const MAX_CHAT_PAGE = 500;
 
+// What follows a chat post's or edit's blob reference and key: nothing; a
+// reply's 16-byte ID alone; or, with mentions, flags (1 everyone, 2 a reply
+// follows), a count, the member IDs in ascending order, then the reply ID.
+function mentionsTail(mentions, reply, isPost) {
+  const members = [...new Set(mentions?.members ?? [])];
+  const everyone = mentions?.everyone === true;
+  if (mentions != null && (typeof mentions !== "object" || (mentions.everyone != null && typeof mentions.everyone !== "boolean") ||
+    !Array.isArray(mentions.members ?? []) || members.length > 20 ||
+    members.some((id) => typeof id !== "string" || !/^[0-9a-f]{32}$/.test(id) || /^0{32}$/.test(id))))
+    throw new KinEngineError(2, "Kin received invalid chat mentions.");
+  if (!isPost && reply) throw new KinEngineError(2, "Kin received invalid chat mentions.");
+  if (!everyone && !members.length) return reply ?? [];
+  members.sort();
+  return [(everyone ? 1 : 0) | (reply ? 2 : 0), members.length, ...members.flatMap((id) => [...idFromHex(id)]), ...(reply ?? [])];
+}
+
 function replyFromHex(value) {
   if (typeof value !== "string" || !/^[0-9a-f]{32}$/.test(value) || /^0{32}$/.test(value))
     throw new KinEngineError(2, "Kin received an invalid chat reply.");
@@ -321,22 +339,26 @@ function blobFromHex(value, what) {
   return bytes;
 }
 
-function executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity, admins) {
+function executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity, admins, members) {
   if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
   if (!["post-chat-message", "edit-chat-message", "delete-chat-message", "react-chat-message"].includes(command?.type))
     throw new KinEngineError(2, "Kin received an invalid household action.");
   if (chatRecords.length > MAX_CHAT_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
-  if (!Array.isArray(admins) || admins.length > 16)
+  if (!Array.isArray(admins) || admins.length > 16 || !Array.isArray(members) || members.length > 64)
     throw new KinEngineError(2, "Kin received an invalid household action.");
   const intent = encodeIntentPacket(command, identity);
-  // u32 intent length, KCMD, u32 admin count, admins, KINE context.
-  const prefix = 4 + intent.length + 4 + admins.length * 16;
+  // u32 intent length, KCMD, u32 admin count, admins, u32 member count,
+  // members, KINE context.
+  const prefix = 4 + intent.length + 4 + admins.length * 16 + 4 + members.length * 16;
   const request = encodeRequest([], asOf, null, civilDate, syncIdentity, prefix);
   const requestView = new DataView(request.buffer);
   requestView.setUint32(0, intent.length, true);
   request.set(intent, 4);
   requestView.setUint32(4 + intent.length, admins.length, true);
   admins.forEach((admin, index) => request.set(idFromHex(admin), 8 + intent.length + index * 16));
+  const membersAt = 8 + intent.length + admins.length * 16;
+  requestView.setUint32(membersAt, members.length, true);
+  members.forEach((member, index) => request.set(idFromHex(member), membersAt + 4 + index * 16));
   const release = chatMirror.hold(chatRecords);
   let bytes;
   try {
@@ -398,20 +420,22 @@ function chatSearchBytes(exports, chatMirror, chatRecords, options = {}, asOf, c
   if (chatRecords.length > MAX_CHAT_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
   const {
     query = "", limit = 50, attachmentsOnly = false, from = 0, to = 0, authors = [], excluded = [], admins = [],
+    mentioning = null,
   } = options;
   const queryBytes = new TextEncoder().encode(typeof query === "string" ? query : "\u0000");
   if (typeof query !== "string" || queryBytes.length > MAX_CHAT_SEARCH_QUERY_BYTES ||
     !Number.isInteger(limit) || limit < 1 || limit > MAX_CHAT_SEARCH_RESULTS ||
     !Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < 0 || (to !== 0 && to <= from) ||
     !Array.isArray(admins) || admins.length > 16 || !Array.isArray(authors) || authors.length > 16 ||
-    !Array.isArray(excluded) || excluded.length > MAX_CHAT_SEARCH_EXCLUDED)
+    !Array.isArray(excluded) || excluded.length > MAX_CHAT_SEARCH_EXCLUDED ||
+    (mentioning !== null && (typeof mentioning !== "string" || !/^[0-9a-f]{32}$/.test(mentioning) || /^0{32}$/.test(mentioning))))
     throw new KinEngineError(2, "Kin received an invalid chat search.");
-  const prefix = 48 + queryBytes.length + (admins.length + authors.length + excluded.length) * 16;
+  const prefix = 48 + queryBytes.length + (admins.length + authors.length + excluded.length + (mentioning ? 1 : 0)) * 16;
   const request = encodeRequest([], asOf, null, civilDate, syncIdentity, prefix);
   const view = new DataView(request.buffer);
   request.set([75, 67, 72, 70, 1, 0, 0, 0]);
   view.setUint32(8, limit, true);
-  view.setUint32(12, attachmentsOnly ? 1 : 0, true);
+  view.setUint32(12, (attachmentsOnly ? 1 : 0) | (mentioning ? 2 : 0), true);
   view.setBigInt64(16, BigInt(from), true);
   view.setBigInt64(24, BigInt(to), true);
   view.setUint32(32, queryBytes.length, true);
@@ -420,7 +444,8 @@ function chatSearchBytes(exports, chatMirror, chatRecords, options = {}, asOf, c
   view.setUint32(44, excluded.length, true);
   request.set(queryBytes, 48);
   let at = 48 + queryBytes.length;
-  for (const id of [...admins, ...authors, ...excluded]) {
+  // The member whose mentions to list goes after the excluded IDs (#130).
+  for (const id of [...admins, ...authors, ...excluded, ...(mentioning ? [mentioning] : [])]) {
     request.set(idFromHex(id), at);
     at += 16;
   }
@@ -505,7 +530,7 @@ function decodeChatPage(bytes) {
   const messages = [];
   // Texts follow each other in record order, with no gaps or overlaps.
   let nextText = 0;
-  const groupCounts = [], quoted = [];
+  const groupCounts = [], quoted = [], mentionFlags = [];
   for (let index = 0; index < count; index += 1) {
     const at = 28 + index * 128;
     const status = CHAT_STATUSES[bytes[at + 68]], contentKind = CHAT_CONTENT_KINDS[bytes[at + 69]];
@@ -518,7 +543,8 @@ function decodeChatPage(bytes) {
     const blobRef = bytes.subarray(at + 72, at + 104), blobKey = bytes.subarray(keysAt + index * 32, keysAt + index * 32 + 32);
     if (visible === zero(blobRef) || visible === zero(blobKey) || (!visible && textLength) ||
       (textLength && (contentKind !== "text" || textOffset !== nextText)) || (!textLength && textOffset) ||
-      bytes[at + 70] > 1 || bytes[at + 71] || (bytes[at + 70] === 1 && !visible) || !zero(bytes.subarray(at + 116, at + 128)) ||
+      bytes[at + 70] > 1 || bytes[at + 71] > 3 || (bytes[at + 70] === 1 && !visible) || !zero(bytes.subarray(at + 118, at + 128)) ||
+      (bytes[at + 71] && !visible) || ((bytes[at + 71] & 2) !== 0) !== (view.getUint16(at + 116, true) > 0) || view.getUint16(at + 116, true) > 20 ||
       (status === "edited" && !editedAt) || (status === "live" && editedAt))
       throw invalid();
     nextText += textLength;
@@ -526,6 +552,7 @@ function decodeChatPage(bytes) {
     if (groups && !visible) throw invalid();
     groupCounts.push(groups);
     quoted.push(bytes[at + 70] === 1);
+    mentionFlags.push({ everyone: (bytes[at + 71] & 1) !== 0, count: view.getUint16(at + 116, true) });
     messages.push({
       messageId: idToHex(bytes.subarray(at, at + 16)),
       authorId: idToHex(bytes.subarray(at + 16, at + 32)),
@@ -541,6 +568,7 @@ function decodeChatPage(bytes) {
       text: textLength ? strictTextDecoder.decode(bytes.subarray(textsAt + textOffset, textsAt + textOffset + textLength)) : null,
       reactions: [],
       replyTo: null,
+      mentions: { everyone: false, members: [] },
     });
   }
   if (nextText !== textBytes) throw invalid();
@@ -583,6 +611,21 @@ function decodeChatPage(bytes) {
       text: length ? strictTextDecoder.decode(bytes.subarray(cursor + 108, cursor + 108 + length)) : null,
     };
     cursor += 108 + length;
+  });
+  // Mentions (#130): the named members of each message that has any, in
+  // record order, ascending; "everyone" comes from the record's flag.
+  mentionFlags.forEach((flags, index) => {
+    messages[index].mentions.everyone = flags.everyone;
+    if (!flags.count) return;
+    if (cursor + flags.count * 16 > bytes.length) throw invalid();
+    let previous = "";
+    for (let member = 0; member < flags.count; member += 1) {
+      const id = idToHex(bytes.subarray(cursor, cursor + 16));
+      if (id <= previous || /^0{32}$/.test(id)) throw invalid();
+      messages[index].mentions.members.push(id);
+      previous = id;
+      cursor += 16;
+    }
   });
   if (cursor !== bytes.length) throw invalid();
   const retired = [];
@@ -929,8 +972,9 @@ function encodeIntentPacket(command, identity) {
   const chatBlob = kind === 44 || kind === 45
     ? Uint8Array.of(
       ...blobFromHex(command.blobRef, "reference"), ...blobFromHex(command.blobKey, "key"),
-      // A reply (#129) adds the message it answers.
-      ...(kind === 44 && command.replyTo != null ? replyFromHex(command.replyTo) : []))
+      // After the blob: mentions (#130), then the message a reply answers
+      // (#129), as ABI.md lays them out.
+      ...mentionsTail(command.mentions, kind === 44 && command.replyTo != null ? replyFromHex(command.replyTo) : null, kind === 44))
     : null;
   if (
     hasText &&

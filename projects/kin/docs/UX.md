@@ -1790,8 +1790,17 @@ and receive a short ID suffix in selection/management labels until renamed.
   the member reads and is placed again the next time they return.
 - **Updates → Chat** shows the unread count (`99+` past 99) with the
   accessible name "N unread". Reading on one device clears it on the member's
-  other devices once they sync. A separate @ marker for mentions comes with
-  mentions (#130).
+  other devices once they sync. When any unread message mentions the member
+  (or everyone), the count starts with "@" and the name becomes "N unread,
+  includes mentions of you".
+- **Mentions (#130).** Typing "@" in the message box opens a list (a
+  combobox: Up/Down, Enter or Tab, Escape; tap to choose) of the members who
+  can read chat, plus @everyone. The text stays plain "@Name"; the sent event
+  records who was meant. Mentions show in bold underline, a message that
+  mentions you has a mark on its row, and search can show only messages that
+  mention you. Limitation: a mention is highlighted by its current label, so
+  a member renamed later no longer matches the old "@Name" text, which then
+  shows as plain text. Push notifications stay generic ([ADR 0008](decisions/0008-household-chat.md)).
 - Where the browser supports the Badging API, the installed app's icon shows
   the same count, set on the device from decrypted state.
 - **Decision: the home-screen badge clears when Kin locks.** The badge is only

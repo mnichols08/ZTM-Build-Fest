@@ -24,7 +24,7 @@
 //   meta    { key: "state", nextOrder, cursor, deviceSequence, provisional,
 //             admins, members, membersSignature, retiredThrough, refused,
 //             hidden, hiddenRevision, hiddenDirty, hiddenSealedFor, read,
-//             presence }
+//             readers, presence }
 //
 // `cursor` is the relay position read up to. `deviceSequence` is the last
 // chat sequence this device used. It starts provisional when the log is new
@@ -34,7 +34,8 @@
 // events' replaced blobs this device already deleted, and `refused` the
 // relay events it skipped because they failed authentication. `hidden` are
 // the messages this member hid for themselves (#119; chat-hidden.js).
-// `read` is this member's private read position, { postedAt, messageId } (#133):
+// `readers` are the members who can read chat (#130), for who can be
+// mentioned. `read` is this member's private read position, { postedAt, messageId } (#133):
 // unread tracking that works with read receipts off, synced in the same
 // sealed record as `hidden`. `presence` is this member's read cursor and receipt and typing settings,
 // with the revision of their slot on the service (#121; chat-presence.js).
@@ -237,12 +238,13 @@ export class ChatLogStore {
   /** Records the household admins and members last known (from the
    * verified device directory), so admin removals and author labels show
    * while offline. */
-  async saveDirectory({ admins, members, membersSignature = null }) {
+  async saveDirectory({ admins, members, membersSignature = null, readers = null }) {
     return transact(this.db, [META], "readwrite", async ({ meta }) => {
       const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
       state.admins = [...admins];
       state.members = members.map(({ id, kind, active }) => ({ id, kind, active }));
       state.membersSignature = membersSignature;
+      if (readers) state.readers = [...readers];
       await settle(meta.put(state));
     });
   }

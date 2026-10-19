@@ -1385,3 +1385,21 @@ test("the chat search folds case and accents over the real text arena (#124)", a
   chat.push(deleted.encodedEvent);
   assert.deepEqual(search({ query: "cafe" }).results.map((result) => result.messageId), ["02".repeat(16)]);
 });
+
+test("chat mentions are checked against the readers and come back in pages and search (#130)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const member = new Uint8Array(16).fill(0xbb), friend = new Uint8Array(16).fill(0xbe);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const context = (sequence) => ({ eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId: member, deviceId: new Uint8Array(16).fill(0xab), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) });
+  const asOf = 1_791_475_200_100, day = 20261009;
+  const blob = (byte) => byte.toString(16).padStart(2, "0").repeat(32);
+  const post = (mentions, members) => engine.executeChatCommand(
+    { type: "post-chat-message", messageId: "01".repeat(16), blobRef: blob(0xa1), blobKey: blob(0xc1), mentions }, context(1), [], asOf, day, null, [], members);
+  // Someone who cannot read chat cannot be mentioned.
+  assert.throws(() => post({ everyone: false, members: [hex(friend)] }, []), (error) => error.code === 4);
+  const posted = post({ everyone: true, members: [hex(friend)] }, [hex(friend)]);
+  const page = engine.chatPage([posted.encodedEvent], {}, asOf, day);
+  assert.deepEqual(page.messages[0].mentions, { everyone: true, members: [hex(friend)] });
+  const plain = engine.executeChatCommand({ type: "post-chat-message", messageId: "02".repeat(16), blobRef: blob(0xa2), blobKey: blob(0xc2) }, context(2), [], asOf, day);
+  assert.deepEqual(engine.chatPage([plain.encodedEvent], {}, asOf, day).messages[0].mentions ?? { everyone: false, members: [] }, { everyone: false, members: [] });
+});

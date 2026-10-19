@@ -1100,6 +1100,32 @@ export async function chatRegressions() {
     check(counts.at(-1).count === 2, "and it returns with the room");
   }
 
+  // Mentions (#130): "@" offers members who can read chat; picking one writes
+  // a plain "@Label"; unread mentions put an "@" on the Chat count.
+  {
+    Object.assign(room, {
+      mentionable() { return [{ id: "ab".repeat(16), label: "Maya" }]; },
+      mentionsOf() { return { everyone: false, members: [], me: false }; },
+    });
+    chat.room = null;
+    await settle();
+    chat.room = room;
+    await settle();
+    const box = chat.querySelector("#chat-text");
+    box.value = "hi @ma";
+    box.setSelectionRange(6, 6);
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    const list = chat.querySelector("#chat-mention-list");
+    check(box.getAttribute("role") === "combobox" && box.getAttribute("aria-expanded") === "true" && !list.hidden, "typing @ opens the mention list");
+    check([...list.querySelectorAll('[role="option"]')].map((o) => o.textContent).join("|") === "@Maya", "it lists the matching member");
+    box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    check(box.value === "hi @Maya " && list.hidden && box.getAttribute("aria-expanded") === "false", "Enter inserts the plain @Label and closes the list");
+    check(JSON.stringify(chat.mentionsFor(box.value).members) === JSON.stringify(["ab".repeat(16)]), "and the mention is sent with the message");
+    box.value = "";
+    box.dispatchEvent(new Event("input", { bubbles: true }));
+    chat.resetMentions();
+  }
+
   chat.room = null;
   await settle();
   if (!app) chat.remove();

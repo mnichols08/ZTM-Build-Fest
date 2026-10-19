@@ -64,9 +64,10 @@ because they are visible and switchable, not hidden.
   service, sealed to that member's own devices for each revision (ECDH to
   each device's agreement key) instead of a member-wide key: it hides the
   message on all their devices, and nobody else can tell.
-- **Still open:** whether a mention may make the push notification say "You
-  were mentioned", which would tell the service who was mentioned (not the
-  text). Decided in the Mentions story.
+- **Decided (#130): push stays generic.** A mention does not change the push
+  notification. Saying "You were mentioned" would tell the service who was
+  mentioned (not the text), so the mention marker (an "@" on the Chat count)
+  appears only on the device, from decrypted state.
 
 ## Alternatives Considered
 
