@@ -1140,7 +1140,7 @@ async function regressions() {
   household.render();
   check(
     [...household.querySelectorAll("button")].some(
-      (button) => button.textContent === "Log in with passkey",
+      (button) => button.textContent === "Sign in with my passkey",
     ),
     "existing members need a login action after logout",
   );

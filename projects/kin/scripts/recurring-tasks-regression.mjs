@@ -142,6 +142,7 @@ export async function recurringTaskRegressions(client, { visit, ready }) {
       await press(KEYS.n);
       if (await page(() => document.querySelector("kin-app").quickAdd.dialog.open)) break;
     }
+    await until(() => { const q = document.querySelector("kin-app").quickAdd; return q.dialog.open && document.activeElement === q.input; }, "Quick add input focus");
     await type(title);
     check(await page((title) => { const q = document.querySelector("kin-app").quickAdd; return q.dialog.open && q.input.value === title; }, title), "N opens Quick add and the title is typed into it",
       await page(() => { const q = document.querySelector("kin-app").quickAdd; return { open: q.dialog.open, value: q.input.value, focus: document.activeElement?.id || document.activeElement?.tagName }; }));
