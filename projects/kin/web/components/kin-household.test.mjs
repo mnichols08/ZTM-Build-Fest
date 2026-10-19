@@ -389,6 +389,7 @@ test("People & devices groups by stable member ID and labels people and device s
     getPinnedDevice: async (_householdId, deviceId) => deviceId === "phone",
   };
   const pairingActions = [];
+  component.showHousehold = () => pairingActions.push(["choose-person-role"]);
   component.createPairing = (kind) => pairingActions.push(["person", kind]);
   component.createDevicePairing = () => pairingActions.push(["device"]);
   component.memberNames = { load: async () => [
@@ -420,9 +421,9 @@ test("People & devices groups by stable member ID and labels people and device s
   assert.equal(line("partner-mac"), "New device · ABCD — Untrusted");
   assert.equal(line("partner-tablet"), "Safari on iPad — Revoked");
   const buttons = descendants(component.children).filter((child) => child.tagName === "button");
-  await buttons.find((button) => button.textContent === "Invite person").listeners.click();
+  await buttons.find((button) => button.textContent === "Invite another person").listeners.click();
   await buttons.find((button) => button.textContent === "Add my device").listeners.click();
-  assert.deepEqual(pairingActions, [["person", "adult"], ["device"]]);
+  assert.deepEqual(pairingActions, [["choose-person-role"], ["device"]], "invitation selection must not silently create an Adult invitation");
   assert.ok(descendants(component.children).some((child) => child.textContent?.includes("own household member identity")));
   assert.ok(descendants(component.children).some((child) => child.textContent?.includes("same member identity")));
   const renameButtons = descendants(component.children).filter((child) => child.textContent === "Rename");
@@ -466,7 +467,7 @@ test("People & devices remains useful offline when encrypted names are unavailab
   const groups = component.children.filter((child) => child.className === "device-group");
   assert.deepEqual(groups.map((group) => group.children[0].textContent), ["Alex (You)", "Riley"]);
   const buttons = descendants(component.children).filter((child) => child.tagName === "button");
-  assert.equal(buttons.some((button) => button.textContent === "Invite person"), false,
+  assert.equal(buttons.some((button) => button.textContent === "Invite another person"), false,
     "inviting another person remains limited to server-authorized managers");
   assert.equal(buttons.some((button) => button.textContent === "Add my device"), true);
   const messages = descendants(component.children).filter((child) => child.className === "household-message");
