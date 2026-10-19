@@ -382,11 +382,11 @@ and iPad until it is added again.
 
 **Planned.** Nothing further; this is the opt-in trade the feature makes.
 
-### Household chat: what the service and members learn (planned, #104)
+### Household chat: what the service and members learn (#104, v1.2.0)
 
 **What it is.** The household chat epic ([ADR 0008](decisions/0008-household-chat.md))
 adds a chat room with read receipts, typing indicators and "online now". This
-entry records the boundary before the code exists; each story updates it.
+entry records what the service and members can learn from chat; each story updates it.
 
 **Who and what.**
 - **The service** relays encrypted chat events and stores encrypted content
@@ -488,7 +488,7 @@ at most 6 seconds. Presence shows "seen" when a message was on a member's
 screen in a focused window, not that they understood it, and a member's
 device clock can make a message look seen slightly early or late.
 
-**Planned.** Each chat story records its own detail here as it lands.
+**Status.** Each chat story records its own detail here.
 
 ### QR pairing and phone sign-in (v1.1)
 

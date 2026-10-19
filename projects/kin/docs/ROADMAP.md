@@ -457,7 +457,9 @@ Preserve every existing tag. Every release follows the gates described in [agent
 ## After v1.0
 
 Every v1.x release keeps reading the v1.0 formats
-([V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md)). New work starts from GitHub
-issues: automatic device names (#71), household install identity (#78), push
-notifications (#85), QR pairing (#93) and household chat (#104). Each new
-capability is a minor release with the stabilization patches described above.
+([V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md)). Work after v1.1.2
+starts from GitHub issues. Household chat (#104), decided in
+[ADR 0008](decisions/0008-household-chat.md) (#105), is the v1.2.0 minor
+release. It was completed on `kin-testing` and merged into `kin-development`
+through the v1.2.0 release PR. Each new capability is a minor release with the
+stabilization patches described above.
