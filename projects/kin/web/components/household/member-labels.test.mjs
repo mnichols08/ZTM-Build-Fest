@@ -23,3 +23,9 @@ test("without a name, or without a known platform, the label falls back", () => 
 test("member names share Rust's 32-character limit", () => {
   assert.equal(MAX_MEMBER_NAME_CHARS, 32);
 });
+
+test("names that pass for You are recognized (#225 review)", async () => {
+  const { misleadingMemberName } = await import("./member-labels.js");
+  for (const name of ["You", " you ", "YOU", "Mikey (You)", "(you)", "Sam ( you )"]) assert.equal(misleadingMemberName(name), true, name);
+  for (const name of ["Mikey", "Young", "Yourself", "Yolanda", "You two", null, ""]) assert.equal(misleadingMemberName(name), false, String(name));
+});

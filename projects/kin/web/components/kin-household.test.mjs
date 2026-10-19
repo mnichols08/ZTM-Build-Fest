@@ -592,9 +592,10 @@ test("an inviter's code says whether it adds their own device or a new person (#
 
 // #225: a member sets, edits and removes only their own preferred name, and
 // their devices pick it up without losing nicknames.
-async function peopleWithNames(names, saved = []) {
+async function peopleWithNames(names, saved = [], { syncEnabled = true } = {}) {
   const component = new KinHousehold();
   component.identity = { memberId: "me", deviceId: "phone" };
+  component.syncStatus = { enabled: syncEnabled, memberKind: "adult" };
   component.localFingerprint = "SELF";
   component.run = async (action) => {
     try { await action(); } catch (error) { component.lastError = error.message; }
@@ -661,17 +662,57 @@ test("a named member can edit or remove their name, and devices follow it (#225)
   assert.deepEqual(saved, [""]);
 });
 
-test("Set my name on the household panel opens the editor in People & devices (#225)", async () => {
+test("every member gets the name editor on the household panel, without the Adult-only device list (#225)", async () => {
   const component = new KinHousehold();
+  component.identity = { memberId: "me", deviceId: "phone" };
   component.syncStatus = { enabled: true, memberKind: "limited" };
-  component.memberNames = { load: async () => [], rename: async () => {} };
-  let opened = 0;
-  component.showDevices = async () => { opened += 1; };
+  component.run = async (action) => action();
+  const saved = [];
+  let renders = 0;
+  component.render = () => { renders += 1; };
+  component.memberNames = { load: async () => [{ memberId: "me", preferredName: "Mikey" }, { memberId: "other", preferredName: "Sam" }], rename: async (name) => { saved.push(name); } };
+  let listed = 0;
+  component.showDevices = async () => { listed += 1; };
   component.ctx.views.renderMember();
+  await new Promise((resolve) => setTimeout(resolve, 0));
   const all = (node) => [node, ...(node.children ?? []).flatMap(all)];
-  const button = all(component).find((node) => node.tagName === "button" && node.textContent === "Set my name");
-  assert.ok(button, "every member, not only Adults, can set their name");
-  await button.listeners.click();
-  assert.equal(opened, 1);
-  assert.equal(component.editOwnName, true);
+  const nodes = all(component);
+  assert.ok(nodes.some((node) => node.tagName === "button" && node.textContent === "Edit my name"), "the current name is loaded into the editor");
+  const form = nodes.find((node) => node.className === "member-name-form");
+  const input = form.children.find((child) => child.tagName === "label").children.find((child) => child.tagName === "input");
+  assert.equal(input.value, "Mikey");
+  input.value = "Mike";
+  form.listeners.submit({ preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(saved, ["Mike"]);
+  assert.equal(renders, 1, "saving refreshes the panel");
+  assert.equal(listed, 0, "the trusted-device list (Adults only) is never needed");
+});
+
+test("without device sync no name editor is offered, since names can't be read back (#225)", async () => {
+  const component = new KinHousehold();
+  component.identity = { memberId: "me", deviceId: "phone" };
+  component.syncStatus = { enabled: false, memberKind: "adult" };
+  component.memberNames = { load: async () => [], rename: async () => {} };
+  component.ctx.views.renderMember();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const all = (node) => [node, ...(node.children ?? []).flatMap(all)];
+  assert.equal(all(component).some((node) => node.className === "member-name"), false);
+  const people = await peopleWithNames([], [], { syncEnabled: false });
+  assert.equal(people.nodes.some((node) => node.className === "member-name"), false);
+});
+
+test("nobody else can pose as You, and you can't save You as your name (#225)", async () => {
+  const { groups, nodes, saved, component } = await peopleWithNames([["partner", "Mikey (You)"]]);
+  assert.equal(groups.map((group) => group.children[0].textContent).join("|"), "You|Household member 1");
+  const lines = nodes.filter((node) => node.className === "device-name-line")
+    .map((line) => line.children.map((part) => part.textContent ?? part).join(""));
+  assert.ok(lines.includes("Safari on Mac — Trusted"), "the impostor name never reaches a device label");
+  const form = nodes.find((node) => node.className === "member-name-form");
+  const input = form.children.find((child) => child.tagName === "label").children.find((child) => child.tagName === "input");
+  input.value = " you ";
+  form.listeners.submit({ preventDefault() {} });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(saved, []);
+  assert.match(component.lastError, /rather than “You”/);
 });

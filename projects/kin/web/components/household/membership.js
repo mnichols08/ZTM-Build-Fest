@@ -2,7 +2,7 @@
 // invitations, device replacement, recovery, removal and admin changes.
 // Part of <kin-household>: state stays on the element (`this.host`), and
 // `this.ctx.<part>` reaches the other parts (kin-household.js lists them).
-import { MAX_MEMBER_NAME_CHARS, MEMBER_KIND_LABELS, friendlyDeviceLabel, memberLabels } from "./member-labels.js";
+import { MAX_MEMBER_NAME_CHARS, MEMBER_KIND_LABELS, friendlyDeviceLabel, memberLabels, misleadingMemberName } from "./member-labels.js";
 import { authenticationOptions, credentialJson } from "./auth.js";
 
 const MAX_ACTIVE_ADULTS = 4;
@@ -117,6 +117,8 @@ export class HouseholdMembership {
       const preferredNameByMember = new Map(
         memberNames
           .filter((entry) => typeof entry?.memberId === "string" && typeof entry?.preferredName === "string" && entry.preferredName.trim())
+          // Nobody else may pass for "You" here, beside the trust controls.
+          .filter((entry) => entry.memberId === this.host.identity.memberId || !misleadingMemberName(entry.preferredName))
           .map((entry) => [entry.memberId, entry.preferredName.trim()]),
       );
       this.host.replaceChildren();
@@ -154,7 +156,8 @@ export class HouseholdMembership {
         list.setAttribute("aria-labelledby", title.id);
         section.append(title);
         // Only you can set your own name (#225); it changes no access.
-        if (isYou && this.host.memberNames?.rename) section.append(this.nameControl(preferredName ?? null));
+        if (isYou && this.host.memberNames?.rename && this.host.syncStatus?.enabled)
+          section.append(this.nameControl(preferredName ?? null));
         section.append(list);
         this.host.append(section);
         lists.set(memberId, list);
@@ -341,7 +344,7 @@ export class HouseholdMembership {
   // event that only ever names its author; an empty field, or "Remove my
   // name", goes back to the fallback label. A name is presentation only: it
   // changes no member ID, role, device trust or notification audience.
-  nameControl(preferredName) {
+  nameControl(preferredName, { onSaved = () => this.host.showDevices() } = {}) {
     const wrapper = document.createElement("div");
     wrapper.className = "member-name";
     const open = this.host.makeButton(preferredName ? "Edit my name" : "Set my name", () => {
@@ -384,11 +387,13 @@ export class HouseholdMembership {
         const next = value.trim();
         if ([...next].length > MAX_MEMBER_NAME_CHARS)
           throw new Error(`Use a name of ${MAX_MEMBER_NAME_CHARS} characters or fewer.`);
+        if (misleadingMemberName(next))
+          throw new Error("Choose your own name rather than “You”.");
         if ((next || null) === (preferredName ?? null)) { saved = true; return; }
         await this.host.memberNames.rename(next);
         saved = true;
       });
-      if (saved) await this.host.showDevices();
+      if (saved) await onSaved();
     };
     form.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -403,13 +408,6 @@ export class HouseholdMembership {
       form.append(remove);
     }
     wrapper.append(open, form);
-    // Arriving from "Set my name" on the household panel opens the field.
-    if (this.host.editOwnName) {
-      this.host.editOwnName = false;
-      open.hidden = true;
-      form.hidden = false;
-      globalThis.requestAnimationFrame?.(() => input.focus());
-    }
     return wrapper;
   }
 

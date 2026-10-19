@@ -149,12 +149,16 @@ can rename it ([EVENTS](EVENTS.md#v110-device-names) has the rules).
 ## Preferred member names
 
 Each member may choose the name their household sees, such as "Mikey" (#224,
-#225), with **Set my name** on the household panel or in People & devices. It
+#225), with **Set my name** on the household panel, which every member can
+open (Adults also see it in People & devices). It needs device sync, because
+the name is read back from the synced household history. It
 exists only as an encrypted `MEMBER_NAMED` event that names its own author, so
 nobody can name another member and the relay never sees it. An empty name
 clears it. A member who never sets one keeps the existing fallback ("You",
 "Household member 1", or their role label), so nothing changes for existing
-households and nobody is asked to rename.
+households and nobody is asked to rename. A name that would pass for "You"
+(such as "You" or "Sam (You)") can't be saved, and another member's name like
+that is never shown, so nobody appears as "You" beside the trust controls.
 
 When a device has no nickname, People & devices shows its owner's name beside
 its automatic name, as "Mikey · Chrome on iPhone" (no possessive, so the

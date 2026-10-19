@@ -40,3 +40,11 @@ export function friendlyDeviceLabel({ nickname = null, automatic = null, preferr
   if (automatic && name) return `${name} · ${automatic}`;
   return automatic || null;
 }
+
+/** A preferred name that would pass for the signed-in person's own label
+ * ("You", "you", "Mikey (You)"). Another member's name like that is not
+ * shown, so nobody can pose as "You" beside trust controls; a member can't
+ * save one as their own either. Presentation only: names grant nothing. */
+export function misleadingMemberName(name) {
+  return typeof name === "string" && /^\s*you\s*$|\(\s*you\s*\)/i.test(name);
+}
