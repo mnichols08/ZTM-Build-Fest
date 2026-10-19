@@ -280,6 +280,13 @@ database per household, `kin-chat-log:<householdId>`, version 1
   access level the service last gave this member, `write`, `read` or `none`
   ([SYNC](SYNC.md#chat-access-policy-v11-123)).
 
+Chat keys (#123) are not in the chat log: they are household-key-style epochs
+in the device key store under the family `chat:<household>`, sealed to the
+device like the household keys, so root rotation re-seals them
+([SYNC](SYNC.md#dedicated-chat-key-v11-123)). On the service, `chat_key_packages`
+holds one wrapped package per device and chat key epoch, and
+`households.chat_key_epoch` the current epoch.
+
 While Kin is unlocked the decrypted log is held in memory as one growing
 buffer (`web/chat/chat-records.js`) that the engine's chat log mirrors
 incrementally; locking zeroes and drops it. Opening reads and decrypts the

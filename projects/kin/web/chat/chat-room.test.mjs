@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { existsSync, readFileSync } from "node:fs";
 import { createKinServer } from "../../server/server.mjs";
-import { exportDevicePublicKeys, generateDeviceKeys, generateHouseholdKey } from "../sync/crypto.js";
+import { decryptStoredEvent, deviceKeyFingerprint, encryptEvent, exportDevicePublicKeys, generateDeviceKeys, generateHouseholdKey } from "../sync/crypto.js";
 import { decodeEnvelopeBatch, encodeEventPage } from "../sync/envelope-wire.js";
 import { SyncCoordinator } from "../sync/sync-coordinator.js";
 import { ChatBlobClient } from "./chat-blob-client.js";
@@ -136,14 +136,22 @@ function requester(base, who) {
 async function device(who, { householdId, epochs, memberKind = "adult", householdAdmin = false }) {
   const keys = await generateDeviceKeys();
   const publicKeys = await exportDevicePublicKeys(keys);
+  const fingerprint = await deviceKeyFingerprint(publicKeys);
+  // Keys saved under other families (the chat key, #123), by "family:epoch".
+  const saved = new Map();
   return {
     who,
-    deviceKeys: { keys },
-    entry: { deviceId: who.deviceId, memberId: who.memberId, publicKeys, verifiedKeyHistory: [{ publicKeys }], historyFromEpoch: 1, memberKind, memberActive: true, householdAdmin },
+    deviceKeys: { keys, fingerprint },
+    entry: { deviceId: who.deviceId, memberId: who.memberId, publicKeys, fingerprint, verifiedKeyHistory: [{ publicKeys }], historyFromEpoch: 1, memberKind, memberActive: true, householdAdmin },
     keyStore: {
       vault: { assertUnlocked() {} },
-      getEpoch: async (household, keyEpoch) => (household === householdId && epochs.has(keyEpoch) ? { keyEpoch, householdKey: epochs.get(keyEpoch) } : null),
-      listEpochs: async () => [...epochs].map(([keyEpoch, householdKey]) => ({ keyEpoch, householdKey })),
+      getEpoch: async (household, keyEpoch) => household === householdId
+        ? (epochs.has(keyEpoch) ? { keyEpoch, householdKey: epochs.get(keyEpoch) } : null)
+        : saved.get(`${household}:${keyEpoch}`) ?? null,
+      listEpochs: async (household) => household === householdId
+        ? [...epochs].map(([keyEpoch, householdKey]) => ({ keyEpoch, householdKey }))
+        : [...saved.values()].filter((record) => record.householdId === household),
+      saveEpoch: async (record) => { saved.set(`${record.householdId}:${record.keyEpoch}`, record); return record; },
     },
     indexedDB: fakeIndexedDB(),
   };
@@ -935,4 +943,92 @@ test("the chat policy: read-only can't post and sends nothing; no access stops t
   assert.equal(a.room.page().total, before + 1);
   a.room.close();
   b.room.close();
+});
+
+// The dedicated chat key (#123): content is sealed under a key only devices of
+// members allowed to read are given. Shutting a class out rotates it; a device
+// that never receives it cannot open what is sent afterwards, even holding the
+// household key and the sealed envelope; giving access back shares it again.
+test("a member shut out of chat cannot open messages sent after the chat key rotates", { timeout: 60_000 }, async (t) => {
+  const s = await service(t);
+  const invitation = s.app.service.createPairing(s.admin.sessionToken, { kind: "limited" });
+  const claim = s.app.service.claimPairing({ code: invitation.code, credential: { id: "child", publicKey: "key-child", algorithm: -7 }, deviceLabel: "Tablet" });
+  s.app.service.approvePairing(s.admin.sessionToken, invitation.pairingId, claim.version);
+  const child = s.app.service.activateClaim(claim.claimToken);
+  const householdKey = await generateHouseholdKey();
+  const epochs = new Map([[1, householdKey]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs });
+  const tablet = await device(child, { householdId: s.householdId, epochs, memberKind: "limited" });
+  for (const one of [phone, laptop, tablet]) s.app.service.devices.get(one.who.deviceId).syncKeyFingerprint = one.entry.fingerprint;
+  const devices = [phone.entry, laptop.entry, tablet.entry];
+  const [a, b, c] = [await openRoom(phone, s), await openRoom(laptop, s), await openRoom(tablet, s)];
+  const status = (who) => s.app.syncService.status(who.sessionToken);
+  const sync = (one, room) => room.room.sync({ status: status(one.who), devices, deviceKeys: one.deviceKeys });
+
+  await a.room.send("before");
+  await sync(phone, a);
+  await sync(laptop, b);
+  await sync(tablet, c);
+  assert.deepEqual(await texts(c), ["before"], "no chat key yet: everyone reads");
+
+  s.app.service.setChatPolicy(s.admin.sessionToken, { limited: "none", temporary: "write" }, s.admin.memberId);
+  assert.equal(status(phone.who).chat.key.action, "rotate");
+  await sync(phone, a);
+  assert.equal(status(phone.who).chat.key.epoch, 1, "an adult's device made the chat key");
+  assert.equal(a.room.chatKeys.pending, false);
+  await sync(laptop, b);
+  assert.equal((await b.room.chatKeys.key(1)) instanceof CryptoKey, true, "the other adult was given it");
+
+  await a.room.send("secret after");
+  await sync(phone, a);
+  await sync(laptop, b);
+  assert.deepEqual(await texts(b), ["before", "secret after"], "devices with the chat key read it");
+  const stored = s.app.chatRelayService.pull(s.app.syncService.authorize(s.admin.sessionToken), "", "50").events.at(-1).envelope;
+  assert.equal(a.room.chatEpochById.get(stored.eventId), 1, "sealed under the chat key");
+
+  // The tablet is told it has no access and fetches nothing. Even handed the
+  // sealed envelope (it holds the household key), it can't open the content.
+  await sync(tablet, c);
+  assert.equal(c.room.access, "none");
+  const outer = await decryptStoredEvent({ envelope: stored, householdKey });
+  assert.deepEqual([...outer.slice(0, 4)], [0x4b, 0x43, 0x4b, 0x31], "inside the household envelope, the chat key's layer");
+  await assert.rejects(c.room.chatKeys.open(outer, stored.eventId), (error) => error.code === "chat_key_missing");
+  await assert.rejects(c.room.chatKeys.key(1), (error) => error.code === "chat_key_missing");
+  assert.equal(c.room.chatKeys.keys.size, 0);
+
+  const adminAuth = s.app.syncService.authorize(s.admin.sessionToken);
+  // A damaged package stored for the tablet doesn't wedge it: it drops the
+  // package, and a holder shares the key again.
+  s.app.service.setChatPolicy(s.admin.sessionToken, { limited: "write", temporary: "write" }, s.admin.memberId);
+  const junk = {
+    version: 1, grantId: "ab".repeat(16), householdId: `chat:${s.householdId}`, senderDeviceId: s.admin.deviceId, recipientDeviceId: child.deviceId,
+    recipientFingerprint: tablet.entry.fingerprint, keyEpoch: 1, expiresAt: Date.now() + 60_000, ephemeralPublicKey: { kty: "EC" },
+    salt: "AAAA", nonce: "AAAA", wrappedKey: "AAAA", signature: "AAAA",
+  };
+  s.app.chatRelayService.putKeys(adminAuth, { expectedEpoch: 1, epoch: 1, packages: [{ deviceId: child.deviceId, keyEpoch: 1, package: junk }] });
+  assert.equal(status(phone.who).chat.key.action, null, "the service believes the tablet has it");
+  await assert.rejects(sync(tablet, c), (error) => error.code === "chat_key_missing", "waiting for the key");
+  assert.equal(status(phone.who).chat.key.action, "grant", "the tablet dropped what it couldn't open");
+
+  // Access back: a holder shares the key, and the tablet reads everything.
+  await sync(phone, a);
+  await sync(tablet, c);
+  assert.deepEqual(await texts(c), ["before", "secret after"]);
+  assert.equal(status(phone.who).chat.key.action, null);
+
+  // A plain (unsealed) event pushed after the key began is refused by every
+  // reader, so a client holding only the household key can't write chat.
+  const forged = a.engine.executeChatCommand({ type: "post-chat-message", messageId: "ab".repeat(16), blobRef: "cd".repeat(32), blobKey: "ef".repeat(32) }, {
+    eventId: "12".repeat(16), householdId: s.householdId, actorId: s.admin.memberId, deviceId: s.admin.deviceId, timestamp: Date.now(), logicalTime: 99n,
+  }, a.room.records.view(), Date.now(), 0, a.room.syncIdentity(), a.room.admins);
+  const plain = await encryptEvent({
+    eventId: "12".repeat(16), householdId: s.householdId, deviceId: s.admin.deviceId,
+    deviceSequence: s.app.chatRelayService.status(adminAuth).deviceSequence + 1, logicalTime: "99", keyEpoch: 1,
+    plaintext: forged.encodedEvent, householdKey, signingKey: phone.deviceKeys.keys.signingPrivateKey,
+  });
+  s.app.chatRelayService.push(adminAuth, [plain], { chatEpoch: 1 });
+  await sync(laptop, b);
+  assert.equal(b.room.refused.length, 1, "refused, and chat goes on");
+  assert.deepEqual(await texts(b), ["before", "secret after"]);
 });

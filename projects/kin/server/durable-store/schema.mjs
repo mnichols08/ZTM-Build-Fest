@@ -685,6 +685,35 @@ export const schemaMethods = {
         throw new DurableStoreError("Kin could not complete the chat policy migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 16) {
+      try {
+        this.transaction(() => {
+          // v1.1 (#123): the dedicated chat key. The household's current chat
+          // key epoch (0 until a policy first needs one) and, per device, the
+          // wrapped key packages it may fetch. The service never holds a key.
+          this.db.exec(`
+            ALTER TABLE households ADD COLUMN chat_key_epoch INTEGER NOT NULL DEFAULT 0
+              CHECK (chat_key_epoch >= 0 AND chat_key_epoch <= 128);
+            ALTER TABLE households ADD COLUMN chat_key_since INTEGER NOT NULL DEFAULT 0
+              CHECK (chat_key_since >= 0);
+            CREATE TABLE chat_key_packages (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              key_epoch INTEGER NOT NULL CHECK (key_epoch >= 1 AND key_epoch <= 128),
+              device_id TEXT NOT NULL,
+              sender_device_id TEXT NOT NULL,
+              package TEXT NOT NULL,
+              PRIMARY KEY (household_id, key_epoch, device_id)
+            );
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(17, Date.now());
+          sqlitePragma(this.db, "user_version = 17");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the chat key migration.", { cause: error });
+      }
+    }
   },
 
   verify() {
