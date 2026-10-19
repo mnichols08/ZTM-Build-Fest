@@ -663,7 +663,11 @@ was read, and the member's two settings.
   and no receipts, and shows none, until the member sets the settings on it or
   it reads a slot it can open. It still learns the slot's revision, so its
   writes don't conflict, and a device that has settings of its own re-seals the
-  slot under a key it has. The cursor and read time sit unencrypted in the
+  slot under a key it has (which can overwrite a newer privacy choice made under
+a key this device lacks; the next device that has both fixes it). A device that
+takes newer settings drops reads it hadn't yet reported, and re-marks the rows
+on screen. A device whose clock is more than 15 seconds off neither shows nor
+is shown as typing. The cursor and read time sit unencrypted in the
   device's local chat database beside the member list, as the other bookkeeping
   there does; the chat events themselves stay sealed.
 - The slot is fetched when the chat opens, on a `RECEIPTS` live hint, and at

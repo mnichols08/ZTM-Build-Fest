@@ -556,3 +556,48 @@ test("a typing frame sealed long ago shows nothing, even if it was never seen be
   assert.equal(await phone.receiveTyping(bytes), false, "a minute old");
   assert.deepEqual(phone.typing(), []);
 });
+
+test("a device that doesn't know the settings never writes its defaults over them", async () => {
+  const h = await household();
+  const phone = h.open("phone"), laptop = h.open("laptop"), sam = h.open("sam");
+  await Promise.all([phone.load(), laptop.load(), sam.load()]);
+  laptop.markRead(message(4)); // dirty with default settings, before any refresh
+  await phone.setSettings({ receipts: false });
+  laptop.env.epochKey = async (epoch) => { if (epoch === 1) throw new Error("no key"); return h.key; };
+  await laptop.refresh();
+  assert.equal(laptop.unverified, true);
+  await h.advance(RECEIPT_WRITE_MS * 3);
+  assert.equal(h.slots.get(ME).revision, 1, "the phone's slot was left alone");
+  await sam.refresh();
+  assert.equal(sam.readers(message(2, SAM)).length, 0);
+  // The key arrives: the slot opens, the settings are adopted, nothing stays silenced.
+  laptop.env.epochKey = async () => h.key;
+  await laptop.refresh();
+  assert.equal(laptop.unverified, false);
+  assert.equal(laptop.sendsReceipts, false, "adopts the phone's choice");
+  assert.equal(laptop.cursor, null);
+});
+
+test("another member's slot that fails only for a missing key keeps its reader", async () => {
+  const h = await household();
+  const sam = h.open("sam"), phone = h.open("phone");
+  await Promise.all([sam.load(), phone.load()]);
+  sam.markRead(message(9, ME));
+  await h.advance(RECEIPT_WRITE_MS);
+  await phone.refresh();
+  assert.equal(phone.readers(message(1, ME)).length, 1);
+  phone.env.epochKey = async () => { throw new Error("key not here right now"); };
+  await phone.refresh();
+  assert.equal(phone.readers(message(1, ME)).length, 1, "kept");
+});
+
+test("a slot cursor dated far ahead is read as none", async () => {
+  const h = await household();
+  const sam = h.open("sam"), phone = h.open("phone");
+  await Promise.all([sam.load(), phone.load()]);
+  sam.cursor = { postedAt: h.clock.now + 60 * 60_000, messageId: id(0x99) };
+  sam.touch();
+  await sam.flush();
+  await phone.refresh();
+  assert.equal(phone.readers(message(1, ME)).length, 0);
+});

@@ -306,7 +306,9 @@ export class ChatPresence {
     // A write in flight was sealed before any change made since; wait for it,
     // then write again if something is still waiting.
     while (this.writing) await this.writing.catch(() => {});
-    if (this.closed || !this.dirty) return;
+    // Unverified: this device doesn't know the member's settings, so whatever
+    // it holds would overwrite them with defaults. Nothing is written.
+    if (this.closed || !this.dirty || this.unverified) return;
     this.writing = this.write({ retried }).finally(() => { this.writing = null; });
     return this.writing;
   }
@@ -350,26 +352,31 @@ export class ChatPresence {
     const devices = this.env.devices();
     const next = new Map();
     let changed = false;
+    let ownUnreadable = false;
     for (const row of response.slots) {
       if (!row || typeof row.memberId !== "string" || !Number.isSafeInteger(row.revision) || row.revision < 1) continue;
+      const own = row.memberId === identity.memberId;
       const device = devices.find((entry) => entry.deviceId === row.record?.deviceId);
       // A slot signed by a device that isn't that member's is not theirs.
-      if (!device || device.memberId !== row.memberId) continue;
+      if (!device || device.memberId !== row.memberId) {
+        if (own) { this.revision = Math.max(this.revision, row.revision); ownUnreadable = true; }
+        continue;
+      }
       let value;
       let keyMissing = false;
       try {
         const householdKey = await this.env.epochKey(row.record.keyEpoch).catch((error) => { keyMissing = true; throw error; });
         value = await open({ envelope: row.record, device, householdKey, householdId: identity.householdId, kind: "receipt" });
-        if (row.record.deviceSequence !== row.revision) continue;
+        if (row.record.deviceSequence !== row.revision) { if (own) { this.revision = Math.max(this.revision, row.revision); ownUnreadable = true; } continue; }
       } catch (error) {
         if (error?.code === "chat_locked") throw error;
-        if (row.memberId === identity.memberId) {
+        if (own) {
           // Sealed under a key this device never had. The revision is still
           // known (so writes work), the settings are not: fail closed unless
           // this device has its own, and re-seal the slot under a key it has.
           this.revision = Math.max(this.revision, row.revision);
-          if (this.settings.settingsAt === 0) this.unverified = true;
-          else if (!this.resealed) { this.resealed = true; this.touch(); }
+          ownUnreadable = true;
+          if (this.settings.settingsAt !== 0 && !this.resealed) { this.resealed = true; this.touch(); }
         } else if (keyMissing) {
           // A key this device doesn't hold right now: keep what was known
           // rather than drop a reader. A slot that fails its signature or
@@ -397,6 +404,10 @@ export class ChatPresence {
       }
     }
     if (next.size !== this.slots.size) changed = true;
+    // Judged on each read: unverified only while the own slot is there and
+    // can't be read, and this device has no settings of its own.
+    if (!ownUnreadable || this.settings.settingsAt !== 0) this.unverified = false;
+    else this.unverified = true;
     this.slots = next;
     if (changed) this.env.onChange?.();
     if (this.dirty) this.scheduleWrite();
