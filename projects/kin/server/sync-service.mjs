@@ -105,6 +105,9 @@ export class EncryptedSyncService {
           // Chat (#111): whose removals count as an admin's, by the same
           // rule the service uses to let them delete others' content.
           householdAdmin: Boolean(member && isHouseholdAdmin(member, this.now())),
+          // Chat (#130): whether this member can read chat under the admin's
+          // policy ("none", "read" or "write"), for who can be mentioned.
+          chatAccess: member ? chatAccess(member, household, this.now()) : "none",
           publicKeys: device.syncPublicKeys ?? null,
           fingerprint: device.syncKeyFingerprint ?? null,
           certificate: device.deviceAuthorizationCertificate ?? null,

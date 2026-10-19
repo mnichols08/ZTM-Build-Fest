@@ -313,10 +313,12 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             blob_ref,
             blob_key,
             reply_to,
+            mentions,
         } => {
             if message_id.0 == [0; 16]
                 || *blob_ref == [0; 32]
                 || *blob_key == [0; 32]
+                || !mentions.is_valid()
                 || reply_to.is_some_and(|reply| reply.0 == [0; 16] || reply == *message_id)
             {
                 return Err(KinError::MalformedProtocol);
@@ -325,22 +327,27 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
             payload.extend_from_slice(&[*content_kind as u8, 0, 0, 0]);
             payload.extend_from_slice(blob_ref);
             payload.extend_from_slice(blob_key);
-            // A reply adds the quoted message's ID (#129).
-            if let Some(reply) = reply_to {
-                payload.extend_from_slice(&reply.0);
-            }
+            // A reply adds the quoted message's ID (#129), mentions their
+            // list (#130).
+            payload.extend_from_slice(&mentions.encode_tail(reply_to.as_ref()));
         }
         EventKind::ChatMessageEdited {
             message_id,
             blob_ref,
             blob_key,
+            mentions,
         } => {
-            if message_id.0 == [0; 16] || *blob_ref == [0; 32] || *blob_key == [0; 32] {
+            if message_id.0 == [0; 16]
+                || *blob_ref == [0; 32]
+                || *blob_key == [0; 32]
+                || !mentions.is_valid()
+            {
                 return Err(KinError::MalformedProtocol);
             }
             payload.extend_from_slice(&message_id.0);
             payload.extend_from_slice(blob_ref);
             payload.extend_from_slice(blob_key);
+            payload.extend_from_slice(&mentions.encode_tail(None));
         }
         EventKind::ChatMessageDeleted {
             message_id,

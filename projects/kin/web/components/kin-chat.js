@@ -35,6 +35,7 @@ import { seenText, typingText } from "../chat/chat-presence.js";
 import { attachmentKindLabel, formatAttachmentSize } from "../attachments/attachment-preview.js";
 import { ObjectUrlRegistry } from "../attachments/object-urls.js";
 import { excerptRanges, highlightRanges } from "../chat/chat-search-ranges.js";
+import { activeMention, mentionOptions, splitMentions, resolveMentions } from "../chat/chat-mentions.js";
 import "./kin-emoji-picker.js";
 import "./kin-chat-search.js";
 
@@ -238,7 +239,38 @@ class KinChat extends HTMLElement {
     this.input.rows = 2;
     this.input.autocomplete = "off";
     this.input.setAttribute("aria-describedby", "chat-message");
+    // Mentions (#130): "@" offers the members who can read chat, plus everyone.
+    this.chosenMentions = new Map();
+    this.mentionList = document.createElement("ul");
+    this.mentionList.id = "chat-mention-list";
+    this.mentionList.className = "chat-mention-list";
+    this.mentionList.setAttribute("role", "listbox");
+    this.mentionList.setAttribute("aria-label", "Mention someone");
+    this.mentionList.hidden = true;
+    this.input.setAttribute("role", "combobox");
+    this.input.setAttribute("aria-autocomplete", "list");
+    this.input.setAttribute("aria-expanded", "false");
+    this.input.setAttribute("aria-controls", "chat-mention-list");
     this.input.addEventListener("keydown", (event) => {
+      if (this.mentionMatch && !event.isComposing) {
+        const count = this.mentionChoices.length;
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          this.mentionIndex = (this.mentionIndex + (event.key === "ArrowDown" ? 1 : count - 1)) % count;
+          this.renderMentionList();
+          return;
+        }
+        if (event.key === "Enter" || event.key === "Tab") {
+          event.preventDefault();
+          this.pickMention(this.mentionChoices[this.mentionIndex]);
+          return;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          this.closeMentions();
+          return;
+        }
+      }
       if (event.key === "Escape" && this.editing) {
         event.preventDefault();
         this.stopEditing({ restoreDraft: true });
@@ -321,7 +353,7 @@ class KinChat extends HTMLElement {
     const buttons = document.createElement("div");
     buttons.className = "chat-form-buttons";
     buttons.append(this.attach, this.emoji, this.send, this.cancel);
-    form.append(this.label, this.replyBar, this.input, this.pendingList, panelSlot, buttons, this.message);
+    form.append(this.label, this.replyBar, this.input, this.mentionList, this.pendingList, panelSlot, buttons, this.message);
 
     // A viewer for one photo, shown modally; its URL is released on close.
     this.viewer = document.createElement("dialog");
@@ -336,7 +368,13 @@ class KinChat extends HTMLElement {
     this.typingLine.className = "chat-typing";
     this.typingLine.hidden = true;
     this.scroller.setAttribute("aria-describedby", "chat-typing");
-    this.input.addEventListener("input", () => this.composerChanged());
+    this.input.addEventListener("input", () => { this.composerChanged(); this.updateMentions(); });
+    this.input.addEventListener("click", () => this.updateMentions());
+    this.input.addEventListener("blur", () => {
+      clearTimeout(this.mentionBlurTimer);
+      this.mentionBlurTimer = setTimeout(() => this.closeMentions(), 150);
+    });
+    this.input.addEventListener("focus", () => clearTimeout(this.mentionBlurTimer));
     this.input.addEventListener("blur", () => this.chatRoom?.presence?.stopTyping());
 
     // A message's details: who has read it, and when.
@@ -412,14 +450,14 @@ class KinChat extends HTMLElement {
     }
     clearTimeout(this.unreadTimer);
     this.unreadTimer = null;
-    let unread = { count: 0, capped: false };
+    let unread = { count: 0, mentions: 0, capped: false };
     try {
       if (this.chatRoom) unread = this.chatRoom.unread();
     } catch { /* a view that can't count shows none */ }
-    const key = `${unread.count}:${unread.capped}`;
+    const key = `${unread.count}:${unread.mentions ?? 0}:${unread.capped}`;
     if (key === this.publishedUnread) return;
     this.publishedUnread = key;
-    this.dispatchEvent(new CustomEvent("kin:chat-unread", { bubbles: true, composed: true, detail: { count: unread.count, capped: unread.capped } }));
+    this.dispatchEvent(new CustomEvent("kin:chat-unread", { bubbles: true, composed: true, detail: { count: unread.count, mentions: unread.mentions ?? 0, capped: unread.capped } }));
   }
 
   get room() {
@@ -517,6 +555,77 @@ class KinChat extends HTMLElement {
   windowChanged() {
     if (document.visibilityState !== "visible" || !document.hasFocus()) this.chatRoom?.presence?.stopTyping();
     this.evaluateRead();
+  }
+
+  /** Shows the mention choices for the "@word" at the caret, if any. */
+  updateMentions() {
+    const room = this.chatRoom;
+    const match = room && !this.isDisabled ? activeMention(this.input.value, this.input.selectionStart ?? this.input.value.length) : null;
+    const choices = match ? mentionOptions(room.mentionable?.() ?? [], match.query) : [];
+    if (!match || !choices.length) { this.closeMentions(); return; }
+    if (!this.mentionMatch || this.mentionMatch.query !== match.query) this.mentionIndex = 0;
+    this.mentionMatch = match;
+    this.mentionChoices = choices;
+    this.renderMentionList();
+  }
+
+  renderMentionList() {
+    this.mentionList.textContent = "";
+    this.mentionChoices.forEach((choice, index) => {
+      const option = document.createElement("li");
+      option.id = `chat-mention-${index}`;
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", String(index === this.mentionIndex));
+      option.textContent = choice.everyone ? "@everyone (everyone in this chat)" : `@${choice.label}`;
+      // pointerdown keeps the focus in the message box.
+      option.addEventListener("pointerdown", (event) => { event.preventDefault(); this.pickMention(choice); });
+      this.mentionList.append(option);
+    });
+    this.mentionList.hidden = false;
+    this.input.setAttribute("aria-expanded", "true");
+    this.input.setAttribute("aria-activedescendant", `chat-mention-${this.mentionIndex}`);
+    this.mentionList.children[this.mentionIndex]?.scrollIntoView?.({ block: "nearest" });
+  }
+
+  closeMentions() {
+    this.mentionMatch = null;
+    this.mentionChoices = [];
+    if (!this.mentionList) return;
+    this.mentionList.hidden = true;
+    this.input.setAttribute("aria-expanded", "false");
+    this.input.removeAttribute("aria-activedescendant");
+  }
+
+  pickMention(choice) {
+    const match = this.mentionMatch;
+    if (!match || !choice) return;
+    const caret = this.input.selectionStart ?? this.input.value.length;
+    const text = this.input.value;
+    const label = choice.everyone ? "everyone" : choice.label;
+    const insert = `@${label} `;
+    this.input.value = text.slice(0, match.start) + insert + text.slice(caret);
+    const at = match.start + insert.length;
+    this.input.setSelectionRange(at, at);
+    if (choice.everyone) this.mentionEveryone = true;
+    else this.chosenMentions.set(choice.label, choice.id);
+    this.closeMentions();
+    this.say(`Mentioned ${label}.`);
+    this.input.focus();
+    this.composerChanged();
+  }
+
+  /** The mentions to send with `text`: only those still written in it. */
+  mentionsFor(text) {
+    // Labels typed by hand count too, when they name someone who can be mentioned.
+    const known = new Map(this.chosenMentions);
+    for (const person of this.chatRoom?.mentionable?.() ?? []) if (!known.has(person.label)) known.set(person.label, person.id);
+    return resolveMentions(text, known, true);
+  }
+
+  resetMentions() {
+    this.chosenMentions = new Map();
+    this.mentionEveryone = false;
+    this.closeMentions();
   }
 
   composerChanged() {
@@ -956,6 +1065,24 @@ class KinChat extends HTMLElement {
     if (this.searchMark) this.applySearchMark();
   }
 
+  /** Plain text, with the message's mentions wrapped for emphasis. */
+  fillText(body, message, room) {
+    const found = room.mentionsOf?.(message);
+    if (!found || (!found.everyone && !found.members.length)) { body.textContent = message.text; return; }
+    const entries = room.mentionable?.() ?? [];
+    const named = [...entries.filter((entry) => found.members.includes(entry.id))];
+    // Others typed the label this member has in Household access, not "You".
+    const myLabel = room.labels?.get(room.identity.memberId);
+    const self = found.members.includes(room.identity.memberId) && myLabel ? [{ id: room.identity.memberId, label: myLabel }] : [];
+    for (const piece of splitMentions(message.text, [...named, ...self], found.everyone)) {
+      if (!piece.mention) { body.append(piece.text); continue; }
+      const mark = document.createElement("mark");
+      mark.className = "chat-mention";
+      mark.textContent = piece.text;
+      body.append(mark);
+    }
+  }
+
   signature(message, grouped, room) {
     const status = this.textStatus.get(message.messageId);
     const attachment = this.attachments.get(message.messageId);
@@ -969,6 +1096,7 @@ class KinChat extends HTMLElement {
       (room.access ?? "write") === "write", this.emojiNames.size,
       message.replyTo ? [message.replyTo.index, message.replyTo.state, message.replyTo.text ?? "", message.replyTo.blobRef ?? "", room.isHidden?.(message.replyTo.messageId) ?? false, this.attachments.get(message.replyTo.messageId)?.status ?? "", this.attachments.get(message.replyTo.messageId)?.files[0]?.name ?? "", Object.keys(this.textStatus.get(`quote:${message.replyTo.messageId}`) ?? {})[0] ?? ""].join("\u0001") : "",
       this.highlighted === message.messageId, this.divider === message.messageId,
+      room.mentionsOf ? JSON.stringify(room.mentionsOf(message)) : "",
     ].join("\u0000");
   }
 
@@ -996,6 +1124,7 @@ class KinChat extends HTMLElement {
     item.className = "chat-row";
     item.dataset.messageId = message.messageId;
     if (message.authorId === room.identity.memberId) item.classList.add("own");
+    if (room.mentionsOf?.(message).me) item.classList.add("chat-mentions-me");
     if (grouped) item.classList.add("grouped");
     const author = room.authorLabel(message.authorId);
     const header = document.createElement("p");
@@ -1048,7 +1177,7 @@ class KinChat extends HTMLElement {
         body.textContent = ATTACHMENT_TEXT[state?.status ?? "loading"];
       }
     } else if (message.text !== null) {
-      body.textContent = message.text;
+      this.fillText(body, message, room);
       // A message of only 1–3 emoji shows larger (#113).
       const count = emojiOnlyCount(message.text);
       if (count >= 1 && count <= 3) body.classList.add("chat-emoji-only");
@@ -1698,9 +1827,17 @@ class KinChat extends HTMLElement {
         this.say("Copied.");
       } else if (action === "edit") {
         this.stopReplying();
-        if (!this.editing) this.stashedDraft = this.input.value;
+        if (!this.editing) {
+          this.stashedDraft = this.input.value;
+          this.stashedMentions = { chosen: this.chosenMentions, everyone: this.mentionEveryone === true };
+        }
         this.editing = message;
         this.input.value = message.text;
+        this.resetMentions();
+        for (const person of room.mentionable?.() ?? []) {
+          if (room.mentionsOf?.(message).members.includes(person.id)) this.chosenMentions.set(person.label, person.id);
+        }
+        this.mentionEveryone = room.mentionsOf?.(message).everyone === true;
         this.label.textContent = "Editing message";
         this.form.classList.add("chat-editing");
         this.send.textContent = "Save";
@@ -1742,6 +1879,14 @@ class KinChat extends HTMLElement {
     if (!this.input) return;
     if (wasEditing && restoreDraft) this.input.value = this.stashedDraft ?? "";
     this.stashedDraft = null;
+    if (wasEditing) {
+      this.resetMentions();
+      if (restoreDraft && this.stashedMentions) {
+        this.chosenMentions = this.stashedMentions.chosen;
+        this.mentionEveryone = this.stashedMentions.everyone;
+      }
+      this.stashedMentions = null;
+    }
     this.label.textContent = "Message";
     this.form?.classList.remove("chat-editing");
     this.send.textContent = "Send";
@@ -1767,9 +1912,10 @@ class KinChat extends HTMLElement {
     this.applyDisabled();
     const editing = this.editing;
     try {
-      if (editing) await room.edit(editing, text);
-      else if (withFiles) await room.sendAttachments({ text: caption, files: this.files, replyTo: this.replyingTo?.messageId ?? null });
-      else await room.send(text, { replyTo: this.replyingTo?.messageId ?? null });
+      const mentions = this.mentionsFor(withFiles ? caption : text);
+      if (editing) await room.edit(editing, text, { mentions });
+      else if (withFiles) await room.sendAttachments({ text: caption, files: this.files, replyTo: this.replyingTo?.messageId ?? null, mentions });
+      else await room.send(text, { replyTo: this.replyingTo?.messageId ?? null, mentions });
       if (editing) {
         // Back to whatever draft was there before editing.
         this.stopEditing({ restoreDraft: this.input.value === text });
@@ -1780,7 +1926,7 @@ class KinChat extends HTMLElement {
           this.renderPending();
         }
         // Only clear what was sent: typing that continued meanwhile stays.
-        if (this.input.value === text) this.input.value = "";
+        if (this.input.value === text) { this.input.value = ""; this.resetMentions(); }
         this.stopReplying();
         await this.queueRender("reset");
       }

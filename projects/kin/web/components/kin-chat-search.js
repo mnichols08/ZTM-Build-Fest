@@ -125,9 +125,15 @@ class KinChatSearch extends HTMLElement {
     const filesLabel = document.createElement("label");
     filesLabel.className = "chat-search-files";
     filesLabel.append(this.files, " Only photos and files");
+    this.mine = document.createElement("input");
+    this.mine.type = "checkbox";
+    this.mine.addEventListener("change", () => this.refresh());
+    const mineLabel = document.createElement("label");
+    mineLabel.className = "chat-search-files";
+    mineLabel.append(this.mine, " Only messages that mention me");
     this.since = this.date(fieldset, "On or after");
     this.until = this.date(fieldset, "On or before");
-    fieldset.append(filesLabel);
+    fieldset.append(filesLabel, mineLabel);
     filters.append(summary, fieldset);
     this.filters = filters;
     form.append(label, this.input, filters);
@@ -201,7 +207,7 @@ class KinChatSearch extends HTMLElement {
   roomChanged() {
     // New messages, edits and deletions change what matches.
     this.updatePeople();
-    if (this.text.trim() || this.files?.checked) this.refresh({ quiet: true });
+    if (this.text.trim() || this.files?.checked || this.mine?.checked) this.refresh({ quiet: true });
   }
 
   cancel() {
@@ -219,7 +225,7 @@ class KinChatSearch extends HTMLElement {
   refresh({ quiet = false } = {}) {
     if (!this.status) return;
     this.cancel();
-    const searching = this.text.trim() || this.files?.checked;
+    const searching = this.text.trim() || this.files?.checked || this.mine?.checked;
     // A member shut out of chat can't search it, whatever this device holds.
     const allowed = this.chatRoom && (this.chatRoom.access ?? "write") !== "none";
     if (!allowed || !searching) {
@@ -240,6 +246,7 @@ class KinChatSearch extends HTMLElement {
       query: clipBytes(this.text.trim(), 256),
       limit: PAGE_LIMIT,
       attachmentsOnly: Boolean(this.files?.checked),
+      ...(this.mine?.checked && this.chatRoom?.identity?.memberId ? { mentioning: this.chatRoom.identity.memberId } : {}),
       authors: person ? [person] : [],
       from: from ?? 0,
       // "On or before" includes that whole day.

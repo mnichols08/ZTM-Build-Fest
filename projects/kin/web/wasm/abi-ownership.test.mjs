@@ -296,12 +296,12 @@ test("chat pages decode from KCHP and malformed pages are refused (#109)", () =>
   assert.deepEqual(decoded.messages[0], {
     messageId: "01".repeat(16), authorId: "11".repeat(16), deviceId: "21".repeat(16),
     postedAt: 1_791_475_200_001, editedAt: 1_791_475_200_009, index: 3, status: "edited", contentKind: "text",
-    blobRef: "b1".repeat(32), blobKey: new Uint8Array(32).fill(0xc1), text: "Dinner at 6 🍝", reactions: [], replyTo: null,
+    blobRef: "b1".repeat(32), blobKey: new Uint8Array(32).fill(0xc1), text: "Dinner at 6 🍝", reactions: [], replyTo: null, mentions: { everyone: false, members: [] },
   });
   assert.deepEqual(decoded.messages[1], {
     messageId: "02".repeat(16), authorId: "12".repeat(16), deviceId: "22".repeat(16),
     postedAt: 1_791_475_200_002, editedAt: null, index: 4, status: "removed-by-admin", contentKind: "text",
-    blobRef: null, blobKey: null, text: null, reactions: [], replyTo: null,
+    blobRef: null, blobKey: null, text: null, reactions: [], replyTo: null, mentions: { everyone: false, members: [] },
   });
   const broken = [
     page.slice(0, -1),

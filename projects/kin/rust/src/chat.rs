@@ -31,6 +31,11 @@ pub const MAX_CHAT_PAGE: usize = 500;
 pub const MAX_CHAT_EVENT_COUNT: usize = 250_000;
 /// Admins a page request may name.
 pub const MAX_CHAT_ADMINS: usize = 16;
+/// Members a command may name as able to read chat (#130), and so as
+/// mentionable.
+pub const MAX_CHAT_MEMBERS: usize = 64;
+/// Most members one message may mention by name (#130); `@everyone` is a flag.
+pub const MAX_CHAT_MENTIONS: usize = 20;
 /// Most bytes one reaction emoji may have (#127).
 pub const MAX_EMOJI_BYTES: usize = 32;
 /// Most different emoji a message may collect; commands refuse a new one
@@ -49,6 +54,111 @@ pub enum ChatMessageStatus {
     RemovedByAdmin = 3,
 }
 
+/// Who a message mentions (#130): members by ID, and everyone who can read
+/// chat. Member IDs are kept in ascending order, once each, so a mention list
+/// has one encoding.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ChatMentions {
+    pub everyone: bool,
+    pub members: Vec<ActorId>,
+}
+
+const MENTIONS_EVERYONE: u8 = 1;
+const MENTIONS_REPLY: u8 = 2;
+
+impl ChatMentions {
+    pub fn is_empty(&self) -> bool {
+        !self.everyone && self.members.is_empty()
+    }
+
+    /// Whether this names no more than `MAX_CHAT_MENTIONS` members, none
+    /// zero, in ascending order without repeats.
+    pub fn is_valid(&self) -> bool {
+        self.members.len() <= MAX_CHAT_MENTIONS
+            && self.members.iter().all(|member| member.0 != [0; 16])
+            && self.members.windows(2).all(|pair| pair[0].0 < pair[1].0)
+    }
+
+    /// Whether `actor` is mentioned, by name or by `@everyone`.
+    pub fn includes(&self, actor: &ActorId) -> bool {
+        self.everyone || self.members.contains(actor)
+    }
+
+    /// The bytes that follow a post's or edit's fixed part: nothing, or for
+    /// a reply alone its 16-byte message ID, or (with mentions) flags u8 (1
+    /// everyone, 2 a reply follows), count u8, the member IDs, then the
+    /// reply ID if flagged.
+    pub fn encode_tail(&self, reply: Option<&ChatMessageId>) -> Vec<u8> {
+        if self.is_empty() {
+            return reply.map(|id| id.0.to_vec()).unwrap_or_default();
+        }
+        let mut bytes = vec![
+            (u8::from(self.everyone) * MENTIONS_EVERYONE)
+                | (u8::from(reply.is_some()) * MENTIONS_REPLY),
+            self.members.len() as u8,
+        ];
+        for member in &self.members {
+            bytes.extend_from_slice(&member.0);
+        }
+        if let Some(reply) = reply {
+            bytes.extend_from_slice(&reply.0);
+        }
+        bytes
+    }
+
+    /// The inverse of `encode_tail`. `allow_reply` is false for an edit.
+    /// Anything that is not the one encoding of its meaning is malformed.
+    pub fn decode_tail(
+        tail: &[u8],
+        allow_reply: bool,
+    ) -> Result<(ChatMentions, Option<ChatMessageId>), KinError> {
+        let reply_id = |bytes: &[u8]| -> Result<ChatMessageId, KinError> {
+            let id: [u8; 16] = bytes.try_into().map_err(|_| KinError::MalformedProtocol)?;
+            if id == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            Ok(ChatMessageId(id))
+        };
+        if tail.is_empty() {
+            return Ok((ChatMentions::default(), None));
+        }
+        if tail.len() == 16 {
+            return if allow_reply {
+                Ok((ChatMentions::default(), Some(reply_id(tail)?)))
+            } else {
+                Err(KinError::MalformedProtocol)
+            };
+        }
+        if tail.len() < 2 {
+            return Err(KinError::MalformedProtocol);
+        }
+        let (flags, count) = (tail[0], tail[1] as usize);
+        let replied = flags & MENTIONS_REPLY != 0;
+        if flags & !(MENTIONS_EVERYONE | MENTIONS_REPLY) != 0
+            || replied && !allow_reply
+            || count > MAX_CHAT_MENTIONS
+            || tail.len() != 2 + count * 16 + if replied { 16 } else { 0 }
+        {
+            return Err(KinError::MalformedProtocol);
+        }
+        let members = tail[2..2 + count * 16]
+            .chunks_exact(16)
+            .map(|chunk| ActorId(chunk.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        let mentions = ChatMentions {
+            everyone: flags & MENTIONS_EVERYONE != 0,
+            members,
+        };
+        if mentions.is_empty() || !mentions.is_valid() {
+            return Err(KinError::MalformedProtocol);
+        }
+        let reply = replied
+            .then(|| reply_id(&tail[2 + count * 16..]))
+            .transpose()?;
+        Ok((mentions, reply))
+    }
+}
+
 /// One message, as replay leaves it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ChatMessage {
@@ -65,6 +175,8 @@ pub struct ChatMessage {
     pub blob_key: [u8; 32],
     /// The message this one answers, if it is a reply (#129).
     pub reply_to: Option<ChatMessageId>,
+    /// Who the message mentions (#130): replaced by an edit.
+    pub mentions: ChatMentions,
 }
 
 /// One emoji on one message and the members who chose it, in the order replay
@@ -525,6 +637,16 @@ fn first_line(text: &[u8]) -> &[u8] {
     &line.as_bytes()[..end]
 }
 
+/// The mentions a page shows for a message: those of one that shows.
+fn shown_mentions(message: &ChatMessage, shown: ChatMessageStatus) -> Option<&ChatMentions> {
+    match shown {
+        ChatMessageStatus::Live | ChatMessageStatus::Edited if !message.mentions.is_empty() => {
+            Some(&message.mentions)
+        }
+        _ => None,
+    }
+}
+
 fn shown_reactions<'a>(
     state: &'a ChatState,
     request: &PageRequest<'_>,
@@ -552,11 +674,14 @@ fn shown_reactions<'a>(
 /// 48  posted at i64          56  edited at i64 (0)    64  index u32
 /// 68  status u8              69  content kind u8      70  reserved u16
 /// 72  blob ref (32)          104 text offset u32      108 text length u32
-/// 112 reaction groups u32  116 reserved (12)
+/// 112 reaction groups u32  116 named mentions u16  118 reserved (10)
 /// ```
 ///
 /// Byte 70 is a flag: 1 when the message is a reply that still shows (a
-/// quote follows the page, below), else 0; byte 71 is reserved
+/// quote follows the page, below), else 0. Byte 71 holds the mentions (#130)
+/// of a message that shows: bit 0 mentions everyone, bit 1 names members (how
+/// many is the u16 at 116, whose IDs follow the quotes); a deleted or removed
+/// message has none.
 ///
 /// The blob ref is zero for a deleted or removed message; a text length of
 /// 0 means the arena doesn't hold that message's text (texts are never
@@ -574,7 +699,9 @@ fn shown_reactions<'a>(
 /// (32) and blob key (32) (zero unless live or edited), its index u32
 /// (`0xFFFFFFFF` if unknown), then text length u32 and the text (the arena's,
 /// only for visible text and only if the request asked for texts: its first
-/// non-blank line, at most 256 bytes).
+/// non-blank line, at most 256 bytes). Last of all, the named mentions (#130):
+/// for each record with a count at 116, in record order, that many 16-byte
+/// member IDs in ascending order.
 pub fn encode_page(
     state: &ChatState,
     request: &PageRequest<'_>,
@@ -604,6 +731,11 @@ pub fn encode_page(
             PAGE_QUOTE_BYTES + quote_text(state, request, texts, &original).map_or(0, <[u8]>::len)
         })
         .sum::<usize>();
+    let mention_bytes = page
+        .iter()
+        .filter_map(|message| shown_mentions(message, status(message)))
+        .map(|mentions| mentions.members.len() * 16)
+        .sum::<usize>();
     let mut text_bytes = 0usize;
     if request.include_text {
         for message in page {
@@ -620,6 +752,7 @@ pub fn encode_page(
         .and_then(|size| size.checked_add(retired.len() * 32))
         .and_then(|size| size.checked_add(reaction_bytes))
         .and_then(|size| size.checked_add(reply_bytes))
+        .and_then(|size| size.checked_add(mention_bytes))
         .ok_or(KinError::SizeLimit)?;
     let mut bytes = Vec::new();
     bytes
@@ -653,7 +786,13 @@ pub fn encode_page(
         bytes.extend_from_slice(&((start + index) as u32).to_le_bytes());
         bytes.push(shown as u8);
         bytes.push(message.content_kind as u8);
-        bytes.extend_from_slice(&[u8::from(quoted(message, shown).is_some()), 0]);
+        let mentions = shown_mentions(message, shown);
+        bytes.extend_from_slice(&[
+            u8::from(quoted(message, shown).is_some()),
+            mentions.map_or(0, |found| {
+                u8::from(found.everyone) | u8::from(!found.members.is_empty()) << 1
+            }),
+        ]);
         bytes.extend_from_slice(if visible { &message.blob_ref } else { &[0; 32] });
         match text {
             Some(text) => {
@@ -667,7 +806,10 @@ pub fn encode_page(
         bytes.extend_from_slice(
             &(shown_reactions(state, request, status(message), message).len() as u32).to_le_bytes(),
         );
-        bytes.extend_from_slice(&[0; 12]);
+        bytes.extend_from_slice(
+            &(mentions.map_or(0, |found| found.members.len()) as u16).to_le_bytes(),
+        );
+        bytes.extend_from_slice(&[0; 10]);
     }
     for message in page {
         let visible = matches!(
@@ -722,6 +864,13 @@ pub fn encode_page(
         let text = quote_text(state, request, texts, &original).unwrap_or(&[]);
         bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
         bytes.extend_from_slice(text);
+    }
+    for message in page {
+        if let Some(mentions) = shown_mentions(message, status(message)) {
+            for member in &mentions.members {
+                bytes.extend_from_slice(&member.0);
+            }
+        }
     }
     debug_assert_eq!(bytes.len(), size);
     Ok(bytes)

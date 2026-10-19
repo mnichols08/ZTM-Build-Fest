@@ -562,6 +562,9 @@ should also separate the two domains.
   device this one doesn't know yet, a missing key epoch, a storage error)
   pauses chat until a later pass. Pushes take at most two batches a pass, so
   chat stays within a small share of the coordinator's request budget.
+- **Chat access (#130).** The same directory gives each device a `chatAccess`
+  (`none`, `read` or `write`) for its member, so a client knows who can read
+  chat and so may be mentioned. Devices keep the last list they saw.
 - **Admins.** Whose removals count comes from the service's own record: the
   device directory (`/api/sync/devices`) marks each device's member
   `householdAdmin`, the rule the service uses to let a member delete others'

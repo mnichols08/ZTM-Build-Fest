@@ -101,6 +101,16 @@ export function chatAdmins(devices, now = Date.now()) {
     .map((device) => device.memberId))].sort().slice(0, 16);
 }
 
+/** Members who can read chat under the admin's policy (#130), by the
+ * service's own word (`chatAccess` in the device directory): the only ones
+ * a message may mention by name. An older service says nothing, and every
+ * active member then counts. At most 64, the engine's bound. */
+export function chatReaders(devices) {
+  return [...new Set(devices
+    .filter((device) => device.memberActive !== false && (device.chatAccess ?? "read") !== "none")
+    .map((device) => device.memberId))].sort().slice(0, 64);
+}
+
 /** What of the device directory decides member labels (each member's kind
  * and whether they're active): when it changes, the room asks the service
  * for the household's member list again. */
@@ -109,6 +119,13 @@ export function chatMembershipSignature(devices) {
   for (const device of devices)
     members.set(device.memberId, `${device.memberKind ?? "adult"}:${device.memberActive !== false}`);
   return [...members].sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0)).map((entry) => entry.join("=")).join(",");
+}
+
+/** The `mentions` part of a post or edit command: `{ everyone, members }`
+ * when there is anything to mention, else nothing (#130). */
+function mentionsOf(mentions) {
+  if (!mentions || (!mentions.everyone && !mentions.members?.length)) return {};
+  return { mentions: { everyone: mentions.everyone === true, members: [...new Set(mentions.members ?? [])].sort() } };
 }
 
 /** Most characters one message holds (the engine's rule, chat.rs). */
@@ -194,6 +211,8 @@ export class ChatRoom {
     this.chatEpochById = new Map();
     this.currentEpoch = null;
     this.admins = [];
+    /** Members who can read chat (#130): who can be mentioned. */
+    this.readers = [];
     this.pending = new Set();
     // Messages with an event still waiting to send, for "Waiting to send".
     this.pendingMessages = new Set();
@@ -377,6 +396,7 @@ export class ChatRoom {
     const state = await this.store.state();
     this.admins = state.admins ?? [];
     this.members = state.members ?? [];
+    this.readers = state.readers ?? [];
     this.membersSignature = state.membersSignature ?? null;
     this.labels = memberLabels(this.members, this.identity.memberId);
     this.retiredThrough = state.retiredThrough ?? 0;
@@ -497,6 +517,33 @@ export class ChatRoom {
   }
 
   /**
+   * Who can be mentioned (#130): the other active members who can read chat,
+   * as { id, label } in label order. Mentioning someone is only offered, and
+   * the engine only accepts it, for these.
+   */
+  mentionable() {
+    const me = this.identity.memberId;
+    return this.members
+      .filter((member) => member.active !== false && member.id !== me && this.readers.includes(member.id))
+      .map((member) => ({ id: member.id, label: this.authorLabel(member.id) }))
+      .sort((left, right) => left.label.localeCompare(right.label, undefined, { numeric: true }));
+  }
+
+  /**
+   * The mentions of `message` that still mean something (#130): named
+   * members who can still read chat and are active (anyone else shows as
+   * plain text), and everyone. A message from someone else that mentions
+   * this member, or everyone, also says so in `me`.
+   */
+  mentionsOf(message) {
+    const found = message?.mentions;
+    if (!found || (!found.everyone && !found.members?.length)) return { everyone: false, members: [], me: false };
+    const members = found.members.filter((id) => this.readers.includes(id) && this.members.some((member) => member.id === id && member.active !== false));
+    const me = message.authorId !== this.identity.memberId && (found.everyone || found.members.includes(this.identity.memberId));
+    return { everyone: found.everyone, members, me };
+  }
+
+  /**
    * Moves this member's private read position forward to `message` (#133):
    * what the unread count and the "New messages" divider are measured from.
    * It is kept apart from read receipts (it works with them off and nobody
@@ -528,22 +575,23 @@ export class ChatRoom {
    * everything would be "new", which says nothing).
    */
   unread() {
-    if (this.closed || this.access === "none") return { count: 0, capped: false, first: null };
+    if (this.closed || this.access === "none") return { count: 0, mentions: 0, capped: false, first: null };
     const me = this.identity.memberId;
     const { messages, start } = this.page({ limit: UNREAD_SCAN });
     // Judged message by message against the position, not by where they
     // sit in the log: an offline message sorts earlier than it was posted.
     const horizon = this.now() + CLOCK_SKEW_MS;
     const after = (message) => compareCursors(cursorOf(message), this.readPosition) > 0;
-    let count = 0, first = null;
+    let count = 0, first = null, mentions = 0;
     for (const message of messages) {
       // A message dated in the future (its sender's clock is wrong) can't be
       // read past, so it isn't counted until its time comes.
       if (!after(message) || message.postedAt > horizon || message.authorId === me || this.hidden.has(message.messageId) || !(message.status === "live" || message.status === "edited")) continue;
       count += 1;
+      if (this.mentionsOf(message).me) mentions += 1;
       first ??= message;
     }
-    return { count, capped: start > 0 && messages.length > 0 && after(messages[0]), first: this.readPosition ? first : null };
+    return { count, mentions, capped: start > 0 && messages.length > 0 && after(messages[0]), first: this.readPosition ? first : null };
   }
 
   setHidden(ids) {
@@ -635,7 +683,7 @@ export class ChatRoom {
   async search(options = {}, onUpdate = () => {}, stopped = () => false) {
     // Chat the member may not open can't be searched, whatever this device still holds.
     if (this.access === "none") throw new ChatRoomError("Chat isn't available to you.", "chat_no_access");
-    const { query = "", from = 0, to = 0, authors = [], attachmentsOnly = false, limit = 50 } = options;
+    const { query = "", from = 0, to = 0, authors = [], attachmentsOnly = false, mentioning = null, limit = 50 } = options;
     // Messages whose text couldn't be opened: left out of later rounds so
     // they don't crowd out older ones the engine lists next.
     const unopened = new Set();
@@ -644,7 +692,7 @@ export class ChatRoom {
       this.assertOpen();
       const { asOf, civilDate } = projectionContext(this.now());
       const found = this.engine.chatSearch(this.records.view(), {
-        query, from, to, authors, attachmentsOnly, limit, admins: this.admins, excluded: [...unopened, ...this.hidden].slice(0, MAX_HIDDEN_MESSAGES),
+        query, from, to, authors, attachmentsOnly, ...(mentioning ? { mentioning } : {}), limit, admins: this.admins, excluded: [...unopened, ...this.hidden].slice(0, MAX_HIDDEN_MESSAGES),
       }, asOf, civilDate, this.syncIdentity());
       const wanted = found.missing;
       const more = wanted.length > 0 && !stopped();
@@ -662,11 +710,11 @@ export class ChatRoom {
 
   /** Sends a text message. Resolves with { messageId, eventId } once it is
    * stored on this device; it reaches the relay on the next sync. */
-  async send(text, { replyTo = null } = {}) {
+  async send(text, { replyTo = null, mentions = null } = {}) {
     this.assertCanPost();
     const messageId = randomIdHex();
     const sealed = await this.sealText(text);
-    const eventId = await this.author({ type: "post-chat-message", messageId, blobRef: sealed.ref, blobKey: sealed.key, ...(replyTo ? { replyTo } : {}) }, { blobRef: sealed.ref });
+    const eventId = await this.author({ type: "post-chat-message", messageId, blobRef: sealed.ref, blobKey: sealed.key, ...(replyTo ? { replyTo } : {}), ...mentionsOf(mentions) }, { blobRef: sealed.ref });
     return { messageId, eventId };
   }
 
@@ -676,7 +724,7 @@ export class ChatRoom {
    * whole), then the manifest that names them. Resolves with
    * { messageId, eventId } like send().
    */
-  async sendAttachments({ text = "", files, replyTo = null }) {
+  async sendAttachments({ text = "", files, replyTo = null, mentions = null }) {
     this.assertOpen();
     this.assertCanPost();
     const problem = attachmentProblem(files);
@@ -706,7 +754,7 @@ export class ChatRoom {
     }
     const hex = refHex(manifest.key);
     manifest.key.fill(0);
-    const eventId = await this.author({ type: "post-chat-message", messageId, blobRef: manifest.ref, blobKey: hex, contentKind: "attachment", ...(replyTo ? { replyTo } : {}) },
+    const eventId = await this.author({ type: "post-chat-message", messageId, blobRef: manifest.ref, blobKey: hex, contentKind: "attachment", ...(replyTo ? { replyTo } : {}), ...mentionsOf(mentions) },
       { blobRef: manifest.ref });
     return { messageId, eventId };
   }
@@ -859,12 +907,12 @@ export class ChatRoom {
   }
 
   /** Replaces a message's text. `message` is the page entry being edited. */
-  async edit(message, text) {
+  async edit(message, text, { mentions = null } = {}) {
     this.assertCanPost();
     // Attachments are deleted, not edited (the engine refuses the edit too).
     if (message.contentKind !== "text") throw new ChatRoomError("Attachments can't be edited.", "chat_attachment_invalid");
     const sealed = await this.sealText(text);
-    return this.author({ type: "edit-chat-message", messageId: message.messageId, blobRef: sealed.ref, blobKey: sealed.key },
+    return this.author({ type: "edit-chat-message", messageId: message.messageId, blobRef: sealed.ref, blobKey: sealed.key, ...mentionsOf(mentions) },
       { blobRef: sealed.ref, retireRef: message.blobRef });
   }
 
@@ -901,7 +949,7 @@ export class ChatRoom {
         deviceId: this.identity.deviceId,
         timestamp: asOf,
         logicalTime,
-      }, this.records.view(), asOf, civilDate, this.syncIdentity(), this.admins);
+      }, this.records.view(), asOf, civilDate, this.syncIdentity(), this.admins, this.readers);
       let envelope;
       try {
         const keyEpoch = await this.sendingEpoch();
@@ -974,6 +1022,8 @@ export class ChatRoom {
     }
     const admins = chatAdmins(devices, this.now());
     const adminsChanged = admins.join() !== this.admins.join();
+    const readers = chatReaders(devices);
+    const readersChanged = readers.join() !== this.readers.join();
     const signature = chatMembershipSignature(devices);
     let members = this.members, membersSignature = this.membersSignature;
     if (signature !== this.membersSignature) {
@@ -990,8 +1040,9 @@ export class ChatRoom {
         if (error?.code === "chat_locked") throw error;
       }
     }
-    if (adminsChanged || membersSignature !== this.membersSignature) {
-      await this.store.saveDirectory({ admins, members, membersSignature });
+    if (adminsChanged || readersChanged || membersSignature !== this.membersSignature) {
+      await this.store.saveDirectory({ admins, members, membersSignature, readers });
+      this.readers = readers;
       this.admins = admins;
       this.members = members;
       this.membersSignature = membersSignature;

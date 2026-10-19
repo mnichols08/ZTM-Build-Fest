@@ -163,12 +163,16 @@ pub enum HouseholdCommand {
         blob_key: [u8; 32],
         /// The message this one answers (#129).
         reply_to: Option<ChatMessageId>,
+        /// Who it mentions (#130).
+        mentions: crate::chat::ChatMentions,
     },
-    /// The author replaces a text message's content blob.
+    /// The author replaces a text message's content blob (and the mentions
+    /// it carries).
     EditChatMessage {
         id: ChatMessageId,
         blob_ref: [u8; 32],
         blob_key: [u8; 32],
+        mentions: crate::chat::ChatMentions,
     },
     /// The author deletes for everyone (`by_admin` false), or an admin
     /// removes another member's message (`by_admin` true).
@@ -410,21 +414,25 @@ pub fn create_event(
             blob_ref,
             blob_key,
             reply_to,
+            mentions,
         } => EventKind::ChatMessagePosted {
             message_id: *id,
             content_kind: *content_kind,
             blob_ref: *blob_ref,
             blob_key: *blob_key,
             reply_to: *reply_to,
+            mentions: mentions.clone(),
         },
         EditChatMessage {
             id,
             blob_ref,
             blob_key,
+            mentions,
         } => EventKind::ChatMessageEdited {
             message_id: *id,
             blob_ref: *blob_ref,
             blob_key: *blob_key,
+            mentions: mentions.clone(),
         },
         DeleteChatMessage { id, by_admin } => EventKind::ChatMessageDeleted {
             message_id: *id,
@@ -485,6 +493,11 @@ pub trait CommandHistory {
     fn chat_admins(&self) -> &[ActorId] {
         &[]
     }
+    /// The members the host names as able to read chat (#130): the only ones
+    /// a message may mention by name.
+    fn chat_members(&self) -> &[ActorId] {
+        &[]
+    }
     /// Whether some event rules out a new event with `context`: it belongs to
     /// another household, is not earlier, or has the same event ID.
     fn conflicts_with(&self, context: &CommandContext) -> bool;
@@ -530,6 +543,7 @@ pub struct HeldHistory<'h> {
     history: &'h mut crate::history::History,
     context: DecodedRequest,
     admins: Vec<ActorId>,
+    members: Vec<ActorId>,
 }
 
 impl<'h> HeldHistory<'h> {
@@ -543,12 +557,19 @@ impl<'h> HeldHistory<'h> {
             history,
             context,
             admins: Vec::new(),
+            members: Vec::new(),
         })
     }
 
     /// Names the household admins for chat commands.
     pub fn with_admins(mut self, admins: Vec<ActorId>) -> Self {
         self.admins = admins;
+        self
+    }
+
+    /// Names the members who may be mentioned in chat commands (#130).
+    pub fn with_members(mut self, members: Vec<ActorId>) -> Self {
+        self.members = members;
         self
     }
 
@@ -572,6 +593,9 @@ impl CommandHistory for HeldHistory<'_> {
     }
     fn chat_admins(&self) -> &[ActorId] {
         &self.admins
+    }
+    fn chat_members(&self) -> &[ActorId] {
+        &self.members
     }
     // Every applied event shares the replay's household, its last logical
     // time is the greatest, and it knows every applied event ID.
@@ -728,11 +752,13 @@ pub fn execute_with(
             id,
             blob_ref,
             reply_to,
+            mentions,
             ..
         } => {
             if current.chat.get(id).is_some() || current.chat.seen.contains(blob_ref) {
                 return Err(KinError::InvalidEvent);
             }
+            check_mentions(mentions, history.chat_members())?;
             // A reply answers a message this log holds that still shows.
             if let Some(original) = reply_to {
                 let message = current.chat.get(original).ok_or(KinError::InvalidEvent)?;
@@ -744,7 +770,13 @@ pub fn execute_with(
                 }
             }
         }
-        HouseholdCommand::EditChatMessage { id, blob_ref, .. } => {
+        HouseholdCommand::EditChatMessage {
+            id,
+            blob_ref,
+            mentions,
+            ..
+        } => {
+            check_mentions(mentions, history.chat_members())?;
             if current.chat.seen.contains(blob_ref)
                 || !current.chat.get(id).is_some_and(|message| {
                     message.author == context.actor_id
@@ -1112,7 +1144,8 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 25 && (17..=16 + crate::state::MAX_STEP_TEXT_BYTES).contains(&text_length)
         || kind == 39 && text_length == 16
         || kind == 41 && text_length == 16
-        || matches!(kind, 44 | 45) && text_length == 64;
+        || matches!(kind, 44 | 45)
+            && (64..=64 + 2 + 16 * crate::chat::MAX_CHAT_MENTIONS + 16).contains(&text_length);
     if !text.is_empty() && !accepts_payload
         || !matches!(kind, 14..=16 | 30) && date != 0
         || !matches!(kind, 1 | 12 | 14 | 29 | 31 | 32 | 39 | 41 | 44 | 46 | 47) && option != 0
@@ -1135,9 +1168,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || matches!(kind, 44..=47) && id == [0; 16]
         || kind == 47
             && (option > 1 || text.is_empty() || text_length > crate::chat::MAX_EMOJI_BYTES)
-        || kind == 45 && text_length != 64
-        || kind == 44 && !matches!(text_length, 64 | 80)
-        || kind == 44 && text_length == 80 && bytes[192..208] == [0; 16]
+        || matches!(kind, 44 | 45) && text_length < 64
         || kind == 44 && !matches!(option, 1 | 2)
         || kind == 46 && (text_length != 0 || option > 1)
         || matches!(kind, 44 | 45) && (bytes[128..160] == [0; 32] || bytes[160..192] == [0; 32])
@@ -1484,6 +1515,9 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         44 | 45 => {
             let blob_ref = field(bytes, 128)?;
             let blob_key = field(bytes, 160)?;
+            // After the blob: a reply's ID and/or mentions (#129, #130).
+            let (mentions, reply_to) =
+                crate::chat::ChatMentions::decode_tail(&bytes[192..], kind == 44)?;
             if kind == 44 {
                 PostChatMessage {
                     id: ChatMessageId(id),
@@ -1494,14 +1528,15 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
                     },
                     blob_ref,
                     blob_key,
-                    reply_to: (text_length == 80)
-                        .then(|| ChatMessageId(field(bytes, 192).unwrap_or([0; 16]))),
+                    reply_to,
+                    mentions,
                 }
             } else {
                 EditChatMessage {
                     id: ChatMessageId(id),
                     blob_ref,
                     blob_key,
+                    mentions,
                 }
             }
         }
@@ -1554,9 +1589,27 @@ pub fn execute_history(
     command_result(execute_with(&command, context, &mut held)?)
 }
 
+/// A message may mention only members the host names as able to read chat
+/// (#130); `@everyone` needs no list.
+fn check_mentions(
+    mentions: &crate::chat::ChatMentions,
+    members: &[ActorId],
+) -> Result<(), KinError> {
+    if mentions
+        .members
+        .iter()
+        .all(|member| members.contains(member))
+    {
+        Ok(())
+    } else {
+        Err(KinError::InvalidEvent)
+    }
+}
+
 /// A chat command against the instance's chat log (`kin_chat_execute`): u32
 /// intent length, the KCMD intent, u32 admin count (at most 16), the
-/// household admins' member IDs (16 bytes each, non-zero), then a
+/// household admins' member IDs (16 bytes each, non-zero), u32 member count
+/// (at most 64) and the IDs of members who can read chat (#130), then a
 /// record-less KINE context. The admins are the service's word on who may
 /// remove other members' messages; an honest client offers removal only to
 /// them, and Rust refuses a removal by anyone else.
@@ -1586,10 +1639,29 @@ pub fn execute_chat_history(
     if admins.iter().any(|admin| admin.0 == [0; 16]) {
         return Err(KinError::MalformedProtocol);
     }
+    // The members able to read chat (#130), after the admins.
+    let member_count = u32::from_le_bytes(field(bytes, admins_end)?) as usize;
+    if member_count > crate::chat::MAX_CHAT_MEMBERS {
+        return Err(KinError::MalformedProtocol);
+    }
+    let members_end = admins_end + 4 + member_count * 16;
+    let members = bytes
+        .get(admins_end + 4..members_end)
+        .ok_or(KinError::MalformedProtocol)?
+        .chunks_exact(16)
+        .map(|chunk| ActorId(chunk.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    if members.iter().any(|member| member.0 == [0; 16]) {
+        return Err(KinError::MalformedProtocol);
+    }
     let replay_context = crate::request::decode_context(
-        bytes.get(admins_end..).ok_or(KinError::MalformedProtocol)?,
+        bytes
+            .get(members_end..)
+            .ok_or(KinError::MalformedProtocol)?,
     )?;
-    let mut held = HeldHistory::new(history, replay_context)?.with_admins(admins);
+    let mut held = HeldHistory::new(history, replay_context)?
+        .with_admins(admins)
+        .with_members(members);
     command_result(execute_with(&command, context, &mut held)?)
 }
 

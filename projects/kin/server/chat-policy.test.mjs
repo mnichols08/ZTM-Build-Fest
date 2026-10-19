@@ -189,3 +189,12 @@ test("a chat push, and its hint, skip members with no access", () => {
   assert.deepEqual(pushes[0].slice(2), [{ chat: true }], "marked as chat, so the push service can filter");
   assert.deepEqual(hints[0].slice(2), [{ chat: true }]);
 });
+
+test("the device directory says who can read chat, so mentions can be offered (#130)", () => {
+  const h = household();
+  h.setPolicy("read", "none");
+  const access = new Map(h.sync.deviceDirectory(h.admin.sessionToken).map((device) => [device.memberId, device.chatAccess]));
+  assert.equal(access.get(h.adult.memberId), "write");
+  assert.equal(access.get(h.child.memberId), "read");
+  assert.equal(access.get(h.guest.memberId), "none");
+});

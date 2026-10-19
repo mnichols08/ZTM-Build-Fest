@@ -101,7 +101,9 @@ holds up to 250,000 records and 64 MiB. `kin_chat_execute` runs chat
 commands against it (any other command fails with code 4, as a chat command
 does against the household history). Its input is `intent length:u32`, the
 KCMD intent, `admin count:u32` (at most 16), the household admins' member IDs
-as the service reports them (16 bytes each, non-zero), then a record-less
+as the service reports them (16 bytes each, non-zero), `member count:u32` (at
+most 64) and the IDs of the members who can read chat (the only ones a
+mention may name, #130), then a record-less
 KINE context. It publishes KCMT with an empty projection: a chat event changes
 no projection, and applying it to a copy of the chat would copy all of it. `kin_chat_page` and `kin_chat_text` read the
 chat log and the text arena (side formats below).
@@ -422,7 +424,8 @@ revision is meaningful only within one instance.
   KINE context as for `kin_project`.
 - **KCHF v1** (chat search request, `kin_chat_search`, #124): `"KCHF"`,
   version 1, reserved u16, limit u32 (1–200), flags u32 (bit 0: attachments
-  only), from i64 and to i64 (posted at or after `from`, before `to`, in
+  only; bit 1: only messages mentioning one member, whose 16-byte ID follows
+  the excluded IDs, #130), from i64 and to i64 (posted at or after `from`, before `to`, in
   milliseconds; 0 for no bound; `to` after `from` when both are set), query
   bytes u32 (at most 256), admin count u32 (at most 16), author count u32 (at
   most 16), excluded count u32 (at most 10,000). Then the query (UTF-8), the
@@ -456,11 +459,12 @@ revision is meaningful only within one instance.
   message ID @0, author @16, posting device @32 (after identity bindings),
   posted at i64 @48, edited at i64 @56 (0 if never), index u32 @64, status u8
   @68 (0 live, 1 edited, 2 deleted, 3 removed by an admin), content kind u8
-  @69, reply flag u8 @70 (1 for a reply that still shows, else 0), reserved
-  u8, blob ref @72 (zero unless live or edited), text offset
+  @69, reply flag u8 @70 (1 for a reply that still shows, else 0), mention
+  flags u8 @71 (bit 0 everyone, bit 1 members are named; #130), blob ref @72 (zero unless live or edited), text offset
   u32 @104 and length u32 @108 (length 0: the arena doesn't hold the text),
   reaction groups u32 @112 (0 unless the request asked for reactions and the
-  message is live or edited), 12 reserved. Then 32 bytes of blob key per message (zero unless live or
+  message is live or edited), named mentions u16 @116, 10 reserved
+  (the named IDs follow the quotes in record order, 16 bytes each). Then 32 bytes of blob key per message (zero unless live or
   edited), the text bytes, and 32 bytes per retired blob: every blob replaced
   by an edit or deleted by its author, every blob brought by an event that
   applies nowhere ([EVENTS](EVENTS.md#v110-household-chat)), plus the blobs

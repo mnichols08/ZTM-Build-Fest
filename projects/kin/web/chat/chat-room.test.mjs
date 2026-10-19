@@ -51,8 +51,11 @@ function fakeEngine() {
     },
     eventMetadata: metadata,
     eventMetadataBatch: (records) => records.map(metadata),
-    executeChatCommand(command, identity, source) {
+    executeChatCommand(command, identity, source, asOf, civilDate, syncIdentity, admins, members = []) {
       this.calls.execute += 1;
+      // The engine names only members who can read chat (#130).
+      for (const id of command.mentions?.members ?? [])
+        if (!members.includes(id)) throw Object.assign(new Error("Kin refused that mention."), { code: 4 });
       assert.equal(typeof source.copyRecordsTo, "function", "the chat log goes to the engine as a view");
       const event = { ...identity, logicalTime: String(identity.logicalTime), kind: KINDS[command.type], command };
       const encodedEvent = encoder.encode(JSON.stringify(event));
@@ -86,7 +89,7 @@ function fakeEngine() {
       for (const { command, actorId, deviceId, timestamp } of events(source)) {
         const message = messages.get(command.messageId);
         if (command.type === "post-chat-message" && !message)
-          messages.set(command.messageId, { reply: command.replyTo ?? null, messageId: command.messageId, authorId: actorId, deviceId, postedAt: timestamp, status: "live", contentKind: command.contentKind ?? "text", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey) });
+          messages.set(command.messageId, { reply: command.replyTo ?? null, mentions: { everyone: command.mentions?.everyone === true, members: command.mentions?.members ?? [] }, messageId: command.messageId, authorId: actorId, deviceId, postedAt: timestamp, status: "live", contentKind: command.contentKind ?? "text", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey) });
         else if (command.type === "react-chat-message") {
           if (!message) continue;
           const groups = message.reactions ??= [];
@@ -100,7 +103,7 @@ function fakeEngine() {
           }
         } else if (message && message.status !== "deleted" && (actorId === message.authorId || (command.byAdmin && options.admins.includes(actorId)))) {
           retired.push(message.blobRef);
-          if (command.type === "edit-chat-message") Object.assign(message, { status: "edited", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey) });
+          if (command.type === "edit-chat-message") Object.assign(message, { status: "edited", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey), mentions: { everyone: command.mentions?.everyone === true, members: command.mentions?.members ?? [] } });
           else Object.assign(message, { status: command.byAdmin ? "removed-by-admin" : "deleted", blobRef: null, blobKey: null });
         }
       }
@@ -119,6 +122,7 @@ function fakeEngine() {
       const list = [...messages.values()].map((message, index) => ({
         ...message, index, replyTo: quote(message),
         reactions: options.includeReactions && (message.status === "live" || message.status === "edited") ? message.reactions ?? [] : [],
+        mentions: message.status === "live" || message.status === "edited" ? message.mentions ?? { everyone: false, members: [] } : { everyone: false, members: [] },
         text: options.includeText === false ? null : this.texts.get(message.blobRef) ?? null,
       }));
       const shown = new Set(list.map((message) => message.blobRef));
@@ -1287,4 +1291,41 @@ test("unread skips hidden, deleted and future-dated messages, and a future posit
   a.room.now = () => real() - 3_600_000;
   assert.equal(a.room.unread().count, 0, "dated ahead of this clock: not counted yet");
   a.room.now = real;
+});
+
+test("mentions name members who can read chat, follow edits, and count as unread (#130)", { timeout: 60_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs, householdAdmin: true });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs });
+  const devices = [phone.entry, laptop.entry];
+  const a = await openRoom(phone, s), c = await openRoom(laptop, s);
+  const syncAll = async () => { for (const { room } of [a, c, a, c]) await room.sync({ status: STATUS, devices }); };
+  await syncAll();
+  assert.deepEqual(a.room.mentionable().map((member) => member.id), [s.partner.memberId], "everyone but me");
+  assert.deepEqual(c.room.mentionable().map((member) => member.id), [s.admin.memberId]);
+  // Naming someone the service doesn't list as a reader is refused.
+  await assert.rejects(a.room.send("hi @nobody", { mentions: { members: ["99".repeat(16)] } }));
+  const first = await a.room.send("@Adult lunch?", { mentions: { members: [s.partner.memberId] } });
+  await a.room.send("@everyone dinner at six", { mentions: { everyone: true } });
+  await a.room.send("no mentions");
+  await syncAll();
+  const messages = c.room.page().messages;
+  assert.equal(messages.length, 3);
+  assert.deepEqual(c.room.mentionsOf(messages[0]), { everyone: false, members: [s.partner.memberId], me: true });
+  assert.equal(c.room.mentionsOf(messages[1]).me, true, "@everyone reaches me too");
+  assert.equal(c.room.mentionsOf(messages[2]).me, false);
+  assert.equal(a.room.mentionsOf(a.room.page().messages[0]).me, false, "my own mention of someone else is not mine");
+  assert.deepEqual({ count: c.room.unread().count, mentions: c.room.unread().mentions }, { count: 3, mentions: 2 });
+  // An edit replaces the list.
+  await a.room.edit(a.room.page().messages.find((message) => message.messageId === first.messageId), "lunch?", { mentions: null });
+  await syncAll();
+  assert.equal(c.room.mentionsOf(c.room.page().messages[0]).me, false);
+  assert.equal(c.room.unread().mentions, 1);
+  // A member who can no longer read chat is plain text.
+  c.room.readers = c.room.readers.filter((id) => id !== s.partner.memberId);
+  assert.deepEqual(a.room.mentionsOf({ authorId: "x", mentions: { everyone: false, members: [s.partner.memberId] } }).members, [s.partner.memberId]);
+  a.room.readers = a.room.readers.filter((id) => id !== s.partner.memberId);
+  assert.deepEqual(a.room.mentionsOf({ authorId: "x", mentions: { everyone: false, members: [s.partner.memberId] } }).members, []);
+  assert.deepEqual(a.room.mentionable(), []);
 });
