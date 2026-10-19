@@ -28,7 +28,6 @@ class KinChatPolicy extends HTMLElement {
 
   connectedCallback() {
     if (!this.firstElementChild) this.build();
-    void this.load();
   }
 
   build() {
