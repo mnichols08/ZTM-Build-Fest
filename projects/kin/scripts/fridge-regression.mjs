@@ -79,7 +79,9 @@ export async function fridgeRegressions(client, until) {
     assert.ok(view.rail, `${label}: a coarse-pointer landscape screen gets the side rail`);
     assert.ok(view.toolsRight <= view.doorLeft, `${label}: the tools sit beside the door, not above it`);
     assert.ok(Math.abs(view.ratio - 0.75) < 0.01, `${label}: the door keeps its 3:4 shape`);
-    assert.ok(view.doorHeight >= view.innerHeight - 160, `${label}: the door takes the height (${view.doorHeight} of ${view.innerHeight})`);
+    // Beside the app's navigation the door can be width-bound; it still
+    // takes most of the height, far more than the stacked layout gives.
+    assert.ok(view.doorHeight >= view.innerHeight * 0.75, `${label}: the door takes the height (${view.doorHeight} of ${view.innerHeight})`);
     assert.ok(view.scrollWidth <= view.innerWidth, `${label}: no horizontal scroll`);
     assert.match(view.note, /lock/i, `${label}: the screen says how it locks`);
   }

@@ -1694,19 +1694,19 @@ kin-fridge {
 .fridge-kitchen-note[hidden], .fridge-fullscreen[hidden] { display: none; }
 kin-fridge { display: grid; gap: 12px; }
 kin-fridge[data-layout="rail"] {
-  grid-template-columns: minmax(200px, 236px) minmax(0, 1fr);
+  grid-template-columns: minmax(188px, 212px) minmax(0, 1fr);
   /* Seven rail rows (heading, lead, tools, full screen, summary, status,
      note) and a flexible last one, so the door's height never spreads the
      rail apart. */
   grid-template-rows: repeat(7, auto) 1fr;
-  gap: 0 28px;
+  gap: 0 20px;
   align-items: start;
 }
 kin-fridge[data-layout="rail"] > * { grid-column: 1; margin-block-end: 12px; }
 kin-fridge[data-layout="rail"] > .fridge-board { grid-column: 2; grid-row: 1 / -1; justify-items: start; margin: 0; }
 kin-fridge[data-layout="rail"] .fridge-tools { flex-direction: column; align-items: stretch; flex-wrap: nowrap; }
-kin-fridge[data-layout="rail"] .fridge-colours { display: grid; grid-template-columns: repeat(4, 48px); gap: 8px; }
-kin-fridge[data-layout="rail"] .fridge-colour { inline-size: 48px; min-height: 48px; }
+kin-fridge[data-layout="rail"] .fridge-colours { display: grid; grid-template-columns: repeat(4, 44px); gap: 8px; }
+kin-fridge[data-layout="rail"] .fridge-colour { inline-size: 44px; min-height: 44px; }
 kin-fridge[data-layout="rail"] .fridge-widths, kin-fridge[data-layout="rail"] .fridge-history { flex-wrap: nowrap; }
 kin-fridge[data-layout="rail"] .fridge-history button { flex: 1 1 0; }
 kin-fridge[data-layout="rail"] .fridge-tools > button, kin-fridge[data-layout="rail"] > .fridge-fullscreen { inline-size: 100%; }

@@ -1158,7 +1158,7 @@ shared board, decided in [ADR 0011](decisions/0011-family-fridge.md).
   At 960 px or wider, in landscape, with a coarse pointer (and in full screen
   in landscape on any device), the heading, tools, summary and a lock note form
   a rail on the left and the door takes the screen's height beside it; the
-  colours sit in a 4 × 2 grid of 48 px swatches. Portrait tablets and phones
+  colours sit in a 4 × 2 grid of 44 px swatches. Portrait tablets and phones
   keep the stacked layout. **Full screen** (where the browser allows it) shows
   the fridge alone, and **Leave full screen** or Esc returns. Kitchen-screen
   mode never changes automatic lock: the rail says "Kin still locks after 15
