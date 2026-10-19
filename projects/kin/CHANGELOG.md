@@ -16,6 +16,12 @@ documentation only.
   non-extractable key; see [ADR 0010](docs/decisions/0010-reload-resume.md).
 - Security → Automatic lock → **Stay unlocked when I refresh this tab**, on by
   default (#355).
+- **The family fridge** (#317, [ADR 0011](docs/decisions/0011-family-fridge.md)):
+  Household → Fridge is a shared 3:4 board the household draws on with a
+  finger, pen or mouse, with an eraser and undo/redo, on phones, tablets and
+  desktop (#320, #321). Drawings live in a third encrypted log beside the
+  household history and chat (event kinds 52–58, KBRD, #319) and travel in
+  their own relay stream (server schema 18). Older devices never see them.
 
 ### Changed
 
