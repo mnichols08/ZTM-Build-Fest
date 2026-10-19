@@ -262,6 +262,13 @@ database per household, `kin-chat-log:<householdId>`, version 1
   database, so the log needs no sealing of its own and root rotation doesn't
   touch it. Signatures are checked once, when an event arrives; reopening the
   log only decrypts.
+  A restored export (#136) stores each chat event as `{ order, eventId,
+  imported }` instead: the canonical event sealed by the local vault (store
+  `chat-import`, the event ID as its context), because there is no relay
+  envelope to check until the device is approved. These rows follow the vault:
+  a recovery key replacement leaves them unreadable (chat opens without
+  them) until the export is restored again, which seals them afresh in place.
+  An event the relay already gave the device is never replaced.
 - `ids`: `{ eventId, order }`, so each event is stored once even when two
   tabs store it together.
 - `outbox`: `{ deviceSequence, eventId, blobRef, retireRef, retireParts }`, this device's

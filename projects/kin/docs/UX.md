@@ -1874,3 +1874,22 @@ and receive a short ID suffix in selection/management labels until renamed.
 - Read-only members see the results and cannot vote. Deleting a poll for
   everyone removes the question, options and votes. Replying to a poll shows its
   question.
+
+# 28. Chat in export and restore (#136)
+
+- Under **Backup and move**, a device that can read chat shows a checkbox,
+  **Include chat (messages, photos, files, voice)**, checked by default. Under
+  it, a polite status line gives the size before anything is made: how many
+  chat events and photos or files, and about how many megabytes. The box is
+  absent when there is no chat yet or the device has no chat access.
+- Messages deleted for everyone are only deleted placeholders in the export,
+  and the line says so; "delete for me" lists are the exporter's own.
+- If the archive's size limit leaves older photos and files out, the message
+  after the export says how many were left out and that they stay in Kin.
+- Restore checks the whole file first. The summary names the chat it holds
+  (events, photos, files). After restoring, the message says the chat will
+  appear once the device is approved. If only the chat could not be saved, the
+  household is still restored and the message says to restore the same export
+  again to finish the chat.
+- The checkbox is a native control with its label and the size line as its
+  description; the progress bar covers household and chat events together.

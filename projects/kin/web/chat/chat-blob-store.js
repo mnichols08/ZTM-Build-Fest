@@ -68,6 +68,21 @@ export class ChatBlobStore {
     return row ? new Uint8Array(row.ciphertext) : null;
   }
 
+  /** What this device holds, without keeping the bytes: for each blob its
+   * reference, size, when it was stored and the parts a manifest names.
+   * Reads one blob at a time, so memory stays at one blob (#136). */
+  async inventory() {
+    const transaction = this.db.transaction([BLOBS], "readonly");
+    const store = transaction.objectStore(BLOBS);
+    const refs = await settle(store.getAllKeys());
+    const found = [];
+    for (const ref of refs) {
+      const row = await settle(store.get(ref));
+      if (row) found.push({ ref, size: row.ciphertext.byteLength, storedAt: row.storedAt ?? 0, parts: Array.isArray(row.parts) ? [...row.parts] : null });
+    }
+    return found;
+  }
+
   async isRetired(ref) {
     const transaction = this.db.transaction([RETIRED], "readonly");
     return Boolean(await settle(transaction.objectStore(RETIRED).get(ref)));

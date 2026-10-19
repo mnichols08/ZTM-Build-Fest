@@ -27,6 +27,7 @@ import {
   ATTACHMENT_PART_BYTES, ChatAttachmentError, MAX_ATTACHMENT_BYTES, attachmentProblem, decodeManifest,
   encodeManifest, manifestRefs, preparePhoto as browserPreparePhoto, safeAttachmentName, safeAttachmentType, sniffPhotoType,
 } from "./chat-attachments.js";
+import { CHAT_EVENT_KINDS, chatNotes } from "./chat-archive.js";
 import { ChatBlobStore } from "./chat-blob-store.js";
 import { ChatBlobs } from "./chat-blobs.js";
 import { ChatLogError, ChatLogStore } from "./chat-log-store.js";
@@ -66,7 +67,7 @@ const FINAL_REFUSALS = new Set(["chat_event_refused"]);
 // A chat key epoch the household hasn't reached may only be newer than this
 // pass's look at the service, so it gets a second look like a signature.
 const SECOND_LOOK_REFUSALS = new Set(["event_signature_invalid", "chat_key_future", "chat_key_lost"]);
-const CHAT_KINDS = new Set(["CHAT_MESSAGE_POSTED", "CHAT_MESSAGE_EDITED", "CHAT_MESSAGE_DELETED", "CHAT_REACTION_SET", "CHAT_PIN_SET", "CHAT_POLL_VOTE", "CHAT_POLL_CLOSED"]);
+const CHAT_KINDS = CHAT_EVENT_KINDS;
 const REF = /^[a-f0-9]{64}$/;
 /** Most messages pinned at once (#131); the engine enforces it too. */
 export const MAX_PINS = 10;
@@ -221,6 +222,8 @@ export class ChatRoom {
     this.pendingMessages = new Set();
     this.retiredThrough = 0;
     this.retiredApplied = new Set();
+    /** Events read from an export that can no longer be opened (#136). */
+    this.unreadableImports = 0;
     this.refused = [];
     this.hidden = new Set();
     this.hiddenError = null;
@@ -385,8 +388,23 @@ export class ChatRoom {
       });
       const keys = new Map();
       for (const row of rows)
-        if (!keys.has(row.envelope.keyEpoch)) keys.set(row.envelope.keyEpoch, await this.epochKey(row.envelope.keyEpoch));
+        if (!row.imported && !keys.has(row.envelope.keyEpoch)) keys.set(row.envelope.keyEpoch, await this.epochKey(row.envelope.keyEpoch));
       const settled = await Promise.allSettled(rows.map(async (row) => {
+        // Read from an export (#136): sealed by this device's vault, with no
+        // envelope or chat key.
+        if (row.imported) {
+          this.chatEpochById.set(row.eventId, 0);
+          try {
+            return await this.keyStore.vault.open(row.imported, { store: "chat-import", id: row.eventId });
+          } catch (error) {
+            // Sealed under a root this device no longer has (the recovery key
+            // was replaced): skipped, not a wall. Restoring the same export
+            // again seals it afresh.
+            if (error?.code === "locked") throw error;
+            this.unreadableImports += 1;
+            return null;
+          }
+        }
         const outer = await decryptStoredEvent({ envelope: row.envelope, householdKey: keys.get(row.envelope.keyEpoch) });
         const opened = await this.chatKeys.open(outer, row.eventId);
         this.chatEpochById.set(row.eventId, opened.keyEpoch);
@@ -397,15 +415,17 @@ export class ChatRoom {
         const failed = settled.find((result) => result.status === "rejected");
         if (failed) throw failed.reason;
         this.assertOpen();
-        const metadata = this.engine.eventMetadataBatch(encoded);
-        rows.forEach((row, index) => {
+        const readable = rows.filter((_, index) => encoded[index]);
+        const kept = encoded.filter(Boolean);
+        const metadata = this.engine.eventMetadataBatch(kept);
+        readable.forEach((row, index) => {
           this.indexById.set(row.eventId, this.records.length);
-          this.records.append(encoded[index]);
+          this.records.append(kept[index]);
           const logicalTime = BigInt(metadata[index].logicalTime);
           if (logicalTime > this.maxLogicalTime) this.maxLogicalTime = logicalTime;
         });
       } finally {
-        for (const bytes of encoded) bytes.fill(0);
+        for (const bytes of encoded) bytes?.fill(0);
       }
       this.loadedOrder += rows.length;
       changed = true;
@@ -692,6 +712,32 @@ export class ChatRoom {
 
   syncIdentity() {
     return { householdId: this.identity.householdId, bindings: [] };
+  }
+
+  /**
+   * What an export of this chat holds (#136): the canonical events (the same
+   * records the room reads), the blobs this device still has for messages
+   * that still exist, and the exporting member's own deleted-for-me list.
+   * Content of messages deleted for everyone is never included: a blob this
+   * device already deleted is gone, and one it has not yet deleted is left out
+   * here. Nothing is copied: `records` is the room's own buffer.
+   */
+  async chatExportPlan() {
+    this.assertOpen();
+    if (this.access === "none") throw new ChatRoomError("Chat isn't available to you.", "chat_no_access");
+    await this.refresh();
+    const { retired } = this.page({ limit: 1, includeText: false, includeRetired: true });
+    const gone = new Set(retired);
+    const blobs = (await this.blobs.store.inventory()).filter((blob) => !gone.has(blob.ref));
+    const state = await this.store.state();
+    return {
+      records: this.records,
+      events: this.records.length,
+      blobs,
+      blobBytes: blobs.reduce((total, blob) => total + blob.size, 0),
+      notes: chatNotes({ memberId: this.identity.memberId, hidden: state.hidden ?? [] }),
+      loadBlob: (blob) => this.blobs.store.get(blob.ref),
+    };
   }
 
   /** A page of the chat room (wasm/kin-engine.js chatPage). */

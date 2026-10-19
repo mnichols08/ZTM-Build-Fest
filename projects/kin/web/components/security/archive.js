@@ -25,9 +25,14 @@ export class SecurityArchive {
     this.host.assertCurrentOperation(operation);
     this.host.message.textContent = "Preparing your Kin export…";
     const progress = this.progress("Export progress");
+    // The chat goes in when the option is shown and checked (#136).
+    const option = this.host.chatOption;
+    const chat = option?.isConnected && option.checked ? await app.chat.room.chatExportPlan() : null;
+    this.host.assertCurrentOperation(operation);
+    const report = {};
     let bytes;
     try {
-      bytes = await exportHouseholdArchive({ store: app.store, engine: app.engine, vault: getActiveVault(), portableMembership, onProgress: progress.update });
+      bytes = await exportHouseholdArchive({ store: app.store, engine: app.engine, vault: getActiveVault(), portableMembership, chat, report, onProgress: progress.update });
     } finally { progress.remove(); }
     this.host.assertCurrentOperation(operation);
     // The name and message come from the export's own header, so they name
@@ -40,7 +45,8 @@ export class SecurityArchive {
     link.download = exportFileName(exportedAt, labels[0]);
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    this.host.message.textContent = `Kin export prepared. It opens with recovery key ${joinLabels(labels)}. ${EXPORT_STORAGE_RULE}`;
+    const left = report.chatBlobsSkipped ? ` ${report.chatBlobsSkipped.toLocaleString()} older chat photos and files didn't fit and were left out; they stay in Kin and in your household's chat.` : "";
+    this.host.message.textContent = `Kin export prepared${report.chatEvents ? " with your household chat" : ""}. It opens with recovery key ${joinLabels(labels)}. ${EXPORT_STORAGE_RULE}${left}`;
   }
 
   // A progress bar after the status message while an archive operation runs.
@@ -117,7 +123,7 @@ export class SecurityArchive {
         this.host.restoreStage = staged.stage;
         form.remove();
         const summary = document.createElement("p");
-        summary.textContent = `This export is ready to restore (${staged.eventCount} household changes, ${staged.attachmentCount} attachments). Restore works on an empty installation or as a no-duplicate check when this same household already contains the export. Device approval and sync access are not included.`;
+        summary.textContent = `This export is ready to restore (${staged.eventCount} household changes, ${staged.attachmentCount} attachments${staged.chatEventCount ? `, and the household chat: ${staged.chatEventCount.toLocaleString()} chat events and ${staged.chatBlobCount.toLocaleString()} photos, files and messages` : ""}). Restore works on an empty installation or as a no-duplicate check when this same household already contains the export. Device approval and sync access are not included.`;
         const confirm = document.createElement("button");
         confirm.id = "restore-confirm";
         confirm.type = "button";
@@ -129,8 +135,14 @@ export class SecurityArchive {
           this.host.message.textContent = "Restoring your household… Keep this tab open.";
           const restoring = this.progress("Restore progress");
           let restored;
+          let chatFailed = false;
           try {
             restored = await restoreValidatedHouseholdArchive({ stage: staged.stage, engine, vault, store: app.store, onProgress: restoring.update });
+          } catch (error) {
+            // The household was written; only its chat could not be (#136).
+            if (!error?.householdRestored) throw error;
+            restored = { eventCount: 0, alreadyPresent: false, chat: null };
+            chatFailed = true;
           } finally { restoring.remove(); }
           this.host.restoreStage = null;
           this.host.assertCurrentOperation(confirmOperation);
@@ -143,6 +155,8 @@ export class SecurityArchive {
           this.host.message.textContent = restored.alreadyPresent
             ? "This household already contains the export's history and attachments. Nothing was duplicated."
             : "Your household is restored on this device. This device still needs household approval before sync can resume.";
+          if (restored.chat) this.host.message.textContent += " Its chat will appear in Chat once this device is approved.";
+          if (chatFailed) this.host.message.textContent += " The household's chat could not be saved on this device. Restore the same export again to try the chat once more.";
         }));
         cancel.addEventListener("click", () => {
           discardValidatedHouseholdArchive(staged.stage);
