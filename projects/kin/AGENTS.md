@@ -106,11 +106,13 @@ If an unrelated parent-repository file was modified accidentally, revert that ch
 
 # Current Development Stage
 
-Kin is at **v1.2.0 — Household Chat**, released as `kin-v1.2.0` on
-2026-10-19. It follows v1.1.2 — Private Household Branding, v1.1.1 — Member and Notification
+Kin is at **v1.3.0 — Member Names and Clearer Setup**, released as
+`kin-v1.3.0` on 2026-10-19. It follows v1.2.0 — Household Chat, v1.1.2 — Private Household Branding, v1.1.1 — Member and Notification
 Clarity, v1.1.0 — Connected Household Devices, and Kin's first stable release,
 `kin-v1.0.0` (with `kin-v1.0.0-rc.1` on the same commit), released on
 2026-10-17. Create, move or push tags only with the owner's explicit approval.
+
+v1.3.0 adds members' own preferred display names (event kind 51, additive; replay protocol still 24), explicit invite-another-person versus add-my-device paths, and the first #261 onboarding and feedback slices. It changes no v1.0 format and no server schema.
 
 v1.2.0 adds one household chat room (ADR 0008) with its own log, relay stream, content blobs and admin access policy. It adds server schemas 12–17 and no change to the v1.0 formats.
 
@@ -1192,6 +1194,7 @@ kin-v1.1.0
 kin-v1.1.1
 kin-v1.1.2
 kin-v1.2.0
+kin-v1.3.0
 ```
 
 Never use ambiguous repository-wide tags such as `v0.0.1` or `v1.0.0`.

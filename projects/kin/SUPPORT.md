@@ -1,6 +1,6 @@
 # Support
 
-Kin's current release is v1.2.0 — Household Chat (`kin-v1.2.0`,
+Kin's current release is v1.3.0 — Member Names and Clearer Setup (`kin-v1.3.0`,
 2026-10-19). It is a Build Fest project, not a
 supported service: there is no staffed runtime support channel or guaranteed
 response time.
