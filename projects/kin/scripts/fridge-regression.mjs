@@ -51,11 +51,11 @@ export async function fridgeRegressions(client, until) {
     await setViewport(client, metrics);
     await page(`document.querySelector("kin-fridge .fridge-door").scrollIntoView({ block: "center" })`);
     const rect = await door();
-    const layout = await page(`({ scrollWidth: document.documentElement.scrollWidth, innerWidth, small: [...document.querySelectorAll("kin-fridge .fridge-tools button")].filter((b) => b.getBoundingClientRect().height < 44).length })`);
+    const layout = await page(`({ scrollWidth: document.documentElement.scrollWidth, innerWidth, small: [...document.querySelectorAll("kin-fridge .fridge-tools button")].filter((b) => !b.hidden && b.getClientRects().length && b.getBoundingClientRect().height < 44).map((b) => b.textContent || b.getAttribute("aria-label")) })`);
     assert.ok(Math.abs(rect.width / rect.height - 0.75) < 0.01, `${label}: the door keeps its 3:4 shape (${rect.width}×${rect.height})`);
     assert.ok(rect.width >= 240 && rect.right <= layout.innerWidth, `${label}: the door fits the screen`);
     assert.ok(layout.scrollWidth <= layout.innerWidth, `${label}: no horizontal scroll`);
-    assert.equal(layout.small, 0, `${label}: every tool is at least 44px tall`);
+    assert.deepEqual(layout.small, [], `${label}: every visible tool is at least 44px tall`);
   }
 
   // ---- Drawing with a finger (phone) -------------------------------------
