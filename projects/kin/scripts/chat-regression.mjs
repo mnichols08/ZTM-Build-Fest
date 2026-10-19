@@ -885,9 +885,11 @@ export async function chatRegressions() {
 
   // Chat search (#124): the panel, results, filters, jump with a text-range highlight.
   {
-    const old = add(other, "The wifi password is Café42", { at: 5 });
+    const old = add(other, "The wifi password is Café42", { at: 1 });
     const lazy = add(other, "Pick up the cafe order", { incoming: true, at: 9 });
     notify();
+    await settle();
+    await chat.jumpToLatest();
     await settle();
     const panel = chat.querySelector(".chat-search-panel");
     const toggle = chat.querySelector(".chat-search-toggle");
