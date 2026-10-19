@@ -1,6 +1,6 @@
 # Threat Model
 
-**Status:** Current as of v1.1.2; see [Known limitations at v1.0](#known-limitations-at-v10). Local authenticated encryption, credential/recovery root wrappers, locked startup, encrypted archives and signed transport-key migration complement encrypted sync. The service has durable identity/relay storage, backup/restore and explicit household lifecycle. Independent security audit, cross-browser certification and general rollback protection are not provided.
+**Status:** Current as of v1.2.0; see [Known limitations at v1.0](#known-limitations-at-v10). Local authenticated encryption, credential/recovery root wrappers, locked startup, encrypted archives and signed transport-key migration complement encrypted sync. The service has durable identity/relay storage, backup/restore and explicit household lifecycle. Independent security audit, cross-browser certification and general rollback protection are not provided.
 
 ## Refactor track: decrypted history in memory while unlocked
 
@@ -190,6 +190,17 @@ The detailed design and guarantees are in [V0.9.0](V0.9.0.md). The following tab
 
 The relay sees household/member/device/session identifiers; event IDs; per-device sequence; key epoch; cursors; public device keys; ciphertext and wrapped-key sizes; event counts/timing; provisioning grant participants/expiry; revocation and rotation timing; IP and connection metadata. Encrypted payloads hide semantic event kinds, text, titles, descriptions, categories, and entity identifiers. Traffic patterns and which devices share a household remain observable. Kin does not claim anonymity or zero-knowledge service behavior.
 
+## Ephemeral live-channel messages (#257, #258, #259)
+
+The live channel has a closed seam for short-lived messages ([SYNC](SYNC.md#ephemeral-envelope-v11-257-258), [ADR 0009](decisions/0009-ephemeral-signaling-boundary.md)); production accepts no category, so today it is an attack surface only for an authenticated trusted device sending a record that is refused and closes its own socket. For a category added later the model is:
+
+- **Spoofed sender.** The sender in a delivery is stamped by the service from the sender's session; a request has no sender field.
+- **Misdirection and probing.** Targets are canonical member and device IDs within the sender's household; others receive nothing and the sender learns nothing, so the path is neither a presence oracle nor a way to enumerate devices.
+- **Stale or revoked routes.** Receivers are chosen from open sockets and re-checked at dispatch; losing access closes the socket, so nothing is routed after revocation, member removal, lock, sign-out or deletion.
+- **Persistence by accident.** The path has no database, file, log or queue access; a test reads the source to keep it so. Messages are not replayed, exported or pushed.
+- **Flooding.** A per-category rate, a payload limit, the 1 MiB socket backpressure bound (a receiver that cannot take a message misses it) and closing of abusive connections.
+- **Not claimed.** The service sees envelope metadata (who sent what category to whom, when) for the instant it relays it. A media connection's own encryption is not Kin's household end-to-end claim.
+
 ## Security principles
 
 - Assume household text and imported/persisted bytes are untrusted.
@@ -370,6 +381,114 @@ old name and icon until its platform checks the manifest again, and on iPhone
 and iPad until it is added again.
 
 **Planned.** Nothing further; this is the opt-in trade the feature makes.
+
+### Household chat: what the service and members learn (#104, v1.2.0)
+
+**What it is.** The household chat epic ([ADR 0008](decisions/0008-household-chat.md))
+adds a chat room with read receipts, typing indicators and "online now". This
+entry records what the service and members can learn from chat; each story updates it.
+
+**Who and what.**
+- **The service** relays encrypted chat events and stores encrypted content
+  blobs. It never sees message text, file names or contents, which message
+  someone read, or what anyone typed. It does learn routing metadata: when a
+  device holds a live connection, which device sent each event, roughly
+  when messages are sent and how
+  large they and their blobs are, and, while a member shares them, that a
+  receipt, typing or presence signal passed between devices.
+- **Household members** see each other's read receipts, typing and "online
+  now" only while both share them; each member can turn off sending their
+  own, which also stops showing them others'. None is kept as history: there
+  is no "last seen".
+- **Deleted messages.** Deleting or editing a message deletes its content
+  blob on the relay and on every device (offline devices when they next
+  sync); the log keeps the message event (who sent it, when, and that it was
+  edited or deleted) but not its content. Nothing can recall what someone
+  already saw, screenshotted, downloaded or exported, and a device that never
+  syncs again keeps its copy.
+- **Admin removal** of another member's message is shown to everyone as
+  "Removed by an admin", never silent.
+
+**Content blobs (#110, in place).** The service stores each message's
+content as a blob sealed under that message's own key, which only the
+encrypted chat event carries; it checks a blob's hash and records which
+member and device uploaded it. A deleted blob's bytes are dropped on the
+service with freed pages zeroed, and a tombstone (reference, size, uploader,
+times) keeps it from being served or accepted again; a deletion that beats
+its upload is kept as a claim that refuses the upload. Devices drop their
+copies when they next read the chat. Only the uploader or a household admin
+can have the service delete a blob; in a legacy household with no admin,
+nobody can delete a removed member's blobs on the service (it fails closed).
+The service also learns when each device fetches each blob (a read signal
+to whoever runs it, finer than a read receipt) and when blobs are retired
+(when messages are edited or deleted). Limits: any trusted device of the
+household can upload blobs within the household's quota; a member who
+copied a blob's bytes and key before deletion keeps them; service backups
+keep deleted bytes as of backup time, and restoring one can bring deleted
+blobs back on the service.
+
+**Chat relay (#111, in place).** Chat events travel in their own relay
+stream, encrypted and signed like household events and, until the chat key
+(#123), under the household key epoch: anyone holding that epoch (every
+device of the household that may sync) can read them, and the service can't.
+The service learns each chat event's size, time, sending device and order,
+and counts chat apart from household events, so it can tell chat activity
+from other household activity. Devices accept a chat event only from a
+verified household device, signed by it, with the same identity inside as
+outside, so the service can't forge, alter or misattribute who wrote one; it
+can still withhold or delay events, as for household sync. Two limits:
+whether a deletion counts as an admin's removal rests on the service's
+record of who is a household admin (the device directory's `householdAdmin`,
+not signed by any device), applied when a page is read, so the service could
+make a member's deletion show as an admin removal or hide a real one, and a
+removal stops showing as one once its author is no longer an admin (its
+content is gone either way). And an event that fails authentication is
+skipped and reported rather than stopping chat, so a member's device can
+send events other devices refuse, but can't block the room. The device keeps
+chat events as those encrypted envelopes; the decrypted log lives in memory
+only while unlocked.
+
+**Edit and delete (#117, in place).** Editing replaces a message's content
+blob and retires the old one; earlier versions aren't kept. Deleting for
+everyone keeps the event (author and time) and retires the content
+everywhere as devices sync; a delete wins over a concurrent edit. Deleting
+"for me" is kept in a record sealed to the member's own devices and signed
+by one of them: other members, and the service, can't read which messages a
+member hid. That rests on the device directory: whoever can make a device
+trusted for a member (an Adult approving it, a service that forges what the
+directory says about revocation) can make it a recipient of later revisions,
+as with household key rotation. The service learns that a member's record
+changed, its size and when. A member's device that never syncs again keeps showing what it showed.
+
+**Photos and files (#114, in place).** An attachment is one sealed manifest
+(the message's content blob: caption, file names, types and sizes, and the
+keys of its parts) plus one sealed blob per 1 MiB part and per photo
+thumbnail, each under its own key. The service sees part sizes and hashes,
+and the number of parts, which bounds a file's size to within a megabyte; it
+never sees names, types or contents. Photos are drawn again on the device,
+which drops their location, camera and other metadata; a browser that can't
+do that refuses the photo. Other files are sent as they are, so a PDF's own
+metadata goes with it. A member's device keeps decrypted names only while
+the room is open. Deleting the message retires the manifest and every part
+on the service and on each device that kept them; a copy a member saved or
+downloaded is not recalled.
+
+**Read receipts and typing (#120, in place).** A member's read cursor and
+settings are one sealed slot on the service, a signed household-key envelope,
+and typing is a sealed frame relayed over the live channel and never stored.
+The service sees that a slot changed and when, its size, and that a typing
+frame passed between two devices at some moment; it can't read a cursor, a
+setting or whether anyone is typing, and it can't forge one without a
+device's signing key. Because the slot is household-wide, any trusted device
+of any member can read every member's cursor and settings, which is the
+point; a member who doesn't want to be seen reading turns receipts off, which
+clears their cursor. A malicious service can withhold or replay a slot or a
+frame: a stale "Seen by" line, a missing one, or a typing indicator that lingers
+at most 6 seconds. Presence shows "seen" when a message was on a member's
+screen in a focused window, not that they understood it, and a member's
+device clock can make a message look seen slightly early or late.
+
+**Status.** Each chat story records its own detail here.
 
 ### QR pairing and phone sign-in (v1.1)
 

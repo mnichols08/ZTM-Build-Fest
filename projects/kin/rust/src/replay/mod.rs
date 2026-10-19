@@ -30,6 +30,7 @@ use crate::event::*;
 use crate::recurrence::CivilDate;
 use crate::state::*;
 
+mod chat;
 mod conversations;
 mod devices;
 mod household;
@@ -99,6 +100,9 @@ pub struct Replay {
     pub(super) playbook_archive_events: BTreeMap<PlaybookId, BTreeSet<(u64, DeviceId)>>,
     /// Named devices by ID (replay/devices.rs).
     pub(super) devices: BTreeMap<DeviceId, DeviceNameState>,
+    /// Household chat (replay/chat.rs), shared with finalized states until
+    /// it changes.
+    pub(super) chat: Arc<crate::chat::ChatState>,
     /// Canonical bytes per applied event: an exact duplicate is skipped, a conflicting one fails. Shared, so cloning a Replay does not copy them.
     pub(super) event_bytes: BTreeMap<EventId, Arc<[u8]>>,
     /// Logical time of the last applied event; replay order never goes back.
@@ -272,11 +276,24 @@ impl Replay {
             | K::PinRemoved { .. }
             | K::ResponsibilityChanged { .. } => household::apply(self, event)?,
             K::DeviceDescribed { .. } | K::DeviceNicknamed { .. } => devices::apply(self, event)?,
+            K::ChatMessagePosted { .. }
+            | K::ChatMessageEdited { .. }
+            | K::ChatMessageDeleted { .. }
+            | K::ChatReactionSet { .. }
+            | K::ChatPinSet { .. }
+            | K::ChatPollVote { .. }
+            | K::ChatPollClosed { .. } => chat::apply(self, event)?,
         }
         self.last_logical_time = event.logical_time;
         self.event_bytes
             .insert(event.event_id, Arc::from(event.canonical_bytes.as_slice()));
         Ok(())
+    }
+
+    /// The chat domain as replayed so far, without finalizing the rest of the
+    /// household (searching needs only this).
+    pub fn chat(&self) -> &crate::chat::ChatState {
+        &self.chat
     }
 
     /// The household state at `as_of` (UTC milliseconds) on `civil_date`.
@@ -349,6 +366,7 @@ impl Replay {
             attachments: self.attachments.clone(),
             responsibilities: self.responsibilities.clone(),
             devices: self.devices.values().cloned().collect(),
+            chat: Arc::clone(&self.chat),
         })
     }
 }

@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Current implementation line: `v1.1.2` — Private Household Branding.** Released as `kin-v1.1.2` on 2026-10-18, this patch shows the private household name and icon in the unlocked shell and keeps that identity synchronized across session transitions. Locked and unassociated surfaces retain generic Kin branding. It builds on v1.1.1 without changing persistent formats or protocol versions. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
+**Current implementation line: `v1.2.0` — Household Chat.** Released as `kin-v1.2.0` on 2026-10-19, this minor release adds one household chat room under Updates → Chat, with read receipts, typing indicators and "online now" that members can switch off and that are never kept as history. Everyone can chat by default; household admins can restrict Limited and Temporary members. It builds on v1.1.2 and adds server schemas 12–17; see the [changelog](CHANGELOG.md) for the compatibility notes. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Exports are encrypted history recovery and do not restore server membership, device trust, credentials, or sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
@@ -42,6 +42,9 @@ AI runtime features, gamification, surveillance, and enterprise workflows stay o
 
 ## Release history
 
+- `v1.2.0` — Household Chat: one household chat room with receipts, typing,
+  "online now", replies, reactions, polls, voice messages, and encrypted content
+  blobs. Released 2026-10-19 (`kin-v1.2.0`).
 - `v1.1.2` — Private Household Branding: private household name/icon in the
   unlocked shell with correct refresh and clearing across session transitions.
   Released 2026-10-18 (`kin-v1.1.2`).

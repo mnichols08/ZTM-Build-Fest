@@ -6,7 +6,7 @@ canonical events protected by the existing local and sync encryption
 boundaries. Rendering uses text nodes/textContent; household Step text is not
 treated as HTML or sent to an AI service.
 
-**Status:** Current as of v1.1.2. Local protected content is encrypted after verified migration. Sync is optional and uploads client-encrypted canonical event envelopes. The durable service receives no plaintext household event payloads or content keys, but it sees and persists routing and traffic metadata; no anonymity or zero-knowledge claim is made.
+**Status:** Current as of v1.2.0. Local protected content is encrypted after verified migration. Sync is optional and uploads client-encrypted canonical event envelopes. The durable service receives no plaintext household event payloads or content keys, but it sees and persists routing and traffic metadata; no anonymity or zero-knowledge claim is made.
 
 v0.10 encrypts local canonical events, duplicated outbox content, protected metadata
 and private sync key material. Household drafts remain in unlocked memory only;
@@ -172,6 +172,29 @@ household deletion, device revocation and member removal in
 automatic expiry. Full encrypted relay history is retained until final
 deletion or the hard event cap; it is not compacted. Deletion does not erase
 copies already held by devices, archives or external backups.
+
+### Voice messages (#134)
+
+Kin asks for the microphone only when a member taps Voice, and releases it the
+moment recording stops, is discarded, the page is hidden or the chat locks. A
+recording stays on the device until it is sent as an ordinary sealed chat
+attachment; nothing is uploaded while recording or reviewing, and nothing is
+transcribed or analysed. The waveform (64 numbers) and the length travel
+inside the sealed attachment manifest, so the service sees only a file of
+ciphertext parts like any other.
+
+### Chat in exports (#136)
+
+An export can include the household chat (on by default, with its size shown
+first, and only on a device that may read chat). It is encrypted with the rest
+of the export, under the same recovery key, and holds chat events, message
+text, photos, files and voice. Messages deleted for everyone appear only as
+deleted placeholders. Your "delete for me" list goes only in your own export.
+A file you export is outside Kin's control: anyone with it and its recovery key
+can read the chat as of that moment. The admin's chat policy (#123) still
+applies: a member who may not read chat has no chat to export, and restoring an
+export does not give a device chat access it has not been given
+([PORTABILITY](PORTABILITY.md#household-chat-in-an-archive-v11-136)).
 
 ## Claims boundary
 

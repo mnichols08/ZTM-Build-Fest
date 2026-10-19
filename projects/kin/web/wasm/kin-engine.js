@@ -89,6 +89,7 @@ export function createEngine(instanceExports) {
     "kin_device_names",
     "kin_event_metadata",
     "kin_event_metadata_batch",
+    "kin_audio_peaks",
     "kin_encode_command",
     "kin_execute",
     "kin_encode_archive",
@@ -96,6 +97,14 @@ export function createEngine(instanceExports) {
     "kin_archive_header",
     "kin_archive_layout",
     "kin_plan_import",
+    "kin_chat_history_reset",
+    "kin_chat_history_append",
+    "kin_chat_history_truncate",
+    "kin_chat_execute",
+    "kin_chat_page",
+    "kin_chat_search",
+    "kin_chat_text",
+    "kin_chat_texts_clear",
     "kin_qr_encode",
     "kin_qr_decode",
     "kin_clear",
@@ -128,11 +137,19 @@ export function createEngine(instanceExports) {
     (batch) => callCore(exports, "kin_history_append", batch, { statusOnly: true }),
     asBytes,
   );
+  // The chat log, a second history apart from the household's (#109).
+  const chatMirror = new HistoryMirror(
+    exports,
+    (batch) => callCore(exports, "kin_chat_history_append", batch, { statusOnly: true }),
+    asBytes,
+    { reset: "kin_chat_history_reset", truncate: "kin_chat_history_truncate" },
+  );
   return {
     dispose() {
       if (exports) {
         exports.kin_clear();
         mirror.forget();
+        chatMirror.forget();
         if (sharedCodec === exports) sharedCodec = null;
         exports = null;
         lastState = null;
@@ -249,7 +266,456 @@ export function createEngine(instanceExports) {
       safeDecode(() => decodeDeviceNames(
         replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_device_names"),
       )),
+    // Household chat (#109). `chatRecords` is the chat log (a history view
+    // or an array of canonical chat records), never the household history.
+    // A chat command validated against the chat log: { encodedEvent,
+    // metadata }. The host stores the event, then reads a page. `admins`
+    // are the household admins' member IDs (hex) as the service reports
+    // them; removing another member's message needs the actor among them.
+    // `members` are the members who can read chat (hex, at most 64): the
+    // only ones a post or edit may mention by name (#130).
+    executeChatCommand: (command, identity, chatRecords, asOf, civilDate, syncIdentity = null, admins = [], members = []) =>
+      executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity, admins, members),
+    // A page of messages, oldest first (KCHP, ABI.md). Options: before (an
+    // index; omit for the newest), limit (1 to 500), includeText, includeRetired,
+    // admins (the household admins' member IDs as hex; at most 16).
+    chatPage: (chatRecords, options, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeChatPage(
+        chatPageBytes(exports, chatMirror, chatRecords, options, asOf, civilDate, syncIdentity),
+        options?.includePins === true,
+        options?.includePolls === true,
+      )),
+    // Searches the chat (KCHF/KCHR, ABI.md): { query, limit (1 to 200),
+    // attachmentsOnly, from, to (ms; 0 for none), authors (hex, at most 16),
+    // excluded (hex IDs of messages hidden for me, at most 10,000), admins }.
+    // Resolves with { total, results: [{ messageId, index, ranges: [[start,
+    // end]] }], unsearched, missing: [{ messageId, blobRef, blobKey }] }:
+    // ranges are UTF-8 byte offsets; `missing` are texts the engine doesn't
+    // hold yet, which the host opens and searches again.
+    chatSearch: (chatRecords, options, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeChatSearch(
+        chatSearchBytes(exports, chatMirror, chatRecords, options, asOf, civilDate, syncIdentity),
+      )),
+    // Hands decrypted texts to the engine's arena: [{ blobRef, text }] with
+    // blobRef as 64 hex digits. Returns one boolean per text: whether it
+    // passed Rust's checks and is held.
+    putChatTexts: (entries) => putChatTexts(exports, entries),
+    // Reduces decoded voice-message samples (a Float32Array of mono samples,
+    // at most 16,000,000) to 64 waveform peaks (KAPQ/KAPR, ABI.md): a
+    // Uint8Array of 64 values, 0 (silent) to 255 (full scale).
+    audioPeaks: (samples) => audioPeaks(exports, samples),
+    // Drops every decrypted chat text the engine holds, for a member who
+    // lost access to chat while unlocked (locking drops them too).
+    clearChatTexts: () => {
+      if (exports) exports.kin_chat_texts_clear();
+    },
   };
+}
+
+const CHAT_QUOTE_STATES = ["unknown", "live", "edited", "deleted", "removed-by-admin"];
+const CHAT_STATUSES = ["live", "edited", "deleted", "removed-by-admin"];
+const CHAT_CONTENT_KINDS = [null, "text", "attachment", "poll"];
+export const MAX_CHAT_EVENT_COUNT = 250_000;
+const MAX_CHAT_PAGE = 500;
+
+// What follows a chat post's or edit's blob reference and key: nothing; a
+// reply's 16-byte ID alone; or, with mentions, flags (1 everyone, 2 a reply
+// follows), a count, the member IDs in ascending order, then the reply ID.
+function mentionsTail(mentions, reply, isPost) {
+  const members = [...new Set(mentions?.members ?? [])];
+  const everyone = mentions?.everyone === true;
+  if (mentions != null && (typeof mentions !== "object" || (mentions.everyone != null && typeof mentions.everyone !== "boolean") ||
+    !Array.isArray(mentions.members ?? []) || members.length > 20 ||
+    members.some((id) => typeof id !== "string" || !/^[0-9a-f]{32}$/.test(id) || /^0{32}$/.test(id))))
+    throw new KinEngineError(2, "Kin received invalid chat mentions.");
+  if (!isPost && reply) throw new KinEngineError(2, "Kin received invalid chat mentions.");
+  if (!everyone && !members.length) return reply ?? [];
+  members.sort();
+  return [(everyone ? 1 : 0) | (reply ? 2 : 0), members.length, ...members.flatMap((id) => [...idFromHex(id)]), ...(reply ?? [])];
+}
+
+function replyFromHex(value) {
+  if (typeof value !== "string" || !/^[0-9a-f]{32}$/.test(value) || /^0{32}$/.test(value))
+    throw new KinEngineError(2, "Kin received an invalid chat reply.");
+  return idFromHex(value);
+}
+
+function blobFromHex(value, what) {
+  if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value) || /^0{64}$/.test(value))
+    throw new KinEngineError(2, `Kin received an invalid chat ${what}.`);
+  const bytes = new Uint8Array(32);
+  for (let index = 0; index < 32; index += 1) bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
+  return bytes;
+}
+
+function executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity, admins, members) {
+  if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
+  if (!["post-chat-message", "edit-chat-message", "delete-chat-message", "react-chat-message", "pin-chat-message", "vote-chat-poll", "close-chat-poll"].includes(command?.type))
+    throw new KinEngineError(2, "Kin received an invalid household action.");
+  if (chatRecords.length > MAX_CHAT_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  if (!Array.isArray(admins) || admins.length > 16 || !Array.isArray(members) || members.length > 64)
+    throw new KinEngineError(2, "Kin received an invalid household action.");
+  const intent = encodeIntentPacket(command, identity);
+  // u32 intent length, KCMD, u32 admin count, admins, u32 member count,
+  // members, KINE context.
+  const prefix = 4 + intent.length + 4 + admins.length * 16 + 4 + members.length * 16;
+  const request = encodeRequest([], asOf, null, civilDate, syncIdentity, prefix);
+  const requestView = new DataView(request.buffer);
+  requestView.setUint32(0, intent.length, true);
+  request.set(intent, 4);
+  requestView.setUint32(4 + intent.length, admins.length, true);
+  admins.forEach((admin, index) => request.set(idFromHex(admin), 8 + intent.length + index * 16));
+  const membersAt = 8 + intent.length + admins.length * 16;
+  requestView.setUint32(membersAt, members.length, true);
+  members.forEach((member, index) => request.set(idFromHex(member), membersAt + 4 + index * 16));
+  const release = chatMirror.hold(chatRecords);
+  let bytes;
+  try {
+    bytes = callCore(exports, "kin_chat_execute", request);
+  } finally {
+    release();
+  }
+  const invalid = () => new KinEngineError(6, "Kin received an invalid command result.");
+  if (bytes.length < 20 || readAscii(bytes, 0, 4) !== "KCMT") throw invalid();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const eventLength = view.getUint32(8, true), metadataLength = view.getUint32(12, true);
+  if (view.getUint16(4, true) !== 1 || view.getUint16(6, true) !== 0 || view.getUint32(16, true) !== 0 ||
+    20 + eventLength + metadataLength !== bytes.length)
+    throw invalid();
+  return {
+    encodedEvent: bytes.slice(20, 20 + eventLength),
+    metadata: decodeMetadata(bytes.subarray(20 + eventLength)),
+  };
+}
+
+// KCHQ v1 (ABI.md): "KCHQ", version, reserved, before u32, limit u16,
+// flags u8 (1 texts, 2 retired, 4 reactions), reserved u8, admin count u32, admins,
+// then the record-less KINE context.
+function chatPageBytes(exports, chatMirror, chatRecords, options = {}, asOf, civilDate, syncIdentity) {
+  if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
+  if (chatRecords.length > MAX_CHAT_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  const { before = null, limit = 50, includeText = true, includeRetired = false, includeReactions = false, includePins = false, includePolls = false, admins = [] } = options;
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_CHAT_PAGE ||
+    (before !== null && (!Number.isInteger(before) || before < 0 || before > 0xffff_ffff)) ||
+    !Array.isArray(admins) || admins.length > 16)
+    throw new KinEngineError(2, "Kin received an invalid chat page request.");
+  const prefix = 20 + admins.length * 16;
+  const request = encodeRequest([], asOf, null, civilDate, syncIdentity, prefix);
+  const view = new DataView(request.buffer);
+  request.set([75, 67, 72, 81, 1, 0, 0, 0]);
+  view.setUint32(8, before ?? 0xffff_ffff, true);
+  view.setUint16(12, limit, true);
+  request[14] = (includeText ? 1 : 0) | (includeRetired ? 2 : 0) | (includeReactions ? 4 : 0) | (includePins ? 8 : 0) | (includePolls ? 16 : 0);
+  view.setUint32(16, admins.length, true);
+  admins.forEach((admin, index) => request.set(idFromHex(admin), 20 + index * 16));
+  const release = chatMirror.hold(chatRecords);
+  try {
+    return callCore(exports, "kin_chat_page", request);
+  } finally {
+    release();
+  }
+}
+
+// KCHF v1 (ABI.md): "KCHF", version, reserved, limit u32, flags u32 (1 =
+// attachments only), from i64, to i64, query bytes u32, admin count u32,
+// author count u32, excluded count u32, the query, the admins, the authors,
+// the excluded IDs, then the record-less KINE context.
+const MAX_CHAT_SEARCH_RESULTS = 200;
+const MAX_CHAT_SEARCH_QUERY_BYTES = 256;
+const MAX_CHAT_SEARCH_EXCLUDED = 10_000;
+
+function chatSearchBytes(exports, chatMirror, chatRecords, options = {}, asOf, civilDate, syncIdentity) {
+  if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
+  if (chatRecords.length > MAX_CHAT_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  const {
+    query = "", limit = 50, attachmentsOnly = false, from = 0, to = 0, authors = [], excluded = [], admins = [],
+    mentioning = null,
+  } = options;
+  const queryBytes = new TextEncoder().encode(typeof query === "string" ? query : "\u0000");
+  if (typeof query !== "string" || queryBytes.length > MAX_CHAT_SEARCH_QUERY_BYTES ||
+    !Number.isInteger(limit) || limit < 1 || limit > MAX_CHAT_SEARCH_RESULTS ||
+    !Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < 0 || (to !== 0 && to <= from) ||
+    !Array.isArray(admins) || admins.length > 16 || !Array.isArray(authors) || authors.length > 16 ||
+    !Array.isArray(excluded) || excluded.length > MAX_CHAT_SEARCH_EXCLUDED ||
+    (mentioning !== null && (typeof mentioning !== "string" || !/^[0-9a-f]{32}$/.test(mentioning) || /^0{32}$/.test(mentioning))))
+    throw new KinEngineError(2, "Kin received an invalid chat search.");
+  const prefix = 48 + queryBytes.length + (admins.length + authors.length + excluded.length + (mentioning ? 1 : 0)) * 16;
+  const request = encodeRequest([], asOf, null, civilDate, syncIdentity, prefix);
+  const view = new DataView(request.buffer);
+  request.set([75, 67, 72, 70, 1, 0, 0, 0]);
+  view.setUint32(8, limit, true);
+  view.setUint32(12, (attachmentsOnly ? 1 : 0) | (mentioning ? 2 : 0), true);
+  view.setBigInt64(16, BigInt(from), true);
+  view.setBigInt64(24, BigInt(to), true);
+  view.setUint32(32, queryBytes.length, true);
+  view.setUint32(36, admins.length, true);
+  view.setUint32(40, authors.length, true);
+  view.setUint32(44, excluded.length, true);
+  request.set(queryBytes, 48);
+  let at = 48 + queryBytes.length;
+  // The member whose mentions to list goes after the excluded IDs (#130).
+  for (const id of [...admins, ...authors, ...excluded, ...(mentioning ? [mentioning] : [])]) {
+    request.set(idFromHex(id), at);
+    at += 16;
+  }
+  const release = chatMirror.hold(chatRecords);
+  try {
+    return callCore(exports, "kin_chat_search", request);
+  } finally {
+    release();
+  }
+}
+
+// KCHR v1 (ABI.md): a 24-byte header, the results newest first (60 bytes,
+// ranges, excerpt each), then the texts the engine couldn't look at.
+function decodeChatSearch(bytes) {
+  const invalid = () => new KinEngineError(6, "Kin received an invalid chat search result.");
+  if (bytes.length < 24 || readAscii(bytes, 0, 4) !== "KCHR") throw invalid();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint16(4, true) !== 1 || view.getUint16(6, true) !== 0) throw invalid();
+  const total = view.getUint32(8, true), count = view.getUint32(12, true);
+  const unsearched = view.getUint32(16, true), listed = view.getUint32(20, true);
+  if (count > MAX_CHAT_SEARCH_RESULTS || count > total || listed > 256 || listed > unsearched) throw invalid();
+  const results = [];
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let at = 24;
+  for (let index = 0; index < count; index += 1) {
+    if (at + 60 > bytes.length) throw invalid();
+    const ranges = view.getUint32(at + 20, true), kind = view.getUint32(at + 48, true);
+    const offset = view.getUint32(at + 52, true), length = view.getUint32(at + 56, true);
+    const postedAt = Number(view.getBigInt64(at + 40, true));
+    const end = at + 60 + ranges * 8 + length;
+    if (ranges > 4 || (kind !== 1 && kind !== 2) || !Number.isSafeInteger(postedAt) || end > bytes.length) throw invalid();
+    const found = [];
+    for (let range = 0; range < ranges; range += 1) {
+      const start = view.getUint32(at + 60 + range * 8, true), stop = view.getUint32(at + 64 + range * 8, true);
+      if (stop <= start) throw invalid();
+      found.push([start, stop]);
+    }
+    let excerpt = "";
+    try {
+      excerpt = decoder.decode(bytes.subarray(at + 60 + ranges * 8, end));
+    } catch {
+      throw invalid();
+    }
+    results.push({
+      messageId: idToHex(bytes.subarray(at, at + 16)),
+      index: view.getUint32(at + 16, true),
+      authorId: idToHex(bytes.subarray(at + 24, at + 40)),
+      postedAt,
+      contentKind: kind === 1 ? "text" : "attachment",
+      ranges: found,
+      excerpt,
+      excerptOffset: offset,
+    });
+    at = end;
+  }
+  if (at + listed * 80 !== bytes.length) throw invalid();
+  const missing = [];
+  for (let index = 0; index < listed; index += 1, at += 80) {
+    missing.push({
+      messageId: idToHex(bytes.subarray(at, at + 16)),
+      blobRef: idToHex(bytes.subarray(at + 16, at + 48)),
+      blobKey: bytes.slice(at + 48, at + 80),
+    });
+  }
+  return { total, results, unsearched, missing };
+}
+
+// KCHP v1 (ABI.md): a 28-byte header, 128 bytes per message, 32 bytes of
+// key per message, the texts, 32 bytes per retired blob, then the reactions
+// a request for them asked for.
+function decodeChatPage(bytes, includePins = false, includePolls = false) {
+  const invalid = () => new KinEngineError(6, "Kin received an invalid chat page.");
+  if (bytes.length < 28 || readAscii(bytes, 0, 4) !== "KCHP") throw invalid();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint16(4, true) !== 1 || view.getUint16(6, true) !== 0) throw invalid();
+  const total = view.getUint32(8, true), start = view.getUint32(12, true), count = view.getUint32(16, true);
+  const textBytes = view.getUint32(20, true), retiredCount = view.getUint32(24, true);
+  const keysAt = 28 + count * 128, textsAt = keysAt + count * 32, retiredAt = textsAt + textBytes;
+  const reactionsAt = retiredAt + retiredCount * 32;
+  if (count > MAX_CHAT_PAGE || start + count > total || reactionsAt > bytes.length) throw invalid();
+  const zero = (slice) => slice.every((byte) => byte === 0);
+  const messages = [];
+  // Texts follow each other in record order, with no gaps or overlaps.
+  let nextText = 0;
+  const groupCounts = [], quoted = [], mentionFlags = [], pollRecords = [];
+  for (let index = 0; index < count; index += 1) {
+    const at = 28 + index * 128;
+    const status = CHAT_STATUSES[bytes[at + 68]], contentKind = CHAT_CONTENT_KINDS[bytes[at + 69]];
+    const textOffset = view.getUint32(at + 104, true), textLength = view.getUint32(at + 108, true);
+    const postedAt = Number(view.getBigInt64(at + 48, true)), editedAt = Number(view.getBigInt64(at + 56, true));
+    if (!status || !contentKind || view.getUint32(at + 64, true) !== start + index ||
+      textOffset + textLength > textBytes || !Number.isSafeInteger(postedAt) || !Number.isSafeInteger(editedAt))
+      throw invalid();
+    const visible = status === "live" || status === "edited";
+    const blobRef = bytes.subarray(at + 72, at + 104), blobKey = bytes.subarray(keysAt + index * 32, keysAt + index * 32 + 32);
+    if (visible === zero(blobRef) || visible === zero(blobKey) || (!visible && textLength) ||
+      (textLength && (contentKind !== "text" || textOffset !== nextText)) || (!textLength && textOffset) ||
+      bytes[at + 70] > 1 || bytes[at + 71] > 3 || (bytes[at + 70] === 1 && !visible) || !zero(bytes.subarray(at + 122, at + 128)) ||
+      // Poll fields (#135): present only when asked for, on a poll that shows.
+      (bytes[at + 118] || bytes[at + 119] || view.getUint16(at + 120, true)) && !(includePolls && visible && contentKind === "poll" && bytes[at + 118] >= 2 && bytes[at + 118] <= 10 && bytes[at + 119] <= 3 && view.getUint16(at + 120, true) <= 64) ||
+      (includePolls && visible && contentKind === "poll" && !bytes[at + 118]) ||
+      (bytes[at + 71] && !visible) || ((bytes[at + 71] & 2) !== 0) !== (view.getUint16(at + 116, true) > 0) || view.getUint16(at + 116, true) > 20 ||
+      (status === "edited" && !editedAt) || (status === "live" && editedAt))
+      throw invalid();
+    nextText += textLength;
+    const groups = view.getUint32(at + 112, true);
+    if (groups && !visible) throw invalid();
+    groupCounts.push(groups);
+    pollRecords.push(includePolls && contentKind === "poll" && visible
+      ? { options: bytes[at + 118], multiple: (bytes[at + 119] & 1) !== 0, closed: (bytes[at + 119] & 2) !== 0, voters: view.getUint16(at + 120, true) }
+      : null);
+    quoted.push(bytes[at + 70] === 1);
+    mentionFlags.push({ everyone: (bytes[at + 71] & 1) !== 0, count: view.getUint16(at + 116, true) });
+    messages.push({
+      messageId: idToHex(bytes.subarray(at, at + 16)),
+      authorId: idToHex(bytes.subarray(at + 16, at + 32)),
+      deviceId: idToHex(bytes.subarray(at + 32, at + 48)),
+      postedAt,
+      editedAt: editedAt || null,
+      index: start + index,
+      status,
+      contentKind,
+      blobRef: visible ? idToHex(blobRef) : null,
+      blobKey: visible ? blobKey.slice() : null,
+      // null: the arena doesn't hold it yet; fetch, decrypt and putChatTexts.
+      text: textLength ? strictTextDecoder.decode(bytes.subarray(textsAt + textOffset, textsAt + textOffset + textLength)) : null,
+      reactions: [],
+      replyTo: null,
+      mentions: { everyone: false, members: [] },
+    });
+  }
+  if (nextText !== textBytes) throw invalid();
+  // Per group: emoji length u8, the emoji, member count u32, 16 bytes a member.
+  let cursor = reactionsAt;
+  groupCounts.forEach((groups, index) => {
+    for (let group = 0; group < groups; group += 1) {
+      const length = bytes[cursor];
+      if (cursor >= bytes.length || length < 1 || length > 32 || cursor + 1 + length + 4 > bytes.length) throw invalid();
+      const emoji = strictTextDecoder.decode(bytes.subarray(cursor + 1, cursor + 1 + length));
+      const members = view.getUint32(cursor + 1 + length, true);
+      cursor += 1 + length + 4;
+      if (members < 1 || cursor + members * 16 > bytes.length) throw invalid();
+      const actors = [];
+      for (let member = 0; member < members; member += 1) actors.push(idToHex(bytes.subarray(cursor + member * 16, cursor + member * 16 + 16)));
+      cursor += members * 16;
+      messages[index].reactions.push({ emoji, actors });
+    }
+  });
+  // A quote entry (also a pin's message): the original's ID, state, content
+  // kind, author, blob ref and key, index and the text held.
+  const readQuote = () => {
+    if (cursor + 108 > bytes.length) throw invalid();
+    const state = CHAT_QUOTE_STATES[bytes[cursor + 16]], contentKind = bytes[cursor + 17] === 0 ? null : CHAT_CONTENT_KINDS[bytes[cursor + 17]];
+    const ref = bytes.subarray(cursor + 36, cursor + 68), key = bytes.subarray(cursor + 68, cursor + 100);
+    const originalIndex = view.getUint32(cursor + 100, true), length = view.getUint32(cursor + 104, true);
+    const shown = state === "live" || state === "edited";
+    if (!state || (state === "unknown") !== (contentKind === null) || bytes[cursor + 18] || bytes[cursor + 19] ||
+      shown === zero(ref) || shown === zero(key) || (!shown && length) || (length && contentKind !== "text") ||
+      (state === "unknown") !== (originalIndex === 0xffff_ffff) || cursor + 108 + length > bytes.length) throw invalid();
+    const quote = {
+      messageId: idToHex(bytes.subarray(cursor, cursor + 16)),
+      state,
+      contentKind,
+      authorId: state === "unknown" ? null : idToHex(bytes.subarray(cursor + 20, cursor + 36)),
+      index: state === "unknown" ? null : originalIndex,
+      blobRef: shown ? idToHex(ref) : null,
+      blobKey: shown ? key.slice() : null,
+      text: length ? strictTextDecoder.decode(bytes.subarray(cursor + 108, cursor + 108 + length)) : null,
+    };
+    cursor += 108 + length;
+    return quote;
+  };
+  // Quotes (#129), one per message flagged as a reply.
+  quoted.forEach((flagged, index) => {
+    if (flagged) messages[index].replyTo = readQuote();
+  });
+  // Mentions (#130): the named members of each message that has any, in
+  // record order, ascending; "everyone" comes from the record's flag.
+  mentionFlags.forEach((flags, index) => {
+    messages[index].mentions.everyone = flags.everyone;
+    if (!flags.count) return;
+    if (cursor + flags.count * 16 > bytes.length) throw invalid();
+    let previous = "";
+    for (let member = 0; member < flags.count; member += 1) {
+      const id = idToHex(bytes.subarray(cursor, cursor + 16));
+      if (id <= previous || /^0{32}$/.test(id)) throw invalid();
+      messages[index].mentions.members.push(id);
+      previous = id;
+      cursor += 16;
+    }
+  });
+  // Pins (#131), when asked for: a count (at most 10), then per pin who pinned
+  // it and the message as a quote entry; only messages that show.
+  const pins = [];
+  if (includePins) {
+    if (cursor + 4 > bytes.length) throw invalid();
+    const pinCount = view.getUint32(cursor, true);
+    cursor += 4;
+    if (pinCount > 10) throw invalid();
+    for (let pin = 0; pin < pinCount; pin += 1) {
+      if (cursor + 16 > bytes.length) throw invalid();
+      const pinnedBy = idToHex(bytes.subarray(cursor, cursor + 16));
+      cursor += 16;
+      const message = readQuote();
+      if ((message.state !== "live" && message.state !== "edited") || /^0{32}$/.test(pinnedBy)) throw invalid();
+      pins.push({ ...message, pinnedBy });
+    }
+  }
+  // Polls (#135), when asked for: each shown poll's votes in record order,
+  // voters ascending, each with their choice as a bit set.
+  pollRecords.forEach((poll, index) => {
+    if (!poll) return;
+    const votes = [];
+    let previous = "";
+    for (let voter = 0; voter < poll.voters; voter += 1) {
+      if (cursor + 20 > bytes.length) throw invalid();
+      const memberId = idToHex(bytes.subarray(cursor, cursor + 16));
+      const mask = view.getUint16(cursor + 16, true);
+      if (memberId <= previous || /^0{32}$/.test(memberId) || mask === 0 || mask >> poll.options !== 0 ||
+        (!poll.multiple && (mask & (mask - 1)) !== 0) || bytes[cursor + 18] || bytes[cursor + 19]) throw invalid();
+      votes.push({ memberId, choice: [...Array(poll.options).keys()].filter((option) => (mask >> option) & 1) });
+      previous = memberId;
+      cursor += 20;
+    }
+    messages[index].poll = { options: poll.options, multiple: poll.multiple, closed: poll.closed, votes };
+  });
+  if (cursor !== bytes.length) throw invalid();
+  const retired = [];
+  for (let index = 0; index < retiredCount; index += 1)
+    retired.push(idToHex(bytes.subarray(retiredAt + index * 32, retiredAt + index * 32 + 32)));
+  return { total, start, messages, retired, pins };
+}
+
+// KCHT v1 / KCHS v1 (ABI.md).
+function putChatTexts(exports, entries) {
+  if (!Array.isArray(entries) || entries.length < 1 || entries.length > MAX_CHAT_PAGE)
+    throw new KinEngineError(2, "Kin received invalid chat texts.");
+  const encoded = entries.map(({ blobRef, text }) => {
+    // A lone surrogate would be encoded as U+FFFD, so Rust would check
+    // different text from the host's.
+    if (typeof text !== "string" || !text.isWellFormed()) throw new KinEngineError(2, "Kin received invalid chat texts.");
+    return [blobFromHex(blobRef, "reference"), textEncoder.encode(text)];
+  });
+  const request = new Uint8Array(12 + encoded.reduce((sum, [, text]) => sum + 36 + text.length, 0));
+  const view = new DataView(request.buffer);
+  request.set([75, 67, 72, 84, 1, 0, 0, 0]);
+  view.setUint32(8, entries.length, true);
+  let offset = 12;
+  for (const [blobRef, text] of encoded) {
+    request.set(blobRef, offset);
+    view.setUint32(offset + 32, text.length, true);
+    request.set(text, offset + 36);
+    offset += 36 + text.length;
+  }
+  const bytes = callCore(exports, "kin_chat_text", request);
+  if (bytes.length !== 12 + entries.length || readAscii(bytes, 0, 4) !== "KCHS" || bytes[4] !== 1 ||
+    bytes[5] !== 0 || bytes[6] !== 0 || bytes[7] !== 0 ||
+    new DataView(bytes.buffer, bytes.byteOffset).getUint32(8, true) !== entries.length ||
+    bytes.subarray(12).some((status) => status > 1))
+    throw new KinEngineError(6, "Kin received an invalid chat text result.");
+  return [...bytes.subarray(12)].map((status) => status === 0);
 }
 
 // KDEV v1 (ABI.md): "KDEV", version u16, reserved u16, count u32, then per
@@ -392,6 +858,13 @@ const COMMAND_TYPES = [
   "change-responsibility",
   "describe-device",
   "nickname-device",
+  "post-chat-message",
+  "edit-chat-message",
+  "delete-chat-message",
+  "react-chat-message",
+  "pin-chat-message",
+  "vote-chat-poll",
+  "close-chat-poll",
 ];
 const EVENT_KINDS = [
   null,
@@ -438,6 +911,13 @@ const EVENT_KINDS = [
   "RESPONSIBILITY_CHANGED",
   "DEVICE_DESCRIBED",
   "DEVICE_NICKNAMED",
+  "CHAT_MESSAGE_POSTED",
+  "CHAT_MESSAGE_EDITED",
+  "CHAT_MESSAGE_DELETED",
+  "CHAT_REACTION_SET",
+  "CHAT_PIN_SET",
+  "CHAT_POLL_VOTE",
+  "CHAT_POLL_CLOSED",
 ];
 
 // The command field that names each event's own entity (packet offset 92).
@@ -486,6 +966,13 @@ const ENTITY_FIELDS = Object.freeze({
   "remove-attachment": "attachmentId",
   "change-responsibility": "targetId",
   "nickname-device": "targetDeviceId",
+  "post-chat-message": "messageId",
+  "edit-chat-message": "messageId",
+  "delete-chat-message": "messageId",
+  "react-chat-message": "messageId",
+  "pin-chat-message": "messageId",
+  "vote-chat-poll": "messageId",
+  "close-chat-poll": "messageId",
 });
 
 /** The entity ID an intent packet carries: the type's own field, else `id`, else the caller's fallback. */
@@ -507,8 +994,9 @@ function encodeIntentPacket(command, identity) {
   const kind = COMMAND_TYPES.indexOf(command.type);
   if (kind < 1)
     throw new KinEngineError(2, "Kin received an invalid household action.");
-  const hasText = [1, 5, 8, 14, 18, 19].includes(kind);
-  const text = hasText ? (command.name ?? command.text) : "";
+  const hasText = [1, 5, 8, 14, 18, 19, 47].includes(kind);
+  // A reaction's text is its emoji; Rust checks it is one emoji.
+  const text = kind === 47 ? command.emoji : hasText ? (command.name ?? command.text) : "";
   const stepText = kind === 25 ? textEncoder.encode(command.text ?? "") : null;
   if (
     kind === 25 &&
@@ -543,6 +1031,14 @@ function encodeIntentPacket(command, identity) {
   const playbookBytes = kind === 33 ? encodePlaybookPayload(command) : null;
   const referenceBytes = kind === 35 ? encodeReferencePayload(command) : null;
   const maintenanceBytes = kind === 37 ? encodeMaintenancePayload(command) : null;
+  // Chat (#109): the content blob's reference and key; Rust checks the rest.
+  const chatBlob = kind === 44 || kind === 45
+    ? Uint8Array.of(
+      ...blobFromHex(command.blobRef, "reference"), ...blobFromHex(command.blobKey, "key"),
+      // After the blob: mentions (#130), then the message a reply answers
+      // (#129), as ABI.md lays them out.
+      ...mentionsTail(command.mentions, kind === 44 && command.replyTo != null ? replyFromHex(command.replyTo) : null, kind === 44))
+    : null;
   if (
     hasText &&
     (typeof text !== "string" ||
@@ -564,7 +1060,7 @@ function encodeIntentPacket(command, identity) {
           ? 16 + stepText.length
           : kind === 22 || kind === 23
             ? 24 + noteTitle.length + noteBody.length
-            : kind === 33 ? playbookBytes.length : kind === 35 ? referenceBytes.length : kind === 37 ? maintenanceBytes.length : kind === 39 || kind === 41 ? 16 : deviceNameBytes ? deviceNameBytes.length : textBytes.length),
+            : kind === 33 ? playbookBytes.length : kind === 35 ? referenceBytes.length : kind === 37 ? maintenanceBytes.length : kind === 39 || kind === 41 ? 16 : chatBlob ? chatBlob.length : deviceNameBytes ? deviceNameBytes.length : textBytes.length),
   );
   packet.set([75, 67, 77, 68, 1, 0, 0, 0]);
   const view = new DataView(packet.buffer);
@@ -642,6 +1138,34 @@ function encodeIntentPacket(command, identity) {
     packet[112] = targetKind;
     packet.set(command.memberId ? idFromHex(command.memberId) : new Uint8Array(16), 128);
     view.setUint32(124, 16, true);
+  } else if (kind === 44) {
+    const code = CHAT_CONTENT_KINDS.indexOf(command.contentKind ?? "text");
+    if (code < 1) throw new KinEngineError(2, "Kin received an invalid chat message.");
+    packet[112] = code;
+    if (code === 3) {
+      // A poll (#135): the option count and the multiple-choice flag ride in
+      // the date field (ABI.md).
+      const { options, multiple = false } = command.poll ?? {};
+      if (!Number.isInteger(options) || options < 2 || options > 10 || typeof multiple !== "boolean")
+        throw new KinEngineError(2, "A poll needs 2 to 10 options.");
+      view.setUint32(108, options | (multiple ? 0x100 : 0), true);
+    }
+  } else if (kind === 49) {
+    // A poll vote (#135): the chosen option numbers as a bit set in the date
+    // field; none clears the member's vote.
+    const choice = command.choice;
+    if (!Array.isArray(choice) || choice.length > 10 || choice.some((option, at) => !Number.isInteger(option) || option < 0 || option > 9 || choice.indexOf(option) !== at))
+      throw new KinEngineError(2, "Kin received an invalid vote.");
+    view.setUint32(108, choice.reduce((mask, option) => mask | (1 << option), 0), true);
+  } else if (kind === 46) {
+    if (typeof (command.byAdmin ?? false) !== "boolean") throw new KinEngineError(2, "Kin received an invalid chat message.");
+    packet[112] = command.byAdmin ? 1 : 0;
+  } else if (kind === 47) {
+    if (typeof command.on !== "boolean") throw new KinEngineError(2, "Kin received an invalid reaction.");
+    packet[112] = command.on ? 1 : 0;
+  } else if (kind === 48) {
+    if (typeof command.on !== "boolean") throw new KinEngineError(2, "Kin received an invalid pin.");
+    packet[112] = command.on ? 1 : 0;
   } else if (kind === 33) {
     packet.set(playbookBytes, 128);
     view.setUint32(124, playbookBytes.length, true);
@@ -667,8 +1191,11 @@ function encodeIntentPacket(command, identity) {
   } else if (stepAction) {
     packet.set(idFromHex(command.itemId), 128);
     view.setUint32(124, 16, true);
-  } else if (kind === 33 || kind === 35 || kind === 37 || kind === 39 || kind === 41) {
-    // The Playbook packet payload was encoded above.
+  } else if (chatBlob) {
+    packet.set(chatBlob, 128);
+    view.setUint32(124, chatBlob.length, true);
+  } else if (kind === 33 || kind === 35 || kind === 37 || kind === 39 || kind === 41 || kind === 46 || kind === 48) {
+    // The Playbook packet payload was encoded above; a chat deletion or pin has none.
   } else if (deviceNameBytes) {
     view.setUint32(124, deviceNameBytes.length, true);
     packet.set(deviceNameBytes, 128);
@@ -760,6 +1287,24 @@ function decodeMetadata(bytes) {
     eventVersion: view.getUint16(88, true),
     kind,
   };
+}
+
+export const AUDIO_PEAK_COUNT = 64;
+export const MAX_AUDIO_SAMPLES = 16_000_000;
+
+function audioPeaks(exports, samples) {
+  if (!(samples instanceof Float32Array) || samples.length < 1 || samples.length > MAX_AUDIO_SAMPLES)
+    throw new KinEngineError(5, USER_MESSAGES.get(5));
+  const request = new Uint8Array(12 + samples.length * 4);
+  request.set([...textEncoder.encode("KAPQ"), 1, 0, 0, 0]);
+  const view = new DataView(request.buffer);
+  view.setUint32(8, samples.length, true);
+  // Little-endian floats, whatever the host's byte order.
+  for (let index = 0; index < samples.length; index += 1) view.setFloat32(12 + index * 4, samples[index], true);
+  const output = callCore(exports, "kin_audio_peaks", request);
+  if (output.length !== 8 + AUDIO_PEAK_COUNT || readAscii(output, 0, 4) !== "KAPR" || output[4] !== 1 || output[5] || output[6] || output[7])
+    throw new KinEngineError(6, "Kin received invalid waveform data.");
+  return output.slice(8);
 }
 
 function metadataBatch(exports, records) {

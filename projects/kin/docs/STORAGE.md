@@ -213,6 +213,108 @@ Increment the IndexedDB schema version only for structural database changes. Eac
 
 Archive is an Item, Handoff or Talk tombstone event; it does not delete source events or implement physical deletion. Portable copy, household deletion, remote deletion, backup retention, and event compaction remain future work described in [RETENTION](RETENTION.md) and [PORTABILITY](PORTABILITY.md). Do not silently delete history as a side effect of completing or archiving an item.
 
+## Chat content blobs (v1.1, #110)
+
+Chat message content is stored apart from the event store, so deleting a
+message can delete its content without touching the immutable log or the
+frozen event database schema. Each household has its own database,
+`kin-chat-blobs:<householdId>`, version 1 (`web/chat/chat-blob-store.js`):
+
+- `blobs`: `{ ref, ciphertext, storedAt, parts }`, sealed content by the
+  SHA-256 of its bytes ([SYNC](SYNC.md#chat-content-blobs-v11-110)). `parts`
+  is set on an attachment's manifest only: the references of its parts and
+  thumbnails, so deleting the manifest deletes them too, and so that the
+  outbox uploads them first ([SYNC](SYNC.md#photos-and-files-v11-114)). No
+  index changes: the database is still version 1. Blobs are already
+  ciphertext and their keys live only in the encrypted chat events, so the
+  store holds nothing readable on its own; it is not wrapped in the
+  encrypted record format.
+- `retired`: `{ ref, retiredAt }`, blobs this device deleted. A retired blob
+  is never stored or fetched again; its message shows as deleted.
+
+A blob is fetched when its message is first shown and kept afterwards; a
+blob from the service is checked against its reference before it is kept.
+Deleting a blob removes its bytes and adds its tombstone in one transaction.
+`ChatBlobStore.destroy()` deletes the whole database; a tab holding it open
+closes its connection when asked, and an old tab that doesn't blocks the
+deletion with a "close other tabs" error. Calling it when the household
+leaves the device is still to come; today local household data stays on the
+device as before.
+
+**Cache trim (#125).** A device keeps chat content (downloaded or sent from it) for 90 days
+(`CHAT_CACHE_DAYS`). During a sync pass (after pulling), at most every six hours,
+`ChatBlobStore.evictOlderThan` drops the bytes of blobs stored longer ago,
+except those of the outbox and the parts of their attachment manifests. It
+writes no `retired` row: the message stays, and opening it fetches the blob
+from the service again. It reads the blob rows in one `getAll`, so a pass
+briefly holds at most the cache in memory (bounded by the household's
+256 MiB blob quota).
+
+## Chat log (v1.1, #111)
+
+The chat log is kept apart from the frozen event database, in its own
+database per household, `kin-chat-log:<householdId>`, version 1
+(`web/chat/chat-log-store.js`):
+
+- `events`: `{ order, eventId, envelope }`, every chat event as the signed,
+  encrypted envelope it travelled in, keyed by the order this device stored
+  it. Envelopes are encrypted under a household key epoch held in the key
+  database, so the log needs no sealing of its own and root rotation doesn't
+  touch it. Signatures are checked once, when an event arrives; reopening the
+  log only decrypts.
+  A restored export (#136) stores each chat event as `{ order, eventId,
+  imported }` instead: the canonical event sealed by the local vault (store
+  `chat-import`, the event ID as its context), because there is no relay
+  envelope to check until the device is approved. These rows follow the vault:
+  a recovery key replacement leaves them unreadable (chat opens without
+  them) until the export is restored again, which seals them afresh in place.
+  An event the relay already gave the device is never replaced.
+- `ids`: `{ eventId, order }`, so each event is stored once even when two
+  tabs store it together.
+- `outbox`: `{ deviceSequence, eventId, blobRef, retireRef, retireParts }`, this device's
+  events the relay hasn't accepted, the blob each uploads first and the blob
+  it replaced. A message in the outbox shows as waiting to send.
+  `retireParts` lists the parts of an attachment the event deletes (#114).
+- `meta`: `{ key: "state", nextOrder, cursor, deviceSequence, provisional,
+  admins, members, membersSignature, retiredThrough, refused, hidden,
+  hiddenRevision, hiddenDirty, hiddenSealedFor, read }`: the relay
+  position read up to, this device's last chat sequence
+  ([SYNC](SYNC.md#chat-relay-v11-111)), the household admins last seen and
+  the household's member list (ID, kind, active, in the service's order, with
+  the directory state it was fetched for) so removals and author labels show
+  offline, how many events'
+  replaced blobs were already deleted here, and the last 100 relay events
+  skipped because they failed authentication; and `hidden`, `hiddenRevision`,
+  `hiddenDirty` and `hiddenSealedFor`: the messages this member deleted for
+  themselves, the record revision last read or written (a lower one served
+  later is written over with what the device holds), whether one hidden here still has to be written, and
+  the devices the record was last sealed to
+  ([SYNC](SYNC.md#delete-for-me-v11-119)); `read`: this member's private
+  read position, `{ postedAt, messageId }`, for the unread count
+  ([SYNC](SYNC.md#unread-position-v11-133)); and `presence`: this member's
+  read cursor, their receipt and typing settings, and the revision of their
+  receipt slot on the service
+  ([SYNC](SYNC.md#read-receipts-and-typing-v11-120)); and `access`: the chat
+  access level the service last gave this member, `write`, `read` or `none`
+  ([SYNC](SYNC.md#chat-access-policy-v11-123)).
+
+Chat keys (#123) are not in the chat log: they are household-key-style epochs
+in the device key store under the family `chat:<household>`, sealed to the
+device like the household keys, so root rotation re-seals them
+([SYNC](SYNC.md#dedicated-chat-key-v11-123)). On the service, `chat_key_packages`
+holds one wrapped package per device and chat key epoch, and
+`households.chat_key_epoch` the current epoch.
+
+While Kin is unlocked the decrypted log is held in memory as one growing
+buffer (`web/chat/chat-records.js`) that the engine's chat log mirrors
+incrementally; locking zeroes and drops it. Opening reads and decrypts the
+log in chunks of 500, alongside the first household sync rather than before
+it, and reads of newly stored events run one at a time per tab. Sending and
+renumbering take a Web Lock per household, and the store writes that add or
+renumber pending events check the sequence they started from, so two tabs
+can't take the same sequence even without Web Locks. Deleting the log with the household, like the blob database,
+is still to come.
+
 ## Handoff storage
 
 The independent draft key is `kin.handoff.draft`; it is best-effort, tab-scoped, and cleared only if successful submitted text still matches. Handoff shares atomic append/counter transactions and content-free invalidation.

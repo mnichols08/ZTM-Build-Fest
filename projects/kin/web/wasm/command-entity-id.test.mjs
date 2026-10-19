@@ -55,6 +55,9 @@ const CASES = [
   ["remove-attachment", { attachmentId: OWN }],
   ["change-responsibility", { targetId: OWN, itemId: ITEM, routineId: ROUTINE }],
   ["nickname-device", { targetDeviceId: OWN }],
+  ["post-chat-message", { messageId: OWN }],
+  ["edit-chat-message", { messageId: OWN }],
+  ["delete-chat-message", { messageId: OWN }],
 ];
 
 test("each command type carries its own entity ID, never a reference it holds", () => {

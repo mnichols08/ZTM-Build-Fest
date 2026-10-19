@@ -13,21 +13,33 @@ import { LocalVault, validateManifest, serializeProtectedValue, deserializeProte
 import { EventStore } from "../storage/event-store.js";
 import { readArchive, writeArchive } from "./archive-stream.js";
 import { manifestRecoveryLabels } from "./key-label.js";
+import {
+  appendChatBlob, appendChatEvents, blobSegment, blobSegmentLength, chatBlobBudget, chatEventsView, chooseChatBlobs,
+  discardChatSection, importChatSection, MAX_ARCHIVE_CHAT_BLOBS, MAX_ARCHIVE_CHAT_EVENTS, openChatSection, validateChatSection,
+} from "../chat/chat-archive.js";
 
-const KIN_VERSION = "1.1.2";
+const KIN_VERSION = "1.2.0";
 const PACKAGE_FORMAT = 3;
 const MAX_ARCHIVE_BYTES = 160 * 1024 * 1024;
 const MAX_EVENT_COUNT = 10_000;
 const MAX_ATTACHMENT_COUNT = 64;
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 const stagedArchives = new WeakMap();
+// The chat section of an archive's parts (#136), kept apart: the parts are
+// checked against the household store's exact field list.
+const chatSections = new WeakMap();
 
 /**
  * The household as a package-format-3 archive. `onProgress({ done, total })`
  * reports events sealed. The history is read from the store's session arena
  * and sealed a chunk at a time into an output allocated once.
+ *
+ * `chat` (a ChatRoom.chatExportPlan(), #136) adds the household chat: its
+ * events, and as many of its blobs as fit under the archive size limit,
+ * newest first. `report`, if given, is filled with what went in:
+ * `{ chatEvents, chatBlobs, chatBlobsSkipped }`.
  */
-export async function exportHouseholdArchive({ store, engine, vault, portableMembership, onProgress }) {
+export async function exportHouseholdArchive({ store, engine, vault, portableMembership, chat = null, report = null, onProgress }) {
   await assertCurrentProtection(vault);
   const parts = await store.archiveParts({ portableMembership });
   const context = parts.local_context[0];
@@ -41,6 +53,25 @@ export async function exportHouseholdArchive({ store, engine, vault, portableMem
   };
   if (!manifest.wrappers.length) throw new VaultError("Create a verified recovery path before exporting.");
   const household = await EventStore.validateArchiveParts({ parts, engine, vault });
+  let included = null;
+  if (chat?.view?.length > 0) {
+    if (!/^[a-f0-9]{32}$/.test(context?.sync_household_id ?? ""))
+      throw new VaultError("Connect to your household before exporting its chat.");
+    // Everything below comes from the plan's own snapshot of the chat, so the
+    // counts in the manifest are the events the stream carries.
+    const view = chatEventsView(chat.view);
+    if (view.length > MAX_ARCHIVE_CHAT_EVENTS) throw new VaultError("This household's chat is too large to export.");
+    let householdBytes = 0;
+    for (let index = 0; index < parts.history.length; index += 1) householdBytes += parts.history.recordLength(index) + 12;
+    householdBytes += Math.ceil(household.attachmentBytes * 1.4) + 4096;
+    let chatEventBytes = 0;
+    for (let index = 0; index < view.length; index += 1) chatEventBytes += view.recordLength(index) + 12;
+    if (householdBytes + chatEventBytes + 4 * 1024 * 1024 > MAX_ARCHIVE_BYTES)
+      throw new VaultError("The chat is too large to include. Export without chat.");
+    const choice = chooseChatBlobs(chat.blobs, chatBlobBudget(MAX_ARCHIVE_BYTES, householdBytes + chatEventBytes));
+    included = { choice, view };
+  }
+  if (report) Object.assign(report, { chatEvents: included ? included.view.length : 0, chatBlobs: included?.choice.chosen.length ?? 0, chatBlobsSkipped: included?.choice.skipped ?? 0 });
   const packageManifest = {
     packageFormatVersion: PACKAGE_FORMAT,
     kinVersion: KIN_VERSION,
@@ -49,6 +80,7 @@ export async function exportHouseholdArchive({ store, engine, vault, portableMem
     attachmentCount: household.attachmentCount,
     attachmentBytes: household.attachmentBytes,
     integrityVersion: 1,
+    ...(included ? { chatEventCount: included.view.length, chatBlobCount: included.choice.chosen.length, chatBlobBytes: included.choice.chosen.reduce((total, blob) => total + blob.size, 0) } : {}),
   };
   // The key is bound to this metadata; the framed metadata adds how to
   // derive it again (salt) and the segments' nonce prefix.
@@ -64,6 +96,7 @@ export async function exportHouseholdArchive({ store, engine, vault, portableMem
   return writeArchive({
     engine, metadata, key, noncePrefix, vaultId: vault.vaultId,
     context, attachments: parts.attachments, view: parts.history,
+    chat: included && { notes: chat.notes, view: included.view, blobs: included.choice.chosen, loadBlob: chat.loadBlob, blobSegmentLength, blobSegment },
     check: () => assertCurrentProtection(vault), onProgress,
   });
 }
@@ -104,6 +137,18 @@ export async function validateHouseholdArchive({ bytes, recoverySecret, engine, 
     ))
       throw new VaultError("This file is damaged or incomplete.");
 
+    let chatSummary = null;
+    const chatSection = chatSections.get(parts);
+    if (chatSection) {
+      const context = parts.local_context[0];
+      if (!/^[a-f0-9]{32}$/.test(context?.sync_household_id ?? "")) throw new VaultError("This file is damaged or incomplete.");
+      chatSummary = await validateChatSection(chatSection, {
+        engine, householdId: context.sync_household_id, memberId: typeof context.sync_member_id === "string" ? context.sync_member_id : null,
+        counts: { eventCount: packageManifest.chatEventCount, blobCount: packageManifest.chatBlobCount },
+      });
+      if (chatSummary.blobBytes !== packageManifest.chatBlobBytes) throw new VaultError("This file is damaged or incomplete.");
+    }
+
     parts.attachments = await rewrapLocalAttachments(parts.attachments, sourceVault, vault);
     // Same history and context: the bindings found above save a replay.
     const summary = await EventStore.validateArchiveParts({ parts, engine, vault, bindings: sourceSummary.bindings });
@@ -116,6 +161,8 @@ export async function validateHouseholdArchive({ bytes, recoverySecret, engine, 
       vaultId: vault.vaultId,
       generation: vault.generation,
       summary,
+      chatSummary,
+      chatSection,
       packageFormatVersion: archiveVersion,
     });
     return Object.freeze({
@@ -123,6 +170,8 @@ export async function validateHouseholdArchive({ bytes, recoverySecret, engine, 
       eventCount: summary.eventCount,
       attachmentCount: summary.attachmentCount,
       attachmentBytes: summary.attachmentBytes,
+      chatEventCount: chatSummary?.eventCount ?? 0,
+      chatBlobCount: chatSummary?.blobCount ?? 0,
       packageFormatVersion: archiveVersion,
     });
   } catch (error) {
@@ -209,10 +258,17 @@ async function openStreamPackage({ header, authenticatedMetadata, packageManifes
   await assertCurrentProtection(vault);
   const history = EventStore.archiveHistory(engine);
   const parts = { formatVersion: 2, history: null, local_context: [], attachments: [], arena: history.arena };
+  const withChat = packageManifest.chatEventCount !== undefined;
+  const chatSection = withChat ? openChatSection() : null;
+  if (chatSection) chatSections.set(parts, chatSection);
   try {
     await readArchive({
       bytes, offset, length, key, noncePrefix, vaultId: protection.vaultId,
       attachmentCount: packageManifest.attachmentCount, eventCount: packageManifest.eventCount,
+      chatPresent: withChat, chatEventCount: packageManifest.chatEventCount ?? 0, chatBlobCount: packageManifest.chatBlobCount ?? 0,
+      onChatNotes: (value) => { chatSection.notes = value; },
+      onChatEvents: (sequences, records) => appendChatEvents(chatSection, sequences, records),
+      onChatBlob: (bytes) => appendChatBlob(chatSection, bytes),
       onContext: (row) => parts.local_context.push(row),
       onAttachment: (row) => parts.attachments.push(row),
       onEvents: (sequences, records, remaining) => {
@@ -266,16 +322,34 @@ export async function restoreValidatedHouseholdArchive({ stage, engine, vault, s
   try {
     if (store && await store.containsSameHouseholdArchive(staged.parts, { engine, vault })) {
       const eventCount = staged.parts.history.length;
+      // The chat is put right too, if it needs it (idempotent).
+      const chat = await restoreChat(staged, vault);
       discardValidatedHouseholdArchive(stage);
-      return { eventCount, alreadyPresent: true };
+      return { eventCount, alreadyPresent: true, chat };
     }
     const result = await EventStore.restoreArchive({ vault, engine, parts: staged.parts, bindings: staged.summary.bindings, onProgress });
+    // The household is restored; its chat is written next. The chat log and
+    // blob store are separate databases, so this is a second step: a failure
+    // here leaves the household restored and says so (restoring the same
+    // export again completes the chat).
+    let chat = null;
+    try { chat = await restoreChat(staged, vault); } catch (error) {
+      error.householdRestored = true;
+      discardValidatedHouseholdArchive(stage);
+      throw error;
+    }
     discardValidatedHouseholdArchive(stage);
-    return result;
+    return { ...result, chat };
   } catch (error) {
     await assertCurrentProtection(vault);
     throw error;
   }
+}
+
+async function restoreChat(staged, vault) {
+  if (!staged.chatSection || !staged.chatSummary) return null;
+  const householdId = staged.parts.local_context[0].sync_household_id;
+  return importChatSection(staged.chatSection, { householdId, vault, hidden: staged.chatSummary.hidden });
 }
 
 export function discardValidatedHouseholdArchive(stage) {
@@ -287,6 +361,7 @@ export function discardValidatedHouseholdArchive(stage) {
 
 function discardParts(parts) {
   parts.arena?.wipe();
+  discardChatSection(chatSections.get(parts));
   zeroByteValues({ context: parts.local_context, attachments: parts.attachments }, new Set());
 }
 
@@ -303,6 +378,7 @@ function validatePackageManifest(value, packageFormatVersion) {
   if (!hasExactKeys(value, [
     "packageFormatVersion", "kinVersion", "exportedAt", "eventCount",
     "attachmentCount", "attachmentBytes", "integrityVersion",
+    ...(value && typeof value === "object" && "chatEventCount" in value ? ["chatEventCount", "chatBlobCount", "chatBlobBytes"] : []),
   ]) || value.packageFormatVersion !== packageFormatVersion || value.integrityVersion !== 1 ||
       typeof value.kinVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(value.kinVersion) ||
       !exportedAtIsCanonical ||
@@ -311,7 +387,13 @@ function validatePackageManifest(value, packageFormatVersion) {
       !Number.isSafeInteger(value.attachmentCount) || value.attachmentCount < 0 ||
       value.attachmentCount > MAX_ATTACHMENT_COUNT ||
       !Number.isSafeInteger(value.attachmentBytes) || value.attachmentBytes < 0 ||
-      value.attachmentBytes > MAX_ATTACHMENT_BYTES)
+      value.attachmentBytes > MAX_ATTACHMENT_BYTES ||
+      // The household chat (#136): only version 3 archives carry it, with
+      // the events and at least the notes segment.
+      ("chatEventCount" in value && (packageFormatVersion !== 3 ||
+        !Number.isSafeInteger(value.chatEventCount) || value.chatEventCount < 1 || value.chatEventCount > MAX_ARCHIVE_CHAT_EVENTS ||
+        !Number.isSafeInteger(value.chatBlobCount) || value.chatBlobCount < 0 || value.chatBlobCount > MAX_ARCHIVE_CHAT_BLOBS ||
+        !Number.isSafeInteger(value.chatBlobBytes) || value.chatBlobBytes < 0 || value.chatBlobBytes > MAX_ARCHIVE_BYTES)))
     throw new VaultError("This Kin export manifest is damaged or unsupported.");
   return value;
 }

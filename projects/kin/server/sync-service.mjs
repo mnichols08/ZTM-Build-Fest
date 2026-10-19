@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { DurableConflictError, MAX_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "./durable-store.mjs";
-import { canManageTrust, canParticipate, isHouseholdAdmin, PairingError, requireTrustAuthority } from "./pairing-service.mjs";
+import { canManageTrust, canParticipate, chatAccess, chatPolicyOf, isHouseholdAdmin, PairingError, requireTrustAuthority } from "./pairing-service.mjs";
 import { INSTALL_ICONS, installContentTag, installIconUrl, validateInstallIdentity } from "./install-identity.mjs";
 import {
   canonicalEventEnvelope,
@@ -36,17 +36,48 @@ export class EncryptedSyncService {
     this.attachments = new Map();
   }
 
+  /**
+   * Tells a household's connected devices (but `exceptDeviceId`) to sync now
+   * over the live channel (#107/#108), for changes that aren't events: keys,
+   * provisioning grants, bindings and rotations. Deferred past the current
+   * request, so it never runs before the change it announces commits.
+   */
+  hintHousehold(householdId, exceptDeviceId = null) {
+    if (!this.liveService) return;
+    setImmediate(() => {
+      try { this.liveService?.eventsAccepted(householdId, exceptDeviceId); } catch { /* best effort */ }
+    });
+  }
+
+  /** The admin changed who can chat: members online learn it now, and the
+   * chat signals they may no longer see stop. */
+  chatPolicyChanged(householdId) {
+    this.liveService?.revalidate(householdId);
+    this.hintHousehold(householdId);
+  }
+
   forgetHousehold(householdId) {
     this.households.delete(householdId);
     this.pushService?.removeUntrusted(householdId);
+    this.chatBlobService?.forgetHousehold(householdId);
+    this.chatRelayService?.forgetHousehold(householdId);
+    this.liveService?.revalidate(householdId);
   }
 
   status(sessionToken) {
     const auth = this.authorize(sessionToken);
     const state = this.state(auth.household.id);
+    const policy = chatPolicyOf(auth.household);
     return {
       memberKind: auth.member.kind ?? "adult",
       ...(auth.member.expiresAt == null ? {} : { memberExpiresAt: auth.member.expiresAt }),
+      // Chat access (#123): this member's own, and the policy for an admin.
+      chat: {
+        access: chatAccess(auth.member, auth.household, this.now()),
+        policyRevision: policy.revision,
+        key: this.chatRelayService?.keySummary(auth) ?? { epoch: 0, pending: false, action: null, held: 0, since: 0, lost: [] },
+        ...(isHouseholdAdmin(auth.member, this.now()) ? { policy: { limited: policy.limited, temporary: policy.temporary } } : {}),
+      },
       currentEpoch: state.currentEpoch,
       enabled: state.enabled,
       rotationPending: state.rotationPending,
@@ -71,6 +102,12 @@ export class EncryptedSyncService {
           memberKind: member?.kind ?? "adult",
           memberActive: canParticipate(member, this.now()),
           ...(member?.expiresAt == null ? {} : { memberExpiresAt: member.expiresAt }),
+          // Chat (#111): whose removals count as an admin's, by the same
+          // rule the service uses to let them delete others' content.
+          householdAdmin: Boolean(member && isHouseholdAdmin(member, this.now())),
+          // Chat (#130): whether this member can read chat under the admin's
+          // policy ("none", "read" or "write"), for who can be mentioned.
+          chatAccess: member ? chatAccess(member, household, this.now()) : "none",
           publicKeys: device.syncPublicKeys ?? null,
           fingerprint: device.syncKeyFingerprint ?? null,
           certificate: device.deviceAuthorizationCertificate ?? null,
@@ -101,7 +138,10 @@ export class EncryptedSyncService {
   householdSettings(sessionToken) {
     const auth = this.authorize(sessionToken);
     const row = this.store?.getHouseholdSettings(auth.household.id) ?? auth.household.settings ?? null;
-    return { admin: isHouseholdAdmin(auth.member, this.now()), adminRecorded: this.pairingService.hasHouseholdAdmin(auth.household), settings: row ? { ...row, ciphertext: Buffer.from(row.ciphertext).toString("base64url") } : null };
+    const admin = isHouseholdAdmin(auth.member, this.now());
+    const policy = chatPolicyOf(auth.household);
+    // The chat policy (#123) rides along for admins, who alone may see it.
+    return { admin, ...(admin ? { chatPolicy: { limited: policy.limited, temporary: policy.temporary } } : {}), adminRecorded: this.pairingService.hasHouseholdAdmin(auth.household), settings: row ? { ...row, ciphertext: Buffer.from(row.ciphertext).toString("base64url") } : null };
   }
 
   updateHouseholdSettings(sessionToken, value) {
@@ -361,6 +401,8 @@ export class EncryptedSyncService {
     // It runs in the background and can never fail or delay this response.
     if (staged.length) {
       try { this.pushService?.eventsAccepted(auth.household.id, auth.member.id); } catch { /* best effort */ }
+      // And to connected devices at once, over the live channel (#107).
+      try { this.liveService?.eventsAccepted(auth.household.id, auth.device.id); } catch { /* best effort */ }
     }
     return {
       accepted: envelopes.length,
@@ -524,6 +566,7 @@ export class EncryptedSyncService {
     for (const [eventId, binding] of staged)
       state.bindings.set(eventId, binding);
     this.persistState(auth.household.id, state);
+    if (staged.size) this.hintHousehold(auth.household.id, auth.device.id);
     return { accepted: envelopes.length, durable: Boolean(this.store) };
   }
 
@@ -678,6 +721,7 @@ export class EncryptedSyncService {
     grant.package ??= structuredClone(keyPackage);
     grant.canonicalPackage ??= canonicalPackage;
     this.persistState(auth.household.id, state);
+    this.hintHousehold(auth.household.id, auth.device.id);
     return { accepted: true, grantId, durable: Boolean(this.store) };
   }
 
@@ -853,6 +897,7 @@ export class EncryptedSyncService {
       });
     }
     this.persistState(auth.household.id, state);
+    this.hintHousehold(auth.household.id, auth.device.id);
     return {
       currentEpoch: nextEpoch,
       rotationPending: false,
@@ -882,6 +927,11 @@ export class EncryptedSyncService {
   onAccessChange(householdId, excludedDeviceIds = []) {
     // Devices that lost access stop getting notifications at once (#85).
     this.pushService?.removeUntrusted(householdId, excludedDeviceIds);
+    // Live sockets of devices that lost access close at once (#107).
+    this.liveService?.revalidate(householdId);
+    // The remaining devices have a rotation (and maybe a new device's keys)
+    // to act on.
+    this.hintHousehold(householdId);
     const state = this.state(householdId);
     state.rotationPending = true;
     // Keep committed packages only for recipients who still hold trust.
@@ -1020,7 +1070,7 @@ function portableMemberStatus(member, now) {
   return status;
 }
 
-function validateEventEnvelope(envelope, auth, currentEpoch) {
+export function validateEventEnvelope(envelope, auth, currentEpoch) {
   const invalid = () =>
     new PairingError(
       "event_envelope_invalid",
@@ -1062,13 +1112,13 @@ function publicGrant(grant) {
   };
 }
 
-function encodeCursor(sequence) {
+export function encodeCursor(sequence) {
   const bytes = Buffer.alloc(8);
   bytes.writeBigUInt64BE(BigInt(sequence));
   return bytes.toString("base64url");
 }
 
-function decodeCursor(value) {
+export function decodeCursor(value) {
   if (value === "") return 0;
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]{11}$/.test(value))
     throw new PairingError(

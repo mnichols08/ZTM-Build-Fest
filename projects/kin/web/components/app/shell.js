@@ -115,6 +115,7 @@ export class ShellBuilder {
     this.app.compose = document.createElement("kin-compose");
     this.app.handoffs = document.createElement("kin-handoff-list");
     this.app.talks = document.createElement("kin-talk-list");
+    this.app.chat = document.createElement("kin-chat");
     this.app.search = document.createElement("kin-search");
     this.app.pulse = document.createElement("kin-pulse");
     this.app.routines = document.createElement("kin-routines");
@@ -204,6 +205,8 @@ export class ShellBuilder {
     };
     this.app.commandPalette.onDismiss = ({ opener }) => this.ctx.append.restoreCommandFocus(opener);
     this.app.append(this.app.commandPalette);
+    this.app.chatShare = document.createElement("kin-chat-share");
+    this.app.append(this.app.chatShare);
     this.app.attachmentInput = this.ctx.attachments.buildAttachmentInput();
     this.app.append(this.app.attachmentInput);
     this.ctx.navigation.showPageFromLocation();

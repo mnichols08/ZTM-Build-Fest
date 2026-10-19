@@ -567,18 +567,34 @@ async function pageSync() {
     original(value);
   };
   try {
+    // A pass already running (a live hint's, or chat's) may have started
+    // before the change this call wants to see: let it finish, then run one
+    // of our own.
+    await coordinator.running;
     await coordinator.syncNow();
     // A device records its automatic name after a successful sync (#71);
     // send it now so relay counts and event sets settle within this call.
     if (await app.deviceDescription) await coordinator.syncNow();
+    // A pass cut short to stay within the request budget ("Catching up…")
+    // continues shortly: let it, so the call sees a whole sync.
+    for (let i = 0; i < 3 && states.at(-1)?.state === "syncing"; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+      await coordinator.running;
+      await coordinator.syncNow();
+    }
   } finally {
     coordinator.onState = original;
   }
-  for (let i = 0; i < 200 && app.busy; i++) await new Promise((r) => setTimeout(r, 25));
+  for (let i = 0; i < 200 && (app.busy || app.refreshing || app.pendingRefresh); i++) await new Promise((r) => setTimeout(r, 25));
   return {
     started: true,
     states,
-    last: states.at(-1) ?? null,
+    // A pass that chat or a live hint started earlier may already have
+    // paused the coordinator before this call listened: the app keeps the
+    // state it last showed.
+    last: states.at(-1) ?? (app.syncState?.state
+      ? { state: app.syncState.state, code: app.syncState.code ?? null, message: app.syncState.message ?? null }
+      : null),
     items: app.state?.items.map((item) => item.text) ?? [],
     notice: app.stateNotice.hidden ? "" : app.stateNotice.textContent,
   };
@@ -1001,11 +1017,11 @@ async function launchProfile(executable, label, origin) {
     return result.result.value;
   };
   // A failure names the page function, so a CI log says which step broke.
-  const call = (fn, argument) => evaluate(`(${fn.toString()})(${argument === undefined ? "" : JSON.stringify(argument)})`)
+  const call = (fn, argument) => (beforePageCall(), evaluate(`(${fn.toString()})(${argument === undefined ? "" : JSON.stringify(argument)})`)
     .catch((error) => {
       if (!error.message.startsWith(`[${label}]`)) error.message = `[${label}] ${fn.name || "inline page function"}: ${error.message}`;
       throw error;
-    });
+    }));
   // For page functions that only wait or read: a navigation can tear down
   // the page's context mid-call (#164), so retry those a few times. Never
   // used for a step that changes anything, which must not run twice.
@@ -1102,7 +1118,14 @@ async function launchProfile(executable, label, origin) {
 // The drill.
 // ---------------------------------------------------------------------------
 
+// The drill drives hundreds of requests per device in a minute (sync, chat,
+// exports, sign-in). It checks authority, not the 256-requests-a-minute sync
+// limit, which has its own tests: each page step starts with a fresh window,
+// so a slow runner cannot turn the drill's own pace into a failure.
+let beforePageCall = () => {};
+
 export async function householdAuthorityDrill({ executable, origin, service, syncService, clock, pushes = [], requests = [] }) {
+  beforePageCall = () => syncService.rateBuckets?.clear();
   let checks = 0;
   const check = (condition, message) => {
     assert.ok(condition, message);

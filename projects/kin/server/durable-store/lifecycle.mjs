@@ -9,6 +9,23 @@ export function purgeHouseholdData(database, householdId) {
   database.prepare("DELETE FROM household_install_identity_revisions WHERE household_id = ?").run(householdId);
   database.prepare("DELETE FROM push_subscriptions WHERE household_id = ?").run(householdId);
   database.prepare("DELETE FROM sync_attachments WHERE household_id = ?").run(householdId);
+  // Chat content: freed pages are zeroed, so deleted messages' ciphertext
+  // doesn't linger in the database file (the WAL is checkpointed later).
+  const secureDelete = database.prepare("PRAGMA secure_delete").get().secure_delete;
+  database.exec("PRAGMA secure_delete = ON");
+  try {
+    database.prepare("DELETE FROM chat_blobs WHERE household_id = ?").run(householdId);
+    database.prepare("DELETE FROM chat_blob_claims WHERE household_id = ?").run(householdId);
+    database.prepare("DELETE FROM chat_blob_usage WHERE household_id = ?").run(householdId);
+    database.prepare("DELETE FROM chat_events WHERE household_id = ?").run(householdId);
+    database.prepare("DELETE FROM chat_device_sequences WHERE household_id = ?").run(householdId);
+    database.prepare("DELETE FROM chat_relay_state WHERE household_id = ?").run(householdId);
+    database.prepare("DELETE FROM chat_hidden WHERE household_id = ?").run(householdId);
+    database.prepare("DELETE FROM chat_receipts WHERE household_id = ?").run(householdId);
+    database.prepare("DELETE FROM chat_key_packages WHERE household_id = ?").run(householdId);
+  } finally {
+    database.exec(`PRAGMA secure_delete = ${secureDelete ? "ON" : "OFF"}`);
+  }
   database
     .prepare("DELETE FROM provisioning_grants WHERE household_id = ?")
     .run(householdId);
@@ -52,6 +69,13 @@ export const lifecycleMethods = {
     };
   },
 
+  /** Purge zeroes freed pages; checkpointing the WAL afterwards carries the
+   * zeroed pages into the main file at once (outside a transaction only). */
+  checkpointAfterPurge(result, purged = true) {
+    if (purged && !this.db.isTransaction) this.db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
+    return result;
+  },
+
   householdPurgeStatus(householdId) {
     this.assertAvailable();
     if (!isId(householdId))
@@ -83,6 +107,12 @@ export const lifecycleMethods = {
       ),
       attachments: count(
         "SELECT COUNT(*) AS count FROM sync_attachments WHERE household_id = ?",
+      ),
+      chatEvents: count(
+        "SELECT (SELECT COUNT(*) FROM chat_events WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_device_sequences WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_relay_state WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_hidden WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_receipts WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_key_packages WHERE household_id = ?1) AS count",
+      ),
+      chatBlobs: count(
+        "SELECT (SELECT COUNT(*) FROM chat_blobs WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_blob_claims WHERE household_id = ?1) + (SELECT COUNT(*) FROM chat_blob_usage WHERE household_id = ?1) AS count",
       ),
       events: count(
         "SELECT COUNT(*) AS count FROM sync_events WHERE household_id = ?",
@@ -124,7 +154,7 @@ export const lifecycleMethods = {
       throw new DurableStoreError(
         "Kin forced household deletion metadata is invalid.",
       );
-    return this.transaction(() => {
+    return this.checkpointAfterPurge(this.transaction(() => {
       const lifecycle = this.lifecycleInfo(householdId);
       if (!lifecycle)
         throw new DurableStoreError("The Kin household does not exist.");
@@ -145,7 +175,7 @@ export const lifecycleMethods = {
       if (!status.purged)
         throw new DurableStoreError("Kin could not verify the household purge.");
       return status;
-    });
+    }));
   },
 
   requestHouseholdDeletion(householdId, requestedAt, finalizeAt) {
@@ -197,7 +227,9 @@ export const lifecycleMethods = {
   finalizeExpiredDeletions(now) {
     if (!isTimestamp(now))
       throw new DurableStoreError("Kin household deletion time is invalid.");
-    return this.transaction(() => {
+    // Runs at the start of every API request: checkpoint only after an
+    // actual purge, never on the common nothing-to-do call.
+    const purged = this.transaction(() => {
       const rows = this.db
         .prepare(
           `SELECT id FROM households
@@ -221,6 +253,7 @@ export const lifecycleMethods = {
       }
       return rows.map(({ id }) => id);
     });
+    return this.checkpointAfterPurge(purged, purged.length > 0);
   },
 
   loadNonActiveHouseholds() {

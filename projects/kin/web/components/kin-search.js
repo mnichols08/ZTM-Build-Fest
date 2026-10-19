@@ -1,4 +1,5 @@
 import { MAX_SEARCH_RESULTS, searchHouseholdRecords } from "../search.js";
+import "./kin-chat-search.js";
 
 // Local search over the unlocked projection. Each result is a real control
 // that opens the matching record by its canonical id (kin:open-search-result);
@@ -13,6 +14,7 @@ class KinSearch extends HTMLElement {
     super();
     this.records = { items: [], handoffs: [], talks: [], notes: [], referenceRecords: [], maintenanceEvents: [], areas: [] };
     this.isDisabled = false;
+    this.room = null;
   }
 
   connectedCallback() {
@@ -40,7 +42,10 @@ class KinSearch extends HTMLElement {
     this.queryInput.autocomplete = "off";
     this.queryInput.spellcheck = false;
     this.queryInput.placeholder = "Try a word or phrase";
-    this.queryInput.addEventListener("input", () => this.renderResults());
+    this.queryInput.addEventListener("input", () => {
+      this.renderResults();
+      this.chatSearch.query = this.queryInput.value;
+    });
 
     const filters = document.createElement("details");
     filters.className = "search-filters-disclosure";
@@ -79,6 +84,7 @@ class KinSearch extends HTMLElement {
       this.statusSelect.value = "";
       this.areaSelect.value = "";
       this.renderResults();
+      this.chatSearch.query = "";
       this.queryInput.focus();
     });
 
@@ -91,7 +97,10 @@ class KinSearch extends HTMLElement {
     this.resultsList.className = "search-results";
     this.resultsList.setAttribute("aria-label", "Search results");
     this.form.append(queryLabel, this.queryInput, filters, this.clearButton);
-    section.append(heading, hint, this.form, this.resultStatus, this.resultsList);
+    // Chat messages that match, under the household results (#124).
+    this.chatSearch = document.createElement("kin-chat-search");
+    this.chatSearch.room = this.chatRoom ?? null;
+    section.append(heading, hint, this.form, this.resultStatus, this.resultsList, this.chatSearch);
     this.replaceChildren(section);
 
     this.updateAreaOptions();
@@ -114,6 +123,16 @@ class KinSearch extends HTMLElement {
     this.records = records;
     this.updateAreaOptions();
     this.renderResults();
+  }
+
+  /** The chat room whose messages the Chat group searches (none: no group). */
+  set chatRoom(value) {
+    this.room = value ?? null;
+    if (this.chatSearch) this.chatSearch.room = this.room;
+  }
+
+  get chatRoom() {
+    return this.room ?? null;
   }
 
   set disabled(value) {

@@ -1,5 +1,6 @@
 // Building the destination pages and their components.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
+import { setAppBadge } from "../../chat/chat-badge.js";
 import { routeHash, SEGMENTS } from "../../routes.js";
 import { currentPlatform, installHelp } from "../../platform.js";
 import { installHelpCard } from "../shared/dom.js";
@@ -100,7 +101,7 @@ export class ViewBuilder {
     this.app.segmentNavs.set("routines", routinesNav);
     routines.append(routinesNav, this.app.routines);
 
-    const updates = page("updates", "Updates", "Handoffs pass context to someone; Talk keeps topics for a calm moment.");
+    const updates = page("updates", "Updates", "Handoffs pass context to someone; Talk keeps topics for a calm moment; Chat is for quick back-and-forth.");
     const updatesNav = segmentNav("updates", "Updates");
     this.app.segmentNavs.set("updates", updatesNav);
     const handoffPanel = document.createElement("section");
@@ -109,10 +110,31 @@ export class ViewBuilder {
     const talkPanel = document.createElement("section");
     talkPanel.id = "talk-panel";
     talkPanel.setAttribute("aria-label", "Talk");
+    const chatPanel = document.createElement("section");
+    chatPanel.id = "chat-panel";
+    chatPanel.setAttribute("aria-label", "Chat");
     handoffPanel.append(this.app.handoffs);
     talkPanel.append(this.app.talks);
-    updates.append(updatesNav, handoffPanel, talkPanel);
-    this.app.segmentPanels.set("updates", new Map([["handoffs", handoffPanel], ["talk", talkPanel]]));
+    chatPanel.append(this.app.chat);
+    // The unread count (#133) from the chat view: on the Chat link and, where
+    // the browser supports it, on the installed app's icon. Both are set from
+    // what this device decrypted; no count is sent anywhere. A locked
+    // household has no chat room, so the count and the icon badge clear
+    // when Kin locks (docs/UX.md).
+    this.app.chat.addEventListener("kin:chat-unread", (event) => {
+      this.app.chatUnread = event.detail;
+      this.ctx.render.renderUpdatesNav();
+      setAppBadge(event.detail.count);
+    });
+    // The admin's chat policy (#123): with no access, Chat leaves Updates.
+    this.app.chat.addEventListener("kin:chat-access", (event) => {
+      this.app.chatAccess = event.detail.access;
+      this.ctx.render.renderState();
+      if (event.detail.access === "none" && this.app.route?.page === "updates" && this.app.route.segment === "chat")
+        this.ctx.navigation.navigate(routeHash("updates", "handoffs"));
+    });
+    updates.append(updatesNav, handoffPanel, talkPanel, chatPanel);
+    this.app.segmentPanels.set("updates", new Map([["handoffs", handoffPanel], ["talk", talkPanel], ["chat", chatPanel]]));
 
     // Household: an overview plus secondary destinations. Appearance remains
     // personal while the five primary destinations stay unchanged.
@@ -234,6 +256,9 @@ export class ViewBuilder {
     // Per-device notification settings (#85), shown once this browser is a
     // trusted household device.
     this.app.notifications = document.createElement("kin-notifications");
+    // Read receipts and typing (#120): per member, so shown with the room.
+    this.app.chatSettings = document.createElement("kin-chat-settings");
+    this.app.chatSettings.hidden = true;
 
     const privacyPage = document.createElement("section");
     privacyPage.className = "household-subpage";
@@ -252,7 +277,8 @@ export class ViewBuilder {
     this.app.appearance = document.createElement("kin-appearance");
     this.app.householdDefaults = document.createElement("kin-household-defaults");
     this.app.householdDefaults.hidden = true;
-    appearancePage.append(this.app.householdDefaults, this.app.appearance);
+    this.app.chatPolicy = document.createElement("kin-chat-policy");
+    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.appearance);
 
     household.append(hub, notesPage, areasPage, peoplePage, privacyPage, appearancePage);
     this.app.segmentPanels.set("household", new Map([["hub", hub], ["notes", notesPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));

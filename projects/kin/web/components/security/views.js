@@ -23,6 +23,37 @@ export class SecurityViews {
     this.host = ctx.host;
   }
 
+  // "Include chat" for the export (#136): on by default, with the size shown
+  // before anything is made. Only offered where this device can read chat.
+  chatExportOption(parent) {
+    const room = this.host.closest("kin-app")?.chat?.room;
+    if (!room?.chatExportPlan) return;
+    const row = document.createElement("div");
+    row.className = "security-chat-option";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.id = "archive-include-chat";
+    box.checked = true;
+    const label = document.createElement("label");
+    label.htmlFor = box.id;
+    label.textContent = "Include chat (messages, photos, files, voice)";
+    const estimate = document.createElement("p");
+    estimate.id = "archive-chat-estimate";
+    estimate.className = "security-note";
+    estimate.setAttribute("role", "status");
+    box.setAttribute("aria-describedby", estimate.id);
+    row.append(box, " ", label, estimate);
+    // Shown (and counted) only once there is chat to include.
+    void room.chatExportPlan().then((plan) => {
+      if (!parent.isConnected || !plan.events) return;
+      (parent.querySelector("h2, h3, h4") ?? { after: (node) => parent.prepend(node) }).after(row);
+      this.host.chatOption = box;
+      const megabytes = (plan.blobBytes + plan.events * 400) / (1024 * 1024);
+      const size = megabytes < 0.1 ? "under 0.1 MB" : `about ${megabytes.toFixed(1)} MB`;
+      estimate.textContent = `${plan.events.toLocaleString()} chat events and ${plan.blobs.length.toLocaleString()} photos, files and messages, ${size}. Messages deleted for everyone are included only as deleted placeholders, and your "delete for me" list is yours alone.`;
+    }, () => {});
+  }
+
   // frameOnly: just the heading and status lines, for a flow (recovery-key
   // setup) that fills in the rest itself.
   render({ frameOnly = false } = {}) {
@@ -261,6 +292,8 @@ export class SecurityViews {
     this.host.button("Replace recovery key", () => this.host.showReplacement(), "", recoverySection);
 
     const backupSection = this.host.section("Backup and move");
+    this.host.chatOption = null;
+    this.chatExportOption(backupSection);
     this.host.button("Export household", () => this.host.run(() => this.host.downloadArchive()), "", backupSection);
     this.host.button("Restore household", () => this.host.showRestore(), "", backupSection);
     if (navigator.storage?.persist) this.host.button("Request persistent storage", () => this.host.run(async (operation) => {

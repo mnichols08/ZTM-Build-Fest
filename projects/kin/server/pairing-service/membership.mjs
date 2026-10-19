@@ -1,8 +1,10 @@
 // PairingService membership: who may manage the household, leaving,
 // removing another adult, the household admin, and Temporary expiry.
 import {
+  CHAT_ACCESS,
   canManageTrust,
   canParticipate,
+  chatPolicyOf,
   isHouseholdAdmin,
   normalizeMemberKind,
   PairingError,
@@ -197,6 +199,34 @@ export const membershipMethods = {
     });
     this.persistHousehold(household.id);
     return { memberId, admin, changed: true };
+  },
+
+  // Chat access policy (#123): admin only, fresh passkey. Legacy households
+  // with no admin fail closed and keep the default (everyone posts).
+  chatPolicyContext(sessionToken) {
+    const { member, household, device } = this.authorize(sessionToken);
+    requireHouseholdAdmin(member, "change who can chat", this.now());
+    return { memberId: member.id, deviceId: device.id, householdId: household.id, credentialIds: [...member.credentials] };
+  },
+
+  setChatPolicy(sessionToken, policy, reauthenticatedMemberId) {
+    if (!CHAT_ACCESS.includes(policy?.limited) || !CHAT_ACCESS.includes(policy?.temporary))
+      throw new PairingError("chat_policy_invalid", "Choose read and post, read only or no access for each group.");
+    const context = this.chatPolicyContext(sessionToken);
+    if (reauthenticatedMemberId !== context.memberId)
+      throw new PairingError("fresh_auth_required", "Authenticate with your passkey again before changing who can chat.", 401);
+    const household = this.households.get(context.householdId);
+    const current = chatPolicyOf(household);
+    if (current.limited === policy.limited && current.temporary === policy.temporary)
+      return { ...current, changed: false };
+    household.chatPolicy = { limited: policy.limited, temporary: policy.temporary, revision: current.revision + 1 };
+    household.version += 1;
+    this.audit("chat_policy_changed", {
+      householdId: household.id, actorId: context.memberId,
+      limited: policy.limited, temporary: policy.temporary, revision: household.chatPolicy.revision,
+    });
+    this.persistHousehold(household.id);
+    return { ...household.chatPolicy, changed: true };
   },
 
   hasUsableTrustedDevice(memberId) {
