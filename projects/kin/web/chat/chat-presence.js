@@ -222,6 +222,7 @@ export class ChatPresence {
     this.lastRefresh = 0;
     this.hinted = false;
     this.writing = null;
+    this.refreshing = null;
     this.closed = false;
   }
 
@@ -320,10 +321,14 @@ export class ChatPresence {
     const epoch = await this.env.sendingEpoch();
     const householdKey = await this.env.epochKey(epoch);
     const version = this.version;
+    // Re-checked here: a refresh during the awaits above may have found the
+    // member's settings unknown (and a 409 retry comes back through here).
+    if (this.unverified || this.closed) return;
     const record = await seal({
       body: this.body(), householdId: identity.householdId, deviceId: identity.deviceId, sequence: this.revision + 1,
       keyEpoch: epoch, householdKey, signingKey: this.env.signingKey(), now: this.now(),
     });
+    if (this.unverified || this.closed) return;
     try {
       const result = await this.env.request("/api/chat/receipts", { method: "PUT", body: JSON.stringify({ expectedRevision: this.revision, record }) });
       this.revision = result.revision;
@@ -342,7 +347,13 @@ export class ChatPresence {
 
   /** Reads everyone's slots; merges this member's own (settings that were
    * written last win; the cursor is the later of the two). */
-  async refresh() {
+  refresh() {
+    // One read at a time: a hint and the chat pass arriving together share it.
+    if (!this.refreshing) this.refreshing = this.readSlots().finally(() => { this.refreshing = null; });
+    return this.refreshing;
+  }
+
+  async readSlots() {
     if (this.closed) return false;
     this.lastRefresh = this.now();
     this.hinted = false;
@@ -455,7 +466,8 @@ export class ChatPresence {
   /** The chat pass: refresh now and then, write what is waiting. */
   async sync() {
     if (this.closed) return;
-    if (this.hinted || this.now() - this.lastRefresh >= RECEIPT_REFRESH_MS) await this.refresh();
+    if (this.refreshing) await this.refreshing;
+    else if (this.hinted || this.now() - this.lastRefresh >= RECEIPT_REFRESH_MS) await this.refresh();
     if (this.dirty && this.writeTimer === null) await this.flush();
   }
 
