@@ -174,10 +174,11 @@ export async function mobileUxRegressions(recovery) {
     "Create names the device automatically and asks nobody to type a name (#71)");
   app.household.startIntent(null);
   const chooser = [...app.household.querySelectorAll("button")].map((button) => button.textContent);
-  check(chooser.includes("Create a household") && chooser.includes("Join an existing household") &&
-    chooser.includes("Add this device to my existing membership") && chooser.includes("Log in with passkey"),
+  check(chooser.includes("Start a new household") && chooser.includes("Join my household") &&
+    chooser.includes("Use Kin on another device") && chooser.includes("Sign in using my phone") &&
+    chooser.includes("Sign in with my passkey"),
     `the household chooser offers every path: ${chooser.join("|")}`);
-  check(app.household.textContent.includes("Household membership is separate"),
+  check(app.household.textContent.includes("a member must approve you before anything is shared"),
     "device protection and household membership are distinguished in plain language");
 
   // 5. Sync pauses, offline and attachment failures speak plainly and keep codes.
