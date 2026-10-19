@@ -108,6 +108,72 @@ with which export.**
 
 ## Ownership principle
 
+### Household chat in an archive (v1.1, #136)
+
+An export can include the household chat. Choosing it adds, after the
+history, to the same sealed stream (package format 3; the container and
+format number don't change): one segment of notes (who exported, and the
+messages they deleted for themselves), the chat events in chunks of 256, and
+one segment per chat blob that fits. The package manifest names the counts
+(`chatEventCount`, `chatBlobCount`, `chatBlobBytes`), which are authenticated
+like the rest; an export without chat has none of them and is byte-for-byte
+what package format 3 has always been, so every release reads it; a release
+from before this change refuses an export that includes chat rather than
+ignoring part of it. Layout: `web/security/archive-stream.js`,
+`web/chat/chat-archive.js`.
+
+- **What goes in.** Every chat event this device holds (the engine's own
+  canonical bytes, without the transport envelope), and the sealed content
+  blobs (message text, photos, files, voice) this device still has for messages
+  that still exist. Blobs are added newest first until the archive's 160 MiB
+  limit is reached; older ones that don't fit are left out and the export says
+  how many (they stay in Kin and on the household's relay, and open from there
+  as usual). The size is shown, and the box is on by default, before the export
+  is made. Only a device that may read chat offers it.
+- **What stays out.** A message deleted for everyone (by its author or an
+  admin) is exported as the events that say so, a deleted placeholder with
+  no content: its blobs are already removed and are never added. Edited-away
+  versions are gone the same way. Another member's "delete for me" list is
+  not on this device and cannot be exported; the exporting member's own is,
+  and a restore keeps it only for that member.
+- **Memory.** The chat events are the buffer the chat room already holds;
+  blobs are read one at a time as their segment is sealed. Restore reads one
+  segment at a time and holds the chat's events and blobs (never more than the
+  archive's 160 MiB) until the whole file has been checked.
+- **Restore.** Before anything is written the engine decodes and replays every
+  chat event (each must be a chat event of this household, with a unique ID),
+  every blob must hash to its reference, and the counts and sizes must match
+  the manifest. Corruption anywhere fails the whole file, as for the rest of
+  the archive. The household is then restored in its one atomic transaction
+  and the chat is written next, into its own storage (chat storage is a
+  separate database): if that second step fails, the household is restored and
+  Kin says its chat is not, and restoring the same export again completes it.
+  Each event is stored sealed by the local vault (it has no relay signature to
+  check until the device is approved) and the blobs go to the chat blob store.
+  An event the relay already gave this device is left as it is.
+- **After restore.** Chat appears once the device is approved. Syncing then
+  brings what the household did after the export (new messages, edits and
+  deletions) and stores nothing twice. A deletion for everyone made after the
+  export arrives as an ordinary chat event and removes that content on this
+  device, so a restore never brings back content that was deleted for everyone
+  after the export was made while the household is still syncing. A blob this
+  device already deleted is never stored again.
+- **Trust.** An imported event carries no relay signature; it is trusted
+  because the archive is authenticated under its recovery key. When the
+  household syncs, the relay's signed copy of each event replaces the
+  imported one in place, and from then on it is authenticated like any other.
+  A deleted message's post event still names its content key; the content
+  itself is not in the export or on the relay, but a copy of the old
+  ciphertext someone kept elsewhere would still open with it.
+- **Replacing the recovery key.** Imported chat events not yet replaced by the
+  relay's copy are sealed by the vault's root, which a recovery key replacement
+  changes. Chat then opens without them rather than stopping, and restoring the
+  same export again seals them afresh. Events from the relay are unaffected.
+- **Consistency.** An export is a snapshot: the events, the deletions that
+  decide which blobs are left out (including a deleted attachment's parts) and
+  the manifest counts are read together, so events that sync meanwhile are not
+  half in the file.
+
 ### v0.10.3 bounded KARC v1 processing
 
 KARC v1 remains one authenticated payload with unchanged bytes/AAD semantics.

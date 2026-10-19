@@ -10,6 +10,8 @@ import { createKinServer } from "../../server/server.mjs";
 import { decryptStoredEvent, deviceKeyFingerprint, encryptEvent, exportDevicePublicKeys, generateDeviceKeys, generateHouseholdKey } from "../sync/crypto.js";
 import { decodeEnvelopeBatch, encodeEventPage } from "../sync/envelope-wire.js";
 import { SyncCoordinator } from "../sync/sync-coordinator.js";
+import { writeArchive, readArchive } from "../security/archive-stream.js";
+import { appendChatBlob, appendChatEvents, blobSegment, blobSegmentLength, chatEventsView, chooseChatBlobs, importChatSection, openChatSection, validateChatSection } from "./chat-archive.js";
 import { ChatBlobClient } from "./chat-blob-client.js";
 import { ChatBlobStore } from "./chat-blob-store.js";
 import { ChatBlobs } from "./chat-blobs.js";
@@ -1500,4 +1502,98 @@ test("rooms report who is online while Kin is visible, and go away when hidden o
   assert.equal(c.room.presence.active, false);
   assert.equal(c.room.presence.beatTimer, null);
   a.room.close();
+});
+
+test("an export carries the chat to a device that has none, which then merges with the relay (#136)", { timeout: 60_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs });
+  const devices = [phone.entry, laptop.entry];
+  const a = await openRoom(phone, s);
+  const dinner = await a.room.send("Dinner at 6 🍝");
+  const bread = await a.room.send("Bring bread");
+  const secret = await a.room.send("Oops, wrong chat");
+  await a.room.sync({ status: STATUS, devices });
+  await a.room.remove(a.room.page().messages.find((message) => message.messageId === secret.messageId));
+  await a.room.hide(a.room.page().messages.find((message) => message.messageId === bread.messageId));
+  await a.room.sync({ status: STATUS, devices });
+
+  // The plan: every event, but only the content of messages that still exist.
+  const plan = await a.room.chatExportPlan();
+  assert.equal(plan.events, 4, "three posts and a deletion");
+  assert.equal(plan.blobs.length, 2, "the deleted message's content is not part of it");
+  const posted = a.room.page().messages;
+  const kept = new Set(posted.filter((message) => message.status === "live").map((message) => message.blobRef));
+  assert.deepEqual(new Set(plan.blobs.map((blob) => blob.ref)), kept);
+  assert.deepEqual(plan.notes.hidden, [bread.messageId]);
+  assert.equal(plan.notes.memberId, s.admin.memberId);
+
+  // Write and read the archive (the engine's container framing is a stand-in).
+  const stub = {
+    archiveHeader: (metadataLength, region) => {
+      const header = new Uint8Array(16), view = new DataView(header.buffer);
+      view.setUint32(0, metadataLength, true); view.setUint32(4, region, true);
+      return header;
+    },
+  };
+  const archiveKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+  const prefix = new Uint8Array(8).fill(5);
+  const choice = chooseChatBlobs(plan.blobs, 10 * 1024 * 1024);
+  const bytes = await writeArchive({
+    engine: stub, metadata: new TextEncoder().encode("meta"), key: archiveKey, noncePrefix: prefix, vaultId: "ab".repeat(16),
+    context: { key: "installation" }, attachments: [], view: { length: 0 },
+    chat: { notes: plan.notes, view: chatEventsView(plan.view), blobs: choice.chosen, loadBlob: plan.loadBlob, blobSegmentLength, blobSegment },
+    check: async () => {},
+  });
+  const view = new DataView(bytes.buffer);
+  const section = openChatSection();
+  await readArchive({
+    bytes, offset: 16 + view.getUint32(0, true), length: view.getUint32(4, true), key: archiveKey, noncePrefix: prefix, vaultId: "ab".repeat(16),
+    attachmentCount: 0, eventCount: 0, chatPresent: true, chatEventCount: plan.events, chatBlobCount: choice.chosen.length,
+    onContext() {}, onAttachment() {}, onEvents() {},
+    onChatNotes: (value) => { section.notes = value; },
+    onChatEvents: (sequences, records) => appendChatEvents(section, sequences, records),
+    onChatBlob: (blob) => appendChatBlob(section, blob),
+    check: async () => {},
+  });
+  await validateChatSection(section, { engine: fakeEngine(), counts: { eventCount: plan.events, blobCount: choice.chosen.length }, householdId: s.householdId, memberId: s.admin.memberId });
+
+  // A device with no chat at all (a new browser): the vault seals what is imported.
+  const vault = {
+    assertUnlocked() {},
+    seal: async (value) => ({ sealed: Array.from(value) }),
+    open: async (envelope) => Uint8Array.from(envelope.sealed),
+  };
+  const fresh = { ...phone, indexedDB: fakeIndexedDB(), keyStore: { ...phone.keyStore, vault } };
+  const imported = await importChatSection(section, { householdId: s.householdId, vault, hidden: section.notes.hidden, indexedDB: fresh.indexedDB, keyRange: fakeKeyRange });
+  assert.deepEqual(imported, { events: 4, blobs: 2 });
+
+  const b = await openRoom(fresh, s);
+  await b.room.refresh();
+  assert.equal(b.room.records.length, 4, "read from the archive alone, with no relay and no chat key");
+  assert.equal(b.room.isHidden(bread.messageId), true, "the member's deleted-for-me list came back");
+  const shown = b.room.page().messages;
+  assert.deepEqual(shown.map((message) => message.status), ["live", "live", "deleted"], "the deleted message is a placeholder");
+  const opened = await b.room.loadTexts(shown.filter((message) => message.status === "live"));
+  assert.deepEqual([...opened.values()].map((result) => result.text), ["Dinner at 6 🍝", "Bring bread"], "the content opens from the imported blobs");
+  assert.equal(shown[2].blobRef && await b.blobs.store.get(shown[2].blobRef), null, "nothing of the deleted message's content came back");
+
+  // Sealed under a root this device no longer has (the recovery key was
+  // replaced): the room opens without those events instead of stopping.
+  const rotated = { ...vault, open: async () => { throw Object.assign(new Error("Kin could not verify the protected store."), { code: "protected_store_corrupt" }); } };
+  const lost = await openRoom({ ...fresh, keyStore: { ...phone.keyStore, vault: rotated } }, s);
+  await lost.room.refresh();
+  assert.equal(lost.room.unreadableImports, 4);
+  assert.equal(lost.room.records.length, 0);
+  lost.room.close();
+
+  // The household moved on after the export; syncing brings it here and stores nothing twice.
+  await a.room.remove(a.room.page().messages.find((message) => message.messageId === dinner.messageId));
+  await a.room.sync({ status: STATUS, devices });
+  await b.room.sync({ status: STATUS, devices });
+  assert.equal(b.room.records.length, 6 - 1, "the relay's four earlier events were not stored again, only the new deletion");
+  assert.deepEqual(b.room.page().messages.map((message) => message.status), ["deleted", "live", "deleted"], "a deletion made after the export removes that content too");
+  assert.equal(await b.blobs.store.get(dinner.blobRef ?? shown[0].blobRef), null);
+
 });

@@ -63,6 +63,7 @@ class Transaction {
         .sort(compareKeys)
         .slice(0, count || undefined)
         .map((key) => structuredClone(rows.get(key)))),
+      getAllKeys: () => request(() => [...rows.keys()].sort(compareKeys)),
       put: (value) => write(() => { rows.set(value[keyPath], structuredClone(value)); return value[keyPath]; }),
       delete: (key) => write(() => { rows.delete(key); }),
     };

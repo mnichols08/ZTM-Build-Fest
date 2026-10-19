@@ -160,6 +160,19 @@ automatic expiry. Full encrypted relay history is retained until final
 deletion or the hard event cap; it is not compacted. Deletion does not erase
 copies already held by devices, archives or external backups.
 
+### Chat in exports (#136)
+
+An export can include the household chat (on by default, with its size shown
+first, and only on a device that may read chat). It is encrypted with the rest
+of the export, under the same recovery key, and holds chat events, message
+text, photos, files and voice. Messages deleted for everyone appear only as
+deleted placeholders. Your "delete for me" list goes only in your own export.
+A file you export is outside Kin's control: anyone with it and its recovery key
+can read the chat as of that moment. The admin's chat policy (#123) still
+applies: a member who may not read chat has no chat to export, and restoring an
+export does not give a device chat access it has not been given
+([PORTABILITY](PORTABILITY.md#household-chat-in-an-archive-v11-136)).
+
 ## Claims boundary
 
 Kin implements client-side encrypted event sync, but it has not received independent security review or production operational hardening. Do not call the service zero-knowledge, anonymous, or robustly recoverable; do not imply cryptography protects a compromised unlocked browser/runtime.

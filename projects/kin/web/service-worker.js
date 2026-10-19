@@ -21,7 +21,7 @@ const SHELL = [
   "/appearance/palette.js", "/appearance/image.js", "/appearance/store.js", "/appearance/household.js", "/appearance/install-icons.js",
   "/sync/crypto.js", "/sync/key-store.js", "/sync/sync-coordinator.js", "/sync/envelope-wire.js", "/sync/live-channel.js",
   "/chat/chat-room.js", "/chat/chat-log-store.js", "/chat/chat-records.js", "/chat/chat-attachments.js", "/chat/chat-blobs.js", "/chat/chat-blob-store.js", "/chat/chat-blob-client.js", "/chat/chat-blob-crypto.js", "/chat/emoji.js", "/chat/emoji.json", "/chat/chat-hidden.js", "/chat/chat-presence.js", "/chat/chat-keys.js", "/chat/chat-reactions.js",
-  "/chat/chat-badge.js",
+  "/chat/chat-badge.js", "/chat/chat-archive.js",
   "/chat/chat-mentions.js",
   "/chat/chat-polls.js",
   "/chat/chat-search-ranges.js",

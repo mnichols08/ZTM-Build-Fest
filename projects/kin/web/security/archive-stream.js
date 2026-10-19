@@ -12,6 +12,13 @@
 //   A+1 ..      the history, CHUNK_EVENTS records per segment, the last one
 //               possibly shorter
 //
+// An archive made with the household chat (#136) continues with, in order: one
+// chat segment holding the exporting member's chat notes (the messages they
+// deleted for themselves), the chat events in chunks laid out as the history's
+// (sequences count up from 1), then one segment per chat blob (chat-archive.js
+// has the layout). The manifest names the counts, so an archive without chat
+// is byte-for-byte what package format 3 always was.
+//
 // Every segment is sealed under one key for this archive
 // (LocalVault.archiveStreamKey), with the nonce `noncePrefix:8 || index:u32 BE`
 // and additional data naming its index and whether it is the last. A reader
@@ -47,8 +54,9 @@ function segmentParams(noncePrefix, vaultId, index, final) {
 }
 
 /** The number of segments an archive with these counts holds. */
-export function segmentCount(attachmentCount, eventCount) {
-  return 1 + attachmentCount + Math.ceil(eventCount / CHUNK_EVENTS);
+export function segmentCount(attachmentCount, eventCount, chat = null) {
+  const household = 1 + attachmentCount + Math.ceil(eventCount / CHUNK_EVENTS);
+  return chat ? household + 1 + Math.ceil(chat.eventCount / CHUNK_EVENTS) + chat.blobCount : household;
 }
 
 function chunkLength(view, from, to) {
@@ -99,10 +107,14 @@ export function readEventChunk(bytes) {
  * The whole archive: KARC header, `metadata`, then the sealed segments of
  * `context`, `attachments` and the history `view`. The output is allocated
  * once at its final size; event chunks pass through one reusable buffer.
+ * `chat` ({ notes, view, blobs, loadBlob(ref), blobSegmentLength(blob),
+ * blobSegment(blob, bytes) }) adds the household chat (#136): `view` is its
+ * event view (length, recordLength, record, localSequence), `blobs` the
+ * blobs to include, each read by `loadBlob` as its segment is sealed.
  * `check` runs after every segment (the caller's lock and epoch checks);
  * `onProgress({ done, total })` reports events written.
  */
-export async function writeArchive({ engine, metadata, key, noncePrefix, vaultId, context, attachments, view, check, onProgress }) {
+export async function writeArchive({ engine, metadata, key, noncePrefix, vaultId, context, attachments, view, chat = null, check, onProgress }) {
   const serializedLength = (value) => {
     const bytes = serializeProtectedValue(value);
     bytes.fill(0);
@@ -113,7 +125,13 @@ export async function writeArchive({ engine, metadata, key, noncePrefix, vaultId
     const to = Math.min(from + CHUNK_EVENTS, view.length);
     chunks.push({ from, to, length: chunkLength(view, from, to) });
   }
-  const plainLengths = [serializedLength(context), ...attachments.map(serializedLength), ...chunks.map((chunk) => chunk.length)];
+  const chatChunks = [];
+  for (let from = 0; chat && from < chat.view.length; from += CHUNK_EVENTS) {
+    const to = Math.min(from + CHUNK_EVENTS, chat.view.length);
+    chatChunks.push({ from, to, length: chunkLength(chat.view, from, to) });
+  }
+  const plainLengths = [serializedLength(context), ...attachments.map(serializedLength), ...chunks.map((chunk) => chunk.length),
+    ...(chat ? [serializedLength(chat.notes), ...chatChunks.map((chunk) => chunk.length), ...chat.blobs.map((blob) => chat.blobSegmentLength(blob))] : [])];
   if (plainLengths.some((length) => length + TAG_BYTES > MAX_SEGMENT_BYTES))
     throw new VaultError("This household is too large to export.");
   const region = plainLengths.reduce((total, length) => total + 4 + length + TAG_BYTES, 0);
@@ -139,14 +157,30 @@ export async function writeArchive({ engine, metadata, key, noncePrefix, vaultId
     const bytes = serializeProtectedValue(value);
     try { await seal(bytes); } finally { bytes.fill(0); }
   };
-  const scratch = new Uint8Array(chunks.reduce((largest, chunk) => Math.max(largest, chunk.length), 0));
+  const scratch = new Uint8Array([...chunks, ...chatChunks].reduce((largest, chunk) => Math.max(largest, chunk.length), 0));
+  const totalEvents = view.length + (chat?.view.length ?? 0);
   try {
     await sealValue(context);
     for (const attachment of attachments) await sealValue(attachment);
     for (const chunk of chunks) {
       const length = writeChunk(view, chunk.from, chunk.to, scratch);
       await seal(scratch.subarray(0, length));
-      onProgress?.({ done: chunk.to, total: view.length });
+      onProgress?.({ done: chunk.to, total: totalEvents });
+    }
+    if (chat) {
+      await sealValue(chat.notes);
+      for (const chunk of chatChunks) {
+        const length = writeChunk(chat.view, chunk.from, chunk.to, scratch);
+        await seal(scratch.subarray(0, length));
+        onProgress?.({ done: view.length + chunk.to, total: totalEvents });
+      }
+      // One blob at a time: the ciphertext is read, sealed and dropped.
+      for (const blob of chat.blobs) {
+        const bytes = await chat.loadBlob(blob);
+        if (!bytes) throw new VaultError("A chat file changed while the export was being prepared. Try again.");
+        const segment = chat.blobSegment(blob, bytes);
+        try { await seal(segment); } finally { segment.fill(0); }
+      }
     }
   } catch (error) {
     output.fill(0);
@@ -165,16 +199,26 @@ export async function writeArchive({ engine, metadata, key, noncePrefix, vaultId
  * records are views of a plaintext buffer that is zero-filled once the
  * callback returns, and `remaining` is the number of archive bytes from this
  * segment to the end (a bound on the history's size still to come).
+ * An archive with the household chat (`chatEventCount` and `chatBlobCount`
+ * from the manifest, #136) then calls `onChatNotes(value)`,
+ * `onChatEvents(sequences, records)` for each chunk and
+ * `onChatBlob(bytes)` for each blob segment (zero-filled afterwards too).
  * Rejects a stream whose segment count or chunking differs from the counts
  * in the authenticated manifest.
  */
 export async function readArchive({ bytes, offset, length, key, noncePrefix, vaultId, attachmentCount, eventCount,
-  onContext, onAttachment, onEvents, check, onProgress }) {
-  const total = segmentCount(attachmentCount, eventCount);
+  chatEventCount = 0, chatBlobCount = 0, chatPresent = false,
+  onContext, onAttachment, onEvents, onChatNotes, onChatEvents, onChatBlob, check, onProgress }) {
+  const chat = chatPresent ? { eventCount: chatEventCount, blobCount: chatBlobCount } : null;
+  const total = segmentCount(attachmentCount, eventCount, chat);
+  const historyEnd = attachmentCount + Math.ceil(eventCount / CHUNK_EVENTS);
+  const notesAt = historyEnd + 1;
+  const chatEventsEnd = notesAt + Math.ceil(chatEventCount / CHUNK_EVENTS);
   const end = offset + length;
   const frames = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let index = 0;
   let events = 0;
+  let chatEvents = 0;
   while (offset < end) {
     if (index >= total || offset + 4 > end) throw damaged();
     const sealedLength = frames.getUint32(offset, true);
@@ -190,19 +234,27 @@ export async function readArchive({ bytes, offset, length, key, noncePrefix, vau
       await check();
       if (index === 0) onContext(deserializeProtectedValue(plaintext));
       else if (index <= attachmentCount) onAttachment(deserializeProtectedValue(plaintext));
-      else {
+      else if (index <= historyEnd) {
         const chunk = readEventChunk(plaintext);
         const expected = Math.min(CHUNK_EVENTS, eventCount - events);
         if (chunk.records.length !== expected) throw damaged();
         onEvents(chunk.sequences, chunk.records, end - offset);
         events += expected;
-        onProgress?.({ done: events, total: eventCount });
-      }
+        onProgress?.({ done: events + chatEvents, total: eventCount + chatEventCount });
+      } else if (index === notesAt) onChatNotes(deserializeProtectedValue(plaintext));
+      else if (index <= chatEventsEnd) {
+        const chunk = readEventChunk(plaintext);
+        const expected = Math.min(CHUNK_EVENTS, chatEventCount - chatEvents);
+        if (chunk.records.length !== expected) throw damaged();
+        onChatEvents(chunk.sequences, chunk.records);
+        chatEvents += expected;
+        onProgress?.({ done: events + chatEvents, total: eventCount + chatEventCount });
+      } else onChatBlob(plaintext);
     } finally {
       plaintext.fill(0);
     }
     offset = start + sealedLength;
     index += 1;
   }
-  if (index !== total || events !== eventCount) throw damaged();
+  if (index !== total || events !== eventCount || chatEvents !== chatEventCount) throw damaged();
 }

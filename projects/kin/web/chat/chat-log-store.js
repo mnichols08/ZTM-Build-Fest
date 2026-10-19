@@ -10,7 +10,11 @@
 // device key) once, when it arrives; reopening only decrypts it.
 //
 //   events  { order, eventId, envelope }   every chat event, in the order
-//                                          this device stored it
+//                                          this device stored it; one read
+//                                          from an archive (#136) has
+//                                          `imported` (the canonical event
+//                                          sealed by the local vault) in
+//                                          place of `envelope`
 //   ids     { eventId, order }             one row per event: the log
 //                                          stores each event once, even when
 //                                          two tabs store it at the same time
@@ -164,13 +168,55 @@ export class ChatLogStore {
       if (refused.length) state.refused = [...(state.refused ?? []), ...refused].slice(-MAX_REFUSED);
       let added = 0;
       for (const envelope of envelopes) {
-        if (await settle(ids.get(envelope.eventId))) continue;
+        const known = await settle(ids.get(envelope.eventId));
+        if (known) {
+          // The relay's signed copy of an event read from an export takes
+          // its place (#136), so it is authenticated and readable by keys.
+          const row = await settle(events.get(known.order));
+          if (row?.imported) events.put({ order: known.order, eventId: envelope.eventId, envelope });
+          continue;
+        }
         const order = state.nextOrder++;
         events.put({ order, eventId: envelope.eventId, envelope });
         ids.put({ eventId: envelope.eventId, order });
         added += 1;
       }
       state.cursor = cursor;
+      await settle(meta.put(state));
+      return added;
+    });
+  }
+
+  /**
+   * Stores events read from an archive (#136). Unlike a relay event these
+   * have no envelope: `entries` are `{ eventId, sealed }`, the canonical
+   * event sealed by the local vault (chat-archive.js). An event already stored
+   * from the relay is kept as it is. One this import stored earlier is
+   * replaced in place, so a restore after the vault's root changed (when the
+   * earlier rows can no longer be opened) puts them right. `hidden` are the
+   * messages the restored member hid for themselves. Resolves with how many
+   * rows are new.
+   */
+  async importEvents(entries, { hidden = [] } = {}) {
+    return transact(this.db, [EVENTS, IDS, META], "readwrite", async ({ events, ids, meta }) => {
+      const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
+      let added = 0;
+      for (const { eventId, sealed } of entries) {
+        const known = await settle(ids.get(eventId));
+        if (known) {
+          const row = await settle(events.get(known.order));
+          if (row?.imported) events.put({ order: known.order, eventId, imported: sealed });
+          continue;
+        }
+        const order = state.nextOrder++;
+        events.put({ order, eventId, imported: sealed });
+        ids.put({ eventId, order });
+        added += 1;
+      }
+      if (hidden.length) {
+        state.hidden = [...new Set([...(state.hidden ?? []), ...hidden])].sort().slice(0, 10_000);
+        state.hiddenDirty = true;
+      }
       await settle(meta.put(state));
       return added;
     });
