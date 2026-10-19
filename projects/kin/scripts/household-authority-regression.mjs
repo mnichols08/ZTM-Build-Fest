@@ -165,8 +165,8 @@ async function pageStartPhoneSignIn() {
   // hidden view.
   location.hash = "#household/people";
   app.ctx.navigation.showPageFromLocation();
-  const choice = [...h.querySelectorAll("button")].find((button) => button.textContent === "Sign in with your phone");
-  if (!choice) throw new Error("The signed-out screen offers no Sign in with your phone: " + h.textContent.slice(0, 300));
+  const choice = [...h.querySelectorAll("button")].find((button) => button.textContent === "Sign in using my phone");
+  if (!choice) throw new Error("The signed-out screen offers no Sign in using my phone: " + h.textContent.slice(0, 300));
   choice.click();
   for (let i = 0; i < 400 && !h.querySelector("kin-qr.sign-in-qr"); i++) await new Promise((r) => setTimeout(r, 25));
   const qr = h.querySelector("kin-qr.sign-in-qr");
@@ -639,6 +639,11 @@ async function pageRevokeDeviceButton(label) {
     const device = (await h.api("/api/devices")).devices.find((entry) => entry.label === label);
     if (!device) throw new Error("No trusted device labelled " + label);
     const row = () => h.querySelector(`li[data-device-id="${device.id}"]`);
+    // The household may still be finishing a pairing UI command. Wait for it
+    // before requesting the device list; run() intentionally ignores busy calls.
+    for (let i = 0; i < 400 && h.busy; i++)
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    if (h.busy) throw new Error("Household stayed busy before device revocation");
     await h.showDevices();
     const button = [...(row()?.querySelectorAll("button") ?? [])].find((b) => b.textContent.startsWith("Revoke "));
     if (!button) throw new Error("No revoke control for " + label + ": " + h.textContent);
