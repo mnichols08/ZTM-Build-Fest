@@ -24,6 +24,7 @@ export class ChatShareController {
     const { app } = this;
     if (!app.store || !app.engine || app.vault?.locked) return { ok: false, message: "Unlock Kin first." };
     if (app.busy) return { ok: false, message: "Kin is still saving another change. Try again in a moment." };
+    if (app.pendingCapture) return { ok: false, message: "An earlier item is only partly saved. Finish it from Today first." };
     let parentKind = null;
     let parentId = null;
     if (kind === "shopping" || kind === "todo") {
@@ -42,7 +43,13 @@ export class ChatShareController {
       await this.ctx.items.handleAddItem({
         detail: { text, classification: CLASSIFICATIONS[kind], planningDate: null, pinned: false, cadence: null, id: parentId, composer, revision: 0 },
       });
-      if (!outcome.saved) return { ok: false, message: outcome.failure ?? "Kin couldn't save that. Try again." };
+      if (!outcome.saved) {
+        // This form owns the failure: no retry or half-saved capture is left
+        // behind for another form to trip over.
+        if (app.pendingCapture?.composer === composer) app.pendingCapture = null;
+        this.ctx.status.clearAlert();
+        return { ok: false, message: outcome.failure ?? "Kin couldn't save that. Try again." };
+      }
     } else if (kind === "handoff") {
       if (!(await this.ctx.conversations.saveHandoff({ type: "add-handoff", text }))) return { ok: false, message: "Kin couldn't save that. Try again." };
     } else if (kind === "note") {
@@ -67,10 +74,10 @@ export class ChatShareController {
         const blob = await file.load();
         if (!blob) throw new Error("missing");
         const copy = new File([blob], file.name, { type: file.type || blob.type });
-        await this.ctx.attachments.handleAddAttachment({ detail: { file: copy, parentKind, parentId } });
-        if (!this.app.attachmentRows.some((row) => row.parentId === parentId && row.name === file.name)) throw new Error("not saved");
+        const saved = await this.ctx.attachments.handleAddAttachment({ detail: { file: copy, parentKind, parentId } });
+        if (!saved?.ok) problems.push(`${file.name} couldn't be added${saved?.message ? `: ${saved.message}` : "."}`);
       } catch {
-        problems.push(`${file.name} couldn't be added; open the ${parentKind === "item" ? "item" : "note"} to try again.`);
+        problems.push(`${file.name} couldn't be added.`);
       }
     }
     return problems;

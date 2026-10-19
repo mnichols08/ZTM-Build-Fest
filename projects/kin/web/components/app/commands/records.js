@@ -62,7 +62,7 @@ export class RecordCommands {
     if (this.app.busy || !this.app.store || !this.app.engine) return false;
     const session = this.ctx.session.captureSession();
     const type = { "create-note": "create-note", "update-note": "update-note", "archive-note": "archive-note" }[action];
-    if (!type) return;
+    if (!type) return false;
     const noteId = detail.noteId ?? crypto.randomUUID().replaceAll("-", "");
     this.ctx.status.setBusy(true); this.ctx.status.clearAlert(); this.ctx.status.setStatus("Saving…");
     try {

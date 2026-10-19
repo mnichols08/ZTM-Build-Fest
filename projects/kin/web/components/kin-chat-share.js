@@ -4,10 +4,12 @@
 // the app's normal commands (app/chat-share.js). The new record is a copy:
 // nothing in it says which message or author it came from.
 import { routeHash } from "../routes.js";
+import { attachmentMetaProblem } from "../attachments/attachment-lifecycle.js";
 
 const TEXT_ENCODER = new TextEncoder();
 const MAX_ITEM_BYTES = 4096;
 const MAX_TITLE_CHARS = 80;
+const MAX_TITLE_BYTES = 256;
 
 export const SHARE_KINDS = Object.freeze({
   shopping: { action: "Add to Shopping", heading: "Add to Shopping", field: "Item", done: "Added to Shopping.", route: routeHash("lists", "shopping"), where: "Shopping" },
@@ -24,8 +26,11 @@ export function oneLine(text) {
 /** A note title from a message: its first line, at most 80 characters. */
 export function noteTitleFrom(text) {
   const first = String(text ?? "").split(/\r?\n/u).map((line) => line.trim()).find(Boolean) ?? "";
-  const letters = Array.from(first.replace(/\p{Cc}/gu, " "));
-  return (letters.length > MAX_TITLE_CHARS ? `${letters.slice(0, MAX_TITLE_CHARS - 1).join("").trimEnd()}…` : letters.join("")).trim();
+  let letters = Array.from(first.replace(/\p{Cc}/gu, " "));
+  if (letters.length > MAX_TITLE_CHARS) letters = [...letters.slice(0, MAX_TITLE_CHARS - 1), "…"];
+  // A title is also held to 256 bytes (emoji are four each).
+  while (letters.length > 1 && TEXT_ENCODER.encode(letters.join("")).length > MAX_TITLE_BYTES) letters.splice(-2, 1);
+  return letters.join("").trim();
 }
 
 class KinChatShare extends HTMLElement {
@@ -72,7 +77,6 @@ class KinChatShare extends HTMLElement {
     this.result = document.createElement("p");
     this.result.className = "chat-share-result";
     this.result.setAttribute("role", "status");
-    this.result.hidden = true;
     this.actions = document.createElement("div");
     this.actions.className = "quick-add-actions";
     this.cancel = document.createElement("button");
@@ -92,6 +96,8 @@ class KinChatShare extends HTMLElement {
       if (this.pending) { event.preventDefault(); this.error.textContent = "Please wait for this to finish saving."; }
     });
     this.dialog.addEventListener("close", () => {
+      // Escape twice mid-save: stay open until the outcome can be shown.
+      if (this.pending && this.state) { this.dialog.showModal(); return; }
       const target = this.opener?.isConnected ? this.opener : null;
       this.opener = null;
       this.state = null;
@@ -119,7 +125,6 @@ class KinChatShare extends HTMLElement {
     this.input.removeAttribute("maxlength");
     this.audience.textContent = `Everyone in your household will see this${limited ? ", including members who can't read the chat" : ""}. It is a copy: changing or deleting the message won't change it.`;
     this.error.textContent = "";
-    this.result.hidden = true;
     this.result.replaceChildren();
     this.renderFiles(kind === "handoff" ? [] : files);
     this.save.textContent = "Save";
@@ -141,14 +146,29 @@ class KinChatShare extends HTMLElement {
       box.type = "checkbox";
       box.value = String(index);
       box.checked = false;
+      // Household attachments hold photos and PDFs up to 4 MB; say so here
+      // rather than after the record is saved.
+      const problem = attachmentMetaProblem({ type: file.type, size: file.size });
       label.append(box, ` ${file.name}`);
+      if (problem) {
+        box.disabled = true;
+        box.dataset.unavailable = "true";
+        const why = document.createElement("small");
+        why.className = "chat-share-why";
+        why.id = `chat-share-why-${index}`;
+        why.textContent = ` Can't be copied: ${problem}`;
+        box.setAttribute("aria-describedby", why.id);
+        label.append(why);
+      }
       this.files.append(label);
     });
   }
 
   setBusy(busy) {
     this.pending = busy;
-    for (const control of [this.input, this.body, this.save, this.cancel, ...this.files.querySelectorAll("input")]) control.disabled = busy;
+    for (const control of [this.input, this.body, this.save, this.cancel]) control.disabled = busy;
+    for (const box of this.files.querySelectorAll("input")) box.disabled = busy || box.dataset.unavailable === "true";
+    this.form.setAttribute("aria-busy", String(busy));
     this.save.textContent = busy ? "Saving…" : "Save";
   }
 
@@ -159,6 +179,10 @@ class KinChatShare extends HTMLElement {
       const title = this.input.value.trim();
       if (!title) return { problem: "Enter a title.", focus: this.input };
       if (Array.from(title).length > MAX_TITLE_CHARS) return { problem: `Titles can be up to ${MAX_TITLE_CHARS} characters.`, focus: this.input };
+      if (TEXT_ENCODER.encode(title).length > MAX_TITLE_BYTES) return { problem: "That title is too long. Shorten it a little.", focus: this.input };
+      if (/\p{Cc}/u.test(title)) return { problem: "Titles can't contain control characters.", focus: this.input };
+      if (Array.from(this.body.value).some((character) => /\p{Cc}/u.test(character) && !"\n\r\t".includes(character)))
+        return { problem: "Notes can contain line breaks and tabs, but no other control characters.", focus: this.body };
       if (TEXT_ENCODER.encode(this.body.value).length > MAX_ITEM_BYTES) return { problem: "That note is too long. Roughly 4,000 characters fit.", focus: this.body };
       return { title, body: this.body.value };
     }
@@ -196,7 +220,6 @@ class KinChatShare extends HTMLElement {
   showDone({ message, itemId = null, problems = [] }) {
     const { spec } = this.state;
     this.form.querySelectorAll(":scope > :not(.chat-share-result):not(.quick-add-actions)").forEach((node) => { node.hidden = true; });
-    this.result.hidden = false;
     this.result.replaceChildren(message || spec.done);
     for (const problem of problems) {
       const line = document.createElement("span");
@@ -229,8 +252,17 @@ class KinChatShare extends HTMLElement {
   /** The app locked or the session changed: nothing stays open. */
   reset() {
     this.pending = false;
-    if (this.dialog?.open) this.dialog.close();
     this.state = null;
+    this.opener = null;
+    if (this.dialog?.open) this.dialog.close();
+    // A locked Kin keeps none of the message's text.
+    if (this.input) {
+      this.input.value = this.body.value = "";
+      this.error.textContent = "";
+      this.result.replaceChildren();
+      this.renderFiles([]);
+      this.audience.textContent = "";
+    }
   }
 }
 

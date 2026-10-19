@@ -67,18 +67,18 @@ export class AttachmentController {
   async saveChosenAttachment(file, target) {
     const kind = isImageAttachment({ type: file?.type, name: file?.name }) ? "photo" : "file";
     const problem = attachmentFileProblem(file);
-    if (problem) { this.reportAttachmentProgress(target, "error", problem); this.ctx.status.showAlert(problem); return; }
+    if (problem) { this.reportAttachmentProgress(target, "error", problem); this.ctx.status.showAlert(problem); return { ok: false, message: problem }; }
     const lockedMessage = `Unlock Kin before attaching a ${kind}.`;
     if (!this.app.vault || this.app.vault.locked || !this.app.store || !this.app.engine) {
-      this.reportAttachmentProgress(target, "error", lockedMessage); this.ctx.status.showAlert(lockedMessage); return;
+      this.reportAttachmentProgress(target, "error", lockedMessage); this.ctx.status.showAlert(lockedMessage); return { ok: false, message: lockedMessage };
     }
     this.reportAttachmentProgress(target, "preparing", `Preparing ${kind}…`);
     if (!(await this.ctx.refresh.untilIdle())) {
       const message = `Kin is still saving another change. Try adding the ${kind} again in a moment.`;
-      this.reportAttachmentProgress(target, "error", message); this.ctx.status.showAlert(message); return;
+      this.reportAttachmentProgress(target, "error", message); this.ctx.status.showAlert(message); return { ok: false, message };
     }
     if (!this.app.vault || this.app.vault.locked || !this.app.store || !this.app.engine) {
-      this.reportAttachmentProgress(target, "error", lockedMessage); return;
+      this.reportAttachmentProgress(target, "error", lockedMessage); return { ok: false, message: lockedMessage };
     }
     const session = this.ctx.session.captureSession();
     const { parentKind, parentId } = target;
@@ -93,10 +93,11 @@ export class AttachmentController {
         ? `${saved.name} is saved on this device and waiting to sync to your household.`
         : `${saved.name} is saved on this device.`);
       void this.app.syncCoordinator?.syncNow();
+      return { ok: true };
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) {
         clearAttachmentProgress(parentKind, parentId);
-        return;
+        return { ok: false, message: "Kin locked before the file was saved." };
       }
       const message = error.stage === "binding"
         ? `The ${kind} was protected but couldn't be linked to this record. Nothing else was changed; try again.`
@@ -107,6 +108,7 @@ export class AttachmentController {
           : error.message || `Kin couldn't save this ${kind} on this device.`);
       this.reportAttachmentProgress(target, "error", message);
       this.ctx.status.showAlert(message);
+      return { ok: false, message };
     } finally { if (this.ctx.session.isCurrentSession(session)) this.ctx.status.setBusy(false); }
   }
   async handleOpenAttachment(event) {

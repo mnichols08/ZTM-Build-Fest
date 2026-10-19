@@ -23,12 +23,13 @@ function controller({ itemSaves = true, handoffSaves = true, noteSaves = true, a
   };
   const ctx = {
     app,
+    status: { clearAlert() {} },
     items: { async handleAddItem(event) { calls.push(["item", event.detail]); if (itemSaves) event.detail.composer.clearIfMatches(); else event.detail.composer.showResult("Nope", { kind: "error" }); } },
     conversations: { async saveHandoff(command) { calls.push(["handoff", command]); return handoffSaves; } },
     records: { async saveNote(action, detail, options) { calls.push(["note", action, detail, options]); return noteSaves; } },
     attachments: { async handleAddAttachment(event) {
       calls.push(["attach", event.detail.parentKind, event.detail.parentId, event.detail.file.name]);
-      if (!attachFails.includes(event.detail.file.name)) app.attachmentRows.push({ parentId: event.detail.parentId, name: event.detail.file.name });
+      return attachFails.includes(event.detail.file.name) ? { ok: false, message: "Too big." } : { ok: true };
     } },
   };
   return { share: new ChatShareController(ctx), calls, app };
@@ -57,7 +58,7 @@ test("only the chosen files become attachments, and a failed one is named withou
   assert.deepEqual(calls.filter((call) => call[0] === "attach").map((call) => call[3]), ["a.png", "b.png"]);
   assert.equal(calls.filter((call) => call[0] === "attach")[0][1], "item");
   assert.equal(some.problems.length, 1);
-  assert.match(some.problems[0], /b\.png/u);
+  assert.match(some.problems[0], /b\.png.*Too big/u);
 });
 
 test("a note keeps the notes editor alone, and attaches to the new note", async () => {
@@ -92,4 +93,21 @@ test("a save that fails says so and copies no files", async () => {
   const locked = controller();
   locked.app.vault.locked = true;
   assert.equal((await locked.share.save({ kind: "handoff", text: "x", files: [] })).ok, false);
+});
+
+test("a failed item leaves no half-saved capture, and an existing one blocks the share", async () => {
+  const failing = controller({ itemSaves: false });
+  await failing.share.save({ kind: "todo", text: "x", files: [] });
+  assert.equal(failing.app.pendingCapture ?? null, null);
+  const blocked = controller();
+  blocked.app.pendingCapture = { draft: {} };
+  const result = await blocked.share.save({ kind: "todo", text: "x", files: [] });
+  assert.equal(result.ok, false);
+  assert.equal(blocked.calls.length, 0);
+});
+
+test("a note title also fits 256 bytes", () => {
+  const title = noteTitleFrom("😀".repeat(79));
+  assert.ok(new TextEncoder().encode(title).length <= 256, title.length);
+  assert.ok(title.length > 10);
 });
