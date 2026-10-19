@@ -1143,8 +1143,18 @@ shared board, decided in [ADR 0011](decisions/0011-family-fridge.md).
   haven't reached the household. A full fridge says so: "The fridge is full.
   Erase something or clear it to draw more." Nothing counts, ranks or
   notifies anyone.
-- Drawing is a path-based gesture and has no keyboard equivalent; magnets
-  (#322) will be movable by keyboard and menu.
+- **Magnets** (#322) are named buttons over the door: an emoji, one of twelve
+  Kin-drawn magnets or a short note, put up through a dialog (a bottom sheet on
+  phones) in one of nine named places. Arrow keys move one 1% (Shift 10%),
+  "Move to" picks a place, dragging works too, and Delete or "Take it down"
+  removes it; undo puts it back. Nothing needs dragging.
+- **Clearing** asks first, with "Keep it" focused, and anyone can bring back
+  the latest clear.
+- **Who can use it** (#323): Adults always draw; the household admin sets
+  Limited and Temporary members to Draw, Look only (the fridge shows without
+  its tools) or No access (Household → Identity & appearance → Who can use the
+  fridge, with a passkey).
+- Drawing is a path-based gesture and has no keyboard equivalent.
 
 # 9. States every relevant screen must handle
 

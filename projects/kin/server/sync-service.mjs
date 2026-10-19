@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { DurableConflictError, MAX_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENT_BYTES, MAX_HOUSEHOLD_ATTACHMENTS } from "./durable-store.mjs";
-import { canManageTrust, canParticipate, chatAccess, chatPolicyOf, isHouseholdAdmin, PairingError, requireTrustAuthority } from "./pairing-service.mjs";
+import { boardAccess, boardPolicyOf, canManageTrust, canParticipate, chatAccess, chatPolicyOf, isHouseholdAdmin, PairingError, requireTrustAuthority } from "./pairing-service.mjs";
 import { INSTALL_ICONS, installContentTag, installIconUrl, validateInstallIdentity } from "./install-identity.mjs";
 import {
   canonicalEventEnvelope,
@@ -79,6 +79,11 @@ export class EncryptedSyncService {
         key: this.chatRelayService?.keySummary(auth) ?? { epoch: 0, pending: false, action: null, held: 0, since: 0, lost: [] },
         ...(isHouseholdAdmin(auth.member, this.now()) ? { policy: { limited: policy.limited, temporary: policy.temporary } } : {}),
       },
+      // The fridge (#323): this member's own access, and the policy for an admin.
+      board: {
+        access: boardAccess(auth.member, auth.household, this.now()),
+        ...(isHouseholdAdmin(auth.member, this.now()) ? { policy: (({ limited, temporary }) => ({ limited, temporary }))(boardPolicyOf(auth.household)) } : {}),
+      },
       currentEpoch: state.currentEpoch,
       enabled: state.enabled,
       rotationPending: state.rotationPending,
@@ -142,7 +147,8 @@ export class EncryptedSyncService {
     const admin = isHouseholdAdmin(auth.member, this.now());
     const policy = chatPolicyOf(auth.household);
     // The chat policy (#123) rides along for admins, who alone may see it.
-    return { admin, ...(admin ? { chatPolicy: { limited: policy.limited, temporary: policy.temporary } } : {}), adminRecorded: this.pairingService.hasHouseholdAdmin(auth.household), settings: row ? { ...row, ciphertext: Buffer.from(row.ciphertext).toString("base64url") } : null };
+    const board = boardPolicyOf(auth.household);
+    return { admin, ...(admin ? { chatPolicy: { limited: policy.limited, temporary: policy.temporary }, boardPolicy: { limited: board.limited, temporary: board.temporary } } : {}), adminRecorded: this.pairingService.hasHouseholdAdmin(auth.household), settings: row ? { ...row, ciphertext: Buffer.from(row.ciphertext).toString("base64url") } : null };
   }
 
   updateHouseholdSettings(sessionToken, value) {

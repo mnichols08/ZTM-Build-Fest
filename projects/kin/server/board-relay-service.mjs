@@ -4,9 +4,10 @@
 // Board events are sealed under the household key epoch like household
 // events: everyone in the household may see the fridge. They carry no push
 // notification (the fridge never notifies), only the live hint other devices
-// sync on. Who may draw is the household's to say later (#323); until then
-// every member who may take part in household sync may.
-import { PairingError, canParticipate } from "./pairing-service.mjs";
+// sync on. Who may draw is the household admin's to say (#323): Adults
+// always draw; Limited and Temporary members draw, look only, or have no
+// access, as the policy says.
+import { PairingError, boardAccess } from "./pairing-service.mjs";
 import { DeviceWindow } from "./chat-limits.mjs";
 import { EventStream, memoryStreamMethods, streamStorage } from "./event-stream.mjs";
 
@@ -42,14 +43,18 @@ export class BoardRelayService {
     });
   }
 
-  /** Only a member who may take part in the household reaches the fridge. */
-  assertCanUse(auth) {
-    if (!canParticipate(auth.member, this.syncService.now()))
+  /** What the fridge policy lets this member do: "read" (status, pulls) or
+   * "write" (pushes). A member who can't take part has no access. */
+  assertCanUse(auth, need = "read") {
+    const access = boardAccess(auth.member, auth.household, this.syncService.now());
+    if (access === "none")
       throw new PairingError("board_unavailable", "The fridge isn't available to you in this household.", 403);
+    if (need === "write" && access !== "write")
+      throw new PairingError("board_read_only", "Your household has set the fridge to look only for you.", 403);
   }
 
   push(auth, envelopes) {
-    this.assertCanUse(auth);
+    this.assertCanUse(auth, "write");
     const sync = this.syncService.state(auth.household.id);
     if (!sync.enabled)
       throw new PairingError("board_sync_unavailable", "The fridge is unavailable until household sync is set up.", 409);

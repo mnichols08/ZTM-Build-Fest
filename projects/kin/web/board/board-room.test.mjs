@@ -214,3 +214,30 @@ test("leaving the household deletes the fridge log", async () => {
   await BoardLogStore.remove(householdId, { indexedDB });
   assert.equal(boardLogDatabaseName(householdId), `kin-board-log:${householdId}`);
 });
+
+test("look only keeps the fridge readable without drawing; no access stops it (#323)", { timeout: 30_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs });
+  const tablet = await device(s.partner, { householdId: s.householdId, epochs });
+  const devices = [phone.entry, tablet.entry];
+  const a = await openRoom(phone, s), b = await openRoom(tablet, s);
+  await a.room.change(stroke());
+  await a.room.sync({ status: STATUS, devices });
+
+  let notified = 0;
+  b.room.subscribe(() => { notified += 1; });
+  await b.room.sync({ status: { ...STATUS, board: { access: "read" } }, devices });
+  assert.equal(b.room.access, "read");
+  assert.ok(notified > 0, "the view hears about the change");
+  assert.equal(b.room.board().strokes.length, 1, "still reads the fridge");
+  await assert.rejects(b.room.change(stroke()), (error) => error.code === "board_read_only");
+
+  b.request.paths.length = 0;
+  await b.room.sync({ status: { ...STATUS, board: { access: "none" } }, devices });
+  assert.equal(b.room.access, "none");
+  assert.deepEqual(b.request.paths, [], "nothing is fetched or sent");
+  await b.room.sync({ status: { ...STATUS, board: { access: "write" } }, devices });
+  await b.room.change(stroke());
+  assert.equal(b.room.board().strokes.length, 2, "drawing again once allowed");
+});

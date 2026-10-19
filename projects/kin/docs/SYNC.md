@@ -554,6 +554,12 @@ epoch (there is no board key).
   events, eventLimit }`. Every route needs a trusted device of a member who may
   take part in the household; pushes also need household sync set up and wait
   out a pending key rotation (409 `sync_rotation_pending`).
+- **Who can use the fridge (#323).** Adults always draw. The household admin
+  sets Limited and Temporary members to **Draw**, **Look only** or **No access**
+  with a fresh passkey (`/api/household/board-policy/options` and `/finish`,
+  schema 19). Pushes need Draw (`board_read_only`, 403); status and pulls need
+  more than No access (`board_unavailable`, 403). `GET /api/sync/status`
+  carries `board.access`, and `board.policy` for an admin.
 - **Limits.** 250,000 board events per household (`board_limit`, 413) and 240
   per device per minute (`board_rate_limited`, 429); a retry of events already
   held is free.

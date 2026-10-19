@@ -303,7 +303,9 @@ export class ViewBuilder {
     this.app.householdDefaults = document.createElement("kin-household-defaults");
     this.app.householdDefaults.hidden = true;
     this.app.chatPolicy = document.createElement("kin-chat-policy");
-    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.appearance);
+    // Who can use the fridge (#323), beside who can chat.
+    this.app.boardPolicy = document.createElement("kin-board-policy");
+    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance);
 
     household.append(hub, fridgePage, notesPage, areasPage, peoplePage, privacyPage, appearancePage);
     this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["notes", notesPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));
