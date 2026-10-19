@@ -128,6 +128,83 @@ export async function fridgeRegressions(client, until) {
   const tools = await page(`[...document.querySelectorAll("kin-fridge .fridge-tools button")].every((button) => button.tagName === "BUTTON" && button.getAttribute("aria-label") || button.textContent)`);
   assert.equal(tools, true, "every tool is a named button");
 
+  // ---- Magnets (#322) ----------------------------------------------------
+  const magnets = () => page(`window.__fridgeRoom.board().magnets.map((m) => ({ id: m.id, kind: m.kind, text: m.text, number: m.number, x: m.x, y: m.y }))`);
+  const key = async (keyName, modifiers = 0) => {
+    const code = { ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Enter: 13, Delete: 46, Escape: 27 }[keyName];
+    await client.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: keyName, code: keyName, windowsVirtualKeyCode: code, modifiers });
+    await client.send("Input.dispatchKeyEvent", { type: "keyUp", key: keyName, code: keyName, windowsVirtualKeyCode: code, modifiers });
+  };
+  // A note, put up at the top right through the dialog.
+  await page(`(() => {
+    document.querySelector("kin-fridge .fridge-add-magnet").click();
+    const dialog = document.querySelector("kin-fridge .fridge-magnet-dialog");
+    dialog.querySelector('input[name="fridge-magnet-kind"][value="note"]').click();
+    const note = [...dialog.querySelectorAll('input[type="text"]')].find((input) => input.maxLength === 60);
+    note.value = "  Milk please ";
+    dialog.querySelector("select").value = "top-right";
+    dialog.querySelector('button[type="submit"]').click();
+    return true;
+  })()`);
+  await until(async () => (await magnets()).length === 1);
+  const [note] = await magnets();
+  assert.deepEqual({ kind: note.kind, text: note.text }, { kind: "note", text: "Milk please" }, "the note is trimmed and put up");
+  assert.ok(note.x > 3000 && note.y < 1500, "at the top right");
+  assert.equal(await page(`document.querySelector("kin-fridge .fridge-magnet").getAttribute("aria-label")`), "Note: Milk please, put up by you");
+  assert.equal(await page(`document.activeElement?.dataset.magnetId ?? null`), note.id, "focus goes to the new magnet");
+  // Arrow keys move it 1% at a time and save once they settle.
+  await key("ArrowLeft");
+  await key("ArrowLeft");
+  await key("ArrowDown", 8);
+  await until(async () => (await magnets())[0].x < note.x);
+  const moved = (await magnets())[0];
+  assert.equal(moved.x, note.x - 82, "two 1% steps left");
+  assert.equal(moved.y, note.y + 546, "one 10% step down with Shift");
+  // Enter opens its menu; Move to puts it in a named place.
+  await key("Enter");
+  await until(() => page(`Boolean(document.querySelector("kin-fridge .fridge-magnet-menu select"))`));
+  await page(`(() => { const select = document.querySelector("kin-fridge .fridge-magnet-menu select"); select.value = "bottom-left"; select.dispatchEvent(new Event("change")); return true; })()`);
+  await until(async () => (await magnets())[0].y > 4000);
+  assert.ok((await magnets())[0].x < 1000, "moved to the bottom left");
+  // A Kin-drawn magnet in the middle, then dragged with a mouse.
+  await page(`(() => {
+    document.querySelector("kin-fridge .fridge-add-magnet").click();
+    const dialog = document.querySelector("kin-fridge .fridge-magnet-dialog");
+    dialog.querySelector('input[name="fridge-magnet-kind"][value="kin"]').click();
+    dialog.querySelector('input[name="fridge-kin-magnet"][value="2"]').click();
+    dialog.querySelector("select").value = "middle";
+    dialog.querySelector('button[type="submit"]').click();
+    return true;
+  })()`);
+  await until(async () => (await magnets()).length === 2);
+  const star = (await magnets()).find((magnet) => magnet.kind === "kin");
+  assert.equal(star.number, 2);
+  rect = await door();
+  const from = await page(`(() => { const r = document.querySelector('kin-fridge [data-magnet-id="${star.id}"]').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
+  await mouse("mousePressed", from);
+  for (let step = 1; step <= 8; step += 1) await mouse("mouseMoved", { x: from.x + step * 10, y: from.y - step * 10 });
+  await mouse("mouseReleased", { x: from.x + 80, y: from.y - 80 }, 0);
+  await until(async () => (await magnets()).find((magnet) => magnet.id === star.id).x > star.x);
+  assert.ok((await magnets()).find((magnet) => magnet.id === star.id).y < star.y, "dragged up and right");
+  assert.equal(await strokes(), 1, "dragging a magnet draws nothing");
+  // Delete takes the focused magnet down; Undo puts it back.
+  await page(`document.querySelector('kin-fridge [data-magnet-id="${star.id}"]').focus()`);
+  await key("Delete");
+  await until(async () => (await magnets()).length === 1);
+  await page(`document.querySelector("kin-fridge .fridge-history button:first-child").click()`);
+  await until(async () => (await magnets()).length === 2);
+
+  // ---- Clearing (#323) ---------------------------------------------------
+  await page(`document.querySelector("kin-fridge .fridge-clear").click()`);
+  assert.equal(await page(`document.querySelector("kin-fridge .fridge-clear-dialog").open`), true, "clearing asks first");
+  assert.equal(await page(`document.activeElement?.textContent`), "Keep it", "the safe choice has focus");
+  await page(`document.querySelector("kin-fridge .fridge-clear-dialog .danger-action").click()`);
+  await until(async () => (await strokes()) === 0 && (await magnets()).length === 0);
+  assert.equal(await page(`document.querySelector("kin-fridge .fridge-restore").hidden`), false, "anyone can bring it back");
+  await page(`document.querySelector("kin-fridge .fridge-restore").click()`);
+  await until(async () => (await strokes()) === 1 && (await magnets()).length === 2);
+  assert.equal(await page(`document.querySelector("kin-fridge .fridge-restore").hidden`), true);
+
   // After a lock, the stored log decrypts and replays to the same fridge.
   const reopened = await page(`(async () => {
     const app = document.querySelector("kin-app");
@@ -156,5 +233,5 @@ export async function fridgeRegressions(client, until) {
   })()`);
   await client.send("Emulation.setTouchEmulationEnabled", { enabled: false });
   await client.send("Emulation.clearDeviceMetricsOverride");
-  return "PASS fridge: 3:4 door fits phone, tablet and desktop; finger, pen and mouse drawing; second-finger cancel; palm rejection; eraser, undo and redo through the real engine (#317)";
+  return "PASS fridge: 3:4 door fits phone, tablet and desktop; finger, pen and mouse drawing; second-finger cancel; palm rejection; eraser, undo and redo; magnets by dialog, keyboard, menu and drag; clear and bring back, through the real engine (#317)";
 }

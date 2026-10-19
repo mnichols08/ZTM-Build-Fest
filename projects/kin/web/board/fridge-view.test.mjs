@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ERASE_REACH, FRIDGE_COLOURS, FRIDGE_WIDTHS, fridgeSummary, strokeAt } from "./fridge-view.js";
+import { ERASE_REACH, FRIDGE_COLOURS, FRIDGE_WIDTHS, fridgeSummary, pathPoints, strokeAt } from "./fridge-view.js";
 import { PALETTE_COLOURS, PEN_WIDTHS } from "../wasm/kin-board.js";
 
 const stroke = (id, author, points, width = 1) => ({ id, author, colour: 0, width, points: Uint16Array.from(points) });
@@ -33,4 +33,16 @@ test("the summary names what is on the fridge without counting anyone", () => {
     fridgeSummary({ strokes: ["m1", "m2", "m3"].map((author, index) => stroke(String(index), author, [0, 0])), magnets: [] }, label),
     "3 drawings by Sam, Alex and you.",
   );
+});
+
+test("a swipe is checked along its whole path, so it can't skip a thin line", () => {
+  const points = pathPoints([0, 0], [0, 100], 24);
+  assert.equal(points.length, 5);
+  assert.deepEqual(points.at(-1), [0, 100]);
+  assert.ok(points.every((point, index) => index === 0 || point[1] - points[index - 1][1] <= 24));
+  // A line crossed between two far-apart samples is still found.
+  const line = [{ id: "line", author: "m1", colour: 0, width: 0, points: Uint16Array.from([0, 500, 1000, 500]) }];
+  const hits = pathPoints([400, 300], [400, 700], ERASE_REACH / 2).map(([x, y]) => strokeAt(line, x, y)?.id).filter(Boolean);
+  assert.ok(hits.includes("line"));
+  assert.deepEqual(pathPoints([5, 5], [5, 5], 24), [[5, 5]]);
 });

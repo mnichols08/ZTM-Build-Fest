@@ -52,3 +52,14 @@ export function fridgeSummary(board, labelOf = (id) => id) {
   return `${parts.join("; ")}.`;
 }
 
+
+/** Points from `from` to `to` (excluding `from`, including `to`) no more
+ * than `step` board units apart, for erasing along a swipe. */
+export function pathPoints(from, to, step) {
+  const distance = Math.hypot(to[0] - from[0], to[1] - from[1]);
+  const count = Math.max(1, Math.ceil(distance / step));
+  return Array.from({ length: count }, (_, index) => {
+    const t = (index + 1) / count;
+    return [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
+  });
+}

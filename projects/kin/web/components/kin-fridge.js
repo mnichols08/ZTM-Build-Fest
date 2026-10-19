@@ -16,9 +16,21 @@
 //   stroke erases it, undoing an erase brings the stroke back.
 // - A text summary says what is on the fridge, for screen readers and for
 //   anyone who can't see the drawing.
-import { MAX_VISIBLE_STROKES, BOARD_WIDTH, BOARD_HEIGHT, boardPoints, simplifyStroke, splitStroke } from "../wasm/kin-board.js";
+// - Magnets (#322) are buttons over the door, not pixels: each has a name,
+//   takes focus, moves with the arrow keys (1%, Shift 10%) or "Move to" one
+//   of nine regions, and can be dragged. Nothing needs dragging.
+// - Clearing (#323) asks first and can be undone by anyone.
+import { MAX_VISIBLE_MAGNETS, MAX_VISIBLE_STROKES, BOARD_WIDTH, BOARD_HEIGHT, boardPoints, normalizeNote, simplifyStroke, splitStroke } from "../wasm/kin-board.js";
 import { newBoardId } from "../board/board-room.js";
-import { FRIDGE_COLOURS, FRIDGE_WIDTHS, fridgeSummary, strokeAt } from "../board/fridge-view.js";
+import { ERASE_REACH, FRIDGE_COLOURS, FRIDGE_WIDTHS, fridgeSummary, pathPoints, strokeAt } from "../board/fridge-view.js";
+import { KIN_MAGNETS, MAGNET_REGIONS, magnetName, magnetPosition, magnetTilt, nudge, regionPoint } from "../board/fridge-magnets.js";
+import "./kin-emoji-picker.js";
+
+const SVG = "http://www.w3.org/2000/svg";
+const UNDONE = Object.freeze({ draw: "Drawing undone.", erase: "Erase undone.", place: "Magnet taken down.", remove: "Magnet back up.", move: "Magnet moved back.", clear: "The fridge is back as it was." });
+const REDONE = Object.freeze({ draw: "Drawing restored.", erase: "Erased again.", place: "Magnet back up.", remove: "Magnet taken down.", move: "Magnet moved again.", clear: "Fridge cleared again." });
+/** How long a keyboard move waits for more key presses before it is saved. */
+const MOVE_SETTLE_MS = 600;
 
 const MAX_PIXEL_RATIO = 3;
 const UNDO_LIMIT = 50;
@@ -26,6 +38,7 @@ const UNDO_LIMIT = 50;
 /** What a refused change means, in plain words. */
 function changeProblem(error, board) {
   if ((board?.strokes?.length ?? 0) >= MAX_VISIBLE_STROKES) return "The fridge is full. Erase something or clear it to draw more.";
+  if ((board?.magnets?.length ?? 0) >= MAX_VISIBLE_MAGNETS) return "The fridge has no room for another magnet. Take one down first.";
   if (error?.code === "board_locked") return "Unlock Kin to draw on the fridge.";
   return error?.userMessage ?? "Kin couldn't save that to the fridge. Try again.";
 }
@@ -46,6 +59,12 @@ class KinFridge extends HTMLElement {
     this.labelOf = (id) => (id === this.memberId ? "you" : "a household member");
     this.memberId = null;
     this.onResize = () => this.resize();
+    // Magnets moved by keyboard or drag but not saved yet: id -> [x, y].
+    this.movingMagnets = new Map();
+    this.moveTimers = new Map();
+    // Where each moving magnet started, for undo.
+    this.moveFrom = new Map();
+    this.drag = null;
   }
 
   connectedCallback() {
@@ -136,7 +155,23 @@ class KinFridge extends HTMLElement {
     const history = document.createElement("div");
     history.className = "fridge-history";
     history.append(this.undoButton, this.redoButton);
-    this.tools.append(colours, widths, this.eraserButton, history);
+    this.magnetButton = document.createElement("button");
+    this.magnetButton.type = "button";
+    this.magnetButton.className = "fridge-add-magnet";
+    this.magnetButton.textContent = "Add magnet";
+    this.magnetButton.addEventListener("click", () => this.openMagnetDialog());
+    this.clearButton = document.createElement("button");
+    this.clearButton.type = "button";
+    this.clearButton.className = "fridge-clear";
+    this.clearButton.textContent = "Clear fridge";
+    this.clearButton.addEventListener("click", () => this.openClearDialog());
+    this.restoreButton = document.createElement("button");
+    this.restoreButton.type = "button";
+    this.restoreButton.className = "fridge-restore";
+    this.restoreButton.textContent = "Bring back what was cleared";
+    this.restoreButton.hidden = true;
+    this.restoreButton.addEventListener("click", () => void this.undoClear());
+    this.tools.append(colours, widths, this.eraserButton, history, this.magnetButton, this.clearButton, this.restoreButton);
 
     this.door = document.createElement("div");
     this.door.className = "fridge-door";
@@ -146,7 +181,10 @@ class KinFridge extends HTMLElement {
     this.live = document.createElement("canvas");
     this.live.className = "fridge-live";
     this.live.setAttribute("aria-hidden", "true");
-    this.door.append(this.ink, this.live);
+    this.magnetLayer = document.createElement("ul");
+    this.magnetLayer.className = "fridge-magnets";
+    this.magnetLayer.setAttribute("aria-label", "Magnets");
+    this.door.append(this.ink, this.live, this.magnetLayer);
     this.door.addEventListener("pointerdown", (event) => this.pointerDown(event));
     this.door.addEventListener("pointermove", (event) => this.pointerMove(event));
     this.door.addEventListener("pointerup", (event) => void this.pointerUp(event));
@@ -164,7 +202,7 @@ class KinFridge extends HTMLElement {
     const board = document.createElement("div");
     board.className = "fridge-board";
     board.append(this.door);
-    this.append(heading, lead, this.tools, board, this.summary, this.status);
+    this.append(heading, lead, this.tools, board, this.summary, this.status, this.buildMagnetDialog(), this.buildClearDialog());
     this.updateTools();
   }
 
@@ -177,6 +215,10 @@ class KinFridge extends HTMLElement {
     const usable = Boolean(this.room);
     this.undoButton.disabled = !usable || !this.undoStack.length;
     this.redoButton.disabled = !usable || !this.redoStack.length;
+    this.magnetButton.disabled = !usable;
+    const empty = !(this.state?.strokes?.length || this.state?.magnets?.length);
+    this.clearButton.disabled = !usable || empty;
+    this.restoreButton.hidden = !usable || !this.state?.openClear;
   }
 
   showStatus(message) {
@@ -208,6 +250,7 @@ class KinFridge extends HTMLElement {
     if (room.syncError) summary += " The fridge will sync again shortly.";
     this.summary.textContent = summary;
     this.drawInk();
+    this.renderMagnets();
     this.updateTools();
   }
 
@@ -276,6 +319,8 @@ class KinFridge extends HTMLElement {
 
   pointerDown(event) {
     if (!this.room || event.button > 0) return;
+    // A magnet handles its own pointer (drag or menu).
+    if (event.target.closest?.(".fridge-magnet-item")) return;
     // Palm rejection: while a pen is drawing, touches don't count.
     if (event.pointerType === "touch" && this.penDown) return;
     // A second finger while drawing with a finger is a gesture, not ink.
@@ -289,8 +334,9 @@ class KinFridge extends HTMLElement {
     try { this.door.setPointerCapture?.(event.pointerId); } catch { /* still draws inside the door */ }
     if (event.pointerType === "pen") this.penDown = true;
     if (this.tool === "eraser") {
-      this.stroke = { pointerId: event.pointerId, pointerType: event.pointerType, erasing: true, erased: new Set() };
-      void this.eraseAt(this.boardPoint(event));
+      const point = this.boardPoint(event);
+      this.stroke = { pointerId: event.pointerId, pointerType: event.pointerType, erasing: true, erased: new Set(), last: point };
+      void this.eraseAt(point);
       return;
     }
     this.stroke = { pointerId: event.pointerId, pointerType: event.pointerType, points: [this.boardPoint(event)] };
@@ -304,7 +350,13 @@ class KinFridge extends HTMLElement {
     const events = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [];
     const samples = events.length ? events : [event];
     if (stroke.erasing) {
-      for (const sample of samples) void this.eraseAt(this.boardPoint(sample));
+      // Along the whole path between samples, so a quick swipe can't skip
+      // over a thin line.
+      for (const sample of samples) {
+        const point = this.boardPoint(sample);
+        for (const along of pathPoints(stroke.last, point, ERASE_REACH / 2)) void this.eraseAt(along);
+        stroke.last = point;
+      }
       return;
     }
     for (const sample of samples) stroke.points.push(this.boardPoint(sample));
@@ -373,6 +425,431 @@ class KinFridge extends HTMLElement {
     }
   }
 
+  // ---- Magnets (#322) ----------------------------------------------------
+
+  kinMagnetIcon(number) {
+    const drawn = KIN_MAGNETS[number - 1];
+    const svg = document.createElementNS(SVG, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    const path = document.createElementNS(SVG, "path");
+    path.setAttribute("d", drawn?.path ?? "");
+    path.setAttribute("fill", drawn?.fill ?? "currentColor");
+    if (drawn?.number === 3) { path.setAttribute("stroke", drawn.fill); path.setAttribute("stroke-width", "2"); }
+    svg.append(path);
+    return svg;
+  }
+
+  renderMagnets() {
+    if (!this.magnetLayer) return;
+    const magnets = this.state?.magnets ?? [];
+    const focused = this.magnetLayer.contains(document.activeElement) ? document.activeElement.dataset.magnetId : null;
+    const items = magnets.map((magnet) => {
+      const item = document.createElement("li");
+      item.className = "fridge-magnet-item";
+      const pending = this.movingMagnets.get(magnet.id);
+      const shown = pending ? { ...magnet, x: pending[0], y: pending[1] } : magnet;
+      const { left, top } = magnetPosition(shown);
+      item.style.left = left;
+      item.style.top = top;
+      item.style.setProperty("--tilt", `${magnetTilt(magnet.id)}deg`);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `fridge-magnet fridge-magnet-${magnet.kind}`;
+      button.dataset.magnetId = magnet.id;
+      const name = magnetName(magnet);
+      const by = this.labelOf(magnet.author);
+      button.setAttribute("aria-label", `${name}, put up by ${by}`);
+      button.title = `Put up by ${by}`;
+      if (magnet.kind === "kin") button.append(this.kinMagnetIcon(magnet.number));
+      else button.textContent = magnet.text;
+      button.addEventListener("keydown", (event) => this.magnetKey(event, magnet));
+      button.addEventListener("pointerdown", (event) => this.magnetPointerDown(event, magnet, item));
+      button.addEventListener("pointermove", (event) => this.magnetPointerMove(event, item));
+      button.addEventListener("pointerup", (event) => void this.magnetPointerUp(event, magnet, item));
+      button.addEventListener("pointercancel", () => { this.drag = null; this.renderMagnets(); });
+      button.addEventListener("click", (event) => {
+        if (event.detail === 0) this.openMagnetMenu(magnet, button);
+      });
+      item.append(button);
+      return item;
+    });
+    this.magnetLayer.replaceChildren(...items);
+    if (focused) this.magnetLayer.querySelector(`[data-magnet-id="${focused}"]`)?.focus();
+  }
+
+  magnetKey(event, magnet) {
+    if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      void this.removeMagnet(magnet);
+      return;
+    }
+    const from = this.movingMagnets.get(magnet.id) ?? [magnet.x, magnet.y];
+    const to = nudge(from, event.key, { large: event.shiftKey });
+    if (!to) return;
+    event.preventDefault();
+    this.queueMove(magnet, to);
+  }
+
+  /** Moves a magnet on screen now and saves it once the keys settle, so a
+   * held arrow key makes one change, not dozens. */
+  queueMove(magnet, to) {
+    if (!this.movingMagnets.has(magnet.id)) this.moveFrom.set(magnet.id, [magnet.x, magnet.y]);
+    this.movingMagnets.set(magnet.id, to);
+    this.renderMagnets();
+    clearTimeout(this.moveTimers.get(magnet.id));
+    this.moveTimers.set(magnet.id, setTimeout(() => void this.saveMove(magnet.id), MOVE_SETTLE_MS));
+  }
+
+  async saveMove(magnetId) {
+    clearTimeout(this.moveTimers.get(magnetId));
+    this.moveTimers.delete(magnetId);
+    const to = this.movingMagnets.get(magnetId);
+    const from = this.moveFrom.get(magnetId);
+    this.moveFrom.delete(magnetId);
+    if (!to || !this.room) { this.movingMagnets.delete(magnetId); return; }
+    try {
+      if (!from || from[0] !== to[0] || from[1] !== to[1]) {
+        await this.room.change({ type: "move-magnet", magnetId, x: to[0], y: to[1] });
+        this.remember({ kind: "move", id: magnetId, from, to });
+      }
+      this.showStatus("");
+    } catch (error) {
+      this.showStatus(changeProblem(error, this.state));
+    } finally {
+      this.movingMagnets.delete(magnetId);
+      this.render();
+    }
+  }
+
+  magnetPointerDown(event, magnet, item) {
+    if (!this.room || event.button > 0) return;
+    event.stopPropagation();
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* still moves inside the door */ }
+    this.drag = { pointerId: event.pointerId, magnetId: magnet.id, startX: event.clientX, startY: event.clientY, moved: false };
+    item.classList.add("is-dragging");
+  }
+
+  magnetPointerMove(event, item) {
+    const drag = this.drag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    if (Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) > 6) drag.moved = true;
+    if (!drag.moved) return;
+    const [x, y] = this.boardPoint(event);
+    const at = [Math.min(4095, Math.max(0, Math.round(x))), Math.min(5460, Math.max(0, Math.round(y)))];
+    drag.to = at;
+    const { left, top } = magnetPosition({ x: at[0], y: at[1] });
+    item.style.left = left;
+    item.style.top = top;
+  }
+
+  async magnetPointerUp(event, magnet, item) {
+    const drag = this.drag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    this.drag = null;
+    item.classList.remove("is-dragging");
+    if (!drag.moved || !drag.to) {
+      this.openMagnetMenu(magnet, event.currentTarget);
+      return;
+    }
+    this.movingMagnets.set(magnet.id, drag.to);
+    this.moveFrom.set(magnet.id, [magnet.x, magnet.y]);
+    await this.saveMove(magnet.id);
+  }
+
+  /** A small menu for a magnet: move it to a named place, or take it down. */
+  openMagnetMenu(magnet, anchor) {
+    this.closeMagnetMenu();
+    const menu = document.createElement("div");
+    menu.className = "fridge-magnet-menu";
+    menu.setAttribute("role", "group");
+    menu.setAttribute("aria-label", magnetName(magnet));
+    const label = document.createElement("label");
+    label.textContent = "Move to ";
+    const select = document.createElement("select");
+    const keep = document.createElement("option");
+    keep.value = "";
+    keep.textContent = "Choose a place";
+    select.append(keep);
+    for (const region of MAGNET_REGIONS) {
+      const option = document.createElement("option");
+      option.value = region.id;
+      option.textContent = region.label;
+      select.append(option);
+    }
+    select.addEventListener("change", () => {
+      if (!select.value) return;
+      const to = regionPoint(select.value);
+      this.closeMagnetMenu({ focus: false });
+      this.movingMagnets.set(magnet.id, to);
+      this.moveFrom.set(magnet.id, [magnet.x, magnet.y]);
+      void this.saveMove(magnet.id).then(() => this.focusMagnet(magnet.id));
+    });
+    label.append(select);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "Take it down";
+    remove.addEventListener("click", () => { this.closeMagnetMenu({ focus: false }); void this.removeMagnet(magnet); });
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "Done";
+    close.addEventListener("click", () => this.closeMagnetMenu());
+    menu.append(label, remove, close);
+    menu.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.preventDefault(); this.closeMagnetMenu(); }
+    });
+    this.magnetMenu = { menu, magnetId: magnet.id };
+    this.door.after(menu);
+    select.focus();
+    void anchor;
+  }
+
+  closeMagnetMenu({ focus = true } = {}) {
+    const open = this.magnetMenu;
+    this.magnetMenu = null;
+    if (!open) return;
+    open.menu.remove();
+    if (focus) this.focusMagnet(open.magnetId);
+  }
+
+  focusMagnet(magnetId) {
+    this.magnetLayer?.querySelector(`[data-magnet-id="${magnetId}"]`)?.focus();
+  }
+
+  async removeMagnet(magnet) {
+    try {
+      await this.room.change({ type: "hide-magnet", magnetId: magnet.id, hidden: true });
+      this.remember({ kind: "remove", id: magnet.id });
+      this.showStatus("Magnet taken down. Undo puts it back.");
+      this.undoButton.focus();
+    } catch (error) {
+      this.showStatus(changeProblem(error, this.state));
+    }
+  }
+
+  buildMagnetDialog() {
+    const dialog = document.createElement("dialog");
+    dialog.className = "fridge-dialog fridge-magnet-dialog";
+    dialog.setAttribute("aria-labelledby", "fridge-magnet-title");
+    const form = document.createElement("form");
+    form.method = "dialog";
+    const title = document.createElement("h3");
+    title.id = "fridge-magnet-title";
+    title.textContent = "Add a magnet";
+    const kinds = document.createElement("fieldset");
+    const legend = document.createElement("legend");
+    legend.textContent = "Kind";
+    kinds.append(legend);
+    this.magnetKind = "emoji";
+    const panels = {};
+    for (const [value, text] of [["emoji", "Emoji"], ["kin", "Kin magnet"], ["note", "Note"]]) {
+      const label = document.createElement("label");
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "fridge-magnet-kind";
+      radio.value = value;
+      radio.checked = value === "emoji";
+      radio.addEventListener("change", () => {
+        this.magnetKind = value;
+        for (const [key, panel] of Object.entries(panels)) panel.hidden = key !== value;
+      });
+      label.append(radio, ` ${text}`);
+      kinds.append(label);
+    }
+    // Emoji: type one or use the picker.
+    panels.emoji = document.createElement("div");
+    const emojiLabel = document.createElement("label");
+    emojiLabel.textContent = "Emoji ";
+    this.emojiInput = document.createElement("input");
+    this.emojiInput.type = "text";
+    this.emojiInput.className = "fridge-emoji-input";
+    this.emojiInput.autocomplete = "off";
+    this.emojiInput.maxLength = 32;
+    // A magnet is one emoji: typing or picking another replaces it.
+    this.emojiInput.addEventListener("input", () => {
+      const value = this.emojiInput.value;
+      if (typeof Intl?.Segmenter !== "function" || !value) return;
+      const last = [...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(value.trim())].at(-1)?.segment ?? "";
+      if (last !== value) this.emojiInput.value = last;
+    });
+    emojiLabel.append(this.emojiInput);
+    const picker = document.createElement("kin-emoji-picker");
+    picker.target = this.emojiInput;
+    panels.emoji.append(emojiLabel, picker);
+    // Kin-drawn magnets: one choice of twelve.
+    panels.kin = document.createElement("fieldset");
+    panels.kin.className = "fridge-kin-magnets";
+    const kinLegend = document.createElement("legend");
+    kinLegend.textContent = "Kin magnet";
+    panels.kin.append(kinLegend);
+    this.kinChoice = 1;
+    for (const drawn of KIN_MAGNETS) {
+      const label = document.createElement("label");
+      label.className = "fridge-kin-choice";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "fridge-kin-magnet";
+      radio.value = String(drawn.number);
+      radio.checked = drawn.number === 1;
+      radio.setAttribute("aria-label", drawn.name);
+      radio.addEventListener("change", () => { this.kinChoice = drawn.number; });
+      label.append(radio, this.kinMagnetIcon(drawn.number));
+      label.title = drawn.name;
+      panels.kin.append(label);
+    }
+    panels.kin.hidden = true;
+    // A short note, for people who'd rather write than draw.
+    panels.note = document.createElement("div");
+    const noteLabel = document.createElement("label");
+    noteLabel.textContent = "Note ";
+    this.noteInput = document.createElement("input");
+    this.noteInput.type = "text";
+    this.noteInput.maxLength = 60;
+    this.noteInput.placeholder = "Milk please";
+    noteLabel.append(this.noteInput);
+    panels.note.append(noteLabel);
+    panels.note.hidden = true;
+    const whereLabel = document.createElement("label");
+    whereLabel.textContent = "Put it ";
+    this.whereSelect = document.createElement("select");
+    for (const region of MAGNET_REGIONS) {
+      const option = document.createElement("option");
+      option.value = region.id;
+      option.textContent = region.label.toLowerCase().replace(/^middle$/, "in the middle").replace(/^(top|bottom|left|right)/, (word) => `at the ${word}`);
+      option.selected = region.id === "middle";
+      this.whereSelect.append(option);
+    }
+    whereLabel.append(this.whereSelect);
+    this.magnetError = document.createElement("p");
+    this.magnetError.className = "error-message";
+    this.magnetError.setAttribute("role", "alert");
+    const actions = document.createElement("div");
+    actions.className = "fridge-dialog-actions";
+    const add = document.createElement("button");
+    add.type = "submit";
+    add.className = "primary-action";
+    add.textContent = "Put it up";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => dialog.close());
+    actions.append(add, cancel);
+    form.append(title, kinds, panels.emoji, panels.kin, panels.note, whereLabel, this.magnetError, actions);
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void this.placeMagnet();
+    });
+    // Focus goes to the magnet just put up, or back to "Add magnet".
+    dialog.addEventListener("close", () => {
+      const placed = this.focusAfterDialog;
+      this.focusAfterDialog = null;
+      if (placed) this.focusMagnet(placed);
+      else this.magnetButton?.focus();
+    });
+    dialog.append(form);
+    this.magnetDialog = dialog;
+    return dialog;
+  }
+
+  openMagnetDialog() {
+    if (!this.room) return;
+    this.magnetError.textContent = "";
+    this.emojiInput.value = "";
+    this.noteInput.value = "";
+    this.magnetDialog.showModal?.();
+    (this.magnetKind === "note" ? this.noteInput : this.magnetKind === "emoji" ? this.emojiInput : this.magnetDialog.querySelector('input[name="fridge-kin-magnet"]:checked'))?.focus();
+  }
+
+  async placeMagnet() {
+    let content;
+    if (this.magnetKind === "emoji") {
+      const emoji = this.emojiInput.value.trim();
+      if (!emoji) { this.magnetError.textContent = "Choose or type an emoji."; return; }
+      content = { kind: "emoji", emoji };
+    } else if (this.magnetKind === "kin") {
+      content = { kind: "kin", number: this.kinChoice };
+    } else {
+      const text = normalizeNote(this.noteInput.value);
+      if (!text) { this.magnetError.textContent = "Write a short note of up to 60 characters on one line."; return; }
+      content = { kind: "note", text };
+    }
+    const [x, y] = regionPoint(this.whereSelect.value);
+    const magnetId = newBoardId();
+    try {
+      await this.room.change({ type: "place-magnet", magnetId, x, y, content });
+    } catch (error) {
+      this.magnetError.textContent = error?.code === 2 && content.kind === "emoji"
+        ? "That isn't a single emoji. Choose one from the picker."
+        : changeProblem(error, this.state);
+      return;
+    }
+    this.remember({ kind: "place", id: magnetId });
+    this.focusAfterDialog = magnetId;
+    this.magnetDialog.close();
+    this.showStatus("Magnet put up.");
+  }
+
+  // ---- Clearing (#323) ----------------------------------------------------
+
+  buildClearDialog() {
+    const dialog = document.createElement("dialog");
+    dialog.className = "fridge-dialog fridge-clear-dialog";
+    dialog.setAttribute("aria-labelledby", "fridge-clear-title");
+    const title = document.createElement("h3");
+    title.id = "fridge-clear-title";
+    title.textContent = "Clear the fridge?";
+    const text = document.createElement("p");
+    text.textContent = "Everything on it comes down for the whole household. Anyone can bring it back afterwards.";
+    const actions = document.createElement("div");
+    actions.className = "fridge-dialog-actions";
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "danger-action";
+    clear.textContent = "Clear fridge";
+    clear.addEventListener("click", () => void this.clearFridge());
+    const keep = document.createElement("button");
+    keep.type = "button";
+    keep.textContent = "Keep it";
+    keep.addEventListener("click", () => dialog.close());
+    actions.append(clear, keep);
+    dialog.append(title, text, actions);
+    dialog.addEventListener("close", () => (this.clearButton?.disabled ? this.undoButton : this.clearButton)?.focus());
+    this.clearDialog = dialog;
+    return dialog;
+  }
+
+  openClearDialog() {
+    if (!this.room) return;
+    this.clearDialog.showModal?.();
+    this.clearDialog.querySelector("button:last-child")?.focus();
+  }
+
+  async clearFridge() {
+    const clearId = newBoardId();
+    try {
+      await this.room.change({ type: "clear-board", clearId });
+      this.remember({ kind: "clear", id: clearId });
+      this.showStatus("Fridge cleared. Undo brings it all back.");
+    } catch (error) {
+      this.showStatus(changeProblem(error, this.state));
+    }
+    this.clearDialog.close();
+  }
+
+  /** Anyone can bring back the most recent clear, theirs or someone else's. */
+  async undoClear() {
+    const clearId = this.state?.openClear;
+    if (!clearId) return;
+    try {
+      await this.room.change({ type: "undo-clear", clearId });
+      this.showStatus("The fridge is back as it was.");
+    } catch (error) {
+      this.showStatus(changeProblem(error, this.state));
+    }
+  }
+
   // ---- Undo and redo (this device's own changes in this visit) -------------
 
   remember(entry) {
@@ -382,14 +859,37 @@ class KinFridge extends HTMLElement {
     this.updateTools();
   }
 
-  /** Applies an entry backwards (undo) or forwards (redo). A stroke someone
-   * else has erased (or restored) meanwhile is left as it is. */
+  /** Applies an entry backwards (undo) or forwards (redo). Something
+   * someone else changed meanwhile is left as it is. */
   async apply(entry, backwards) {
-    const hidden = entry.kind === "draw" ? backwards : !backwards;
-    const visible = new Set((this.room.board().strokes ?? []).map((stroke) => stroke.id));
-    for (const strokeId of entry.ids) {
-      if (visible.has(strokeId) !== hidden) continue;
-      await this.room.change({ type: "hide-stroke", strokeId, hidden });
+    const board = this.room.board();
+    if (entry.kind === "draw" || entry.kind === "erase") {
+      const hidden = entry.kind === "draw" ? backwards : !backwards;
+      const visible = new Set((board.strokes ?? []).map((stroke) => stroke.id));
+      for (const strokeId of entry.ids) {
+        if (visible.has(strokeId) !== hidden) continue;
+        await this.room.change({ type: "hide-stroke", strokeId, hidden });
+      }
+      return;
+    }
+    if (entry.kind === "place" || entry.kind === "remove") {
+      const hidden = entry.kind === "place" ? backwards : !backwards;
+      const shown = (board.magnets ?? []).some((magnet) => magnet.id === entry.id);
+      if (shown === hidden) await this.room.change({ type: "hide-magnet", magnetId: entry.id, hidden });
+      return;
+    }
+    if (entry.kind === "move") {
+      const magnet = (board.magnets ?? []).find((candidate) => candidate.id === entry.id);
+      const [x, y] = backwards ? entry.from : entry.to;
+      if (magnet && (magnet.x !== x || magnet.y !== y)) await this.room.change({ type: "move-magnet", magnetId: entry.id, x, y });
+      return;
+    }
+    if (entry.kind === "clear") {
+      if (backwards && board.openClear === entry.id) await this.room.change({ type: "undo-clear", clearId: entry.id });
+      else if (!backwards) {
+        entry.id = newBoardId();
+        await this.room.change({ type: "clear-board", clearId: entry.id });
+      }
     }
   }
 
@@ -399,7 +899,7 @@ class KinFridge extends HTMLElement {
     try {
       await this.apply(entry, true);
       this.redoStack.push(entry);
-      this.showStatus(entry.kind === "draw" ? "Drawing undone." : "Erase undone.");
+      this.showStatus(UNDONE[entry.kind] ?? "Undone.");
     } catch (error) {
       this.showStatus(changeProblem(error, this.state));
     }
@@ -412,7 +912,7 @@ class KinFridge extends HTMLElement {
     try {
       await this.apply(entry, false);
       this.undoStack.push(entry);
-      this.showStatus(entry.kind === "draw" ? "Drawing restored." : "Erased again.");
+      this.showStatus(REDONE[entry.kind] ?? "Redone.");
     } catch (error) {
       this.showStatus(changeProblem(error, this.state));
     }
