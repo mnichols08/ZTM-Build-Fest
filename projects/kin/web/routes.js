@@ -29,6 +29,8 @@ export const SEGMENTS = Object.freeze({
   ]),
   household: Object.freeze([
     Object.freeze({ id: "hub", label: "Household" }),
+    // The family fridge (#317): a shared drawing board.
+    Object.freeze({ id: "fridge", label: "Fridge" }),
     Object.freeze({ id: "notes", label: "Notes & reference" }),
     Object.freeze({ id: "areas", label: "Areas & status" }),
     Object.freeze({ id: "people", label: "People & devices" }),

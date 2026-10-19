@@ -1565,3 +1565,202 @@ kin-qr-scanner { display: block; }
 /* Long member names and device labels wrap instead of widening the page at
    320 px (#268): a 32-character name may have no spaces at all. */
 .device-group > h3, .device-name-line, .member-name-form input { overflow-wrap: anywhere; }
+
+/* The family fridge (#317, ADR 0011): a fixed 3:4 door. Ink colours are
+   palette indices, remapped for dark mode and forced colours. */
+kin-fridge {
+  --fridge-door: #fbf8f3;
+  --fridge-ink-0: #2b2522;
+  --fridge-ink-1: #c4372b;
+  --fridge-ink-2: #d9701c;
+  --fridge-ink-3: #c99a00;
+  --fridge-ink-4: #2e8549;
+  --fridge-ink-5: #2b63bd;
+  --fridge-ink-6: #7a48b0;
+  --fridge-ink-7: #7a4a2a;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-kin-appearance="light"]) kin-fridge {
+    --fridge-door: #2a302c;
+    --fridge-ink-0: #f2ece6;
+    --fridge-ink-1: #ff8a7a;
+    --fridge-ink-2: #ffb066;
+    --fridge-ink-3: #f2d35b;
+    --fridge-ink-4: #7fd39a;
+    --fridge-ink-5: #8fb8ff;
+    --fridge-ink-6: #c9a2f2;
+    --fridge-ink-7: #d7a77f;
+  }
+}
+:root[data-kin-appearance="dark"] kin-fridge {
+  --fridge-door: #2a302c;
+  --fridge-ink-0: #f2ece6;
+  --fridge-ink-1: #ff8a7a;
+  --fridge-ink-2: #ffb066;
+  --fridge-ink-3: #f2d35b;
+  --fridge-ink-4: #7fd39a;
+  --fridge-ink-5: #8fb8ff;
+  --fridge-ink-6: #c9a2f2;
+  --fridge-ink-7: #d7a77f;
+}
+.fridge-heading { margin: 0; }
+.fridge-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+}
+.fridge-colours, .fridge-widths, .fridge-history { display: flex; flex-wrap: wrap; gap: 6px; }
+.fridge-colour {
+  inline-size: 44px;
+  min-height: 44px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--line);
+  background: var(--swatch);
+}
+.fridge-colour[aria-pressed="true"] { outline: 3px solid var(--accent); outline-offset: 2px; }
+.fridge-width {
+  inline-size: 44px;
+  min-height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+.fridge-width::after {
+  content: "";
+  inline-size: 22px;
+  block-size: 4px;
+  border-radius: 4px;
+  background: currentColor;
+}
+.fridge-width[data-width="0"]::after { block-size: 2px; }
+.fridge-width[data-width="2"]::after { block-size: 9px; }
+.fridge-width[aria-pressed="true"], .fridge-eraser[aria-pressed="true"] {
+  background: var(--surface-secondary);
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.fridge-board { display: grid; justify-items: center; min-width: 0; }
+/* The door keeps its shape and fits the screen: on a phone the width
+   decides; on a short, wide screen the height does. */
+.fridge-door {
+  position: relative;
+  inline-size: min(100%, calc((100dvh - var(--header-height, 64px) - 220px) * 0.75), 720px);
+  min-inline-size: min(100%, 240px);
+  aspect-ratio: 3 / 4;
+  border: 2px solid var(--line-strong);
+  border-radius: 20px;
+  background: var(--fridge-door);
+  box-shadow: inset 0 0 0 6px color-mix(in srgb, var(--fridge-door) 80%, var(--line));
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  cursor: crosshair;
+}
+.fridge-door[data-tool="eraser"] { cursor: cell; }
+.fridge-door[aria-disabled="true"] { cursor: not-allowed; opacity: 0.7; }
+.fridge-door canvas { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; }
+.fridge-summary { margin: 0; color: var(--ink-muted); }
+.fridge-status { margin: 0; font-weight: 600; }
+.fridge-status[hidden] { display: none; }
+@media (forced-colors: active) {
+  kin-fridge {
+    --fridge-door: Canvas;
+    --fridge-ink-0: CanvasText;
+    --fridge-ink-1: CanvasText;
+    --fridge-ink-2: CanvasText;
+    --fridge-ink-3: CanvasText;
+    --fridge-ink-4: CanvasText;
+    --fridge-ink-5: CanvasText;
+    --fridge-ink-6: CanvasText;
+    --fridge-ink-7: CanvasText;
+  }
+  .fridge-colour { forced-color-adjust: none; border-color: CanvasText; }
+  .fridge-colour[aria-pressed="true"], .fridge-width[aria-pressed="true"], .fridge-eraser[aria-pressed="true"] { outline: 3px solid Highlight; }
+  .fridge-door { border-color: CanvasText; box-shadow: none; }
+}
+.today-fridge-link { display: inline-flex; align-items: center; min-height: var(--tap); font-size: 15px; }
+/* Fridge magnets (#322): buttons over the door. The layer lets drawing
+   through; each magnet takes its own pointer. */
+.fridge-magnets { position: absolute; inset: 0; margin: 0; padding: 0; list-style: none; pointer-events: none; }
+.fridge-magnet-item {
+  position: absolute;
+  transform: translate(-50%, -50%) rotate(var(--tilt, 0deg));
+  pointer-events: auto;
+}
+.fridge-magnet {
+  display: grid;
+  place-items: center;
+  min-inline-size: 44px;
+  min-height: 44px;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 2px 4px rgb(0 0 0 / 0.25);
+  touch-action: none;
+  cursor: grab;
+}
+.fridge-magnet-emoji { font-size: 32px; line-height: 1; padding: 2px; background: transparent; border-color: transparent; box-shadow: none; filter: drop-shadow(0 2px 2px rgb(0 0 0 / 0.3)); }
+.fridge-magnet-kin svg { inline-size: 36px; block-size: 36px; }
+.fridge-magnet-note {
+  max-inline-size: 9em;
+  background: #fff4a8;
+  color: #2b2522;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.fridge-magnet:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.fridge-magnet-item.is-dragging .fridge-magnet { cursor: grabbing; box-shadow: 0 6px 12px rgb(0 0 0 / 0.3); }
+.fridge-magnet-menu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card, 12px);
+  background: var(--surface);
+}
+.fridge-dialog {
+  inline-size: min(32rem, calc(100vw - 32px));
+  max-block-size: calc(100dvh - 32px);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 16px;
+}
+.fridge-dialog::backdrop { background: rgb(0 0 0 / 0.4); }
+.fridge-dialog h3 { margin-top: 0; }
+.fridge-dialog fieldset { border: 0; padding: 0; margin: 0 0 12px; display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.fridge-dialog label { display: inline-flex; align-items: center; gap: 6px; min-height: var(--tap); }
+.fridge-kin-magnets { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); }
+.fridge-kin-magnets legend { grid-column: 1 / -1; }
+.fridge-kin-choice { position: relative; justify-content: center; min-height: 52px; border: 1px solid var(--line); border-radius: 12px; }
+.fridge-kin-choice input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+.fridge-kin-choice svg { inline-size: 32px; block-size: 32px; }
+.fridge-kin-choice:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 2px var(--accent); }
+.fridge-kin-choice:has(input:focus-visible) { outline: 3px solid var(--accent); outline-offset: 2px; }
+.fridge-dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+/* On a phone the dialogs are bottom sheets. */
+@media (max-width: 719px) {
+  .fridge-dialog { margin: auto 0 0; inline-size: 100%; max-inline-size: 100%; border-radius: 16px 16px 0 0; }
+}
+@media (forced-colors: active) {
+  .fridge-magnet { border-color: CanvasText; box-shadow: none; }
+  .fridge-kin-choice:has(input:checked) { outline: 3px solid Highlight; }
+}
+.fridge-dialog .danger-action { background: var(--danger); border-color: var(--danger); color: var(--surface); }
