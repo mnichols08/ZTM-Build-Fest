@@ -71,7 +71,16 @@ export class ItemCommands {
       const where = submittedDraft.planningDate === this.ctx.navigation.currentCivilDate() ? `${destination} and Today` : destination;
       const recurring = submittedDraft.cadence ? this.app.state.routines?.find((routine) => routine.routineId === submittedDraft.id) : null;
       this.ctx.status.setStatus(`${recurring ? describeRecurringCapture(recurring, this.ctx.navigation.currentCivilDate()) : `Added to ${where}.`}${this.ctx.sync.offlineSyncSuffix()}`);
-      if (!sourceList) composer.showResult?.(this.app.syncCoordinator ? "Saved here. Waiting to sync." : "Saved on this device.");
+      if (!sourceList) {
+        // Saved locally is not shared: with sync on, the line waits for the
+        // relay to accept the change before it says "sent" (#267).
+        if (this.app.syncCoordinator) {
+          composer.showResult?.("Saved here. Waiting to sync.", { kind: "pending-sync" });
+          (this.app.pendingShares ??= new Set()).add(composer);
+        } else {
+          composer.showResult?.("Saved on this device.");
+        }
+      }
       if (this.app.pendingCapture?.draft.id === submittedDraft.id) this.app.pendingCapture = null;
       this.ctx.peers.broadcastEventChange();
       restoreComposeFocus = !sourceList;

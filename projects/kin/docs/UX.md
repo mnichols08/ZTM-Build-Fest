@@ -2008,3 +2008,34 @@ and receive a short ID suffix in selection/management labels until renamed.
   so, and a **Retry** button beside Send tries again with the same draft.
   Removing the last file hides it.
 
+
+# 31. Approachable first use and clearer feedback (#261)
+
+These slices of #261 were built from the epic's written direction **before**
+the usability sessions it calls for (#262). They are hypotheses to test, not
+validated results; #262 and #269 stay open until real household members have
+tried them.
+
+- **Welcome home (#263).** A household with nothing on Today's lists yet sees
+  a short card above Today: what Kin is for (To do, Shopping, Updates), that
+  it stays private to the household, **Add your first item** (the existing
+  Quick add) and **Got it**. It never creates sample items or events. It goes
+  away for good once the household has an item or routine, or when **Got it**
+  is chosen on this device (a device-local preference, like auto-lock).
+- **Clear capture (#265).** The Today field asks "What would you like to
+  remember?" and a line under it says where the item goes before Add, such as
+  "Adds to Shopping, planned for today." It is read with the field.
+- **Truthful save feedback (#267).** With sync on, a capture says "Saved here.
+  Waiting to sync." and keeps saying so. It changes to "Saved and sent to your
+  household." only after a sync cycle ends with nothing unaccepted left in this
+  device's outbox, and the status region announces it once. It never says
+  anyone has received or read it. Without sync it says "Saved on this device."
+- **Plain destinations (#266).** Lists, Routines, Updates and Household each
+  have one plain sentence under their heading; Updates drops Chat from it when
+  the household's chat policy leaves a member without Chat. Names, order and
+  routes of the five destinations are unchanged.
+- **Joining (#264).** While waiting for approval, the joining device says who
+  checks the key and approves next. Opening a code link without choosing a path
+  first explains what happens and that a code never creates a new household.
+- **Consistent identity forms (#268).** Path statements, next steps and the
+  name and nickname forms share spacing, 48 px targets and theme tokens.

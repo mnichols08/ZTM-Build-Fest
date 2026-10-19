@@ -4,7 +4,7 @@
 import { currentPlatform, householdDeviceName } from "../../platform.js";
 import { invitationCode, invitationLink } from "../../pairing-link.js";
 import { consumeOpenedSignInLink } from "../../device-link.js";
-import { intentConflict, inviterPathCopy, joinerPathCopy } from "./pairing-path.js";
+import { CODE_ARRIVAL_COPY, intentConflict, inviterPathCopy, joinerPathCopy } from "./pairing-path.js";
 import "../kin-qr.js";
 import "../kin-qr-scanner.js";
 
@@ -179,9 +179,12 @@ export class HouseholdViews {
 
   renderJoin() {
     if (this.host.claim?.state === "Claimed") {
-      this.showPath(joinerPathCopy(this.host.claim.purpose));
+      const path = joinerPathCopy(this.host.claim.purpose);
+      this.showPath(path);
       const conflict = this.claimConflict();
       if (conflict) this.host.message(conflict, true);
+      const next = this.host.text(path.next);
+      if (next) next.className = "pairing-next-step";
       this.host.message(
         ["device", "replacement"].includes(this.host.claim.purpose)
           ? "This device is ready. Your existing trusted device must approve it before access is restored."
@@ -286,6 +289,9 @@ export class HouseholdViews {
       this.host.text(
         "Ask an adult in the household to open Kin → More → Household access and add you as an Adult or Limited Member. Enter the code they get here. They approve this device after you both compare the device keys.",
       );
+    else if (location.pathname === "/pair")
+      // Arrived from a code link without choosing a path first (#264).
+      this.host.text(CODE_ARRIVAL_COPY);
     this.host.text(
       "A code starts a short-lived invitation or recovery request. You must create a fresh passkey, and an existing trusted adult must still approve this device. No household details or encryption keys are shown before approval. Entering a code never creates a second household.",
     );

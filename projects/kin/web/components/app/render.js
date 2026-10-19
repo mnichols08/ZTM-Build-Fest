@@ -2,6 +2,7 @@
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { routeHash, SEGMENTS } from "../../routes.js";
 import { formatCivilDate } from "../../today-view.js";
+import { DESTINATION_DESCRIPTIONS } from "./constants.js";
 
 export class RenderController {
   constructor(ctx) {
@@ -12,6 +13,11 @@ export class RenderController {
   /** The Updates segments: handoffs waiting, and Chat's unread count (#133),
    * which comes from the chat view and never leaves this device. */
   renderUpdatesNav(waiting = (this.app.state?.handoffs ?? []).filter((record) => record.status === "unacknowledged").length) {
+    // The page's plain description names Chat only while this member has it.
+    if (this.app.updatesLead)
+      this.app.updatesLead.textContent = this.app.chatAccess === "none"
+        ? DESTINATION_DESCRIPTIONS.updatesWithoutChat
+        : DESTINATION_DESCRIPTIONS.updates;
     const updatesNav = this.app.segmentNavs?.get("updates");
     if (!updatesNav) return;
     const unread = this.app.chatUnread ?? { count: 0, mentions: 0, capped: false };

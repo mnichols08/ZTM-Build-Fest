@@ -5,6 +5,7 @@
 // `this.ctx.<part>` reaches the other parts (kin-today.js lists them).
 import { composeToday, ROUTINE_PERIOD_LABELS } from "../../today-view.js";
 import { describeNextOccurrence, describeRepeat } from "../../recurrence.js";
+import { createWelcome, readWelcomeDismissed, welcomeVisible, writeWelcomeDismissed } from "./welcome.js";
 
 const MODE_LABELS = { normal: "Normal", vacation: "Vacation", guests: "Guests", rest: "Rest" };
 
@@ -32,6 +33,19 @@ export class TodaySections {
     }
     const view = composeToday({ items: this.host.records, routines: this.host.routineRecords, pins: this.host.pinRecords, handoffs: this.host.handoffRecords, mode: this.host.householdMode, civilDate: this.host.civilDate });
     const sections = [];
+    // First use only (#263): nothing on the lists yet and not dismissed here.
+    this.host.welcomeDismissed ??= readWelcomeDismissed();
+    if (welcomeVisible({ hasItems: view.hasItems, hasRoutines: this.host.routineRecords.length > 0, dismissed: this.host.welcomeDismissed }))
+      sections.push(createWelcome({
+        disabled: this.host.isDisabled,
+        onStart: (opener) => this.host.dispatchEvent(new CustomEvent("kin:open-quick-add", { detail: { opener }, bubbles: true, composed: true })),
+        onDismiss: () => {
+          this.host.welcomeDismissed = true;
+          writeWelcomeDismissed();
+          this.host.render();
+          this.host.querySelector?.('[data-section="today"] h2')?.focus?.();
+        },
+      }));
     if (view.hasItems) sections.push(this.createSummary(view.counts));
 
     // Most time-sensitive first: plans still open from earlier days, today's

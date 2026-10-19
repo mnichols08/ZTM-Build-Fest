@@ -30,7 +30,7 @@ const SHELL = [
   ...["dom", "focus", "icons", "operation", "props", "session-guard"].map((name) => `/components/shared/${name}.js`),
   ...["api", "auth", "lifecycle", "link", "link-approval", "member-labels", "membership", "pairing", "pairing-path", "views"].map((name) => `/components/household/${name}.js`),
   ...["archive", "protection", "unlock", "views"].map((name) => `/components/security/${name}.js`),
-  ...["focus", "sections", "selection"].map((name) => `/components/today/${name}.js`),
+  ...["focus", "sections", "selection", "welcome"].map((name) => `/components/today/${name}.js`),
   "/components/item-detail/sections.js", "/components/notes/notes.js", "/components/notes/references.js",
 ];
 const ALLOWED = new Set(SHELL);

@@ -2,6 +2,7 @@
 // State stays on the element (`this.app`); app/context.js explains the controllers.
 import { setAppBadge } from "../../chat/chat-badge.js";
 import { routeHash, SEGMENTS } from "../../routes.js";
+import { DESTINATION_DESCRIPTIONS } from "./constants.js";
 import { currentPlatform, installHelp } from "../../platform.js";
 import { installHelpCard } from "../shared/dom.js";
 
@@ -62,7 +63,7 @@ export class ViewBuilder {
 
     // Lists: one list at a time, each with its own quick-add; export lives in
     // the list actions with its warning at the point of use.
-    const lists = page("lists", "Lists");
+    const lists = page("lists", "Lists", DESTINATION_DESCRIPTIONS.lists);
     const listsNav = segmentNav("lists", "Lists");
     this.app.segmentNavs.set("lists", listsNav);
     lists.append(listsNav);
@@ -96,12 +97,14 @@ export class ViewBuilder {
     const search = page("search", "Search");
     search.append(this.app.search);
 
-    const routines = page("routines", "Routines");
+    const routines = page("routines", "Routines", DESTINATION_DESCRIPTIONS.routines);
     const routinesNav = segmentNav("routines", "Routines");
     this.app.segmentNavs.set("routines", routinesNav);
     routines.append(routinesNav, this.app.routines);
 
-    const updates = page("updates", "Updates", "Handoffs pass context to someone; Talk keeps topics for a calm moment; Chat is for quick back-and-forth.");
+    const updates = page("updates", "Updates", DESTINATION_DESCRIPTIONS.updates);
+    // Kept so the line can drop Chat when the chat policy removes it.
+    this.app.updatesLead = updates.querySelector(".page-lead");
     const updatesNav = segmentNav("updates", "Updates");
     this.app.segmentNavs.set("updates", updatesNav);
     const handoffPanel = document.createElement("section");
@@ -138,7 +141,7 @@ export class ViewBuilder {
 
     // Household: an overview plus secondary destinations. Appearance remains
     // personal while the five primary destinations stay unchanged.
-    const household = page("household", "Household");
+    const household = page("household", "Household", DESTINATION_DESCRIPTIONS.household);
     const householdNav = segmentNav("household", "Household");
     this.app.segmentNavs.set("household", householdNav);
     household.append(householdNav);
