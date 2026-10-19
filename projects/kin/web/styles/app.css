@@ -901,6 +901,7 @@ kin-emoji-picker { display: contents; }
 .chat-online { margin: 0 0 .5rem; font-size: .9em; }
 .chat-online[hidden] { display: none; }
 .chat-online-dot { display: inline-block; width: .6em; height: .6em; border-radius: 50%; background: #1a7f37; vertical-align: baseline; }
+@media (prefers-color-scheme: dark) { .chat-online-dot { background: #3fb950; } }
 .chat-pins { border: 1px solid var(--line, currentColor); border-radius: .5rem; margin-bottom: .5rem; background: var(--surface, Canvas); }
 .chat-pins[hidden], .chat-pin-list[hidden] { display: none; }
 .chat-pin-bar { display: flex; gap: .25rem; align-items: center; width: 100%; min-height: 2.75rem; padding: .5rem .75rem; text-align: start; background: transparent; border: 0; color: inherit; font: inherit; cursor: pointer; }
