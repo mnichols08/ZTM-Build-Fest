@@ -1927,3 +1927,495 @@ fn a_quote_carries_only_the_first_line_of_a_long_original() {
     assert!(quoted.starts_with("First line \u{1F600}"));
     assert!(!quoted.contains("Second"));
 }
+
+// ---- search (#124) ----------------------------------------------------
+
+#[derive(Default)]
+struct Find<'a> {
+    query: &'a str,
+    limit: u32,
+    flags: u32,
+    from: i64,
+    to: i64,
+    authors: Vec<[u8; 16]>,
+    excluded: Vec<[u8; 16]>,
+}
+
+fn kchf(find: &Find<'_>, context: &[u8]) -> Vec<u8> {
+    let mut bytes = b"KCHF\x01\0\0\0".to_vec();
+    bytes.extend_from_slice(&find.limit.max(1).to_le_bytes());
+    bytes.extend_from_slice(&find.flags.to_le_bytes());
+    bytes.extend_from_slice(&find.from.to_le_bytes());
+    bytes.extend_from_slice(&find.to.to_le_bytes());
+    bytes.extend_from_slice(&(find.query.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&(find.authors.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&(find.excluded.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(find.query.as_bytes());
+    for id in find.authors.iter().chain(&find.excluded) {
+        bytes.extend_from_slice(id);
+    }
+    bytes.extend_from_slice(context);
+    bytes
+}
+
+/// A decoded KCHR: total, results (id, index, ranges), unsearched total and
+/// the listed (id, ref, key).
+type Found = (
+    u32,
+    Vec<([u8; 16], u32, Vec<(u32, u32)>)>,
+    u32,
+    Vec<[u8; 16]>,
+);
+
+fn found(bytes: &[u8]) -> Found {
+    assert_eq!(&bytes[..4], b"KCHR");
+    let count = u32_at(bytes, 12) as usize;
+    let listed = u32_at(bytes, 20) as usize;
+    let mut at = 24;
+    let mut results = Vec::new();
+    for _ in 0..count {
+        let id: [u8; 16] = bytes[at..at + 16].try_into().unwrap();
+        let index = u32_at(bytes, at + 16);
+        let ranges = u32_at(bytes, at + 20) as usize;
+        let excerpt = u32_at(bytes, at + 56) as usize;
+        let ranges = (0..ranges)
+            .map(|n| {
+                (
+                    u32_at(bytes, at + 60 + n * 8),
+                    u32_at(bytes, at + 64 + n * 8),
+                )
+            })
+            .collect::<Vec<_>>();
+        at += 60 + ranges.len() * 8 + excerpt;
+        results.push((id, index, ranges));
+    }
+    let unsearched = (0..listed)
+        .map(|n| bytes[at + n * 80..at + n * 80 + 16].try_into().unwrap())
+        .collect();
+    assert_eq!(bytes.len(), at + listed * 80);
+    (u32_at(bytes, 8), results, u32_at(bytes, 16), unsearched)
+}
+
+/// Messages `1..` by MEMBER_1, with `texts[n]` as the text of message n+1.
+fn talk(texts: &[&str]) -> (History, ChatTexts) {
+    let records = (0..texts.len())
+        .map(|n| posted((n + 1) as u32, MEMBER_1, 0x11, (n + 1) as u8, 1))
+        .collect::<Vec<_>>();
+    let history = history_of(&records);
+    let mut arena = ChatTexts::new();
+    for (n, text) in texts.iter().enumerate() {
+        put_texts(
+            &kcht(&[(blob((n + 1) as u8, 0), text.as_bytes())]),
+            &mut arena,
+        )
+        .unwrap();
+    }
+    (history, arena)
+}
+
+fn search(history: &mut History, texts: &mut ChatTexts, find: &Find<'_>) -> Found {
+    let context = kine(&[], 0, TEST_DATE, None);
+    found(&crate::core::chat_search(&kchf(find, &context), history, texts).unwrap())
+}
+
+fn ids_of(found: &Found) -> Vec<u8> {
+    found.1.iter().map(|(id, _, _)| id[0]).collect()
+}
+
+#[test]
+fn search_folds_case_and_accents_and_reports_byte_ranges() {
+    let (mut history, mut texts) = talk(&[
+        "Café Résumé",
+        "STRASSE or Straße",
+        "Łódź at Zürich",
+        "cafe\u{301} decomposed",
+        "nothing here",
+    ]);
+    let query = |query| Find {
+        query,
+        limit: 10,
+        ..Find::default()
+    };
+    let result = search(&mut history, &mut texts, &query("cafe"));
+    assert_eq!(ids_of(&result), [4, 1]);
+    // "Café" is bytes 0..5 (é is two); the decomposed one runs to 6 (e + mark).
+    assert_eq!(result.1[1].2, [(0, 5)]);
+    assert_eq!(result.1[0].2, [(0, 6)]);
+    assert_eq!(
+        ids_of(&search(&mut history, &mut texts, &query("RESUME"))),
+        [1]
+    );
+    let strasse = search(&mut history, &mut texts, &query("strasse"));
+    assert_eq!(ids_of(&strasse), [2]);
+    assert_eq!(strasse.1[0].2, [(0, 7), (11, 18)]);
+    assert_eq!(
+        ids_of(&search(&mut history, &mut texts, &query("lodz"))),
+        [3]
+    );
+    assert_eq!(
+        ids_of(&search(&mut history, &mut texts, &query("zurich"))),
+        [3]
+    );
+    // The accent in the query folds too.
+    assert_eq!(
+        ids_of(&search(&mut history, &mut texts, &query("CAFÉ"))),
+        [4, 1]
+    );
+    assert_eq!(search(&mut history, &mut texts, &query("zzz")).0, 0);
+}
+
+#[test]
+fn search_never_cuts_an_emoji_sequence() {
+    let (mut history, mut texts) = talk(&[
+        "great \u{1F44D} job",
+        "tone \u{1F44D}\u{1F3FD} here",
+        "family \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467} out",
+        "heart \u{2764}\u{FE0F} done",
+        "flag \u{1F1FA}\u{1F1F8}",
+    ]);
+    let query = |query| Find {
+        query,
+        limit: 10,
+        ..Find::default()
+    };
+    // A thumbs-up is found alone, and with its tone only when asked for.
+    assert_eq!(
+        ids_of(&search(&mut history, &mut texts, &query("\u{1F44D}"))),
+        [1]
+    );
+    assert_eq!(
+        ids_of(&search(
+            &mut history,
+            &mut texts,
+            &query("\u{1F44D}\u{1F3FD}")
+        )),
+        [2]
+    );
+    // One person of a family is not the family.
+    assert_eq!(
+        ids_of(&search(&mut history, &mut texts, &query("\u{1F469}"))),
+        Vec::<u8>::new()
+    );
+    assert_eq!(
+        ids_of(&search(&mut history, &mut texts, &query("\u{1F468}"))),
+        Vec::<u8>::new()
+    );
+    assert_eq!(
+        ids_of(&search(
+            &mut history,
+            &mut texts,
+            &query("\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}")
+        )),
+        [3]
+    );
+    // With or without the emoji selector, and the range includes it.
+    let heart = search(&mut history, &mut texts, &query("\u{2764}"));
+    assert_eq!(ids_of(&heart), [4]);
+    assert_eq!(heart.1[0].2, [(6, 12)]);
+    assert_eq!(
+        ids_of(&search(
+            &mut history,
+            &mut texts,
+            &query("\u{2764}\u{FE0F}")
+        )),
+        [4]
+    );
+    assert_eq!(
+        ids_of(&search(
+            &mut history,
+            &mut texts,
+            &query("\u{1F1FA}\u{1F1F8}")
+        )),
+        [5]
+    );
+}
+
+#[test]
+fn search_skips_deleted_hidden_and_removed_messages() {
+    let mut records = vec![
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        posted(2, MEMBER_1, 0x11, 2, 1),
+        posted(3, MEMBER_2, 0x21, 3, 1),
+        posted(4, MEMBER_2, 0x21, 4, 1),
+        deleted(5, MEMBER_1, 0x11, 1, false),
+        deleted(6, MEMBER_1, 0x11, 4, true),
+    ];
+    let mut history = history_of(&records);
+    let mut texts = ChatTexts::new();
+    for n in 1..=4u8 {
+        put_texts(&kcht(&[(blob(n, 0), b"the code is 1234")]), &mut texts).unwrap();
+    }
+    let find = Find {
+        query: "code",
+        limit: 10,
+        ..Find::default()
+    };
+    // Deleted by its author (1) and removed by a named admin (4, if named).
+    let result = search(&mut history, &mut texts, &find);
+    assert_eq!(ids_of(&result), [4, 3, 2]);
+    assert!(
+        texts.get(&blob(1, 0)).is_none(),
+        "a deleted text is forgotten"
+    );
+    // Hidden for me.
+    let hidden = Find {
+        excluded: vec![message(3)],
+        ..Find {
+            query: "code",
+            limit: 10,
+            ..Find::default()
+        }
+    };
+    assert_eq!(ids_of(&search(&mut history, &mut texts, &hidden)), [4, 2]);
+    records.clear();
+}
+
+#[test]
+fn search_filters_by_person_date_and_attachments_and_limits() {
+    let records = vec![
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        posted(2, MEMBER_2, 0x21, 2, 1),
+        posted(3, MEMBER_1, 0x11, 3, 2),
+        posted(4, MEMBER_2, 0x21, 4, 1),
+    ];
+    let mut history = history_of(&records);
+    let mut texts = ChatTexts::new();
+    for n in [1u8, 2, 4] {
+        put_texts(&kcht(&[(blob(n, 0), b"plan the trip")]), &mut texts).unwrap();
+    }
+    let run = |history: &mut History, texts: &mut ChatTexts, find: Find<'_>| {
+        search(history, texts, &find)
+    };
+    let all = Find {
+        query: "trip",
+        limit: 10,
+        ..Find::default()
+    };
+    assert_eq!(
+        ids_of(&run(&mut history, &mut texts, Find { ..all_of(&all) })),
+        [4, 2, 1]
+    );
+    let by = Find {
+        authors: vec![MEMBER_2],
+        ..all_of(&all)
+    };
+    assert_eq!(ids_of(&run(&mut history, &mut texts, by)), [4, 2]);
+    // Posted at BASE_TIME + event: from 2 up to (not including) 4.
+    let dated = Find {
+        from: BASE_TIME + 2,
+        to: BASE_TIME + 4,
+        ..all_of(&all)
+    };
+    assert_eq!(ids_of(&run(&mut history, &mut texts, dated)), [2]);
+    // Attachments only, with no query: message 3 is the attachment.
+    let files = Find {
+        flags: 1,
+        ..Find {
+            limit: 10,
+            ..Find::default()
+        }
+    };
+    assert_eq!(ids_of(&run(&mut history, &mut texts, files)), [3]);
+    // Limit keeps the newest and still counts the rest.
+    let limited = Find {
+        limit: 2,
+        ..all_of(&all)
+    };
+    let result = run(&mut history, &mut texts, limited);
+    assert_eq!((result.0, ids_of(&result)), (3, vec![4, 2]));
+    // No query lists everything shown that passes the filters.
+    let everything = Find {
+        limit: 10,
+        ..Find::default()
+    };
+    assert_eq!(run(&mut history, &mut texts, everything).0, 4);
+}
+
+fn all_of<'a>(find: &Find<'a>) -> Find<'a> {
+    Find {
+        query: find.query,
+        limit: find.limit,
+        flags: find.flags,
+        from: find.from,
+        to: find.to,
+        authors: find.authors.clone(),
+        excluded: find.excluded.clone(),
+    }
+}
+
+#[test]
+fn search_lists_texts_it_could_not_look_at() {
+    let (mut history, _) = talk(&["one", "two", "three"]);
+    let mut texts = ChatTexts::new();
+    put_texts(&kcht(&[(blob(2, 0), b"two trip")]), &mut texts).unwrap();
+    let find = Find {
+        query: "trip",
+        limit: 10,
+        ..Find::default()
+    };
+    let result = search(&mut history, &mut texts, &find);
+    assert_eq!(ids_of(&result), [2]);
+    // Messages 3 and 1 have no text yet: newest first.
+    assert_eq!((result.2, result.3), (2, vec![message(3), message(1)]));
+}
+
+#[test]
+fn search_requests_are_checked() {
+    let context = kine(&[], 0, TEST_DATE, None);
+    let good = Find {
+        query: "a",
+        limit: 5,
+        ..Find::default()
+    };
+    let valid = kchf(&good, &context);
+    let (mut history, mut texts) = talk(&["a"]);
+    let mut run = |bytes: &[u8]| crate::core::chat_search(bytes, &mut history, &mut texts);
+    assert!(run(&valid).is_ok());
+    let mut bad_magic = valid.clone();
+    bad_magic[0] = b'X';
+    assert_eq!(run(&bad_magic), Err(KinError::MalformedProtocol));
+    let mut version = valid.clone();
+    version[4] = 2;
+    assert_eq!(run(&version), Err(KinError::UnsupportedVersion));
+    let mut flags = valid.clone();
+    flags[12] = 2;
+    assert_eq!(run(&flags), Err(KinError::MalformedProtocol));
+    let mut zero_limit = valid.clone();
+    zero_limit[8..12].copy_from_slice(&0u32.to_le_bytes());
+    assert_eq!(run(&zero_limit), Err(KinError::MalformedProtocol));
+    let mut huge_limit = valid.clone();
+    huge_limit[8..12].copy_from_slice(&201u32.to_le_bytes());
+    assert_eq!(run(&huge_limit), Err(KinError::MalformedProtocol));
+    let backwards = Find {
+        from: 9,
+        to: 5,
+        ..Find {
+            query: "a",
+            limit: 5,
+            ..Find::default()
+        }
+    };
+    assert_eq!(
+        run(&kchf(&backwards, &context)),
+        Err(KinError::MalformedProtocol)
+    );
+    let long = "a".repeat(257);
+    let too_long = Find {
+        query: &long,
+        limit: 5,
+        ..Find::default()
+    };
+    assert_eq!(
+        run(&kchf(&too_long, &context)),
+        Err(KinError::MalformedProtocol)
+    );
+    let zero_author = Find {
+        authors: vec![[0; 16]],
+        query: "a",
+        limit: 5,
+        ..Find::default()
+    };
+    assert_eq!(
+        run(&kchf(&zero_author, &context)),
+        Err(KinError::MalformedProtocol)
+    );
+    assert_eq!(run(&valid[..40]), Err(KinError::MalformedProtocol));
+    // Not UTF-8.
+    let mut bytes = valid.clone();
+    bytes[48] = 0xff;
+    assert_eq!(run(&bytes), Err(KinError::MalformedProtocol));
+}
+
+/// A hundred thousand messages already in memory search in well under 50 ms
+/// (checked in release builds; a debug build is an order of magnitude slower).
+#[test]
+fn search_scans_a_hundred_thousand_messages_quickly() {
+    const COUNT: u32 = 100_000;
+    let mut state = ChatState::default();
+    let mut texts = ChatTexts::new();
+    let words = [
+        "pick up the kids",
+        "Café run at 5",
+        "grocery list: milk",
+        "remember the code 4821",
+        "see you soon 👍",
+    ];
+    for n in 0..COUNT {
+        let mut id = [0u8; 16];
+        id[..4].copy_from_slice(&n.to_le_bytes());
+        let mut blob_ref = [0u8; 32];
+        blob_ref[..4].copy_from_slice(&(n + 1).to_le_bytes());
+        let text = format!("{} {}", words[(n % 5) as usize], n);
+        texts.put(blob_ref, text.as_bytes()).ok();
+        state.positions.insert(ChatMessageId(id), n as usize);
+        state.messages.push(ChatMessage {
+            message_id: ChatMessageId(id),
+            author: ActorId(MEMBER_1),
+            device: DeviceId([0x11; 16]),
+            posted_at: BASE_TIME + i64::from(n),
+            edited_at: 0,
+            status: ChatMessageStatus::Live,
+            content_kind: ChatContentKind::Text,
+            blob_ref,
+            blob_key: [7; 32],
+            reply_to: None,
+        });
+    }
+    let context = kine(&[], 0, TEST_DATE, None);
+    for (query, ascii) in [("grocery", true), ("cafe", false)] {
+        let request = kchf(
+            &Find {
+                query,
+                limit: 50,
+                ..Find::default()
+            },
+            &context,
+        );
+        let request = crate::chat_search::decode_search_request(&request).unwrap();
+        let started = std::time::Instant::now();
+        let bytes = crate::chat_search::encode_search(&state, &request, &texts).unwrap();
+        let elapsed = started.elapsed();
+        let result = found(&bytes);
+        // The arena is bounded, so only the texts it kept can match.
+        assert!(result.0 > 0, "{query} ({ascii}) found nothing");
+        #[cfg(not(debug_assertions))]
+        assert!(elapsed.as_millis() < 50, "{query} took {elapsed:?}");
+        eprintln!("search {query}: {elapsed:?}");
+    }
+}
+
+#[test]
+fn search_excerpts_hold_the_first_match_on_character_boundaries() {
+    let long = format!("{}needle é{}", "é".repeat(200), "x".repeat(400));
+    let (mut history, mut texts) = talk(&[&long, "short needle"]);
+    let context = kine(&[], 0, TEST_DATE, None);
+    let find = Find {
+        query: "needle",
+        limit: 10,
+        ..Find::default()
+    };
+    let bytes = crate::core::chat_search(&kchf(&find, &context), &mut history, &mut texts).unwrap();
+    let mut at = 24;
+    let mut excerpts = Vec::new();
+    for _ in 0..u32_at(&bytes, 12) {
+        let ranges = u32_at(&bytes, at + 20) as usize;
+        let (offset, length) = (
+            u32_at(&bytes, at + 52) as usize,
+            u32_at(&bytes, at + 56) as usize,
+        );
+        let first = (
+            u32_at(&bytes, at + 60) as usize,
+            u32_at(&bytes, at + 64) as usize,
+        );
+        let start = at + 60 + ranges * 8;
+        let text = std::str::from_utf8(&bytes[start..start + length]).unwrap();
+        // The first range is relative to the whole text; the match is inside.
+        assert_eq!(&text[first.0 - offset..first.1 - offset], "needle");
+        assert_eq!(u32_at(&bytes, at + 48), 1, "a text message");
+        excerpts.push((offset, text.to_owned()));
+        at = start + length;
+    }
+    assert_eq!(excerpts[0], (0, "short needle".to_owned()));
+    assert!(excerpts[1].0 > 0 && excerpts[1].1.len() <= 160 + 4);
+}

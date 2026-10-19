@@ -362,6 +362,13 @@ pub extern "C" fn kin_chat_page(pointer: u32, length: u32) -> i32 {
     run_chat(pointer, length, crate::core::chat_page)
 }
 
+/// A chat search: a KCHF request with its record-less KINE context, against
+/// the chat log and the chat-text arena; publishes KCHR (chat_search.rs).
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_search(pointer: u32, length: u32) -> i32 {
+    run_chat(pointer, length, crate::core::chat_search)
+}
+
 /// Drops every decrypted chat text (zero-filling the arena), for a member
 /// who lost access to chat while unlocked. Always succeeds.
 #[cfg_attr(target_arch = "wasm32", no_mangle)]

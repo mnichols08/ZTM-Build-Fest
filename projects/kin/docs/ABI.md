@@ -18,6 +18,7 @@ kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
 kin_chat_history_truncate(count) -> status   keep the chat log's first `count`
 kin_chat_execute(ptr, len)           chat command: length + KCMD + admins + KINE context -> KCMT
 kin_chat_page(ptr, len)              replay the chat log: KCHQ -> KCHP (v1.1)
+kin_chat_search(ptr, len)            search the chat's decrypted texts: KCHF -> KCHR (v1.1)
 kin_chat_text(ptr, len)              decrypted texts for the arena: KCHT -> KCHS
 kin_chat_texts_clear() -> status     drop every decrypted chat text
 kin_execute(ptr, len)                command: length + KCMD + KINE context -> KCMT
@@ -419,6 +420,34 @@ revision is meaningful only within one instance.
   arena holds; bit 1: retired blobs; bit 2: reactions), reserved u8, admin count u32 (at most
   16), the admins' member IDs (16 bytes each, non-zero), then a record-less
   KINE context as for `kin_project`.
+- **KCHF v1** (chat search request, `kin_chat_search`, #124): `"KCHF"`,
+  version 1, reserved u16, limit u32 (1–200), flags u32 (bit 0: attachments
+  only), from i64 and to i64 (posted at or after `from`, before `to`, in
+  milliseconds; 0 for no bound; `to` after `from` when both are set), query
+  bytes u32 (at most 256), admin count u32 (at most 16), author count u32 (at
+  most 16), excluded count u32 (at most 10,000). Then the query (UTF-8), the
+  admins, the authors (only these members' messages) and the excluded
+  message IDs (messages the member hid for themselves), 16 bytes each and
+  non-zero for the admins and authors, then a record-less KINE context.
+  Texts of retired blobs are forgotten first, as for a page, so a deleted
+  message never matches. The search folds case and accents (Latin letters,
+  combining accents and emoji selectors are ignored) and matches substrings
+  over Unicode scalars, but never ends inside an emoji sequence (a ZWJ
+  joiner, skin tone, keycap or tag after the match) nor begins after a
+  joiner. An empty query lists the messages that pass the filters; a query
+  matches text messages only. Nothing is indexed or kept between calls.
+- **KCHR v1** (chat search result): `"KCHR"`, version 1, reserved u16, then
+  u32s: total matches, results listed, unsearched total, unsearched listed
+  (at most 256). Results come newest first, each 60 bytes then its ranges
+  and excerpt: message ID @0, index u32 @16, range count u32 @20 (at most 4),
+  author @24, posted at i64 @40, content kind u32 @48 (1 text, 2
+  attachment), excerpt offset u32 @52 and excerpt length u32 @56; then
+  (start u32, end u32) UTF-8 byte ranges into the whole text, then the
+  excerpt, up to about 160 bytes of the text around the first match, cut on
+  character boundaries and starting `offset` bytes into the text. Then one
+  80-byte entry per unsearched message listed (newest first): its ID, blob
+  ref and blob key, for texts the arena doesn't hold yet. The host opens
+  them (`kin_chat_text`) and searches again.
 - **KCHP v1** (chat page): `"KCHP"`, version 1, reserved u16, then u32s:
   total messages, index of the page's first message, messages in the page,
   text bytes, retired blobs. Then 128 bytes per message, oldest first:

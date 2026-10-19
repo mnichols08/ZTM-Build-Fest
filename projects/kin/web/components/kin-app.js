@@ -51,7 +51,7 @@ const ELEMENT_EVENTS = [
   ["kin:open-quick-add", "onOpenQuickAdd"], ["kin:bulk-item-action", "onBulkItemAction"],
   ["kin:bulk-undo", "onBulkUndo"], ["kin:bulk-retry", "onBulkRetry"],
   ["kin:bulk-dismiss", "onBulkDismiss"], ["kin:open-item", "onOpenItem"],
-  ["kin:close-item-detail", "onCloseItemDetail"], ["kin:open-search-result", "onOpenSearchResult"],
+  ["kin:close-item-detail", "onCloseItemDetail"], ["kin:open-search-result", "onOpenSearchResult"], ["kin:open-chat-message", "onOpenChatMessage"],
   ["kin:area-intent", "onAreaIntent"], ["kin:add-handoff", "onAddHandoff"],
   ["kin:acknowledge-handoff", "onAcknowledgeHandoff"], ["kin:archive-handoff", "onArchiveHandoff"],
   ["kin:add-talk", "onAddTalk"], ["kin:resolve-talk", "onResolveTalk"],

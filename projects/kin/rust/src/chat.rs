@@ -15,7 +15,8 @@
 //! decrypted texts in a separate append-only arena referenced by offset and
 //! length. The arena lives on the engine instance, only while it is
 //! unlocked (`kin_clear` drops it with everything else).
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::hash::{BuildHasherDefault, Hasher};
 
 use crate::error::KinError;
 use crate::event::{ActorId, ChatContentKind, ChatMessageId, DeviceId};
@@ -292,7 +293,28 @@ fn emoji_element(scalars: &[u32], at: usize) -> Option<(usize, bool)> {
 #[derive(Default)]
 pub struct ChatTexts {
     bytes: Vec<u8>,
-    spans: BTreeMap<[u8; 32], (u32, u32)>,
+    spans: HashMap<[u8; 32], (u32, u32), BuildHasherDefault<RefHasher>>,
+}
+
+/// Hashes a blob reference (already a random-looking digest) by folding its
+/// bytes eight at a time: the arena is looked up once per message when
+/// searching, so the lookup should cost a few cycles, not a tree walk.
+#[derive(Default)]
+pub struct RefHasher(u64);
+
+impl Hasher for RefHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.0 = (self.0.rotate_left(5) ^ u64::from_le_bytes(word))
+                .wrapping_mul(0x517c_c1b7_2722_0a95);
+        }
+    }
 }
 
 /// Most text the arena holds (a little over 1,000 full-length messages);
@@ -303,7 +325,7 @@ impl ChatTexts {
     pub const fn new() -> Self {
         Self {
             bytes: Vec::new(),
-            spans: BTreeMap::new(),
+            spans: HashMap::with_hasher(BuildHasherDefault::new()),
         }
     }
 

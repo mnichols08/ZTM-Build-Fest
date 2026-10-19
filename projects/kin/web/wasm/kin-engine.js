@@ -101,6 +101,7 @@ export function createEngine(instanceExports) {
     "kin_chat_history_truncate",
     "kin_chat_execute",
     "kin_chat_page",
+    "kin_chat_search",
     "kin_chat_text",
     "kin_chat_texts_clear",
     "kin_clear",
@@ -277,6 +278,17 @@ export function createEngine(instanceExports) {
       safeDecode(() => decodeChatPage(
         chatPageBytes(exports, chatMirror, chatRecords, options, asOf, civilDate, syncIdentity),
       )),
+    // Searches the chat (KCHF/KCHR, ABI.md): { query, limit (1 to 200),
+    // attachmentsOnly, from, to (ms; 0 for none), authors (hex, at most 16),
+    // excluded (hex IDs of messages hidden for me, at most 10,000), admins }.
+    // Resolves with { total, results: [{ messageId, index, ranges: [[start,
+    // end]] }], unsearched, missing: [{ messageId, blobRef, blobKey }] }:
+    // ranges are UTF-8 byte offsets; `missing` are texts the engine doesn't
+    // hold yet, which the host opens and searches again.
+    chatSearch: (chatRecords, options, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeChatSearch(
+        chatSearchBytes(exports, chatMirror, chatRecords, options, asOf, civilDate, syncIdentity),
+      )),
     // Hands decrypted texts to the engine's arena: [{ blobRef, text }] with
     // blobRef as 64 hex digits. Returns one boolean per text: whether it
     // passed Rust's checks and is held.
@@ -371,6 +383,109 @@ function chatPageBytes(exports, chatMirror, chatRecords, options = {}, asOf, civ
   } finally {
     release();
   }
+}
+
+// KCHF v1 (ABI.md): "KCHF", version, reserved, limit u32, flags u32 (1 =
+// attachments only), from i64, to i64, query bytes u32, admin count u32,
+// author count u32, excluded count u32, the query, the admins, the authors,
+// the excluded IDs, then the record-less KINE context.
+const MAX_CHAT_SEARCH_RESULTS = 200;
+const MAX_CHAT_SEARCH_QUERY_BYTES = 256;
+const MAX_CHAT_SEARCH_EXCLUDED = 10_000;
+
+function chatSearchBytes(exports, chatMirror, chatRecords, options = {}, asOf, civilDate, syncIdentity) {
+  if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
+  if (chatRecords.length > MAX_CHAT_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  const {
+    query = "", limit = 50, attachmentsOnly = false, from = 0, to = 0, authors = [], excluded = [], admins = [],
+  } = options;
+  const queryBytes = new TextEncoder().encode(typeof query === "string" ? query : "\u0000");
+  if (typeof query !== "string" || queryBytes.length > MAX_CHAT_SEARCH_QUERY_BYTES ||
+    !Number.isInteger(limit) || limit < 1 || limit > MAX_CHAT_SEARCH_RESULTS ||
+    !Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < 0 || (to !== 0 && to <= from) ||
+    !Array.isArray(admins) || admins.length > 16 || !Array.isArray(authors) || authors.length > 16 ||
+    !Array.isArray(excluded) || excluded.length > MAX_CHAT_SEARCH_EXCLUDED)
+    throw new KinEngineError(2, "Kin received an invalid chat search.");
+  const prefix = 48 + queryBytes.length + (admins.length + authors.length + excluded.length) * 16;
+  const request = encodeRequest([], asOf, null, civilDate, syncIdentity, prefix);
+  const view = new DataView(request.buffer);
+  request.set([75, 67, 72, 70, 1, 0, 0, 0]);
+  view.setUint32(8, limit, true);
+  view.setUint32(12, attachmentsOnly ? 1 : 0, true);
+  view.setBigInt64(16, BigInt(from), true);
+  view.setBigInt64(24, BigInt(to), true);
+  view.setUint32(32, queryBytes.length, true);
+  view.setUint32(36, admins.length, true);
+  view.setUint32(40, authors.length, true);
+  view.setUint32(44, excluded.length, true);
+  request.set(queryBytes, 48);
+  let at = 48 + queryBytes.length;
+  for (const id of [...admins, ...authors, ...excluded]) {
+    request.set(idFromHex(id), at);
+    at += 16;
+  }
+  const release = chatMirror.hold(chatRecords);
+  try {
+    return callCore(exports, "kin_chat_search", request);
+  } finally {
+    release();
+  }
+}
+
+// KCHR v1 (ABI.md): a 24-byte header, the results newest first (60 bytes,
+// ranges, excerpt each), then the texts the engine couldn't look at.
+function decodeChatSearch(bytes) {
+  const invalid = () => new KinEngineError(6, "Kin received an invalid chat search result.");
+  if (bytes.length < 24 || readAscii(bytes, 0, 4) !== "KCHR") throw invalid();
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (view.getUint16(4, true) !== 1 || view.getUint16(6, true) !== 0) throw invalid();
+  const total = view.getUint32(8, true), count = view.getUint32(12, true);
+  const unsearched = view.getUint32(16, true), listed = view.getUint32(20, true);
+  if (count > MAX_CHAT_SEARCH_RESULTS || count > total || listed > 256 || listed > unsearched) throw invalid();
+  const results = [];
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  let at = 24;
+  for (let index = 0; index < count; index += 1) {
+    if (at + 60 > bytes.length) throw invalid();
+    const ranges = view.getUint32(at + 20, true), kind = view.getUint32(at + 48, true);
+    const offset = view.getUint32(at + 52, true), length = view.getUint32(at + 56, true);
+    const postedAt = Number(view.getBigInt64(at + 40, true));
+    const end = at + 60 + ranges * 8 + length;
+    if (ranges > 4 || (kind !== 1 && kind !== 2) || !Number.isSafeInteger(postedAt) || end > bytes.length) throw invalid();
+    const found = [];
+    for (let range = 0; range < ranges; range += 1) {
+      const start = view.getUint32(at + 60 + range * 8, true), stop = view.getUint32(at + 64 + range * 8, true);
+      if (stop <= start) throw invalid();
+      found.push([start, stop]);
+    }
+    let excerpt = "";
+    try {
+      excerpt = decoder.decode(bytes.subarray(at + 60 + ranges * 8, end));
+    } catch {
+      throw invalid();
+    }
+    results.push({
+      messageId: idToHex(bytes.subarray(at, at + 16)),
+      index: view.getUint32(at + 16, true),
+      authorId: idToHex(bytes.subarray(at + 24, at + 40)),
+      postedAt,
+      contentKind: kind === 1 ? "text" : "attachment",
+      ranges: found,
+      excerpt,
+      excerptOffset: offset,
+    });
+    at = end;
+  }
+  if (at + listed * 80 !== bytes.length) throw invalid();
+  const missing = [];
+  for (let index = 0; index < listed; index += 1, at += 80) {
+    missing.push({
+      messageId: idToHex(bytes.subarray(at, at + 16)),
+      blobRef: idToHex(bytes.subarray(at + 16, at + 48)),
+      blobKey: bytes.slice(at + 48, at + 80),
+    });
+  }
+  return { total, results, unsearched, missing };
 }
 
 // KCHP v1 (ABI.md): a 28-byte header, 128 bytes per message, 32 bytes of

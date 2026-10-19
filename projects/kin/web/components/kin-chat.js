@@ -34,7 +34,9 @@ import { attachmentProblem, MAX_ATTACHMENT_FILES, safeAttachmentName } from "../
 import { seenText, typingText } from "../chat/chat-presence.js";
 import { attachmentKindLabel, formatAttachmentSize } from "../attachments/attachment-preview.js";
 import { ObjectUrlRegistry } from "../attachments/object-urls.js";
+import { excerptRanges, highlightRanges } from "../chat/chat-search-ranges.js";
 import "./kin-emoji-picker.js";
+import "./kin-chat-search.js";
 
 /** Rows rendered at first and added per page. */
 const PAGE = 60;
@@ -118,6 +120,7 @@ class KinChat extends HTMLElement {
     if (this.replyBar) this.replyBar.hidden = true;
     this.highlighted = null;
     clearTimeout(this.highlightTimer);
+    this.clearSearchMark();
     // Per message: { deleted } is final; { pending } and { failed } are
     // retried on the room's next change; { loading } while a load runs.
     this.textStatus = new Map();
@@ -151,6 +154,32 @@ class KinChat extends HTMLElement {
     const heading = document.createElement("h2");
     heading.id = "chat-heading";
     heading.textContent = "Household chat";
+    const top = document.createElement("div");
+    top.className = "chat-top";
+    this.searchToggle = document.createElement("button");
+    this.searchToggle.type = "button";
+    this.searchToggle.className = "chat-search-toggle";
+    this.searchToggle.textContent = "Search chat";
+    this.searchToggle.setAttribute("aria-expanded", "false");
+    this.searchToggle.setAttribute("aria-controls", "chat-search-panel");
+    this.searchToggle.addEventListener("click", () => (this.searchPanel.hidden ? this.openSearch() : this.closeSearch({ focus: true })));
+    top.append(heading, this.searchToggle);
+    // The chat's own search box and filters (#124).
+    this.searchPanel = document.createElement("div");
+    this.searchPanel.id = "chat-search-panel";
+    this.searchPanel.className = "chat-search-panel";
+    this.searchPanel.hidden = true;
+    this.search = document.createElement("kin-chat-search");
+    this.search.setAttribute("with-controls", "");
+    this.search.addEventListener("kin:open-chat-message", (event) => {
+      event.stopPropagation();
+      void this.showSearchResult(event.detail);
+    });
+    this.search.addEventListener("kin:close-chat-search", (event) => {
+      event.stopPropagation();
+      this.closeSearch({ focus: true });
+    });
+    this.searchPanel.append(this.search);
     this.notice = document.createElement("p");
     this.notice.className = "chat-notice";
 
@@ -329,7 +358,7 @@ class KinChat extends HTMLElement {
     this.readOnly.setAttribute("role", "status");
     this.readOnly.textContent = "Your household has set chat to read-only for you.";
     this.readOnly.hidden = true;
-    section.append(heading, this.notice, this.scroller, this.typingLine, this.jump, form, this.readOnly, this.announcer, this.viewer, this.details);
+    section.append(top, this.searchPanel, this.notice, this.scroller, this.typingLine, this.jump, form, this.readOnly, this.announcer, this.viewer, this.details);
     this.replaceChildren(section);
     this.queueRender("reset");
   }
@@ -354,6 +383,7 @@ class KinChat extends HTMLElement {
     this.unsubscribePresence = null;
     this.chatRoom?.presence?.stopTyping();
     this.chatRoom = value ?? null;
+    if (this.search) this.search.room = this.chatRoom;
     this.resetView();
     this.stopEditing({ restoreDraft: true });
     if (this.chatRoom) {
@@ -856,6 +886,7 @@ class KinChat extends HTMLElement {
       entry.row.remove();
     }
     this.rows = keep;
+    if (this.searchMark) this.applySearchMark();
   }
 
   signature(message, grouped, room) {
@@ -1075,6 +1106,52 @@ class KinChat extends HTMLElement {
       this.highlighted = null;
       this.reconcile();
     }, 1800);
+  }
+
+  openSearch() {
+    this.searchPanel.hidden = false;
+    this.searchToggle.setAttribute("aria-expanded", "true");
+    this.search.room = this.chatRoom;
+    this.search.focusInput();
+  }
+
+  closeSearch({ focus = false } = {}) {
+    this.searchPanel.hidden = true;
+    this.searchToggle.setAttribute("aria-expanded", "false");
+    this.clearSearchMark();
+    if (focus) this.searchToggle.focus();
+  }
+
+  /** Opens a search result: brings the message into view, marks the row for
+   * a moment and highlights the matched text with text ranges (the CSS
+   * Custom Highlight API), never by rewriting markup (#124). */
+  async showSearchResult({ messageId, index, ranges = [] }) {
+    this.clearSearchMark();
+    await this.jumpTo({ messageId, index });
+    const message = this.messages.find((candidate) => candidate.messageId === messageId);
+    if (!message || typeof message.text !== "string") return;
+    this.searchMark = { messageId, text: message.text, ranges: excerptRanges(message.text, 0, ranges) };
+    this.applySearchMark();
+  }
+
+  applySearchMark() {
+    this.unmark?.();
+    this.unmark = null;
+    const mark = this.searchMark;
+    // An edit since the search changed the text the ranges point into.
+    const current = mark && this.messages.find((message) => message.messageId === mark.messageId);
+    if (mark && current?.text !== mark.text) {
+      this.searchMark = null;
+      return;
+    }
+    const text = mark && this.rowFor(mark.messageId)?.querySelector(".chat-text");
+    if (text) this.unmark = highlightRanges(text, mark.ranges);
+  }
+
+  clearSearchMark() {
+    this.unmark?.();
+    this.unmark = null;
+    this.searchMark = null;
   }
 
   /** Starts answering `message`: the quote bar shows above the box. */
