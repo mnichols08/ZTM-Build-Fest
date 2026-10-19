@@ -316,7 +316,9 @@ export async function fridgeRegressions(client, until) {
     assert.ok(layout.scrollWidth <= layout.innerWidth, `${label}: no horizontal scroll`);
     assert.deepEqual(layout.small, [], `${label}: every visible control is at least 44px tall`);
   }
-  const inkCheck = () => page(`(() => {
+  const inkCheck = () => page(`(async () => {
+    // Two frames, so a changed appearance has been styled and painted.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const fridge = document.querySelector("kin-fridge");
     fridge.drawInk();
     const canvas = fridge.querySelector(".fridge-ink");
@@ -324,7 +326,7 @@ export async function fridgeRegressions(client, until) {
     let inked = 0;
     for (let i = 3; i < data.length; i += 4) if (data[i]) inked += 1;
     const moving = document.getAnimations().filter((animation) => fridge.contains(animation.effect?.target ?? null)).length;
-    return { inked, palette: fridge.palette(), door: getComputedStyle(fridge.querySelector(".fridge-door")).backgroundColor, moving };
+    return { inked, palette: fridge.palette(), door: getComputedStyle(fridge.querySelector(".fridge-door")).getPropertyValue("--fridge-door").trim(), moving };
   })()`);
   await setViewport(client, { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   const light = await inkCheck();
@@ -344,6 +346,8 @@ export async function fridgeRegressions(client, until) {
       rule, sheets: [...document.styleSheets].map((sheet) => sheet.href ?? "inline").join(" "), adopted: document.adoptedStyleSheets.length };
   })()`);
   await page(`(${JSON.stringify(appearance)} === null ? delete document.documentElement.dataset.kinAppearance : document.documentElement.dataset.kinAppearance = ${JSON.stringify(appearance)}, true)`);
+  // The door's own colour variable (its background is var(--fridge-door));
+  // headless Edge has reported a stale computed background here.
   assert.notEqual(dark.door, light.door, `dark mode darkens the door (${JSON.stringify(darkFacts)}; was ${JSON.stringify(appearance)})`);
   assert.notDeepEqual(dark.palette, light.palette, "dark mode remaps the ink colours");
   assert.ok(dark.inked > 0, "drawings stay visible in dark mode");
