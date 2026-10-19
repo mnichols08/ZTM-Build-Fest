@@ -244,7 +244,7 @@ export async function chatRegressions() {
     fresh.room = room;
     await settle();
     const heard = [];
-    const freshAnnouncer = fresh.querySelector('[aria-live="polite"]');
+    const freshAnnouncer = fresh.querySelector('.visually-hidden[aria-live="polite"]');
     const ear = new MutationObserver(() => { if (freshAnnouncer.textContent) heard.push(freshAnnouncer.textContent); });
     ear.observe(freshAnnouncer, { childList: true, characterData: true, subtree: true });
     for (let i = 0; i < 4; i += 1) {
@@ -283,7 +283,7 @@ export async function chatRegressions() {
 
   // Receiving (what the live socket's hint brings): appended, its text
   // loaded, announced politely, and shown as text only.
-  const announcer = chat.querySelector('[aria-live="polite"]');
+  const announcer = chat.querySelector('.visually-hidden[aria-live="polite"]');
   add(other, '<img src=x onerror="window.chatXss=1"> Dinner at 6', { incoming: true });
   notify();
   await settle();
