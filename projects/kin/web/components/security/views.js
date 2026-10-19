@@ -46,7 +46,7 @@ export class SecurityViews {
     // Shown (and counted) only once there is chat to include.
     void room.chatExportPlan().then((plan) => {
       if (!parent.isConnected || !plan.events) return;
-      parent.prepend(row);
+      (parent.querySelector("h2, h3, h4") ?? { after: (node) => parent.prepend(node) }).after(row);
       this.host.chatOption = box;
       const megabytes = (plan.blobBytes + plan.events * 400) / (1024 * 1024);
       const size = megabytes < 0.1 ? "under 0.1 MB" : `about ${megabytes.toFixed(1)} MB`;
