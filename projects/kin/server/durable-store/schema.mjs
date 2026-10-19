@@ -714,6 +714,44 @@ export const schemaMethods = {
         throw new DurableStoreError("Kin could not complete the chat key migration.", { cause: error });
       }
     }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 17) {
+      try {
+        this.transaction(() => {
+          // #317 (ADR 0011): the fridge's board relay, a third encrypted
+          // event stream laid out like the chat relay.
+          this.db.exec(`
+            CREATE TABLE board_relay_state (
+              household_id TEXT PRIMARY KEY REFERENCES households(id),
+              next_sequence INTEGER NOT NULL CHECK (next_sequence >= 1),
+              max_logical_time TEXT NOT NULL
+            );
+            CREATE TABLE board_events (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              relay_sequence INTEGER NOT NULL CHECK (relay_sequence >= 1),
+              event_id TEXT NOT NULL,
+              device_id TEXT NOT NULL,
+              device_sequence INTEGER NOT NULL CHECK (device_sequence >= 1),
+              key_epoch INTEGER NOT NULL CHECK (key_epoch BETWEEN 1 AND 128),
+              canonical_envelope TEXT NOT NULL,
+              PRIMARY KEY (household_id, relay_sequence),
+              UNIQUE (household_id, event_id)
+            );
+            CREATE TABLE board_device_sequences (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              device_id TEXT NOT NULL,
+              last_sequence INTEGER NOT NULL CHECK (last_sequence >= 1),
+              PRIMARY KEY (household_id, device_id)
+            );
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(18, Date.now());
+          sqlitePragma(this.db, "user_version = 18");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the board relay migration.", { cause: error });
+      }
+    }
   },
 
   verify() {

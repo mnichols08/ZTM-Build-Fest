@@ -15,8 +15,8 @@
 // with identical bytes; a page only shows events from epochs the reading
 // device may read. Pushes wait out a household key rotation.
 import { PairingError, canManageTrust, chatAccess } from "./pairing-service.mjs";
-import { canonicalEventEnvelope, MAX_LOGICAL_TIME_ADVANCE } from "./sync-contract.mjs";
-import { decodeCursor, encodeCursor, MAX_EVENTS_PER_BATCH, validateEventEnvelope } from "./sync-service.mjs";
+import { encodeCursor, validateEventEnvelope } from "./sync-service.mjs";
+import { EventStream, streamStorage } from "./event-stream.mjs";
 import { CHAT_EVENTS_PER_MINUTE, DeviceWindow, chatRateLimited } from "./chat-limits.mjs";
 import { DurableConflictError, MAX_CHAT_HIDDEN_RECORD_BYTES, MAX_CHAT_RECEIPT_BYTES, MAX_HOUSEHOLD_CHAT_EVENTS } from "./durable-store.mjs";
 import { isProvisioningPackageValid, isSyncId } from "./sync-contract.mjs";
@@ -27,7 +27,6 @@ import { isProvisioningPackageValid, isSyncId } from "./sync-contract.mjs";
 export const RECEIPT_WRITES_PER_MINUTE = 40;
 const RECEIPT_WINDOW_MS = 60_000;
 
-const MAX_REQUEST_BYTES = 200_000;
 /** Most chat events one pull returns. Chat is far busier than household
  * events, so its pages are larger than the household relay's (at most
  * about 1.6 MB of envelopes). */
@@ -163,6 +162,27 @@ export class ChatRelayService {
     this.receiptWrites = new Map();
     /** deviceId → events sent in the last minute (#125). */
     this.eventWindow = new DeviceWindow({ limit: CHAT_EVENTS_PER_MINUTE, windowMs: 60_000, now: () => syncService.now() });
+    // Push, status and pull shared with the fridge's stream (event-stream.mjs).
+    this.stream = new EventStream({
+      syncService, storage: streamStorage(this.storage, "chat"), maxEvents: MAX_HOUSEHOLD_CHAT_EVENTS, maxPull: MAX_CHAT_PULL,
+      window: this.eventWindow, rateLimited: () => chatRateLimited("many messages"),
+      // The household's other devices hear about it at once (#107) and
+      // members get a push (#85).
+      hint: (householdId, auth) => {
+        try { syncService.pushService?.eventsAccepted(householdId, auth.member.id, { chat: true }); } catch { /* best effort */ }
+        syncService.liveService?.eventsAccepted(householdId, auth.device.id, { chat: true });
+      },
+      words: {
+        batchInvalid: "That chat batch is invalid.",
+        batchTooLarge: "That chat batch is too large.",
+        duplicate: "A chat event conflicts with one already received.",
+        logicalTime: "That chat message is outside Kin's supported event-order range.",
+        sequenceGap: "This device must send its earlier chat messages first.",
+        fullCode: "chat_limit", full: "This household's chat is full.",
+        conflictCode: "chat_relay_conflict", conflict: "Chat changed meanwhile; retry.",
+        cursor: "Kin could not continue from that chat position.",
+      },
+    });
   }
 
   /** The household's chat event use, for the admin's storage line (#125). */
@@ -197,64 +217,7 @@ export class ChatRelayService {
     // rotation) must seal again, not put plain events into a keyed chat.
     if (chatEpoch !== this.storage.chatKeyEpoch(auth.household.id))
       throw new PairingError("chat_key_stale", "The chat key changed. Chat will send again after the next sync.", 409);
-    if (!Array.isArray(envelopes) || envelopes.length < 1 || envelopes.length > MAX_EVENTS_PER_BATCH)
-      throw new PairingError("sync_batch_invalid", "That chat batch is invalid.", 400);
-    const householdId = auth.household.id;
-    // New events only count: a retry of events the service already holds is
-    // free. Checked here, charged only once they are stored, so a batch that
-    // fails (full, conflict, invalid) never uses up the allowance.
-    const fresh = envelopes.filter((envelope) => !this.storage.findChatEvent(householdId, envelope.eventId)).length;
-    if (fresh && !this.eventWindow.allows(auth.device.id, fresh)) throw chatRateLimited("many messages");
-    const relay = this.storage.chatRelayState(householdId);
-    const expectedDeviceSequence = this.storage.chatDeviceSequence(householdId, auth.device.id);
-    let deviceSequence = expectedDeviceSequence;
-    let maxLogicalTime = BigInt(relay.maxLogicalTime);
-    let requestBytes = 0;
-    const staged = [], seen = new Map();
-    for (const envelope of envelopes) {
-      validateEventEnvelope(envelope, auth, sync.currentEpoch);
-      const canonical = canonicalEventEnvelope(envelope);
-      requestBytes += Buffer.byteLength(canonical);
-      if (requestBytes > MAX_REQUEST_BYTES)
-        throw new PairingError("sync_batch_too_large", "That chat batch is too large.", 413);
-      const existing = this.storage.findChatEvent(householdId, envelope.eventId) ?? seen.get(envelope.eventId);
-      if (existing) {
-        if (existing.canonical !== canonical)
-          throw new PairingError("event_duplicate_conflict", "A chat event conflicts with one already received.", 409);
-        continue;
-      }
-      const logicalTime = BigInt(envelope.logicalTime);
-      if (logicalTime - maxLogicalTime > MAX_LOGICAL_TIME_ADVANCE)
-        throw new PairingError("logical_time_invalid", "That chat message is outside Kin's supported event-order range.", 400);
-      if (logicalTime > maxLogicalTime) maxLogicalTime = logicalTime;
-      if (envelope.deviceSequence !== deviceSequence + 1)
-        throw new PairingError("sync_sequence_gap", "This device must send its earlier chat messages first.", 409);
-      if (relay.eventCount + staged.length >= MAX_HOUSEHOLD_CHAT_EVENTS)
-        throw new PairingError("chat_limit", "This household's chat is full.", 413);
-      deviceSequence = envelope.deviceSequence;
-      const entry = { canonical, envelope };
-      staged.push(entry);
-      seen.set(envelope.eventId, entry);
-    }
-    if (staged.length) {
-      try {
-        this.storage.commitChatEvents(householdId, {
-          expectedNextSequence: relay.nextSequence, deviceId: auth.device.id, expectedDeviceSequence,
-          entries: staged, maxLogicalTime: maxLogicalTime.toString(),
-        });
-      } catch (error) {
-        if (error instanceof DurableConflictError)
-          throw new PairingError("chat_relay_conflict", "Chat changed meanwhile; retry.", 409);
-        throw error;
-      }
-      this.eventWindow.spend(auth.device.id, staged.length);
-      // After the commit, in the background: the household's other devices
-      // hear about it at once (#107) and members get a push (#85).
-      try { this.syncService.pushService?.eventsAccepted(householdId, auth.member.id, { chat: true }); } catch { /* best effort */ }
-      try { this.syncService.liveService?.eventsAccepted(householdId, auth.device.id, { chat: true }); } catch { /* best effort */ }
-    }
-    const after = this.storage.chatRelayState(householdId);
-    return { accepted: envelopes.length, latestCursor: encodeCursor(after.nextSequence - 1) };
+    return this.stream.push(auth, envelopes, sync);
   }
 
   /** Where this device stands in the chat relay: its last chat sequence
@@ -262,22 +225,12 @@ export class ChatRelayService {
    * gap) and the relay's latest cursor. */
   status(auth) {
     this.assertCanChat(auth);
-    const householdId = auth.household.id;
-    return {
-      deviceSequence: this.storage.chatDeviceSequence(householdId, auth.device.id),
-      latestCursor: encodeCursor(this.storage.chatRelayState(householdId).nextSequence - 1),
-    };
+    return this.stream.status(auth);
   }
 
   pull(auth, cursorValue = "", limitValue = String(MAX_CHAT_PULL)) {
     this.assertCanChat(auth);
-    const householdId = auth.household.id;
-    const cursor = decodeCursor(cursorValue);
-    const limit = Number(limitValue);
-    const relay = this.storage.chatRelayState(householdId);
-    if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_CHAT_PULL || cursor > relay.nextSequence - 1)
-      throw new PairingError("sync_cursor_invalid", "Kin could not continue from that chat position.", 400);
-    return this.storage.readChatEvents(householdId, cursor, limit, auth.device.syncHistoryFromEpoch ?? 1);
+    return this.stream.pull(auth, cursorValue, limitValue);
   }
 
   /**

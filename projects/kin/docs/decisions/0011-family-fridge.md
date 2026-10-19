@@ -93,10 +93,13 @@ time); replay order is the protocol-8 order `(logical_time, device, event_id)`.
   is compacted ([RETENTION](../RETENTION.md)). A board log that reaches its cap
   makes the fridge read-only with the same truthful message. Compaction would
   need its own proof, as RETENTION says.
-- The board log is part of the encrypted archive (export and restore), is
-  purged on household deletion on the service, and its local database is
-  deleted when the device leaves the household. (The chat log is not deleted
-  locally on leave today; that is a separate fix.)
+- The board log is part of the encrypted archive (export and restore) and is
+  purged on household deletion on the service. Like the household history and
+  the chat log, its local database (`kin-board-log:<household>`) stays on a
+  device that leaves the household, encrypted under keys that device keeps;
+  removing it is clearing the site's data, as [RETENTION](../RETENTION.md)
+  says. `BoardLogStore.remove` exists for a later household-wide local
+  cleanup to call.
 
 ### Access
 - **Everyone may draw and hang magnets by default**, Limited and Temporary
