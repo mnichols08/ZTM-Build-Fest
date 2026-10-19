@@ -33,6 +33,29 @@ id_type!(ReferenceRecordId);
 id_type!(ReferenceFieldId);
 id_type!(MaintenanceEventId);
 id_type!(AttachmentId);
+id_type!(ChatMessageId);
+
+/// What a chat message's content blob holds (#109).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChatContentKind {
+    Text,
+    Attachment,
+    /// A poll (#135): its question and options are the blob; the number of
+    /// options and whether several may be chosen are part of the event, so
+    /// Rust can check votes.
+    Poll(crate::chat::PollSpec),
+}
+
+impl ChatContentKind {
+    /// The kind's code in events and pages: 1 text, 2 attachment, 3 poll.
+    pub const fn code(self) -> u8 {
+        match self {
+            ChatContentKind::Text => 1,
+            ChatContentKind::Attachment => 2,
+            ChatContentKind::Poll(_) => 3,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -279,6 +302,75 @@ pub enum EventKind {
         device_id: DeviceId,
         nickname: Option<String>,
     },
+    /// A chat message (#109). Its content is a blob outside the log: the
+    /// 32-byte content hash and the blob's own 32-byte key (chat.rs).
+    ChatMessagePosted {
+        message_id: ChatMessageId,
+        content_kind: ChatContentKind,
+        blob_ref: [u8; 32],
+        blob_key: [u8; 32],
+        /// The message this one answers (#129). Its text is looked up at
+        /// render time, never copied.
+        reply_to: Option<ChatMessageId>,
+        /// Who it mentions (#130).
+        mentions: crate::chat::ChatMentions,
+    },
+    /// The author replaces a message's content with a new blob.
+    ChatMessageEdited {
+        message_id: ChatMessageId,
+        blob_ref: [u8; 32],
+        blob_key: [u8; 32],
+        /// Who the edited message mentions (#130): replaces the earlier list.
+        mentions: crate::chat::ChatMentions,
+    },
+    /// Deletes a message for everyone: by its author, or (`by_admin`) by a
+    /// household admin.
+    ChatMessageDeleted {
+        message_id: ChatMessageId,
+        by_admin: bool,
+    },
+    /// A member turns one emoji reaction to a message on or off (#127). The
+    /// emoji is one grapheme (`chat::check_emoji`). The last write per
+    /// (member, message, emoji) in replay order wins.
+    ChatReactionSet {
+        message_id: ChatMessageId,
+        emoji: String,
+        on: bool,
+    },
+    /// A member pins a message, or unpins one (#131). Pinning a message that
+    /// is already pinned changes nothing; any member may unpin.
+    ChatPinSet {
+        message_id: ChatMessageId,
+        on: bool,
+    },
+    /// A member's vote in a poll (#135): the options chosen as a bit set
+    /// (bit n is option n), which replaces their earlier vote; none clears
+    /// it. Ignored once the poll is closed.
+    ChatPollVote {
+        message_id: ChatMessageId,
+        options: u16,
+    },
+    /// The poll's author closes it (#135): no vote counts after this.
+    ChatPollClosed {
+        message_id: ChatMessageId,
+    },
+}
+
+impl EventKind {
+    /// Chat events (#109) live in the chat log, never in the household log
+    /// (history.rs): the two are replayed, capped and kept apart.
+    pub const fn is_chat(&self) -> bool {
+        matches!(
+            self,
+            EventKind::ChatMessagePosted { .. }
+                | EventKind::ChatMessageEdited { .. }
+                | EventKind::ChatMessageDeleted { .. }
+                | EventKind::ChatReactionSet { .. }
+                | EventKind::ChatPinSet { .. }
+                | EventKind::ChatPollVote { .. }
+                | EventKind::ChatPollClosed { .. }
+        )
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

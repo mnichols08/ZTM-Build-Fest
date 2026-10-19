@@ -4,11 +4,13 @@ import { isIP } from "node:net";
 import { pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
-import { PairingError, PairingService, parseHouseholdPolicy, requireTrustAuthority } from "./pairing-service.mjs";
+import { PairingError, PairingService, CHAT_ACCESS, parseHouseholdPolicy, requireTrustAuthority } from "./pairing-service.mjs";
 import { deviceLabel } from "./pairing-service/device-label.mjs";
 import { configuredDatabasePath, permissionProblem } from "./permissions.mjs";
 import { builtInManifest, etagMatches, INSTALL_ICONS, publishedManifest } from "./install-identity.mjs";
 import { PushService } from "./push-service.mjs";
+import { ChatBlobService } from "./chat-blob-service.mjs";
+import { ChatRelayService } from "./chat-relay-service.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
 import {
@@ -16,6 +18,8 @@ import {
   DurableStore,
   DurableStoreError,
   MAX_ATTACHMENT_BYTES,
+  MAX_CHAT_HIDDEN_RECORD_BYTES,
+  MAX_CHAT_RECEIPT_BYTES,
 } from "./durable-store.mjs";
 import { WebAuthn } from "./webauthn.mjs";
 import { readBody, readJsonBody } from "./http-body.mjs";
@@ -29,6 +33,7 @@ import {
 } from "../web/sync/envelope-wire.js";
 import { isInsideRoot, webRoot } from "./path-safety.mjs";
 import { clientKey, parseTrustedProxies } from "./client-key.mjs";
+import { LiveService } from "./live/live-service.mjs";
 
 const FLOW_TTL_MS = 2 * 60_000;
 const MAX_ACTIVE_FLOWS = 512;
@@ -82,6 +87,12 @@ export function createKinServer(options = {}) {
   const pushService = options.pushService ?? new PushService({ pairingService: service, store, now: options.now ?? (() => Date.now()),
     subject: process.env.KIN_PUSH_SUBJECT || origin });
   syncService.pushService = pushService;
+  // Chat content blobs (#110).
+  const chatBlobService = new ChatBlobService({ pairingService: service, store, now: options.now ?? (() => Date.now()) });
+  syncService.chatBlobService = chatBlobService;
+  // The chat relay (#111): chat events in their own encrypted stream.
+  const chatRelayService = new ChatRelayService({ syncService, store });
+  syncService.chatRelayService = chatRelayService;
   const webauthn =
     options.webauthn ??
     new WebAuthn({
@@ -96,6 +107,8 @@ export function createKinServer(options = {}) {
     service,
     syncService,
     pushService,
+    chatBlobService,
+    chatRelayService,
     store,
     webauthn,
     flows: new Map(),
@@ -112,6 +125,12 @@ export function createKinServer(options = {}) {
     origin,
     clientKey: (request) => clientKey(request, trustedProxies),
   };
+  // The live channel (#107): one WebSocket per trusted device at /api/live.
+  const liveService = options.liveService ?? new LiveService({
+    service, origin, store, readSession: (request) => cookies(request).kin_session, ...(options.live ?? {}),
+  });
+  syncService.liveService = liveService;
+  context.liveService = liveService;
   const server = createServer(async (request, response) => {
     const requestId = randomBytes(12).toString("hex");
     response.setHeader("X-Request-ID", requestId);
@@ -218,11 +237,27 @@ export function createKinServer(options = {}) {
   const lifecycleTimer = setInterval(pruneExpiredDeletions, 60_000);
   lifecycleTimer.unref?.();
   server.on("close", () => clearInterval(lifecycleTimer));
+  server.on("upgrade", (request, socket, head) => {
+    try {
+      liveService.handleUpgrade(request, socket, head);
+    } catch {
+      socket.destroy();
+    }
+  });
+  // close() waits for open sockets, so end live connections first.
+  const close = server.close.bind(server);
+  server.close = (callback) => {
+    liveService.closeAll();
+    return close(callback);
+  };
   return {
     server,
     service,
     syncService,
     pushService,
+    chatBlobService,
+    chatRelayService,
+    liveService,
     webauthn,
     store,
     flows: context.flows,
@@ -348,16 +383,30 @@ async function api(request, response, url, context) {
   });
   for (const householdId of service.finalizeExpiredDeletions(context.now()))
     syncService.forgetHousehold(householdId);
+  // A chat blob upload is authorized before its body is read, so nobody
+  // without a session can make the service buffer 4 MiB.
+  const chatBlobRoute = CHAT_BLOB_ROUTE.exec({ pathname: url.pathname })?.pathname.groups.ref ?? null;
+  let chatUploadAuth = null;
+  if (request.method === "PUT" && chatBlobRoute) {
+    chatUploadAuth = syncService.authorize(cookies(request).kin_session);
+    // A member who can't post is refused before the body is read.
+    context.chatBlobService.assertCanChat(chatUploadAuth, "write");
+  }
   const binaryUpload = (request.method === "POST" && /^\/api\/sync\/attachments\/[a-f0-9]{32}$/.test(url.pathname)) ||
+    chatUploadAuth !== null ||
     (request.method === "PUT" && url.pathname === "/api/household/settings");
   // Event envelopes travel as binary batches (web/sync/envelope-wire.js).
-  const envelopePush = request.method === "POST" && url.pathname === "/api/sync/events";
+  const envelopePush = request.method === "POST" && (url.pathname === "/api/sync/events" || url.pathname === "/api/chat/events");
   const body = envelopePush
     ? await readEnvelopeBatch(request, response)
     : binaryUpload
     ? await readBinary(request, response)
     : request.method === "PUT" && url.pathname === "/api/household/install-identity"
     ? await readJsonBody(request, response, MAX_INSTALL_IDENTITY_BODY_BYTES)
+    : request.method === "PUT" && url.pathname === "/api/chat/hidden"
+    ? await readJsonBody(request, response, MAX_CHAT_HIDDEN_RECORD_BYTES + 1024)
+    : request.method === "PUT" && url.pathname === "/api/chat/receipts"
+    ? await readJsonBody(request, response, MAX_CHAT_RECEIPT_BYTES + 1024)
     : ["POST", "PUT", "DELETE"].includes(request.method)
     ? await readJsonBody(request, response, MAX_JSON_BODY_BYTES)
     : {};
@@ -738,6 +787,8 @@ async function api(request, response, url, context) {
         });
       return result;
     });
+    // A replacement or recovery revokes old devices: their sockets close now.
+    context.liveService.revalidate(auth.household.id);
     json(response, 200, approved);
     return;
   }
@@ -798,6 +849,7 @@ async function api(request, response, url, context) {
     }
     if (signedOutDevice) context.pushService.signedOut(signedOutDevice);
     service.logout(session);
+    if (signedOutDevice) context.liveService.revalidate(service.devices.get(signedOutDevice)?.householdId);
     clearCookie(response, "kin_session", secureCookies);
     json(response, 200, { loggedOut: true });
     return;
@@ -910,6 +962,24 @@ async function api(request, response, url, context) {
       return;
     }
   }
+  if (chatUploadAuth) {
+    // Authorized (and rate-limited) once, before the body was read.
+    json(response, 200, withTransaction(context, () => context.chatBlobService.put(chatUploadAuth, chatBlobRoute, body)));
+    return;
+  }
+  if (chatBlobRoute && request.method === "GET") {
+    const bytes = context.chatBlobService.get(syncService.authorize(session), chatBlobRoute);
+    response.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": bytes.length, "Cache-Control": "no-store" });
+    response.end(bytes);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/chat/blobs/retire") {
+    const auth = syncService.authorize(session);
+    // Not in an outer transaction: the store zeroes freed pages and then
+    // checkpoints the WAL, which needs no transaction open.
+    json(response, 200, context.chatBlobService.retire(auth, body?.refs));
+    return;
+  }
   if (url.pathname.startsWith("/api/push/")) {
     const auth = syncService.authorize(session);
     const { pushService } = context;
@@ -938,8 +1008,69 @@ async function api(request, response, url, context) {
     });
     return;
   }
-  if (envelopePush) {
+  if (envelopePush && url.pathname === "/api/sync/events") {
     json(response, 200, syncService.push(session, body));
+    return;
+  }
+  if (url.pathname === "/api/chat/events" && request.method === "POST") {
+    const auth = syncService.authorize(session);
+    json(response, 200, withTransaction(context, () => context.chatRelayService.push(auth, body, { chatEpoch: Number(request.headers["x-kin-chat-epoch"] ?? 0) })));
+    return;
+  }
+  if (url.pathname === "/api/chat/hidden" && request.method === "GET") {
+    json(response, 200, context.chatRelayService.hidden(syncService.authorize(session), url.searchParams.get("since")));
+    return;
+  }
+  if (url.pathname === "/api/chat/hidden" && request.method === "PUT") {
+    const auth = syncService.authorize(session);
+    json(response, 200, context.chatRelayService.putHidden(auth, body));
+    return;
+  }
+  if (url.pathname === "/api/chat/receipts" && request.method === "GET") {
+    json(response, 200, context.chatRelayService.receipts(syncService.authorize(session)));
+    return;
+  }
+  if (url.pathname === "/api/chat/receipts" && request.method === "PUT") {
+    const auth = syncService.authorize(session);
+    json(response, 200, context.chatRelayService.putReceipt(auth, body));
+    return;
+  }
+  if (url.pathname === "/api/chat/keys" && request.method === "GET") {
+    json(response, 200, context.chatRelayService.keys(syncService.authorize(session)));
+    return;
+  }
+  if (url.pathname === "/api/chat/keys" && request.method === "POST") {
+    const auth = syncService.authorize(session);
+    json(response, 200, withTransaction(context, () => context.chatRelayService.putKeys(auth, body)));
+    return;
+  }
+  if (url.pathname === "/api/chat/keys/reject" && request.method === "POST") {
+    json(response, 200, context.chatRelayService.rejectKey(syncService.authorize(session), body));
+    return;
+  }
+  if (url.pathname === "/api/chat/storage" && request.method === "GET") {
+    const auth = syncService.authorize(session);
+    // usage() first: it refuses anyone who is not an admin.
+    const blobs = context.chatBlobService.usage(auth);
+    json(response, 200, { ...blobs, ...context.chatRelayService.eventUsage(auth) });
+    return;
+  }
+  if (url.pathname === "/api/chat/status" && request.method === "GET") {
+    json(response, 200, context.chatRelayService.status(syncService.authorize(session)));
+    return;
+  }
+  if (url.pathname === "/api/chat/events" && request.method === "GET") {
+    const auth = syncService.authorize(session);
+    let page;
+    try {
+      page = context.chatRelayService.pull(auth, url.searchParams.get("cursor") ?? "", url.searchParams.get("limit") ?? undefined);
+      binary(response, encodeEventPage(page));
+    } catch (error) {
+      if (!(error instanceof EnvelopeWireError) &&
+          !(error instanceof DurableStoreError && error.code === "sync_store_invalid")) throw error;
+      console.error(JSON.stringify({ event: "chat_store_invalid", householdId: auth.household.id }));
+      throw new PairingError("sync_store_invalid", "Kin's stored chat history is invalid.", 500);
+    }
     return;
   }
   if (request.method === "GET" && url.pathname === "/api/sync/events") {
@@ -1086,6 +1217,7 @@ async function api(request, response, url, context) {
         auth.household.members.has(activeFlow.memberId)
       )
         context.flows.delete(flowId);
+    context.liveService.revalidate(auth.household.id);
     clearCookie(response, "kin_session", secureCookies);
     json(response, 200, {
       ...result,
@@ -1268,6 +1400,32 @@ async function api(request, response, url, context) {
         service.setHouseholdAdmin(session, flow.targetMemberId, flow.admin, auth.member.id),
       ),
     );
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/household/chat-policy/options") {
+    const change = service.chatPolicyContext(session);
+    if (!CHAT_ACCESS.includes(body?.limited) || !CHAT_ACCESS.includes(body?.temporary)) throw badRequest();
+    json(response, 200, issueAuthenticationFlow(
+      { purpose: "set-chat-policy", limited: body?.limited, temporary: body?.temporary, memberId: change.memberId, deviceId: change.deviceId },
+      change.credentialIds,
+      context,
+    ));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/household/chat-policy/finish") {
+    const flow = consumeFlow(body.flow, context);
+    if (flow.purpose !== "set-chat-policy") throw badRequest();
+    const auth = service.authorize(session);
+    if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+    const credential = service.credentials.get(body.credential?.id);
+    if (!credential || credential.memberId !== auth.member.id)
+      throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    const result = withTransaction(context, () =>
+      service.setChatPolicy(session, { limited: flow.limited, temporary: flow.temporary }, auth.member.id),
+    );
+    if (result.changed) syncService.chatPolicyChanged(auth.household.id);
+    json(response, 200, result);
     return;
   }
   if (
@@ -1478,7 +1636,7 @@ function setHeaders(response) {
   response.setHeader("Referrer-Policy", "no-referrer");
   response.setHeader(
     "Permissions-Policy",
-    "camera=(self), microphone=(), geolocation=()",
+    "camera=(self), microphone=(self), geolocation=()",
   );
 }
 // The service worker keys its shell cache by the release in the registration
@@ -1531,6 +1689,7 @@ export function fingerprintedShell(html, fingerprint) {
 
 // New routes match with URLPattern (#106) rather than hand-written parsing.
 const INSTALL_ICON_ROUTE = new URLPattern({ pathname: "/install-icon/:file([a-z0-9\\-]+[.]png)" });
+const CHAT_BLOB_ROUTE = new URLPattern({ pathname: "/api/chat/blobs/:ref([a-f0-9]{64})" });
 
 // The install identity (#78) a trusted device's kin_device cookie resolves
 // to, or the built-in Kin manifest and icon. Always private to the browser
@@ -1624,6 +1783,8 @@ function serve(response, pathname) {
     ".wasm": "application/wasm",
     ".webmanifest": "application/manifest+json",
     ".svg": "image/svg+xml",
+    // The chat emoji table (#113).
+    ".json": "application/json; charset=utf-8",
   };
   if (requested === "index.html") {
     let body;

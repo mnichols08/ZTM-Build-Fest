@@ -3,6 +3,8 @@ import { MAX_ACTIVE_MEMBERS } from "../identity-limits.mjs";
 import {
   DurableStoreError,
   MAX_ATTACHMENT_BYTES,
+  MAX_CHAT_BLOB_BYTES,
+  MIN_CHAT_BLOB_BYTES,
   SERVER_SCHEMA_VERSION,
   sqlitePragma,
 } from "./shared.mjs";
@@ -525,6 +527,191 @@ export const schemaMethods = {
       } catch (error) {
         if (error instanceof DurableStoreError) throw error;
         throw new DurableStoreError("Kin could not complete the push notification migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 11) {
+      try {
+        this.transaction(() => {
+          // v1.1 (#110): chat content blobs, addressed by the SHA-256 of
+          // their encrypted bytes. A retired blob keeps its row without
+          // bytes (a tombstone), so it can't be uploaded again; a retire that
+          // arrives before its upload is kept as a claim; running counts keep
+          // uploads O(1). ciphertext is the last column, so reading a row's
+          // other fields never walks a blob's overflow pages.
+          this.db.exec(`
+            CREATE TABLE chat_blobs (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              blob_ref TEXT NOT NULL CHECK (length(blob_ref) = 64 AND blob_ref NOT GLOB '*[^0-9a-f]*'),
+              retired INTEGER NOT NULL DEFAULT 0 CHECK (retired IN (0, 1)),
+              size_bytes INTEGER NOT NULL CHECK (size_bytes BETWEEN ${MIN_CHAT_BLOB_BYTES} AND ${MAX_CHAT_BLOB_BYTES}),
+              uploader_member_id TEXT NOT NULL,
+              uploader_device_id TEXT NOT NULL,
+              created_at INTEGER NOT NULL,
+              retired_at INTEGER,
+              ciphertext BLOB,
+              CHECK ((retired = 1) = (ciphertext IS NULL)),
+              CHECK ((retired = 1) = (retired_at IS NOT NULL)),
+              PRIMARY KEY (household_id, blob_ref)
+            );
+            CREATE INDEX chat_blob_tombstones ON chat_blobs(household_id, retired_at) WHERE retired = 1;
+            CREATE TABLE chat_blob_claims (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              blob_ref TEXT NOT NULL CHECK (length(blob_ref) = 64 AND blob_ref NOT GLOB '*[^0-9a-f]*'),
+              member_id TEXT NOT NULL,
+              by_admin INTEGER NOT NULL CHECK (by_admin IN (0, 1)),
+              created_at INTEGER NOT NULL,
+              PRIMARY KEY (household_id, blob_ref, member_id)
+            );
+            CREATE INDEX chat_blob_claims_by_member ON chat_blob_claims(household_id, member_id, created_at);
+            CREATE TABLE chat_blob_usage (
+              household_id TEXT PRIMARY KEY REFERENCES households(id),
+              live_blobs INTEGER NOT NULL DEFAULT 0 CHECK (live_blobs >= 0),
+              live_bytes INTEGER NOT NULL DEFAULT 0 CHECK (live_bytes >= 0),
+              tombstones INTEGER NOT NULL DEFAULT 0 CHECK (tombstones >= 0),
+              claims INTEGER NOT NULL DEFAULT 0 CHECK (claims >= 0)
+            );
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(12, Date.now());
+          sqlitePragma(this.db, "user_version = 12");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the chat blob migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 12) {
+      try {
+        this.transaction(() => {
+          // v1.1 (#111): the chat relay, a second encrypted event stream with
+          // its own relay sequence, per-device sequences and clock bound.
+          this.db.exec(`
+            CREATE TABLE chat_relay_state (
+              household_id TEXT PRIMARY KEY REFERENCES households(id),
+              next_sequence INTEGER NOT NULL CHECK (next_sequence >= 1),
+              max_logical_time TEXT NOT NULL
+            );
+            CREATE TABLE chat_events (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              relay_sequence INTEGER NOT NULL CHECK (relay_sequence >= 1),
+              event_id TEXT NOT NULL,
+              device_id TEXT NOT NULL,
+              device_sequence INTEGER NOT NULL CHECK (device_sequence >= 1),
+              key_epoch INTEGER NOT NULL CHECK (key_epoch BETWEEN 1 AND 128),
+              canonical_envelope TEXT NOT NULL,
+              PRIMARY KEY (household_id, relay_sequence),
+              UNIQUE (household_id, event_id)
+            );
+            CREATE TABLE chat_device_sequences (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              device_id TEXT NOT NULL,
+              last_sequence INTEGER NOT NULL CHECK (last_sequence >= 1),
+              PRIMARY KEY (household_id, device_id)
+            );
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(13, Date.now());
+          sqlitePragma(this.db, "user_version = 13");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the chat relay migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 13) {
+      try {
+        this.transaction(() => {
+          // v1.1 (#119): each member's sealed "delete for me" record.
+          this.db.exec(`
+            CREATE TABLE chat_hidden (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              member_id TEXT NOT NULL,
+              revision INTEGER NOT NULL CHECK (revision >= 1),
+              record TEXT NOT NULL,
+              PRIMARY KEY (household_id, member_id)
+            );
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(14, Date.now());
+          sqlitePragma(this.db, "user_version = 14");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the chat preferences migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 14) {
+      try {
+        this.transaction(() => {
+          // v1.1 (#121): each member's sealed read-receipt slot, latest only.
+          this.db.exec(`
+            CREATE TABLE chat_receipts (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              member_id TEXT NOT NULL,
+              revision INTEGER NOT NULL CHECK (revision >= 1),
+              record TEXT NOT NULL,
+              PRIMARY KEY (household_id, member_id)
+            );
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(15, Date.now());
+          sqlitePragma(this.db, "user_version = 15");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the read receipts migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 15) {
+      try {
+        this.transaction(() => {
+          // v1.1 (#123): the household's chat access policy, plaintext
+          // authorization metadata the service enforces. Existing households
+          // keep everyone reading and posting.
+          this.db.exec(`
+            ALTER TABLE households ADD COLUMN chat_limited TEXT NOT NULL DEFAULT 'write'
+              CHECK (chat_limited IN ('write', 'read', 'none'));
+            ALTER TABLE households ADD COLUMN chat_temporary TEXT NOT NULL DEFAULT 'write'
+              CHECK (chat_temporary IN ('write', 'read', 'none'));
+            ALTER TABLE households ADD COLUMN chat_policy_revision INTEGER NOT NULL DEFAULT 0
+              CHECK (chat_policy_revision >= 0);
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(16, Date.now());
+          sqlitePragma(this.db, "user_version = 16");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the chat policy migration.", { cause: error });
+      }
+    }
+
+    if (sqlitePragma(this.db, "user_version", { simple: true }) === 16) {
+      try {
+        this.transaction(() => {
+          // v1.1 (#123): the dedicated chat key. The household's current chat
+          // key epoch (0 until a policy first needs one) and, per device, the
+          // wrapped key packages it may fetch. The service never holds a key.
+          this.db.exec(`
+            ALTER TABLE households ADD COLUMN chat_key_epoch INTEGER NOT NULL DEFAULT 0
+              CHECK (chat_key_epoch >= 0 AND chat_key_epoch <= 128);
+            ALTER TABLE households ADD COLUMN chat_key_since INTEGER NOT NULL DEFAULT 0
+              CHECK (chat_key_since >= 0);
+            CREATE TABLE chat_key_packages (
+              household_id TEXT NOT NULL REFERENCES households(id),
+              key_epoch INTEGER NOT NULL CHECK (key_epoch >= 1 AND key_epoch <= 128),
+              device_id TEXT NOT NULL,
+              sender_device_id TEXT NOT NULL,
+              package TEXT NOT NULL,
+              PRIMARY KEY (household_id, key_epoch, device_id)
+            );
+          `);
+          this.db.prepare("INSERT INTO server_migrations(version, applied_at) VALUES (?, ?)").run(17, Date.now());
+          sqlitePragma(this.db, "user_version = 17");
+        });
+      } catch (error) {
+        if (error instanceof DurableStoreError) throw error;
+        throw new DurableStoreError("Kin could not complete the chat key migration.", { cause: error });
       }
     }
   },

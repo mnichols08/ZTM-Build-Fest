@@ -79,7 +79,7 @@ export class SessionController {
       this.app.main.hidden = false;
       this.app.nav.hidden = false;
       this.app.siteTools.hidden = false;
-      this.app.peoplePage.append(this.app.household, this.app.notifications);
+      this.app.peoplePage.append(this.app.household, this.app.notifications, this.app.chatSettings);
       this.app.privacyPage.append(this.app.security);
       this.ctx.navigation.showPageFromLocation();
       this.ctx.status.setStatus("Ready.");
@@ -224,6 +224,7 @@ export class SessionController {
     this.ctx.status.clearAlert();
     clearLegacyDrafts();
     this.app.quickAdd?.reset();
+    this.app.chatShare?.reset();
     if (this.app.main) {
       this.app.nav.hidden = true;
       this.app.shell.before(this.app.security);
@@ -239,6 +240,7 @@ export class SessionController {
         ["compose", "kin-compose"],
         ["handoffs", "kin-handoff-list"],
         ["talks", "kin-talk-list"],
+        ["chat", "kin-chat"],
         ["search", "kin-search"],
         ["pulse", "kin-pulse"],
         ["routines", "kin-routines"],

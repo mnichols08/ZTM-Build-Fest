@@ -102,7 +102,14 @@ fn event(event_number: u8, logical_time: u64, kind: EventKind) -> EventEnvelope 
         | EventKind::AttachmentRemoved { .. }
         | EventKind::ResponsibilityChanged { .. }
         | EventKind::DeviceDescribed { .. }
-        | EventKind::DeviceNicknamed { .. } => {
+        | EventKind::DeviceNicknamed { .. }
+        | EventKind::ChatMessagePosted { .. }
+        | EventKind::ChatMessageEdited { .. }
+        | EventKind::ChatMessageDeleted { .. }
+        | EventKind::ChatReactionSet { .. }
+        | EventKind::ChatPinSet { .. }
+        | EventKind::ChatPollVote { .. }
+        | EventKind::ChatPollClosed { .. } => {
             panic!("Area tests use independent wire fixtures")
         }
     }

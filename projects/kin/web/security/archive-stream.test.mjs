@@ -8,6 +8,9 @@ import { createEngine, encodeAddedRecord, eventMetadata } from "../wasm/kin-engi
 import { EventArena } from "../storage/event-arena.js";
 import { CHUNK_EVENTS, readArchive, readEventChunk, segmentCount, writeArchive } from "./archive-stream.js";
 import { LocalVault, serializeProtectedValue } from "./local-vault.js";
+import { appendChatBlob, appendChatEvents, blobSegment, blobSegmentLength, chatEventsView, chatNotes, openChatSection } from "../chat/chat-archive.js";
+import { sealChatBlob } from "../chat/chat-blob-crypto.js";
+import { ChatRecords } from "../chat/chat-records.js";
 
 const wasm = await readFile(new URL("../wasm/kin_engine.wasm", import.meta.url));
 const { instance } = await WebAssembly.instantiate(wasm, {});
@@ -159,4 +162,36 @@ test("the archive key is bound to its vault root, salt and metadata", async () =
   const { vault: locked } = await LocalVault.create();
   locked.lock();
   await assert.rejects(locked.archiveStreamKey(new Uint8Array(32), metadata), /locked/i);
+});
+
+test("the household chat rides after the history, in the real container (#136)", async () => {
+  const chatRecords = new ChatRecords();
+  for (let n = 1; n <= 300; n += 1) chatRecords.append(new TextEncoder().encode(`chat event ${n}`));
+  const sealed = await sealChatBlob(new TextEncoder().encode("hello"));
+  const blob = { ref: sealed.ref, size: sealed.ciphertext.length, parts: null };
+  const notes = chatNotes({ memberId: "11".repeat(16), hidden: [] });
+  const bytes = await write(arenaWith(3).view(), {
+    chat: { notes, view: chatEventsView(chatRecords.view()), blobs: [blob], loadBlob: () => sealed.ciphertext, blobSegmentLength, blobSegment },
+  });
+  const { metadataLength, ciphertextLength } = engine.archiveLayout(bytes);
+  const section = openChatSection();
+  const history = [];
+  await readArchive({
+    bytes, offset: 16 + metadataLength, length: ciphertextLength, key, noncePrefix: PREFIX, vaultId: VAULT_ID,
+    attachmentCount: 1, eventCount: 3, chatPresent: true, chatEventCount: 300, chatBlobCount: 1,
+    onContext() {}, onAttachment() {}, onEvents: (sequences) => history.push(...sequences),
+    onChatNotes: (value) => { section.notes = value; },
+    onChatEvents: (sequences, records) => appendChatEvents(section, sequences, records),
+    onChatBlob: (segment) => appendChatBlob(section, segment),
+    check: async () => {},
+  });
+  assert.equal(history.length, 3);
+  assert.equal(section.records.length, 300);
+  assert.deepEqual(section.notes, notes);
+  assert.deepEqual(section.blobs[0].ciphertext, sealed.ciphertext);
+  // Without the chat counts the same bytes are not a valid household archive.
+  await assert.rejects(readArchive({
+    bytes, offset: 16 + metadataLength, length: ciphertextLength, key, noncePrefix: PREFIX, vaultId: VAULT_ID,
+    attachmentCount: 1, eventCount: 3, onContext() {}, onAttachment() {}, onEvents() {}, check: async () => {},
+  }), /damaged/);
 });

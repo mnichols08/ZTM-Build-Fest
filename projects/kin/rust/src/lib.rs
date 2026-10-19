@@ -1,5 +1,8 @@
 pub mod abi;
 pub mod archive;
+pub mod audio;
+pub mod chat;
+pub mod chat_search;
 pub mod codec;
 pub mod command;
 pub mod core;
@@ -57,6 +60,9 @@ mod responsibility_tests;
 
 #[cfg(test)]
 mod device_name_tests;
+
+#[cfg(test)]
+mod chat_tests;
 
 #[cfg(test)]
 mod recurring_task_tests;

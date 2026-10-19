@@ -12,6 +12,8 @@ function assertFramingDenied(response) {
     "frame-ancestors 'none'",
   );
   assert.equal(response.headers.get("x-frame-options"), "DENY");
+  // Voice messages (#134) record with the microphone: this origin only.
+  assert.equal(response.headers.get("permissions-policy"), "camera=(self), microphone=(self), geolocation=()");
 }
 
 test("the shell fingerprint hashes served content deterministically and ignores test files", () => {
@@ -84,7 +86,7 @@ test("served pages permit same-origin camera access and deny unused capabilities
     assert.equal(response.status, 200);
     assert.equal(
       response.headers.get("permissions-policy"),
-      "camera=(self), microphone=(), geolocation=()",
+      "camera=(self), microphone=(self), geolocation=()",
     );
   } finally {
     server.closeAllConnections();

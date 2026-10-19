@@ -80,6 +80,15 @@ export class NavigationController {
     return "inline";
   }
   // Search results open the real record by canonical id.
+  /** A chat message picked on the Search page (#124): open Chat and show it. */
+  handleOpenChatMessage(detail) {
+    if (!this.app.state || !this.app.chat?.room) return;
+    this.ctx.navigation.navigate(routeHash("updates", "chat"));
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      void this.app.chat.showSearchResult(detail);
+    }));
+  }
+
   handleOpenSearchResult(detail) {
     if (!this.app.state) return;
     const unavailable = () => this.ctx.status.setStatus("That record is no longer available. It may have been archived or removed.");

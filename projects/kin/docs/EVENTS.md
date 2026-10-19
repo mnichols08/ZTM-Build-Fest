@@ -76,6 +76,9 @@ Use uppercase entity/action-past-tense names consistently. The milestone column 
 | `ITEM_PLANNING_DATE_CHANGED`    | v0.22.0           | Set or clear an Item's optional fixed civil planning date.     |
 | `DEVICE_DESCRIBED`              | v1.1.0            | Record the automatic name a device reports for itself.         |
 | `DEVICE_NICKNAMED`              | v1.1.0            | Set or clear the nickname a member gives one of their devices. |
+| `CHAT_MESSAGE_POSTED`           | v1.1.0 (chat log) | Post a chat message whose content is a separate encrypted blob. |
+| `CHAT_MESSAGE_EDITED`           | v1.1.0 (chat log) | The author replaces a text message's content blob.             |
+| `CHAT_MESSAGE_DELETED`          | v1.1.0 (chat log) | The author deletes a message for everyone, or an admin removes it. |
 | `HOUSEHOLD_CREATED`            | v0.8.0            | Establish a household identity when pairing is introduced.   |
 | `MEMBER_INVITED`               | v0.8.0            | Record a member invitation.                                  |
 | `MEMBER_JOINED`                | v0.8.0            | Record accepted household membership.                        |
@@ -228,6 +231,126 @@ the server never learns a name anyone typed ([PRIVACY](PRIVACY.md),
 - A v1.0 engine does not know these kinds. It stops at the first one with the
   unsupported-event error above and syncs again once updated
   ([V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md)).
+
+## v1.1.0 Household chat
+
+`CHAT_MESSAGE_POSTED` (44), `CHAT_MESSAGE_EDITED` (45) and
+`CHAT_MESSAGE_DELETED` (46), `CHAT_REACTION_SET` (47), `CHAT_PIN_SET` (48), `CHAT_POLL_VOTE` (49) and `CHAT_POLL_CLOSED` (50) are schema 1 and leave replay protocol 24
+unchanged ([ABI](ABI.md) has the payloads; [ADR 0008](decisions/0008-household-chat.md)
+the product decisions).
+
+- **Their own log.** Chat events live in the chat log, never in the
+  household history. Each refuses the other's events (code 4), so chat never
+  counts against the household's 10,000 events and a household request never
+  carries chat. The chat log holds up to 250,000 events.
+- **Metadata only.** An event carries the message ID, the content blob's
+  32-byte SHA-256 reference and its 32-byte random key, and (for a post) the
+  content kind: text, attachment or poll. Text and files live in the blob, outside
+  the log, so deleting a message can delete its content.
+- **Conflicts change nothing shown.** As with device names, a decoded chat
+  event never fails replay. One that conflicts with what a log knows is kept
+  and changes nothing a page shows; commands enforce the rules when the event
+  is created. The first post of a message ID wins. Only the author edits,
+  only a text message, never a deleted one. The author deletes for everyone;
+  deletion is terminal, so it wins over an edit at the same logical time in
+  either replay order.
+- **Blob references.** Honest devices never repeat a blob reference (each
+  is a content hash under a random key), and commands refuse one the log has
+  seen. Replay doesn't rely on that: logical times are the author's to
+  write and every chat member can read every reference, so a modified client
+  could copy one into an earlier-dated event. A reused reference applies like
+  any other, and a blob a visible message shows is never retired. A copy can
+  only show the content again as its author's own message; it can't hide or
+  delete the original. It can keep a deleted message's blob from being
+  retired while the copy is visible, which adds nothing: whoever made it
+  already held the key and the bytes.
+- **Retired blobs.** Hosts delete these locally and on the service. The
+  candidates are every blob an edit replaced or the author's deletion
+  dropped, and every blob brought by an event that applies nowhere (a second
+  post of an existing ID, another member's edit, an edit of an attachment,
+  an edit after or concurrent with the author's deletion). A page retires
+  each candidate, and each blob of a message removed by a named admin, once
+  and only while no live or edited message shows it. An edit of a message
+  the log doesn't hold keeps its blob, since where the message is known the
+  edit may apply. An edit to the blob a message already has changes
+  nothing.
+- **Admin removal is a claim.** `by_admin` set on another member's message
+  records a claim. Only the service knows who is an admin, so a page counts
+  the claim when the host names its author among the household's admins;
+  the message then shows "Removed by an admin" and its blob is retired. The
+  host names the admins to commands too (`kin_chat_execute`), so Kin's own
+  clients only make a claim as a current admin. A claim is counted while its
+  author is an admin, whenever it was made: one written by a modified client
+  before its author became an admin counts once they are one, and one whose
+  author stops being an admin stops counting (the message reads as live
+  again, but its blob has usually been deleted by then, so its content stays
+  gone).
+- **Text rules.** A message's decrypted text is checked in Rust when the host
+  hands it over: 1 to 4,000 Unicode scalar values, valid UTF-8, not only
+  whitespace, and no control characters other than tab and line feed. It is
+  plain text, rendered with `textContent`.
+- **Replies (#129).** A post may name the message it answers. The event
+  carries only that ID; the quoted text is looked up from the original each
+  time a page is read, so an edit shows and a deletion turns the quote into
+  "deleted" (and the original's blob and text are gone with it). Replay
+  stores the ID and never checks it against the log (a zero ID or a message
+  answering itself is malformed and refused at decode): the original may be
+  absent from a log (a member who joined later), and the page then marks it
+  unknown. A quote carries the original's first non-blank line, at most 256
+  bytes.
+  Commands answer only a message that still shows. There are no threads.
+- **Mentions (#130).** A post (44) or edit (45) may carry mentions after its
+  fixed fields: flags u8 (1 everyone, 2 a reply ID follows), count u8 (at
+  most 20), that many member IDs (ascending, unique, 16 bytes each), then the
+  reply ID if flagged. Older events with nothing, or with just a reply ID,
+  still decode. The command is refused unless every named member is one the
+  host lists as able to read chat; replay does not check. An edit replaces
+  the message's mentions. The text is not changed: the mention is only a
+  record of who the writer meant.
+- **Voice messages (#134).** An attachment message (content kind 2) whose
+  manifest holds one audio file with a `voice` entry. No event, kind or
+  payload byte changes; the engine only reduces samples to a waveform
+  (`kin_audio_peaks`, [ABI](ABI.md)).
+- **Polls (#135).** A post whose content kind (payload byte 16) is 3 is a
+  poll: byte 17 is the option count (2–10) and byte 18 is 1 for multiple
+  choice (both zero for other kinds); the question and options are in the
+  sealed blob like any text. `CHAT_POLL_VOTE` (49) carries the message ID, the
+  choice as a u16 bit set and 2 reserved zero bytes (20 bytes); the later vote
+  of a member (by logical time, then device ID, then event ID) replaces the earlier, 0 clears.
+  A vote is ignored if the message is not a poll, if the choice is not one the
+  poll allows, or if it comes after the author's close. `CHAT_POLL_CLOSED`
+  (50) carries the message ID and 4 reserved bytes; only the poll's author
+  closes it, and the first close stands. Deleting the poll for everyone drops
+  its votes.
+- **Pins (#131).** `CHAT_PIN_SET` (48) pins or unpins one message: payload is
+  the message ID, `on` u8 and 3 reserved zero bytes (20 bytes). Replay keeps
+  pins in the order applied, with who pinned each: a pin of an unknown
+  message or of one already pinned changes nothing (the first pinner stays),
+  and an unpin of one that is not pinned changes nothing. The author's
+  deletion of a message unpins it; an admin's removal is only known to the
+  service, so a page leaves a pin out while a named admin has removed its
+  message. Commands allow a pin only on a message that shows, while fewer
+  than 10 pins show; any member who can post may pin or unpin. Pins from
+  devices that raced past the limit stay in the log but a page lists the
+  first 10 that show, so unpinning brings the next one back. Replay keeps at
+  most 64 records, and a command that would exceed that is refused.
+- **Reactions (#127).** `CHAT_REACTION_SET` (47) turns one emoji on or off
+  for the event's actor on one message. The emoji is a single grapheme from
+  the emoji ranges (a pictograph with optional variation selector and skin
+  tone, a flag, a keycap, or such parts joined by zero-width joiners), at
+  most 32 bytes, checked in Rust (`chat::check_emoji`); an event with
+  anything else is malformed. Replay order is total, so the last write per
+  (member, message, emoji) wins, and a member's devices converge. A
+  reaction to a message the log lacks changes nothing. A page leaves out the
+  reactions of a message it shows as deleted or removed, and lists the rest
+  grouped by emoji in the order replay first saw them. Commands refuse a
+  reaction that would change nothing and a 25th different emoji on one
+  message; replay applies the same cap, so a log can't grow one message
+  without bound. A joiner joins only pictographs, never flags or keycaps.
+- Chat never appears in the KINS projection or the catch-up summary. Hosts
+  read it with `kin_chat_page`.
+- An engine older than v1.1 does not know these kinds and rejects them with
+  the unsupported-event error (code 3), rather than dropping them.
 
 ## v0.22.0 Lightweight Planning Dates
 

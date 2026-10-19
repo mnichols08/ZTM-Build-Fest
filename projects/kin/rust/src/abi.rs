@@ -68,6 +68,10 @@ struct AbiState {
     allocations: Allocations,
     /// The canonical history this instance replays (history.rs).
     history: History,
+    /// The chat log, apart from the household history (history.rs).
+    chat_history: History,
+    /// Decrypted chat texts, while unlocked (chat.rs).
+    chat_texts: crate::chat::ChatTexts,
     result: Vec<u8>,
     error: Vec<u8>,
     /// Where `result` holds a projection, when it does.
@@ -84,6 +88,8 @@ impl AbiState {
         Self {
             allocations: Allocations::new(),
             history: History::new(),
+            chat_history: History::chat(),
+            chat_texts: crate::chat::ChatTexts::new(),
             result: Vec::new(),
             error: Vec::new(),
             projection: None,
@@ -127,11 +133,18 @@ impl AbiState {
     fn clear(&mut self) {
         self.allocations.clear();
         self.history.clear();
+        self.chat_history.clear();
+        self.chat_texts.clear();
         self.result = Vec::new();
         self.error = Vec::new();
         self.projection = None;
         self.previous = Vec::new();
         self.previous_projection = None;
+    }
+
+    /// Empties the chat log, keeping the text arena (`kin_chat_history_reset`).
+    fn reset_chat_history(&mut self) {
+        self.chat_history.clear();
     }
 
     /// Publishes an operation's outcome as the result or error buffer and
@@ -301,6 +314,85 @@ pub extern "C" fn kin_device_names(pointer: u32, length: u32) -> i32 {
     run(pointer, length, crate::core::device_names, None)
 }
 
+/// Empties the instance's chat log. Always succeeds. The text arena stays:
+/// its texts are content-addressed and independent of the log, and the
+/// history mirror resets the log whenever it is handed a plain array, so
+/// clearing texts here would drop them before every such page. `kin_clear`
+/// drops both on lock.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_history_reset() -> i32 {
+    lock_state().reset_chat_history();
+    0
+}
+
+/// Appends a batch of chat records to the chat log, as
+/// `kin_history_append` does for the household history. Either log refuses
+/// the other's events.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_history_append(pointer: u32, length: u32) -> i32 {
+    run_chat(pointer, length, |input, chat, _| {
+        chat.append(input).map(|()| Vec::new())
+    })
+}
+
+/// Keeps the chat log's first `count` records, as `kin_history_truncate`.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_history_truncate(count: u32) -> i32 {
+    match lock_state().chat_history.truncate(count as usize) {
+        Ok(()) => 0,
+        Err(error) => error.code(),
+    }
+}
+
+/// Validates a chat command against the chat log (u32 intent length, KCMD,
+/// u32 admin count, admins, record-less KINE context; command.rs
+/// `execute_chat_history`) and publishes KCMT with an empty projection. The
+/// log is not changed.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_execute(pointer: u32, length: u32) -> i32 {
+    run_chat(pointer, length, |input, chat, _| {
+        crate::command::execute_chat_history(input, chat)
+    })
+}
+
+/// A chat page: a KCHQ request with its record-less KINE context, against
+/// the chat log and the chat-text arena; publishes KCHP (chat.rs).
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_page(pointer: u32, length: u32) -> i32 {
+    run_chat(pointer, length, crate::core::chat_page)
+}
+
+/// A chat search: a KCHF request with its record-less KINE context, against
+/// the chat log and the chat-text arena; publishes KCHR (chat_search.rs).
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_search(pointer: u32, length: u32) -> i32 {
+    run_chat(pointer, length, crate::core::chat_search)
+}
+
+/// Drops every decrypted chat text (zero-filling the arena), for a member
+/// who lost access to chat while unlocked. Always succeeds.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_texts_clear() -> i32 {
+    lock_state().chat_texts.clear();
+    0
+}
+
+/// Stores decrypted chat texts (KCHT) in the instance's arena; publishes
+/// the per-text KCHS statuses (chat.rs).
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_chat_text(pointer: u32, length: u32) -> i32 {
+    run_chat(pointer, length, |input, _, texts| {
+        crate::chat::put_texts(input, texts)
+    })
+}
+
+/// Reduces decoded voice-message samples to 64 waveform peaks (#134):
+/// KAPQ -> KAPR. Touches no household or chat state.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_audio_peaks(pointer: u32, length: u32) -> i32 {
+    operate(pointer, length, crate::audio::encode_peaks)
+}
+
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
 pub extern "C" fn kin_event_metadata(pointer: u32, length: u32) -> i32 {
     operate(pointer, length, crate::codec::encode_metadata)
@@ -384,12 +476,53 @@ fn run(
     operation: impl FnOnce(&[u8], &mut History) -> Result<Vec<u8>, KinError>,
     locate: Option<Locate>,
 ) -> i32 {
+    run_parts(
+        pointer,
+        length,
+        |input, parts| operation(input, parts.history),
+        locate,
+    )
+}
+
+/// `run` for an operation on the chat log and the chat-text arena.
+fn run_chat(
+    pointer: u32,
+    length: u32,
+    operation: impl FnOnce(
+        &[u8],
+        &mut History,
+        &mut crate::chat::ChatTexts,
+    ) -> Result<Vec<u8>, KinError>,
+) -> i32 {
+    run_parts(
+        pointer,
+        length,
+        |input, parts| operation(input, parts.chat_history, parts.chat_texts),
+        None,
+    )
+}
+
+/// The instance's logs and arena, borrowed for one operation.
+struct Parts<'a> {
+    history: &'a mut History,
+    chat_history: &'a mut History,
+    chat_texts: &'a mut crate::chat::ChatTexts,
+}
+
+fn run_parts(
+    pointer: u32,
+    length: u32,
+    operation: impl FnOnce(&[u8], Parts<'_>) -> Result<Vec<u8>, KinError>,
+    locate: Option<Locate>,
+) -> i32 {
     // Keep inputs and published buffers stable against concurrent free, clear, or calls.
     let mut state = lock_state();
     state.begin();
     let AbiState {
         allocations,
         history,
+        chat_history,
+        chat_texts,
         ..
     } = &mut *state;
     let outcome = if !request_length_is_supported(length) {
@@ -403,7 +536,14 @@ fn run(
                 if input.len() != length as usize {
                     Err(KinError::InvalidAbi)
                 } else {
-                    operation(input, history)
+                    operation(
+                        input,
+                        Parts {
+                            history,
+                            chat_history,
+                            chat_texts,
+                        },
+                    )
                 }
             })
     };
@@ -548,6 +688,38 @@ mod tests {
             "lengths must cover the result"
         );
         assert_eq!(command_projection(&result[..10]), None);
+    }
+
+    #[test]
+    fn resetting_the_chat_log_keeps_texts_and_clearing_drops_both() {
+        let mut state = AbiState::new();
+        let mut post = vec![0u8; 88 + 84];
+        post[..2].copy_from_slice(&1u16.to_le_bytes());
+        post[2..4].copy_from_slice(&44u16.to_le_bytes());
+        for range in [4..20, 20..36, 36..52, 52..68] {
+            post[range].fill(0x11);
+        }
+        post[68..76].copy_from_slice(&1_791_475_200_000i64.to_le_bytes());
+        post[76..84].copy_from_slice(&1u64.to_le_bytes());
+        post[84..88].copy_from_slice(&84u32.to_le_bytes());
+        post[88..104].fill(0x07);
+        post[104] = 1;
+        post[108..140].fill(0xa1);
+        post[140..172].fill(0xc1);
+        let mut batch = 1u32.to_le_bytes().to_vec();
+        batch.extend_from_slice(&(post.len() as u32).to_le_bytes());
+        batch.extend_from_slice(&post);
+        state.chat_history.append(&batch).unwrap();
+        state.chat_texts.put([0xa1; 32], b"Dinner at 6").unwrap();
+        // The history mirror resets the log before re-sending a plain array;
+        // the texts it was given must survive that.
+        state.reset_chat_history();
+        assert!(state.chat_history.is_empty());
+        assert_eq!(state.chat_texts.get(&[0xa1; 32]), Some(&b"Dinner at 6"[..]));
+        state.chat_history.append(&batch).unwrap();
+        state.clear();
+        assert!(state.chat_history.is_empty());
+        assert!(state.chat_texts.is_empty());
     }
 
     #[test]

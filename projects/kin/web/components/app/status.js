@@ -14,7 +14,10 @@ export class StatusController {
     this.ctx.render.updateCalendarExportButton();
     this.app.main.setAttribute("aria-busy", String(isBusy));
     const controlsDisabled = isBusy || !this.app.store;
-    if (isBusy) this.app.detail?.deferFocusedControl?.();
+    if (isBusy) {
+      this.app.detail?.deferFocusedControl?.();
+      this.app.chat?.deferFocusedControl?.();
+    }
     this.app.controlFieldset.disabled = controlsDisabled;
     // Header controls and a phone detail sheet live outside the fieldset.
     this.app.quickAdd.disabled = isBusy || !this.app.store;
@@ -22,7 +25,7 @@ export class StatusController {
     if (this.app.lockButton) this.app.lockButton.disabled = isBusy;
     this.app.retryButton.disabled = isBusy;
     if (!controlsDisabled) {
-      for (const component of [this.app.today, this.app.needs, this.app.shopping, this.app.staples, this.app.areas, this.app.notes, this.app.detail])
+      for (const component of [this.app.today, this.app.needs, this.app.shopping, this.app.staples, this.app.areas, this.app.notes, this.app.detail, this.app.chat])
         component?.settleDeferredFocus?.();
     }
   }
