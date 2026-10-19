@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { exportDevicePublicKeys, generateDeviceKeys } from "../sync/crypto.js";
-import { openHiddenRecord, sealHiddenRecord } from "./chat-hidden.js";
+import { openHiddenRecord, openHiddenState, sealHiddenRecord } from "./chat-hidden.js";
 
 const HOUSEHOLD = "aa".repeat(16), ME = "bb".repeat(16), OTHER = "cc".repeat(16);
 const id = (byte) => byte.toString(16).padStart(2, "0").repeat(16);
@@ -74,4 +74,19 @@ test("a full record (10,000 IDs, 64 devices) fits the service's bound", { timeou
   assert.ok(bytes <= 256 * 1024, `${bytes} bytes`);
   assert.equal(isHiddenRecordValid(record, { householdId: HOUSEHOLD, memberId: ME, deviceId: id(1), revision: 1 }), true);
   assert.equal((await openHiddenRecord({ record, householdId: HOUSEHOLD, memberId: ME, revision: 1, deviceId: id(1), deviceFingerprint: phone.entry.fingerprint, agreementPrivateKey: phone.keys.agreementPrivateKey, senders: [phone.entry] })).length, 10_000);
+});
+
+test("the private read position travels in the record and nowhere in the clear (#133)", async () => {
+  const phone = await device(id(1), ME), laptop = await device(id(2), ME);
+  const read = { postedAt: 1_700_000_123_456, messageId: id(7) };
+  const seal = (extra) => sealHiddenRecord({ ids: [id(9)], householdId: HOUSEHOLD, memberId: ME, revision: 2, senderDeviceId: id(1), signingKey: phone.keys.signingPrivateKey, recipients: [phone.entry, laptop.entry], ...extra });
+  const open = (record, who = laptop) => openHiddenState({ record, householdId: HOUSEHOLD, memberId: ME, revision: 2, deviceId: who.entry.deviceId, deviceFingerprint: who.entry.fingerprint, agreementPrivateKey: who.keys.agreementPrivateKey, senders: [phone.entry, laptop.entry] });
+  const withRead = await seal({ read });
+  assert.equal(JSON.stringify(withRead).includes(id(7)), false);
+  assert.deepEqual(await open(withRead), { ids: [id(9)], read });
+  assert.deepEqual(await open(await seal({})), { ids: [id(9)], read: null }, "no position yet");
+  assert.deepEqual(await open(await seal({ ids: [], read })), { ids: [], read }, "a position without hidden messages");
+  assert.deepEqual(await openHiddenRecord({ record: withRead, householdId: HOUSEHOLD, memberId: ME, revision: 2, deviceId: id(2), deviceFingerprint: laptop.entry.fingerprint, agreementPrivateKey: laptop.keys.agreementPrivateKey, senders: [phone.entry, laptop.entry] }), [id(9)], "the ID list alone still opens");
+  await assert.rejects(seal({ read: { postedAt: -1, messageId: id(7) } }), (error) => error.code === "chat_hidden_invalid");
+  await assert.rejects(seal({ read: { postedAt: 5, messageId: "nope" } }), (error) => error.code === "chat_hidden_invalid");
 });

@@ -32,8 +32,8 @@ import { ChatBlobs } from "./chat-blobs.js";
 import { ChatLogError, ChatLogStore } from "./chat-log-store.js";
 import { ChatRecords } from "./chat-records.js";
 import { memberLabels } from "../components/household/member-labels.js";
-import { MAX_HIDDEN_MESSAGES, openHiddenRecord, sealHiddenRecord } from "./chat-hidden.js";
-import { ChatPresence } from "./chat-presence.js";
+import { MAX_HIDDEN_MESSAGES, openHiddenState, sealHiddenRecord } from "./chat-hidden.js";
+import { ChatPresence, CLOCK_SKEW_MS, compareCursors, cursorOf, isCursor, mergeCursors } from "./chat-presence.js";
 import { ChatKeys, cursorSequence } from "./chat-keys.js";
 
 
@@ -78,6 +78,9 @@ export class ChatRoomError extends Error {
 
 const randomIdHex = () => [...crypto.getRandomValues(new Uint8Array(16))]
   .map((byte) => byte.toString(16).padStart(2, "0")).join("");
+
+/** The newest messages the unread count looks through (#133). */
+export const UNREAD_SCAN = 100;
 
 /** How long a device keeps chat content it downloaded, and how often it
  * looks for older content to drop (#125). */
@@ -200,6 +203,8 @@ export class ChatRoom {
     this.hidden = new Set();
     this.hiddenError = null;
     this.hiddenWaiting = false;
+    /** This member's private read position (#133), or null. */
+    this.readPosition = null;
     // Events whose signature failed once: eventId -> the pass it failed in.
     this.suspects = new Map();
     this.pass = 0;
@@ -377,6 +382,7 @@ export class ChatRoom {
     this.retiredThrough = state.retiredThrough ?? 0;
     this.refused = state.refused ?? [];
     this.hidden = new Set(state.hidden ?? []);
+    this.readPosition = state.read ?? null;
     if (["write", "read", "none"].includes(state.access)) this.access = state.access;
   }
 
@@ -428,14 +434,14 @@ export class ChatRoom {
       return;
     }
     const { record } = current.unchanged ? await this.request("/api/chat/hidden") : current;
-    let remote = [];
+    let remote = [], remoteRead = null;
     let rewrite = false;
     if (record) {
       try {
-        remote = await openHiddenRecord({
+        ({ ids: remote, read: remoteRead } = await openHiddenState({
           record, householdId, memberId, revision, deviceId: me.deviceId, deviceFingerprint: me.fingerprint ?? "",
           agreementPrivateKey: this.deviceKeys?.keys?.agreementPrivateKey, senders: mine,
-        });
+        }));
       } catch (error) {
         if (error?.code === "chat_hidden_untrusted_sender") {
           rewrite = true;
@@ -459,11 +465,13 @@ export class ChatRoom {
     const merged = [...new Set([...remote, ...(state.hidden ?? [])])];
     if (merged.length > MAX_HIDDEN_MESSAGES)
       throw new ChatRoomError("You've deleted too many messages for yourself to keep track of them all.", "chat_hidden_full");
-    const changed = merged.length !== remote.length || merged.some((id) => !remoteSet.has(id));
+    // The read position only moves forward, so the later of the two stands.
+    const read = mergeCursors(remoteRead, state.read ?? null);
+    const changed = merged.length !== remote.length || merged.some((id) => !remoteSet.has(id)) || compareCursors(read, remoteRead) > 0;
     let stored = revision;
     if (changed || rewrite) {
       const sealed = await sealHiddenRecord({
-        ids: merged, householdId, memberId, revision: revision + 1, senderDeviceId: me.deviceId,
+        ids: merged, read, householdId, memberId, revision: revision + 1, senderDeviceId: me.deviceId,
         signingKey: this.signingKey(),
         recipients: mine.map((device) => ({ deviceId: device.deviceId, fingerprint: device.fingerprint ?? "", publicKeys: device.publicKeys })),
       });
@@ -474,13 +482,62 @@ export class ChatRoom {
         // Another of the member's devices wrote meanwhile: read and merge
         // once more now; past that, the next pass does.
         if (!retried) return this.syncHidden(devices, { retried: true });
-        const settled = await this.store.settleHidden({ ids: remote, revision, dirty: true });
+        const settled = await this.store.settleHidden({ ids: remote, revision, dirty: true, read: remoteRead });
         this.setHidden(settled.ids);
+        this.setReadPosition(settled.read);
         return;
       }
     }
-    const settled = await this.store.settleHidden({ ids: merged, revision: stored, sealedFor: sealFor });
+    const settled = await this.store.settleHidden({ ids: merged, revision: stored, sealedFor: sealFor, read });
     this.setHidden(settled.ids);
+    this.setReadPosition(settled.read);
+  }
+
+  /**
+   * Moves this member's private read position forward to `message` (#133):
+   * what the unread count and the "New messages" divider are measured from.
+   * It is kept apart from read receipts (it works with them off and nobody
+   * else sees it) and is written, sealed, to the member's own devices with
+   * the next pass. Resolves true when the position moved.
+   */
+  async markReadPosition(message) {
+    this.assertOpen();
+    if (!message || this.access === "none") return false;
+    const cursor = cursorOf(message);
+    if (!isCursor(cursor) || compareCursors(cursor, this.readPosition) <= 0 || cursor.postedAt > this.now() + CLOCK_SKEW_MS) return false;
+    this.setReadPosition(await this.store.markReadPosition(cursor));
+    try { this.onLocalChange(); } catch { /* sync starts on its own schedule */ }
+    return true;
+  }
+
+  setReadPosition(position) {
+    if (compareCursors(position, this.readPosition) === 0) return;
+    this.readPosition = position;
+    this.notify();
+  }
+
+  /**
+   * What this member hasn't read (#133): the messages from others, not
+   * deleted or hidden, after the private read position. Counts the newest
+   * `UNREAD_SCAN` messages only, so `capped` says "at least this many".
+   * `first` is the oldest unread message in that range, where the divider
+   * goes; null when there is none, or when no position is known yet (then
+   * everything would be "new", which says nothing).
+   */
+  unread() {
+    if (this.closed || this.access === "none") return { count: 0, capped: false, first: null };
+    const me = this.identity.memberId;
+    const { messages, start } = this.page({ limit: UNREAD_SCAN });
+    // Judged message by message against the position, not by where they
+    // sit in the log: an offline message sorts earlier than it was posted.
+    const after = (message) => compareCursors(cursorOf(message), this.readPosition) > 0;
+    let count = 0, first = null;
+    for (const message of messages) {
+      if (!after(message) || message.authorId === me || this.hidden.has(message.messageId) || !(message.status === "live" || message.status === "edited")) continue;
+      count += 1;
+      first ??= message;
+    }
+    return { count, capped: start > 0 && messages.length > 0 && after(messages[0]), first: this.readPosition ? first : null };
   }
 
   setHidden(ids) {

@@ -270,7 +270,7 @@ database per household, `kin-chat-log:<householdId>`, version 1
   `retireParts` lists the parts of an attachment the event deletes (#114).
 - `meta`: `{ key: "state", nextOrder, cursor, deviceSequence, provisional,
   admins, members, membersSignature, retiredThrough, refused, hidden,
-  hiddenRevision, hiddenDirty, hiddenSealedFor }`: the relay
+  hiddenRevision, hiddenDirty, hiddenSealedFor, read }`: the relay
   position read up to, this device's last chat sequence
   ([SYNC](SYNC.md#chat-relay-v11-111)), the household admins last seen and
   the household's member list (ID, kind, active, in the service's order, with
@@ -282,7 +282,9 @@ database per household, `kin-chat-log:<householdId>`, version 1
   themselves, the record revision last read or written (a lower one served
   later is written over with what the device holds), whether one hidden here still has to be written, and
   the devices the record was last sealed to
-  ([SYNC](SYNC.md#delete-for-me-v11-119)); and `presence`: this member's
+  ([SYNC](SYNC.md#delete-for-me-v11-119)); `read`: this member's private
+  read position, `{ postedAt, messageId }`, for the unread count
+  ([SYNC](SYNC.md#unread-position-v11-133)); and `presence`: this member's
   read cursor, their receipt and typing settings, and the revision of their
   receipt slot on the service
   ([SYNC](SYNC.md#read-receipts-and-typing-v11-120)); and `access`: the chat

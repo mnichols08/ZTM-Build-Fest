@@ -54,8 +54,8 @@ class KinSegmentNav extends HTMLElement {
       if (entry.count) {
         const count = document.createElement("span");
         count.className = "segment-count";
-        count.textContent = String(entry.count);
-        count.setAttribute("aria-label", `${entry.count} ${entry.countLabel ?? "open"}`);
+        count.textContent = entry.countText ?? String(entry.count);
+        count.setAttribute("aria-label", `${entry.countText ?? entry.count} ${entry.countLabel ?? "open"}`);
         link.append(" ", count);
       }
       item.append(link);

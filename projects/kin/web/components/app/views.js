@@ -1,5 +1,6 @@
 // Building the destination pages and their components.
 // State stays on the element (`this.app`); app/context.js explains the controllers.
+import { setAppBadge } from "../../chat/chat-badge.js";
 import { routeHash, SEGMENTS } from "../../routes.js";
 import { currentPlatform, installHelp } from "../../platform.js";
 import { installHelpCard } from "../shared/dom.js";
@@ -115,6 +116,16 @@ export class ViewBuilder {
     handoffPanel.append(this.app.handoffs);
     talkPanel.append(this.app.talks);
     chatPanel.append(this.app.chat);
+    // The unread count (#133) from the chat view: on the Chat link and, where
+    // the browser supports it, on the installed app's icon. Both are set from
+    // what this device decrypted; no count is sent anywhere. A locked
+    // household has no chat room, so the count and the icon badge clear
+    // when Kin locks (docs/UX.md).
+    this.app.chat.addEventListener("kin:chat-unread", (event) => {
+      this.app.chatUnread = event.detail;
+      this.ctx.render.renderUpdatesNav();
+      setAppBadge(event.detail.count);
+    });
     // The admin's chat policy (#123): with no access, Chat leaves Updates.
     this.app.chat.addEventListener("kin:chat-access", (event) => {
       this.app.chatAccess = event.detail.access;

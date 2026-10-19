@@ -1780,3 +1780,22 @@ secondary native select. Keep it labeled “Area for [item text]”, keyboard
 operable, at least 48px tall, and reflowing at 320px and 200% zoom. Names are
 plain text. Conflicting offline duplicate names remain separate stable Areas
 and receive a short ID suffix in selection/management labels until renamed.
+
+# 23. Chat unread marker and badges (#133)
+
+- Where the member left off is a private read position, kept apart from read
+  receipts: it works with receipts off and is shown to no one.
+- Opening Chat scrolls to a "New messages" divider above the first unread
+  message, with "Jump to latest" to skip to the end. The divider stays while
+  the member reads and is placed again the next time they return.
+- **Updates → Chat** shows the unread count (`99+` past 99) with the
+  accessible name "N unread". Reading on one device clears it on the member's
+  other devices once they sync. A separate @ marker for mentions comes with
+  mentions (#130).
+- Where the browser supports the Badging API, the installed app's icon shows
+  the same count, set on the device from decrypted state.
+- **Decision: the home-screen badge clears when Kin locks.** The badge is only
+  a number, but a number on a locked app still tells anyone who sees the
+  screen that the household is active. Locking stops the chat room, which
+  clears the count and the badge; unlocking brings both back from the saved
+  position. Messages that arrive while locked are counted at the next unlock.
