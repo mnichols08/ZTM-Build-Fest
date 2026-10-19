@@ -30,6 +30,7 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_device_names: status,
       kin_event_metadata: status,
       kin_event_metadata_batch: status,
+      kin_audio_peaks: status,
       kin_encode_command: status,
       kin_execute: status,
       kin_encode_archive: status,

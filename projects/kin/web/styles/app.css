@@ -858,6 +858,21 @@ button.chat-quote:hover, button.chat-quote:focus-visible { color: var(--ink); }
 .chat-text.chat-emoji-only { font-size: 2.2em; line-height: 1.2; }
 .chat-attach { min-height: var(--tap); padding-inline: 14px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
 .chat-attach:disabled { opacity: .5; }
+.chat-voice-recorder { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); }
+.chat-voice-recorder[hidden] { display: none; }
+.chat-voice-status { flex: 1 1 100%; margin: 0; font-size: 14px; }
+.chat-voice-clock { font-variant-numeric: tabular-nums; font-weight: 600; }
+.chat-voice-recorder audio { flex: 1 1 200px; min-width: 0; max-width: 100%; }
+.chat-voice-stop, .chat-voice-send, .chat-voice-discard, .chat-voice-play, .chat-voice-speed { min-height: var(--tap); padding-inline: 14px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
+.chat-voice { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%; }
+.chat-voice-track { position: relative; flex: 1 1 140px; min-width: 120px; height: var(--tap); }
+.chat-voice-wave { position: absolute; inset: 0; display: flex; align-items: center; gap: 1px; pointer-events: none; }
+.chat-voice-wave span { flex: 1 1 0; min-width: 1px; border-radius: 1px; background: var(--line-strong); }
+.chat-voice-wave span.played { background: var(--ink); }
+.chat-voice-seek { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.chat-voice-track:focus-within { outline: 2px solid var(--focus, currentColor); outline-offset: 2px; }
+.chat-voice-time { font-variant-numeric: tabular-nums; font-size: 13px; }
+.chat-voice-problem { font-size: 13px; }
 .chat-pending { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 14px; }
 .chat-pending[hidden] { display: none; }
 .chat-pending li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }

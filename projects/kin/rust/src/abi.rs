@@ -386,6 +386,13 @@ pub extern "C" fn kin_chat_text(pointer: u32, length: u32) -> i32 {
     })
 }
 
+/// Reduces decoded voice-message samples to 64 waveform peaks (#134):
+/// KAPQ -> KAPR. Touches no household or chat state.
+#[cfg_attr(target_arch = "wasm32", no_mangle)]
+pub extern "C" fn kin_audio_peaks(pointer: u32, length: u32) -> i32 {
+    operate(pointer, length, crate::audio::encode_peaks)
+}
+
 #[cfg_attr(target_arch = "wasm32", no_mangle)]
 pub extern "C" fn kin_event_metadata(pointer: u32, length: u32) -> i32 {
     operate(pointer, length, crate::codec::encode_metadata)

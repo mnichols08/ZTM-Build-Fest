@@ -1467,3 +1467,19 @@ test("chat polls are posted, voted in and closed through the engine, and a page 
   assert.equal(page().messages[0].poll, undefined);
   assert.equal(page().messages[0].status, "deleted");
 });
+
+test("kin_audio_peaks reduces mono samples to 64 peaks", async () => {
+  const wasm = await readFile(new URL("./kin_engine.wasm", import.meta.url));
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${wasm.toString("base64")}`);
+  const samples = new Float32Array(6400);
+  samples[0] = 0.5;
+  samples[3200] = -1;
+  samples[6399] = 2;
+  const peaks = engine.audioPeaks(samples);
+  assert.equal(peaks.length, 64);
+  assert.equal(peaks[0], 128);
+  assert.equal(peaks[32], 255);
+  assert.equal(peaks[63], 255, "values over full scale are clamped");
+  assert.equal(peaks[1], 0);
+  assert.throws(() => engine.audioPeaks(new Float32Array(0)));
+});

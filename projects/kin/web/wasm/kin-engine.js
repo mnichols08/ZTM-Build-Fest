@@ -89,6 +89,7 @@ export function createEngine(instanceExports) {
     "kin_device_names",
     "kin_event_metadata",
     "kin_event_metadata_batch",
+    "kin_audio_peaks",
     "kin_encode_command",
     "kin_execute",
     "kin_encode_archive",
@@ -297,6 +298,10 @@ export function createEngine(instanceExports) {
     // blobRef as 64 hex digits. Returns one boolean per text: whether it
     // passed Rust's checks and is held.
     putChatTexts: (entries) => putChatTexts(exports, entries),
+    // Reduces decoded voice-message samples (a Float32Array of mono samples,
+    // at most 16,000,000) to 64 waveform peaks (KAPQ/KAPR, ABI.md): a
+    // Uint8Array of 64 values, 0 (silent) to 255 (full scale).
+    audioPeaks: (samples) => audioPeaks(exports, samples),
     // Drops every decrypted chat text the engine holds, for a member who
     // lost access to chat while unlocked (locking drops them too).
     clearChatTexts: () => {
@@ -1280,6 +1285,24 @@ function decodeMetadata(bytes) {
     eventVersion: view.getUint16(88, true),
     kind,
   };
+}
+
+export const AUDIO_PEAK_COUNT = 64;
+export const MAX_AUDIO_SAMPLES = 16_000_000;
+
+function audioPeaks(exports, samples) {
+  if (!(samples instanceof Float32Array) || samples.length < 1 || samples.length > MAX_AUDIO_SAMPLES)
+    throw new KinEngineError(5, USER_MESSAGES.get(5));
+  const request = new Uint8Array(12 + samples.length * 4);
+  request.set([...textEncoder.encode("KAPQ"), 1, 0, 0, 0]);
+  const view = new DataView(request.buffer);
+  view.setUint32(8, samples.length, true);
+  // Little-endian floats, whatever the host's byte order.
+  for (let index = 0; index < samples.length; index += 1) view.setFloat32(12 + index * 4, samples[index], true);
+  const output = callCore(exports, "kin_audio_peaks", request);
+  if (output.length !== 8 + AUDIO_PEAK_COUNT || readAscii(output, 0, 4) !== "KAPR" || output[4] !== 1 || output[5] || output[6] || output[7])
+    throw new KinEngineError(6, "Kin received invalid waveform data.");
+  return output.slice(8);
 }
 
 function metadataBatch(exports, records) {

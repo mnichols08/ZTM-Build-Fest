@@ -25,6 +25,7 @@ kin_execute(ptr, len)                command: length + KCMD + KINE context -> KC
 kin_encode_command(ptr, len)         KCMD -> canonical event bytes
 kin_event_metadata(ptr, len)         one canonical event -> KMET
 kin_event_metadata_batch(ptr, len)   KMDQ -> KMDL
+kin_audio_peaks(ptr, len)            voice samples: KAPQ -> KAPR (v1.1)
 kin_plan_import(ptr, len)            import plan of the history: KINE context -> KIMP
 kin_archive_header(ptr, len)         two lengths -> 16-byte KARC header
 kin_archive_layout(ptr, len)         KARC header + total length -> two lengths
@@ -509,6 +510,14 @@ revision is meaningful only within one instance.
   record order: per voter, in ascending member order, the member ID (16), the
   chosen options as a u16 bit set and 2 zero bytes (20 bytes). At most 64
   voters are kept per poll. A member's vote is their latest, by logical time.
+- **KAPQ v1 / KAPR v1** (voice waveform, `kin_audio_peaks`, #134):
+  `"KAPQ"`, version 1, 3 reserved zero bytes, sample count u32 (1–16,000,000),
+  then that many little-endian f32 samples (mono, -1.0 to 1.0); the byte length
+  must match exactly. The result is `"KAPR"`, version 1, 3 reserved zero bytes,
+  then 64 bytes. Sample `i` of `n` falls in bucket `i * 64 / n`; a bucket's
+  byte is its largest magnitude (NaN counts as silence, anything past 1.0 as
+  1.0) times 255, rounded. With fewer than 64 samples the unused buckets are
+  0. One pass over the samples; no household or chat state is read or kept.
 - **KCHT v1 / KCHS v1** (chat texts, `kin_chat_text`): `"KCHT"`, version 1,
   reserved u16, count u32 (1–500), then per text: blob ref (32, non-zero),
   length u32, the UTF-8 text. Every entry is framed before any is stored. The
