@@ -313,8 +313,8 @@ export class HouseholdMembership {
       actions.append(actionsHeading);
       if (canManageMembers === true) {
         const inviteCopy = document.createElement("p");
-        inviteCopy.textContent = "Invite person gives them their own household member identity and access for their role.";
-        actions.append(inviteCopy, this.host.makeButton("Invite person", () => this.host.createPairing("adult")));
+        inviteCopy.textContent = "Invite another person gives them their own household member identity and access for their role.";
+        actions.append(inviteCopy, this.host.makeButton("Invite another person", () => this.host.createPairing("adult")));
       }
       const deviceCopy = document.createElement("p");
       deviceCopy.textContent = "Add my device keeps you under this same member identity on another phone or computer.";

@@ -420,7 +420,7 @@ test("People & devices groups by stable member ID and labels people and device s
   assert.equal(line("partner-mac"), "New device · ABCD — Untrusted");
   assert.equal(line("partner-tablet"), "Safari on iPad — Revoked");
   const buttons = descendants(component.children).filter((child) => child.tagName === "button");
-  await buttons.find((button) => button.textContent === "Invite person").listeners.click();
+  await buttons.find((button) => button.textContent === "Invite another person").listeners.click();
   await buttons.find((button) => button.textContent === "Add my device").listeners.click();
   assert.deepEqual(pairingActions, [["person", "adult"], ["device"]]);
   assert.ok(descendants(component.children).some((child) => child.textContent?.includes("own household member identity")));
@@ -466,7 +466,7 @@ test("People & devices remains useful offline when encrypted names are unavailab
   const groups = component.children.filter((child) => child.className === "device-group");
   assert.deepEqual(groups.map((group) => group.children[0].textContent), ["Alex (You)", "Riley"]);
   const buttons = descendants(component.children).filter((child) => child.tagName === "button");
-  assert.equal(buttons.some((button) => button.textContent === "Invite person"), false,
+  assert.equal(buttons.some((button) => button.textContent === "Invite another person"), false,
     "inviting another person remains limited to server-authorized managers");
   assert.equal(buttons.some((button) => button.textContent === "Add my device"), true);
   const messages = descendants(component.children).filter((child) => child.className === "household-message");
@@ -518,4 +518,71 @@ test("an invitation code arriving after connection fills the join screen (#97)",
   assert.deepEqual(calls, ["/pair"], "the address was cleared when the code was taken");
   component.offerInvitationCode();
   assert.equal(renders, 1, "nothing more to offer");
+});
+
+// #223: a code on a different path than the one chosen is never activated
+// silently, and both screens say which path is in progress.
+function confirmedClaim({ intent, purpose }) {
+  const component = new KinHousehold();
+  component.localFingerprint = "f".repeat(64);
+  component.claimIntent = intent;
+  component.claim = {
+    state: "Confirmed",
+    purpose,
+    syncKeyFingerprint: component.localFingerprint,
+    inviterKeyFingerprint: "e".repeat(64),
+  };
+  component.ctx.views.renderJoin();
+  const all = (node) => [node, ...(node.children ?? []).flatMap(all)];
+  const nodes = all(component);
+  const activate = nodes.find((node) => node.tagName === "button" && node.textContent === "Activate with passkey");
+  const boxes = nodes.filter((node) => node.tagName === "input" && node.type === "checkbox");
+  const text = nodes.map((node) => node.textContent).join(" ");
+  return { activate, boxes, text, component };
+}
+
+test("Add my device with an invitation code stays blocked until the switch is acknowledged (#223)", () => {
+  const { activate, boxes, text } = confirmedClaim({ intent: "device", purpose: "adult" });
+  assert.match(text, /Joining as a new household member/);
+  assert.match(text, /You chose Add my device, but this code is an invitation/);
+  assert.equal(boxes.length, 2, "fingerprint comparison and path acknowledgement");
+  const [fingerprint, acknowledgement] = boxes;
+  assert.equal(acknowledgement.name, "path-acknowledged");
+  assert.equal(activate.disabled, true);
+  fingerprint.checked = true;
+  fingerprint.listeners.change();
+  assert.equal(activate.disabled, true, "a compared fingerprint alone does not accept a different path");
+  acknowledgement.checked = true;
+  acknowledgement.listeners.change();
+  assert.equal(activate.disabled, false);
+});
+
+test("a joiner whose code matches their choice sees the path and only the fingerprint gate (#223)", () => {
+  const { activate, boxes, text } = confirmedClaim({ intent: "device", purpose: "device" });
+  assert.match(text, /Adding this device to your membership/);
+  assert.doesNotMatch(text, /You chose/);
+  assert.equal(boxes.length, 1);
+  boxes[0].checked = true;
+  boxes[0].listeners.change();
+  assert.equal(activate.disabled, false);
+});
+
+test("an inviter's code says whether it adds their own device or a new person (#222)", () => {
+  for (const [pairing, title, waiting] of [
+    [{ purpose: "device" }, "Adding your own device", "Waiting for your other device to enter this code."],
+    [{ memberKind: "limited" }, "Inviting another person", "Waiting for the person you invited to enter this code."],
+  ]) {
+    const component = new KinHousehold();
+    component.syncStatus = { enabled: true, memberKind: "adult" };
+    component.pairing = { state: "Pending", code: "F7KM-Q2DX", expiresAt: Date.now() + 60_000, ...pairing };
+    component.ctx.pairing.pollPairing = () => {};
+    component.ctx.pairing.updateCountdown = () => {};
+    component.ctx.views.renderMember();
+    clearInterval(component.timer);
+    const all = (node) => [node, ...(node.children ?? []).flatMap(all)];
+    const text = all(component).map((node) => node.textContent).join(" ");
+    assert.match(text, new RegExp(title), title);
+    assert.ok(text.includes(waiting), waiting);
+    if (pairing.memberKind) assert.match(text, /Limited \(child or teen\) access/);
+  }
 });

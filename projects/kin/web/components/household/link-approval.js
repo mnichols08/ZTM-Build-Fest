@@ -34,7 +34,7 @@ export const APPROVAL_POLL_MS = 2_000;
 
 const NOT_SIGN_IN = "That isn't a computer's sign-in code. On the computer, choose Sign in with your phone, then scan the code it shows.";
 const INVITATION = "That's a household invitation, not a computer's sign-in code. Scan the code on the computer you're signing in.";
-const NO_TYPING = "Signing in a computer needs its QR code. If your camera can't read it, sign in on the computer with your passkey, or add it with Add another device.";
+const NO_TYPING = "Signing in a computer needs its QR code. If your camera can't read it, sign in on the computer with your passkey, or add it with Add my device.";
 
 function remaining(expiresAt) {
   const seconds = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));

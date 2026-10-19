@@ -6,11 +6,12 @@
 
 Inviting another household member changes household membership. Adding a device authorizes another installation for an existing member. They are separate operations with different confirmation and recovery requirements.
 
-Before either QR or manual-code UI appears, Kin names the choices **Invite a
-person** and **Add my device** and states whether a new member ID will be
-created. Keeping that explanation visible throughout approval and completion
-is tracked by #219; the current approval screens retain their existing generic
-pairing copy. Back or Cancel grants nothing. Platform, offline, migration and
+Before either QR or manual-code UI appears, Kin names the choices **Invite
+another person** and **Add my device** and states whether a new member ID will
+be created. Both the code's creator and the joining device keep that path
+visible through approval and activation, and a code whose real purpose
+contradicts the path the person chose cannot be activated until they
+acknowledge the switch (#219, #223). Back or Cancel grants nothing. Platform, offline, migration and
 accessibility evidence is tracked in
 [Member and Device Identity Acceptance](IDENTITY-PAIRING-ACCEPTANCE.md).
 
