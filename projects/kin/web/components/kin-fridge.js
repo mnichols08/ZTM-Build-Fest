@@ -268,7 +268,7 @@ class KinFridge extends HTMLElement {
   updateTools() {
     if (!this.tools) return;
     // Look only (#323): the fridge shows, its tools don't.
-    const drawing = this.room?.access !== "read";
+    const drawing = !this.room || this.room.access === "write";
     this.tools.hidden = !drawing;
     this.colourButtons.forEach((button, index) => button.setAttribute("aria-pressed", String(this.tool === "pen" && index === this.colour)));
     this.widthButtons.forEach((button, index) => button.setAttribute("aria-pressed", String(index === this.width)));
@@ -319,8 +319,11 @@ class KinFridge extends HTMLElement {
     let summary = fridgeSummary(this.state, this.labelOf);
     if (room.access === "read") summary += " Your household has set the fridge to look only for you.";
     if (room.waiting) summary += " Waiting to send.";
-    if (room.syncError) summary += " The fridge will sync again shortly.";
-    this.summary.textContent = summary;
+    // A household service from before the fridge has no board routes (404).
+    if (room.syncError?.code === "not_found") summary += " The fridge needs an updated household service to reach the rest of the household; drawings stay on this device until then.";
+    else if (room.syncError) summary += " The fridge will sync again shortly.";
+    // A polite live region: only a real change is announced again.
+    if (this.summary.textContent !== summary) this.summary.textContent = summary;
     this.drawInk();
     this.renderMagnets();
     this.updateTools();
@@ -652,8 +655,14 @@ class KinFridge extends HTMLElement {
       option.textContent = region.label;
       select.append(option);
     }
-    select.addEventListener("change", () => {
-      if (!select.value) return;
+    // Choosing a place doesn't move the magnet by itself (arrow keys on a
+    // closed select fire "change"); the Move button does (WCAG 3.2.2).
+    const move = document.createElement("button");
+    move.type = "button";
+    move.className = "fridge-magnet-move";
+    move.textContent = "Move";
+    move.addEventListener("click", () => {
+      if (!select.value) { select.focus(); return; }
       const to = regionPoint(select.value);
       this.closeMagnetMenu({ focus: false });
       this.movingMagnets.set(magnet.id, to);
@@ -669,7 +678,7 @@ class KinFridge extends HTMLElement {
     close.type = "button";
     close.textContent = "Done";
     close.addEventListener("click", () => this.closeMagnetMenu());
-    menu.append(label, remove, close);
+    menu.append(label, move, remove, close);
     menu.addEventListener("keydown", (event) => {
       if (event.key === "Escape") { event.preventDefault(); this.closeMagnetMenu(); }
     });
@@ -916,6 +925,7 @@ class KinFridge extends HTMLElement {
     const clearId = this.state?.openClear;
     if (!clearId) return;
     try {
+      if (this.room.board().openClear !== clearId) { this.showStatus("Someone changed the fridge meanwhile. Nothing was brought back."); return; }
       await this.room.change({ type: "undo-clear", clearId });
       this.showStatus("The fridge is back as it was.");
     } catch (error) {
@@ -939,40 +949,48 @@ class KinFridge extends HTMLElement {
     if (entry.kind === "draw" || entry.kind === "erase") {
       const hidden = entry.kind === "draw" ? backwards : !backwards;
       const visible = new Set((board.strokes ?? []).map((stroke) => stroke.id));
+      let changed = false;
       for (const strokeId of entry.ids) {
         if (visible.has(strokeId) !== hidden) continue;
         await this.room.change({ type: "hide-stroke", strokeId, hidden });
+        changed = true;
       }
-      return;
+      return changed;
     }
     if (entry.kind === "place" || entry.kind === "remove") {
       const hidden = entry.kind === "place" ? backwards : !backwards;
       const shown = (board.magnets ?? []).some((magnet) => magnet.id === entry.id);
-      if (shown === hidden) await this.room.change({ type: "hide-magnet", magnetId: entry.id, hidden });
-      return;
+      if (shown !== hidden) return false;
+      await this.room.change({ type: "hide-magnet", magnetId: entry.id, hidden });
+      return true;
     }
     if (entry.kind === "move") {
       const magnet = (board.magnets ?? []).find((candidate) => candidate.id === entry.id);
       const [x, y] = backwards ? entry.from : entry.to;
-      if (magnet && (magnet.x !== x || magnet.y !== y)) await this.room.change({ type: "move-magnet", magnetId: entry.id, x, y });
-      return;
+      if (!magnet || (magnet.x === x && magnet.y === y)) return false;
+      await this.room.change({ type: "move-magnet", magnetId: entry.id, x, y });
+      return true;
     }
     if (entry.kind === "clear") {
-      if (backwards && board.openClear === entry.id) await this.room.change({ type: "undo-clear", clearId: entry.id });
-      else if (!backwards) {
-        entry.id = newBoardId();
-        await this.room.change({ type: "clear-board", clearId: entry.id });
+      if (backwards) {
+        if (board.openClear !== entry.id) return false;
+        await this.room.change({ type: "undo-clear", clearId: entry.id });
+        return true;
       }
+      entry.id = newBoardId();
+      await this.room.change({ type: "clear-board", clearId: entry.id });
+      return true;
     }
+    return false;
   }
 
   async undo() {
     const entry = this.undoStack.pop();
     if (!entry || !this.room) return;
     try {
-      await this.apply(entry, true);
+      const changed = await this.apply(entry, true);
       this.redoStack.push(entry);
-      this.showStatus(UNDONE[entry.kind] ?? "Undone.");
+      this.showStatus(changed ? UNDONE[entry.kind] ?? "Undone." : "Someone changed that meanwhile, so there was nothing to undo.");
     } catch (error) {
       this.showStatus(changeProblem(error, this.state));
     }
@@ -983,9 +1001,9 @@ class KinFridge extends HTMLElement {
     const entry = this.redoStack.pop();
     if (!entry || !this.room) return;
     try {
-      await this.apply(entry, false);
+      const changed = await this.apply(entry, false);
       this.undoStack.push(entry);
-      this.showStatus(REDONE[entry.kind] ?? "Redone.");
+      this.showStatus(changed ? REDONE[entry.kind] ?? "Redone." : "Someone changed that meanwhile, so there was nothing to redo.");
     } catch (error) {
       this.showStatus(changeProblem(error, this.state));
     }

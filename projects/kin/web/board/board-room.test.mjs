@@ -285,3 +285,52 @@ test("a fridge restored from an export reads back sealed by the vault, then the 
   assert.equal(rows.length, 2);
   assert.ok(rows.every((row) => row.envelope && !row.imported), "each row now holds the relay's envelope");
 });
+
+test("the relay's copy of a restored event is authenticated and must match it (#363)", { timeout: 30_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs });
+  const devices = [phone.entry];
+  const a = await openRoom(phone, s);
+  const original = stroke();
+  await a.room.change(original);
+  const plan = await a.room.exportPlan();
+  const eventId = [...a.room.indexById.keys()][0];
+  // The export holds a different event under the same ID than the one the
+  // relay will serve (a relay or writer substituting content).
+  const forged = JSON.parse(new TextDecoder().decode(plan.view.record(0)));
+  forged.command = { ...forged.command, points: [[900, 900], [950, 950]] };
+  const section = openBoardSection();
+  appendBoardEvents(section, [1], [new TextEncoder().encode(JSON.stringify(forged))]);
+  validateBoardSection(section, { engine: fakeEngine(), eventCount: 1, householdId: s.householdId });
+  assert.deepEqual(section.eventIds, [eventId]);
+  await a.room.sync({ status: STATUS, devices });
+
+  const sealed = new Map();
+  const vault = {
+    assertUnlocked() {},
+    async seal(bytes, { id }) { sealed.set(id, bytes.slice()); return { id }; },
+    async open(value, { id }) { return sealed.get(id).slice(); },
+  };
+  const fresh = { ...phone, indexedDB: fakeIndexedDB(), keyStore: { ...phone.keyStore, vault } };
+  await importBoardSection(section, { householdId: s.householdId, vault, indexedDB: fresh.indexedDB, keyRange: fakeKeyRange });
+  const b = await openRoom(fresh, s);
+  await b.room.sync({ status: STATUS, devices });
+  assert.deepEqual(b.room.refused.map((entry) => [entry.eventId, entry.code]), [[eventId, "board_event_refused"]], "the mismatch is refused");
+  const store = await BoardLogStore.open(s.householdId, { indexedDB: fresh.indexedDB, keyRange: fakeKeyRange });
+  const rows = await store.eventsFrom(1);
+  store.close();
+  assert.ok(rows[0].imported && !rows[0].envelope, "the restored copy is kept, not overwritten");
+});
+
+test("the member's fridge access is remembered for the next unlock (#323)", { timeout: 30_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const tablet = await device(s.partner, { householdId: s.householdId, epochs });
+  const b = await openRoom(tablet, s);
+  await b.room.sync({ status: { ...STATUS, board: { access: "read" } }, devices: [tablet.entry] });
+  b.room.close();
+  const again = await openRoom(tablet, s);
+  assert.equal(again.room.access, "read", "starts look only, before any sync");
+  await assert.rejects(again.room.change(stroke()), (error) => error.code === "board_read_only");
+});

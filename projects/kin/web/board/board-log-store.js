@@ -18,7 +18,8 @@
 //   outbox  { deviceSequence, eventId }    this device's events the relay
 //                                          hasn't accepted yet
 //   meta    { key: "state", nextOrder, cursor, deviceSequence, provisional,
-//             refused }
+//             refused, access }   `access` is the last fridge access the
+//                                 service gave this member (#323)
 //
 // `cursor` is the relay position read up to; `deviceSequence` the last board
 // sequence this device used. It starts provisional (an offline first stroke)
@@ -224,6 +225,16 @@ export class BoardLogStore {
       }
       state.deviceSequence = deviceSequence;
       state.provisional = provisional;
+      await settle(meta.put(state));
+    });
+  }
+
+  /** Remembers this member's fridge access, so the next unlock starts from
+   * it rather than from "write" before the first sync (#323). */
+  setAccess(access) {
+    return transact(this.db, [META], "readwrite", async ({ meta }) => {
+      const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
+      state.access = access;
       await settle(meta.put(state));
     });
   }

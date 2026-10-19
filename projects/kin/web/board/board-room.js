@@ -57,6 +57,8 @@ export class BoardRoom {
     const store = await BoardLogStore.open(identity.householdId, { indexedDB, keyRange });
     const room = new BoardRoom({ identity, keyStore, deviceKeys, engine, request, store, locks, now, onLocalChange });
     try {
+      const { access } = await store.state();
+      if (["write", "read", "none"].includes(access)) room.access = access;
       await room.refresh();
     } catch (error) {
       room.close();
@@ -69,6 +71,10 @@ export class BoardRoom {
     Object.assign(this, { identity, keyStore, deviceKeys, engine, request, store, locks, now, onLocalChange });
     this.records = new ChatRecords();
     this.indexById = new Map();
+    // Storage order of every stored event, readable or not, and the events
+    // still held as read from an export (#363).
+    this.orderById = new Map();
+    this.importedIds = new Set();
     this.loadedOrder = 0;
     this.maxLogicalTime = 0n;
     this.epochKeys = new Map();
@@ -155,6 +161,10 @@ export class BoardRoom {
           throw new BoardLogError("This device's fridge log is out of order.", "board_log_damaged");
       });
       const decrypted = [];
+      for (const row of rows) {
+        this.orderById.set(row.eventId, row.order);
+        if (row.imported) this.importedIds.add(row.eventId);
+      }
       try {
         for (const row of rows) {
           // Read from an export (#363): sealed by this device's vault.
@@ -284,6 +294,7 @@ export class BoardRoom {
     const access = ["write", "read", "none"].includes(status.board?.access) ? status.board.access : "write";
     if (access !== this.access) {
       this.access = access;
+      await this.store.setAccess(access);
       this.notify();
     }
     // No access: nothing is fetched or sent until the admin changes it back.
@@ -381,7 +392,9 @@ export class BoardRoom {
           householdKey,
           signingKey: this.signingKey(),
         });
-        entries.push({ order: index + 1, previousSequence: row.deviceSequence, envelope });
+        const order = this.orderById.get(row.eventId);
+        if (order === undefined) throw new BoardLogError("This device's fridge log is missing a pending change.", "board_log_damaged");
+        entries.push({ order, previousSequence: row.deviceSequence, envelope });
       } finally {
         plaintext.fill(0);
       }
@@ -399,12 +412,17 @@ export class BoardRoom {
       const verified = [], refused = [];
       let pause = null;
       for (const { cursor: at, envelope } of page.events) {
-        if (this.indexById.has(envelope.eventId)) {
+        // Already stored from the relay: checked when it first arrived. One
+        // read from an export is checked like any other, and must be the
+        // same event, before the relay's copy takes its place.
+        const imported = this.importedIds.has(envelope.eventId);
+        if (this.orderById.has(envelope.eventId) && !imported) {
           verified.push(envelope);
           continue;
         }
         try {
-          await this.authenticate(envelope, status, devices);
+          const index = this.indexById.get(envelope.eventId);
+          await this.authenticate(envelope, status, devices, imported && index !== undefined ? this.records.view().record(index) : null);
           verified.push(envelope);
         } catch (error) {
           if (this.closed) throw error;
@@ -424,6 +442,7 @@ export class BoardRoom {
       if (pause) throw pause;
       this.assertOpen();
       await this.store.addReceived(verified, page.nextCursor, { refused });
+      for (const envelope of verified) this.importedIds.delete(envelope.eventId);
       if (refused.length) this.refused = [...this.refused, ...refused].slice(-100);
       await this.refresh();
       if (!page.hasMore || page.nextCursor === cursor) return false;
@@ -434,7 +453,7 @@ export class BoardRoom {
   /** Checks a relayed board event as household sync checks its events: from
    * a trusted device of this household, signed by it, under a key epoch it
    * may use, a board kind, and carrying the same identity inside as out. */
-  async authenticate(envelope, status, devices) {
+  async authenticate(envelope, status, devices, expected = null) {
     const refuse = (message) => { throw new BoardRoomError(message, "board_event_refused"); };
     if (envelope.householdId !== this.identity.householdId) refuse("A fridge change came from another household.");
     const signer = devices.find((device) => device.deviceId === envelope.deviceId);
@@ -457,6 +476,8 @@ export class BoardRoom {
           idToHex(metadata.deviceId) !== envelope.deviceId ||
           metadata.logicalTime.toString() !== envelope.logicalTime)
         refuse("A fridge change did not match its encrypted envelope.");
+      if (expected && (expected.length !== encodedEvent.length || expected.some((byte, index) => byte !== encodedEvent[index])))
+        refuse("A fridge change did not match the one restored from an export.");
     } finally {
       encodedEvent.fill(0);
     }
@@ -468,6 +489,8 @@ export class BoardRoom {
     this.closed = true;
     this.records.clear();
     this.indexById.clear();
+    this.orderById.clear();
+    this.importedIds.clear();
     this.epochKeys.clear();
     this.pending.clear();
     this.listeners.clear();

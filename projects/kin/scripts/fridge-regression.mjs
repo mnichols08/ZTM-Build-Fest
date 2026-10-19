@@ -234,6 +234,8 @@ export async function fridgeRegressions(client, until) {
   await key("Enter");
   await until(() => page(`Boolean(document.querySelector("kin-fridge .fridge-magnet-menu select"))`));
   await page(`(() => { const select = document.querySelector("kin-fridge .fridge-magnet-menu select"); select.value = "bottom-left"; select.dispatchEvent(new Event("change")); return true; })()`);
+  assert.equal(await page(`Boolean(document.querySelector("kin-fridge .fridge-magnet-menu"))`), true, "choosing a place alone doesn't move the magnet");
+  await page(`document.querySelector("kin-fridge .fridge-magnet-move").click(), true`);
   await until(async () => (await magnets())[0].y > 4000);
   assert.ok((await magnets())[0].x < 1000, "moved to the bottom left");
   // A Kin-drawn magnet in the middle, then dragged with a mouse.

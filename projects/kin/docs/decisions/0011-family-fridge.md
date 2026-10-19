@@ -43,7 +43,8 @@ Three facts from the code shape the design:
     relay's store and service are generalized by stream name rather than
     copied; chat's tables, routes and behaviour do not change.
   - **Client:** a board log per household in IndexedDB, built on a log store
-    extracted from `ChatLogStore` (envelopes, outbox, cursor), and a board
+    modelled on `ChatLogStore` (envelopes, outbox, cursor; a separate copy, not
+    a shared module), and a board
     pass that runs after the chat pass in the sync coordinator.
 - **Encryption:** board events use the household key epoch, like household
   events. There is no separate board key: everyone in the household may see
@@ -141,8 +142,8 @@ time); replay order is the protocol-8 order `(logical_time, device, event_id)`.
 - Additive format: new kinds 52–58 in a new log, a new relay stream, a server
   schema migration (board tables and the two policy columns) and a new
   archive section. Older clients ignore all of it; older services refuse the
-  board routes, so a newer client shows "The fridge needs an updated household
-  service" instead of drawing. [V1.0-COMPATIBILITY](../V1.0-COMPATIBILITY.md)
+  board routes, so a newer client says "The fridge needs an updated household
+  service" and keeps what is drawn on this device until it can send. [V1.0-COMPATIBILITY](../V1.0-COMPATIBILITY.md)
   gets a row.
 - The service learns when someone in the household draws (timing and size of
   board envelopes), never what.
