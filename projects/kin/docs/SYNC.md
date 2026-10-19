@@ -476,6 +476,24 @@ characters, captions up to 4,000, a manifest up to 256 KiB.
   manifest; the service retires them all in batches of 64, and each device
   deletes the parts it kept with the manifest. A device that never fetched a
   manifest has no parts to delete.
+- **Preparing, cancelling and retrying (#115, #116).** `sendAttachments`
+  reports `{ index, done, total }` bytes per file after each part and takes an
+  `AbortSignal`: when it fires (or the room closes, or sealing fails) the parts
+  already sealed for that send are retired, nothing is posted, and the caller
+  gets `chat_attachment_cancelled`. The composer keeps the files, so a failed
+  or cancelled send is retried with the same draft.
+- **Why 1 MiB parts rather than 64 KiB chunks with their own endpoints.**
+  Every part is already a content-addressed blob sealed under its own random
+  key and nonce, uploaded with an idempotent `PUT` by hash, so an interrupted
+  upload resumes by sending only the parts the service lacks, and a receiver
+  checks each part against its reference and size before using it. The
+  manifest, sealed inside the signed event, fixes the order, sizes and keys, so
+  a truncated, reordered or swapped sequence fails closed (a part from the
+  service that is not the one named is refused by its hash). Sealing holds one
+  part at a time; opening a file holds that file's decrypted parts (25 MB at
+  most) while joining them into a Blob. Smaller chunks and a second family of
+  routes would add a new frozen layout and more requests without any of these
+  properties changing, so the 1 MiB parts of manifest 1 stay.
 - **Limits by the service:** a household holds 256 MiB of live blobs, so a
   message of ten 25 MB files can fill a small household's chat storage;
   uploads then fail with `chat_storage_full` and say so.

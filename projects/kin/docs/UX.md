@@ -1916,3 +1916,25 @@ and receive a short ID suffix in selection/management labels until renamed.
   by the engine from the recording on the sender's device. A voice message is
   an ordinary attachment: it is sealed, kept, expires, exports and is deleted
   exactly like any other file.
+
+# 30. Attaching in chat: paste, drop, camera, progress, retry (#115, #116)
+
+- **Paste.** Pasting a picture or file into the message box adds it to the
+  files to send. Pasted text, including text that also carries a picture (as a
+  spreadsheet does), pastes as text.
+- **Drop.** On a desktop, dragging files over the chat outlines the composer
+  and dropping adds them. Nothing happens, and no outline shows, when the
+  member can't post, is editing or recording, or is already sending.
+- **Camera.** On a phone or tablet (a touch screen as the main pointer) a
+  **Camera** button beside Attach opens the device's camera for one photo. It
+  is not shown on a desktop.
+- **Every addition is announced** ("2 files added.") and limited like the
+  Attach button: up to ten files, 25 MB each.
+- **Progress and Cancel.** While Send prepares the files, each listed file
+  shows a native progress bar named "Preparing <name>", and **Cancel sending**
+  stops it. Cancelling leaves the files and the caption where they were and
+  says so.
+- **Retry.** If sending fails, the caption and files stay, the message says
+  so, and a **Retry** button beside Send tries again with the same draft.
+  Removing the last file hides it.
+

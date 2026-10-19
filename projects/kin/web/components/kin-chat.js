@@ -375,6 +375,15 @@ class KinChat extends HTMLElement {
     this.attach.textContent = "Attach";
     this.attach.setAttribute("aria-label", `Attach photos or files (up to ${MAX_ATTACHMENT_FILES})`);
     this.attach.addEventListener("click", () => this.chooseFiles());
+    // Camera (#116): only where the main way to point at something is a touch
+    // screen. The browser opens the camera app and hands back one photo.
+    this.cameraButton = document.createElement("button");
+    this.cameraButton.type = "button";
+    this.cameraButton.className = "chat-attach chat-camera";
+    this.cameraButton.textContent = "Camera";
+    this.cameraButton.setAttribute("aria-label", "Take a photo to attach");
+    this.cameraButton.hidden = typeof matchMedia !== "function" || !matchMedia("(pointer: coarse)").matches;
+    this.cameraButton.addEventListener("click", () => this.chooseFiles({ camera: true }));
     // Quick polls (#135): a question with 2 to 10 options.
     this.pollButton = document.createElement("button");
     this.pollButton.type = "button";
@@ -428,7 +437,21 @@ class KinChat extends HTMLElement {
     this.pendingList.hidden = true;
     const buttons = document.createElement("div");
     buttons.className = "chat-form-buttons";
-    buttons.append(this.attach, this.pollButton, this.voiceButton, this.emoji, this.send, this.cancel);
+    // While files are being prepared: stop. After a failed send: try again.
+    this.stopSend = document.createElement("button");
+    this.stopSend.type = "button";
+    this.stopSend.className = "chat-stop-send";
+    this.stopSend.textContent = "Cancel sending";
+    this.stopSend.hidden = true;
+    this.stopSend.addEventListener("click", () => this.sendAbort?.abort());
+    this.retry = document.createElement("button");
+    this.retry.type = "button";
+    this.retry.className = "chat-attach chat-retry";
+    this.retry.textContent = "Retry";
+    this.retry.setAttribute("aria-label", "Retry sending");
+    this.retry.hidden = true;
+    this.retry.addEventListener("click", () => void this.submit());
+    buttons.append(this.attach, this.cameraButton, this.pollButton, this.voiceButton, this.emoji, this.send, this.retry, this.stopSend, this.cancel);
     form.append(this.label, this.replyBar, this.input, this.mentionList, this.pendingList, this.voiceHost, panelSlot, buttons, this.message);
 
     // A viewer for one photo, shown modally; its URL is released on close.
@@ -446,6 +469,10 @@ class KinChat extends HTMLElement {
     this.scroller.setAttribute("aria-describedby", "chat-typing");
     this.input.addEventListener("input", () => { this.composerChanged(); this.updateMentions(); });
     this.input.addEventListener("click", () => this.updateMentions());
+    this.input.addEventListener("paste", (event) => this.onPaste(event));
+    this.addEventListener("dragover", (event) => this.onDragOver(event));
+    this.addEventListener("dragleave", (event) => { if (!this.contains(event.relatedTarget)) this.form.classList.remove("chat-dropping"); });
+    this.addEventListener("drop", (event) => this.onDrop(event));
     this.input.addEventListener("blur", () => {
       clearTimeout(this.mentionBlurTimer);
       this.mentionBlurTimer = setTimeout(() => this.closeMentions(), 150);
@@ -554,7 +581,9 @@ class KinChat extends HTMLElement {
     this.send.disabled = off || Boolean(this.sending);
     this.emoji.disabled = off;
     // Attachments aren't edited: no attaching while editing a message.
-    this.attach.disabled = off || Boolean(this.sending) || Boolean(this.editing);
+    this.attach.disabled = off || Boolean(this.sending) || Boolean(this.editing) || this.voice?.open === true;
+    this.cameraButton.disabled = this.attach.disabled;
+    this.retry.disabled = off || Boolean(this.sending);
     this.pollButton.disabled = off || Boolean(this.sending) || Boolean(this.editing);
     this.voiceButton.disabled = off || Boolean(this.sending) || Boolean(this.editing) || this.voice.open;
   }
@@ -2021,11 +2050,16 @@ class KinChat extends HTMLElement {
 
   /** Opens the file dialog once; the input is removed after the choice (or
    * a cancel), so the page never holds a file input between sends. */
-  chooseFiles() {
+  chooseFiles({ camera = false } = {}) {
     const input = document.createElement("input");
     input.type = "file";
-    input.multiple = true;
     input.hidden = true;
+    if (camera) {
+      input.accept = "image/*";
+      input.setAttribute("capture", "environment");
+    } else {
+      input.multiple = true;
+    }
     const done = () => input.remove();
     input.addEventListener("change", () => { done(); this.addFiles([...input.files]); });
     input.addEventListener("cancel", done);
@@ -2035,7 +2069,7 @@ class KinChat extends HTMLElement {
 
   /** Adds photos and files to the ones to send, within the limits. */
   addFiles(incoming) {
-    if (!incoming.length) return;
+    if (!incoming.length || !this.canAttach()) return;
     const next = [...this.files, ...incoming];
     const problem = attachmentProblem(next);
     if (problem) {
@@ -2044,7 +2078,45 @@ class KinChat extends HTMLElement {
     }
     this.message.textContent = "";
     this.files = next;
+    this.retry.hidden = true;
     this.renderPending();
+    this.say(incoming.length === 1 ? "1 file added." : `${incoming.length} files added.`);
+  }
+
+  /** Whether files can be added now: a room that allows posting, not mid-send,
+   * not editing and not recording. */
+  canAttach() {
+    return Boolean(this.chatRoom) && (this.chatRoom.access ?? "write") === "write" && !this.isDisabled && !this.attach.disabled;
+  }
+
+  /** Paste and drop (#116): files from the clipboard or dragged in from the
+   * desktop. Text pastes and drags are left to the browser. */
+  filesOf(transfer) {
+    return transfer?.types && [...transfer.types].includes("Files") ? [...(transfer.files ?? [])] : [];
+  }
+
+  onPaste(event) {
+    const files = this.filesOf(event.clipboardData);
+    // Copied text that also carries a picture (a spreadsheet, say) pastes as text.
+    if (!files.length || [...event.clipboardData.types].includes("text/plain")) return;
+    event.preventDefault();
+    this.addFiles(files);
+  }
+
+  onDragOver(event) {
+    if (!this.filesOf(event.dataTransfer).length && ![...(event.dataTransfer?.types ?? [])].includes("Files")) return;
+    // Allowed to drop only where files can be added now.
+    if (!this.canAttach()) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    this.form.classList.add("chat-dropping");
+  }
+
+  onDrop(event) {
+    this.form.classList.remove("chat-dropping");
+    if (![...(event.dataTransfer?.types ?? [])].includes("Files")) return;
+    event.preventDefault();
+    this.addFiles([...(event.dataTransfer.files ?? [])]);
   }
 
   renderPending() {
@@ -2052,6 +2124,17 @@ class KinChat extends HTMLElement {
       const item = document.createElement("li");
       const name = document.createElement("span");
       name.textContent = `${safeAttachmentName(file.name)} · ${formatAttachmentSize(file.size)}`;
+      if (this.sending && this.progress) {
+        // Preparing (encrypting) this file: a native progress bar, named.
+        const bar = document.createElement("progress");
+        const state = this.progress.get(index) ?? { done: 0, total: file.size };
+        bar.max = Math.max(1, state.total);
+        bar.value = state.done;
+        bar.setAttribute("aria-label", `Preparing ${safeAttachmentName(file.name)}`);
+        bar.textContent = `${Math.round((state.done / Math.max(1, state.total)) * 100)}%`;
+        item.append(name, " ", bar);
+        return item;
+      }
       const remove = document.createElement("button");
       remove.type = "button";
       remove.className = "chat-pending-remove";
@@ -2066,6 +2149,7 @@ class KinChat extends HTMLElement {
       return item;
     }));
     this.pendingList.hidden = this.files.length === 0;
+    if (!this.files.length) this.retry.hidden = true;
   }
 
   actionsFor(message, room) {
@@ -2277,12 +2361,30 @@ class KinChat extends HTMLElement {
     }
     this.message.textContent = "";
     this.sending = true;
+    this.retry.hidden = true;
     this.applyDisabled();
     const editing = this.editing;
+    // Per-file progress and Cancel while photos and files are prepared.
+    this.sendAbort = withFiles ? new AbortController() : null;
+    this.progress = withFiles ? new Map() : null;
+    if (withFiles) {
+      this.stopSend.hidden = false;
+      this.renderPending();
+      this.say("Sending files.");
+    }
     try {
       const mentions = this.mentionsFor(withFiles ? caption : text);
       if (editing) await room.edit(editing, text, { mentions });
-      else if (withFiles) await room.sendAttachments({ text: caption, files: this.files, replyTo: this.replyingTo?.messageId ?? null, mentions });
+      else if (withFiles) {
+        await room.sendAttachments({
+          text: caption, files: this.files, replyTo: this.replyingTo?.messageId ?? null, mentions, signal: this.sendAbort.signal,
+          onProgress: ({ index, done, total }) => {
+            this.progress.set(index, { done, total });
+            const bar = this.pendingList.children[index]?.querySelector("progress");
+            if (bar) { bar.max = Math.max(1, total); bar.value = done; }
+          },
+        });
+      }
       else await room.send(text, { replyTo: this.replyingTo?.messageId ?? null, mentions });
       if (editing) {
         // Back to whatever draft was there before editing.
@@ -2300,9 +2402,21 @@ class KinChat extends HTMLElement {
       }
     } catch (error) {
       const plain = error?.code === "chat_text_invalid" || error?.code === "chat_attachment_invalid";
-      this.message.textContent = plain ? error.message : "Kin couldn't send that. Your text is still here.";
+      if (withFiles && error?.code === "chat_attachment_cancelled") {
+        this.message.textContent = "Sending was cancelled. Your files are still here.";
+      } else if (withFiles && !plain) {
+        // The draft stays, with a Retry beside Send.
+        this.message.textContent = "Kin couldn't send that. Your text and files are still here.";
+        this.retry.hidden = false;
+      } else {
+        this.message.textContent = plain ? error.message : "Kin couldn't send that. Your text is still here.";
+      }
     } finally {
       this.sending = false;
+      this.sendAbort = null;
+      this.progress = null;
+      this.stopSend.hidden = true;
+      if (withFiles) this.renderPending();
       this.applyDisabled();
       if (!this.input.disabled) this.input.focus();
     }

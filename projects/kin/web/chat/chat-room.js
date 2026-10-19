@@ -72,6 +72,11 @@ const REF = /^[a-f0-9]{64}$/;
 /** Most messages pinned at once (#131); the engine enforces it too. */
 export const MAX_PINS = 10;
 
+/** Throws the cancelled error once `signal` has been aborted. */
+function cancelCheck(signal) {
+  if (signal?.aborted) throw new ChatRoomError("Sending was cancelled.", "chat_attachment_cancelled");
+}
+
 export class ChatRoomError extends Error {
   constructor(message, code = "chat_unavailable") {
     super(message);
@@ -806,7 +811,7 @@ export class ChatRoom {
    * whole), then the manifest that names them. Resolves with
    * { messageId, eventId } like send().
    */
-  async sendAttachments({ text = "", files, replyTo = null, mentions = null, voice = null }) {
+  async sendAttachments({ text = "", files, replyTo = null, mentions = null, voice = null, signal = null, onProgress = () => {} }) {
     this.assertOpen();
     this.assertCanPost();
     const problem = attachmentProblem(files);
@@ -822,8 +827,9 @@ export class ChatRoom {
     const kept = [];
     let manifest;
     try {
-      for (const file of files) {
-        const sealed = await this.sealFile(file);
+      for (const [index, file] of files.entries()) {
+        const sealed = await this.sealFile(file, { signal, onBytes: (done, total) => onProgress({ index, done, total }) });
+        onProgress({ index, done: sealed.size, total: sealed.size });
         if (voice) sealed.voice = { durationMs: voice.durationMs, peaks: [...voice.peaks] };
         prepared.push(sealed);
         kept.push(...manifestRefs({ files: [sealed] }));
@@ -862,7 +868,8 @@ export class ChatRoom {
 
   /** One file as its manifest entry: photos are drawn again first, then the
    * bytes are sealed in parts of ATTACHMENT_PART_BYTES. */
-  async sealFile(file) {
+  async sealFile(file, { signal = null, onBytes = () => {} } = {}) {
+    cancelCheck(signal);
     let source = file;
     let thumbnail = null;
     // Photos are recognized by their bytes, not their claimed type, so a
@@ -876,24 +883,41 @@ export class ChatRoom {
     if (source.size < 1) throw new ChatAttachmentError(`${safeAttachmentName(file.name)} is empty. Choose a file that has content.`);
     if (source.size > MAX_ATTACHMENT_BYTES)
       throw new ChatAttachmentError(`${safeAttachmentName(file.name)} is too large to send${source !== file ? " even with its details removed" : ""}. Files can be 25 MB or smaller.`);
-    const parts = await this.sealParts(source);
-    const thumb = thumbnail ? (await this.sealParts(thumbnail))[0] : null;
+    const parts = await this.sealParts(source, { signal, onBytes });
+    let thumb = null;
+    if (thumbnail) {
+      try {
+        thumb = (await this.sealParts(thumbnail, { signal }))[0];
+      } catch (error) {
+        await this.blobs.retire(parts.map((part) => part.ref)).catch(() => {});
+        throw error;
+      }
+    }
     return { name: safeAttachmentName(file.name), type: safeAttachmentType(source.type || file.type), size: source.size, thumbnail: thumb, parts };
   }
 
   /** Seals a blob's bytes part by part; each part is kept until sent. */
-  async sealParts(source) {
+  async sealParts(source, { signal = null, onBytes = () => {} } = {}) {
     const parts = [];
-    for (let offset = 0; offset < source.size; offset += ATTACHMENT_PART_BYTES) {
-      this.assertOpen();
-      const bytes = new Uint8Array(await source.slice(offset, offset + ATTACHMENT_PART_BYTES).arrayBuffer());
-      try {
-        const sealed = await this.blobs.sealBytes(bytes);
-        parts.push({ ref: sealed.ref, key: refHex(sealed.key), size: bytes.length });
-        sealed.key.fill(0);
-      } finally {
-        bytes.fill(0);
+    try {
+      for (let offset = 0; offset < source.size; offset += ATTACHMENT_PART_BYTES) {
+        this.assertOpen();
+        cancelCheck(signal);
+        const bytes = new Uint8Array(await source.slice(offset, offset + ATTACHMENT_PART_BYTES).arrayBuffer());
+        try {
+          const sealed = await this.blobs.sealBytes(bytes);
+          parts.push({ ref: sealed.ref, key: refHex(sealed.key), size: bytes.length });
+          sealed.key.fill(0);
+        } finally {
+          bytes.fill(0);
+        }
+        onBytes(Math.min(offset + ATTACHMENT_PART_BYTES, source.size), source.size);
       }
+    } catch (error) {
+      // Stopped part-way (cancelled, locked or failed): the parts already
+      // sealed for this file are not part of any message, so they go.
+      await this.blobs.retire(parts.map((part) => part.ref)).catch(() => {});
+      throw error;
     }
     return parts;
   }

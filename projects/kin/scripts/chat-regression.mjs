@@ -158,7 +158,12 @@ export async function chatRegressions() {
       const file = attachments.get(message.blobRef).files[index];
       return file.type.startsWith("image/") ? new Blob([file], { type: "image/jpeg" }) : null;
     },
-    async sendAttachments({ text, files }) {
+    async sendAttachments({ text, files, signal, onProgress }) {
+      if (calls.attachMode === "fail") throw new Error("offline");
+      if (calls.attachMode === "hang") {
+        onProgress?.({ index: 0, done: 10, total: 100 });
+        await new Promise((_, reject) => signal.addEventListener("abort", () => reject(Object.assign(new Error("cancelled"), { code: "chat_attachment_cancelled" }))));
+      }
       calls.attach.push([text, files.map((file) => file.name)]);
       ids += 1;
       const messageId = hex(ids);
@@ -656,6 +661,46 @@ export async function chatRegressions() {
   viewer.querySelector(".chat-viewer-actions button:last-child").click();
   await settle();
   check(!viewer.open, "the viewer closes");
+
+  // Paste and drop (#116), progress and Cancel, and Retry (#115).
+  const pastePicture = new DataTransfer();
+  pastePicture.items.add(new File([new Uint8Array(8)], "pasted.png", { type: "image/png" }));
+  const pasteEvent = new ClipboardEvent("paste", { clipboardData: pastePicture, bubbles: true, cancelable: true });
+  chat.querySelector("textarea").dispatchEvent(pasteEvent);
+  await settle();
+  check(pasteEvent.defaultPrevented && chat.querySelector(".chat-pending").textContent.includes("pasted.png"), "a pasted picture is listed to send");
+  const pasteText = new DataTransfer();
+  pasteText.setData("text/plain", "just words");
+  const textPaste = new ClipboardEvent("paste", { clipboardData: pasteText, bubbles: true, cancelable: true });
+  chat.querySelector("textarea").dispatchEvent(textPaste);
+  check(!textPaste.defaultPrevented, "pasted text is left to the browser");
+  const dropFiles = new DataTransfer();
+  dropFiles.items.add(new File([new Uint8Array(16)], "dropped.txt", { type: "text/plain" }));
+  const over = new DragEvent("dragover", { dataTransfer: dropFiles, bubbles: true, cancelable: true });
+  chat.dispatchEvent(over);
+  check(over.defaultPrevented && chat.querySelector(".chat-form").classList.contains("chat-dropping"), "dragging files over the chat shows where to drop");
+  chat.dispatchEvent(new DragEvent("drop", { dataTransfer: dropFiles, bubbles: true, cancelable: true }));
+  await settle();
+  check(chat.querySelector(".chat-pending").textContent.includes("dropped.txt") && !chat.querySelector(".chat-form").classList.contains("chat-dropping"), "a dropped file is listed to send");
+
+  const stopButton = chat.querySelector(".chat-stop-send");
+  const retryButton = chat.querySelector(".chat-retry");
+  calls.attachMode = "hang";
+  chat.querySelector(".chat-form").requestSubmit();
+  await settle();
+  check(!stopButton.hidden && chat.querySelector(".chat-pending progress")?.getAttribute("aria-label") === "Preparing pasted.png" && chat.querySelector(".chat-pending progress").value === 10, "preparing shows a named progress bar and Cancel");
+  stopButton.click();
+  await settle();
+  check(stopButton.hidden && chat.querySelector(".compose-message").textContent.includes("cancelled") && chat.querySelector(".chat-pending").textContent.includes("pasted.png"), "cancelling keeps the files for another try");
+  calls.attachMode = "fail";
+  chat.querySelector(".chat-form").requestSubmit();
+  await settle();
+  check(!retryButton.hidden && chat.querySelector(".chat-pending").textContent.includes("dropped.txt"), "a failed send keeps the draft and offers Retry");
+  calls.attachMode = "ok";
+  const sentBefore = calls.attach.length;
+  retryButton.click();
+  await settle();
+  check(calls.attach.length === sentBefore + 1 && calls.attach.at(-1)[1].join() === "pasted.png,dropped.txt" && retryButton.hidden && chat.querySelector(".chat-pending").hidden, "Retry sends the same files");
 
   // Read receipts and typing (#120): a stub presence stands in for the
   // room's. A message counts as read only while on screen in a visible,
