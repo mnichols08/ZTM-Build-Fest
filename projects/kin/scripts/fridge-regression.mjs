@@ -325,7 +325,10 @@ export async function fridgeRegressions(client, until) {
     const data = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
     let inked = 0;
     for (let i = 3; i < data.length; i += 4) if (data[i]) inked += 1;
-    const moving = document.getAnimations().filter((animation) => fridge.contains(animation.effect?.target ?? null)).length;
+    // Reduced motion shortens every animation and transition to 0.01 ms
+    // (app.css); count only motion that lasts long enough to be seen.
+    const moving = document.getAnimations().filter((animation) => fridge.contains(animation.effect?.target ?? null) &&
+      (animation.effect?.getComputedTiming?.().activeDuration ?? 0) > 1).length;
     return { inked, palette: fridge.palette(), door: getComputedStyle(fridge.querySelector(".fridge-door")).getPropertyValue("--fridge-door").trim(), moving };
   })()`);
   await setViewport(client, { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
