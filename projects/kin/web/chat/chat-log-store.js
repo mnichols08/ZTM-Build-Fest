@@ -243,6 +243,16 @@ export class ChatLogStore {
     });
   }
 
+  /** Records the chat access level the service last gave this member
+   * (#123), so a read-only member never sees a composer while offline. */
+  async saveAccess(access) {
+    return transact(this.db, [META], "readwrite", async ({ meta }) => {
+      const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
+      state.access = ["write", "read", "none"].includes(access) ? access : "write";
+      await settle(meta.put(state));
+    });
+  }
+
   /** Records that every blob retired by the first `count` events was
    * deleted on this device, so reopening doesn't delete them again. */
   async saveRetiredThrough(count) {

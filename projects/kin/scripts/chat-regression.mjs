@@ -588,6 +588,7 @@ export async function chatRegressions() {
   const presenceListeners = new Set();
   const presence = {
     marks: [], typedCount: 0, stoppedCount: 0, readersByMessage: new Map(), typingIds: [], sendsReceipts: true,
+    get settings() { return { receipts: this.sendsReceipts, typing: this.sendsTyping !== false }; },
     markRead(message) { this.marks.push(message.messageId); return true; },
     readers(message) { return this.sendsReceipts ? this.readersByMessage.get(message.messageId) ?? [] : []; },
     typing() { return this.typingIds; },

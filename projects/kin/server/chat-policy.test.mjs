@@ -2,6 +2,9 @@
 // Temporary members read and post, read only, or have no access; the service
 // enforces it on the chat relay, uploads and live frames, and audits changes.
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { ChatBlobService } from "./chat-blob-service.mjs";
 import { ChatRelayService } from "./chat-relay-service.mjs";
@@ -147,4 +150,42 @@ test("a policy change tells the live service to revalidate", () => {
   h.setPolicy("read", "write");
   h.sync.chatPolicyChanged(h.admin.householdId);
   assert.deepEqual(h.revalidated, [h.admin.householdId]);
+});
+
+test("restoring an older backup keeps the current chat policy", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "kin-chat-policy-"));
+  const targetPath = join(directory, "kin.sqlite");
+  const backupPath = join(directory, "stale.sqlite");
+  let store = new DurableStore(targetPath, { acquireProcessLock: false });
+  try {
+    const pairing = new PairingService({ store });
+    const admin = pairing.bootstrap({ credential: credential(`restore-${Math.random()}`) });
+    await store.backup(backupPath);
+    pairing.setChatPolicy(admin.sessionToken, { limited: "none", temporary: "read" }, admin.memberId);
+    store.close();
+    store = null;
+    const result = await DurableStore.restoreBackup(backupPath, targetPath, { acknowledgeDeletionHistory: true });
+    assert.equal(result.preservedAuthorityCount, 1);
+    const restored = new DurableStore(targetPath, { acquireProcessLock: false });
+    try {
+      const home = new PairingService({ store: restored }).households.get(admin.householdId);
+      assert.deepEqual(chatPolicyOf(home), { limited: "none", temporary: "read", revision: 1 }, "the older backup does not reopen chat");
+    } finally {
+      restored.close();
+    }
+  } finally {
+    store?.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("a chat push, and its hint, skip members with no access", () => {
+  const pushes = [], hints = [];
+  const h = household();
+  h.sync.pushService = { eventsAccepted: (...args) => pushes.push(args) };
+  h.sync.liveService = { eventsAccepted: (...args) => hints.push(args), revalidate() {} };
+  h.setPolicy("none", "write");
+  h.relay.push(h.auth(h.adult), [envelope(h.adult, 1)]);
+  assert.deepEqual(pushes[0].slice(2), [{ chat: true }], "marked as chat, so the push service can filter");
+  assert.deepEqual(hints[0].slice(2), [{ chat: true }]);
 });

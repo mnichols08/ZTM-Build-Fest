@@ -34,10 +34,7 @@ class KinChatPolicy extends HTMLElement {
   build() {
     this.hidden = true;
     this.className = "chat-policy";
-    this.setAttribute("role", "group");
-    this.setAttribute("aria-labelledby", "chat-policy-heading");
     const heading = document.createElement("h2");
-    heading.id = "chat-policy-heading";
     heading.textContent = "Who can chat";
     const note = document.createElement("p");
     note.className = "section-hint";
@@ -53,7 +50,14 @@ class KinChatPolicy extends HTMLElement {
     this.feedback.className = "appearance-feedback";
     this.feedback.setAttribute("role", "status");
     this.feedback.setAttribute("aria-live", "polite");
-    this.append(heading, note, this.limited.field, this.temporary.field, this.save, this.feedback);
+    // A fieldset names the group of choices for assistive technology.
+    const group = document.createElement("fieldset");
+    const legend = document.createElement("legend");
+    legend.className = "visually-hidden";
+    legend.textContent = "Who can chat";
+    group.append(legend, this.limited.field, this.temporary.field);
+    this.group = group;
+    this.append(heading, note, group, this.save, this.feedback);
   }
 
   field(id, text) {
@@ -77,11 +81,14 @@ class KinChatPolicy extends HTMLElement {
 
   /** Reads the policy; the service sends it to admins only. */
   async load() {
+    if (this.busy) return;
     try {
       const status = await json("/api/sync/status");
       this.show(status.chat?.policy ?? null);
     } catch {
-      this.show(null);
+      // Keep what is shown (and any message): not being able to reach the
+      // service is not the same as not being an admin. Before the first
+      // successful load the panel simply stays hidden.
     }
   }
 
@@ -119,10 +126,13 @@ class KinChatPolicy extends HTMLElement {
       this.feedback.textContent = "Chat access saved. Members who are online see it now.";
     } catch (error) {
       this.feedback.textContent = error?.name === "NotAllowedError" ? "Canceled. Nothing changed." : (error?.message || "Kin couldn't save that.");
+      this.busy = false;
       await this.load();
     } finally {
       this.busy = false;
       this.apply();
+      // The button disables itself when nothing differs; keep focus somewhere real.
+      if (this.save.disabled && this.contains(document.activeElement) === false) this.limited.select.focus();
     }
   }
 }

@@ -728,6 +728,13 @@ access**; Adults always read and post.
   check happens at the start of each request, so a change applies to the next
   call from members who are online, and `GET /api/sync/status` tells their
   devices (`chat.access`) on the next pass or hint.
+- **Beyond requests.** Chat push notifications and live "sync now" hints skip a
+  member with no access, and restoring an older backup keeps the current
+  policy (it is authority, like the admin flag), so a restore cannot reopen
+  chat. A message queued by a member who then became read only stays on their
+  device, marked "Not sent: chat is read-only for you", and sends if access is
+  restored. The device remembers the access level it was last given, so it does
+  not show a composer while offline.
 - **Experience.** A read-only member sees the chat with the composer replaced
   by "Your household has set chat to read-only for you." and no edit or delete
   of their own messages; a no-access member doesn't see Chat in Updates, and

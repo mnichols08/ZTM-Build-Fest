@@ -98,10 +98,12 @@ class KinChatSettings extends HTMLElement {
   render() {
     if (!this.receipts) return;
     const presence = this.chatRoom?.presence;
-    this.hidden = !presence;
-    if (!presence) return;
-    this.receipts.input.checked = presence.sendsReceipts;
-    this.typing.input.checked = presence.sendsTyping;
+    // Receipts and typing go with posting: a member the household set to
+    // read only (or no access) has nothing to choose (#123).
+    this.hidden = !presence || (this.chatRoom.access ?? "write") !== "write";
+    if (this.hidden) return;
+    this.receipts.input.checked = presence.settings.receipts;
+    this.typing.input.checked = presence.settings.typing;
   }
 }
 

@@ -282,6 +282,7 @@ class KinChat extends HTMLElement {
 
     this.readOnly = document.createElement("p");
     this.readOnly.className = "section-hint chat-read-only";
+    this.readOnly.setAttribute("role", "status");
     this.readOnly.textContent = "Your household has set chat to read-only for you.";
     this.readOnly.hidden = true;
     section.append(heading, this.notice, this.scroller, this.typingLine, this.jump, form, this.readOnly, this.announcer, this.viewer, this.details);
@@ -539,6 +540,9 @@ class KinChat extends HTMLElement {
     this.form.hidden = access !== "write";
     this.readOnly.hidden = access !== "read";
     this.scroller.hidden = access === "none";
+    this.jump.hidden = this.jump.hidden || access === "none";
+    if (access === "none" && this.details.open) this.details.close();
+    if (access === "none" && this.viewer.open) this.viewer.close();
     this.typingLine.hidden = access === "none" || this.typingLine.hidden;
     if (access !== this.announcedAccess) {
       this.announcedAccess = access;
@@ -834,7 +838,7 @@ class KinChat extends HTMLElement {
     const notes = [];
     // A grouped row's time is visually hidden: show "edited" with the notes.
     if (message.status === "edited" && grouped) notes.push("Edited");
-    if (room.pendingMessages?.has(message.messageId)) notes.push("Waiting to send");
+    if (room.pendingMessages?.has(message.messageId)) notes.push((room.access ?? "write") === "write" ? "Waiting to send" : "Not sent: chat is read-only for you");
     if (notes.length) {
       const note = document.createElement("p");
       note.className = "chat-note";

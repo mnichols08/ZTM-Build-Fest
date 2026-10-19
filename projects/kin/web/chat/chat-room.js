@@ -358,6 +358,7 @@ export class ChatRoom {
     this.retiredThrough = state.retiredThrough ?? 0;
     this.refused = state.refused ?? [];
     this.hidden = new Set(state.hidden ?? []);
+    if (["write", "read", "none"].includes(state.access)) this.access = state.access;
   }
 
   /** Whether this member hid `messageId` for themselves ("delete for me"). */
@@ -812,8 +813,10 @@ export class ChatRoom {
     const access = ["write", "read", "none"].includes(status.chat?.access) ? status.chat.access : "write";
     if (access !== this.access) {
       this.access = access;
+      try { await this.store.saveAccess(access); } catch { /* the next pass says it again */ }
       this.presence.accessChanged();
       this.notify();
+      this.notifyPresence();
     }
     // No access: nothing is fetched, sent or kept fresh until the admin
     // changes it back; what this device already decrypted stays.

@@ -108,10 +108,10 @@ export class AppearanceController {
       if (refreshGeneration !== this.householdDefaultsRefreshGeneration) return;
       if (result.value && (this.app.householdSettings?.revision ?? -1) <= result.value.revision) this.app.householdSettings = result.value;
       const draftPreserved = this.app.householdDefaults.initialize({ ...result, value: this.app.householdSettings });
-      if (result.admin) void this.refreshInstallIdentity({ onlyFirst: true });
-      void this.app.chatPolicy?.load();
       // A demotion removes the section; a later promotion loads it again.
+      if (result.admin) void this.refreshInstallIdentity({ onlyFirst: true });
       else this.installIdentitySession = null;
+      void this.app.chatPolicy?.load();
       if (draftPreserved) return;
       if (this.app.appearance?.dirty) this.ctx.appearance.setHouseholdIdentity(this.app.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME);
       else {

@@ -276,7 +276,9 @@ database per household, `kin-chat-log:<householdId>`, version 1
   ([SYNC](SYNC.md#delete-for-me-v11-119)); and `presence`: this member's
   read cursor, their receipt and typing settings, and the revision of their
   receipt slot on the service
-  ([SYNC](SYNC.md#read-receipts-and-typing-v11-120)).
+  ([SYNC](SYNC.md#read-receipts-and-typing-v11-120)); and `access`: the chat
+  access level the service last gave this member, `write`, `read` or `none`
+  ([SYNC](SYNC.md#chat-access-policy-v11-123)).
 
 While Kin is unlocked the decrypted log is held in memory as one growing
 buffer (`web/chat/chat-records.js`) that the engine's chat log mirrors

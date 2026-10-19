@@ -447,9 +447,9 @@ export class LiveService {
   }
 
   /** New events were accepted: tell the household's other devices. */
-  eventsAccepted(householdId, authorDeviceId) {
+  eventsAccepted(householdId, authorDeviceId, { chat = false } = {}) {
     for (const connection of this.households.get(householdId) ?? [])
-      if (connection.deviceId !== authorDeviceId) connection.send(LIVE_TYPE.SYNC_HINT);
+      if (connection.deviceId !== authorDeviceId && (!chat || this.chatAllowed(connection))) connection.send(LIVE_TYPE.SYNC_HINT);
   }
 
   /** A member's read-receipt slot changed: tell the household's other

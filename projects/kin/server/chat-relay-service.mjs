@@ -196,8 +196,8 @@ export class ChatRelayService {
       }
       // After the commit, in the background: the household's other devices
       // hear about it at once (#107) and members get a push (#85).
-      try { this.syncService.pushService?.eventsAccepted(householdId, auth.member.id); } catch { /* best effort */ }
-      try { this.syncService.liveService?.eventsAccepted(householdId, auth.device.id); } catch { /* best effort */ }
+      try { this.syncService.pushService?.eventsAccepted(householdId, auth.member.id, { chat: true }); } catch { /* best effort */ }
+      try { this.syncService.liveService?.eventsAccepted(householdId, auth.device.id, { chat: true }); } catch { /* best effort */ }
     }
     const after = this.storage.chatRelayState(householdId);
     return { accepted: envelopes.length, latestCursor: encodeCursor(after.nextSequence - 1) };
