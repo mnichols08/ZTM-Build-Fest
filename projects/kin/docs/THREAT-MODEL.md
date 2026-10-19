@@ -190,6 +190,17 @@ The detailed design and guarantees are in [V0.9.0](V0.9.0.md). The following tab
 
 The relay sees household/member/device/session identifiers; event IDs; per-device sequence; key epoch; cursors; public device keys; ciphertext and wrapped-key sizes; event counts/timing; provisioning grant participants/expiry; revocation and rotation timing; IP and connection metadata. Encrypted payloads hide semantic event kinds, text, titles, descriptions, categories, and entity identifiers. Traffic patterns and which devices share a household remain observable. Kin does not claim anonymity or zero-knowledge service behavior.
 
+## Ephemeral live-channel messages (#257, #258, #259)
+
+The live channel has a closed seam for short-lived messages ([SYNC](SYNC.md#ephemeral-envelope-v11-257-258), [ADR 0009](decisions/0009-ephemeral-signaling-boundary.md)); production accepts no category, so today it is an attack surface only for an authenticated trusted device sending a record that is refused and closes its own socket. For a category added later the model is:
+
+- **Spoofed sender.** The sender in a delivery is stamped by the service from the sender's session; a request has no sender field.
+- **Misdirection and probing.** Targets are canonical member and device IDs within the sender's household; others receive nothing and the sender learns nothing, so the path is neither a presence oracle nor a way to enumerate devices.
+- **Stale or revoked routes.** Receivers are chosen from open sockets and re-checked at dispatch; losing access closes the socket, so nothing is routed after revocation, member removal, lock, sign-out or deletion.
+- **Persistence by accident.** The path has no database, file, log or queue access; a test reads the source to keep it so. Messages are not replayed, exported or pushed.
+- **Flooding.** A per-category rate, a payload limit, the 1 MiB socket backpressure bound (a receiver that cannot take a message misses it) and closing of abusive connections.
+- **Not claimed.** The service sees envelope metadata (who sent what category to whom, when) for the instant it relays it. A media connection's own encryption is not Kin's household end-to-end claim.
+
 ## Security principles
 
 - Assume household text and imported/persisted bytes are untrusted.

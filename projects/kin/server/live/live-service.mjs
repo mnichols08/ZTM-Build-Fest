@@ -26,6 +26,7 @@ import {
   acceptKey, CLOSE, closePayload, encodeFrame, encodeMessage, FrameParser, isClientKey, MAX_MESSAGE_BYTES, OPCODE, parseMessage,
 } from "./websocket.mjs";
 import { PairingError, canParticipate, chatAccess } from "../pairing-service/shared.mjs";
+import { CATEGORIES, EphemeralError, SCOPE, decodeRequest, encodeDelivery } from "./ephemeral.mjs";
 
 export const LIVE_PATH = "/api/live";
 export const PING_INTERVAL_MS = 25_000;
@@ -59,6 +60,11 @@ export const LIVE_TYPE = Object.freeze({
    * stops; the service relays it unchanged to the household's other
    * connected, chat-allowed devices. It is never stored, counted or logged. */
   PRESENCE: 0x05,
+  /** An ephemeral message (#257), both ways: one versioned envelope (see
+   * ephemeral.mjs) relayed to open sockets only, by member or trusted
+   * device, with the sender stamped by the service. Never stored, replayed,
+   * exported or pushed. Production accepts no category yet. */
+  EPHEMERAL: 0x06,
 });
 
 /** A typing frame is one small envelope; anything larger isn't one. */
@@ -118,6 +124,8 @@ class LiveConnection {
     this.presenceTokens = PRESENCE_BURST;
     this.presenceRefilledAt = 0;
     this.presenceDrops = 0;
+    /** category id → { tokens, refilledAt, drops }, for the ephemeral path. */
+    this.ephemeralBuckets = new Map();
     this.queuedReceipts = false;
     this.closing = false;
     this.disposed = false;
@@ -296,7 +304,7 @@ export class LiveService {
   constructor({
     service, origin, readSession, store = null,
     pingInterval = PING_INTERVAL_MS, maxMissedPongs = MAX_MISSED_PONGS, maxQueued = MAX_QUEUED_BYTES,
-    maxMessage = MAX_MESSAGE_BYTES, maxConnections = MAX_CONNECTIONS,
+    maxMessage = MAX_MESSAGE_BYTES, maxConnections = MAX_CONNECTIONS, ephemeralCategories = CATEGORIES,
   }) {
     this.service = service;
     // Compared as a browser sends it: scheme, host and port only.
@@ -308,6 +316,7 @@ export class LiveService {
     this.maxQueued = maxQueued;
     this.maxMessage = maxMessage;
     this.maxConnections = maxConnections;
+    this.ephemeralCategories = ephemeralCategories;
     /** deviceId → connection */
     this.connections = new Map();
     /** householdId → Set of connections */
@@ -320,6 +329,7 @@ export class LiveService {
     this.handlers = new Map();
     this.handlers.set(LIVE_TYPE.TYPING, (connection, record) => this.relayTyping(connection, record));
     this.handlers.set(LIVE_TYPE.PRESENCE, (connection, record) => this.relayPresence(connection, record));
+    this.handlers.set(LIVE_TYPE.EPHEMERAL, (connection, record) => this.relayEphemeral(connection, record));
   }
 
   /** What the connection's member may do in chat now (#123): "write",
@@ -400,6 +410,75 @@ export class LiveService {
     if (!this.chatAllowed(connection)) return;
     for (const other of this.households.get(connection.householdId) ?? [])
       if (other !== connection && this.chatAllowed(other)) other.sendEphemeral(LIVE_TYPE.PRESENCE, payload);
+  }
+
+  /**
+   * Relays one ephemeral message (#257, #258). The envelope is checked
+   * before anything else: a malformed one, an unknown version or category, a
+   * scope the category doesn't allow or an oversized payload closes the
+   * socket (fail closed, like an unknown record type). After that nothing a
+   * sender gets wrong is visible to it: a message that is over the rate, or
+   * whose sender or receivers may not take part, or that names a member or
+   * device that is offline, revoked or in another household, is dropped without
+   * a word, so the sender learns nothing about who is connected.
+   *
+   * Receivers are chosen from the live sockets and re-checked now, on the
+   * server: the device still trusted, its member active and allowed. The
+   * sender is stamped from its own session, never read from the message.
+   * Nothing is stored, queued (a receiver that can't take it right now misses
+   * it), counted per member or logged.
+   */
+  relayEphemeral(connection, record) {
+    let request;
+    try {
+      request = decodeRequest(record.payload, this.ephemeralCategories);
+    } catch (error) {
+      if (!(error instanceof EphemeralError)) throw error;
+      const code = error.reason === "too_big" ? CLOSE.TOO_BIG : error.reason === "malformed" ? CLOSE.INVALID_DATA : CLOSE.UNSUPPORTED_DATA;
+      return connection.close(code, "Bad ephemeral message");
+    }
+    const { category, categoryId } = request;
+    const now = this.service.now();
+    let bucket = connection.ephemeralBuckets.get(categoryId);
+    if (!bucket) connection.ephemeralBuckets.set(categoryId, (bucket = { tokens: category.burst, refilledAt: now, drops: 0 }));
+    const elapsed = Math.max(0, now - bucket.refilledAt);
+    bucket.tokens = Math.min(category.burst, bucket.tokens + Math.floor(elapsed / category.refillMs));
+    if (elapsed >= category.refillMs) bucket.refilledAt = now;
+    if (bucket.tokens < 1) {
+      bucket.drops += 1;
+      if (bucket.drops > MAX_TYPING_DROPS) connection.close(CLOSE.POLICY, "Too many messages");
+      return;
+    }
+    bucket.tokens -= 1;
+    bucket.drops = 0;
+    // The sender must still be trusted, and allowed to take part, right now.
+    if (!this.stillAllowed(connection) || !this.ephemeralAllowed(connection, category)) return;
+    let delivery;
+    for (const other of this.ephemeralReceivers(connection, request)) {
+      if (!this.ephemeralAllowed(other, category) || this.lostAccess(other)) continue;
+      delivery ??= encodeDelivery({
+        categoryId, scope: request.scope, correlation: request.correlation,
+        senderMemberId: connection.memberId, senderDeviceId: connection.deviceId, payload: request.payload,
+      });
+      other.sendEphemeral(LIVE_TYPE.EPHEMERAL, delivery);
+    }
+  }
+
+  /** Whether the connection's member may take part in a category now. */
+  ephemeralAllowed(connection, category) {
+    if (connection.closing || connection.disposed) return false;
+    return category.access === "write" ? this.chatLevel(connection) === "write" : this.chatAllowed(connection);
+  }
+
+  /** The open sockets a request addresses, in the sender's household only. */
+  ephemeralReceivers(connection, { scope, targetId }) {
+    const household = this.households.get(connection.householdId);
+    if (!household) return [];
+    if (scope === SCOPE.DEVICE) {
+      const other = this.connections.get(targetId);
+      return other && other !== connection && household.has(other) ? [other] : [];
+    }
+    return [...household].filter((other) => other !== connection && (scope === SCOPE.HOUSEHOLD || other.memberId === targetId));
   }
 
   /** node:http's "upgrade" event. */
