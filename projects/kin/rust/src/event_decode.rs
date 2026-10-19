@@ -545,16 +545,25 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
         }
         // Chat (#109). IDs, blob references and keys are never zero.
         (1, 44) => {
-            if payload.len() < 84
-                || payload[17..20] != [0; 3]
-                || !valid_timestamp(read_i64(record, 68)?)
-            {
+            if payload.len() < 84 || !valid_timestamp(read_i64(record, 68)?) {
                 return Err(KinError::MalformedProtocol);
             }
             let message_id = ChatMessageId(read_id(payload, 0)?);
+            // Bytes 17..20 are zero except for a poll (#135): its option
+            // count, a multiple-choice flag (0 or 1) and a zero.
             let content_kind = match payload[16] {
-                1 => ChatContentKind::Text,
-                2 => ChatContentKind::Attachment,
+                1 if payload[17..20] == [0; 3] => ChatContentKind::Text,
+                2 if payload[17..20] == [0; 3] => ChatContentKind::Attachment,
+                3 if payload[19] == 0 && payload[18] <= 1 => {
+                    let spec = crate::chat::PollSpec {
+                        options: payload[17],
+                        multiple: payload[18] == 1,
+                    };
+                    if !spec.is_valid() {
+                        return Err(KinError::MalformedProtocol);
+                    }
+                    ChatContentKind::Poll(spec)
+                }
                 _ => return Err(KinError::MalformedProtocol),
             };
             let blob_ref = read_32(payload, 20)?;
@@ -652,6 +661,35 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
                 message_id,
                 on: payload[16] == 1,
             }
+        }
+        (1, 49) => {
+            if payload.len() != 20
+                || payload[18..20] != [0; 2]
+                || !valid_timestamp(read_i64(record, 68)?)
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            let message_id = ChatMessageId(read_id(payload, 0)?);
+            if message_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::ChatPollVote {
+                message_id,
+                options: u16::from_le_bytes([payload[16], payload[17]]),
+            }
+        }
+        (1, 50) => {
+            if payload.len() != 20
+                || payload[16..20] != [0; 4]
+                || !valid_timestamp(read_i64(record, 68)?)
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            let message_id = ChatMessageId(read_id(payload, 0)?);
+            if message_id.0 == [0; 16] {
+                return Err(KinError::MalformedProtocol);
+            }
+            EventKind::ChatPollClosed { message_id }
         }
         (1, 15..=17) => {
             if payload.len() != if event_kind == 17 { 16 } else { 20 }

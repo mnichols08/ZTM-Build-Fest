@@ -31,6 +31,8 @@ import { chatTextProblem, MAX_CHAT_TEXT_CHARS } from "../chat/chat-room.js";
 import { emojiOnlyCount, loadEmojiTable } from "../chat/emoji.js";
 import { QUICK_REACTIONS, reactionChips, reactionNames } from "../chat/chat-reactions.js";
 import { attachmentProblem, MAX_ATTACHMENT_FILES, safeAttachmentName } from "../chat/chat-attachments.js";
+import "./kin-chat-poll.js";
+import { renderPoll } from "./kin-chat-poll.js";
 import { seenText, typingText } from "../chat/chat-presence.js";
 import { attachmentKindLabel, formatAttachmentSize } from "../attachments/attachment-preview.js";
 import { ObjectUrlRegistry } from "../attachments/object-urls.js";
@@ -133,6 +135,9 @@ class KinChat extends HTMLElement {
     this.textStatus = new Map();
     // Per attachment message (#114): { status, text, files, thumbs }.
     this.attachments = new Map();
+    // Per poll message (#135): { status, question, options } once opened.
+    this.polls = new Map();
+    this.pollDialog?.reset?.();
     // Photos and files chosen to send, not yet sent.
     this.files = [];
     this.urls?.revokeAll();
@@ -364,6 +369,14 @@ class KinChat extends HTMLElement {
     this.attach.textContent = "Attach";
     this.attach.setAttribute("aria-label", `Attach photos or files (up to ${MAX_ATTACHMENT_FILES})`);
     this.attach.addEventListener("click", () => this.chooseFiles());
+    // Quick polls (#135): a question with 2 to 10 options.
+    this.pollButton = document.createElement("button");
+    this.pollButton.type = "button";
+    this.pollButton.className = "chat-attach chat-poll-open";
+    this.pollButton.textContent = "Poll";
+    this.pollButton.setAttribute("aria-label", "Ask a poll");
+    this.pollButton.addEventListener("click", () => this.askPoll());
+    this.pollDialog = document.createElement("kin-chat-poll");
     // The quote bar above the box while replying (#129).
     this.replyBar = document.createElement("div");
     this.replyBar.className = "chat-replying";
@@ -385,7 +398,7 @@ class KinChat extends HTMLElement {
     this.pendingList.hidden = true;
     const buttons = document.createElement("div");
     buttons.className = "chat-form-buttons";
-    buttons.append(this.attach, this.emoji, this.send, this.cancel);
+    buttons.append(this.attach, this.pollButton, this.emoji, this.send, this.cancel);
     form.append(this.label, this.replyBar, this.input, this.mentionList, this.pendingList, panelSlot, buttons, this.message);
 
     // A viewer for one photo, shown modally; its URL is released on close.
@@ -435,7 +448,7 @@ class KinChat extends HTMLElement {
     this.readOnly.setAttribute("role", "status");
     this.readOnly.textContent = "Your household has set chat to read-only for you.";
     this.readOnly.hidden = true;
-    section.append(top, this.searchPanel, this.notice, this.onlineLine, this.pinRegion, this.scroller, this.typingLine, this.jump, form, this.readOnly, this.announcer, this.viewer, this.details);
+    section.append(top, this.searchPanel, this.notice, this.onlineLine, this.pinRegion, this.scroller, this.typingLine, this.jump, form, this.readOnly, this.announcer, this.viewer, this.details, this.pollDialog);
     this.replaceChildren(section);
     this.queueRender("reset");
   }
@@ -510,6 +523,7 @@ class KinChat extends HTMLElement {
     this.emoji.disabled = off;
     // Attachments aren't edited: no attaching while editing a message.
     this.attach.disabled = off || Boolean(this.sending) || Boolean(this.editing);
+    this.pollButton.disabled = off || Boolean(this.sending) || Boolean(this.editing);
   }
 
   enterSends() {
@@ -799,6 +813,8 @@ class KinChat extends HTMLElement {
       if (status.pending || status.failed) this.textStatus.delete(messageId);
     for (const [messageId, state] of this.attachments)
       if (state.status === "pending" || state.status === "failed") this.attachments.delete(messageId);
+    for (const [messageId, state] of this.polls)
+      if (state.status === "pending" || state.status === "failed") this.polls.delete(messageId);
     this.queueRender("update");
   }
 
@@ -944,6 +960,7 @@ class KinChat extends HTMLElement {
     this.flushAnnouncements(newest);
     this.loadMissingTexts();
     this.loadMissingAttachments();
+    this.loadMissingPolls();
   }
 
   /** Opens texts the engine doesn't hold yet, outside the render queue, and
@@ -1033,9 +1050,12 @@ class KinChat extends HTMLElement {
       const shown = this.rows.has(messageId);
       // An attachment's caption and files are settled once its load is done.
       const attachment = message.contentKind === "attachment" && visible(message);
+      const poll = message.contentKind === "poll" && visible(message);
       const settled = attachment
         ? this.attachments.get(messageId)?.status !== undefined && this.attachments.get(messageId).status !== "loading"
-        : message.text !== null || !message.blobRef || (status && !status.loading);
+        : poll
+          ? this.polls.get(messageId)?.status !== undefined && this.polls.get(messageId).status !== "loading"
+          : message.text !== null || !message.blobRef || (status && !status.loading);
       if (!shown || settled) ready.push(message);
       else waiting.push(messageId);
     }
@@ -1044,7 +1064,8 @@ class KinChat extends HTMLElement {
     const last = ready.at(-1);
     const more = ready.length > 1 ? `${ready.length} new messages. ` : "";
     const who = room.authorLabel(last.authorId);
-    this.say(last.text !== null ? `${more}${who}: ${last.text}` : `${more}New message from ${who}.`);
+    const asked = last.contentKind === "poll" && this.polls.get(last.messageId)?.status === "ready" ? this.polls.get(last.messageId).question : null;
+    this.say(last.text !== null ? `${more}${who}: ${last.text}` : asked ? `${more}${who} asked a poll: ${asked}` : `${more}New message from ${who}.`);
   }
 
   /** Opens the captions and file lists of attachment messages on screen,
@@ -1056,6 +1077,26 @@ class KinChat extends HTMLElement {
       (!this.attachments.has(message.messageId) || (this.attachments.get(message.messageId).quoteOnly && this.attachments.get(message.messageId).status !== "loading")));
     for (const message of missing) this.attachments.set(message.messageId, { status: "loading", text: "", files: [], thumbs: new Map() });
     for (const message of missing) void this.loadAttachment(room, message);
+  }
+
+  /** Opens the question and options of the polls on screen. */
+  loadMissingPolls() {
+    const room = this.chatRoom;
+    if (!room) return;
+    const missing = this.messages.filter((message) => visible(message) && message.contentKind === "poll" && message.blobRef && message.poll && !this.polls.has(message.messageId));
+    for (const message of missing) this.polls.set(message.messageId, { status: "loading" });
+    for (const message of missing) {
+      room.openPoll(message).then((content) => {
+        if (room !== this.chatRoom) return;
+        this.polls.set(message.messageId, { status: "ready", ...content });
+        this.queueRender("update");
+      }, (error) => {
+        if (room !== this.chatRoom) return;
+        const status = error?.code === "chat_poll_deleted" ? "deleted" : error?.code === "chat_poll_pending" ? "pending" : "failed";
+        this.polls.set(message.messageId, { status });
+        this.queueRender("update");
+      });
+    }
   }
 
   async loadAttachment(room, message, { thumbnails = true } = {}) {
@@ -1159,6 +1200,7 @@ class KinChat extends HTMLElement {
       room.mentionsOf ? JSON.stringify(room.mentionsOf(message)) : "",
       this.pins.some((pin) => pin.messageId === message.messageId),
       this.onlineMembers().includes(message.authorId),
+      message.contentKind === "poll" ? [this.polls.get(message.messageId)?.status ?? "", JSON.stringify(message.poll ?? null)].join("\u0001") : "",
     ].join("\u0000");
   }
 
@@ -1247,6 +1289,17 @@ class KinChat extends HTMLElement {
         body.classList.add("chat-gone");
         body.textContent = ATTACHMENT_TEXT[state?.status ?? "loading"];
       }
+    } else if (message.contentKind === "poll") {
+      // The poll below carries its own question; until it opens, say so here.
+      const state = this.polls.get(message.messageId);
+      if (state?.status === "ready") body.hidden = true;
+      else {
+        body.classList.add("chat-gone");
+        body.textContent = state?.status === "deleted" ? "This message was deleted"
+          : state?.status === "pending" ? "Waiting for this poll to arrive…"
+          : state?.status === "failed" ? "This poll couldn't be opened yet."
+          : "Loading…";
+      }
     } else if (message.text !== null) {
       this.fillText(body, message, room);
       // A message of only 1–3 emoji shows larger (#113).
@@ -1263,6 +1316,14 @@ class KinChat extends HTMLElement {
     item.append(body);
     const attached = visible(message) && message.contentKind === "attachment" ? this.attachments.get(message.messageId) : null;
     if (attached?.status === "ready" && attached.files.length) item.append(this.attachmentList(message, attached));
+    const asked = visible(message) && message.contentKind === "poll" && message.poll ? this.polls.get(message.messageId) : null;
+    if (asked?.status === "ready") {
+      item.append(renderPoll({
+        message, content: asked, room, canVote: (room.access ?? "write") === "write",
+        onChoose: (choice) => void this.castVote(message, choice),
+        onClose: () => void this.closePoll(message),
+      }));
+    }
 
     const notes = [];
     // A grouped row's time is visually hidden: show "edited" with the notes.
@@ -1312,6 +1373,7 @@ class KinChat extends HTMLElement {
     if (room.isHidden?.(original.messageId)) return { text: "Message hidden", gone: true };
     if (original.state === "deleted") return { text: "Original message was deleted", gone: true };
     if (original.state === "removed-by-admin") return { text: "Original message was removed by an admin", gone: true };
+    if (original.contentKind === "poll") return { text: "Poll", gone: false };
     if (original.contentKind === "attachment") {
       const attachment = this.attachments.get(original.messageId);
       if (attachment?.status === "deleted") return { text: "Original message was deleted", gone: true };
@@ -1533,7 +1595,9 @@ class KinChat extends HTMLElement {
     const who = room.authorLabel(message.authorId);
     const attachment = this.attachments.get(message.messageId);
     const first = attachment?.status === "ready" ? attachment.files[0] : null;
-    const line = message.contentKind === "attachment"
+    const line = message.contentKind === "poll"
+      ? `Poll: ${this.polls.get(message.messageId)?.question ?? ""}`
+      : message.contentKind === "attachment"
       ? (first?.photo ? "Photo" : first ? first.name : "Attachment")
       : (message.text ?? "").split("\n").find((part) => part.trim()) ?? "";
     this.replyText.textContent = `Replying to ${who === "You" ? "yourself" : who}: ${clip(line, 80)}`;
@@ -1696,6 +1760,53 @@ class KinChat extends HTMLElement {
     } catch {
       this.namesLoaded = false;
     }
+  }
+
+  /** Opens the dialog that asks a poll (#135). */
+  askPoll() {
+    const room = this.chatRoom;
+    if (!room || this.pollButton.disabled) return;
+    this.pollDialog.open({
+      opener: this.pollButton,
+      submit: async (poll) => {
+        try {
+          const sent = await room.sendPoll(poll);
+          this.following = true;
+          await this.queueRender("reset");
+          this.say("Poll sent.");
+          return sent;
+        } catch (error) {
+          throw new Error(error?.code?.startsWith?.("chat_") ? error.message : "Kin couldn't send the poll. Try again.");
+        }
+      },
+    });
+  }
+
+  /** Votes in a poll, or clears the vote; the engine refuses a vote in a
+   * closed poll or one that changes nothing. */
+  async castVote(message, choice) {
+    const room = this.chatRoom;
+    if (!room) return;
+    try {
+      await room.vote(message, choice);
+      this.say(choice.length ? "Vote saved." : "Vote cleared.");
+    } catch (error) {
+      if (error?.code !== 4) this.message.textContent = "Kin couldn't save your vote. Try again.";
+      else this.say("That poll has changed. Showing the latest results.");
+    }
+    await this.queueRender("update");
+  }
+
+  async closePoll(message) {
+    const room = this.chatRoom;
+    if (!room) return;
+    try {
+      await room.closePoll(message);
+      this.say("Poll closed.");
+    } catch {
+      this.message.textContent = "Kin couldn't close the poll. Try again.";
+    }
+    await this.queueRender("update");
   }
 
   /** Turns this member's reaction on or off. */

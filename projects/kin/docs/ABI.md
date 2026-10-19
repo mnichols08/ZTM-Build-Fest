@@ -397,7 +397,17 @@ revision is meaningful only within one instance.
   payload and a zero entity ID; action 43 (`nickname-device`) carries the
   target device as its entity ID and the nickname as its payload (empty
   clears). Executing either rejects a name that would change nothing.
-- **Chat commands (KCMD 44–48, v1.1).** The entity ID is the message ID. Action 48 (`pin-chat-message`) carries `on` (0 or 1) in the u8 field and no payload.
+- **Chat commands (KCMD 44–50, v1.1).** The entity ID is the message ID. Action 48 (`pin-chat-message`) carries `on` (0 or 1) in the u8 field and no payload.
+  Poll commands (#135): action 44 with content kind 3 posts a poll: the
+  `date` field carries the option count in its low byte (2–10) and 1 in the
+  next byte for multiple choice; the payload is the blob pair as for text (the
+  question and the options' text live in the sealed blob). Action 49
+  (`vote-chat-poll`) carries the choice as a bit set (bit n is option n) in
+  the `date` field, replacing the member's earlier vote; 0 clears it. Action
+  50 (`close-chat-poll`) carries nothing. Executing a vote needs an open poll
+  that shows, a choice the poll allows (one bit unless multiple choice, none
+  past the option count) and a change from the member's current vote; a close
+  needs the poll's author and a poll not yet closed.
   Action 44 (`post-chat-message`) carries the content kind in the u8 field
   (1 text, 2 attachment) and a 64-byte payload: blob ref, then blob key; a
   reply adds a third 16 bytes, the ID of the message it answers (80 in all).
@@ -420,7 +430,7 @@ revision is meaningful only within one instance.
 - **KCHQ v1** (chat page request, `kin_chat_page`): `"KCHQ"`, version 1,
   reserved u16, before u32 (the page ends before this message index;
   `0xFFFFFFFF` for the newest), limit u16 (1–500), flags u8 (bit 0: texts the
-  arena holds; bit 1: retired blobs; bit 2: reactions; bit 3: pins), reserved u8, admin count u32 (at most
+  arena holds; bit 1: retired blobs; bit 2: reactions; bit 3: pins; bit 4: polls), reserved u8, admin count u32 (at most
   16), the admins' member IDs (16 bytes each, non-zero), then a record-less
   KINE context as for `kin_project`.
 - **KCHF v1** (chat search request, `kin_chat_search`, #124): `"KCHF"`,
@@ -490,6 +500,13 @@ revision is meaningful only within one instance.
   named mentions: a count u32 (at most 10), then per pin, oldest pinned
   first, who pinned it (16) and the message as a quote entry (same layout and
   rules as above; only messages that show are listed).
+  When the request asked for polls (#135, flag bit 4), a poll's record carries
+  its option count at byte 118, flags at 119 (1 multiple choice, 2 closed) and
+  its voter count as a u16 at 120 (bytes 122–127 stay zero; all were reserved
+  zero before). The page then ends with the votes of each shown poll, in
+  record order: per voter, in ascending member order, the member ID (16), the
+  chosen options as a u16 bit set and 2 zero bytes (20 bytes). At most 64
+  voters are kept per poll. A member's vote is their latest, by logical time.
 - **KCHT v1 / KCHS v1** (chat texts, `kin_chat_text`): `"KCHT"`, version 1,
   reserved u16, count u32 (1–500), then per text: blob ref (32, non-zero),
   length u32, the UTF-8 text. Every entry is framed before any is stored. The

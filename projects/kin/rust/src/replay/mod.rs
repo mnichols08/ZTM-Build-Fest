@@ -280,7 +280,9 @@ impl Replay {
             | K::ChatMessageEdited { .. }
             | K::ChatMessageDeleted { .. }
             | K::ChatReactionSet { .. }
-            | K::ChatPinSet { .. } => chat::apply(self, event)?,
+            | K::ChatPinSet { .. }
+            | K::ChatPollVote { .. }
+            | K::ChatPollClosed { .. } => chat::apply(self, event)?,
         }
         self.last_logical_time = event.logical_time;
         self.event_bytes

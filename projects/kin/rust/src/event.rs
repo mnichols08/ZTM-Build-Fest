@@ -37,10 +37,24 @@ id_type!(ChatMessageId);
 
 /// What a chat message's content blob holds (#109).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[repr(u8)]
 pub enum ChatContentKind {
-    Text = 1,
-    Attachment = 2,
+    Text,
+    Attachment,
+    /// A poll (#135): its question and options are the blob; the number of
+    /// options and whether several may be chosen are part of the event, so
+    /// Rust can check votes.
+    Poll(crate::chat::PollSpec),
+}
+
+impl ChatContentKind {
+    /// The kind's code in events and pages: 1 text, 2 attachment, 3 poll.
+    pub const fn code(self) -> u8 {
+        match self {
+            ChatContentKind::Text => 1,
+            ChatContentKind::Attachment => 2,
+            ChatContentKind::Poll(_) => 3,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -329,6 +343,17 @@ pub enum EventKind {
         message_id: ChatMessageId,
         on: bool,
     },
+    /// A member's vote in a poll (#135): the options chosen as a bit set
+    /// (bit n is option n), which replaces their earlier vote; none clears
+    /// it. Ignored once the poll is closed.
+    ChatPollVote {
+        message_id: ChatMessageId,
+        options: u16,
+    },
+    /// The poll's author closes it (#135): no vote counts after this.
+    ChatPollClosed {
+        message_id: ChatMessageId,
+    },
 }
 
 impl EventKind {
@@ -342,6 +367,8 @@ impl EventKind {
                 | EventKind::ChatMessageDeleted { .. }
                 | EventKind::ChatReactionSet { .. }
                 | EventKind::ChatPinSet { .. }
+                | EventKind::ChatPollVote { .. }
+                | EventKind::ChatPollClosed { .. }
         )
     }
 }

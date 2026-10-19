@@ -1161,6 +1161,20 @@ export async function chatRegressions() {
     check(region.hidden, "unpinning the last pin hides the bar");
   }
 
+  // Quick polls (#135): a Poll button opens a labelled dialog that Escape closes.
+  {
+    const button = chat.querySelector(".chat-poll-open");
+    check(button && button.getAttribute("aria-label") === "Ask a poll", "the composer has a labelled Poll button");
+    button.click();
+    await settle();
+    const dialog = chat.querySelector(".chat-poll-dialog");
+    check(dialog?.open && dialog.getAttribute("aria-labelledby") === "chat-poll-heading", "the Poll button opens a labelled dialog");
+    check(dialog.querySelectorAll(".chat-poll-field-list input").length >= 2, "the dialog starts with at least two options");
+    dialog.close();
+    await settle();
+    check(!dialog.open, "the poll dialog closes");
+  }
+
   // Mentions (#130): "@" offers members who can read chat; picking one writes
   // a plain "@Label"; unread mentions put an "@" on the Chat count.
   {

@@ -90,7 +90,7 @@ fn schemas_and_kinds_outside_protocol_24_are_unsupported() {
             "kind {kind} schema 2"
         );
     }
-    for kind in [0u16, 49, 99, u16::MAX] {
+    for kind in [0u16, 51, 99, u16::MAX] {
         assert_eq!(
             decode_event(&reference_record(kind, 1, 0x11)),
             Err(KinError::UnsupportedVersion)

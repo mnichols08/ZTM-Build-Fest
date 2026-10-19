@@ -134,6 +134,8 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 message.status = ChatMessageStatus::Deleted;
                 chat.retired.push(old);
                 chat.pins.retain(|pin| pin.message_id != *message_id);
+                // Deleting a poll deletes its votes too (#135).
+                chat.polls.remove(message_id);
             } else if *by_admin {
                 let claims = chat.admin_claims.entry(*message_id).or_default();
                 if !claims.contains(&event.actor_id) {
@@ -201,6 +203,45 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 }
             } else {
                 chat.pins.retain(|pin| pin.message_id != *message_id);
+            }
+        }
+        EventKind::ChatPollVote {
+            message_id,
+            options,
+        } => {
+            // A vote counts if the poll shows, is open and the choice fits
+            // it; the member's last counted vote replaces earlier ones. A
+            // vote for a message this history lacks changes nothing.
+            let Some((spec, closed)) = chat.poll_of(message_id) else {
+                return Ok(());
+            };
+            if closed || !spec.allows(*options) {
+                return Ok(());
+            }
+            if *options == 0 {
+                if let Some(poll) = chat.polls.get_mut(message_id) {
+                    poll.votes.remove(&event.actor_id);
+                }
+            } else {
+                let poll = chat.polls.entry(*message_id).or_default();
+                if poll.votes.contains_key(&event.actor_id)
+                    || poll.votes.len() < crate::chat::MAX_POLL_VOTERS
+                {
+                    poll.votes.insert(event.actor_id, *options);
+                }
+            }
+        }
+        EventKind::ChatPollClosed { message_id } => {
+            // Only the poll's author closes it, and the first close stands.
+            let Some((_, closed)) = chat.poll_of(message_id) else {
+                return Ok(());
+            };
+            if !closed
+                && chat
+                    .get(message_id)
+                    .is_some_and(|m| m.author == event.actor_id)
+            {
+                chat.polls.entry(*message_id).or_default().closed = true;
             }
         }
         _ => return Err(KinError::Internal),

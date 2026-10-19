@@ -1430,3 +1430,40 @@ test("chat pins are commands, limited to ten, and listed by a page that asks for
   run({ type: "pin-chat-message", messageId: ids[0], on: false });
   assert.equal(engine.chatPage(chat, { includePins: true }, asOf, day).pins.length, 9);
 });
+
+test("chat polls are posted, voted in and closed through the engine, and a page lists the votes (#135)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const author = new Uint8Array(16).fill(0xbb), friend = new Uint8Array(16).fill(0xbc);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  let sequence = 0;
+  const as = (actorId) => { sequence += 1; return { eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId, deviceId: new Uint8Array(16).fill(0xab), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) }; };
+  const asOf = 1_791_475_200_900, day = 20261009;
+  const blob = (byte) => byte.toString(16).padStart(2, "0").repeat(32);
+  const chat = [];
+  const run = (command, actor = author) => { const result = engine.executeChatCommand(command, as(actor), chat, asOf, day); chat.push(result.encodedEvent); return result; };
+  const poll = "0a".repeat(16);
+  // The shape: 2 to 10 options.
+  for (const options of [1, 11]) assert.throws(() => run({ type: "post-chat-message", messageId: poll, blobRef: blob(0xa0), blobKey: blob(0xc0), contentKind: "poll", poll: { options } }), (error) => error.code === 2 || error.code === 4);
+  const posted = run({ type: "post-chat-message", messageId: poll, blobRef: blob(0xa0), blobKey: blob(0xc0), contentKind: "poll", poll: { options: 3, multiple: false } });
+  assert.equal(new DataView(posted.encodedEvent.buffer).getUint16(2, true), 44);
+  const page = (options = {}) => engine.chatPage(chat, { includePolls: true, ...options }, asOf, day);
+  assert.equal(page().messages[0].contentKind, "poll");
+  assert.deepEqual(page().messages[0].poll, { options: 3, multiple: false, closed: false, votes: [] });
+  assert.equal(engine.chatPage(chat, {}, asOf, day).messages[0].poll, null, "polls only when asked for");
+  // Votes: one answer, from the poll's options, and a change each time.
+  assert.equal(new DataView(run({ type: "vote-chat-poll", messageId: poll, choice: [1] }, friend).encodedEvent.buffer).getUint16(2, true), 49);
+  for (const choice of [[1], [0, 1], [3]]) assert.throws(() => run({ type: "vote-chat-poll", messageId: poll, choice }, friend), (error) => error.code === 2 || error.code === 4, JSON.stringify(choice));
+  run({ type: "vote-chat-poll", messageId: poll, choice: [2] }, author);
+  run({ type: "vote-chat-poll", messageId: poll, choice: [0] }, friend);
+  const votes = page().messages[0].poll.votes;
+  assert.deepEqual(Object.fromEntries(votes.map((vote) => [vote.memberId, vote.choice])), { [hex(author)]: [2], [hex(friend)]: [0] });
+  // Only the author closes it, and nothing counts after.
+  assert.throws(() => run({ type: "close-chat-poll", messageId: poll }, friend), (error) => error.code === 4);
+  assert.equal(new DataView(run({ type: "close-chat-poll", messageId: poll }).encodedEvent.buffer).getUint16(2, true), 50);
+  assert.throws(() => run({ type: "vote-chat-poll", messageId: poll, choice: [1] }, friend), (error) => error.code === 4);
+  assert.equal(page().messages[0].poll.closed, true);
+  // Deleting it for everyone takes the votes with it.
+  run({ type: "delete-chat-message", messageId: poll, byAdmin: false });
+  assert.equal(page().messages[0].poll, null);
+  assert.equal(page().messages[0].status, "deleted");
+});

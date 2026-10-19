@@ -193,6 +193,17 @@ pub enum HouseholdCommand {
         id: ChatMessageId,
         on: bool,
     },
+    /// The context member votes in a poll (#135): `options` is the choice as
+    /// a bit set (bit n is option n), replacing their earlier vote; none
+    /// clears it. The poll must be open and the vote must change something.
+    VoteChatPoll {
+        id: ChatMessageId,
+        options: u16,
+    },
+    /// The poll's author closes it (#135).
+    CloseChatPoll {
+        id: ChatMessageId,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -453,6 +464,11 @@ pub fn create_event(
             message_id: *id,
             on: *on,
         },
+        VoteChatPoll { id, options } => EventKind::ChatPollVote {
+            message_id: *id,
+            options: *options,
+        },
+        CloseChatPoll { id } => EventKind::ChatPollClosed { message_id: *id },
     };
     let event = EventEnvelope {
         event_id: context.event_id,
@@ -665,6 +681,8 @@ pub fn execute_with(
             | HouseholdCommand::DeleteChatMessage { .. }
             | HouseholdCommand::ReactChatMessage { .. }
             | HouseholdCommand::PinChatMessage { .. }
+            | HouseholdCommand::VoteChatPoll { .. }
+            | HouseholdCommand::CloseChatPoll { .. }
     );
     if history.event_count() >= history.limit()
         || chat_command != history.is_chat()
@@ -761,6 +779,7 @@ pub fn execute_with(
         // A blob reference is used once in a log (chat.rs `seen`).
         HouseholdCommand::PostChatMessage {
             id,
+            content_kind,
             blob_ref,
             reply_to,
             mentions,
@@ -768,6 +787,12 @@ pub fn execute_with(
         } => {
             if current.chat.get(id).is_some() || current.chat.seen.contains(blob_ref) {
                 return Err(KinError::InvalidEvent);
+            }
+            // A poll stands alone: no reply, no mentions, a valid shape.
+            if let ChatContentKind::Poll(spec) = content_kind {
+                if !spec.is_valid() || reply_to.is_some() || !mentions.is_empty() {
+                    return Err(KinError::InvalidEvent);
+                }
             }
             check_mentions(mentions, history.chat_members())?;
             // A reply answers a message this log holds that still shows.
@@ -852,6 +877,40 @@ pub fn execute_with(
                     return Err(KinError::InvalidEvent);
                 }
             } else if !pinned {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::VoteChatPoll { id, options } => {
+            let message = current.chat.get(id).ok_or(KinError::InvalidEvent)?;
+            let (spec, closed) = current.chat.poll_of(id).ok_or(KinError::InvalidEvent)?;
+            let earlier = current
+                .chat
+                .polls
+                .get(id)
+                .and_then(|poll| poll.votes.get(&context.actor_id))
+                .copied()
+                .unwrap_or(0);
+            if closed
+                || !spec.allows(*options)
+                || earlier == *options
+                || !matches!(
+                    current.chat.shown_status(message, history.chat_admins()),
+                    crate::chat::ChatMessageStatus::Live
+                )
+            {
+                return Err(KinError::InvalidEvent);
+            }
+        }
+        HouseholdCommand::CloseChatPoll { id } => {
+            let message = current.chat.get(id).ok_or(KinError::InvalidEvent)?;
+            let (_, closed) = current.chat.poll_of(id).ok_or(KinError::InvalidEvent)?;
+            if closed
+                || message.author != context.actor_id
+                || !matches!(
+                    current.chat.shown_status(message, history.chat_admins()),
+                    crate::chat::ChatMessageStatus::Live
+                )
+            {
                 return Err(KinError::InvalidEvent);
             }
         }
@@ -1161,7 +1220,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
     if bytes.len() != 128 + text_length {
         return Err(KinError::MalformedProtocol);
     }
-    let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41 | 44..=46 | 48) {
+    let text = if matches!(kind, 21..=28 | 33 | 35 | 37 | 39 | 41 | 44..=46 | 48..=50) {
         String::new()
     } else {
         std::str::from_utf8(&bytes[128..])
@@ -1177,7 +1236,7 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || matches!(kind, 44 | 45)
             && (64..=64 + 2 + 16 * crate::chat::MAX_CHAT_MENTIONS + 16).contains(&text_length);
     if !text.is_empty() && !accepts_payload
-        || !matches!(kind, 14..=16 | 30) && date != 0
+        || !matches!(kind, 14..=16 | 30 | 49) && !(kind == 44 && option == 3) && date != 0
         || !matches!(
             kind,
             1 | 12 | 14 | 29 | 31 | 32 | 39 | 41 | 44 | 46 | 47 | 48
@@ -1198,11 +1257,16 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || kind == 42 && (id != [0; 16] || text.is_empty())
         || kind == 43 && id == [0; 16]
         || matches!(kind, 42 | 43) && text_length > crate::state::MAX_DEVICE_NAME_BYTES
-        || matches!(kind, 44..=48) && id == [0; 16]
+        || matches!(kind, 44..=50) && id == [0; 16]
+        || kind == 49 && date > u32::from(u16::MAX)
+        || matches!(kind, 49 | 50) && text_length != 0
         || kind == 47
             && (option > 1 || text.is_empty() || text_length > crate::chat::MAX_EMOJI_BYTES)
         || matches!(kind, 44 | 45) && text_length < 64
-        || kind == 44 && !matches!(option, 1 | 2)
+        || kind == 44 && !matches!(option, 1..=3)
+        || kind == 44 && option == 3 && date > 0x1ff
+        || kind == 44 && option == 3 && date >> 8 > 1
+        || kind == 44 && option == 3 && !(2..=10).contains(&(date & 0xff))
         || matches!(kind, 46 | 48) && (text_length != 0 || option > 1)
         || matches!(kind, 44 | 45) && (bytes[128..160] == [0; 32] || bytes[160..192] == [0; 32])
     {
@@ -1554,10 +1618,15 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
             if kind == 44 {
                 PostChatMessage {
                     id: ChatMessageId(id),
-                    content_kind: if option == 1 {
-                        ChatContentKind::Text
-                    } else {
-                        ChatContentKind::Attachment
+                    content_kind: match option {
+                        1 => ChatContentKind::Text,
+                        2 => ChatContentKind::Attachment,
+                        // A poll: the option count in the low byte of the
+                        // date field and a multiple-choice flag in the next.
+                        _ => ChatContentKind::Poll(crate::chat::PollSpec {
+                            options: (date & 0xff) as u8,
+                            multiple: date >> 8 == 1,
+                        }),
                     },
                     blob_ref,
                     blob_key,
@@ -1585,6 +1654,13 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         48 => PinChatMessage {
             id: ChatMessageId(id),
             on: option == 1,
+        },
+        49 => VoteChatPoll {
+            id: ChatMessageId(id),
+            options: date as u16,
+        },
+        50 => CloseChatPoll {
+            id: ChatMessageId(id),
         },
         _ => return Err(KinError::UnsupportedVersion),
     };

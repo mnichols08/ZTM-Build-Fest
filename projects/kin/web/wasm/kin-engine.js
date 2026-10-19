@@ -280,6 +280,7 @@ export function createEngine(instanceExports) {
       safeDecode(() => decodeChatPage(
         chatPageBytes(exports, chatMirror, chatRecords, options, asOf, civilDate, syncIdentity),
         options?.includePins === true,
+        options?.includePolls === true,
       )),
     // Searches the chat (KCHF/KCHR, ABI.md): { query, limit (1 to 200),
     // attachmentsOnly, from, to (ms; 0 for none), authors (hex, at most 16),
@@ -306,7 +307,7 @@ export function createEngine(instanceExports) {
 
 const CHAT_QUOTE_STATES = ["unknown", "live", "edited", "deleted", "removed-by-admin"];
 const CHAT_STATUSES = ["live", "edited", "deleted", "removed-by-admin"];
-const CHAT_CONTENT_KINDS = [null, "text", "attachment"];
+const CHAT_CONTENT_KINDS = [null, "text", "attachment", "poll"];
 export const MAX_CHAT_EVENT_COUNT = 250_000;
 const MAX_CHAT_PAGE = 500;
 
@@ -342,7 +343,7 @@ function blobFromHex(value, what) {
 
 function executeChatCommand(exports, chatMirror, command, identity, chatRecords, asOf, civilDate, syncIdentity, admins, members) {
   if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
-  if (!["post-chat-message", "edit-chat-message", "delete-chat-message", "react-chat-message", "pin-chat-message"].includes(command?.type))
+  if (!["post-chat-message", "edit-chat-message", "delete-chat-message", "react-chat-message", "pin-chat-message", "vote-chat-poll", "close-chat-poll"].includes(command?.type))
     throw new KinEngineError(2, "Kin received an invalid household action.");
   if (chatRecords.length > MAX_CHAT_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
   if (!Array.isArray(admins) || admins.length > 16 || !Array.isArray(members) || members.length > 64)
@@ -386,7 +387,7 @@ function executeChatCommand(exports, chatMirror, command, identity, chatRecords,
 function chatPageBytes(exports, chatMirror, chatRecords, options = {}, asOf, civilDate, syncIdentity) {
   if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
   if (chatRecords.length > MAX_CHAT_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
-  const { before = null, limit = 50, includeText = true, includeRetired = false, includeReactions = false, includePins = false, admins = [] } = options;
+  const { before = null, limit = 50, includeText = true, includeRetired = false, includeReactions = false, includePins = false, includePolls = false, admins = [] } = options;
   if (!Number.isInteger(limit) || limit < 1 || limit > MAX_CHAT_PAGE ||
     (before !== null && (!Number.isInteger(before) || before < 0 || before > 0xffff_ffff)) ||
     !Array.isArray(admins) || admins.length > 16)
@@ -397,7 +398,7 @@ function chatPageBytes(exports, chatMirror, chatRecords, options = {}, asOf, civ
   request.set([75, 67, 72, 81, 1, 0, 0, 0]);
   view.setUint32(8, before ?? 0xffff_ffff, true);
   view.setUint16(12, limit, true);
-  request[14] = (includeText ? 1 : 0) | (includeRetired ? 2 : 0) | (includeReactions ? 4 : 0) | (includePins ? 8 : 0);
+  request[14] = (includeText ? 1 : 0) | (includeRetired ? 2 : 0) | (includeReactions ? 4 : 0) | (includePins ? 8 : 0) | (includePolls ? 16 : 0);
   view.setUint32(16, admins.length, true);
   admins.forEach((admin, index) => request.set(idFromHex(admin), 20 + index * 16));
   const release = chatMirror.hold(chatRecords);
@@ -517,7 +518,7 @@ function decodeChatSearch(bytes) {
 // KCHP v1 (ABI.md): a 28-byte header, 128 bytes per message, 32 bytes of
 // key per message, the texts, 32 bytes per retired blob, then the reactions
 // a request for them asked for.
-function decodeChatPage(bytes, includePins = false) {
+function decodeChatPage(bytes, includePins = false, includePolls = false) {
   const invalid = () => new KinEngineError(6, "Kin received an invalid chat page.");
   if (bytes.length < 28 || readAscii(bytes, 0, 4) !== "KCHP") throw invalid();
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -531,7 +532,7 @@ function decodeChatPage(bytes, includePins = false) {
   const messages = [];
   // Texts follow each other in record order, with no gaps or overlaps.
   let nextText = 0;
-  const groupCounts = [], quoted = [], mentionFlags = [];
+  const groupCounts = [], quoted = [], mentionFlags = [], pollRecords = [];
   for (let index = 0; index < count; index += 1) {
     const at = 28 + index * 128;
     const status = CHAT_STATUSES[bytes[at + 68]], contentKind = CHAT_CONTENT_KINDS[bytes[at + 69]];
@@ -544,7 +545,10 @@ function decodeChatPage(bytes, includePins = false) {
     const blobRef = bytes.subarray(at + 72, at + 104), blobKey = bytes.subarray(keysAt + index * 32, keysAt + index * 32 + 32);
     if (visible === zero(blobRef) || visible === zero(blobKey) || (!visible && textLength) ||
       (textLength && (contentKind !== "text" || textOffset !== nextText)) || (!textLength && textOffset) ||
-      bytes[at + 70] > 1 || bytes[at + 71] > 3 || (bytes[at + 70] === 1 && !visible) || !zero(bytes.subarray(at + 118, at + 128)) ||
+      bytes[at + 70] > 1 || bytes[at + 71] > 3 || (bytes[at + 70] === 1 && !visible) || !zero(bytes.subarray(at + 122, at + 128)) ||
+      // Poll fields (#135): present only when asked for, on a poll that shows.
+      (bytes[at + 118] || bytes[at + 119] || view.getUint16(at + 120, true)) && !(includePolls && visible && contentKind === "poll" && bytes[at + 118] >= 2 && bytes[at + 118] <= 10 && bytes[at + 119] <= 3 && view.getUint16(at + 120, true) <= 64) ||
+      (includePolls && visible && contentKind === "poll" && !bytes[at + 118]) ||
       (bytes[at + 71] && !visible) || ((bytes[at + 71] & 2) !== 0) !== (view.getUint16(at + 116, true) > 0) || view.getUint16(at + 116, true) > 20 ||
       (status === "edited" && !editedAt) || (status === "live" && editedAt))
       throw invalid();
@@ -552,6 +556,9 @@ function decodeChatPage(bytes, includePins = false) {
     const groups = view.getUint32(at + 112, true);
     if (groups && !visible) throw invalid();
     groupCounts.push(groups);
+    pollRecords.push(includePolls && contentKind === "poll" && visible
+      ? { options: bytes[at + 118], multiple: (bytes[at + 119] & 1) !== 0, closed: (bytes[at + 119] & 2) !== 0, voters: view.getUint16(at + 120, true) }
+      : null);
     quoted.push(bytes[at + 70] === 1);
     mentionFlags.push({ everyone: (bytes[at + 71] & 1) !== 0, count: view.getUint16(at + 116, true) });
     messages.push({
@@ -570,6 +577,7 @@ function decodeChatPage(bytes, includePins = false) {
       reactions: [],
       replyTo: null,
       mentions: { everyone: false, members: [] },
+      poll: null,
     });
   }
   if (nextText !== textBytes) throw invalid();
@@ -649,6 +657,24 @@ function decodeChatPage(bytes, includePins = false) {
       pins.push({ ...message, pinnedBy });
     }
   }
+  // Polls (#135), when asked for: each shown poll's votes in record order,
+  // voters ascending, each with their choice as a bit set.
+  pollRecords.forEach((poll, index) => {
+    if (!poll) return;
+    const votes = [];
+    let previous = "";
+    for (let voter = 0; voter < poll.voters; voter += 1) {
+      if (cursor + 20 > bytes.length) throw invalid();
+      const memberId = idToHex(bytes.subarray(cursor, cursor + 16));
+      const mask = view.getUint16(cursor + 16, true);
+      if (memberId <= previous || /^0{32}$/.test(memberId) || mask === 0 || mask >> poll.options !== 0 ||
+        (!poll.multiple && (mask & (mask - 1)) !== 0) || bytes[cursor + 18] || bytes[cursor + 19]) throw invalid();
+      votes.push({ memberId, choice: [...Array(poll.options).keys()].filter((option) => (mask >> option) & 1) });
+      previous = memberId;
+      cursor += 20;
+    }
+    messages[index].poll = { options: poll.options, multiple: poll.multiple, closed: poll.closed, votes };
+  });
   if (cursor !== bytes.length) throw invalid();
   const retired = [];
   for (let index = 0; index < retiredCount; index += 1)
@@ -831,6 +857,8 @@ const COMMAND_TYPES = [
   "delete-chat-message",
   "react-chat-message",
   "pin-chat-message",
+  "vote-chat-poll",
+  "close-chat-poll",
 ];
 const EVENT_KINDS = [
   null,
@@ -882,6 +910,8 @@ const EVENT_KINDS = [
   "CHAT_MESSAGE_DELETED",
   "CHAT_REACTION_SET",
   "CHAT_PIN_SET",
+  "CHAT_POLL_VOTE",
+  "CHAT_POLL_CLOSED",
 ];
 
 // The command field that names each event's own entity (packet offset 92).
@@ -935,6 +965,8 @@ const ENTITY_FIELDS = Object.freeze({
   "delete-chat-message": "messageId",
   "react-chat-message": "messageId",
   "pin-chat-message": "messageId",
+  "vote-chat-poll": "messageId",
+  "close-chat-poll": "messageId",
 });
 
 /** The entity ID an intent packet carries: the type's own field, else `id`, else the caller's fallback. */
@@ -1104,6 +1136,21 @@ function encodeIntentPacket(command, identity) {
     const code = CHAT_CONTENT_KINDS.indexOf(command.contentKind ?? "text");
     if (code < 1) throw new KinEngineError(2, "Kin received an invalid chat message.");
     packet[112] = code;
+    if (code === 3) {
+      // A poll (#135): the option count and the multiple-choice flag ride in
+      // the date field (ABI.md).
+      const { options, multiple = false } = command.poll ?? {};
+      if (!Number.isInteger(options) || options < 2 || options > 10 || typeof multiple !== "boolean")
+        throw new KinEngineError(2, "A poll needs 2 to 10 options.");
+      view.setUint32(108, options | (multiple ? 0x100 : 0), true);
+    }
+  } else if (kind === 49) {
+    // A poll vote (#135): the chosen option numbers as a bit set in the date
+    // field; none clears the member's vote.
+    const choice = command.choice;
+    if (!Array.isArray(choice) || choice.length > 10 || choice.some((option, at) => !Number.isInteger(option) || option < 0 || option > 9 || choice.indexOf(option) !== at))
+      throw new KinEngineError(2, "Kin received an invalid vote.");
+    view.setUint32(108, choice.reduce((mask, option) => mask | (1 << option), 0), true);
   } else if (kind === 46) {
     if (typeof (command.byAdmin ?? false) !== "boolean") throw new KinEngineError(2, "Kin received an invalid chat message.");
     packet[112] = command.byAdmin ? 1 : 0;

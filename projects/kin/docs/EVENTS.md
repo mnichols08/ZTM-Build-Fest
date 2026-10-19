@@ -307,6 +307,17 @@ the product decisions).
   host lists as able to read chat; replay does not check. An edit replaces
   the message's mentions. The text is not changed: the mention is only a
   record of who the writer meant.
+- **Polls (#135).** A post whose content kind (payload byte 16) is 3 is a
+  poll: byte 17 is the option count (2–10) and byte 18 is 1 for multiple
+  choice (both zero for other kinds); the question and options are in the
+  sealed blob like any text. `CHAT_POLL_VOTE` (49) carries the message ID, the
+  choice as a u16 bit set and 2 reserved zero bytes (20 bytes); the later vote
+  of a member (by logical time, then event ID) replaces the earlier, 0 clears.
+  A vote is ignored if the message is not a poll, if the choice is not one the
+  poll allows, or if it comes after the author's close. `CHAT_POLL_CLOSED`
+  (50) carries the message ID and 4 reserved bytes; only the poll's author
+  closes it, and the first close stands. Deleting the poll for everyone drops
+  its votes.
 - **Pins (#131).** `CHAT_PIN_SET` (48) pins or unpins one message: payload is
   the message ID, `on` u8 and 3 reserved zero bytes (20 bytes). Replay keeps
   pins in the order applied, with who pinned each: a pin of an unknown
