@@ -602,6 +602,29 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
                 by_admin: payload[16] == 1,
             }
         }
+        (1, 47) => {
+            if payload.len() < 25
+                || payload.len() > 24 + crate::chat::MAX_EMOJI_BYTES
+                || payload[17..20] != [0; 3]
+                || payload[16] > 1
+                || !valid_timestamp(read_i64(record, 68)?)
+            {
+                return Err(KinError::MalformedProtocol);
+            }
+            let message_id = ChatMessageId(read_id(payload, 0)?);
+            let length = read_u32(payload, 20)? as usize;
+            if message_id.0 == [0; 16] || payload.len() != 24 + length {
+                return Err(KinError::MalformedProtocol);
+            }
+            let emoji =
+                std::str::from_utf8(&payload[24..]).map_err(|_| KinError::MalformedProtocol)?;
+            crate::chat::check_emoji(emoji).map_err(|_| KinError::MalformedProtocol)?;
+            EventKind::ChatReactionSet {
+                message_id,
+                emoji: emoji.to_owned(),
+                on: payload[16] == 1,
+            }
+        }
         (1, 15..=17) => {
             if payload.len() != if event_kind == 17 { 16 } else { 20 }
                 || !valid_timestamp(read_i64(record, 68)?)

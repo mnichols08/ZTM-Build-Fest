@@ -32,11 +32,16 @@
 //!   claimant is an admin is the service's to say, so the claim takes effect
 //!   when the host reads a page and names the admins (chat.rs).
 //!
+//! - A reaction (#127) turns one member's emoji on or off. The last write
+//!   per (member, message, emoji) in replay order wins, so a member's devices
+//!   converge. A reaction to a message this log lacks changes nothing; one
+//!   to a deleted message is kept and left out of the page.
+//!
 //! Actors and devices are the event header's, after identity bindings.
 use std::sync::Arc;
 
 use super::*;
-use crate::chat::{ChatMessage, ChatMessageStatus};
+use crate::chat::{ChatMessage, ChatMessageStatus, ReactionGroup};
 use crate::event::ChatContentKind;
 
 pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinError> {
@@ -122,6 +127,40 @@ pub(super) fn apply(r: &mut Replay, event: &EventEnvelope) -> Result<(), KinErro
                 if !claims.contains(&event.actor_id) {
                     claims.push(event.actor_id);
                 }
+            }
+        }
+        EventKind::ChatReactionSet {
+            message_id,
+            emoji,
+            on,
+        } => {
+            // A reaction to a message this history lacks changes nothing,
+            // like an edit of one. Reactions are per member (the header's
+            // actor), so a member's devices converge: replay order is total
+            // and the last write wins. Whether the message still shows them
+            // is decided at page time (deleted messages drop theirs).
+            if !chat.positions.contains_key(message_id) {
+                return Ok(());
+            }
+            let groups = chat.reactions.entry(*message_id).or_default();
+            let found = groups.iter().position(|group| group.emoji == *emoji);
+            if *on {
+                match found {
+                    Some(at) if groups[at].actors.contains(&event.actor_id) => {}
+                    Some(at) => groups[at].actors.push(event.actor_id),
+                    None => groups.push(ReactionGroup {
+                        emoji: emoji.clone(),
+                        actors: vec![event.actor_id],
+                    }),
+                }
+            } else if let Some(at) = found {
+                groups[at].actors.retain(|actor| *actor != event.actor_id);
+                if groups[at].actors.is_empty() {
+                    groups.remove(at);
+                }
+            }
+            if groups.is_empty() {
+                chat.reactions.remove(message_id);
             }
         }
         _ => return Err(KinError::Internal),

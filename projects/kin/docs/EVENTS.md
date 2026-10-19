@@ -235,7 +235,7 @@ the server never learns a name anyone typed ([PRIVACY](PRIVACY.md),
 ## v1.1.0 Household chat
 
 `CHAT_MESSAGE_POSTED` (44), `CHAT_MESSAGE_EDITED` (45) and
-`CHAT_MESSAGE_DELETED` (46) are schema 1 and leave replay protocol 24
+`CHAT_MESSAGE_DELETED` (46), and `CHAT_REACTION_SET` (47) are schema 1 and leave replay protocol 24
 unchanged ([ABI](ABI.md) has the payloads; [ADR 0008](decisions/0008-household-chat.md)
 the product decisions).
 
@@ -289,6 +289,18 @@ the product decisions).
   hands it over: 1 to 4,000 Unicode scalar values, valid UTF-8, not only
   whitespace, and no control characters other than tab and line feed. It is
   plain text, rendered with `textContent`.
+- **Reactions (#127).** `CHAT_REACTION_SET` (47) turns one emoji on or off
+  for the event's actor on one message. The emoji is a single grapheme from
+  the emoji ranges (a pictograph with optional variation selector and skin
+  tone, a flag, a keycap, or such parts joined by zero-width joiners), at
+  most 32 bytes, checked in Rust (`chat::check_emoji`); an event with
+  anything else is malformed. Replay order is total, so the last write per
+  (member, message, emoji) wins, and a member's devices converge. A
+  reaction to a message the log lacks changes nothing. A page leaves out the
+  reactions of a message it shows as deleted or removed, and lists the rest
+  grouped by emoji in the order replay first saw them. Commands refuse a
+  reaction that would change nothing and a 25th different emoji on one
+  message; replay keeps whatever a log holds.
 - Chat never appears in the KINS projection or the catch-up summary. Hosts
   read it with `kin_chat_page`.
 - An engine older than v1.1 does not know these kinds and rejects them with

@@ -28,7 +28,8 @@
 // message's details; under the list a plain "Sam is typing…" line, which
 // screen readers get as the list's description, not as an announcement.
 import { chatTextProblem, MAX_CHAT_TEXT_CHARS } from "../chat/chat-room.js";
-import { emojiOnlyCount } from "../chat/emoji.js";
+import { emojiOnlyCount, loadEmojiTable } from "../chat/emoji.js";
+import { QUICK_REACTIONS, reactionChips, reactionNames } from "../chat/chat-reactions.js";
 import { attachmentProblem, MAX_ATTACHMENT_FILES, safeAttachmentName } from "../chat/chat-attachments.js";
 import { seenText, typingText } from "../chat/chat-presence.js";
 import { attachmentKindLabel, formatAttachmentSize } from "../attachments/attachment-preview.js";
@@ -58,7 +59,9 @@ const DOWNLOAD_URL_MS = 60_000;
 const TIME = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 const DATE_TIME = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const FULL = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "short" });
-const ACTION_LABELS = { copy: "Copy text", edit: "Edit", delete: "Delete for everyone", remove: "Remove as admin", hide: "Delete for me" };
+const ACTION_LABELS = { copy: "Copy text", details: "See who reacted", edit: "Edit", delete: "Delete for everyone", remove: "Remove as admin", hide: "Delete for me" };
+/** How long a press on a reaction chip must last to list who reacted. */
+const LONG_PRESS_MS = 500;
 const NO_RECALL = "Copies people already saved, screenshotted or downloaded can't be recalled.";
 
 const visible = (message) => message.status === "live" || message.status === "edited";
@@ -82,6 +85,7 @@ class KinChat extends HTMLElement {
     this.onWindowChange = () => this.windowChanged();
     this.onDocumentClick = (event) => {
       if (this.menuFor && !event.composedPath().some((node) => node?.classList?.contains?.("chat-menu-wrap"))) this.closeMenu();
+      if (this.reacting && !event.composedPath().some((node) => node?.classList?.contains?.("chat-react-bar") || node?.classList?.contains?.("chat-react-button"))) this.closeReactions();
     };
   }
 
@@ -94,6 +98,11 @@ class KinChat extends HTMLElement {
     this.messages = [];
     this.rows = new Map();
     this.menuFor = null;
+    // The message whose reaction bar is open (#127), and whether it shows
+    // the whole emoji table; names for chips, once the table has loaded.
+    this.reacting = null;
+    this.reactMore = false;
+    this.emojiNames ??= reactionNames();
     // Per message: { deleted } is final; { pending } and { failed } are
     // retried on the room's next change; { loading } while a load runs.
     this.textStatus = new Map();
@@ -455,6 +464,18 @@ class KinChat extends HTMLElement {
     const off = others.filter((member) => room.presence?.slots?.get(member.id)?.receipts === false);
     const waiting = others.filter((member) => !off.includes(member));
     const children = [heading, seen];
+    const chips = reactionChips(message.reactions, room.identity.memberId, { names: this.emojiNames, labelOf: (id) => room.authorLabel(id) });
+    if (chips.length) {
+      const reacted = document.createElement("ul");
+      reacted.className = "chat-details-reactions";
+      reacted.setAttribute("aria-label", "Reactions");
+      for (const chip of chips) {
+        const item = document.createElement("li");
+        item.textContent = `${chip.emoji} ${chip.name}: ${chip.who.join(", ")}`;
+        reacted.append(item);
+      }
+      children.push(reacted);
+    }
     for (const [members, label] of [[waiting, "Not seen yet"], [off, "Read receipts off"]]) {
       if (!members.length) continue;
       const rest = document.createElement("p");
@@ -764,6 +785,8 @@ class KinChat extends HTMLElement {
       attachment ? [attachment.status, attachment.text, attachment.files.length, attachment.thumbs.size].join("\u0001") : "",
       room.authorLabel(message.authorId), this.menuFor === message.messageId, this.actionsFor(message, room).join(),
       message.messageId === this.latestOwn ? this.seenLine(message, room).text : "",
+      JSON.stringify(message.reactions ?? []), this.reacting === message.messageId ? (this.reactMore ? 2 : 1) : 0,
+      (room.access ?? "write") === "write", this.emojiNames.size,
     ].join("\u0000");
   }
 
@@ -865,9 +888,179 @@ class KinChat extends HTMLElement {
         item.append(seen);
       }
     }
+    if (visible(message)) {
+      const chips = this.reactionList(message, room);
+      if (chips) item.append(chips);
+      if (this.reacting === message.messageId && this.canReact(room)) item.append(this.reactionBar(message, room));
+    }
     const actions = this.actionsFor(message, room);
-    if (actions.length) item.append(this.menu(message, actions, author));
+    const react = visible(message) && this.canReact(room) ? this.reactButton(message, author) : null;
+    if (actions.length) item.append(this.menu(message, actions, author, react));
+    else if (react) {
+      const wrap = document.createElement("div");
+      wrap.className = "chat-menu-wrap";
+      wrap.append(react);
+      item.append(wrap);
+    }
     return item;
+  }
+
+  canReact(room) {
+    return (room.access ?? "write") === "write";
+  }
+
+  /** The chips under a message: emoji and count, each a button that toggles
+   * this member's reaction. Pressing and holding (or the "See who reacted"
+   * action) lists who reacted. */
+  reactionList(message, room) {
+    const chips = reactionChips(message.reactions, room.identity.memberId, { names: this.emojiNames, labelOf: (id) => room.authorLabel(id) });
+    if (!chips.length) return null;
+    const list = document.createElement("ul");
+    list.className = "chat-reactions";
+    list.setAttribute("aria-label", "Reactions");
+    const canReact = this.canReact(room);
+    for (const chip of chips) {
+      const entry = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "chat-reaction";
+      button.dataset.action = `react-${chip.emoji}`;
+      button.setAttribute("aria-pressed", String(chip.mine));
+      button.setAttribute("aria-label", chip.label);
+      if (!canReact) button.setAttribute("aria-disabled", "true");
+      // Hover lists who reacted.
+      button.title = `${chip.name}: ${chip.who.join(", ")}`;
+      const emoji = document.createElement("span");
+      emoji.textContent = chip.emoji;
+      emoji.setAttribute("aria-hidden", "true");
+      const count = document.createElement("span");
+      count.className = "chat-reaction-count";
+      count.textContent = String(chip.count);
+      count.setAttribute("aria-hidden", "true");
+      button.append(emoji, count);
+      let timer = null;
+      let held = false;
+      const clear = () => { clearTimeout(timer); timer = null; };
+      button.addEventListener("pointerdown", () => {
+        held = false;
+        clear();
+        timer = setTimeout(() => { held = true; this.openDetails(message); }, LONG_PRESS_MS);
+      });
+      for (const type of ["pointerup", "pointerleave", "pointercancel"]) button.addEventListener(type, clear);
+      button.addEventListener("contextmenu", (event) => { event.preventDefault(); });
+      button.addEventListener("click", () => {
+        if (held) { held = false; return; }
+        if (canReact) void this.react(message, chip.emoji, !chip.mine);
+      });
+      entry.append(button);
+      list.append(entry);
+    }
+    return list;
+  }
+
+  reactButton(message, author) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "chat-react-button";
+    button.dataset.action = "react-open";
+    button.textContent = "🙂";
+    button.setAttribute("aria-label", `Add a reaction to ${author === "You" ? "your" : `${author}'s`} message`);
+    button.setAttribute("aria-expanded", String(this.reacting === message.messageId));
+    button.setAttribute("aria-controls", `chat-react-${message.messageId}`);
+    button.addEventListener("click", () => {
+      this.closeMenu();
+      this.reacting = this.reacting === message.messageId ? null : message.messageId;
+      this.reactMore = false;
+      this.reconcile();
+      this.rowFor(message.messageId)?.querySelector(this.reacting ? ".chat-react-bar button" : '[data-action="react-open"]')?.focus({ preventScroll: true });
+    });
+    return button;
+  }
+
+  /** Six quick reactions and "More", which opens every emoji the picker has. */
+  reactionBar(message, room) {
+    const bar = document.createElement("div");
+    bar.className = "chat-react-bar";
+    bar.id = `chat-react-${message.messageId}`;
+    bar.setAttribute("role", "group");
+    bar.setAttribute("aria-label", "Choose a reaction");
+    bar.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      this.closeReactions({ focusToggle: true });
+    });
+    const choose = (emoji, name) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.action = `react-${emoji}`;
+      button.textContent = emoji;
+      button.setAttribute("aria-label", name);
+      const mine = (message.reactions ?? []).some((group) => group.emoji === emoji && group.actors.includes(room.identity.memberId));
+      button.setAttribute("aria-pressed", String(mine));
+      button.addEventListener("click", () => void this.react(message, emoji, !mine));
+      return button;
+    };
+    for (const [emoji, name] of QUICK_REACTIONS) bar.append(choose(emoji, name));
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "chat-react-more";
+    more.dataset.action = "react-more";
+    more.textContent = this.reactMore ? "Fewer" : "More";
+    more.setAttribute("aria-expanded", String(this.reactMore));
+    more.addEventListener("click", async () => {
+      this.reactMore = !this.reactMore;
+      if (this.reactMore) await this.loadNames();
+      this.reconcile();
+      this.rowFor(message.messageId)?.querySelector('[data-action="react-more"]')?.focus({ preventScroll: true });
+    });
+    bar.append(more);
+    if (this.reactMore) {
+      const grid = document.createElement("div");
+      grid.className = "chat-react-grid";
+      grid.setAttribute("role", "group");
+      grid.setAttribute("aria-label", "All emoji");
+      const quick = new Set(QUICK_REACTIONS.map(([emoji]) => emoji));
+      for (const [emoji, name] of this.emojiNames) if (!quick.has(emoji)) grid.append(choose(emoji, name));
+      bar.append(grid);
+    }
+    return bar;
+  }
+
+  closeReactions({ focusToggle = false } = {}) {
+    const messageId = this.reacting;
+    if (!messageId) return;
+    this.reacting = null;
+    this.reactMore = false;
+    this.reconcile();
+    if (focusToggle) this.rowFor(messageId)?.querySelector('[data-action="react-open"]')?.focus({ preventScroll: true });
+  }
+
+  /** Names for the chips of emoji outside the quick set: the picker's table. */
+  async loadNames() {
+    if (this.namesLoaded) return;
+    this.namesLoaded = true;
+    try {
+      this.emojiNames = reactionNames(await loadEmojiTable());
+    } catch {
+      this.namesLoaded = false;
+    }
+  }
+
+  /** Turns this member's reaction on or off. */
+  async react(message, emoji, on) {
+    const room = this.chatRoom;
+    if (!room || !this.canReact(room)) return;
+    const focus = this.reacting === message.messageId;
+    try {
+      await room.react(message, emoji, on);
+      this.say(on ? "Reaction added." : "Reaction removed.");
+    } catch (error) {
+      // A reaction that changed nothing (another device got there first)
+      // just shows the current state.
+      if (error?.code !== 4) this.message.textContent = "Kin couldn't do that right now. Try again.";
+    }
+    if (focus) this.closeReactions({ focusToggle: true });
+    await this.queueRender("update");
   }
 
   /** The photos and files of an attachment message: a thumbnail per photo,
@@ -1052,6 +1245,7 @@ class KinChat extends HTMLElement {
     const own = message.authorId === room.identity.memberId;
     const actions = [];
     if (message.text !== null) actions.push("copy");
+    if (message.reactions?.length) actions.push("details");
     // Read-only members (#123) can copy and hide for themselves, nothing else.
     const canPost = (room.access ?? "write") === "write";
     if (canPost && own && message.text !== null && message.contentKind === "text") actions.push("edit");
@@ -1063,7 +1257,7 @@ class KinChat extends HTMLElement {
   }
 
   /** A disclosure: the ⋯ button shows or hides the row's action buttons. */
-  menu(message, actions, author) {
+  menu(message, actions, author, react = null) {
     const wrap = document.createElement("div");
     wrap.className = "chat-menu-wrap";
     const toggle = document.createElement("button");
@@ -1088,7 +1282,7 @@ class KinChat extends HTMLElement {
     wrap.addEventListener("focusout", (event) => {
       if (this.menuFor === message.messageId && event.relatedTarget && !wrap.contains(event.relatedTarget)) this.closeMenu();
     });
-    wrap.append(toggle);
+    wrap.append(...(react ? [react] : []), toggle);
     if (open) {
       const list = document.createElement("div");
       list.className = "chat-menu";
@@ -1134,7 +1328,9 @@ class KinChat extends HTMLElement {
     this.closeMenu({ focusToggle: action === "copy" });
     if (!room) return;
     try {
-      if (action === "copy") {
+      if (action === "details") {
+        this.openDetails(message);
+      } else if (action === "copy") {
         await navigator.clipboard.writeText(message.text);
         this.say("Copied.");
       } else if (action === "edit") {

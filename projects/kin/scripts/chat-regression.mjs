@@ -733,6 +733,82 @@ export async function chatRegressions() {
   }
   room.presence = undefined;
 
+  // Reactions (#127): quick bar, chips as toggle buttons, who reacted, read-only.
+  {
+    calls.react = [];
+    room.react = async function react(message, emoji, on) {
+      calls.react.push([message.messageId, emoji, on]);
+      const entry = log.find((row) => row.messageId === message.messageId);
+      const groups = entry.reactions ??= [];
+      let group = groups.find((candidate) => candidate.emoji === emoji);
+      if (on) {
+        if (!group) groups.push(group = { emoji, actors: [] });
+        if (!group.actors.includes(me)) group.actors.push(me);
+      } else if (group) {
+        group.actors = group.actors.filter((actor) => actor !== me);
+        if (!group.actors.length) groups.splice(groups.indexOf(group), 1);
+      }
+      notify();
+    };
+    const target = rows().findLast((row) => !row.classList.contains("own") && row.querySelector('[data-action="react-open"]'));
+    check(target, "a message from someone else offers a reaction button");
+    const id = target.dataset.messageId;
+    const rowOf = () => chat.querySelector(`[data-message-id="${id}"]`);
+    const entry = log.find((row) => row.messageId === id);
+    check(!rowOf().querySelector(".chat-reactions"), "no chips before anyone reacts");
+    rowOf().querySelector('[data-action="react-open"]').click();
+    await settle();
+    const quick = [...rowOf().querySelectorAll(".chat-react-bar button")].filter((button) => button.dataset.action !== "react-more");
+    check(quick.length === 6 && quick[0].getAttribute("aria-label") === "Thumbs up", "six quick reactions, named");
+    check(rowOf().querySelector('[data-action="react-open"]').getAttribute("aria-expanded") === "true", "the button says the bar is open");
+    check(document.activeElement === quick[0], "focus moves into the bar");
+    quick[0].click();
+    await settle();
+    check(calls.react.at(-1)?.[1] === "\u{1F44D}" && calls.react.at(-1)?.[2] === true, "choosing a reaction sends it on");
+    let chip = rowOf().querySelector(".chat-reaction");
+    check(chip && chip.tagName === "BUTTON" && chip.getAttribute("aria-label") === "Thumbs up, 1 person, including you" && chip.getAttribute("aria-pressed") === "true", "a chip with an accessible name appears and is mine");
+    check(!rowOf().querySelector(".chat-react-bar") && document.activeElement?.dataset.action === "react-open", "the bar closes and focus returns to the button");
+    entry.reactions[0].actors.push(other);
+    notify();
+    await settle();
+    chip = rowOf().querySelector(".chat-reaction");
+    check(chip.getAttribute("aria-label") === "Thumbs up, 2 people, including you" && chip.querySelector(".chat-reaction-count").textContent === "2", "another member's reaction counts");
+    check(chip.title.includes("You") && chip.title.includes("Adult 2"), "hover lists who reacted");
+    chip.click();
+    await settle();
+    check(calls.react.at(-1)?.[2] === false, "tapping my chip takes my reaction back");
+    chip = rowOf().querySelector(".chat-reaction");
+    check(chip.getAttribute("aria-label") === "Thumbs up, 1 person" && chip.getAttribute("aria-pressed") === "false", "the chip drops my count");
+    // Who reacted, from the row menu.
+    rowOf().querySelector(".chat-menu-button").click();
+    await settle();
+    const details = rowOf().querySelector('[data-action="details"]');
+    check(details && details.textContent === "See who reacted", "the menu can list who reacted");
+    details.click();
+    await settle();
+    check(chat.querySelector(".chat-details-reactions")?.textContent.includes("Adult 2"), "the details list who reacted");
+    chat.details.close();
+    await settle();
+    // Read-only members see chips but can't change them.
+    room.access = "read";
+    notify();
+    await settle();
+    check(!rowOf().querySelector('[data-action="react-open"]'), "no reaction button without write access");
+    check(rowOf().querySelector(".chat-reaction")?.getAttribute("aria-disabled") === "true", "chips are inert without write access");
+    const before = calls.react.length;
+    rowOf().querySelector(".chat-reaction").click();
+    await settle();
+    check(calls.react.length === before, "a read-only tap sends nothing");
+    room.access = "write";
+    notify();
+    await settle();
+    // A deleted message shows no reactions.
+    Object.assign(entry, { status: "deleted", blobRef: null, blobKey: null });
+    notify();
+    await settle();
+    check(!rowOf().querySelector(".chat-reactions") && !rowOf().querySelector('[data-action="react-open"]'), "a deleted message has no reactions");
+  }
+
   chat.room = null;
   await settle();
   if (!app) chat.remove();

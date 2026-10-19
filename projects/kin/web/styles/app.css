@@ -816,6 +816,20 @@ kin-household, kin-security, kin-areas, kin-notes, kin-search, kin-item, kin-att
 .chat-menu { position: absolute; z-index: 2; right: 0; top: calc(100% + 2px); display: grid; min-width: 190px; padding: 4px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); box-shadow: 0 6px 20px rgb(0 0 0 / .16); }
 .chat-menu button { min-height: var(--tap); padding-inline: 12px; border: 0; border-radius: var(--r-control); background: transparent; color: var(--ink); font: inherit; text-align: start; }
 .chat-menu button:hover, .chat-menu button:focus-visible { background: var(--surface-secondary); }
+.chat-menu-wrap { display: flex; }
+.chat-react-button { min-width: var(--tap); min-height: var(--tap); border: 0; border-radius: var(--r-control); background: transparent; color: var(--ink-muted); font: inherit; font-size: 16px; opacity: .65; }
+.chat-react-button:hover, .chat-react-button:focus-visible, .chat-react-button[aria-expanded="true"] { background: var(--surface-secondary); opacity: 1; }
+.chat-reactions { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 0; padding: 0; list-style: none; }
+.chat-reaction { display: inline-flex; align-items: center; gap: 4px; min-height: var(--tap); padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; cursor: pointer; }
+.chat-reaction[aria-pressed="true"] { border-color: var(--accent, currentColor); background: var(--surface-secondary); font-weight: 600; }
+.chat-reaction[aria-disabled="true"] { cursor: default; }
+.chat-reaction:hover:not([aria-disabled="true"]), .chat-reaction:focus-visible { background: var(--surface-secondary); }
+.chat-react-bar { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0 0; padding: 4px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); }
+.chat-react-bar button { min-width: var(--tap); min-height: var(--tap); border: 0; border-radius: var(--r-control); background: transparent; color: var(--ink); font: inherit; font-size: 20px; cursor: pointer; }
+.chat-react-bar button[aria-pressed="true"] { background: var(--surface-secondary); }
+.chat-react-bar button:hover, .chat-react-bar button:focus-visible { background: var(--surface-secondary); }
+.chat-react-bar .chat-react-more { padding-inline: 12px; font-size: 14px; }
+.chat-react-grid { display: flex; flex-wrap: wrap; flex-basis: 100%; gap: 2px; max-height: 190px; overflow-y: auto; }
 .chat-jump { justify-self: center; min-height: var(--tap); padding-inline: 16px; border: 1px solid var(--accent); border-radius: 999px; background: var(--surface); color: var(--accent); font: inherit; font-weight: 650; }
 .chat-jump[hidden] { display: none; }
 .chat-form { grid-template-columns: minmax(0, 1fr); }

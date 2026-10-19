@@ -24,7 +24,7 @@ const WASM = new URL("../wasm/kin_engine.wasm", import.meta.url);
 
 const encoder = new TextEncoder(), decoder = new TextDecoder();
 const bytesOf = (hex) => Uint8Array.from(hex.match(/../g), (pair) => Number.parseInt(pair, 16));
-const KINDS = { "post-chat-message": "CHAT_MESSAGE_POSTED", "edit-chat-message": "CHAT_MESSAGE_EDITED", "delete-chat-message": "CHAT_MESSAGE_DELETED" };
+const KINDS = { "post-chat-message": "CHAT_MESSAGE_POSTED", "edit-chat-message": "CHAT_MESSAGE_EDITED", "delete-chat-message": "CHAT_MESSAGE_DELETED", "react-chat-message": "CHAT_REACTION_SET" };
 
 /** The engine calls the room makes, over JSON "canonical events". */
 function fakeEngine() {
@@ -65,7 +65,18 @@ function fakeEngine() {
         const message = messages.get(command.messageId);
         if (command.type === "post-chat-message" && !message)
           messages.set(command.messageId, { messageId: command.messageId, authorId: actorId, deviceId, postedAt: timestamp, status: "live", contentKind: command.contentKind ?? "text", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey) });
-        else if (message && message.status !== "deleted" && (actorId === message.authorId || (command.byAdmin && options.admins.includes(actorId)))) {
+        else if (command.type === "react-chat-message") {
+          if (!message) continue;
+          const groups = message.reactions ??= [];
+          let group = groups.find((entry) => entry.emoji === command.emoji);
+          if (command.on) {
+            if (!group) groups.push(group = { emoji: command.emoji, actors: [] });
+            if (!group.actors.includes(actorId)) group.actors.push(actorId);
+          } else if (group) {
+            group.actors = group.actors.filter((actor) => actor !== actorId);
+            if (!group.actors.length) groups.splice(groups.indexOf(group), 1);
+          }
+        } else if (message && message.status !== "deleted" && (actorId === message.authorId || (command.byAdmin && options.admins.includes(actorId)))) {
           retired.push(message.blobRef);
           if (command.type === "edit-chat-message") Object.assign(message, { status: "edited", blobRef: command.blobRef, blobKey: bytesOf(command.blobKey) });
           else Object.assign(message, { status: command.byAdmin ? "removed-by-admin" : "deleted", blobRef: null, blobKey: null });
@@ -73,6 +84,7 @@ function fakeEngine() {
       }
       const list = [...messages.values()].map((message, index) => ({
         ...message, index,
+        reactions: options.includeReactions && (message.status === "live" || message.status === "edited") ? message.reactions ?? [] : [],
         text: options.includeText === false ? null : this.texts.get(message.blobRef) ?? null,
       }));
       const shown = new Set(list.map((message) => message.blobRef));
@@ -1031,4 +1043,43 @@ test("a member shut out of chat cannot open messages sent after the chat key rot
   await sync(laptop, b);
   assert.equal(b.room.refused.length, 1, "refused, and chat goes on");
   assert.deepEqual(await texts(b), ["before", "secret after"]);
+});
+
+test("members react to a message, take it back, and a deletion drops the reactions (#127)", { timeout: 30_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs, householdAdmin: true });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs, memberKind: "limited" });
+  const devices = [phone.entry, laptop.entry];
+  const a = await openRoom(phone, s), b = await openRoom(laptop, s);
+  await a.room.send("Dinner at 6");
+  await a.room.sync({ status: STATUS, devices });
+  await b.room.sync({ status: STATUS, devices });
+  const [dinner] = b.room.page().messages;
+  assert.deepEqual(dinner.reactions, []);
+  await b.room.react(dinner, "\u{1F44D}", true);
+  await b.room.react(dinner, "\u2764\uFE0F", true);
+  assert.equal(b.room.pendingMessages.has(dinner.messageId), false, "a reaction doesn't make its message \"sending\"");
+  await b.room.sync({ status: STATUS, devices });
+  await a.room.sync({ status: STATUS, devices });
+  const [seen] = a.room.page().messages;
+  assert.deepEqual(seen.reactions, [
+    { emoji: "\u{1F44D}", actors: [s.partner.memberId] },
+    { emoji: "\u2764\uFE0F", actors: [s.partner.memberId] },
+  ]);
+  await a.room.react(seen, "\u{1F44D}", true);
+  await b.room.react(dinner, "\u2764\uFE0F", false);
+  await a.room.sync({ status: STATUS, devices });
+  await b.room.sync({ status: STATUS, devices });
+  assert.deepEqual(b.room.page().messages[0].reactions, [{ emoji: "\u{1F44D}", actors: [s.partner.memberId, s.admin.memberId] }]);
+  // Pages carry them unless a caller opts out.
+  assert.deepEqual(b.room.page({ includeReactions: false }).messages[0].reactions, []);
+  // The author deletes the message: its reactions go with it.
+  await a.room.remove(a.room.page().messages[0]);
+  await a.room.sync({ status: STATUS, devices });
+  await b.room.sync({ status: STATUS, devices });
+  assert.deepEqual(b.room.page().messages[0].reactions, []);
+  // A member who can only read may not react.
+  b.room.access = "read";
+  await assert.rejects(() => b.room.react(b.room.page().messages[0], "\u{1F44D}", true), (error) => error.code === "chat_read_only" || /read/i.test(error.message));
 });

@@ -1038,7 +1038,7 @@ fn malformed_page_requests_are_rejected() {
     let mut bad = vec![
         kchq(u32::MAX, 0, 0, &[], &context),
         kchq(u32::MAX, 501, 0, &[], &context),
-        kchq(u32::MAX, 10, 0b100, &[], &context),
+        kchq(u32::MAX, 10, 0b1000, &[], &context),
         kchq(u32::MAX, 10, 0, &[[0; 16]], &context),
         kchq(u32::MAX, 10, 0, &[[3; 16]; 17], &context),
         kchq(
@@ -1180,4 +1180,478 @@ fn a_long_chat_replays_and_pages_quickly() {
         history.last_replay_reused(),
         "the second page used the checkpoint"
     );
+}
+
+// Reactions (#127).
+
+/// A reaction record: message `id`, `on`, and the emoji, by hand.
+fn reacted(event: u32, actor: [u8; 16], device: u8, id: u8, emoji: &str, on: bool) -> Vec<u8> {
+    let mut payload = message(id).to_vec();
+    payload.extend_from_slice(&[u8::from(on), 0, 0, 0]);
+    payload.extend_from_slice(&(emoji.len() as u32).to_le_bytes());
+    payload.extend_from_slice(emoji.as_bytes());
+    record(47, event, actor, device, &payload)
+}
+
+/// The same record at an explicit logical time.
+fn reacted_at(
+    event: u32,
+    logical: u64,
+    actor: [u8; 16],
+    device: u8,
+    id: u8,
+    emoji: &str,
+    on: bool,
+) -> Vec<u8> {
+    let mut bytes = reacted(event, actor, device, id, emoji, on);
+    bytes[76..84].copy_from_slice(&logical.to_le_bytes());
+    bytes
+}
+
+fn react(id: u8, emoji: &str, on: bool) -> C {
+    C::ReactChatMessage {
+        id: ChatMessageId(message(id)),
+        emoji: emoji.to_owned(),
+        on,
+    }
+}
+
+fn reactions_on(state: &ChatState, id: u8) -> Vec<(String, Vec<[u8; 16]>)> {
+    state
+        .reactions
+        .get(&ChatMessageId(message(id)))
+        .map(|groups| {
+            groups
+                .iter()
+                .map(|group| {
+                    (
+                        group.emoji.clone(),
+                        group.actors.iter().map(|a| a.0).collect(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn an_emoji_is_one_grapheme_from_the_emoji_ranges() {
+    for emoji in [
+        "\u{1F44D}",
+        "\u{2764}\u{FE0F}",
+        "\u{2764}",
+        "\u{1F602}",
+        "\u{1F44D}\u{1F3FD}",
+        "\u{1F1FA}\u{1F1F8}",
+        "\u{1F3F3}\u{FE0F}\u{200D}\u{1F308}",
+        "\u{1F469}\u{1F3FD}\u{200D}\u{2695}\u{FE0F}",
+        "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}",
+        "1\u{FE0F}\u{20E3}",
+        "#\u{20E3}",
+        "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}",
+        "\u{1FAE0}",
+    ] {
+        assert_eq!(check_emoji(emoji), Ok(()), "{emoji:?}");
+    }
+    let too_long = "\u{1F468}\u{200D}".repeat(5) + "\u{1F468}";
+    assert!(too_long.len() > MAX_EMOJI_BYTES);
+    for emoji in [
+        "",
+        "a",
+        "1",
+        "#",
+        " ",
+        "\n",
+        "hi",
+        "\u{1F44D}a",
+        "a\u{1F44D}",
+        "\u{1F44D}\u{1F44D}",
+        "\u{1F44D}\u{200D}",
+        "\u{200D}\u{1F44D}",
+        "\u{FE0F}",
+        "\u{1F3FD}\u{1F44D}x",
+        "\u{1F1FA}",
+        "\u{1F1FA}\u{1F1F8}\u{1F1E7}",
+        "\u{1F3F4}\u{E0067}",
+        "1\u{20E3}\u{20E3}",
+        "\u{0}",
+        "<b>",
+        &too_long,
+    ] {
+        assert_eq!(check_emoji(emoji), Err(KinError::InvalidEvent), "{emoji:?}");
+    }
+}
+
+#[test]
+fn every_picker_emoji_is_accepted() {
+    // The picker's table (web/chat/emoji.json): each entry is `["emoji", "name"]`.
+    let table = include_str!("../../web/chat/emoji.json");
+    let mut checked = 0;
+    for line in table.lines() {
+        let mut rest = line;
+        while let Some(at) = rest.find("[\"") {
+            let after = &rest[at + 2..];
+            let Some(end) = after.find('"') else { break };
+            let emoji = &after[..end];
+            if !emoji.is_empty() && !emoji.is_ascii() {
+                assert_eq!(
+                    check_emoji(emoji),
+                    Ok(()),
+                    "{emoji:?} ({:x?})",
+                    emoji.chars().map(|c| c as u32).collect::<Vec<_>>()
+                );
+                checked += 1;
+            }
+            rest = &after[end..];
+        }
+    }
+    assert!(checked > 300, "read {checked} emoji");
+}
+
+#[test]
+fn reaction_records_decode_as_documented() {
+    let event = decode_event(&reacted(1, MEMBER_1, 0x11, 7, "\u{1F44D}", true)).unwrap();
+    assert_eq!(
+        event.kind,
+        EventKind::ChatReactionSet {
+            message_id: ChatMessageId(message(7)),
+            emoji: "\u{1F44D}".to_owned(),
+            on: true,
+        }
+    );
+    assert_eq!(event.canonical_bytes.len(), 88 + 24 + 4);
+    assert!(event.kind.is_chat());
+    let off = decode_event(&reacted(2, MEMBER_1, 0x11, 7, "\u{2764}\u{FE0F}", false)).unwrap();
+    assert_eq!(
+        off.kind,
+        EventKind::ChatReactionSet {
+            message_id: ChatMessageId(message(7)),
+            emoji: "\u{2764}\u{FE0F}".to_owned(),
+            on: false,
+        }
+    );
+    // The encoder writes the same bytes.
+    assert_eq!(
+        crate::codec::encode_event(&off).unwrap(),
+        reacted(2, MEMBER_1, 0x11, 7, "\u{2764}\u{FE0F}", false)
+    );
+
+    // Malformed records are refused.
+    let mut bad = Vec::new();
+    bad.push(reacted(1, MEMBER_1, 0x11, 7, "a", true));
+    bad.push(reacted(1, MEMBER_1, 0x11, 7, "", true));
+    bad.push(reacted(1, MEMBER_1, 0x11, 7, "\u{1F44D}\u{1F44D}", true));
+    let mut zero_message = reacted(1, MEMBER_1, 0x11, 7, "\u{1F44D}", true);
+    zero_message[88..104].fill(0);
+    bad.push(zero_message);
+    let mut flag = reacted(1, MEMBER_1, 0x11, 7, "\u{1F44D}", true);
+    flag[104] = 2;
+    bad.push(flag);
+    let mut reserved = reacted(1, MEMBER_1, 0x11, 7, "\u{1F44D}", true);
+    reserved[106] = 1;
+    bad.push(reserved);
+    let mut length = reacted(1, MEMBER_1, 0x11, 7, "\u{1F44D}", true);
+    length[108] = 5;
+    bad.push(length);
+    let mut cut = reacted(1, MEMBER_1, 0x11, 7, "\u{1F44D}", true);
+    cut.truncate(cut.len() - 1);
+    let new_length = (cut.len() - 88) as u32;
+    cut[84..88].copy_from_slice(&new_length.to_le_bytes());
+    bad.push(cut);
+    for record in bad {
+        assert!(decode_event(&record).is_err());
+    }
+}
+
+#[test]
+fn replay_keeps_the_last_reaction_write_per_member_message_and_emoji() {
+    let thumbs = "\u{1F44D}";
+    let heart = "\u{2764}\u{FE0F}";
+    let state = chat(&[
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        reacted(2, MEMBER_2, 0x21, 1, thumbs, true),
+        reacted(3, MEMBER_1, 0x11, 1, thumbs, true),
+        reacted(4, MEMBER_2, 0x21, 1, heart, true),
+        // Adding twice changes nothing.
+        reacted(5, MEMBER_2, 0x21, 1, thumbs, true),
+        // Another device of member 2 takes the thumbs-up back.
+        reacted(6, MEMBER_2, 0x22, 1, thumbs, false),
+        // Taking back what was never added changes nothing.
+        reacted(7, ADMIN, 0x31, 1, thumbs, false),
+    ]);
+    assert_eq!(
+        reactions_on(&state, 1),
+        vec![
+            (thumbs.to_owned(), vec![MEMBER_1]),
+            (heart.to_owned(), vec![MEMBER_2]),
+        ]
+    );
+    // Taking the last one back leaves no group and no entry.
+    let state = chat(&[
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        reacted(2, MEMBER_1, 0x11, 1, thumbs, true),
+        reacted(3, MEMBER_1, 0x11, 1, thumbs, false),
+    ]);
+    assert!(state.reactions.is_empty());
+    // A reaction to a message this log lacks changes nothing.
+    let state = chat(&[reacted(1, MEMBER_1, 0x11, 9, thumbs, true)]);
+    assert!(state.reactions.is_empty());
+}
+
+#[test]
+fn two_devices_of_one_member_converge_whatever_order_they_arrive_in() {
+    let thumbs = "\u{1F44D}";
+    // Both devices toggle at the same logical time; replay order is total
+    // (logical time, then event ID), so the result doesn't depend on which
+    // arrived first.
+    let post = posted(1, MEMBER_1, 0x11, 1, 1);
+    let on = reacted_at(2, 5, MEMBER_2, 0x21, 1, thumbs, true);
+    let off = reacted_at(3, 5, MEMBER_2, 0x22, 1, thumbs, false);
+    let forward = chat(&[post.clone(), on.clone(), off.clone()]);
+    let backward = chat(&[post.clone(), off.clone(), on.clone()]);
+    assert_eq!(forward.reactions, backward.reactions);
+    // Event 3 sorts after event 2: the later write (off) wins.
+    assert!(forward.reactions.is_empty());
+    // And replaying the same log again gives the same projection.
+    let again = chat(&[post, on, off]);
+    assert_eq!(again.reactions, forward.reactions);
+}
+
+#[test]
+fn commands_react_and_refuse_what_changes_nothing() {
+    let thumbs = "\u{1F44D}";
+    let mut events = History::chat();
+    run(
+        &mut events,
+        post(1, ChatContentKind::Text),
+        context(1, MEMBER_1, 0x11, 1),
+    )
+    .unwrap();
+    run(
+        &mut events,
+        post(2, ChatContentKind::Text),
+        context(2, MEMBER_1, 0x11, 2),
+    )
+    .unwrap();
+    run(
+        &mut events,
+        react(1, thumbs, true),
+        context(3, MEMBER_2, 0x21, 3),
+    )
+    .unwrap();
+    // Reacting twice, taking back what isn't there, a message that isn't
+    // there, a bad emoji and a deleted message are all refused.
+    run(&mut events, delete(2, false), context(4, MEMBER_1, 0x11, 4)).unwrap();
+    for (command, actor) in [
+        (react(1, thumbs, true), MEMBER_2),
+        (react(1, thumbs, false), MEMBER_1),
+        (react(1, "\u{2764}\u{FE0F}", false), MEMBER_2),
+        (react(9, thumbs, true), MEMBER_2),
+        (react(1, "a", true), MEMBER_2),
+        (react(1, "\u{1F44D}\u{1F44D}", true), MEMBER_2),
+        (react(2, thumbs, true), MEMBER_2),
+    ] {
+        assert!(run(&mut events, command, context(9, actor, 0x21, 9)).is_err());
+    }
+    // Another member may add the same emoji, and a member may add another.
+    run(
+        &mut events,
+        react(1, thumbs, true),
+        context(5, MEMBER_1, 0x11, 5),
+    )
+    .unwrap();
+    run(
+        &mut events,
+        react(1, "\u{2764}\u{FE0F}", true),
+        context(6, MEMBER_2, 0x21, 6),
+    )
+    .unwrap();
+    run(
+        &mut events,
+        react(1, thumbs, false),
+        context(7, MEMBER_2, 0x21, 7),
+    )
+    .unwrap();
+    let context = local_context();
+    let state = events
+        .replay(&context)
+        .unwrap()
+        .finalize(context.as_of, context.civil_date)
+        .unwrap();
+    assert_eq!(
+        reactions_on(&state.chat, 1),
+        vec![
+            (thumbs.to_owned(), vec![MEMBER_1]),
+            ("\u{2764}\u{FE0F}".to_owned(), vec![MEMBER_2]),
+        ]
+    );
+}
+
+#[test]
+fn a_message_collects_a_bounded_number_of_different_emoji() {
+    let mut events = History::chat();
+    run(
+        &mut events,
+        post(1, ChatContentKind::Text),
+        context(1, MEMBER_1, 0x11, 1),
+    )
+    .unwrap();
+    // 24 distinct emoji from the first block of faces.
+    for (index, scalar) in (0x1F600u32..0x1F600 + MAX_REACTION_GROUPS as u32).enumerate() {
+        let emoji = char::from_u32(scalar).unwrap().to_string();
+        run(
+            &mut events,
+            react(1, &emoji, true),
+            context(2 + index as u8, MEMBER_2, 0x21, 2 + index as u64),
+        )
+        .unwrap();
+    }
+    let next = char::from_u32(0x1F600 + MAX_REACTION_GROUPS as u32)
+        .unwrap()
+        .to_string();
+    assert!(run(
+        &mut events,
+        react(1, &next, true),
+        context(100, MEMBER_2, 0x21, 100)
+    )
+    .is_err());
+    // Another member adding one of the 24 is still fine.
+    let first = char::from_u32(0x1F600).unwrap().to_string();
+    run(
+        &mut events,
+        react(1, &first, true),
+        context(101, MEMBER_1, 0x11, 101),
+    )
+    .unwrap();
+}
+
+#[test]
+fn the_wire_command_reacts() {
+    // KCMD 47: the message in the entity ID, `on` in the option byte, the
+    // emoji as the text.
+    let mut bytes = vec![0u8; 128];
+    bytes[..4].copy_from_slice(b"KCMD");
+    bytes[4] = 1;
+    bytes[8] = 47;
+    bytes[12..28].copy_from_slice(&[7; 16]);
+    bytes[28..44].copy_from_slice(&HOUSEHOLD);
+    bytes[44..60].copy_from_slice(&MEMBER_2);
+    bytes[60..76].copy_from_slice(&[0x21; 16]);
+    bytes[76..84].copy_from_slice(&BASE_TIME.to_le_bytes());
+    bytes[84..92].copy_from_slice(&5u64.to_le_bytes());
+    bytes[92..108].copy_from_slice(&message(1));
+    bytes[112] = 1;
+    let emoji = "\u{1F44D}";
+    bytes[124..128].copy_from_slice(&(emoji.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(emoji.as_bytes());
+    let (command, _) = decode_command(&bytes).unwrap();
+    assert_eq!(command, react(1, emoji, true));
+    let mut off = bytes.clone();
+    off[112] = 0;
+    assert_eq!(decode_command(&off).unwrap().0, react(1, emoji, false));
+    for broken in [
+        {
+            let mut b = bytes.clone();
+            b[112] = 2;
+            b
+        },
+        {
+            let mut b = bytes.clone();
+            b[92..108].fill(0);
+            b
+        },
+        {
+            // No emoji.
+            let mut b = bytes[..128].to_vec();
+            b[124..128].copy_from_slice(&0u32.to_le_bytes());
+            b
+        },
+        {
+            // Past 32 bytes.
+            let mut b = bytes[..128].to_vec();
+            b.extend_from_slice(&[b'x'; 33]);
+            b[124..128].copy_from_slice(&33u32.to_le_bytes());
+            b
+        },
+    ] {
+        assert!(decode_command(&broken).is_err());
+    }
+}
+
+#[test]
+fn a_page_lists_reactions_and_drops_those_of_deleted_messages() {
+    let thumbs = "\u{1F44D}";
+    let heart = "\u{2764}\u{FE0F}";
+    let records = vec![
+        posted(1, MEMBER_1, 0x11, 1, 1),
+        posted(2, MEMBER_2, 0x21, 2, 1),
+        posted(3, MEMBER_2, 0x21, 3, 1),
+        reacted(4, MEMBER_2, 0x21, 1, thumbs, true),
+        reacted(5, MEMBER_1, 0x11, 1, thumbs, true),
+        reacted(6, MEMBER_1, 0x11, 1, heart, true),
+        reacted(7, MEMBER_1, 0x11, 2, thumbs, true),
+        reacted(8, MEMBER_1, 0x11, 3, thumbs, true),
+        deleted(9, MEMBER_2, 0x21, 2, false),
+        deleted(10, ADMIN, 0x31, 3, true),
+    ];
+    let mut history = history_of(&records);
+    let mut texts = ChatTexts::new();
+    let context = kine(&[], 0, TEST_DATE, None);
+    let page = chat_page(
+        &kchq(u32::MAX, 10, 0b100, &[ADMIN], &context),
+        &mut history,
+        &mut texts,
+    )
+    .unwrap();
+    assert_eq!(&page[..4], b"KCHP");
+    // Header: total 3, start 0, 3 records, no texts, no retired blobs.
+    assert_eq!(
+        [
+            u32_at(&page, 8),
+            u32_at(&page, 12),
+            u32_at(&page, 16),
+            u32_at(&page, 20),
+            u32_at(&page, 24)
+        ],
+        [3, 0, 3, 0, 0]
+    );
+    // Group counts in each record: two groups, none (deleted), none (removed).
+    let counts: Vec<u32> = (0..3)
+        .map(|index| u32_at(&page, 28 + index * 128 + 112))
+        .collect();
+    assert_eq!(counts, [2, 0, 0]);
+    for index in 0..3 {
+        assert_eq!(
+            page[28 + index * 128 + 116..28 + index * 128 + 128],
+            [0; 12]
+        );
+    }
+    // After 3 records and 3 keys: the reactions, by hand.
+    let mut expected = Vec::new();
+    for (emoji, actors) in [(thumbs, vec![MEMBER_2, MEMBER_1]), (heart, vec![MEMBER_1])] {
+        expected.push(emoji.len() as u8);
+        expected.extend_from_slice(emoji.as_bytes());
+        expected.extend_from_slice(&(actors.len() as u32).to_le_bytes());
+        for actor in actors {
+            expected.extend_from_slice(&actor);
+        }
+    }
+    assert_eq!(&page[28 + 3 * 128 + 3 * 32..], expected.as_slice());
+    // Not asked for, not sent.
+    let plain = chat_page(
+        &kchq(u32::MAX, 10, 0, &[ADMIN], &context),
+        &mut history,
+        &mut texts,
+    )
+    .unwrap();
+    assert_eq!(plain.len(), 28 + 3 * 128 + 3 * 32);
+    assert_eq!(u32_at(&plain, 28 + 112), 0);
+    // Without the admin named, the removed message is live again and shows its reaction.
+    let unnamed = chat_page(
+        &kchq(u32::MAX, 10, 0b100, &[], &context),
+        &mut history,
+        &mut texts,
+    )
+    .unwrap();
+    assert_eq!(u32_at(&unnamed, 28 + 2 * 128 + 112), 1);
 }

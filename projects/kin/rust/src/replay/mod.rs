@@ -278,7 +278,8 @@ impl Replay {
             K::DeviceDescribed { .. } | K::DeviceNicknamed { .. } => devices::apply(self, event)?,
             K::ChatMessagePosted { .. }
             | K::ChatMessageEdited { .. }
-            | K::ChatMessageDeleted { .. } => chat::apply(self, event)?,
+            | K::ChatMessageDeleted { .. }
+            | K::ChatReactionSet { .. } => chat::apply(self, event)?,
         }
         self.last_logical_time = event.logical_time;
         self.event_bytes

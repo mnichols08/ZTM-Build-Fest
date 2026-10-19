@@ -258,6 +258,49 @@ test("chat posts, edits, deletes and pages from its own log through real WASM (#
   assert.equal(engine.chatPage(chat, {}, asOf, day).messages.some((message) => message.text !== null), false);
 });
 
+test("chat reactions toggle, list and drop with their message through real WASM (#127)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const member = new Uint8Array(16).fill(0xbb), other = new Uint8Array(16).fill(0xbe);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const context = (sequence, actorId = member) => ({ eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId, deviceId: new Uint8Array(16).fill(actorId[0] - 0x10), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) });
+  const asOf = 1_791_475_200_100, day = 20261009;
+  const blob = (byte) => byte.toString(16).padStart(2, "0").repeat(32);
+  const chat = [];
+  const run = (command, ctx) => {
+    const result = engine.executeChatCommand(command, ctx, chat, asOf, day);
+    chat.push(result.encodedEvent);
+    return result;
+  };
+  const message = "01".repeat(16);
+  run({ type: "post-chat-message", messageId: message, blobRef: blob(0xa1), blobKey: blob(0xc1) }, context(1));
+  const reacted = run({ type: "react-chat-message", messageId: message, emoji: "\u{1F44D}", on: true }, context(2, other));
+  assert.equal(new DataView(reacted.encodedEvent.buffer).getUint16(2, true), 47);
+  assert.equal(reacted.metadata.kind, "CHAT_REACTION_SET");
+  run({ type: "react-chat-message", messageId: message, emoji: "\u{1F44D}", on: true }, context(3));
+  run({ type: "react-chat-message", messageId: message, emoji: "\u2764\uFE0F", on: true }, context(4));
+  // Redundant, unknown and malformed reactions are refused.
+  for (const command of [
+    { type: "react-chat-message", messageId: message, emoji: "\u{1F44D}", on: true },
+    { type: "react-chat-message", messageId: message, emoji: "\u{1F602}", on: false },
+    { type: "react-chat-message", messageId: "09".repeat(16), emoji: "\u{1F44D}", on: true },
+    { type: "react-chat-message", messageId: message, emoji: "hi", on: true },
+  ]) assert.throws(() => engine.executeChatCommand(command, context(9), chat, asOf, day), (error) => error.code === 4);
+  assert.throws(() => engine.executeChatCommand({ type: "react-chat-message", messageId: message, emoji: "\u{1F44D}" }, context(9), chat, asOf, day), (error) => error.code === 2);
+  // Pages carry reactions only when asked.
+  assert.deepEqual(engine.chatPage(chat, {}, asOf, day).messages[0].reactions, []);
+  const page = engine.chatPage(chat, { includeReactions: true }, asOf, day);
+  assert.deepEqual(page.messages[0].reactions, [
+    { emoji: "\u{1F44D}", actors: [hex(other), hex(member)] },
+    { emoji: "\u2764\uFE0F", actors: [hex(member)] },
+  ]);
+  // Taking one back; deleting the message drops them all.
+  run({ type: "react-chat-message", messageId: message, emoji: "\u{1F44D}", on: false }, context(5, other));
+  assert.deepEqual(engine.chatPage(chat, { includeReactions: true }, asOf, day).messages[0].reactions.map(({ emoji }) => emoji), ["\u{1F44D}", "\u2764\uFE0F"]);
+  assert.deepEqual(engine.chatPage(chat, { includeReactions: true }, asOf, day).messages[0].reactions[0].actors, [hex(member)]);
+  run({ type: "delete-chat-message", messageId: message }, context(6));
+  assert.deepEqual(engine.chatPage(chat, { includeReactions: true }, asOf, day).messages[0].reactions, []);
+});
+
 test("Attachment bind and remove intent payloads roundtrip through real WASM", async () => {
   const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
   const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
