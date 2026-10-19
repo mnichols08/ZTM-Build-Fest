@@ -1245,7 +1245,7 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     const peopleDevicesLayout = await a.call(pagePeopleDevicesLayout);
     check(peopleDevicesLayout.width === 320 && !peopleDevicesLayout.overflow &&
       peopleDevicesLayout.groupCount >= 2 && peopleDevicesLayout.linesFit &&
-      peopleDevicesLayout.actions.includes("Invite person") && peopleDevicesLayout.actions.includes("Add my device") &&
+      peopleDevicesLayout.actions.includes("Invite another person") && peopleDevicesLayout.actions.includes("Add my device") &&
       peopleDevicesLayout.targetHeights.every((height) => height >= 44),
     "People & devices groups members, wraps a long label, and keeps both actions tappable without 320px overflow: " +
       JSON.stringify(peopleDevicesLayout));
