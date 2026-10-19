@@ -846,6 +846,20 @@ kin-household, kin-security, kin-areas, kin-notes, kin-search, kin-item, kin-att
 .chat-viewer-name { margin: 0; font-weight: 650; overflow-wrap: anywhere; }
 .chat-viewer-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .chat-viewer-actions button { min-height: var(--tap); padding-inline: 14px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
+.chat-seen { justify-self: end; min-height: var(--tap); margin: 0; padding: 0 4px; border: 0; background: transparent; color: var(--ink-muted); font: inherit; font-size: 12px; text-align: end; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
+.chat-seen:hover, .chat-seen:focus-visible { color: var(--ink); }
+.chat-typing { min-height: 1.4em; margin: 4px 2px; color: var(--ink-muted); font-size: 13px; font-style: italic; }
+.chat-typing[hidden] { display: none; }
+.chat-details { max-width: min(92vw, 420px); padding: 16px; border: 1px solid var(--line-strong); border-radius: var(--r-card); background: var(--surface); color: var(--ink); }
+.chat-details::backdrop { background: rgb(0 0 0 / .6); }
+.chat-details h3 { margin: 0 0 8px; }
+.chat-details-readers { margin: 0 0 8px; padding-inline-start: 18px; }
+.chat-details-waiting { margin: 0 0 8px; color: var(--ink-muted); }
+.chat-details button { min-height: var(--tap); padding-inline: 14px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); color: var(--ink); font: inherit; }
+.chat-settings { display: grid; gap: 8px; margin-block: 16px; }
+.chat-setting { display: grid; grid-template-columns: auto 1fr; column-gap: 10px; align-items: center; }
+.chat-setting input { width: 22px; height: 22px; }
+.chat-setting .section-hint { grid-column: 2; margin: 2px 0 8px; }
 kin-emoji-picker { display: contents; }
 .emoji-toggle { min-width: var(--tap); min-height: var(--tap); border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--surface); font: inherit; font-size: 22px; line-height: 1; }
 .emoji-toggle[aria-expanded="true"] { background: var(--accent-soft); border-color: var(--accent); }

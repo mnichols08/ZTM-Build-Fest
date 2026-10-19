@@ -19,7 +19,7 @@ export async function chatRegressions() {
     document.body.append(chat);
   }
   const hex = (value, length = 32) => value.toString(16).padStart(length, "0");
-  const me = "a1".repeat(16), other = "b2".repeat(16);
+  const me = "a1".repeat(16), other = "b2".repeat(16), third = "c5".repeat(16);
   const listeners = new Set();
   const log = [];
   const held = new Map();
@@ -49,7 +49,7 @@ export async function chatRegressions() {
     retireRefusal: null,
     get isAdmin() { return true; },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    authorLabel(id) { return id === me ? "You" : "Adult 2"; },
+    authorLabel(id) { return id === me ? "You" : id === third ? "Adult 3" : "Adult 2"; },
     page({ before = null, limit = 50 } = {}) {
       const end = before ?? log.length;
       const first = Math.max(0, end - limit);
@@ -557,6 +557,155 @@ export async function chatRegressions() {
   viewer.querySelector(".chat-viewer-actions button:last-child").click();
   await settle();
   check(!viewer.open, "the viewer closes");
+
+  // Read receipts and typing (#120): a stub presence stands in for the
+  // room's. A message counts as read only while on screen in a visible,
+  // focused window; the newest of the member's own messages carries
+  // "Seen by"; who is typing is plain text, not an announcement.
+  const presenceListeners = new Set();
+  const presence = {
+    marks: [], typedCount: 0, stoppedCount: 0, readersByMessage: new Map(), typingIds: [], sendsReceipts: true,
+    markRead(message) { this.marks.push(message.messageId); return true; },
+    readers(message) { return this.sendsReceipts ? this.readersByMessage.get(message.messageId) ?? [] : []; },
+    typing() { return this.typingIds; },
+    typed() { this.typedCount += 1; },
+    stopTyping() { this.stoppedCount += 1; },
+  };
+  room.presence = presence;
+  room.members = [{ id: me, active: true }, { id: other, active: true }, { id: third, active: true }];
+  room.subscribePresence = (listener) => { presenceListeners.add(listener); return () => presenceListeners.delete(listener); };
+  const presenceChanged = async () => { for (const listener of presenceListeners) listener(); await settle(); };
+  const mineLast = [...log].reverse().find((message) => message.authorId === me && message.status === "live" && !room.pendingMessages.has(message.messageId));
+  chat.room = null;
+  await settle();
+  chat.room = room;
+  await settle();
+  // Read tracking: nothing counts while the window isn't visible and focused.
+  const realCanRead = chat.canRead.bind(chat);
+  chat.canRead = () => false;
+  presence.marks.length = 0;
+  scroller.scrollTop = scroller.scrollHeight;
+  await settle();
+  chat.windowChanged();
+  check(!presence.marks.length, `nothing is marked read in a window that isn't focused (${presence.marks.length})`);
+  chat.canRead = () => true;
+  chat.windowChanged();
+  await settle();
+  const newest = log.at(-1).messageId;
+  check(presence.marks.at(-1) === newest, `the newest message on screen is marked read once the window is focused (${presence.marks.at(-1)})`);
+  check(!presence.marks.some((id) => log.findIndex((message) => message.messageId === id) < log.length - 80), "messages far above the screen aren't marked");
+  // Scrolling away from the newest marks what is on screen then (the cursor
+  // itself only moves forward, in the room).
+  presence.marks.length = 0;
+  scroller.scrollTop = 0;
+  await settle();
+  chat.windowChanged();
+  check(presence.marks.length > 0 && log.findIndex((message) => message.messageId === presence.marks.at(-1)) < log.length - 40, "scrolled up, an older message is the newest on screen");
+  scroller.scrollTop = scroller.scrollHeight;
+  await settle();
+  chat.canRead = realCanRead;
+
+  // "Seen by" sits under the member's latest message and opens its details.
+  check(!chat.querySelector(".chat-seen"), "no Seen by line while no one has read it");
+  presence.readersByMessage.set(mineLast.messageId, [{ memberId: other, readAt: start + 7_200_000 }]);
+  await presenceChanged();
+  const seenRow = chat.querySelector(`.chat-row[data-message-id="${mineLast.messageId}"]`);
+  check(seenRow && seenRow === rows().filter((row) => row.classList.contains("own")).at(-1) || log.at(-1).authorId !== me, "Seen by belongs to the member's latest own message");
+  const seen = chat.querySelector(".chat-seen");
+  check(seen && seen.textContent === "Seen by Adult 2", `names who has read it (${seen?.textContent})`);
+  presence.readersByMessage.set(mineLast.messageId, [{ memberId: other, readAt: start + 7_200_000 }, { memberId: third, readAt: start + 7_260_000 }]);
+  await presenceChanged();
+  check(chat.querySelector(".chat-seen").textContent === "Seen by everyone", `everyone when all other members have (${chat.querySelector(".chat-seen")?.textContent})`);
+  check(chat.querySelectorAll(".chat-seen").length === 1, "only one message carries the line");
+  presence.readersByMessage.set(mineLast.messageId, [{ memberId: other, readAt: start + 7_200_000 }]);
+  await presenceChanged();
+  chat.querySelector(".chat-seen").focus();
+  chat.querySelector(".chat-seen").click();
+  await settle();
+  const details = chat.querySelector("dialog.chat-details");
+  check(details.open && details.textContent.includes("Message details") && details.textContent.includes("Adult 2 · ") && details.textContent.includes("Not seen yet: Adult 3"), `details list each reader with a time and who hasn't (${details.textContent})`);
+  check(details.querySelector("time")?.dateTime, "each reader's time is a real time");
+  details.querySelector("button").click();
+  await settle();
+  check(!details.open && document.activeElement?.classList.contains("chat-seen"), "closing details returns focus to the line");
+  presence.sendsReceipts = false;
+  await presenceChanged();
+  check(!chat.querySelector(".chat-seen"), "receipts off: no Seen by lines");
+  presence.sendsReceipts = true;
+  presence.readersByMessage.clear();
+
+  // Typing: plain text under the list, not a live announcement.
+  const typingLine = chat.querySelector(".chat-typing");
+  check(typingLine && typingLine.hidden && scroller.getAttribute("aria-describedby") === typingLine.id, "the typing line is the log's description");
+  check(!typingLine.closest("[aria-live]") && !typingLine.hasAttribute("aria-live") && typingLine.getAttribute("role") === null, "and not a live region");
+  presence.typingIds = [other];
+  await presenceChanged();
+  check(!typingLine.hidden && typingLine.textContent === "Adult 2 is typing…", `one person typing (${typingLine.textContent})`);
+  presence.typingIds = [other, third];
+  await presenceChanged();
+  check(typingLine.textContent === "Adult 2 and Adult 3 are typing…", `two people typing (${typingLine.textContent})`);
+  check(!announcer.textContent.includes("typing"), "typing is never announced");
+  presence.typingIds = [];
+  await presenceChanged();
+  check(typingLine.hidden && typingLine.textContent === "", "gone when they stop");
+  // The composer tells the presence about typing, and about stopping.
+  const composer = chat.querySelector("textarea");
+  presence.typedCount = presence.stoppedCount = 0;
+  composer.value = "On my";
+  composer.dispatchEvent(new Event("input", { bubbles: true }));
+  check(presence.typedCount === 1, "typing in the composer is reported");
+  composer.value = "";
+  composer.dispatchEvent(new Event("input", { bubbles: true }));
+  check(presence.stoppedCount === 1, "clearing the composer stops it");
+  composer.value = "again";
+  composer.dispatchEvent(new Event("input", { bubbles: true }));
+  composer.dispatchEvent(new Event("blur"));
+  check(presence.stoppedCount === 2, "leaving the composer stops it");
+  composer.value = "sent now";
+  composer.dispatchEvent(new Event("input", { bubbles: true }));
+  presence.stoppedCount = 0;
+  chat.querySelector("form").requestSubmit();
+  await settle();
+  check(presence.stoppedCount >= 1, "sending stops it");
+
+  // Settings → Chat: the two switches, per member, with the reciprocity said.
+  if (customElements.get("kin-chat-settings")) {
+    presence.sendsTyping = true;
+    presence.settingsCalls = [];
+    presence.setSettings = async function setSettings(change) {
+      this.settingsCalls.push(change);
+      if ("receipts" in change) this.sendsReceipts = change.receipts;
+      if ("typing" in change) this.sendsTyping = change.typing;
+      for (const listener of presenceListeners) listener();
+    };
+    const settings = document.createElement("kin-chat-settings");
+    document.body.append(settings);
+    check(settings.hidden, "the chat settings wait for a chat room");
+    settings.room = room;
+    await settle();
+    check(!settings.hidden, "and show once there is one");
+    const boxes = [...settings.querySelectorAll('input[type="checkbox"]')];
+    const labelOf = (box) => settings.querySelector(`label[for="${box.id}"]`)?.textContent;
+    check(boxes.length === 2 && labelOf(boxes[0]) === "Send read receipts" && labelOf(boxes[1]) === "Show when I'm typing", "two switches, named as the story names them");
+    check(boxes.every((box) => box.checked), "both are on by default");
+    check(/also stop seeing/.test(settings.textContent), "turning receipts off says it hides theirs too");
+    boxes[0].click();
+    await settle();
+    check(presence.settingsCalls.length === 1 && presence.settingsCalls[0].receipts === false && !boxes[0].checked && boxes[1].checked, "receipts off is saved on its own");
+    boxes[1].click();
+    await settle();
+    check(presence.settingsCalls[1].typing === false && !boxes[1].checked, "typing off is saved on its own");
+    presence.sendsReceipts = true;
+    presence.sendsTyping = true;
+    for (const listener of presenceListeners) listener();
+    await settle();
+    check(boxes.every((box) => box.checked), "a change made on another device shows here");
+    settings.room = null;
+    check(settings.hidden, "the settings go when the room does");
+    settings.remove();
+  }
+  room.presence = undefined;
+
   chat.room = null;
   await settle();
   if (!app) chat.remove();

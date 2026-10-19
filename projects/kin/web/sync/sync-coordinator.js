@@ -15,7 +15,7 @@ import {
   verifyDeviceAuthorizationCertificate,
 } from "./crypto.js";
 import { SyncKeyStore } from "./key-store.js";
-import { LiveChannel, liveUrl } from "./live-channel.js";
+import { LIVE_TYPE, LiveChannel, liveUrl } from "./live-channel.js";
 import { QUARANTINE_MESSAGE, quarantineMessage } from "../storage/quarantine.js";
 import { idToHex } from "../wasm/kin-engine.js";
 import { reconcileAttachments } from "../attachments/attachment-lifecycle.js";
@@ -232,6 +232,9 @@ export class SyncCoordinator {
     this.live = this.createLiveChannel?.({
       lockName: `kin-live:${this.identity.deviceId}`,
       onHint: () => this.hinted(),
+      // Typing frames and receipt changes go to the chat room (#120).
+      onTyping: (bytes) => void this.chat?.receiveTyping(bytes),
+      onReceipts: () => this.chat?.receiptsChanged(),
       onUp: () => {
         this.liveUp = true;
         this.updatePollInterval();
@@ -666,6 +669,8 @@ export class SyncCoordinator {
       if (!room) this.openChatRoom = null;
       this.chat = room;
       this.chatOpenError = null;
+      // Typing frames go out on the live channel when this tab holds it.
+      room?.setLiveSender((bytes) => this.live?.send(LIVE_TYPE.TYPING, bytes) ?? false);
       if (room) {
         try { this.onChatRoom(room); } catch { /* the view's trouble isn't sync's */ }
       }

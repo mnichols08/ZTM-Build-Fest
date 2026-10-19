@@ -721,7 +721,7 @@ test("the coordinator runs a chat pass after each full pass and keeps chat troub
   const reports = [];
   const room = { syncs: 0, closed: false, result: { hasMore: true }, failure: null,
     async sync(context) { this.syncs += 1; this.context = context; if (this.failure) throw this.failure; return this.result; },
-    reportSync(error) { reports.push(error?.code ?? null); }, close() { this.closed = true; } };
+    reportSync(error) { reports.push(error?.code ?? null); }, setLiveSender() {}, close() { this.closed = true; } };
   const opened = [], told = [];
   const coordinator = new SyncCoordinator({ store: {}, engine: {}, identity: { householdId: "aa".repeat(16), memberId: "bb".repeat(16), deviceId: "cc".repeat(16) }, liveChannel: () => null,
     chatRoom: async (options) => { opened.push(options); return room; }, onChatRoom: (value) => told.push(value) });
@@ -852,4 +852,43 @@ test("photos and files go to the other device in parts, and deleting the message
   await b.room.sync({ status: STATUS, devices });
   await assert.rejects(b.room.openAttachment(message), (error) => error.code === "chat_attachment_deleted");
   for (const ref of parts) assert.equal(await b.blobs.store.get(ref), null, "and on the other device");
+});
+
+test("read receipts travel through the real receipt route, sealed, and survive the other device's sync", { timeout: 30_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs });
+  const devices = [phone.entry, laptop.entry];
+  const a = await openRoom(phone, s), b = await openRoom(laptop, s);
+  await a.room.send("Dinner at 6");
+  await a.room.sync({ status: STATUS, devices });
+  await b.room.sync({ status: STATUS, devices });
+  const [message] = b.room.page().messages;
+  assert.deepEqual(a.room.presence.readers(message), [], "nobody has read it yet");
+
+  // The partner reads it on screen; their cursor goes to the service.
+  assert.equal(b.room.presence.markRead(message), true);
+  await b.room.presence.flush();
+  const stored = JSON.stringify(s.app.chatRelayService.receipts({ ...s.app.syncService.authorize(s.admin.sessionToken) }));
+  assert.equal(stored.includes(message.messageId), false, "the service holds no message ID");
+  assert.equal(stored.includes("cursor"), false, "nor a cursor");
+  // The chat pass reads the slots at most every 15 seconds; the live hint
+  // (or the first pass after opening) brings them sooner.
+  a.room.receiptsChanged();
+  await a.room.sync({ status: STATUS, devices });
+  assert.deepEqual(a.room.presence.readers(message).map((reader) => reader.memberId), [s.partner.memberId], "the sender sees who read it");
+
+  // Turning receipts off hides mine and theirs, and clears the cursor.
+  await a.room.presence.setSettings({ receipts: false });
+  assert.deepEqual(a.room.presence.readers(message), []);
+  await b.room.sync({ status: STATUS, devices });
+  await b.room.presence.refresh();
+  assert.equal(b.room.presence.readers({ ...message, authorId: s.admin.memberId }).length, 0, "the admin's slot says nothing");
+  // A write for a stale revision is refused by the real service and merged.
+  await b.room.presence.setSettings({ typing: false });
+  await a.room.presence.refresh();
+  assert.equal(a.room.presence.sendsTyping, true, "settings are per member, not household-wide");
+  b.room.close();
+  a.room.close();
 });

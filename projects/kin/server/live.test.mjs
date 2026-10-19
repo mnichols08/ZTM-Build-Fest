@@ -584,3 +584,85 @@ test("closing the service closes live sockets", async () => {
   await client.until(() => client.ended);
   assert.equal(client.closeFrame()?.code, CLOSE.GOING_AWAY);
 });
+
+// ---- Typing frames (#122) and receipt hints (#121) ----------------------------------
+
+const typingFrame = (device, extra = {}) => Buffer.from(JSON.stringify({ householdId: device.householdId, deviceId: device.deviceId, ciphertext: "x", ...extra }));
+const sendRecord = (client, type, payload) => client.send(clientFrame(OPCODE.BINARY, encodeMessage(type, payload)));
+const typing = (client) => client.records().filter((record) => record.type === LIVE_TYPE.TYPING);
+
+test("a typing frame is relayed unchanged to the household's other devices, never back to its sender", async () => {
+  const r = await rig();
+  try {
+    const phone = await open(r.port, { session: r.adult.sessionToken });
+    const laptop = await open(r.port, { session: r.laptop.sessionToken });
+    await phone.until(() => phone.records().length === 1);
+    await laptop.until(() => laptop.records().length === 1);
+    const frame = typingFrame(r.adult);
+    sendRecord(phone, LIVE_TYPE.TYPING, frame);
+    await laptop.until(() => typing(laptop).length === 1);
+    assert.deepEqual(Buffer.from(typing(laptop)[0].payload), frame, "relayed byte for byte");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(typing(phone).length, 0, "not echoed to the sender");
+    assert.equal(phone.ended, false, "the sender stays connected");
+  } finally {
+    await r.close();
+  }
+});
+
+test("a typing frame must be small, valid, and name the sender's own household and device", async () => {
+  const r = await rig();
+  try {
+    for (const [payload, code] of [
+      [Buffer.alloc(3000, 0x61), CLOSE.TOO_BIG],
+      [Buffer.from("not json"), CLOSE.INVALID_DATA],
+      [typingFrame(r.laptop), CLOSE.POLICY],
+      [typingFrame(r.adult, { householdId: "other" }), CLOSE.POLICY],
+      [Buffer.from("null"), CLOSE.POLICY],
+    ]) {
+      const client = await open(r.port, { session: r.adult.sessionToken });
+      await client.until(() => client.records().length === 1);
+      sendRecord(client, LIVE_TYPE.TYPING, payload);
+      await client.until(() => client.ended);
+      assert.equal(client.closeFrame()?.code, code);
+    }
+  } finally {
+    await r.close();
+  }
+});
+
+test("typing frames faster than a person types are dropped, and nothing is stored", async () => {
+  const r = await rig();
+  try {
+    const phone = await open(r.port, { session: r.adult.sessionToken });
+    const laptop = await open(r.port, { session: r.laptop.sessionToken });
+    await phone.until(() => phone.records().length === 1);
+    await laptop.until(() => laptop.records().length === 1);
+    for (let count = 0; count < 12; count += 1) sendRecord(phone, LIVE_TYPE.TYPING, typingFrame(r.adult, { n: count }));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(typing(laptop).length, 4, "a burst of four, then dropped");
+    assert.equal(phone.ended, false, "dropped, not closed");
+    // The service keeps no typing state: nothing in the live service holds a frame.
+    assert.deepEqual(Object.keys(r.application.liveService).filter((key) => /typing/i.test(key)), []);
+  } finally {
+    await r.close();
+  }
+});
+
+test("a read-receipt change nudges the household's other devices with an empty record", async () => {
+  const r = await rig();
+  try {
+    const phone = await open(r.port, { session: r.adult.sessionToken });
+    const laptop = await open(r.port, { session: r.laptop.sessionToken });
+    await phone.until(() => phone.records().length === 1);
+    await laptop.until(() => laptop.records().length === 1);
+    r.application.liveService.receiptsChanged(r.adult.householdId, r.adult.deviceId);
+    await laptop.until(() => laptop.records().length === 2);
+    assert.equal(laptop.records()[1].type, LIVE_TYPE.RECEIPTS);
+    assert.equal(laptop.records()[1].payload.length, 0);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(phone.records().length, 1, "the writer isn't nudged");
+  } finally {
+    await r.close();
+  }
+});

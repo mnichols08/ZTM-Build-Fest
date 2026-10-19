@@ -196,3 +196,74 @@ test("the chat event routes move binary batches and pages", { timeout: 30_000 },
   const household = await fetch(`${url}/api/sync/events?cursor=&limit=20`, { headers: { cookie } });
   assert.equal(decodeEventPage(new Uint8Array(await household.arrayBuffer())).events.length, 0);
 });
+
+// ---- Read-receipt slots (#121) ----------------------------------------------------
+
+/** A receipt slot as the service sees it: an envelope whose sequence is the
+ * revision it writes, opaque inside. */
+const slot = (who, revision, extra = {}) => envelope(who, { eventId: hex(revision + 10), deviceSequence: revision, logicalTime: 1_700_000_000_000, ...extra });
+
+bothStores("each member has one receipt slot, replaced compare-and-set and never added to the chat log", (h) => {
+  const writes = [];
+  h.sync.liveService.receiptsChanged = (householdId, deviceId) => writes.push(deviceId);
+  const auth = h.auth(h.adult);
+  assert.deepEqual(h.relay.receipts(auth), { slots: [] });
+  assert.deepEqual(h.relay.putReceipt(auth, { expectedRevision: 0, record: slot(h.adult, 1) }), { revision: 1 });
+  assert.deepEqual(writes, [h.adult.deviceId], "the household's other devices are told");
+  // The member's other device replaces the same slot.
+  assert.deepEqual(h.relay.putReceipt(h.auth(h.laptop), { expectedRevision: 1, record: slot(h.laptop, 2) }), { revision: 2 });
+  const { slots } = h.relay.receipts(auth);
+  assert.equal(slots.length, 1, "one slot per member, however many devices and writes");
+  assert.equal(slots[0].revision, 2);
+  assert.equal(slots[0].record.deviceId, h.laptop.deviceId);
+  // A stale writer is refused with the conflict to resolve.
+  assert.throws(() => h.relay.putReceipt(auth, { expectedRevision: 1, record: slot(h.adult, 2) }), rejects("chat_receipts_stale", 409));
+  // Nothing went into the chat event stream.
+  assert.deepEqual(h.relay.pull(auth, "", "20").events, []);
+});
+
+bothStores("a receipt slot must be this device's own small envelope for the revision it replaces", (h) => {
+  const auth = h.auth(h.adult);
+  for (const [body, label] of [
+    [{ expectedRevision: 0, record: slot(h.adult, 2) }, "a sequence that isn't the next revision"],
+    [{ expectedRevision: 0, record: slot(h.laptop, 1) }, "another device's envelope"],
+    [{ expectedRevision: 0, record: slot(h.adult, 1, { keyEpoch: 9 }) }, "a key epoch the household doesn't have"],
+    [{ expectedRevision: 0, record: { ...slot(h.adult, 1), ciphertext: "A".repeat(5000) } }, "over the size bound"],
+    [{ expectedRevision: -1, record: slot(h.adult, 0) }, "a negative revision"],
+    [{ expectedRevision: "0", record: slot(h.adult, 1) }, "a revision that isn't a number"],
+    [{ expectedRevision: 0, record: null }, "no record"],
+    [{ expectedRevision: 0, record: { ...slot(h.adult, 1), householdId: "other" } }, "another household"],
+  ]) assert.throws(() => h.relay.putReceipt(auth, body), rejects("chat_receipts_invalid", 400), label);
+  assert.deepEqual(h.relay.receipts(auth), { slots: [] }, "nothing was stored");
+});
+
+bothStores("receipt writes are limited per device", (h) => {
+  const auth = h.auth(h.adult);
+  let revision = 0;
+  for (; revision < 40; revision += 1) h.relay.putReceipt(auth, { expectedRevision: revision, record: slot(h.adult, revision + 1) });
+  assert.throws(() => h.relay.putReceipt(auth, { expectedRevision: revision, record: slot(h.adult, revision + 1) }), rejects("chat_receipts_rate_limited", 429));
+  // The other device has its own allowance.
+  assert.equal(h.relay.putReceipt(h.auth(h.laptop), { expectedRevision: revision, record: slot(h.laptop, revision + 1) }).revision, revision + 1);
+  assert.equal(h.relay.receipts(auth).slots.length, 1);
+});
+
+test("the receipt routes carry JSON, need a session, and stay out of the chat stream", { timeout: 30_000 }, async (t) => {
+  const app = createKinServer({ store: false, origin: "https://kin.example.org", host: "127.0.0.1" });
+  await new Promise((resolve) => app.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => app.server.close(resolve)));
+  const base = `http://127.0.0.1:${app.server.address().port}`;
+  const admin = app.service.bootstrap({ credential: { id: "admin", publicKey: "key-admin", algorithm: -7 } });
+  app.syncService.enable(admin.sessionToken);
+  const headers = { cookie: `kin_session=${admin.sessionToken}; kin_device=${admin.deviceToken}`, "content-type": "application/json", origin: "https://kin.example.org" };
+  const record = envelope({ householdId: admin.householdId, deviceId: admin.deviceId }, { eventId: hex(1), deviceSequence: 1, logicalTime: 1_700_000_000_000 });
+  assert.equal((await fetch(`${base}/api/chat/receipts`)).status, 401, "a session is required");
+  const put = await fetch(`${base}/api/chat/receipts`, { method: "PUT", headers, body: JSON.stringify({ expectedRevision: 0, record }) });
+  assert.equal(put.status, 200);
+  assert.deepEqual(await put.json(), { revision: 1 });
+  const got = await (await fetch(`${base}/api/chat/receipts`, { headers })).json();
+  assert.equal(got.slots.length, 1);
+  assert.equal(got.slots[0].memberId, admin.memberId);
+  const stale = await fetch(`${base}/api/chat/receipts`, { method: "PUT", headers, body: JSON.stringify({ expectedRevision: 0, record }) });
+  assert.equal(stale.status, 409);
+  assert.equal((await stale.json()).error, "chat_receipts_stale");
+});

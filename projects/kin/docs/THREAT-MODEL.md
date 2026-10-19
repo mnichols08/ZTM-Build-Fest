@@ -462,6 +462,21 @@ the room is open. Deleting the message retires the manifest and every part
 on the service and on each device that kept them; a copy a member saved or
 downloaded is not recalled.
 
+**Read receipts and typing (#120, in place).** A member's read cursor and
+settings are one sealed slot on the service, a signed household-key envelope,
+and typing is a sealed frame relayed over the live channel and never stored.
+The service sees that a slot changed and when, its size, and that a typing
+frame passed between two devices at some moment; it can't read a cursor, a
+setting or whether anyone is typing, and it can't forge one without a
+device's signing key. Because the slot is household-wide, any trusted device
+of any member can read every member's cursor and settings, which is the
+point; a member who doesn't want to be seen reading turns receipts off, which
+clears their cursor. A malicious service can withhold or replay a slot or a
+frame: a stale "Seen by" line, a missing one, or a typing indicator that lingers
+at most 6 seconds. Presence shows "seen" when a message was on a member's
+screen in a focused window, not that they understood it, and a member's
+device clock can make a message look seen slightly early or late.
+
 **Planned.** Each chat story records its own detail here as it lands.
 
 ### v1.0 was not tested across every browser and device

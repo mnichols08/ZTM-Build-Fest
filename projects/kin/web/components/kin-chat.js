@@ -19,9 +19,18 @@
 // polite live region announces only messages from others this view hasn't
 // seen before (by message ID), never paging or the history shown on opening.
 // The draft lives in this element only: locking replaces the element.
+//
+// Read receipts and typing (#120): a message counts as read only while its
+// row is mostly on screen in a visible, focused window of this chat (an
+// IntersectionObserver on the rows, the page's visibility and focus). The
+// room's presence (chat/chat-presence.js) turns that into the member's read
+// cursor. Under the member's latest message a "Seen by" line opens that
+// message's details; under the list a plain "Sam is typing…" line, which
+// screen readers get as the list's description, not as an announcement.
 import { chatTextProblem, MAX_CHAT_TEXT_CHARS } from "../chat/chat-room.js";
 import { emojiOnlyCount } from "../chat/emoji.js";
 import { attachmentProblem, MAX_ATTACHMENT_FILES, safeAttachmentName } from "../chat/chat-attachments.js";
+import { seenText, typingText } from "../chat/chat-presence.js";
 import { attachmentKindLabel, formatAttachmentSize } from "../attachments/attachment-preview.js";
 import { ObjectUrlRegistry } from "../attachments/object-urls.js";
 import "./kin-emoji-picker.js";
@@ -67,6 +76,10 @@ class KinChat extends HTMLElement {
     this.pendingMode = null;
     this.rendering = Promise.resolve();
     this.isDisabled = false;
+    this.unsubscribePresence = null;
+    // Rows mostly on screen now, by message ID (see evaluateRead()).
+    this.onScreen = new Set();
+    this.onWindowChange = () => this.windowChanged();
     this.onDocumentClick = (event) => {
       if (this.menuFor && !event.composedPath().some((node) => node?.classList?.contains?.("chat-menu-wrap"))) this.closeMenu();
     };
@@ -89,6 +102,8 @@ class KinChat extends HTMLElement {
     // Photos and files chosen to send, not yet sent.
     this.files = [];
     this.urls?.revokeAll();
+    this.onScreen?.clear();
+    this.rowObserver?.disconnect();
     this.seen = new Set();
     this.toAnnounce = [];
     this.wasAtBottom = true;
@@ -99,6 +114,10 @@ class KinChat extends HTMLElement {
 
   connectedCallback() {
     document.addEventListener("click", this.onDocumentClick);
+    document.addEventListener("visibilitychange", this.onWindowChange);
+    window.addEventListener("focus", this.onWindowChange);
+    window.addEventListener("blur", this.onWindowChange);
+    window.addEventListener("pagehide", this.onWindowChange);
     if (this.list) {
       this.resizeObserver?.observe(this.scroller);
       return;
@@ -231,13 +250,48 @@ class KinChat extends HTMLElement {
     this.viewer.setAttribute("aria-labelledby", "chat-viewer-name");
     this.viewer.addEventListener("close", () => this.closeViewer());
 
-    section.append(heading, this.notice, this.scroller, this.jump, form, this.announcer, this.viewer);
+    // Who is typing: plain visible text, not a live region (it would be
+    // announced on every change). The log's description carries it instead.
+    this.typingLine = document.createElement("p");
+    this.typingLine.id = "chat-typing";
+    this.typingLine.className = "chat-typing";
+    this.typingLine.hidden = true;
+    this.scroller.setAttribute("aria-describedby", "chat-typing");
+    this.input.addEventListener("input", () => this.composerChanged());
+    this.input.addEventListener("blur", () => this.chatRoom?.presence?.stopTyping());
+
+    // A message's details: who has read it, and when.
+    this.details = document.createElement("dialog");
+    this.details.className = "chat-details";
+    this.details.setAttribute("aria-labelledby", "chat-details-heading");
+    this.details.addEventListener("close", () => this.closeDetails());
+
+    // Which rows are on screen decides what counts as read.
+    if (typeof IntersectionObserver === "function") {
+      this.rowObserver = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          const id = entry.target.dataset.messageId;
+          const root = entry.rootBounds?.height ?? 0;
+          const shown = entry.isIntersecting && (entry.intersectionRatio >= 0.5 || (root > 0 && entry.intersectionRect.height >= root * 0.5));
+          if (shown) this.onScreen.add(id);
+          else this.onScreen.delete(id);
+        }
+        this.evaluateRead();
+      }, { root: this.scroller, threshold: [0, 0.5, 1] });
+    }
+
+    section.append(heading, this.notice, this.scroller, this.typingLine, this.jump, form, this.announcer, this.viewer, this.details);
     this.replaceChildren(section);
     this.queueRender("reset");
   }
 
   disconnectedCallback() {
     document.removeEventListener("click", this.onDocumentClick);
+    document.removeEventListener("visibilitychange", this.onWindowChange);
+    window.removeEventListener("focus", this.onWindowChange);
+    window.removeEventListener("blur", this.onWindowChange);
+    window.removeEventListener("pagehide", this.onWindowChange);
+    this.chatRoom?.presence?.stopTyping();
     this.resizeObserver?.disconnect();
     this.urls.revokeAll();
   }
@@ -247,10 +301,16 @@ class KinChat extends HTMLElement {
     if (value === this.chatRoom) return;
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.unsubscribePresence?.();
+    this.unsubscribePresence = null;
+    this.chatRoom?.presence?.stopTyping();
     this.chatRoom = value ?? null;
     this.resetView();
     this.stopEditing({ restoreDraft: true });
-    if (this.chatRoom) this.unsubscribe = this.chatRoom.subscribe(() => this.roomChanged());
+    if (this.chatRoom) {
+      this.unsubscribe = this.chatRoom.subscribe(() => this.roomChanged());
+      this.unsubscribePresence = this.chatRoom.subscribePresence?.(() => this.presenceChanged()) ?? null;
+    }
     this.queueRender("reset");
   }
 
@@ -293,6 +353,126 @@ class KinChat extends HTMLElement {
     if (!deferred || !this.input || this.input.disabled || !this.isConnected) return;
     this.input.focus({ preventScroll: true });
     this.input.setSelectionRange(deferred.start, deferred.end);
+  }
+
+  /* ---------- Read receipts and typing (#120) ---------- */
+
+  /** Whether the chat is really in front of someone: shown, in a visible and
+   * focused window. Only then does a message on screen count as read. */
+  canRead() {
+    return this.isConnected && document.visibilityState === "visible" && document.hasFocus() &&
+      this.offsetParent !== null && !this.closest("[hidden]");
+  }
+
+  /** The newest message mostly on screen becomes the member's read cursor. */
+  evaluateRead() {
+    const presence = this.chatRoom?.presence;
+    if (!presence || !this.canRead()) return;
+    let latest = null;
+    for (const message of this.messages) if (this.onScreen.has(message.messageId)) latest = message;
+    if (latest) presence.markRead(latest);
+  }
+
+  windowChanged() {
+    if (document.visibilityState !== "visible" || !document.hasFocus()) this.chatRoom?.presence?.stopTyping();
+    this.evaluateRead();
+  }
+
+  composerChanged() {
+    const presence = this.chatRoom?.presence;
+    if (!presence) return;
+    if (this.editing || !this.input.value.trim()) presence.stopTyping();
+    else presence.typed();
+  }
+
+  /** The newest message from this member that the window shows, if the
+   * window ends at the latest message: the one that carries "Seen by". */
+  latestOwnId() {
+    const room = this.chatRoom;
+    if (!room || this.end !== this.total) return null;
+    for (let index = this.messages.length - 1; index >= 0; index -= 1) {
+      const message = this.messages[index];
+      if (message.authorId === room.identity.memberId && visible(message) && !room.pendingMessages?.has(message.messageId)) return message.messageId;
+    }
+    return null;
+  }
+
+  /** The members who may have read `message`: the active members but its author. */
+  audienceOf(message, room) {
+    return (room.members ?? []).filter((member) => member.active !== false && member.id !== message.authorId);
+  }
+
+  /** Who has read `message`, and the line that says so ("" when no one). */
+  seenLine(message, room) {
+    // Only members still in the household count: a removed member's last
+    // slot stays on the service, but they are no longer a reader.
+    const audience = this.audienceOf(message, room);
+    const readers = (room.presence?.readers(message) ?? []).filter((reader) => audience.some((member) => member.id === reader.memberId));
+    if (!readers.length) return { readers, text: "" };
+    const everyone = audience.length > 0 && audience.every((member) => readers.some((reader) => reader.memberId === member.id));
+    return { readers, text: seenText(readers.map((reader) => room.authorLabel(reader.memberId)), everyone) };
+  }
+
+  /** The presence changed: redraw the "Seen by" line and the typing line,
+   * not the messages. */
+  presenceChanged() {
+    const room = this.chatRoom;
+    if (!room || !this.list) return;
+    this.reconcile();
+    const text = typingText(room.presence.typing().map((memberId) => room.authorLabel(memberId)));
+    if (this.typingLine.textContent !== text) this.typingLine.textContent = text;
+    this.typingLine.hidden = !text;
+    this.evaluateRead();
+  }
+
+  openDetails(message) {
+    const room = this.chatRoom;
+    if (!room || typeof this.details.showModal !== "function") return;
+    this.detailsOpener = document.activeElement;
+    const { readers } = this.seenLine(message, room);
+    const heading = document.createElement("h3");
+    heading.id = "chat-details-heading";
+    heading.textContent = "Message details";
+    const seen = document.createElement("ul");
+    seen.className = "chat-details-readers";
+    seen.setAttribute("aria-label", "Seen by");
+    for (const reader of readers) {
+      const item = document.createElement("li");
+      const when = new Date(reader.readAt);
+      const time = document.createElement("time");
+      time.dateTime = when.toISOString();
+      time.textContent = (when.toDateString() === new Date().toDateString() ? TIME : DATE_TIME).format(when);
+      item.append(`${room.authorLabel(reader.memberId)} · `, time);
+      seen.append(item);
+    }
+    const others = this.audienceOf(message, room).filter((member) => !readers.some((reader) => reader.memberId === member.id));
+    // Someone who sends no receipts isn't "not seen yet": nothing is known.
+    const off = others.filter((member) => room.presence?.slots?.get(member.id)?.receipts === false);
+    const waiting = others.filter((member) => !off.includes(member));
+    const children = [heading, seen];
+    for (const [members, label] of [[waiting, "Not seen yet"], [off, "Read receipts off"]]) {
+      if (!members.length) continue;
+      const rest = document.createElement("p");
+      rest.className = "chat-details-waiting";
+      rest.textContent = `${label}: ${members.map((member) => room.authorLabel(member.id)).join(", ")}`;
+      children.push(rest);
+    }
+    const note = document.createElement("p");
+    note.className = "section-hint";
+    note.textContent = "A time is when that person's device had your message on screen, rounded to when it last reported.";
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "Close";
+    close.addEventListener("click", () => this.details.close());
+    this.details.replaceChildren(...children, note, close);
+    this.details.showModal();
+  }
+
+  closeDetails() {
+    this.details.replaceChildren();
+    const opener = this.detailsOpener;
+    this.detailsOpener = null;
+    if (opener?.isConnected) opener.focus({ preventScroll: true });
   }
 
   roomChanged() {
@@ -514,6 +694,7 @@ class KinChat extends HTMLElement {
     const keep = new Map();
     let previous = null;
     let cursor = this.list.firstElementChild;
+    this.latestOwn = this.latestOwnId();
     for (const message of this.messages) {
       const grouped = Boolean(previous && previous.authorId === message.authorId &&
         message.postedAt - previous.postedAt < GROUP_MS && visible(previous));
@@ -524,8 +705,10 @@ class KinChat extends HTMLElement {
         const row = this.row(message, grouped, room);
         if (entry) {
           if (cursor === entry.row) cursor = row;
+          this.rowObserver?.unobserve(entry.row);
           entry.row.replaceWith(row);
         }
+        this.rowObserver?.observe(row);
         entry = { row, signature };
         if (focus) this.restoreFocus(row, focus);
       }
@@ -534,7 +717,12 @@ class KinChat extends HTMLElement {
       else cursor = cursor.nextElementSibling;
       previous = message;
     }
-    for (const [messageId, entry] of this.rows) if (!keep.has(messageId)) entry.row.remove();
+    for (const [messageId, entry] of this.rows) {
+      if (keep.has(messageId)) continue;
+      this.rowObserver?.unobserve(entry.row);
+      this.onScreen.delete(messageId);
+      entry.row.remove();
+    }
     this.rows = keep;
   }
 
@@ -546,6 +734,7 @@ class KinChat extends HTMLElement {
       room.pendingMessages?.has(message.messageId) ?? false, status ? Object.keys(status)[0] : "",
       attachment ? [attachment.status, attachment.text, attachment.files.length, attachment.thumbs.size].join("\u0001") : "",
       room.authorLabel(message.authorId), this.menuFor === message.messageId, this.actionsFor(message, room).join(),
+      message.messageId === this.latestOwn ? this.seenLine(message, room).text : "",
     ].join("\u0000");
   }
 
@@ -634,6 +823,18 @@ class KinChat extends HTMLElement {
       // readers: don't say it twice.
       if (notes.length === 1 && notes[0] === "Edited") note.setAttribute("aria-hidden", "true");
       item.append(note);
+    }
+    if (message.messageId === this.latestOwn) {
+      const { text } = this.seenLine(message, room);
+      if (text) {
+        const seen = document.createElement("button");
+        seen.type = "button";
+        seen.className = "chat-seen";
+        seen.textContent = text;
+        seen.setAttribute("aria-label", `${text}. Show message details`);
+        seen.addEventListener("click", () => this.openDetails(message));
+        item.append(seen);
+      }
     }
     const actions = this.actionsFor(message, room);
     if (actions.length) item.append(this.menu(message, actions, author));
@@ -960,6 +1161,7 @@ class KinChat extends HTMLElement {
     const room = this.chatRoom;
     if (!room || this.isDisabled || this.sending) return;
     const text = this.input.value;
+    room.presence?.stopTyping();
     // With photos or files, the caption may be empty.
     const withFiles = !this.editing && this.files.length > 0;
     const caption = withFiles && !text.trim() ? "" : text;

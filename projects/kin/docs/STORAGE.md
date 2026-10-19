@@ -273,7 +273,10 @@ database per household, `kin-chat-log:<householdId>`, version 1
   themselves, the record revision last read or written (a lower one served
   later is written over with what the device holds), whether one hidden here still has to be written, and
   the devices the record was last sealed to
-  ([SYNC](SYNC.md#delete-for-me-v11-119)).
+  ([SYNC](SYNC.md#delete-for-me-v11-119)); and `presence`: this member's
+  read cursor, their receipt and typing settings, and the revision of their
+  receipt slot on the service
+  ([SYNC](SYNC.md#read-receipts-and-typing-v11-120)).
 
 While Kin is unlocked the decrypted log is held in memory as one growing
 buffer (`web/chat/chat-records.js`) that the engine's chat log mirrors

@@ -33,6 +33,7 @@ import { ChatLogError, ChatLogStore } from "./chat-log-store.js";
 import { ChatRecords } from "./chat-records.js";
 import { memberLabels } from "../components/household/member-labels.js";
 import { MAX_HIDDEN_MESSAGES, openHiddenRecord, sealHiddenRecord } from "./chat-hidden.js";
+import { ChatPresence } from "./chat-presence.js";
 
 
 
@@ -144,6 +145,7 @@ export class ChatRoom {
     const room = new ChatRoom({ identity, keyStore, deviceKeys, engine, request, blobs, store, locks, now, onLocalChange, preparePhoto });
     try {
       await room.loadState();
+      await room.presence.load();
       await room.refresh();
     } catch (error) {
       room.close();
@@ -190,6 +192,23 @@ export class ChatRoom {
     // refresh() calls run one at a time (see refresh()).
     this.refreshQueue = Promise.resolve();
     this.listeners = new Set();
+    // Read receipts and typing (#120): their own listeners, so a typing
+    // indicator updating doesn't redraw the messages.
+    this.presenceListeners = new Set();
+    this.directory = [];
+    this.liveSender = null;
+    this.presence = new ChatPresence({
+      identity,
+      request: (path, options) => this.request(path, options),
+      epochKey: (epoch) => this.epochKey(epoch),
+      sendingEpoch: () => this.sendingEpoch(),
+      signingKey: () => this.signingKey(),
+      devices: () => this.directory,
+      sendLive: (bytes) => Boolean(this.liveSender?.(bytes)),
+      store,
+      now: () => this.now(),
+      onChange: () => this.notifyPresence(),
+    });
     this.syncError = null;
     this.onClose = null;
     this.closed = false;
@@ -214,6 +233,34 @@ export class ChatRoom {
     for (const listener of this.listeners) {
       try { listener(); } catch { /* a view's failure isn't the room's */ }
     }
+  }
+
+  /** Calls `listener()` when who has read what, or who is typing, changes. */
+  subscribePresence(listener) {
+    this.presenceListeners.add(listener);
+    return () => this.presenceListeners.delete(listener);
+  }
+
+  notifyPresence() {
+    for (const listener of this.presenceListeners) {
+      try { listener(); } catch { /* a view's failure isn't the room's */ }
+    }
+  }
+
+  /** The coordinator's live channel, for typing frames: `send(bytes)` returns
+   * whether the frame went out. Null when the channel is down. */
+  setLiveSender(send) {
+    this.liveSender = send;
+  }
+
+  /** A typing frame relayed by the service (live channel). */
+  receiveTyping(bytes) {
+    return this.presence.receiveTyping(bytes).catch(() => false);
+  }
+
+  /** The service says a read-receipt slot changed (live channel). */
+  receiptsChanged() {
+    this.presence.hint();
   }
 
   assertOpen() {
@@ -747,6 +794,7 @@ export class ChatRoom {
     this.pass += 1;
     if (deviceKeys) this.deviceKeys = deviceKeys;
     this.currentEpoch = status.currentEpoch;
+    this.directory = devices;
     const admins = chatAdmins(devices, this.now());
     const adminsChanged = admins.join() !== this.admins.join();
     const signature = chatMembershipSignature(devices);
@@ -791,6 +839,12 @@ export class ChatRoom {
       this.hiddenError = error;
     }
     if ((this.hiddenError?.code ?? null) !== hadError || this.hiddenWaiting !== wasWaiting) this.notify();
+    // Read receipts are a nicety too: their trouble never holds up messages.
+    try {
+      await this.presence.sync();
+    } catch (error) {
+      if (error?.code === "chat_locked") throw error;
+    }
     return { hasMore: pushMore || pullMore };
   }
 
@@ -1020,6 +1074,7 @@ export class ChatRoom {
   /** Drops the decrypted log (on lock or stop). */
   close() {
     if (this.closed) return;
+    this.presence.close();
     this.closed = true;
     this.records.clear();
     this.indexById.clear();
@@ -1030,6 +1085,8 @@ export class ChatRoom {
     this.manifests.clear();
     this.hidden?.clear();
     this.listeners.clear();
+    this.presenceListeners.clear();
+    this.liveSender = null;
     this.deviceKeys = null;
     this.store.close();
     try { this.onClose?.(); } catch { /* already closed */ }
