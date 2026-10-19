@@ -132,7 +132,9 @@ export async function fridgeRegressions(client, until) {
   const magnets = () => page(`window.__fridgeRoom.board().magnets.map((m) => ({ id: m.id, kind: m.kind, text: m.text, number: m.number, x: m.x, y: m.y }))`);
   const key = async (keyName, modifiers = 0) => {
     const code = { ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Enter: 13, Delete: 46, Escape: 27 }[keyName];
-    await client.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: keyName, code: keyName, windowsVirtualKeyCode: code, modifiers });
+    // Enter activates a button through its key press, so it carries text.
+    const text = keyName === "Enter" ? { type: "keyDown", text: "\r", unmodifiedText: "\r" } : { type: "rawKeyDown" };
+    await client.send("Input.dispatchKeyEvent", { ...text, key: keyName, code: keyName, windowsVirtualKeyCode: code, modifiers });
     await client.send("Input.dispatchKeyEvent", { type: "keyUp", key: keyName, code: keyName, windowsVirtualKeyCode: code, modifiers });
   };
   // A note, put up at the top right through the dialog.
