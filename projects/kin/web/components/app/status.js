@@ -103,8 +103,8 @@ export class StatusController {
       const choices = document.createElement("div");
       choices.className = "household-choices";
       for (const [label, intent, className] of [
-        ["Start a new household", "create", ""],
-        ["Join my household", "join", "primary-action"],
+        ["Start a new household", "create", "primary-action"],
+        ["Join my household", "join", ""],
         ["Sign in using my phone", "phone", ""],
         ["Use Kin on another device", "device", ""],
       ]) {
