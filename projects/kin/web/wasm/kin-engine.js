@@ -289,10 +289,17 @@ export function createEngine(instanceExports) {
   };
 }
 
+const CHAT_QUOTE_STATES = ["unknown", "live", "edited", "deleted", "removed-by-admin"];
 const CHAT_STATUSES = ["live", "edited", "deleted", "removed-by-admin"];
 const CHAT_CONTENT_KINDS = [null, "text", "attachment"];
 export const MAX_CHAT_EVENT_COUNT = 250_000;
 const MAX_CHAT_PAGE = 500;
+
+function replyFromHex(value) {
+  if (typeof value !== "string" || !/^[0-9a-f]{32}$/.test(value) || /^0{32}$/.test(value))
+    throw new KinEngineError(2, "Kin received an invalid chat reply.");
+  return idFromHex(value);
+}
 
 function blobFromHex(value, what) {
   if (typeof value !== "string" || !/^[0-9a-f]{64}$/.test(value) || /^0{64}$/.test(value))
@@ -383,7 +390,7 @@ function decodeChatPage(bytes) {
   const messages = [];
   // Texts follow each other in record order, with no gaps or overlaps.
   let nextText = 0;
-  const groupCounts = [];
+  const groupCounts = [], quoted = [];
   for (let index = 0; index < count; index += 1) {
     const at = 28 + index * 128;
     const status = CHAT_STATUSES[bytes[at + 68]], contentKind = CHAT_CONTENT_KINDS[bytes[at + 69]];
@@ -396,13 +403,14 @@ function decodeChatPage(bytes) {
     const blobRef = bytes.subarray(at + 72, at + 104), blobKey = bytes.subarray(keysAt + index * 32, keysAt + index * 32 + 32);
     if (visible === zero(blobRef) || visible === zero(blobKey) || (!visible && textLength) ||
       (textLength && (contentKind !== "text" || textOffset !== nextText)) || (!textLength && textOffset) ||
-      bytes[at + 70] || bytes[at + 71] || !zero(bytes.subarray(at + 116, at + 128)) ||
+      bytes[at + 70] > 1 || bytes[at + 71] || (bytes[at + 70] === 1 && !visible) || !zero(bytes.subarray(at + 116, at + 128)) ||
       (status === "edited" && !editedAt) || (status === "live" && editedAt))
       throw invalid();
     nextText += textLength;
     const groups = view.getUint32(at + 112, true);
     if (groups && !visible) throw invalid();
     groupCounts.push(groups);
+    quoted.push(bytes[at + 70] === 1);
     messages.push({
       messageId: idToHex(bytes.subarray(at, at + 16)),
       authorId: idToHex(bytes.subarray(at + 16, at + 32)),
@@ -417,6 +425,7 @@ function decodeChatPage(bytes) {
       // null: the arena doesn't hold it yet; fetch, decrypt and putChatTexts.
       text: textLength ? strictTextDecoder.decode(bytes.subarray(textsAt + textOffset, textsAt + textOffset + textLength)) : null,
       reactions: [],
+      replyTo: null,
     });
   }
   if (nextText !== textBytes) throw invalid();
@@ -435,6 +444,30 @@ function decodeChatPage(bytes) {
       cursor += members * 16;
       messages[index].reactions.push({ emoji, actors });
     }
+  });
+  // Quotes (#129), one per message flagged as a reply: the original's ID, its
+  // state, content kind, author, blob ref and key, index and the text held.
+  quoted.forEach((flagged, index) => {
+    if (!flagged) return;
+    if (cursor + 108 > bytes.length) throw invalid();
+    const state = CHAT_QUOTE_STATES[bytes[cursor + 16]], contentKind = bytes[cursor + 17] === 0 ? null : CHAT_CONTENT_KINDS[bytes[cursor + 17]];
+    const ref = bytes.subarray(cursor + 36, cursor + 68), key = bytes.subarray(cursor + 68, cursor + 100);
+    const originalIndex = view.getUint32(cursor + 100, true), length = view.getUint32(cursor + 104, true);
+    const shown = state === "live" || state === "edited";
+    if (!state || (state === "unknown") !== (contentKind === null) || bytes[cursor + 18] || bytes[cursor + 19] ||
+      shown === zero(ref) || shown === zero(key) || (!shown && length) || (length && contentKind !== "text") ||
+      (state === "unknown") !== (originalIndex === 0xffff_ffff) || cursor + 108 + length > bytes.length) throw invalid();
+    messages[index].replyTo = {
+      messageId: idToHex(bytes.subarray(cursor, cursor + 16)),
+      state,
+      contentKind,
+      authorId: state === "unknown" ? null : idToHex(bytes.subarray(cursor + 20, cursor + 36)),
+      index: state === "unknown" ? null : originalIndex,
+      blobRef: shown ? idToHex(ref) : null,
+      blobKey: shown ? key.slice() : null,
+      text: length ? strictTextDecoder.decode(bytes.subarray(cursor + 108, cursor + 108 + length)) : null,
+    };
+    cursor += 108 + length;
   });
   if (cursor !== bytes.length) throw invalid();
   const retired = [];
@@ -779,7 +812,10 @@ function encodeIntentPacket(command, identity) {
   const maintenanceBytes = kind === 37 ? encodeMaintenancePayload(command) : null;
   // Chat (#109): the content blob's reference and key; Rust checks the rest.
   const chatBlob = kind === 44 || kind === 45
-    ? Uint8Array.of(...blobFromHex(command.blobRef, "reference"), ...blobFromHex(command.blobKey, "key"))
+    ? Uint8Array.of(
+      ...blobFromHex(command.blobRef, "reference"), ...blobFromHex(command.blobKey, "key"),
+      // A reply (#129) adds the message it answers.
+      ...(kind === 44 && command.replyTo != null ? replyFromHex(command.replyTo) : []))
     : null;
   if (
     hasText &&
@@ -802,7 +838,7 @@ function encodeIntentPacket(command, identity) {
           ? 16 + stepText.length
           : kind === 22 || kind === 23
             ? 24 + noteTitle.length + noteBody.length
-            : kind === 33 ? playbookBytes.length : kind === 35 ? referenceBytes.length : kind === 37 ? maintenanceBytes.length : kind === 39 || kind === 41 ? 16 : chatBlob ? 64 : deviceNameBytes ? deviceNameBytes.length : textBytes.length),
+            : kind === 33 ? playbookBytes.length : kind === 35 ? referenceBytes.length : kind === 37 ? maintenanceBytes.length : kind === 39 || kind === 41 ? 16 : chatBlob ? chatBlob.length : deviceNameBytes ? deviceNameBytes.length : textBytes.length),
   );
   packet.set([75, 67, 77, 68, 1, 0, 0, 0]);
   const view = new DataView(packet.buffer);
@@ -917,7 +953,7 @@ function encodeIntentPacket(command, identity) {
     view.setUint32(124, 16, true);
   } else if (chatBlob) {
     packet.set(chatBlob, 128);
-    view.setUint32(124, 64, true);
+    view.setUint32(124, chatBlob.length, true);
   } else if (kind === 33 || kind === 35 || kind === 37 || kind === 39 || kind === 41 || kind === 46) {
     // The Playbook packet payload was encoded above; a chat deletion has none.
   } else if (deviceNameBytes) {

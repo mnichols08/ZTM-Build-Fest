@@ -161,6 +161,8 @@ pub enum HouseholdCommand {
         content_kind: ChatContentKind,
         blob_ref: [u8; 32],
         blob_key: [u8; 32],
+        /// The message this one answers (#129).
+        reply_to: Option<ChatMessageId>,
     },
     /// The author replaces a text message's content blob.
     EditChatMessage {
@@ -407,11 +409,13 @@ pub fn create_event(
             content_kind,
             blob_ref,
             blob_key,
+            reply_to,
         } => EventKind::ChatMessagePosted {
             message_id: *id,
             content_kind: *content_kind,
             blob_ref: *blob_ref,
             blob_key: *blob_key,
+            reply_to: *reply_to,
         },
         EditChatMessage {
             id,
@@ -720,9 +724,24 @@ pub fn execute_with(
     // removal only while its claimant is one.
     match command {
         // A blob reference is used once in a log (chat.rs `seen`).
-        HouseholdCommand::PostChatMessage { id, blob_ref, .. } => {
+        HouseholdCommand::PostChatMessage {
+            id,
+            blob_ref,
+            reply_to,
+            ..
+        } => {
             if current.chat.get(id).is_some() || current.chat.seen.contains(blob_ref) {
                 return Err(KinError::InvalidEvent);
+            }
+            // A reply answers a message this log holds that still shows.
+            if let Some(original) = reply_to {
+                let message = current.chat.get(original).ok_or(KinError::InvalidEvent)?;
+                if !matches!(
+                    current.chat.shown_status(message, history.chat_admins()),
+                    crate::chat::ChatMessageStatus::Live | crate::chat::ChatMessageStatus::Edited
+                ) {
+                    return Err(KinError::InvalidEvent);
+                }
             }
         }
         HouseholdCommand::EditChatMessage { id, blob_ref, .. } => {
@@ -1116,7 +1135,9 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
         || matches!(kind, 44..=47) && id == [0; 16]
         || kind == 47
             && (option > 1 || text.is_empty() || text_length > crate::chat::MAX_EMOJI_BYTES)
-        || matches!(kind, 44 | 45) && text_length != 64
+        || kind == 45 && text_length != 64
+        || kind == 44 && !matches!(text_length, 64 | 80)
+        || kind == 44 && text_length == 80 && bytes[192..208] == [0; 16]
         || kind == 44 && !matches!(option, 1 | 2)
         || kind == 46 && (text_length != 0 || option > 1)
         || matches!(kind, 44 | 45) && (bytes[128..160] == [0; 32] || bytes[160..192] == [0; 32])
@@ -1473,6 +1494,8 @@ pub fn decode_command(bytes: &[u8]) -> Result<(HouseholdCommand, CommandContext)
                     },
                     blob_ref,
                     blob_key,
+                    reply_to: (text_length == 80)
+                        .then(|| ChatMessageId(field(bytes, 192).unwrap_or([0; 16]))),
                 }
             } else {
                 EditChatMessage {

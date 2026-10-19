@@ -230,6 +230,53 @@ test("a chat page carries reactions after its retired blobs (#127)", () => {
   ]) assert.throws(() => decode(bytes), (error) => error instanceof KinEngineError && error.code === 6);
 });
 
+test("a chat page carries the quote of a reply after its reactions (#129)", () => {
+  const base = kchp({
+    total: 2, start: 0,
+    messages: [
+      { id: 0x01, author: 0x11, device: 0x21, postedAt: 1_791_475_200_001, status: 0, blob: 0xb1, key: 0xc1 },
+      { id: 0x02, author: 0x12, device: 0x22, postedAt: 1_791_475_200_002, status: 0, blob: 0xb2, key: 0xc2 },
+    ],
+  });
+  const flag = (bytes, index = 1) => { bytes[28 + index * 128 + 70] = 1; return bytes; };
+  const quote = ({ id = 0x01, state = 1, kind = 1, author = 0x11, ref = 0xb1, key = 0xc1, index = 0, text = "Dinner at 6" } = {}) => {
+    const body = new TextEncoder().encode(text ?? "");
+    const out = new Uint8Array(108 + body.length);
+    out.fill(id, 0, 16); out[16] = state; out[17] = kind;
+    out.fill(author, 20, 36); out.fill(ref, 36, 68); out.fill(key, 68, 100);
+    const view = new DataView(out.buffer);
+    view.setUint32(100, index, true); view.setUint32(104, body.length, true);
+    out.set(body, 108);
+    return out;
+  };
+  const withQuote = (entry, flagged = flag(base.slice())) => Uint8Array.of(...flagged, ...entry);
+  const decode = (bytes) => createEngine(substituteExports({ operation: () => 0, result: bytes }).exports).chatPage([], {}, 1_760_000_000_000, 20261003);
+  const page = decode(withQuote(quote()));
+  assert.equal(page.messages[0].replyTo, null);
+  assert.deepEqual(page.messages[1].replyTo, {
+    messageId: "01".repeat(16), state: "live", contentKind: "text", authorId: "11".repeat(16), index: 0,
+    blobRef: "b1".repeat(32), blobKey: new Uint8Array(32).fill(0xc1), text: "Dinner at 6",
+  });
+  // Deleted, unknown and not-yet-downloaded originals.
+  assert.deepEqual(decode(withQuote(quote({ state: 3, ref: 0, key: 0, text: "" }))).messages[1].replyTo,
+    { messageId: "01".repeat(16), state: "deleted", contentKind: "text", authorId: "11".repeat(16), index: 0, blobRef: null, blobKey: null, text: null });
+  assert.equal(decode(withQuote(quote({ state: 0, kind: 0, author: 0, ref: 0, key: 0, index: 0xffff_ffff, text: "" }))).messages[1].replyTo.state, "unknown");
+  assert.equal(decode(withQuote(quote({ text: "" }))).messages[1].replyTo.text, null);
+  for (const bytes of [
+    withQuote(Uint8Array.of()),
+    withQuote(quote({ state: 9 })),
+    withQuote(quote({ state: 3 })),
+    withQuote(quote({ state: 0, kind: 1, author: 0, ref: 0, key: 0, index: 0xffff_ffff, text: "" })),
+    withQuote(quote({ ref: 0 })),
+    withQuote(quote({ kind: 2 })),
+    withQuote(Uint8Array.of(...quote(), 0)),
+    withQuote(quote().slice(0, -1)),
+    // A quote with no flag, and a flag on a deleted message.
+    Uint8Array.of(...base, ...quote()),
+    (() => { const copy = withQuote(quote()); copy[28 + 128 + 68] = 2; return copy; })(),
+  ]) assert.throws(() => decode(bytes), (error) => error instanceof KinEngineError && error.code === 6);
+});
+
 test("chat pages decode from KCHP and malformed pages are refused (#109)", () => {
   const page = kchp({
     total: 5,
@@ -248,12 +295,12 @@ test("chat pages decode from KCHP and malformed pages are refused (#109)", () =>
   assert.deepEqual(decoded.messages[0], {
     messageId: "01".repeat(16), authorId: "11".repeat(16), deviceId: "21".repeat(16),
     postedAt: 1_791_475_200_001, editedAt: 1_791_475_200_009, index: 3, status: "edited", contentKind: "text",
-    blobRef: "b1".repeat(32), blobKey: new Uint8Array(32).fill(0xc1), text: "Dinner at 6 🍝", reactions: [],
+    blobRef: "b1".repeat(32), blobKey: new Uint8Array(32).fill(0xc1), text: "Dinner at 6 🍝", reactions: [], replyTo: null,
   });
   assert.deepEqual(decoded.messages[1], {
     messageId: "02".repeat(16), authorId: "12".repeat(16), deviceId: "22".repeat(16),
     postedAt: 1_791_475_200_002, editedAt: null, index: 4, status: "removed-by-admin", contentKind: "text",
-    blobRef: null, blobKey: null, text: null, reactions: [],
+    blobRef: null, blobKey: null, text: null, reactions: [], replyTo: null,
   });
   const broken = [
     page.slice(0, -1),

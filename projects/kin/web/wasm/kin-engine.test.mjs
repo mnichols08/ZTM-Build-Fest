@@ -301,6 +301,42 @@ test("chat reactions toggle, list and drop with their message through real WASM 
   assert.deepEqual(engine.chatPage(chat, { includeReactions: true }, asOf, day).messages[0].reactions, []);
 });
 
+test("a chat reply quotes its original through real WASM (#129)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const member = new Uint8Array(16).fill(0xbb), other = new Uint8Array(16).fill(0xbe);
+  const context = (sequence, actorId = member) => ({ eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId, deviceId: new Uint8Array(16).fill(actorId[0] - 0x10), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) });
+  const asOf = 1_791_475_200_100, day = 20261009;
+  const blob = (byte) => byte.toString(16).padStart(2, "0").repeat(32);
+  const chat = [];
+  const run = (command, ctx) => {
+    const result = engine.executeChatCommand(command, ctx, chat, asOf, day);
+    chat.push(result.encodedEvent);
+    return result;
+  };
+  const original = "01".repeat(16), answer = "02".repeat(16);
+  run({ type: "post-chat-message", messageId: original, blobRef: blob(0xa1), blobKey: blob(0xc1) }, context(1));
+  // A reply to nothing, or to itself, is refused.
+  for (const replyTo of ["09".repeat(16), answer])
+    assert.throws(() => engine.executeChatCommand({ type: "post-chat-message", messageId: answer, blobRef: blob(0xa2), blobKey: blob(0xc2), replyTo }, context(2, other), chat, asOf, day), (error) => error.code === 4 || error.code === 2);
+  assert.throws(() => engine.executeChatCommand({ type: "post-chat-message", messageId: answer, blobRef: blob(0xa2), blobKey: blob(0xc2), replyTo: "00".repeat(16) }, context(2, other), chat, asOf, day), (error) => error.code === 2);
+  const posted = run({ type: "post-chat-message", messageId: answer, blobRef: blob(0xa2), blobKey: blob(0xc2), replyTo: original }, context(2, other));
+  assert.equal(posted.encodedEvent.length, 88 + 100);
+  engine.putChatTexts([{ blobRef: blob(0xa1), text: "Dinner at 6" }]);
+  let page = engine.chatPage(chat, {}, asOf, day);
+  assert.equal(page.messages[0].replyTo, null);
+  assert.deepEqual(
+    { ...page.messages[1].replyTo, blobKey: [...page.messages[1].replyTo.blobKey].every((byte) => byte === 0xc1) },
+    { messageId: original, state: "live", contentKind: "text", authorId: "bb".repeat(16), index: 0, blobRef: blob(0xa1), blobKey: true, text: "Dinner at 6" },
+  );
+  // Without texts the quote has none; once the original is deleted it has no blob either.
+  assert.equal(engine.chatPage(chat, { includeText: false }, asOf, day).messages[1].replyTo.text, null);
+  run({ type: "delete-chat-message", messageId: original }, context(3));
+  page = engine.chatPage(chat, {}, asOf, day);
+  assert.deepEqual([page.messages[1].replyTo.state, page.messages[1].replyTo.blobRef, page.messages[1].replyTo.text], ["deleted", null, null]);
+  // Replying to a deleted message is refused.
+  assert.throws(() => engine.executeChatCommand({ type: "post-chat-message", messageId: "03".repeat(16), blobRef: blob(0xa3), blobKey: blob(0xc3), replyTo: original }, context(4), chat, asOf, day), (error) => error.code === 4);
+});
+
 test("Attachment bind and remove intent payloads roundtrip through real WASM", async () => {
   const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
   const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");

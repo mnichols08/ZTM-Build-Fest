@@ -59,12 +59,21 @@ const DOWNLOAD_URL_MS = 60_000;
 const TIME = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
 const DATE_TIME = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const FULL = new Intl.DateTimeFormat(undefined, { dateStyle: "full", timeStyle: "short" });
-const ACTION_LABELS = { copy: "Copy text", details: "See who reacted", edit: "Edit", delete: "Delete for everyone", remove: "Remove as admin", hide: "Delete for me" };
+const ACTION_LABELS = { copy: "Copy text", reply: "Reply", details: "See who reacted", edit: "Edit", delete: "Delete for everyone", remove: "Remove as admin", hide: "Delete for me" };
 /** How long a press on a reaction chip must last to list who reacted. */
 const LONG_PRESS_MS = 500;
 const NO_RECALL = "Copies people already saved, screenshotted or downloaded can't be recalled.";
 
 const visible = (message) => message.status === "live" || message.status === "edited";
+
+/** `text` cut to `max` UTF-16 units with an ellipsis, never inside a pair. */
+function clip(text, max) {
+  if (text.length <= max) return text;
+  let end = max - 1;
+  const code = text.charCodeAt(end - 1);
+  if (code >= 0xd800 && code <= 0xdbff) end -= 1;
+  return `${text.slice(0, end)}…`;
+}
 
 class KinChat extends HTMLElement {
   constructor() {
@@ -103,6 +112,12 @@ class KinChat extends HTMLElement {
     this.reacting = null;
     this.reactMore = false;
     this.emojiNames ??= reactionNames();
+    // The message the composer is answering (#129), and the one a jump
+    // just highlighted.
+    this.replyingTo = null;
+    if (this.replyBar) this.replyBar.hidden = true;
+    this.highlighted = null;
+    clearTimeout(this.highlightTimer);
     // Per message: { deleted } is final; { pending } and { failed } are
     // retried on the room's next change; { loading } while a load runs.
     this.textStatus = new Map();
@@ -194,6 +209,11 @@ class KinChat extends HTMLElement {
         this.stopEditing({ restoreDraft: true });
         return;
       }
+      if (event.key === "Escape" && this.replyingTo && !event.isComposing) {
+        event.preventDefault();
+        this.stopReplying({ focus: true });
+        return;
+      }
       // Enter sends and Shift+Enter adds a line on a keyboard device; on a
       // touch screen Enter adds a line and the Send button sends.
       if (event.key !== "Enter" || event.shiftKey || event.isComposing || !this.enterSends()) return;
@@ -244,6 +264,21 @@ class KinChat extends HTMLElement {
     this.attach.textContent = "Attach";
     this.attach.setAttribute("aria-label", `Attach photos or files (up to ${MAX_ATTACHMENT_FILES})`);
     this.attach.addEventListener("click", () => this.chooseFiles());
+    // The quote bar above the box while replying (#129).
+    this.replyBar = document.createElement("div");
+    this.replyBar.className = "chat-replying";
+    this.replyBar.hidden = true;
+    this.replyBar.setAttribute("role", "group");
+    this.replyBar.setAttribute("aria-label", "Replying to");
+    this.replyText = document.createElement("p");
+    this.replyText.className = "chat-replying-text";
+    this.replyCancel = document.createElement("button");
+    this.replyCancel.type = "button";
+    this.replyCancel.className = "chat-replying-cancel";
+    this.replyCancel.textContent = "Cancel";
+    this.replyCancel.setAttribute("aria-label", "Cancel reply");
+    this.replyCancel.addEventListener("click", () => this.stopReplying({ focus: true }));
+    this.replyBar.append(this.replyText, this.replyCancel);
     this.pendingList = document.createElement("ul");
     this.pendingList.className = "chat-pending";
     this.pendingList.setAttribute("aria-label", "Photos and files to send");
@@ -251,7 +286,7 @@ class KinChat extends HTMLElement {
     const buttons = document.createElement("div");
     buttons.className = "chat-form-buttons";
     buttons.append(this.attach, this.emoji, this.send, this.cancel);
-    form.append(this.label, this.input, this.pendingList, panelSlot, buttons, this.message);
+    form.append(this.label, this.replyBar, this.input, this.pendingList, panelSlot, buttons, this.message);
 
     // A viewer for one photo, shown modally; its URL is released on close.
     this.viewer = document.createElement("dialog");
@@ -653,6 +688,12 @@ class KinChat extends HTMLElement {
    * repaints once they're in. */
   loadMissingTexts() {
     const room = this.chatRoom;
+    const target = this.replyingTo && this.messages.find((message) => message.messageId === this.replyingTo.messageId);
+    if (this.replyingTo && (room.isHidden?.(this.replyingTo.messageId) || (target && !visible(target)))) {
+      this.stopReplying();
+      this.say("The message you were replying to is gone.");
+    }
+    this.loadMissingQuotes();
     const missing = this.messages.filter((message) => message.text === null && message.blobRef && message.contentKind === "text" && !this.textStatus.has(message.messageId));
     if (!missing.length) return;
     for (const message of missing) this.textStatus.set(message.messageId, { loading: true });
@@ -668,6 +709,46 @@ class KinChat extends HTMLElement {
     }, () => {
       if (room !== this.chatRoom) return;
       for (const message of missing) this.textStatus.set(message.messageId, { failed: true });
+      this.queueRender("update");
+    });
+  }
+
+  /** The same for what replies quote (#129): the original's text, opened on
+   * demand when it isn't in the engine yet. */
+  loadMissingQuotes() {
+    const room = this.chatRoom;
+    const replies = this.messages.filter((message) => {
+      const original = message.replyTo;
+      return original && visible(message) && original.contentKind === "text" && original.blobRef && original.text === null &&
+        !room.isHidden?.(original.messageId) && !this.textStatus.has(`quote:${original.messageId}`);
+    });
+    // A quoted attachment says "Photo" or its file name once its list is open.
+    const files = [...new Map(this.messages
+      .filter((message) => {
+        const original = message.replyTo;
+        return original && visible(message) && original.contentKind === "attachment" && original.blobRef &&
+          !room.isHidden?.(original.messageId) && !this.attachments.has(original.messageId) &&
+          !this.messages.some((shown) => shown.messageId === original.messageId);
+      })
+      .map(({ replyTo }) => [replyTo.messageId, replyTo])).values()];
+    for (const original of files) {
+      this.attachments.set(original.messageId, { status: "loading", text: "", files: [], thumbs: new Map(), quoteOnly: true });
+      void this.loadAttachment(room, { ...original, contentKind: "attachment" }, { thumbnails: false });
+    }
+    if (!replies.length) return;
+    for (const { replyTo } of replies) this.textStatus.set(`quote:${replyTo.messageId}`, { loading: true });
+    const keys = [...new Set(replies.map(({ replyTo }) => replyTo.messageId))];
+    room.loadQuoteTexts(replies).then((results) => {
+      if (room !== this.chatRoom) return;
+      for (const id of keys) {
+        const result = results.get(id) ?? { failed: true };
+        if (typeof result.text === "string") this.textStatus.delete(`quote:${id}`);
+        else this.textStatus.set(`quote:${id}`, result);
+      }
+      this.queueRender("update");
+    }, () => {
+      if (room !== this.chatRoom) return;
+      for (const id of keys) this.textStatus.set(`quote:${id}`, { failed: true });
       this.queueRender("update");
     });
   }
@@ -705,27 +786,28 @@ class KinChat extends HTMLElement {
   loadMissingAttachments() {
     const room = this.chatRoom;
     if (!room) return;
-    const missing = this.messages.filter((message) => visible(message) && message.contentKind === "attachment" && message.blobRef && !this.attachments.has(message.messageId));
+    const missing = this.messages.filter((message) => visible(message) && message.contentKind === "attachment" && message.blobRef &&
+      (!this.attachments.has(message.messageId) || (this.attachments.get(message.messageId).quoteOnly && this.attachments.get(message.messageId).status !== "loading")));
     for (const message of missing) this.attachments.set(message.messageId, { status: "loading", text: "", files: [], thumbs: new Map() });
     for (const message of missing) void this.loadAttachment(room, message);
   }
 
-  async loadAttachment(room, message) {
+  async loadAttachment(room, message, { thumbnails = true } = {}) {
     let opened;
     try {
       opened = await room.openAttachment(message);
     } catch (error) {
       if (room !== this.chatRoom) return;
       const status = error?.code === "chat_attachment_deleted" ? "deleted" : error?.code === "chat_attachment_pending" ? "pending" : "failed";
-      this.attachments.set(message.messageId, { status, text: "", files: [], thumbs: new Map() });
+      this.attachments.set(message.messageId, { status, text: "", files: [], thumbs: new Map(), quoteOnly: !thumbnails });
       this.queueRender("update");
       return;
     }
     if (room !== this.chatRoom) return;
-    const state = { status: "ready", text: opened.text, files: opened.files, thumbs: new Map() };
+    const state = { status: "ready", text: opened.text, files: opened.files, thumbs: new Map(), quoteOnly: !thumbnails };
     this.attachments.set(message.messageId, state);
     this.queueRender("update");
-    for (let index = 0; index < opened.files.length; index += 1) {
+    for (let index = 0; thumbnails && index < opened.files.length; index += 1) {
       if (!opened.files[index].photo) continue;
       try {
         const blob = await room.attachmentThumbnail(message, index);
@@ -787,6 +869,8 @@ class KinChat extends HTMLElement {
       message.messageId === this.latestOwn ? this.seenLine(message, room).text : "",
       JSON.stringify(message.reactions ?? []), this.reacting === message.messageId ? (this.reactMore ? 2 : 1) : 0,
       (room.access ?? "write") === "write", this.emojiNames.size,
+      message.replyTo ? [message.replyTo.index, message.replyTo.state, message.replyTo.text ?? "", message.replyTo.blobRef ?? "", room.isHidden?.(message.replyTo.messageId) ?? false, this.attachments.get(message.replyTo.messageId)?.status ?? "", this.attachments.get(message.replyTo.messageId)?.files[0]?.name ?? "", Object.keys(this.textStatus.get(`quote:${message.replyTo.messageId}`) ?? {})[0] ?? ""].join("\u0001") : "",
+      this.highlighted === message.messageId,
     ].join("\u0000");
   }
 
@@ -794,10 +878,16 @@ class KinChat extends HTMLElement {
   focusIn(row) {
     const active = document.activeElement;
     if (!active || !row.contains(active)) return null;
+    if (active === row) return { row: true };
     return active.dataset.action ? { action: active.dataset.action } : { toggle: true };
   }
 
   restoreFocus(row, focus) {
+    if (focus.row) {
+      row.tabIndex = -1;
+      row.focus({ preventScroll: true });
+      return;
+    }
     const target = (focus.action && row.querySelector(`[data-action="${focus.action}"]`)) || row.querySelector(".chat-menu-button");
     if (target) target.focus({ preventScroll: true });
     else this.scroller.focus({ preventScroll: true });
@@ -831,6 +921,8 @@ class KinChat extends HTMLElement {
       header.append(edited);
     }
     item.append(header);
+    if (this.highlighted === message.messageId) item.classList.add("chat-highlight");
+    if (message.replyTo && visible(message)) item.append(this.quote(message, room));
 
     const body = document.createElement("p");
     body.className = "chat-text";
@@ -903,6 +995,111 @@ class KinChat extends HTMLElement {
       item.append(wrap);
     }
     return item;
+  }
+
+  /** What a quote of `original` says: its first line, or why there isn't one. */
+  quoteLine(original, room) {
+    if (original.state === "unknown") return { text: "Original message isn't available", gone: true };
+    if (room.isHidden?.(original.messageId)) return { text: "Message hidden", gone: true };
+    if (original.state === "deleted") return { text: "Original message was deleted", gone: true };
+    if (original.state === "removed-by-admin") return { text: "Original message was removed by an admin", gone: true };
+    if (original.contentKind === "attachment") {
+      const attachment = this.attachments.get(original.messageId);
+      if (attachment?.status === "deleted") return { text: "Original message was deleted", gone: true };
+      const first = attachment?.status === "ready" ? attachment.files[0] : null;
+      return { text: first?.photo ? "Photo" : first ? first.name : "Attachment", gone: false };
+    }
+    if (original.text === null) {
+      const status = this.textStatus.get(`quote:${original.messageId}`);
+      if (status?.deleted) return { text: "Original message was deleted", gone: true };
+      if (status?.pending) return { text: "This message is still arriving.", gone: false };
+      return { text: status?.failed ? "This message couldn't be opened yet." : "Loading…", gone: false };
+    }
+    const line = original.text.split("\n").find((part) => part.trim()) ?? "";
+    return { text: clip(line, 100), gone: false };
+  }
+
+  /** A compact quote above a reply; pressing it goes to the original. */
+  quote(message, room) {
+    const original = message.replyTo;
+    const { text, gone } = this.quoteLine(original, room);
+    const who = original.authorId ? room.authorLabel(original.authorId) : "";
+    const hidden = room.isHidden?.(original.messageId) ?? false;
+    const jumpable = original.index !== null && !hidden && original.state !== "unknown";
+    const quote = document.createElement(jumpable ? "button" : "p");
+    quote.className = "chat-quote";
+    if (gone) quote.classList.add("chat-gone");
+    if (jumpable) {
+      quote.type = "button";
+      quote.dataset.action = "quote";
+      quote.setAttribute("aria-label", `In reply to ${who === "You" ? "you" : who}: ${text}. Go to the original message`);
+      quote.addEventListener("click", () => void this.jumpTo(original));
+    }
+    if (who && !gone) {
+      const name = document.createElement("span");
+      name.className = "chat-quote-author";
+      name.textContent = who;
+      quote.append(name, " ");
+    }
+    quote.append(text);
+    return quote;
+  }
+
+  /** Brings the original of a reply into view and marks it for a moment. */
+  async jumpTo(original) {
+    const room = this.chatRoom;
+    if (!room || original.index === null) return;
+    let row = this.rowFor(original.messageId);
+    if (!row) {
+      // Not in the window: load the stretch around it, as paging back does.
+      const end = Math.min(this.total, original.index + Math.ceil(PAGE / 2));
+      this.following = false;
+      this.end = end;
+      this.start = Math.max(0, end - PAGE);
+      await this.queueRender("page");
+      row = this.rowFor(original.messageId);
+    }
+    if (!row) {
+      this.say("That message isn't available.");
+      return;
+    }
+    clearTimeout(this.highlightTimer);
+    this.highlighted = original.messageId;
+    this.reconcile();
+    row = this.rowFor(original.messageId);
+    const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    row.tabIndex = -1;
+    row.scrollIntoView({ block: "center", behavior: calm ? "auto" : "smooth" });
+    row.focus({ preventScroll: true });
+    this.highlightTimer = setTimeout(() => {
+      this.highlighted = null;
+      this.reconcile();
+    }, 1800);
+  }
+
+  /** Starts answering `message`: the quote bar shows above the box. */
+  startReplying(message) {
+    const room = this.chatRoom;
+    if (!room) return;
+    if (this.editing) this.stopEditing({ restoreDraft: true });
+    this.replyingTo = message;
+    const who = room.authorLabel(message.authorId);
+    const attachment = this.attachments.get(message.messageId);
+    const first = attachment?.status === "ready" ? attachment.files[0] : null;
+    const line = message.contentKind === "attachment"
+      ? (first?.photo ? "Photo" : first ? first.name : "Attachment")
+      : (message.text ?? "").split("\n").find((part) => part.trim()) ?? "";
+    this.replyText.textContent = `Replying to ${who === "You" ? "yourself" : who}: ${clip(line, 80)}`;
+    this.say(`Replying to ${who === "You" ? "yourself" : who}.`);
+    this.replyBar.hidden = false;
+    this.input.focus();
+  }
+
+  stopReplying({ focus = false } = {}) {
+    this.replyingTo = null;
+    this.replyBar.hidden = true;
+    this.replyText.textContent = "";
+    if (focus) this.input.focus();
   }
 
   canReact(room) {
@@ -1254,6 +1451,7 @@ class KinChat extends HTMLElement {
     const actions = [];
     if (message.text !== null) actions.push("copy");
     if (message.reactions?.length) actions.push("details");
+    if ((room.access ?? "write") === "write") actions.push("reply");
     // Read-only members (#123) can copy and hide for themselves, nothing else.
     const canPost = (room.access ?? "write") === "write";
     if (canPost && own && message.text !== null && message.contentKind === "text") actions.push("edit");
@@ -1338,10 +1536,13 @@ class KinChat extends HTMLElement {
     try {
       if (action === "details") {
         this.openDetails(message);
+      } else if (action === "reply") {
+        this.startReplying(message);
       } else if (action === "copy") {
         await navigator.clipboard.writeText(message.text);
         this.say("Copied.");
       } else if (action === "edit") {
+        this.stopReplying();
         if (!this.editing) this.stashedDraft = this.input.value;
         this.editing = message;
         this.input.value = message.text;
@@ -1412,8 +1613,8 @@ class KinChat extends HTMLElement {
     const editing = this.editing;
     try {
       if (editing) await room.edit(editing, text);
-      else if (withFiles) await room.sendAttachments({ text: caption, files: this.files });
-      else await room.send(text);
+      else if (withFiles) await room.sendAttachments({ text: caption, files: this.files, replyTo: this.replyingTo?.messageId ?? null });
+      else await room.send(text, { replyTo: this.replyingTo?.messageId ?? null });
       if (editing) {
         // Back to whatever draft was there before editing.
         this.stopEditing({ restoreDraft: this.input.value === text });
@@ -1425,6 +1626,7 @@ class KinChat extends HTMLElement {
         }
         // Only clear what was sent: typing that continued meanwhile stays.
         if (this.input.value === text) this.input.value = "";
+        this.stopReplying();
         await this.queueRender("reset");
       }
     } catch (error) {

@@ -295,6 +295,9 @@ pub enum EventKind {
         content_kind: ChatContentKind,
         blob_ref: [u8; 32],
         blob_key: [u8; 32],
+        /// The message this one answers (#129). Its text is looked up at
+        /// render time, never copied.
+        reply_to: Option<ChatMessageId>,
     },
     /// The author replaces a message's content with a new blob.
     ChatMessageEdited {

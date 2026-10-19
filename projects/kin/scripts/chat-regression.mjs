@@ -38,6 +38,16 @@ export async function chatRegressions() {
     return messageId;
   };
   const notify = () => { for (const listener of listeners) listener(); };
+  // What a reply quotes, looked up from its original every time (#129).
+  const quoteOf = (id) => {
+    const original = log.find((row) => row.messageId === id);
+    if (!original) return { messageId: id, state: "unknown", contentKind: null, authorId: null, index: null, blobRef: null, blobKey: null, text: null };
+    const shown = original.status === "live" || original.status === "edited";
+    return {
+      messageId: id, state: original.status, contentKind: original.contentKind, authorId: original.authorId, index: log.indexOf(original),
+      blobRef: shown ? original.blobRef : null, blobKey: shown ? original.blobKey : null, text: shown ? held.get(original.blobRef) ?? null : null,
+    };
+  };
   const calls = { send: [], edit: [], remove: [], hide: [], attach: [] };
   const attachments = new Map();
   const room = {
@@ -58,6 +68,7 @@ export async function chatRegressions() {
         start: first,
         messages: log.slice(first, end).map((message, offset) => ({
           ...message,
+          replyTo: message.replyOf ? quoteOf(message.replyOf) : null,
           index: first + offset,
           text: message.blobRef ? held.get(message.blobRef) ?? null : null,
         })),
@@ -70,6 +81,16 @@ export async function chatRegressions() {
         const text = sources.get(message.blobRef);
         if (text === undefined) results.set(message.messageId, { pending: true });
         else { held.set(message.blobRef, text); results.set(message.messageId, { text }); }
+      }
+      return results;
+    },
+    async loadQuoteTexts(messages) {
+      const results = new Map();
+      for (const { replyTo } of messages) {
+        if (!replyTo?.blobRef || replyTo.text !== null) continue;
+        const text = sources.get(replyTo.blobRef);
+        if (text === undefined) results.set(replyTo.messageId, { pending: true });
+        else { held.set(replyTo.blobRef, text); results.set(replyTo.messageId, { text }); }
       }
       return results;
     },
@@ -276,7 +297,7 @@ export async function chatRegressions() {
   await settle();
   const menu = chat.querySelector(`[data-message-id="${ownRow.dataset.messageId}"] .chat-menu`);
   check(menu && document.activeElement === menu.querySelector("button"), "menu opens with focus");
-  check([...menu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,edit,delete", "own message actions (not Delete for me while it waits to send)");
+  check([...menu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,reply,edit,delete", "own message actions (not Delete for me while it waits to send)");
   menu.querySelector('[data-action="edit"]').click();
   await settle();
   check(input.value === "Send button" && chat.querySelector(".chat-cancel").hidden === false, "editing in the composer");
@@ -295,7 +316,7 @@ export async function chatRegressions() {
   theirs.querySelector(".chat-menu-button").click();
   await settle();
   const theirMenu = chat.querySelector(`[data-message-id="${theirs.dataset.messageId}"] .chat-menu`);
-  check([...theirMenu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,remove,hide", "an admin may remove others' messages");
+  check([...theirMenu.querySelectorAll("button")].map((button) => button.dataset.action).join() === "copy,reply,remove,hide", "an admin may remove others' messages");
   const realConfirm = window.confirm;
   const questions = [];
   window.confirm = (question) => { questions.push(question); return true; };
@@ -732,6 +753,92 @@ export async function chatRegressions() {
     settings.remove();
   }
   room.presence = undefined;
+
+  // Replies (#129): quote bar, quote above the reply, jump, deleted and hidden.
+  {
+    calls.reply = [];
+    const plainSend = room.send;
+    room.send = async function send(text, { replyTo = null } = {}) {
+      calls.reply.push(replyTo);
+      const result = await plainSend.call(this, text);
+      if (replyTo) log.find((row) => row.messageId === result.messageId).replyOf = replyTo;
+      return result;
+    };
+    const target = rows().findLast((row) => !row.classList.contains("own") && row.querySelector(".chat-menu-button") && !row.querySelector(".chat-gone"));
+    const targetId = target.dataset.messageId;
+    const targetText = log.find((row) => row.messageId === targetId);
+    target.querySelector(".chat-menu-button").click();
+    await settle();
+    const reply = chat.querySelector(`[data-message-id="${targetId}"] [data-action="reply"]`);
+    check(reply && reply.textContent === "Reply", "Reply is among the message actions");
+    reply.click();
+    await settle();
+    const bar = chat.querySelector(".chat-replying");
+    check(!bar.hidden && bar.textContent.includes("Replying to") && bar.textContent.includes(held.get(targetText.blobRef).slice(0, 10)), "a quote bar shows above the box");
+    check(document.activeElement === chat.querySelector("textarea"), "focus goes to the message box");
+    chat.querySelector("textarea").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    check(bar.hidden && calls.reply.length === 0, "Escape cancels the reply");
+    target.querySelector(".chat-menu-button").click();
+    await settle();
+    chat.querySelector(`[data-message-id="${targetId}"] [data-action="reply"]`).click();
+    await settle();
+    bar.querySelector("button").click();
+    check(bar.hidden, "Cancel removes the quote bar");
+    // Answer for real.
+    chat.querySelector(`[data-message-id="${targetId}"] .chat-menu-button`).click();
+    await settle();
+    chat.querySelector(`[data-message-id="${targetId}"] [data-action="reply"]`).click();
+    await settle();
+    chat.querySelector("textarea").value = "Answering that";
+    chat.querySelector(".chat-form").requestSubmit();
+    await settle();
+    check(calls.reply.at(-1) === targetId && bar.hidden, "the reply goes with the message it answers and the bar clears");
+    const answer = rows().findLast((row) => textOf(row) === "Answering that");
+    const quote = answer.querySelector(".chat-quote");
+    check(quote?.tagName === "BUTTON" && quote.textContent.includes(held.get(targetText.blobRef).slice(0, 10)) && quote.getAttribute("aria-label").includes("Go to the original message"), "the reply shows a compact quote button");
+    // Jump to an original that is far outside the window.
+    const answerEntry = log.find((row) => row.messageId === answer.dataset.messageId);
+    const old = log.find((row, index) => index > 2 && row.status === "live" && !room.hidden.has(row.messageId));
+    answerEntry.replyOf = old.messageId;
+    notify();
+    await settle();
+    check(!chat.querySelector(`[data-message-id="${old.messageId}"]`), "the old original is not on screen yet");
+    rows().findLast((row) => row.dataset.messageId === answer.dataset.messageId).querySelector(".chat-quote").click();
+    await settle();
+    await settle();
+    const arrived = chat.querySelector(`[data-message-id="${old.messageId}"]`);
+    check(arrived && arrived.classList.contains("chat-highlight"), "the jump loads and highlights the original");
+    chat.jump.click();
+    await settle();
+    await settle();
+    check(chat.querySelector(`[data-message-id="${answer.dataset.messageId}"]`), "back at the newest messages");
+    // Edits show in the quote; deletion and hiding say so.
+    const near = log[log.length - 3];
+    answerEntry.replyOf = near.messageId;
+    Object.assign(near, { status: "deleted", blobRef: null, blobKey: null });
+    notify();
+    await settle();
+    await settle();
+    const deletedQuote = () => chat.querySelector(`[data-message-id="${answer.dataset.messageId}"] .chat-quote`);
+    check(deletedQuote()?.textContent === "Original message was deleted", "a deleted original says so");
+    room.hidden.add(near.messageId);
+    notify();
+    await settle();
+    check(deletedQuote()?.textContent === "Message hidden" && deletedQuote().tagName === "P", "a hidden original says so and isn't a link");
+    room.hidden.delete(near.messageId);
+    answerEntry.replyOf = "ee".repeat(16);
+    notify();
+    await settle();
+    check(deletedQuote()?.textContent === "Original message isn't available", "an original this device lacks says so");
+    // Not-yet-downloaded originals load on demand.
+    const lazy = add(other, "Fetched when quoted", { incoming: true });
+    answerEntry.replyOf = lazy;
+    notify();
+    await settle();
+    await settle();
+    check(deletedQuote()?.textContent.includes("Fetched when quoted"), "an original that wasn't downloaded loads for the quote");
+    room.send = plainSend;
+  }
 
   // Reactions (#127): quick bar, chips as toggle buttons, who reacted, read-only.
   {
