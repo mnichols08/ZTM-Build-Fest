@@ -171,7 +171,7 @@ test("the household chat rides after the history, in the real container (#136)",
   const blob = { ref: sealed.ref, size: sealed.ciphertext.length, parts: null };
   const notes = chatNotes({ memberId: "11".repeat(16), hidden: [] });
   const bytes = await write(arenaWith(3).view(), {
-    chat: { notes, view: chatEventsView(chatRecords), blobs: [blob], loadBlob: () => sealed.ciphertext, blobSegmentLength, blobSegment },
+    chat: { notes, view: chatEventsView(chatRecords.view()), blobs: [blob], loadBlob: () => sealed.ciphertext, blobSegmentLength, blobSegment },
   });
   const { metadataLength, ciphertextLength } = engine.archiveLayout(bytes);
   const section = openChatSection();

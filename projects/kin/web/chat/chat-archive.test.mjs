@@ -78,7 +78,7 @@ async function read(bytes, { chatEventCount, chatBlobCount }) {
 async function chatArchive(events, blobs) {
   const records = recordsOf(events);
   const bytes = await write({
-    notes: chatNotes({ memberId: ME, hidden: [hex(9), hex(2)] }), view: chatEventsView(records), blobs,
+    notes: chatNotes({ memberId: ME, hidden: [hex(9), hex(2)] }), view: chatEventsView(records.view()), blobs,
     loadBlob: (blob) => blob.ciphertext, blobSegmentLength, blobSegment,
   });
   return { bytes, records };
@@ -283,4 +283,23 @@ test("a blob a device deleted is not brought back by an import", async () => {
   assert.equal(await again.get(blob.ref), null);
   again.close();
   assert.equal(await blobRef(blob.ciphertext), blob.ref);
+});
+
+test("the relay's signed copy replaces an imported event, so it is authenticated and readable by keys", async () => {
+  const indexedDB = fakeIndexedDB();
+  const section = await sectionOf(2, []);
+  await validateChatSection(section, { engine: checkingEngine(), counts: { eventCount: 2, blobCount: 0 }, householdId: HOUSEHOLD, memberId: ME });
+  await importChatSection(section, { householdId: HOUSEHOLD, vault, hidden: [], indexedDB, keyRange: fakeKeyRange });
+  const log = await ChatLogStore.open(HOUSEHOLD, { indexedDB, keyRange: fakeKeyRange });
+  assert.equal(await log.addReceived([{ eventId: section.eventIds[0], keyEpoch: 1 }], "c1"), 0, "nothing new");
+  const rows = await log.eventsFrom(1);
+  assert.deepEqual(rows.map((row) => Boolean(row.envelope)), [true, false]);
+  assert.deepEqual(rows.map((row) => row.order), [1, 2], "in the same place");
+  log.close();
+});
+
+test("a member-less restore keeps nobody's deleted-for-me list", async () => {
+  const section = await sectionOf(1, []);
+  const summary = await validateChatSection(section, { engine: checkingEngine(), counts: { eventCount: 1, blobCount: 0 }, householdId: HOUSEHOLD, memberId: null });
+  assert.deepEqual(summary.hidden, []);
 });

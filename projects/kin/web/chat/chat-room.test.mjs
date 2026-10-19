@@ -1543,7 +1543,7 @@ test("an export carries the chat to a device that has none, which then merges wi
   const bytes = await writeArchive({
     engine: stub, metadata: new TextEncoder().encode("meta"), key: archiveKey, noncePrefix: prefix, vaultId: "ab".repeat(16),
     context: { key: "installation" }, attachments: [], view: { length: 0 },
-    chat: { notes: plan.notes, view: chatEventsView(plan.records), blobs: choice.chosen, loadBlob: plan.loadBlob, blobSegmentLength, blobSegment },
+    chat: { notes: plan.notes, view: chatEventsView(plan.view), blobs: choice.chosen, loadBlob: plan.loadBlob, blobSegmentLength, blobSegment },
     check: async () => {},
   });
   const view = new DataView(bytes.buffer);
@@ -1579,6 +1579,15 @@ test("an export carries the chat to a device that has none, which then merges wi
   assert.deepEqual([...opened.values()].map((result) => result.text), ["Dinner at 6 🍝", "Bring bread"], "the content opens from the imported blobs");
   assert.equal(shown[2].blobRef && await b.blobs.store.get(shown[2].blobRef), null, "nothing of the deleted message's content came back");
 
+  // Sealed under a root this device no longer has (the recovery key was
+  // replaced): the room opens without those events instead of stopping.
+  const rotated = { ...vault, open: async () => { throw Object.assign(new Error("Kin could not verify the protected store."), { code: "protected_store_corrupt" }); } };
+  const lost = await openRoom({ ...fresh, keyStore: { ...phone.keyStore, vault: rotated } }, s);
+  await lost.room.refresh();
+  assert.equal(lost.room.unreadableImports, 4);
+  assert.equal(lost.room.records.length, 0);
+  lost.room.close();
+
   // The household moved on after the export; syncing brings it here and stores nothing twice.
   await a.room.remove(a.room.page().messages.find((message) => message.messageId === dinner.messageId));
   await a.room.sync({ status: STATUS, devices });
@@ -1587,12 +1596,4 @@ test("an export carries the chat to a device that has none, which then merges wi
   assert.deepEqual(b.room.page().messages.map((message) => message.status), ["deleted", "live", "deleted"], "a deletion made after the export removes that content too");
   assert.equal(await b.blobs.store.get(dinner.blobRef ?? shown[0].blobRef), null);
 
-  // Sealed under a root this device no longer has (the recovery key was
-  // replaced): the room opens without those events instead of stopping.
-  b.room.close();
-  const rotated = { ...vault, open: async () => { throw Object.assign(new Error("Kin could not verify the protected store."), { code: "protected_store_corrupt" }); } };
-  const c = await openRoom({ ...fresh, keyStore: { ...phone.keyStore, vault: rotated } }, s);
-  await c.room.refresh();
-  assert.equal(c.room.unreadableImports, 4);
-  assert.equal(c.room.records.length, 1, "what came from the relay since is still read");
 });

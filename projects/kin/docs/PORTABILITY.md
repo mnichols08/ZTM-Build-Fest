@@ -158,10 +158,21 @@ ignoring part of it. Layout: `web/security/archive-stream.js`,
   device, so a restore never brings back content that was deleted for everyone
   after the export was made while the household is still syncing. A blob this
   device already deleted is never stored again.
-- **Replacing the recovery key.** Imported chat events are sealed by the
-  vault's root, which a recovery key replacement changes. Chat then opens
-  without them rather than stopping, and restoring the same export again seals
-  them afresh. Events from the relay are unaffected.
+- **Trust.** An imported event carries no relay signature; it is trusted
+  because the archive is authenticated under its recovery key. When the
+  household syncs, the relay's signed copy of each event replaces the
+  imported one in place, and from then on it is authenticated like any other.
+  A deleted message's post event still names its content key; the content
+  itself is not in the export or on the relay, but a copy of the old
+  ciphertext someone kept elsewhere would still open with it.
+- **Replacing the recovery key.** Imported chat events not yet replaced by the
+  relay's copy are sealed by the vault's root, which a recovery key replacement
+  changes. Chat then opens without them rather than stopping, and restoring the
+  same export again seals them afresh. Events from the relay are unaffected.
+- **Consistency.** An export is a snapshot: the events, the deletions that
+  decide which blobs are left out (including a deleted attachment's parts) and
+  the manifest counts are read together, so events that sync meanwhile are not
+  half in the file.
 
 ### v0.10.3 bounded KARC v1 processing
 

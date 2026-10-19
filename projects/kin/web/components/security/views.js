@@ -30,7 +30,6 @@ export class SecurityViews {
     if (!room?.chatExportPlan) return;
     const row = document.createElement("div");
     row.className = "security-chat-option";
-    row.hidden = true;
     const box = document.createElement("input");
     box.type = "checkbox";
     box.id = "archive-include-chat";
@@ -44,14 +43,14 @@ export class SecurityViews {
     estimate.setAttribute("role", "status");
     box.setAttribute("aria-describedby", estimate.id);
     row.append(box, " ", label, estimate);
-    parent.append(row);
-    this.host.chatOption = box;
+    // Shown (and counted) only once there is chat to include.
     void room.chatExportPlan().then((plan) => {
-      if (!row.isConnected || !plan.events) return;
+      if (!parent.isConnected || !plan.events) return;
+      parent.prepend(row);
+      this.host.chatOption = box;
       const megabytes = (plan.blobBytes + plan.events * 400) / (1024 * 1024);
       const size = megabytes < 0.1 ? "under 0.1 MB" : `about ${megabytes.toFixed(1)} MB`;
       estimate.textContent = `${plan.events.toLocaleString()} chat events and ${plan.blobs.length.toLocaleString()} photos, files and messages, ${size}. Messages deleted for everyone are included only as deleted placeholders, and your "delete for me" list is yours alone.`;
-      row.hidden = false;
     }, () => {});
   }
 

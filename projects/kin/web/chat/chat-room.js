@@ -726,13 +726,19 @@ export class ChatRoom {
     this.assertOpen();
     if (this.access === "none") throw new ChatRoomError("Chat isn't available to you.", "chat_no_access");
     await this.refresh();
+    // The events and the deletions they hold are read together, synchronously:
+    // a snapshot, so events synced while the export is made are not in it.
+    const view = this.records.view();
     const { retired } = this.page({ limit: 1, includeText: false, includeRetired: true });
     const gone = new Set(retired);
-    const blobs = (await this.blobs.store.inventory()).filter((blob) => !gone.has(blob.ref));
+    const inventory = await this.blobs.store.inventory();
+    // A deleted attachment's parts go with its manifest.
+    for (const blob of inventory) if (gone.has(blob.ref)) for (const part of blob.parts ?? []) gone.add(part);
+    const blobs = inventory.filter((blob) => !gone.has(blob.ref));
     const state = await this.store.state();
     return {
-      records: this.records,
-      events: this.records.length,
+      view,
+      events: view.length,
       blobs,
       blobBytes: blobs.reduce((total, blob) => total + blob.size, 0),
       notes: chatNotes({ memberId: this.identity.memberId, hidden: state.hidden ?? [] }),

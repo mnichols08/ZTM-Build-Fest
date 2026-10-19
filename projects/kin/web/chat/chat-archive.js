@@ -103,9 +103,8 @@ export function parseBlobSegment(bytes) {
   return { ref: hexOf(bytes.subarray(0, REF_BYTES)), parts: count ? parts : null, ciphertext: bytes.slice(start) };
 }
 
-/** The records of a chat log as the archive writer reads them (sequences 1, 2, 3 ...). */
-export function chatEventsView(records) {
-  const view = records.view();
+/** A snapshot view of a chat log as the archive writer reads it (sequences 1, 2, 3 ...). */
+export function chatEventsView(view) {
   return {
     length: view.length,
     recordLength: (index) => view.recordLength(index),
@@ -155,6 +154,7 @@ export function appendChatBlob(section, bytes) {
 /** Wipes a chat section. */
 export function discardChatSection(section) {
   section?.records.clear();
+  if (section) { section.notes = null; section.eventIds = []; }
   for (const blob of section?.blobs ?? []) blob.ciphertext.fill(0);
   if (section) section.blobs = [];
 }
@@ -196,7 +196,7 @@ export async function validateChatSection(section, { engine, counts, householdId
   }
   // The deleted-for-me list is the exporting member's own: it is only kept
   // when the household being restored is that member's.
-  const hidden = memberId && notes.memberId !== memberId ? [] : notes.hidden;
+  const hidden = memberId && notes.memberId === memberId ? notes.hidden : [];
   return Object.freeze({ eventCount: section.records.length, blobCount: section.blobs.length, blobBytes: section.blobBytes, hidden });
 }
 
@@ -215,7 +215,8 @@ export async function importChatSection(section, { householdId, vault, hidden, i
     const entries = [];
     for (let index = 0; index < view.length; index += 1) {
       const eventId = section.eventIds[index];
-      entries.push({ eventId, sealed: await vault.seal(view.record(index).slice(), { store: "chat-import", id: eventId }) });
+      const copy = view.record(index).slice();
+      try { entries.push({ eventId, sealed: await vault.seal(copy, { store: "chat-import", id: eventId }) }); } finally { copy.fill(0); }
     }
     // Blobs first: an event is never there without the content it names.
     let storedBlobs = 0;

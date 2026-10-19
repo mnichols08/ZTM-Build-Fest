@@ -27,7 +27,8 @@ export class SecurityArchive {
     const progress = this.progress("Export progress");
     // The chat goes in when the option is shown and checked (#136).
     const option = this.host.chatOption;
-    const chat = option?.isConnected && option.checked ? await app.chat.room.chatExportPlan() : null;
+    let chat = null;
+    if (option?.isConnected && option.checked) chat = await app.chat.room.chatExportPlan().catch(() => null);
     this.host.assertCurrentOperation(operation);
     const report = {};
     let bytes;
@@ -155,7 +156,7 @@ export class SecurityArchive {
           this.host.message.textContent = restored.alreadyPresent
             ? "This household already contains the export's history and attachments. Nothing was duplicated."
             : "Your household is restored on this device. This device still needs household approval before sync can resume.";
-          if (restored.chat) this.host.message.textContent += " Its chat will appear in Chat once this device is approved.";
+          if (restored.chat && !restored.alreadyPresent) this.host.message.textContent += " Its chat will appear in Chat once this device is approved.";
           if (chatFailed) this.host.message.textContent += " The household's chat could not be saved on this device. Restore the same export again to try the chat once more.";
         }));
         cancel.addEventListener("click", () => {
