@@ -162,6 +162,12 @@ fn base(c: char) -> Option<&'static str> {
         code @ 0xe0..=0xff => Some(LATIN_1[(code - 0xe0) as usize]),
         0x132 | 0x133 => Some("ij"),
         0x152 | 0x153 => Some("oe"),
+        0x1a0 | 0x1a1 => Some("o"),
+        0x1af | 0x1b0 => Some("u"),
+        0x1cd | 0x1ce => Some("a"),
+        0x1cf | 0x1d0 => Some("i"),
+        0x1d1 | 0x1d2 => Some("o"),
+        0x1d3 | 0x1d4 => Some("u"),
         0x219 => Some("s"),
         0x21b => Some("t"),
         0x3c2 => Some("\u{3c3}"),
@@ -234,23 +240,16 @@ fn splits_grapheme(text: &str, start: usize, end: usize) -> bool {
             return true;
         }
     }
-    if text[..end].chars().next_back().is_some_and(regional) {
-        let inside = text[start..end]
+    // A match ending on an indicator that pairs with the next one splits it.
+    if text[..end].chars().next_back().is_some_and(regional)
+        && text[end..].chars().next().is_some_and(regional)
+    {
+        let run = text[..end]
             .chars()
             .rev()
             .take_while(|&c| regional(c))
             .count();
-        let before = text[..start]
-            .chars()
-            .rev()
-            .take_while(|&c| regional(c))
-            .count();
-        let run = if inside == end - start {
-            inside + before
-        } else {
-            inside
-        };
-        if run % 2 == 1 && text[end..].chars().next().is_some_and(regional) {
+        if run % 2 == 1 {
             return true;
         }
     }

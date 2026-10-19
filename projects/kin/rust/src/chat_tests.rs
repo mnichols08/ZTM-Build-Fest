@@ -2468,3 +2468,79 @@ fn search_over_a_hundred_thousand_events_stays_under_fifty_milliseconds() {
     }
     assert!(best.as_millis() < 50, "took {best:?}");
 }
+
+#[test]
+fn search_folds_vietnamese_romanian_greek_and_dotted_capitals() {
+    let (mut history, mut texts) =
+        talk(&["Thương và Người, Việt", "școala, țară", "İstanbul", "ΟΔΟΣ"]);
+    let query = |query| Find {
+        query,
+        limit: 10,
+        ..Find::default()
+    };
+    for (word, expected) in [
+        ("thuong", 1),
+        ("nguoi", 1),
+        ("viet", 1),
+        ("scoala", 2),
+        ("tara", 2),
+        ("istanbul", 3),
+        ("οδος", 4),
+        ("οδοσ", 4),
+    ] {
+        assert_eq!(
+            ids_of(&search(&mut history, &mut texts, &query(word))),
+            [expected],
+            "{word}"
+        );
+    }
+}
+
+#[test]
+fn search_does_not_split_graphemes_at_either_end() {
+    let (mut history, mut texts) = talk(&[
+        "\u{1F1FA}\u{1F1F8}\u{1F1EB}\u{1F1F7}",
+        "e\u{301}x and \u{1F468}\u{200D}\u{1F469}",
+    ]);
+    let query = |query| Find {
+        query,
+        limit: 10,
+        ..Find::default()
+    };
+    // Flags pair up from the start: US|FR, never U|SF|R.
+    assert_eq!(
+        ids_of(&search(
+            &mut history,
+            &mut texts,
+            &query("\u{1F1F8}\u{1F1EB}")
+        )),
+        Vec::<u8>::new()
+    );
+    assert_eq!(
+        ids_of(&search(
+            &mut history,
+            &mut texts,
+            &query("\u{1F1FA}\u{1F1F8}")
+        )),
+        [1]
+    );
+    assert_eq!(
+        ids_of(&search(
+            &mut history,
+            &mut texts,
+            &query("\u{1F1EB}\u{1F1F7}")
+        )),
+        [1]
+    );
+    // A combining mark stays with its letter (so "e" finds "é", whole); a
+    // joiner with its pair.
+    assert_eq!(ids_of(&search(&mut history, &mut texts, &query("e"))), [2]);
+    assert_eq!(
+        ids_of(&search(&mut history, &mut texts, &query("\u{1F469}"))),
+        Vec::<u8>::new()
+    );
+    assert_eq!(
+        ids_of(&search(&mut history, &mut texts, &query("\u{1F468}"))),
+        Vec::<u8>::new()
+    );
+}

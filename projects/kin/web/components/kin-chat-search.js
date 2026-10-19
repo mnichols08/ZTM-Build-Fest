@@ -19,7 +19,10 @@ const DATE_TIME = new Intl.DateTimeFormat(undefined, { month: "short", day: "num
 function dayStart(value, days = 0) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!match) return null;
-  const time = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days).getTime();
+  // setFullYear keeps years 0 to 99 as typed (the constructor maps them to 19xx).
+  const date = new Date(2000, 0, 1);
+  date.setFullYear(Number(match[1]), Number(match[2]) - 1, Number(match[3]) + days);
+  const time = date.getTime();
   return Number.isFinite(time) ? Math.max(0, time) : null;
 }
 
