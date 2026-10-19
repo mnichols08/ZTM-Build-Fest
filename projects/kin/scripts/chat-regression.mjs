@@ -1222,6 +1222,7 @@ export async function chatRegressions() {
       share.form.requestSubmit();
       await settle();
       check(share.error.textContent === "No luck." && share.dialog.open, "a failed save stays open with the reason");
+      share.reset();
       share.open({ kind: "todo", text: "Look", files: [{ name: "big.zip", size: 9e6, type: "application/zip", load: async () => null }], limited: false, submit: async () => ({ ok: true }) });
       check(!share.audience.textContent.includes("can't read the chat") && share.audience.textContent.includes("Everyone in your household"), "no extra warning when everyone can read the chat");
       check(share.files.querySelector("input").disabled && share.files.querySelector(".chat-share-why")?.textContent.includes("Can't be copied"), "a file households can't hold says why it can't be copied");

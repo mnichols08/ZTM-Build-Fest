@@ -29,7 +29,10 @@ export function noteTitleFrom(text) {
   let letters = Array.from(first.replace(/\p{Cc}/gu, " "));
   if (letters.length > MAX_TITLE_CHARS) letters = [...letters.slice(0, MAX_TITLE_CHARS - 1), "…"];
   // A title is also held to 256 bytes (emoji are four each).
-  while (letters.length > 1 && TEXT_ENCODER.encode(letters.join("")).length > MAX_TITLE_BYTES) letters.splice(-2, 1);
+  while (letters.length > 1 && TEXT_ENCODER.encode(letters.join("")).length > MAX_TITLE_BYTES) {
+    if (letters.at(-1) === "…") letters.splice(-2, 1);
+    else letters = [...letters.slice(0, -2), "…"];
+  }
   return letters.join("").trim();
 }
 
