@@ -289,6 +289,53 @@ export async function fridgeRegressions(client, until) {
   assert.equal(reopened.after, reopened.before, "the reopened fridge matches");
   assert.equal(reopened.waiting, true, "unsent changes are still waiting");
 
+  // ---- Acceptance (#325): more screens, 200% zoom, dark and forced colours --
+  await page(`(async () => {
+    const { newBoardId } = await import("/board/board-room.js");
+    await window.__fridgeRoom.change({ type: "add-stroke", strokeId: newBoardId(), colour: 5, width: 2, points: [[400, 400], [1600, 1400], [2600, 900]] });
+    return true;
+  })()`);
+  for (const [label, metrics] of [
+    ["320×568", { width: 320, height: 568, deviceScaleFactor: 2, mobile: true }],
+    ["phone landscape", { width: 844, height: 390, deviceScaleFactor: 3, mobile: true }],
+    ["820×1180", { width: 820, height: 1180, deviceScaleFactor: 2, mobile: true }],
+    ["1024×768", { width: 1024, height: 768, deviceScaleFactor: 2, mobile: true }],
+    // 200% browser zoom on a 1280×800 desktop: half the CSS pixels.
+    ["desktop at 200%", { width: 640, height: 400, deviceScaleFactor: 2, mobile: false }],
+  ]) {
+    await setViewport(client, metrics);
+    await page(`document.querySelector("kin-fridge .fridge-door").scrollIntoView({ block: "center" })`);
+    const rect = await door();
+    const layout = await page(`({ scrollWidth: document.documentElement.scrollWidth, innerWidth, small: [...document.querySelectorAll("kin-fridge .fridge-tools button, kin-fridge > .fridge-fullscreen")].filter((b) => !b.hidden && b.getClientRects().length && b.getBoundingClientRect().height < 44).map((b) => b.textContent || b.getAttribute("aria-label")) })`);
+    assert.ok(Math.abs(rect.width / rect.height - 0.75) < 0.01, `${label}: the door keeps its 3:4 shape (${rect.width}×${rect.height})`);
+    assert.ok(rect.width >= 240 && rect.right <= layout.innerWidth, `${label}: the door fits the screen`);
+    assert.ok(layout.scrollWidth <= layout.innerWidth, `${label}: no horizontal scroll`);
+    assert.deepEqual(layout.small, [], `${label}: every visible control is at least 44px tall`);
+  }
+  const inkCheck = () => page(`(() => {
+    const fridge = document.querySelector("kin-fridge");
+    fridge.drawInk();
+    const canvas = fridge.querySelector(".fridge-ink");
+    const data = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+    let inked = 0;
+    for (let i = 3; i < data.length; i += 4) if (data[i]) inked += 1;
+    const moving = document.getAnimations().filter((animation) => fridge.contains(animation.effect?.target ?? null)).length;
+    return { inked, palette: fridge.palette(), door: getComputedStyle(fridge.querySelector(".fridge-door")).backgroundColor, moving };
+  })()`);
+  await setViewport(client, { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+  const light = await inkCheck();
+  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "dark" }] });
+  const dark = await inkCheck();
+  assert.notEqual(dark.door, light.door, "dark mode darkens the door");
+  assert.notDeepEqual(dark.palette, light.palette, "dark mode remaps the ink colours");
+  assert.ok(dark.inked > 0, "drawings stay visible in dark mode");
+  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "active" }, { name: "prefers-reduced-motion", value: "reduce" }] });
+  const forced = await inkCheck();
+  assert.ok(forced.palette.every((colour) => colour === "CanvasText"), "forced colours draw every ink in the system text colour");
+  assert.ok(forced.inked > 0, "drawings stay visible in forced colours");
+  assert.equal(forced.moving, 0, "nothing on the fridge moves with reduced motion");
+  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "none" }, { name: "prefers-reduced-motion", value: "no-preference" }, { name: "prefers-color-scheme", value: "light" }] });
+
   // Clean up: no room, no fridge database left behind for later checks.
   await page(`(async () => {
     const app = document.querySelector("kin-app");
@@ -303,5 +350,5 @@ export async function fridgeRegressions(client, until) {
   })()`);
   await client.send("Emulation.setTouchEmulationEnabled", { enabled: false });
   await client.send("Emulation.clearDeviceMetricsOverride");
-  return "PASS fridge: 3:4 door fits phone, tablet and desktop; finger, pen and mouse drawing; second-finger cancel; palm rejection; eraser, undo and redo; magnets by dialog, keyboard, menu and drag; clear and bring back; kitchen-screen rail, full screen and its lock note, through the real engine (#317, #324)";
+  return "PASS fridge: 3:4 door fits phone, tablet and desktop; finger, pen and mouse drawing; second-finger cancel; palm rejection; eraser, undo and redo; magnets by dialog, keyboard, menu and drag; clear and bring back; kitchen-screen rail, full screen and its lock note; 320×568 to desktop, 200% zoom, dark mode, forced colours and reduced motion, through the real engine (#317, #324, #325)";
 }
