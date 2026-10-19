@@ -339,6 +339,19 @@ export class HouseholdViews {
     requestAnimationFrame(() => code.focus());
   }
 
+  /** Puts the name editor in `slot` once this member's current name is
+   * known. A failed read still offers it (as "Set my name"); a slot the
+   * panel has since replaced is left alone. */
+  async fillNameSlot(slot) {
+    let current = null;
+    try {
+      const names = (await this.host.memberNames.load()) ?? [];
+      current = names.find((entry) => entry?.memberId === this.host.identity?.memberId)?.preferredName ?? null;
+    } catch { /* Offer the editor without the current name. */ }
+    if (slot.isConnected === false) return;
+    slot.replaceChildren(this.ctx.membership.nameControl(current, { onSaved: () => this.host.render() }));
+  }
+
   renderMember() {
     // Add a computer (#101) takes the panel while it is open.
     if (this.ctx.linkApproval?.open) return this.ctx.linkApproval.render();
@@ -372,6 +385,17 @@ export class HouseholdViews {
       }
       if (this.host.syncStatus?.memberKind === "adult")
         this.host.button("Trusted devices", () => this.host.showDevices(), "secondary");
+      // Any member can choose the name their household sees (#225), here on
+      // the panel every member reaches: the trusted-device list is Adults
+      // only. Names are read back from synced history, so this needs sync.
+      if (this.host.memberNames?.rename && this.host.syncStatus?.enabled) {
+        const hint = this.host.text("Choose the name your household sees. It changes no access.");
+        if (hint) hint.className = "household-choice-hint";
+        const slot = document.createElement("div");
+        slot.className = "member-name-slot";
+        this.host.append(slot);
+        void this.fillNameSlot(slot);
+      }
       this.host.button("Household access", () => this.host.showHousehold(), "secondary");
       this.host.button("Log out", () => this.ctx.auth.logout(), "secondary");
       return;

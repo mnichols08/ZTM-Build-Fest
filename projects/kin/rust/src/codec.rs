@@ -56,6 +56,7 @@ pub fn kind_code(kind: &EventKind) -> u16 {
         EventKind::ChatPinSet { .. } => 48,
         EventKind::ChatPollVote { .. } => 49,
         EventKind::ChatPollClosed { .. } => 50,
+        EventKind::MemberNamed { .. } => 51,
     }
 }
 
@@ -309,6 +310,16 @@ pub fn encode_event(event: &EventEnvelope) -> Result<Vec<u8>, KinError> {
                 None => payload.extend_from_slice(&0u32.to_le_bytes()),
             }
         }
+        // A member's preferred name (#224): u32 length, then UTF-8; length 0
+        // clears it.
+        EventKind::MemberNamed { name } => match name {
+            Some(name) => {
+                let name = crate::state::normalize_member_name(name)?;
+                payload.extend_from_slice(&(name.len() as u32).to_le_bytes());
+                payload.extend_from_slice(name.as_bytes());
+            }
+            None => payload.extend_from_slice(&0u32.to_le_bytes()),
+        },
         // Chat (#109): message ID, then the blob reference and key.
         EventKind::ChatMessagePosted {
             message_id,

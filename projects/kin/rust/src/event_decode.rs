@@ -543,6 +543,20 @@ pub fn decode_event(record: &[u8]) -> Result<EventEnvelope, KinError> {
                 nickname,
             }
         }
+        // A member's preferred name (#224): length 0 clears it; a name must
+        // already be canonical.
+        (1, 51) => {
+            let name = match device_text(payload, 0)? {
+                Some(name) => {
+                    if crate::state::normalize_member_name(name).ok().as_deref() != Some(name) {
+                        return Err(KinError::MalformedProtocol);
+                    }
+                    Some(name.to_owned())
+                }
+                None => None,
+            };
+            EventKind::MemberNamed { name }
+        }
         // Chat (#109). IDs, blob references and keys are never zero.
         (1, 44) => {
             if payload.len() < 84 || !valid_timestamp(read_i64(record, 68)?) {

@@ -211,6 +211,36 @@ test("device names describe, nickname, clear and replay outside the projection (
   assert.equal(engine.applyEvents(records, asOf, null, day).items.length, 0);
 });
 
+test("members set, rename and clear only their own name outside the projection (#224)", async () => {
+  const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
+  const hex = (value) => [...value].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const mikey = new Uint8Array(16).fill(0xbb), sam = new Uint8Array(16).fill(0xbe);
+  const context = (sequence, actorId = mikey, device = 0xcc) => ({ eventId: new Uint8Array(16).fill(sequence), householdId: new Uint8Array(16).fill(0xaa), actorId, deviceId: new Uint8Array(16).fill(device), timestamp: 1_791_475_200_000 + sequence, logicalTime: BigInt(sequence) });
+  const asOf = 1_791_475_200_100, day = 20261009;
+  const records = [];
+  const run = (command, ctx) => {
+    const result = engine.executeCommand(command, ctx, records, asOf, null, day);
+    records.push(result.encodedEvent);
+    return result;
+  };
+  const named = run({ type: "name-member", name: "  Mikey " }, context(1));
+  assert.equal(new DataView(named.encodedEvent.buffer).getUint16(2, true), 51);
+  assert.equal(engine.eventMetadata(named.encodedEvent).kind, "MEMBER_NAMED");
+  run({ type: "name-member", name: "Sam" }, context(2, sam, 0xdd));
+  assert.deepEqual(engine.memberNames(records, asOf, day), [
+    { memberId: hex(mikey), name: "Mikey" },
+    { memberId: hex(sam), name: "Sam" },
+  ]);
+  // The same name again records nothing; an invalid name is refused.
+  assert.throws(() => engine.executeCommand({ type: "name-member", name: "Mikey" }, context(3, mikey, 0xcd), records, asOf, null, day), (error) => error.code === 4);
+  assert.throws(() => engine.executeCommand({ type: "name-member", name: "M".repeat(33) }, context(3), records, asOf, null, day), (error) => error.code === 4);
+  // Another device of the same member renames; clearing falls back.
+  run({ type: "name-member", name: "Michael" }, context(3, mikey, 0xcd));
+  run({ type: "name-member", name: "" }, context(4, sam, 0xdd));
+  assert.deepEqual(engine.memberNames(records, asOf, day), [{ memberId: hex(mikey), name: "Michael" }]);
+  assert.equal(engine.applyEvents(records, asOf, null, day).items.length, 0);
+});
+
 test("chat posts, edits, deletes and pages from its own log through real WASM (#109)", async () => {
   const engine = await loadCurrentEngine(`data:application/wasm;base64,${initialWasm.toString("base64")}`);
   const member = new Uint8Array(16).fill(0xbb), other = new Uint8Array(16).fill(0xbe), admin = new Uint8Array(16).fill(0xbf);

@@ -76,6 +76,7 @@ Use uppercase entity/action-past-tense names consistently. The milestone column 
 | `ITEM_PLANNING_DATE_CHANGED`    | v0.22.0           | Set or clear an Item's optional fixed civil planning date.     |
 | `DEVICE_DESCRIBED`              | v1.1.0            | Record the automatic name a device reports for itself.         |
 | `DEVICE_NICKNAMED`              | v1.1.0            | Set or clear the nickname a member gives one of their devices. |
+| `MEMBER_NAMED`                  | after v1.2.0      | Set or clear a member's own preferred display name.            |
 | `CHAT_MESSAGE_POSTED`           | v1.1.0 (chat log) | Post a chat message whose content is a separate encrypted blob. |
 | `CHAT_MESSAGE_EDITED`           | v1.1.0 (chat log) | The author replaces a text message's content blob.             |
 | `CHAT_MESSAGE_DELETED`          | v1.1.0 (chat log) | The author deletes a message for everyone, or an admin removes it. |
@@ -228,6 +229,28 @@ the server never learns a name anyone typed ([PRIVACY](PRIVACY.md),
   disguising format characters. Anything else is a malformed event.
 - Device names never appear in the KINS projection or the catch-up summary.
   Hosts read them with `kin_device_names`.
+
+## Member preferred names
+
+`MEMBER_NAMED` (kind 51, #224) is schema 1 and was added after v1.2.0 without
+changing replay protocol 24 ([ABI](ABI.md) has the payload). Like device
+names it lives only inside the encrypted household history, so the relay never
+learns it ([PRIVACY](PRIVACY.md), [IDENTITY](IDENTITY.md#preferred-member-names)).
+
+- The name always belongs to the event's own header actor (after identity
+  bindings). There is no target, so no member can name another.
+- An empty name clears it, and the member falls back to their existing label.
+  The latest event in replay order (logical time, device, event ID) wins, so
+  every device converges whatever order events arrive in; an exact duplicate
+  is skipped. Renames from any of a member's devices are just later events, so
+  the history keeps every earlier name.
+- Names are canonical in the event: trimmed, 1–32 characters, no control
+  characters and no disguising format characters. Anything else is a malformed
+  event. Commands also reject a name that would change nothing.
+- A preferred name is presentation only. It never changes a member ID, role,
+  device trust, event authorship or push filtering, and it never appears in
+  the KINS projection or the catch-up summary. Hosts read names with
+  `kin_member_names`.
 - A v1.0 engine does not know these kinds. It stops at the first one with the
   unsupported-event error above and syncs again once updated
   ([V1.0-COMPATIBILITY](V1.0-COMPATIBILITY.md)).

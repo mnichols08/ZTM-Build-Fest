@@ -13,6 +13,7 @@ kin_history_append(ptr, len)         append a record batch to the history
 kin_history_truncate(count) -> status   keep the first `count` records
 kin_project(ptr, len)                replay the history: KINE context -> KINS
 kin_device_names(ptr, len)           replay the history: KINE context -> KDEV (v1.1)
+kin_member_names(ptr, len)           replay the history: KINE context -> KMNM (after v1.2)
 kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
 kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
 kin_chat_history_truncate(count) -> status   keep the chat log's first `count`
@@ -235,6 +236,7 @@ N  payload
 | 48 | CHAT_PIN_SET (v1.1, chat log) | message ID, on u8 (0 or 1), 3 reserved: 20 bytes |
 | 49 | CHAT_POLL_VOTE (v1.1, chat log) | message ID, choice u16 (bit n is option n; 0 clears), 2 reserved: 20 bytes |
 | 50 | CHAT_POLL_CLOSED (v1.1, chat log) | message ID, 4 reserved: 20 bytes |
+| 51 | MEMBER_NAMED (after v1.2) | name length u32 (zero clears), the header actor's own preferred name (1–32 characters) |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -252,6 +254,15 @@ changes nothing, and a nickname for a device this history has not seen
 described is kept as a nickname-only entry. The latest description and
 nickname in replay order win. Commands enforce the strict rules. Device names are not part of KINS: they leave the engine
 only through `kin_device_names`. An engine older than v1.1 fails both kinds
+with code 3 (unsupported).
+
+A member's preferred name (kind 51, #224, added after v1.2 without a protocol
+change) follows the same canonical-name rules, at most 32 characters, and an
+empty name clears it. It always names the event's own header actor (after
+identity bindings), so no event can name another member. Once decoded it never
+fails replay; the latest name in replay order wins, so devices converge however
+events arrive. Member names are not part of KINS: they leave the engine only
+through `kin_member_names`. An engine from before this addition fails kind 51
 with code 3 (unsupported).
 
 Chat events (kinds 44–50, v1.1, no protocol change) belong to the chat log
@@ -459,6 +470,15 @@ tuned for printed codes under heavy blur.
   payload and a zero entity ID; action 43 (`nickname-device`) carries the
   target device as its entity ID and the nickname as its payload (empty
   clears). Executing either rejects a name that would change nothing.
+- **KMNM v1** (preferred member names, `kin_member_names`, #224): `"KMNM"`,
+  version 1, reserved u16, member count u32, then per member in member-ID
+  order: member ID (16 bytes, after identity bindings), name length u16
+  (never zero) and the name (UTF-8). Members without a preferred name are
+  absent, and hosts keep their own fallback labels. The context is a
+  record-less KINE request, as for `kin_project`. KCMD action 51
+  (`name-member`) carries the name as its payload, a zero entity ID and no
+  option or date (empty clears); there is no target, because a member can
+  only name themselves. Executing it rejects a name that would change nothing.
 - **Chat commands (KCMD 44–50, v1.1).** The entity ID is the message ID. Action 48 (`pin-chat-message`) carries `on` (0 or 1) in the u8 field and no payload.
   Poll commands (#135): action 44 with content kind 3 posts a poll: the
   `date` field carries the option count in its low byte (2–10) and 1 in the

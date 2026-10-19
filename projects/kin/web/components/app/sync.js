@@ -273,6 +273,23 @@ export class SyncController {
     this.ctx.session.assertCurrentSession(session);
     return names;
   }
+  // Members' preferred names (#224) for People & devices, or [] while this
+  // device does not sync. Presentation only: never keys or permissions.
+  async memberNames() {
+    const session = this.ctx.session.captureSession();
+    if (!session.store || !this.app.syncCoordinator) return [];
+    const names = await session.store.memberNames();
+    this.ctx.session.assertCurrentSession(session);
+    return names;
+  }
+  // Sets or clears (empty) this member's own preferred name. The event
+  // always names its author, so there is no target to choose (#224).
+  async setMyName(name) {
+    const session = this.ctx.session.captureSession();
+    await this.ctx.append.appendCommand({ type: "name-member", name: name || "" });
+    this.ctx.session.assertCurrentSession(session);
+    this.ctx.peers.broadcastEventChange();
+  }
   // Sets or clears (empty) the nickname of one of this member's devices.
   async renameDevice(deviceId, nickname) {
     const session = this.ctx.session.captureSession();
