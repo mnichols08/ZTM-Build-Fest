@@ -50,6 +50,25 @@ export class SecurityUnlock {
     } finally { secret.fill(0); }
   }
 
+  /** Reopens the household after a refresh with the root a reload-resume
+   * ticket returned (#351). A failure just leaves the ordinary lock screen. */
+  async resumeAfterReload({ root, manifest }) {
+    const operation = this.host.operation;
+    let vault = null;
+    try {
+      await this.host.closest("kin-app")?.lockBarrier;
+      this.host.assertCurrentOperation(operation);
+      this.host.message.textContent = "Reopening your household…";
+      vault = new LocalVault(manifest.vaultId, root, manifest);
+    } catch {
+      return;
+    } finally { root.fill(0); }
+    try { await this.finishUnlock(vault, operation); }
+    catch {
+      if (operation === this.host.operation) this.host.message.textContent = "";
+    }
+  }
+
   async finishUnlock(vault, operation) {
     try {
       await this.host.closest("kin-app")?.lockBarrier;

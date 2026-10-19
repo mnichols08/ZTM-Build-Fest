@@ -1,5 +1,5 @@
 // Real browser IndexedDB + Web Crypto regressions; no third-party harness.
-import { waitForOrigin } from "./cdp-page.mjs";
+import { applyRegressionDefaults, waitForOrigin } from "./cdp-page.mjs";
 import assert from "node:assert/strict";
 import { householdLifecycleChecks } from "./security-household-regression.mjs";
 import { householdLeaveChecks } from "./household-leave-regression.mjs";
@@ -1013,6 +1013,7 @@ if (
         return result.result.value;
       },
     };
+    await applyRegressionDefaults(send);
     await waitForOrigin(client.evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
     await send("Page.enable");
     await securityUiRegressions(client);

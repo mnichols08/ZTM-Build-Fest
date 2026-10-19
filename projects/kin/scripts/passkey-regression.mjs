@@ -1,6 +1,6 @@
 // Real WebAuthn through a virtual authenticator and the production Kin server.
 // https://raw.githubusercontent.com/ChromeDevTools/devtools-protocol/master/pdl/domains/WebAuthn.pdl
-import { waitForOrigin } from "./cdp-page.mjs";
+import { applyRegressionDefaults, waitForOrigin } from "./cdp-page.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -647,6 +647,7 @@ if (
         return result.result.value;
       },
     };
+    await applyRegressionDefaults(send);
     await waitForOrigin(client.evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
     await passkeyRegressions(client, service, syncService);
   } finally {

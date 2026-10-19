@@ -91,7 +91,7 @@ const WINDOW_EVENTS = [
   ["beforeinstallprompt", "onBeforeInstallPrompt"], ["appinstalled", "onAppInstalled"],
   ["hashchange", "onHashChange"], ["popstate", "onHashChange"],
   ["offline", "onOffline"], ["online", "onOnline"],
-  ["pagehide", "onPageHide"], ["resize", "onLayoutChange"],
+  ["pagehide", "onPageHide"], ["pageshow", "onPageShow"], ["resize", "onLayoutChange"],
   ["focus", "onWindowFocus"],
 ];
 

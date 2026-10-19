@@ -5,6 +5,23 @@ development candidates that never received a release tag; their changes
 ship in v1.0.0. The project's planning releases v0.0.1–v0.0.12 are
 documentation only.
 
+## Unreleased
+
+### Added
+
+- A refresh keeps Kin unlocked in the same tab, including an accidental
+  pull-down on a phone (#351, #354). Closing the tab, Lock, automatic lock and
+  a lock from another tab still lock Kin, and the inactivity clock carries
+  over. The unloading tab leaves a one-use, two-minute ticket sealed with a
+  non-extractable key; see [ADR 0010](docs/decisions/0010-reload-resume.md).
+- Security → Automatic lock → **Stay unlocked when I refresh this tab**, on by
+  default (#355).
+
+### Changed
+
+- The page no longer triggers the browser's pull-to-refresh where the browser
+  allows turning it off (#353).
+
 ## v1.3.0 — Member Names and Clearer Setup
 
 Released 2026-10-19 as `kin-v1.3.0`. This minor release completes the member

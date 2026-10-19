@@ -1,6 +1,7 @@
 // Node 22+ and a Chromium-family executable; no npm packages required.
 // Uses a fresh temporary profile and loopback server, never an existing Kin DB.
 import { setViewport } from "./cdp-viewport.mjs";
+import { applyRegressionDefaults } from "./cdp-page.mjs";
 import {
   pulseRegressions,
   pulsePeerRegressions,
@@ -1175,6 +1176,7 @@ try {
     const client = await connect(target.webSocketDebuggerUrl);
     for (const domain of ["Runtime", "Page", "Log", "Network"])
       await client.send(`${domain}.enable`);
+    await applyRegressionDefaults((method, params) => client.send(method, params));
     await client.send("Page.navigate", { url: origin });
     await ready(client);
     return client;
@@ -1523,6 +1525,46 @@ try {
     }
   });
   assert.equal(backgroundResponsibilityFocus, true, "Background responsibility reconciliation leaves Today capture enabled and focused");
+  // #351: a refresh keeps Kin unlocked in the same tab; Lock, the setting and
+  // a non-refresh navigation still leave it locked.
+  {
+    const safely = (expression) => async () => { try { return await first.evaluate(expression); } catch { return false; } };
+    const settled = safely('(()=>{const app=document.querySelector("kin-app");return Boolean(app?.security?.heading)&&!app.busy&&(app.security.phase!=="unlocked"||Boolean(app.store))&&!app.starting})()');
+    const phase = () => first.evaluate('document.querySelector("kin-app").security.phase');
+    const armed = safely('Boolean(document.querySelector("kin-app")?.reloadResume?.armed)');
+    assert.equal(await first.evaluate('getComputedStyle(document.documentElement).overscrollBehaviorY'), "none",
+      "the page root stops the browser's pull-to-refresh");
+    await first.evaluate('(()=>{localStorage.setItem("kin.reload-resume-enabled","on");const app=document.querySelector("kin-app");return app.reloadResume.arm(app.vault)})()');
+    await until(armed);
+    await first.evaluate('location.hash="#lists/shopping"');
+    await first.send("Page.reload");
+    await until(settled, { attempts: 600 });
+    await until(safely('document.querySelector("kin-app").security.phase==="unlocked"&&Boolean(document.querySelector("kin-app").store)'), { attempts: 600 });
+    assert.equal(await first.evaluate('location.hash'), "#lists/shopping", "a refresh keeps Kin unlocked on the same page");
+    assert.equal(await first.evaluate('sessionStorage.getItem("kin.reload-resume")'), null, "the resume ticket is used once");
+    await until(armed);
+    await first.evaluate('document.querySelector("kin-app").lockButton.click()');
+    await until(safely('document.querySelector("kin-app").security.phase!=="unlocked"'));
+    await first.send("Page.reload");
+    await until(settled, { attempts: 600 });
+    await delay(500);
+    assert.notEqual(await phase(), "unlocked", "after Lock, a refresh stays locked");
+    await ready(first);
+    await until(armed);
+    await first.send("Page.navigate", { url: `${origin}/?resume-check=1#today` });
+    await until(settled, { attempts: 600 });
+    await delay(500);
+    assert.notEqual(await phase(), "unlocked", "navigating to Kin again (not a refresh) stays locked");
+    await ready(first);
+    await first.evaluate('localStorage.setItem("kin.reload-resume-enabled","off")');
+    await first.send("Page.reload");
+    await until(settled, { attempts: 600 });
+    await delay(500);
+    assert.notEqual(await phase(), "unlocked", "with the setting off, a refresh locks like closing the tab");
+    await ready(first);
+    await first.evaluate('location.hash="#today"');
+    console.log("PASS refresh keeps Kin unlocked in the same tab; Lock, navigation and the setting still lock (#351)");
+  }
   await first.evaluate(
     'sessionStorage.setItem("kin.test.expectedState", JSON.stringify(document.querySelector("kin-app").state))',
   );
