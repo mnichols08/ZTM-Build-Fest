@@ -669,7 +669,7 @@ export async function chatRegressions({ keepRoom = false } = {}) {
   await choose([pdf]);
   check(!chat.querySelector(".chat-pending").hidden && chat.querySelector(".chat-pending").textContent.includes("Permission slip.pdf"), "a chosen file is listed to send");
   await choose([new File([new Uint8Array(4)], "scan.heic", { type: "image/heic" })]);
-  check(chat.querySelector(".compose-message").textContent.includes("can't be sent as a photo"), `a HEIC photo is refused plainly (${chat.querySelector(".compose-message").textContent})`);
+  check(chat.querySelector(".chat-form .compose-message").textContent.includes("can't be sent as a photo"), `a HEIC photo is refused plainly (${chat.querySelector(".chat-form .compose-message").textContent})`);
   check(chat.querySelector(".chat-pending").textContent.includes("Permission slip.pdf") && !chat.querySelector(".chat-pending").textContent.includes("scan.heic"), "a refused file isn't listed");
   await choose([photo]);
   const pendingRemove = [...chat.querySelectorAll(".chat-pending-remove")].find((button) => button.getAttribute("aria-label") === "Remove IMG_2041.jpg");
@@ -727,7 +727,7 @@ export async function chatRegressions({ keepRoom = false } = {}) {
   folder.items.add(new File([], "Holiday photos", { type: "" }));
   chat.dispatchEvent(new DragEvent("drop", { dataTransfer: folder, bubbles: true, cancelable: true }));
   await settle();
-  check(chat.querySelector(".compose-message").textContent.includes("Holiday photos is empty") && !chat.querySelector(".chat-pending").textContent.includes("Holiday photos"), "a dropped folder is refused by name");
+  check(chat.querySelector(".chat-form .compose-message").textContent.includes("Holiday photos is empty") && !chat.querySelector(".chat-pending").textContent.includes("Holiday photos"), "a dropped folder is refused by name");
   const stopButton = chat.querySelector(".chat-stop-send");
   // (voice messages are exercised below)
   const retryButton = chat.querySelector(".chat-retry");
@@ -737,7 +737,7 @@ export async function chatRegressions({ keepRoom = false } = {}) {
   check(!stopButton.hidden && chat.querySelector(".chat-pending progress")?.getAttribute("aria-label") === "Preparing pasted.png" && chat.querySelector(".chat-pending progress").value === 10, "preparing shows a named progress bar and Cancel");
   stopButton.click();
   await settle();
-  check(stopButton.hidden && chat.querySelector(".compose-message").textContent.includes("cancelled") && chat.querySelector(".chat-pending").textContent.includes("pasted.png"), "cancelling keeps the files for another try");
+  check(stopButton.hidden && chat.querySelector(".chat-form .compose-message").textContent.includes("cancelled") && chat.querySelector(".chat-pending").textContent.includes("pasted.png"), "cancelling keeps the files for another try");
   calls.attachMode = "fail";
   chat.querySelector(".chat-form").requestSubmit();
   await settle();
