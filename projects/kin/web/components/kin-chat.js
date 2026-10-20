@@ -206,7 +206,10 @@ class KinChat extends HTMLElement {
     this.searchToggle = document.createElement("button");
     this.searchToggle.type = "button";
     this.searchToggle.className = "chat-search-toggle";
-    this.searchToggle.textContent = "Search chat";
+    // "Search" on screen keeps the toolbar to one row on a phone; the name
+    // stays "Search chat".
+    this.searchToggle.textContent = "Search";
+    this.searchToggle.setAttribute("aria-label", "Search chat");
     this.searchToggle.setAttribute("aria-expanded", "false");
     this.searchToggle.setAttribute("aria-controls", "chat-search-panel");
     this.searchToggle.addEventListener("click", () => (this.searchPanel.hidden ? this.openSearch() : this.closeSearch({ focus: true })));
