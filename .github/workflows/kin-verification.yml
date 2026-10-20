@@ -38,32 +38,16 @@ jobs:
       - name: Install Kin dependencies
         working-directory: projects/kin
         run: npm ci
-      # The browser engine is reused while the Rust sources are unchanged
-      # (#330). Stage D still builds WASM afresh and fails if this copy
-      # differs, so a stale cache can't pass.
-      - name: Restore browser WASM built from these Rust sources
-        id: wasm-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: projects/kin/web/wasm/kin_engine.wasm
-          key: kin-wasm-${{ runner.os }}-${{ hashFiles('projects/kin/rust-toolchain.toml', 'projects/kin/Cargo.toml', 'projects/kin/Cargo.lock', 'projects/kin/rust/**') }}
-      - name: Prepare ignored WASM asset for browser regressions
-        if: steps.wasm-cache.outputs.cache-hit != 'true'
-        working-directory: projects/kin
-        run: ./build-wasm.ps1
-      - name: Run verification and browser gates
+      # Stages A–D on Windows. The browser suites run in the `browser` jobs
+      # below, in parallel, on Windows Edge and Linux Chrome (#329).
+      - name: Run verification
         working-directory: projects/kin
         shell: pwsh
-        env:
-          KIN_BROWSER: C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
-          # A failed or flaky browser suite leaves its output, screenshots and
-          # page text here (#328); the next step uploads them.
-          KIN_DIAGNOSTICS_DIR: ${{ runner.temp }}/kin-diagnostics
         # On failure, the failing lines and the end of the output are also
         # reported as annotations, which the checks API returns even where
         # the full job log can't be downloaded (#164).
         run: |
-          npm run verify:browser 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/kin-verify.txt"
+          npm run verify 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/kin-verify.txt"
           $code = $LASTEXITCODE
           if ($code -ne 0) {
             # Annotations are cut at about 4 KB and a step may emit 10, so
@@ -86,14 +70,6 @@ jobs:
             }
           }
           exit $code
-      - name: Upload browser diagnostics
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: kin-browser-diagnostics
-          path: ${{ runner.temp }}/kin-diagnostics
-          if-no-files-found: ignore
-          retention-days: 14
 
   verify-linux:
     runs-on: ubuntu-latest
@@ -157,3 +133,84 @@ jobs:
             tail -n 40 "$RUNNER_TEMP/kin-verify.txt" | report "Kin verification failed - last lines"
           fi
           exit "$status"
+
+  # Each browser suite in its own job, on Windows Edge and on Linux Chrome,
+  # against the engine verify-linux built and published for this commit
+  # (#329). verify.mjs retries a failed suite once and reports a pass on
+  # retry as FLAKY (#328).
+  browser:
+    name: browser (${{ matrix.browser }}, ${{ matrix.suite }})
+    needs: verify-linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [edge, chrome]
+        suite:
+          - browser-regression
+          - security-storage-regression
+          - security-ui-regression
+          - passkey-regression
+          - household-authority-regression
+        include:
+          - browser: edge
+            os: windows-latest
+            executable: C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+          - browser: chrome
+            os: ubuntu-latest
+            executable: /usr/bin/google-chrome
+    defaults:
+      run:
+        shell: bash
+        working-directory: projects/kin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.22.0
+      - name: Download this commit's engine
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kin-engine-wasm
+          path: projects/kin/web/wasm
+      - name: Check the engine against its recorded hash
+        run: sha256sum -c web/wasm/kin_engine.wasm.sha256
+      - name: Run the browser suite
+        env:
+          KIN_BROWSER: ${{ matrix.executable }}
+          KIN_DIAGNOSTICS_DIR: ${{ runner.temp }}/kin-diagnostics
+        # On failure, as in the other jobs, the failing lines and the end of
+        # the output become annotations the checks API can return (#164).
+        run: |
+          set -o pipefail
+          status=0
+          node scripts/verify.mjs --browser-only --suite "${{ matrix.suite }}" 2>&1 | tee "$RUNNER_TEMP/kin-verify.txt" || status=$?
+          if [ "$status" -ne 0 ]; then
+            set +e +o pipefail
+            report() {
+              title="$1"; chunk=""; part=1
+              while IFS= read -r line; do
+                line="${line:0:1500}"
+                if [ $(( ${#chunk} + ${#line} )) -gt 3800 ]; then
+                  printf '::error title=%s (%s)::%s\n' "$title" "$part" "$(printf '%s' "$chunk" | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')"
+                  chunk=""; part=$((part + 1))
+                fi
+                chunk="${chunk}${line}"$'\n'
+              done
+              [ -n "$chunk" ] && printf '::error title=%s (%s)::%s\n' "$title" "$part" "$(printf '%s' "$chunk" | sed -e 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')"
+            }
+            grep -E 'FAIL|Error|not ok|timed out|✖' "$RUNNER_TEMP/kin-verify.txt" | tail -n 30 | report "Kin ${{ matrix.suite }} (${{ matrix.browser }}) failed - failing lines"
+            tail -n 40 "$RUNNER_TEMP/kin-verify.txt" | report "Kin ${{ matrix.suite }} (${{ matrix.browser }}) failed - last lines"
+          fi
+          exit "$status"
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kin-browser-diagnostics-${{ matrix.browser }}-${{ matrix.suite }}
+          path: ${{ runner.temp }}/kin-diagnostics
+          if-no-files-found: ignore
+          retention-days: 14

@@ -381,8 +381,20 @@ explicit second command. `node --test scripts/verify.test.mjs` runs focused
 tests for the verification runner itself (they are also part of the gate). The active root workflow is
 `.github/workflows/kin-verification.yml`; a synchronized project-local reference
 is retained at `docs/ci/kin-verification.workflow.yml`. Pull requests that
-change Kin or its workflow run the complete Windows Edge gate, and pushes to
-`kin-development` run the same gate.
+change Kin or its workflow, and pushes to `kin-development`, run three jobs
+(#329):
+
+- `verify` (Windows): stages A–D (environment, static checks, every Node and
+  Rust test, the release WASM build).
+- `verify-linux` (Linux): the same stages, and publishes the engine it built.
+- `browser`: each of the five browser suites in its own job, on Windows Edge
+  and on Linux Chrome (ten jobs in parallel), against that published engine
+  after checking its SHA-256. Each runs
+  `node scripts/verify.mjs --browser-only --suite <suite>`, with the retry and
+  FLAKY reporting below.
+
+Every one of them must pass; a suite that fails on either browser fails the
+run.
 `scripts/ci-workflow.test.mjs` fails if the two copies drift apart or an
 action is not pinned to a full commit.
 
@@ -390,10 +402,8 @@ action is not pinned to a full commit.
 publishes the engine it built as the `kin-engine-wasm` workflow artifact
 (`kin_engine.wasm` and its `kin_engine.wasm.sha256`, kept 30 days), so a
 machine without the `wasm32` target can run the browser gates against the same
-engine ([below](#run-the-browser-gates-locally)). The Windows job reuses the
-browser engine while `rust/`, `Cargo.toml`, `Cargo.lock` and
-`rust-toolchain.toml` are unchanged; stage D still builds WASM afresh and fails
-if the browser copy differs, so a stale cache cannot pass. Measured in October
+engine ([below](#run-the-browser-gates-locally)); the `browser` jobs use it
+too, so no browser job installs Rust. Measured in October
 2026, the toolchain install (10–12 s), `npm ci` (0–2 s; Kin has no npm
 dependencies) and the WASM build (7–9 s) are a small share of a run; the
 browser step (about 360 s on Windows) is the rest. A Cargo `target/` cache is
@@ -435,6 +445,11 @@ that target can't be installed, fetch the engine CI built for the same commit:
 ```sh
 node scripts/fetch-wasm.mjs            # HEAD; or --commit <sha>
 ```
+
+To run one suite, or only the browser suites against the engine already in
+place: `node scripts/verify.mjs --browser-only --suite passkey-regression`
+(`--suite` repeats; `--browser [EXECUTABLE]` or `KIN_BROWSER` names the
+browser).
 
 It needs a GitHub token (`GITHUB_TOKEN`, or `gh auth login`), finds that
 commit's `kin-engine-wasm` artifact, checks the engine against the SHA-256 CI

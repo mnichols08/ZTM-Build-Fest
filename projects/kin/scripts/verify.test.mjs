@@ -12,12 +12,13 @@ import {
   parseVersion,
   runCommand,
   firstFailingLine,
+  parseArguments,
   runVerification as runRealVerification,
 } from "./verify.mjs";
 
 // The WASM comparison reads two build outputs; these tests stand in for them
 // (identical bytes) so they don't depend on a build having run first.
-const runVerification = (options) => runRealVerification({ readBytes: async () => Buffer.from("engine"), ...options });
+const runVerification = (options) => runRealVerification({ readBytes: async () => Buffer.from("engine"), engineReady: async () => true, ...options });
 
 test("a failing child command returns its exit status", async () => {
   const result = await runCommand(process.execPath, ["-e", "process.exit(17)"], { capture: true });
@@ -403,4 +404,39 @@ test("the first failing line names the assertion, error or timeout", () => {
   assert.equal(firstFailingLine("starting\nError: Timed out waiting\n"), "Error: Timed out waiting");
   assert.equal(firstFailingLine("one\n\nlast line\n"), "last line");
   assert.equal(firstFailingLine(""), "no output");
+});
+
+test("the command line reads --browser, --browser-only and --suite (#329)", () => {
+  assert.deepEqual(parseArguments([]), { browser: false, browserExecutable: undefined, browserOnly: false, suites: [] });
+  assert.deepEqual(parseArguments(["--browser", "/usr/bin/chrome"]), { browser: true, browserExecutable: "/usr/bin/chrome", browserOnly: false, suites: [] });
+  assert.deepEqual(parseArguments(["--browser", "--suite", "passkey-regression"]), { browser: true, browserExecutable: undefined, browserOnly: false, suites: ["passkey-regression"] });
+  assert.deepEqual(parseArguments(["--browser-only", "--browser", "edge.exe", "--suite", "browser regression", "--suite", "security-ui-regression.mjs"]),
+    { browser: true, browserExecutable: "edge.exe", browserOnly: true, suites: ["browser regression", "security-ui-regression.mjs"] });
+  assert.match(parseArguments(["--suite", "passkey-regression"]).error, /needs --browser/);
+  assert.match(parseArguments(["--browser", "--suite", "nope"]).error, /Unknown suite "nope"/);
+  assert.match(parseArguments(["--browser", "--suite"]).error, /needs a suite name/);
+  assert.match(parseArguments(["--fast"]).error, /Unknown argument --fast/);
+});
+
+test("--browser-only runs just the chosen suites, with retry, and nothing else (#329)", async () => {
+  const { execute, calls } = scriptedExecute((script, attempt) => ({ code: script === "passkey-regression.mjs" && attempt === 1 ? 1 : 0, stdout: "", stderr: "Error: first try" }));
+  const others = [];
+  const record = async (command, args, options) => {
+    if (!(command === process.execPath && args[0]?.endsWith("regression.mjs"))) others.push(command);
+    return execute(command, args, options);
+  };
+  const result = await runVerification({ browser: true, browserOnly: true, suites: ["passkey-regression"], browserExecutable: process.execPath, execute: record, nodeVersion: "24.16.0", output: () => {} });
+  assert.deepEqual(others, [], "no environment, static, unit or WASM commands");
+  assert.deepEqual(result.stages.map(({ name }) => name), ["E — Browser verification"]);
+  assert.deepEqual(calls.map(({ script, attempt }) => [script, attempt]), [["passkey-regression.mjs", 1], ["passkey-regression.mjs", 2]]);
+  assert.equal(result.stages[0].results[0].status, "FLAKY");
+  assert.equal(result.code, 0);
+});
+
+test("--browser-only without an engine fails with how to get one (#329)", async () => {
+  const { execute, calls } = scriptedExecute(() => ({ code: 0, stdout: "", stderr: "" }));
+  const result = await runVerification({ browser: true, browserOnly: true, browserExecutable: process.execPath, execute, nodeVersion: "24.16.0", output: () => {}, engineReady: async () => false });
+  assert.equal(result.code, 1);
+  assert.equal(calls.length, 0);
+  assert.match(result.stages[0].results[0].label, /kin_engine\.wasm is missing.*fetch-wasm/);
 });
