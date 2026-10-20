@@ -85,6 +85,21 @@ export async function loadCachedHouseholdSettings(identity, { keyStore = null } 
   }
 }
 
+/** This device member's cached layout (#343, ADR 0013): true when Simple
+ * view was on at the last status poll, false otherwise or when unknown. */
+export async function loadCachedSimpleView(identity, { keyStore = null } = {}) {
+  if (![identity?.householdId, identity?.memberId, identity?.deviceId].every((value) => /^[a-f0-9]{32}$/.test(value ?? ""))) return false;
+  const ownedStore = !keyStore;
+  const store = keyStore ?? await SyncKeyStore.open();
+  try {
+    const device = await store.getDevice(identity.deviceId);
+    if (!device || device.householdId !== identity.householdId || device.memberId !== identity.memberId) return false;
+    return (await store.getCachedMemberView(identity.householdId, identity.memberId))?.simpleView === true;
+  } finally {
+    if (ownedStore) store.close();
+  }
+}
+
 export function portableMembershipFromDirectory(entries) {
   if (!Array.isArray(entries) || entries.length > 12)
     throw new Error("Kin could not validate current household membership for export.");

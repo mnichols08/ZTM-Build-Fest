@@ -96,6 +96,7 @@ export class SyncController {
         this.app.chat.room = room;
         if (this.app.chatSettings) this.app.chatSettings.room = room;
         if (this.app.search) this.app.search.chatRoom = room;
+        this.ctx.simple?.updateAccess();
       },
       // Simple view (#343, ADR 0013): the layout this member's admin chose.
       onSimpleView: (on) => {
@@ -110,6 +111,7 @@ export class SyncController {
         this.app.fridge.memberId = identity.memberId;
         this.app.fridge.room = room;
         if (room) void this.labelFridge(identity.memberId);
+        this.ctx.simple?.updateAccess();
       },
     });
     this.app.syncCoordinator = coordinator;

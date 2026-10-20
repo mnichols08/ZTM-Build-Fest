@@ -66,6 +66,8 @@ export class RenderController {
     this.app.catchUp.summary = this.app.state.summary;
     // Meals replay from history on their own; the read coalesces.
     void this.ctx.meals?.refresh();
+    // Simple view's cards (#345) read the same history.
+    void this.ctx.simple?.refresh();
     this.app.catchUp.lastLookedAt = this.app.catchUpCursor?.lastLookedAt;
     this.app.todayDate.textContent = formatCivilDate(civilDate);
     const selected = this.app.selection?.itemId ?? null;

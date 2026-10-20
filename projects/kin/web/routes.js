@@ -87,6 +87,25 @@ export function routeHash(page, segment = null) {
   return `#${page}/${chosen.id}`;
 }
 
+/** Simple view's destinations (#345, ADR 0013), by route. */
+export const SIMPLE_ROUTES = Object.freeze({
+  today: Object.freeze({ page: "today", label: "Today" }),
+  chat: Object.freeze({ page: "updates", segment: "chat", label: "Chat" }),
+  fridge: Object.freeze({ page: "household", segment: "fridge", label: "Fridge" }),
+});
+
+/**
+ * Simple view's allowlist: Today, Updates › Chat when `chat` is true and
+ * Household › Fridge when `fridge` is true. Every other hash, alias, search
+ * link and `/pair` resolves to Today.
+ */
+export function resolveSimpleRoute(location = {}, { chat = false, fridge = false } = {}) {
+  const route = resolveRoute(location);
+  const allowed = (chat && route.page === "updates" && route.segment === "chat") ||
+    (fridge && route.page === "household" && route.segment === "fridge");
+  return allowed ? route : resolveRoute({ hash: "#today" });
+}
+
 export function resolveRoute({ hash = "", pathname = "/" } = {}) {
   let requested = String(hash ?? "").replace(/^#/, "").replace(/\/+$/, "").toLowerCase();
   // An invitation link's fragment (#code=…) is not a route. pairing-link.js

@@ -74,6 +74,9 @@ export class SessionController {
       this.app.hasLocalSyncBinding = Boolean(snapshot.syncIdentity);
       this.ctx.refresh.applyCatchUpSnapshot(snapshot);
       await this.ctx.appearance.restoreCachedHouseholdDefaults(snapshot.syncIdentity, session);
+      // Simple view (#345, ADR 0013): the cached layout, before anything shows.
+      await this.ctx.simple.restore(snapshot.syncIdentity, session);
+      this.assertCurrentSession(session);
       this.ctx.render.renderState();
       void this.ctx.attachments.refreshAttachmentRows();
       this.app.main.hidden = false;
@@ -228,6 +231,7 @@ export class SessionController {
     clearTimeout(this.app.focusTimer);
     this.ctx.status.clearAlert();
     clearLegacyDrafts();
+    this.ctx.simple?.reset();
     this.app.quickAdd?.reset();
     this.app.chatShare?.reset();
     if (this.app.main) {

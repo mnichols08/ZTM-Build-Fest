@@ -76,10 +76,12 @@ Simple view is **a calmer layout an admin chooses**, not a permission tier.
   Updates → Chat (when the child's chat access isn't "none") and Household →
   Fridge (when board access isn't "none") resolve; every other hash, alias,
   `/pair` and search link goes to Today.
-- **Not built:** hidden pages are never created, and the command palette,
-  keyboard shortcuts, Quick add, Search, the compose bar, bulk selection and
-  the detail panel and sheet are off. Kept: the household brand, sync status
-  and Lock.
+- **Not mounted:** in Simple view only its three pages are in the document;
+  the rest of the workspace is taken out of the document before anything
+  shows, so no link, alias or focus path reaches it. The command palette, keyboard shortcuts, Quick add,
+  Search, the compose bar, bulk selection and the detail panel and sheet
+  are off. Kept: the household brand, sync status and Lock. Turning Simple
+  view off reloads Kin into the full layout.
 - **My things today** (Rust, one projection per member): active items
   assigned to the member (responsibility kind 41, target Item) whose planning
   date is today or earlier, or that have no planning date; plus routines

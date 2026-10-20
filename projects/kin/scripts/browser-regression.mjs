@@ -19,6 +19,7 @@ import {
 import { shoppingRegressions } from "./shopping-regression.mjs";
 import { mealsRegressions } from "./meals-regression.mjs";
 import { mealsAcceptanceRegressions } from "./meals-acceptance-regression.mjs";
+import { simpleRegressions } from "./simple-regression.mjs";
 import { planningDateRegressions } from "./planning-date-regression.mjs";
 import { mobileUxRegressions } from "./mobile-ux-regression.mjs";
 import { fridgeRegressions } from "./fridge-regression.mjs";
@@ -1605,6 +1606,7 @@ try {
     console.log("PASS refresh keeps Kin unlocked in the same tab; Lock, navigation and the setting still lock (#351)");
   }
   if (heavy) console.log(await fridgeRegressions(first, until));
+  console.log(await simpleRegressions(first, { until, ready }));
   await first.evaluate(
     'sessionStorage.setItem("kin.test.expectedState", JSON.stringify(document.querySelector("kin-app").state))',
   );

@@ -99,6 +99,8 @@ export class MealsController {
       view.meals = meals;
       if (today) view.date = today;
     }
+    // Simple view shows tonight's dinner on its Today (#348).
+    if (this.ctx.simple?.on) void this.ctx.simple.refresh();
     const line = this.app.tonight;
     if (line && today) {
       const dinner = meals.dinners.find((entry) => entry.date === today) ?? null;

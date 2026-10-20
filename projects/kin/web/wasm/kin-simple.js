@@ -109,10 +109,9 @@ export function encodeMyThingsQuery(memberId) {
   return out;
 }
 
-const dateText = (encoded) => `${String(Math.floor(encoded / 10_000)).padStart(4, "0")}-${String(Math.floor(encoded / 100) % 100).padStart(2, "0")}-${String(encoded % 100).padStart(2, "0")}`;
-
 /** KMTD v1 as [{ kind: "item", itemId } | { kind: "routine", routineId,
- * occurrenceKey "YYYY-MM-DD", done }], in Rust's order. */
+ * occurrenceKey (YYYYMMDD, as routine commands take it), done }], in Rust's
+ * order. */
 export function decodeMyThings(bytes) {
   const read = new Reader(bytes, "KMTD");
   const count = read.u32();
@@ -123,7 +122,7 @@ export function decodeMyThings(bytes) {
     const id = read.id();
     const date = read.u32();
     if (kind === 1 && !done && date === 0) things.push({ kind: "item", itemId: id });
-    else if (kind === 2 && date !== 0) things.push({ kind: "routine", routineId: id, occurrenceKey: dateText(date), done: done === 1 });
+    else if (kind === 2 && date !== 0) things.push({ kind: "routine", routineId: id, occurrenceKey: date, done: done === 1 });
     else throw new SimpleFormatError("Kin received invalid Simple view data.");
   }
   read.end();
