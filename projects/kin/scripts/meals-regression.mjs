@@ -46,8 +46,8 @@ export async function mealsRegressions() {
   const other = plan.querySelector(".meal-plan-other input");
   other.value = "   ";
   plan.querySelector(".meal-plan-other button").click();
-  await idle();
-  check(plan.querySelector('[role="alert"]:not([hidden])'), "an empty dinner name is refused inline");
+  await waitFor(() => plan.querySelector('[role="alert"]:not([hidden])'), "an empty dinner name is refused inline");
+  check(document.activeElement === other, "focus stays on the dinner name");
   other.value = "Meals regression leftovers";
   plan.querySelector(".meal-plan-other button").click();
   await waitFor(() => app.mealsState?.dinners.some((dinner) => dinner.date === today && dinner.name === "Meals regression leftovers"), "the dinner is planned");

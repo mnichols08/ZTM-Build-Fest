@@ -18,7 +18,7 @@
 // writing: saveRecipe, archiveRecipe, setDinner, clearDinner, setCook and
 // addIngredients, each resolving true when it saved.
 import { cookLabel, cookOptions, filterRecipes, matchingStaple, mondayOf, recentRecipes, weekDays, weekLabel, addDays } from "../meals/meals-view.js";
-import { MealFormatError, collapseText, ingredientsFromText, normalizeRecipe } from "../wasm/kin-meals.js";
+import { MealFormatError, collapseText, ingredientsFromText, normalizeDinnerName, normalizeRecipe } from "../wasm/kin-meals.js";
 
 let instances = 0;
 
@@ -443,6 +443,8 @@ class KinMeals extends HTMLElement {
     if (!date) return;
     this.planOtherError.hidden = true;
     try {
+      // Checked here first so the message sits beside the field at once.
+      normalizeDinnerName(name);
       if (await this.actions?.setDinner({ date, recipeId: null, name })) this.planCook.focus();
     } catch (error) {
       if (!(error instanceof MealFormatError)) throw error;
