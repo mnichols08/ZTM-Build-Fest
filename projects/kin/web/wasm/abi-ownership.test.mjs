@@ -33,6 +33,8 @@ function substituteExports({ operation, result = null, allocPointer = POINTER } 
       kin_meal_shopping_plan: status,
       kin_item_emojis: status,
       kin_my_things: status,
+      kin_week: status,
+      kin_shopping_sections: status,
       kin_event_metadata: status,
       kin_event_metadata_batch: status,
       kin_audio_peaks: status,
@@ -522,4 +524,70 @@ test("chat search requests and results are checked (#124)", () => {
     (() => { const copy = good.slice(); copy[copy.length - 1] = 0xff; return copy; })(),
   ];
   broken.forEach((bytes, index) => assert.throws(() => run(bytes), /invalid chat search result|invalid/i, `broken result ${index}`));
+});
+
+// Store sections (#411): KSHS v1 decodes into ordered sections and a Map of
+// item sections; the two commands travel as KCMD 66 and 67 carrying their
+// canonical payloads.
+test("store sections decode from KSHS and their commands encode as KCMD 66 and 67", () => {
+  const text = new TextEncoder();
+  const idOf = (byte) => new Uint8Array(16).fill(byte);
+  const hexOf = (byte) => byte.toString(16).padStart(2, "0").repeat(16);
+  const name = (value) => { const bytes = text.encode(value); return [bytes.length, 0, ...bytes]; };
+  const kshs = Uint8Array.from([
+    ...text.encode("KSHS"), 1, 0, 0, 0,
+    2, 0, 0, 0, ...idOf(0x22), ...name("Dairy"), ...idOf(0x11), ...name("Produce"),
+    1, 0, 0, 0, ...idOf(0x31), ...idOf(0x22),
+  ]);
+  const read = (bytes) => createEngine(substituteExports({ operation: () => 0, result: bytes }).exports)
+    .shoppingSections([], 1_760_000_000_000, 20261003);
+  assert.deepEqual(read(kshs), {
+    sections: [{ sectionId: hexOf(0x22), name: "Dairy" }, { sectionId: hexOf(0x11), name: "Produce" }],
+    itemSections: new Map([[hexOf(0x31), hexOf(0x22)]]),
+  });
+  const unlisted = kshs.slice();
+  unlisted.fill(0x33, kshs.length - 16);
+  for (const broken of [kshs.slice(0, -1), Uint8Array.of(...kshs, 0), (() => { const t = kshs.slice(); t[4] = 2; return t; })(), unlisted]) {
+    assert.throws(() => read(broken), (error) => error instanceof KinEngineError && error.code === 6);
+  }
+
+  let request = null;
+  const fake = substituteExports({ operation: () => 0 });
+  const engine = createEngine({ ...fake.exports, kin_execute: () => {
+    request = new Uint8Array(fake.exports.memory.buffer.slice(POINTER, POINTER + fake.allocations.at(-1)));
+    return 0;
+  } });
+  const identity = {
+    eventId: idOf(1), householdId: idOf(2), actorId: idOf(3), deviceId: idOf(4), timestamp: 1, logicalTime: 1n,
+  };
+  const packetOf = (command) => {
+    request = null;
+    // The substitute returns no KCMT, so the call fails after sending.
+    assert.throws(() => engine.executeCommand(command, identity, [], 1_760_000_000_000, null, 20261003), KinEngineError);
+    const length = new DataView(request.buffer).getUint32(0, true);
+    return request.subarray(4, 4 + length);
+  };
+  const list = packetOf({ type: "set-shopping-sections", sections: [
+    { sectionId: hexOf(0x11), name: "  Produce " }, { sectionId: hexOf(0x22), name: "Dairy" },
+  ] });
+  const view = new DataView(list.buffer, list.byteOffset);
+  assert.equal(String.fromCharCode(...list.subarray(0, 4)), "KCMD");
+  assert.equal(view.getUint16(8, true), 66);
+  assert.ok(list.subarray(92, 124).every((byte) => byte === 0), "no entity, date, option or expiry");
+  assert.deepEqual([...list.subarray(128)], [2, 0, 0, 0, ...idOf(0x11), ...name("Produce"), ...idOf(0x22), ...name("Dairy")]);
+  assert.equal(view.getUint32(124, true), list.length - 128);
+  const put = packetOf({ type: "set-item-section", itemId: hexOf(0x31), sectionId: hexOf(0x22) });
+  assert.equal(new DataView(put.buffer, put.byteOffset).getUint16(8, true), 67);
+  assert.deepEqual([...put.subarray(128)], [...idOf(0x31), ...idOf(0x22)]);
+  const clear = packetOf({ type: "set-item-section", itemId: hexOf(0x31), sectionId: null });
+  assert.deepEqual([...clear.subarray(128)], [...idOf(0x31), ...new Uint8Array(16)]);
+  for (const bad of [
+    { type: "set-shopping-sections", sections: [{ sectionId: hexOf(0x11), name: "   " }] },
+    { type: "set-shopping-sections", sections: [{ sectionId: hexOf(0x11), name: "x".repeat(41) }] },
+    { type: "set-shopping-sections", sections: Array.from({ length: 31 }, (_, n) => ({ sectionId: hexOf(n + 1), name: `S${n}` })) },
+    { type: "set-item-section", itemId: hexOf(0), sectionId: null },
+  ]) {
+    assert.throws(() => engine.executeCommand(bad, identity, [], 1_760_000_000_000, null, 20261003),
+      (error) => error instanceof KinEngineError && error.code === 2);
+  }
 });

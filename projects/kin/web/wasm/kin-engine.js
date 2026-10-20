@@ -20,6 +20,8 @@ import { HistoryMirror } from "./history-mirror.js";
 import { BOARD_COMMANDS, BOARD_EVENT_KINDS, MAX_BOARD_EVENT_COUNT, BoardFormatError, decodeBoard, encodeBoardIntent } from "./kin-board.js";
 import { MEAL_COMMANDS, MEAL_EVENT_KINDS, MealFormatError, decodeMeals, decodePlan, encodeMealIntent, encodePlanQuery } from "./kin-meals.js";
 import { SIMPLE_COMMANDS, SIMPLE_EVENT_KINDS, SimpleFormatError, decodeItemEmojis, decodeMyThings, encodeItemEmojiIntent, encodeMyThingsQuery } from "./kin-simple.js";
+import { decodeWeek, encodeWeekQuery } from "./kin-week.js";
+import { SECTION_COMMANDS, SECTION_EVENT_KINDS, SectionFormatError, decodeShoppingSections, encodeSectionIntent } from "./kin-sections.js";
 
 export { idToHex, KinEngineError };
 
@@ -95,6 +97,8 @@ export function createEngine(instanceExports) {
     "kin_meal_shopping_plan",
     "kin_item_emojis",
     "kin_my_things",
+    "kin_week",
+    "kin_shopping_sections",
     "kin_event_metadata",
     "kin_event_metadata_batch",
     "kin_audio_peaks",
@@ -302,10 +306,24 @@ export function createEngine(instanceExports) {
       safeDecode(() => decodeItemEmojis(
         replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_item_emojis"),
       )),
+    // Store sections (#411, ADR 0015): { sections: [{ sectionId, name }] in
+    // the household's order, itemSections: Map itemId -> sectionId } for
+    // items that exist, aren't archived and whose section is listed.
+    shoppingSections: (records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeShoppingSections(
+        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_shopping_sections"),
+      )),
     // A member's things on `civilDate` (#344, ADR 0013): [{ kind: "item",
     // itemId } | { kind: "routine", routineId, occurrenceKey, done }].
     myThings: (memberId, records, asOf, civilDate, syncIdentity = null) =>
       safeDecode(() => decodeMyThings(queryBytes(exports, mirror, "kin_my_things", encodeMyThingsQuery(memberId), records, asOf, civilDate, syncIdentity))),
+    // The household's seven days from `startCivilDate` (#417, kin-week.js):
+    // [{ date, items, routines, meals, maintenance, omitted }]. "current" and
+    // "done" on a routine occurrence are judged at `civilDate`.
+    week: (startCivilDate, records, asOf, civilDate, syncIdentity = null) => {
+      const query = encodeWeekQuery(startCivilDate);
+      return safeDecode(() => decodeWeek(queryBytes(exports, mirror, "kin_week", query, records, asOf, civilDate, syncIdentity)));
+    },
     // What adding a recipe's ({ recipeId }) or a date's dinner's ({ date })
     // ingredients to Shopping would do now: [{ outcome, text, stapleId }].
     mealShoppingPlan: (source, records, asOf, civilDate, syncIdentity = null) =>
@@ -1036,6 +1054,8 @@ const COMMAND_TYPES = [
   // "Talk later" (#312): KCMD action 65, a chat command; its state rides in
   // the u8 field.
   "set-chat-topic",
+  // Store sections (#411): KCMD actions 66–67, encoded by kin-sections.js.
+  ...SECTION_COMMANDS,
 ];
 const EVENT_KINDS = [
   null,
@@ -1094,6 +1114,7 @@ const EVENT_KINDS = [
   ...MEAL_EVENT_KINDS,
   ...SIMPLE_EVENT_KINDS,
   "CHAT_TOPIC_SET",
+  ...SECTION_EVENT_KINDS,
 ];
 
 // The command field that names each event's own entity (packet offset 92).
@@ -1182,6 +1203,14 @@ function encodeIntentPacket(command, identity) {
     try { return encodeItemEmojiIntent(command, identity); }
     catch (error) {
       if (error instanceof SimpleFormatError) throw new KinEngineError(2, error.message);
+      throw error;
+    }
+  }
+  // Store sections (66–67) carry their canonical payload (kin-sections.js).
+  if (kind === 66 || kind === 67) {
+    try { return encodeSectionIntent(command, identity); }
+    catch (error) {
+      if (error instanceof SectionFormatError) throw new KinEngineError(2, error.message);
       throw error;
     }
   }

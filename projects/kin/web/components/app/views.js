@@ -55,7 +55,12 @@ export class ViewBuilder {
     fridgeLink.className = "today-fridge-link";
     fridgeLink.href = routeHash("household", "fridge");
     fridgeLink.textContent = "Draw on the fridge";
-    today.querySelector(".page-intro").append(this.app.todayDate, fridgeLink);
+    // This week (#416): the next seven days in one list.
+    const weekLink = document.createElement("a");
+    weekLink.className = "today-week-link";
+    weekLink.href = "#week";
+    weekLink.textContent = "This week";
+    today.querySelector(".page-intro").append(this.app.todayDate, weekLink, fridgeLink);
     this.app.compose.setAttribute("mode", "today");
     this.app.compose.setAttribute("scope", "today");
     this.app.catchUp.setAttribute("aria-label", "Catch up since you last looked");
@@ -86,7 +91,16 @@ export class ViewBuilder {
     const calendarExportNote = document.createElement("p");
     calendarExportNote.className = "section-hint";
     calendarExportNote.textContent = "Exports every open item that has a planned date, from all lists. The downloaded .ics file is not encrypted and contains the item text.";
-    listActions.append(listActionsSummary, this.app.calendarExportButton, calendarExportNote);
+    // Bring a list into Kin (#452): paste a list or choose a CSV/text file.
+    const importButton = document.createElement("button");
+    importButton.type = "button";
+    importButton.className = "import-list-button";
+    importButton.textContent = "Import a list…";
+    importButton.addEventListener("click", () => this.ctx.importList.open({ opener: importButton }));
+    const importNote = document.createElement("p");
+    importNote.className = "section-hint";
+    importNote.textContent = "Paste a list or choose a CSV or text file from another app. It is read on this device; you choose what to add.";
+    listActions.append(listActionsSummary, this.app.calendarExportButton, calendarExportNote, importButton, importNote);
     lists.append(listActions);
     this.app.needs.display = "need";
     this.app.shopping.display = "shopping";
@@ -104,6 +118,9 @@ export class ViewBuilder {
 
     const search = page("search", "Search");
     search.append(this.app.search);
+    const week = page("week", "This week", "The next seven days: planned items, routines, dinners and maintenance due. Move an item to another day from here.");
+    this.app.week = document.createElement("kin-week");
+    week.append(this.app.week);
 
     const routines = page("routines", "Routines", DESTINATION_DESCRIPTIONS.routines);
     const routinesNav = segmentNav("routines", "Routines");
@@ -318,7 +335,7 @@ export class ViewBuilder {
     household.append(hub, fridgePage, notesPage, areasPage, peoplePage, privacyPage, appearancePage);
     this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["notes", notesPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));
 
-    for (const section of [today, lists, search, routines, updates, household]) {
+    for (const section of [today, week, lists, search, routines, updates, household]) {
       this.app.pages.set(section.id, section);
       main.append(section);
     }

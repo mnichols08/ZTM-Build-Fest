@@ -68,6 +68,17 @@ export class ItemCommands {
         this.ctx.session.assertCurrentSession(session);
       }
       step = null;
+      // A replenished staple's store section (#411) goes with it, when it
+      // can: the item is saved either way.
+      const stapleSection = submittedDraft.sourceStapleId ? this.app.shoppingSections?.itemSections.get(submittedDraft.sourceStapleId) : null;
+      if (stapleSection && this.app.shoppingSections?.itemSections.get(submittedDraft.id) !== stapleSection) {
+        try {
+          await this.ctx.append.appendCommand({ type: "set-item-section", itemId: submittedDraft.id, sectionId: stapleSection });
+          this.ctx.session.assertCurrentSession(session);
+        } catch (error) {
+          if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) throw error;
+        }
+      }
       this.ctx.render.renderState();
       if (!sourceList) composer.clearIfMatches(submittedDraft);
       const where = submittedDraft.planningDate === this.ctx.navigation.currentCivilDate() ? `${destination} and Today` : destination;

@@ -26,6 +26,7 @@ export class StatusController {
     if (this.app.detail?.closest(".detail-sheet")) this.app.detail.disabled = controlsDisabled;
     if (this.app.lockButton) this.app.lockButton.disabled = isBusy;
     if (this.app.shoppingMode) this.app.shoppingMode.disabled = controlsDisabled;
+    if (this.app.week) this.app.week.disabled = controlsDisabled;
     this.app.retryButton.disabled = isBusy;
     if (!controlsDisabled) {
       for (const component of [this.app.today, this.app.needs, this.app.shopping, this.app.staples, this.app.areas, this.app.notes, this.app.detail, this.app.chat, this.app.meals, this.app.simpleToday])
