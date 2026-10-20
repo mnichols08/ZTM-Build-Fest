@@ -95,7 +95,88 @@ export async function chatLayoutRegressions(client, { until }) {
   })()`);
   assert.deepEqual(menu, { open: true, inside: true, closed: true, back: true, voice: true, send: true }, "the + menu, and Voice while the box is empty");
 
+  // Message actions (#311). With a mouse: the last message's ⋯ opens the
+  // sheet by it, flipped above (it's near the composer); Escape returns to ⋯.
+  // Right-click opens it too, and a backdrop click closes it.
+  const sheetAt = await page(`(() => {
+    const chat = document.querySelector("kin-app kin-chat");
+    const row = [...chat.querySelectorAll(".chat-row")].findLast((node) => node.querySelector(".chat-menu-button"));
+    const button = row.querySelector(".chat-menu-button");
+    button.click();
+    const sheet = chat.querySelector(".chat-action-sheet");
+    const box = sheet.getBoundingClientRect(), at = button.getBoundingClientRect();
+    const result = { open: sheet.open, bottomSheet: sheet.classList.contains("chat-sheet-bottom"),
+      clear: box.bottom <= at.top + 1 || box.top >= at.bottom - 1, inView: box.top >= 0 && box.bottom <= innerHeight,
+      focus: document.activeElement?.closest?.(".chat-menu") !== null, expanded: button.getAttribute("aria-expanded") };
+    document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    result.closed = !sheet.open && !chat.querySelector(".chat-menu");
+    result.back = document.activeElement?.classList.contains("chat-menu-button");
+    row.querySelector(".chat-text").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 }));
+    result.rightClick = sheet.open;
+    sheet.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: 1, clientY: 1 }));
+    result.backdrop = !sheet.open;
+    return result;
+  })()`);
+  assert.deepEqual(sheetAt, { open: true, bottomSheet: false, clear: true, inView: true, focus: true, expanded: "true", closed: true, back: true, rightClick: true, backdrop: true },
+    "with a mouse the actions open by the ⋯ (above it near the bottom), close with Escape, open on right-click and close on the backdrop");
+
+  // A touch screen at 320px: no action column, a 44px ⋯ in the time line; a
+  // long press opens a bottom sheet with quick reactions first; a swipe
+  // down closes it and focus returns to ⋯.
+  await setViewport(client, { width: 320, height: 568, deviceScaleFactor: 2, mobile: true });
+  await client.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "pointer", value: "coarse" }, { name: "hover", value: "none" }] });
+  await frames();
+  const touchRow = await page(`(() => {
+    const chat = document.querySelector("kin-app kin-chat");
+    const row = [...chat.querySelectorAll(".chat-row")].findLast((node) => node.querySelector(".chat-menu-button") && !node.classList.contains("grouped"));
+    row.scrollIntoView({ block: "center" });
+    const wrap = getComputedStyle(row.querySelector(".chat-menu-wrap"));
+    const button = row.querySelector(".chat-menu-button").getBoundingClientRect();
+    const react = row.querySelector(".chat-react-button");
+    const text = row.querySelector(".chat-text").getBoundingClientRect();
+    window.__touchRow = row.dataset.messageId;
+    row.querySelector(".chat-text").dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch", isPrimary: true, button: 0, clientX: text.left + 5, clientY: text.top + 5 }));
+    return { overlay: wrap.position === "absolute", target: button.width >= 44 && button.height >= 44, react: !react || getComputedStyle(react).display === "none" };
+  })()`);
+  assert.deepEqual(touchRow, { overlay: true, target: true, react: true }, "touch: no action column, a 44px ⋯, reactions in the sheet");
+  await until(() => page(`document.querySelector("kin-app kin-chat .chat-action-sheet").open`), { attempts: 300 });
+  const touchSheet = await page(`(() => {
+    const chat = document.querySelector("kin-app kin-chat");
+    const sheet = chat.querySelector(".chat-action-sheet");
+    const row = chat.querySelector('.chat-row[data-message-id="' + window.__touchRow + '"]');
+    row.querySelector(".chat-text").dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerType: "touch", isPrimary: true }));
+    const box = sheet.getBoundingClientRect();
+    const view = visualViewport ? visualViewport.height : innerHeight;
+    const result = { bottomSheet: sheet.classList.contains("chat-sheet-bottom"), anchored: Math.abs(box.bottom - view) <= 2, width: box.width <= 480,
+      reactionsFirst: sheet.querySelector(".chat-sheet-reactions")?.compareDocumentPosition(sheet.querySelector(".chat-menu")) === Node.DOCUMENT_POSITION_FOLLOWING,
+      targets: [...sheet.querySelectorAll("button")].every((node) => node.getBoundingClientRect().height >= 44) };
+    sheet.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "touch", clientX: 100, clientY: box.top + 10 }));
+    sheet.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerType: "touch", clientX: 100, clientY: box.top + 120 }));
+    result.swiped = !sheet.open;
+    result.back = document.activeElement === row.querySelector(".chat-menu-button");
+    delete window.__touchRow;
+    return result;
+  })()`);
+  assert.deepEqual(touchSheet, { bottomSheet: true, anchored: true, width: true, reactionsFirst: true, targets: true, swiped: true, back: true },
+    "touch: a long press opens a bottom sheet, reactions first, 44px targets; a swipe down closes it and focus returns to ⋯");
+  // A tablet held by touch: the sheet stays at most 480px wide.
+  await setViewport(client, { width: 820, height: 1180, deviceScaleFactor: 2, mobile: true });
+  await frames();
+  const tablet = await page(`(() => {
+    const chat = document.querySelector("kin-app kin-chat");
+    const row = [...chat.querySelectorAll(".chat-row")].findLast((node) => node.querySelector(".chat-menu-button"));
+    row.querySelector(".chat-menu-button").click();
+    const sheet = chat.querySelector(".chat-action-sheet");
+    const width = sheet.getBoundingClientRect().width;
+    sheet.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    return { width: width <= 480, closed: !sheet.open };
+  })()`);
+  assert.deepEqual(tablet, { width: true, closed: true }, "touch tablet: the sheet is at most 480px wide");
+  await client.send("Emulation.setEmulatedMedia", { features: [] });
+  await client.send("Emulation.setTouchEmulationEnabled", { enabled: false });
+
   await client.send("Emulation.clearDeviceMetricsOverride");
   await page(`(async () => { await window.__chatCleanup?.(); delete window.__chatCleanup; return true; })()`);
-  return "PASS chat fits the screen at 320×568 to desktop and 200%, opens at the latest message, keeps the one-row composer above the bar and the keyboard, jumps to latest, and the + menu (#310, #311)";
+  return "PASS chat fits the screen at 320×568 to desktop and 200%, opens at the latest message, keeps the one-row composer above the bar and the keyboard, jumps to latest, and the + menu, and message actions by mouse, right-click, long press and swipe (#310, #311)";
 }
