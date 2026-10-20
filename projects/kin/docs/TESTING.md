@@ -432,6 +432,38 @@ folder as the `kin-browser-diagnostics` artifact.
 A flake is a bug to fix, not noise: fix the cause rather than lengthening a
 wait, and never delete or weaken a test to make it pass.
 
+### Triage a flake
+
+1. **Read it.** The job summary's "Flaky browser suites" table (or the
+   warning annotation) names the suite and its first failing assertion or
+   error. Open the job's `kin-browser-diagnostics-<browser>-<suite>` artifact:
+   `<suite>-attempt1.log` is the failed attempt's full output, and
+   `attempt1/` holds a screenshot and the address and text of each page the
+   suite had open.
+2. **Reproduce it.** Run that suite alone, several times, against the same
+   engine: `node scripts/verify.mjs --browser-only --suite <suite>` (fetch the
+   commit's engine with `node scripts/fetch-wasm.mjs` if you can't build it).
+   A flake that never reproduces locally is usually a wait on something
+   asynchronous (an animation frame, a media-query `change`, a second tab
+   starting); look for the step just before the failing assertion.
+3. **File it.** Add a comment to the open flake-tracking issue (#327 while the
+   test and CI reliability epic, #326, is open; afterwards a new issue labelled
+   for test health), with the run link, suite, browser, the first failing line
+   and what the diagnostics showed.
+4. **Fix the cause** rather than lengthening a wait or retrying more, and say
+   in the fix which race it closes. Never delete or weaken a test to go green.
+
+### Test health over time
+
+`node scripts/test-health.mjs` (needs `GITHUB_TOKEN` or `gh auth login`)
+reads the last 20 completed `kin-development` runs of Kin verification and
+prints, per job, how many passed first time, passed only on retry (FLAKY) and
+failed, worst first, with the run links. Options: `--runs N` (1–100),
+`--branch NAME`, `--repo OWNER/NAME`. It reads the latest attempt of each
+run, so a run someone re-ran by hand before #328 counts as its final result;
+retries since #328 happen inside the job and are counted as FLAKY. The
+epic's target is 20 consecutive runs with nothing flaky or failed.
+
 The gate runs every `*.test.mjs` under `server/`, `web/` and `scripts/`, so
 the runner's own tests, the documentation checks and the v1.0 compatibility
 check are part of it (before #328 the `scripts/` tests ran only by hand).
