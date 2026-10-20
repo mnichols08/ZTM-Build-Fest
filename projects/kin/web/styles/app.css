@@ -2109,7 +2109,7 @@ html:has(kin-app .undo-toast:not([hidden])) { scroll-padding-bottom: calc(160px 
 @media (forced-colors: active) { .shopping-mode-item label { border-bottom: 1px solid CanvasText; } }
 
 /* This week (#416): one section per day, today first. */
-.today-week-link { font-size: 15px; }
+.today-week-link { display: inline-flex; align-items: center; min-height: var(--tap); font-size: 15px; }
 .week-days { display: grid; gap: 14px; }
 .week-day { padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); }
 .week-day h2 { margin: 0 0 8px; font-size: 18px; }
