@@ -226,6 +226,9 @@ export class ShellBuilder {
     // "Add to Kin" for things shared from other apps (#389).
     this.app.shareSheet = document.createElement("kin-share-sheet");
     this.app.append(this.app.shareSheet);
+    // Shopping mode (#403): the Shopping list for use in the shop.
+    this.app.shoppingMode = document.createElement("kin-shopping-mode");
+    this.app.append(this.app.shoppingMode);
     this.app.attachmentInput = this.ctx.attachments.buildAttachmentInput();
     this.app.append(this.app.attachmentInput);
     this.ctx.navigation.showPageFromLocation();

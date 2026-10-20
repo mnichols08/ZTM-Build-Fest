@@ -9,6 +9,9 @@ documentation only.
 
 ### Added
 
+- **Shopping mode** (#403): Start shopping opens the list for the shop —
+  big checkboxes, ticked items into "In the basket" (Undo applies), and the
+  screen kept on while you shop where the browser allows.
 - **Share into Kin** (#389): choose Kin in another app's share sheet to add a
   link, text, photo or PDF to To do, Shopping, a note, a handoff or Chat,
   after a preview. The content never reaches the server. Home-screen

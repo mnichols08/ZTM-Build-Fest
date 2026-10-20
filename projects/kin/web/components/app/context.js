@@ -199,6 +199,9 @@ export function initializeAppState(app) {
       app.ctx.conversations.saveTalk({ type: "archive-talk", talkId: event.detail.talkId });
     // Several handlers derive the command type from the event name: every
     // component event is "kin:<command>", so `event.type.slice(4)` drops "kin:".
+    app.onStartShopping = (event) => {
+      if (!app.simpleView && app.state) app.shoppingMode?.open({ opener: event.detail?.opener ?? null });
+    };
     app.onRoutineIntent = (event) => app.ctx.routines.saveRoutine({ ...event.detail, type: event.type.slice(4) });
     app.onChangeRoutineSchedule = (event) => app.ctx.routines.changeRoutineSchedule(event.detail);
     app.onOpenRoutineSchedule = (event) => app.ctx.routines.openRoutineSchedule(event.detail.routineId);

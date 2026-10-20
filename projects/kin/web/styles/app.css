@@ -2085,3 +2085,25 @@ html:has(kin-app .undo-toast:not([hidden])) { scroll-padding-bottom: calc(160px 
 .share-sheet-files { padding-inline-start: 1.2em; font-size: 14px; }
 .share-sheet-choices { display: grid; gap: 8px; margin: 12px 0; }
 .share-sheet-choices button, .share-sheet-cancel { min-height: var(--tap); justify-content: flex-start; text-align: start; }
+
+/* Shopping mode (#403): the list for use in the shop. Full screen, one hand,
+   big targets, nothing else. */
+.start-shopping { margin: 0 0 12px; }
+.shopping-mode { width: 100%; max-width: 640px; height: 100%; max-height: 100%; margin: 0 auto; padding: 0; border: 0; border-radius: 0; background: var(--bg, var(--surface)); color: var(--ink); }
+.shopping-mode[open] { display: flex; flex-direction: column; }
+.shopping-mode::backdrop { background: var(--bg, var(--surface)); }
+.shopping-mode-top { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: calc(12px + env(safe-area-inset-top)) 16px 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.shopping-mode-top h2 { margin: 0; font-size: 22px; }
+.shopping-mode-count { margin: 2px 0 0; color: var(--ink-muted); font-size: 15px; }
+.shopping-mode-done { flex: none; min-height: var(--tap); }
+.shopping-mode-list { display: grid; gap: 0; margin: 0; padding: 0 8px; list-style: none; }
+.shopping-mode-item label { display: flex; align-items: center; gap: 16px; min-height: 56px; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 19px; line-height: 1.35; cursor: pointer; }
+.shopping-mode-item input { flex: none; width: 30px; height: 30px; margin: 0; accent-color: var(--accent); }
+.shopping-mode-text { min-width: 0; overflow-wrap: anywhere; }
+.shopping-mode-basket { margin: 12px 8px; }
+.shopping-mode-basket summary { min-height: var(--tap); display: flex; align-items: center; padding: 0 10px; font-weight: 640; cursor: pointer; }
+.shopping-mode-basket .shopping-mode-text { color: var(--ink-muted); text-decoration: line-through; }
+.shopping-mode-empty { margin: 24px 16px; }
+.shopping-mode-wake { display: flex; align-items: center; gap: 10px; min-height: var(--tap); margin: auto 16px calc(12px + env(safe-area-inset-bottom)); color: var(--ink-muted); font-size: 15px; }
+.shopping-mode-wake input { width: 22px; height: 22px; }
+@media (forced-colors: active) { .shopping-mode-item label { border-bottom: 1px solid CanvasText; } }
