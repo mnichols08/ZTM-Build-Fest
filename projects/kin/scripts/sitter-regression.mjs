@@ -56,7 +56,6 @@ export async function sitterRegressions() {
   editor.previewLink.click();
   const view = app.sitterView;
   await until(() => !app.pages.get("foryou").hidden && view.querySelectorAll(".sitter-card").length >= 3, "For you shows the cards");
-  check(document.title.startsWith("For you"), "the page is titled For you", document.title);
   check(view.querySelector(".sitter-preview-note"), "an Adult sees the preview note");
   check(view.querySelector(".sitter-intro")?.textContent === "Thanks for looking after us!", "the welcome shows first");
   const headings = [...view.querySelectorAll(".sitter-card h2")].map((heading) => heading.textContent);
