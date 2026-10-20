@@ -39,6 +39,7 @@ export async function chatLayoutRegressions(client, { until }) {
     ["phone landscape", { width: 568, height: 320, deviceScaleFactor: 2, mobile: true }],
     ["tablet", { width: 768, height: 1024, deviceScaleFactor: 2, mobile: true }],
     ["tablet landscape", { width: 1024, height: 768, deviceScaleFactor: 2, mobile: true }],
+    ["tablet portrait (820)", { width: 820, height: 1180, deviceScaleFactor: 2, mobile: true }],
     ["desktop", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false }],
     ["desktop at 200%", { width: 640, height: 400, deviceScaleFactor: 2, mobile: false }],
   ]) {
@@ -57,6 +58,42 @@ export async function chatLayoutRegressions(client, { until }) {
     assert.ok(view.rowHeight <= 120, `${label}: the composer is one row (${view.rowHeight}px)${why}`);
     assert.ok(view.atLatest, `${label}: showing the latest message${why}`);
   }
+
+  // #316: at 320×568 with 200% text, dark mode and reduced motion, Chat
+  // still fits, the composer stays in view, nothing scrolls sideways, and the
+  // Updates tabs stay on one row.
+  await setViewport(client, { width: 320, height: 568, deviceScaleFactor: 2, mobile: true });
+  for (const [label, features, bigText] of [
+    ["200% text", [], true],
+    ["dark mode", [{ name: "prefers-color-scheme", value: "dark" }], false],
+    ["reduced motion", [{ name: "prefers-reduced-motion", value: "reduce" }], false],
+  ]) {
+    await client.send("Emulation.setEmulatedMedia", { features });
+    await page(`(() => { document.documentElement.style.fontSize = ${bigText ? '"200%"' : '""'}; scrollTo(0, 0); return true; })()`);
+    await frames();
+    await page(`(() => { const s = document.querySelector("kin-app kin-chat .chat-scroll"); s.scrollTop = s.scrollHeight; return true; })()`);
+    await frames();
+    const view = await measure();
+    const why = ` ${JSON.stringify(view)}`;
+    assert.ok(view.fit && view.pageScroll <= 2 && view.sideways <= 0, `${label}: Chat fits without page or sideways scroll${why}`);
+    assert.ok(view.composerBottom <= view.visible + 1 && (view.navTop === null || view.composerBottom <= view.navTop + 1), `${label}: the composer is in view above the bar${why}`);
+    const tabs = await page(`(() => {
+      const app = document.querySelector("kin-app");
+      app.ctx.navigation.navigate("#updates/handoffs");
+      const links = [...app.segmentNavs.get("updates").querySelectorAll(".segment-link")];
+      const tops = new Set(links.map((link) => Math.round(link.getBoundingClientRect().top)));
+      const result = { count: links.length, rows: tops.size, sideways: document.documentElement.scrollWidth - innerWidth,
+        labelled: links.every((link) => !link.querySelector(".segment-count") || /\w/.test(link.textContent)) };
+      app.ctx.navigation.navigate("#updates/chat");
+      return result;
+    })()`);
+    assert.deepEqual(tabs, { count: 2, rows: 1, sideways: 0, labelled: true }, `${label}: Updates shows two tabs on one row at 320px`);
+    if (label === "reduced motion")
+      assert.equal(await page(`getComputedStyle(document.querySelector("kin-app kin-chat .chat-menu-wrap")).transitionDuration`), "0s", "reduced motion: no fade on message tools");
+    await frames();
+  }
+  await page(`(() => { document.documentElement.style.fontSize = ""; return true; })()`);
+  await client.send("Emulation.setEmulatedMedia", { features: [] });
 
   // A phone with the keyboard open: the message box has focus and the
   // visible height shrinks; the bottom bar steps aside, the list keeps room.
