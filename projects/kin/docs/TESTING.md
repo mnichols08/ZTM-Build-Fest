@@ -383,6 +383,40 @@ tests for the verification runner itself. The active root workflow is
 is retained at `docs/ci/kin-verification.workflow.yml`. Pull requests that
 change Kin or its workflow run the complete Windows Edge gate, and pushes to
 `kin-development` run the same gate.
+`scripts/ci-workflow.test.mjs` fails if the two copies drift apart or an
+action is not pinned to a full commit.
+
+**Reused work and the published engine (#330).** Every run's Linux job
+publishes the engine it built as the `kin-engine-wasm` workflow artifact
+(`kin_engine.wasm` and its `kin_engine.wasm.sha256`, kept 30 days), so a
+machine without the `wasm32` target can run the browser gates against the same
+engine ([below](#run-the-browser-gates-locally)). The Windows job reuses the
+browser engine while `rust/`, `Cargo.toml`, `Cargo.lock` and
+`rust-toolchain.toml` are unchanged; stage D still builds WASM afresh and fails
+if the browser copy differs, so a stale cache cannot pass. Measured in October
+2026, the toolchain install (10–12 s), `npm ci` (0–2 s; Kin has no npm
+dependencies) and the WASM build (7–9 s) are a small share of a run; the
+browser step (about 360 s on Windows) is the rest. A Cargo `target/` cache is
+deliberately not kept: Cargo rebuilds a path crate whose files have new
+modification times, which every checkout gives them, and Kin has no other
+crates to reuse.
+
+## Run the browser gates locally
+
+`npm run verify:browser` runs every gate with the browser suites. The browser
+suites need the engine at `web/wasm/kin_engine.wasm`: build it with
+`./build-wasm.sh` (or `.\build-wasm.ps1`), which needs the Rust target
+`wasm32-unknown-unknown` (`rustup target add wasm32-unknown-unknown`). Where
+that target can't be installed, fetch the engine CI built for the same commit:
+
+```sh
+node scripts/fetch-wasm.mjs            # HEAD; or --commit <sha>
+```
+
+It needs a GitHub token (`GITHUB_TOKEN`, or `gh auth login`), finds that
+commit's `kin-engine-wasm` artifact, checks the engine against the SHA-256 CI
+recorded with it, and only then installs it. The commit must have been pushed
+and verified within the last 30 days.
 
 Verification is fail-fast. When a mandatory command fails, later commands in
 that stage and dependent stages are reported `NOT RUN` with the reason; they

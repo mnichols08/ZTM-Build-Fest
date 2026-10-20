@@ -38,7 +38,17 @@ jobs:
       - name: Install Kin dependencies
         working-directory: projects/kin
         run: npm ci
+      # The browser engine is reused while the Rust sources are unchanged
+      # (#330). Stage D still builds WASM afresh and fails if this copy
+      # differs, so a stale cache can't pass.
+      - name: Restore browser WASM built from these Rust sources
+        id: wasm-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: projects/kin/web/wasm/kin_engine.wasm
+          key: kin-wasm-${{ runner.os }}-${{ hashFiles('projects/kin/rust-toolchain.toml', 'projects/kin/Cargo.toml', 'projects/kin/Cargo.lock', 'projects/kin/rust/**') }}
       - name: Prepare ignored WASM asset for browser regressions
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
         working-directory: projects/kin
         run: ./build-wasm.ps1
       - name: Run verification and browser gates
@@ -93,7 +103,21 @@ jobs:
         run: npm ci
       - name: Exercise Linux WASM launcher
         working-directory: projects/kin
-        run: ./build-wasm.sh
+        run: |
+          ./build-wasm.sh
+          sha256sum web/wasm/kin_engine.wasm | tee web/wasm/kin_engine.wasm.sha256
+      # The engine every browser run of this commit uses, with its hash, so
+      # a machine without the wasm32 target can run the browser gates (#330,
+      # #331: scripts/fetch-wasm.mjs).
+      - name: Publish the built WASM engine
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kin-engine-wasm
+          path: |
+            projects/kin/web/wasm/kin_engine.wasm
+            projects/kin/web/wasm/kin_engine.wasm.sha256
+          if-no-files-found: error
+          retention-days: 30
       - name: Run browserless verification
         working-directory: projects/kin
         # As on Windows: on failure, report the failing lines and the end of
