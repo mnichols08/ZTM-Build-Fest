@@ -449,10 +449,14 @@ impl MealsState {
                 self.dinners.remove(&date.encoded());
                 self.cooks.remove(&date.encoded());
             }
+            // A cook belongs to a planned dinner: one set for a date with
+            // no dinner (another device cleared it meanwhile) is ignored, so
+            // a dinner planned later never shows a cook nobody chose.
             EventKind::DinnerCookSet { date, member_id } => match member_id {
-                Some(member) => {
+                Some(member) if self.dinners.contains_key(&date.encoded()) => {
                     self.cooks.insert(date.encoded(), *member);
                 }
+                Some(_) => {}
                 None => {
                     self.cooks.remove(&date.encoded());
                 }

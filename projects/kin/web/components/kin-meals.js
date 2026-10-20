@@ -172,8 +172,59 @@ class KinMeals extends HTMLElement {
     return this.mealsValue.dinners.find((dinner) => dinner.date === date) ?? null;
   }
 
+  // ---- Focus across re-renders ------------------------------------------
+  // A refresh (another tab, sync, the minute timer) rebuilds rows, and the
+  // busy guard disables every control; either would drop keyboard focus.
+  // Controls are found again by what they are, not by node.
+
+  /** A stable key for a control in this view, or null. */
+  focusKey(node) {
+    if (!node || !this.contains(node)) return null;
+    if (node.id) return `#${node.id}`;
+    const day = node.closest(".meal-day");
+    if (day) return `day|${day.dataset.date}|${node.className}`;
+    const recipe = node.closest(".recipe");
+    if (recipe) return `recipe|${recipe.dataset.recipeId}|${[...recipe.querySelectorAll("button, select")].indexOf(node)}`;
+    const planned = node.closest(".meal-plan-recipes li");
+    if (planned) return `plan|${node.dataset.recipeId}`;
+    return null;
+  }
+
+  findByKey(key) {
+    if (!key) return null;
+    if (key.startsWith("#")) return this.querySelector(key);
+    const [kind, id, detail] = key.split("|");
+    if (kind === "day") return this.querySelector(`.meal-day[data-date="${id}"] [class="${detail}"]`) ?? this.querySelector(`.meal-day[data-date="${id}"] .meal-plan`);
+    if (kind === "recipe") return this.querySelector(`.recipe[data-recipe-id="${id}"]`)?.querySelectorAll("button, select")[Number(detail)] ?? null;
+    if (kind === "plan") return this.querySelector(`.meal-plan-recipes button[data-recipe-id="${id}"]`);
+    return null;
+  }
+
+  /** Puts focus back on `key`'s control when focus was lost. */
+  restoreFocus(key) {
+    const active = document.activeElement;
+    const lost = !active || active === document.body || !active.isConnected;
+    const target = this.findByKey(key);
+    if (lost && target && !target.disabled) target.focus();
+  }
+
+  /** Called by the app before it disables controls for a save. */
+  deferFocusedControl() {
+    this.deferredFocus = this.focusKey(document.activeElement) ?? this.deferredFocus ?? null;
+  }
+
+  /** Called once controls are enabled again. */
+  settleDeferredFocus() {
+    const key = this.deferredFocus;
+    this.deferredFocus = null;
+    this.restoreFocus(key);
+  }
+
   render() {
     if (!this.firstElementChild || !this.today) return;
+    const focused = this.focusKey(document.activeElement);
+    // "Put on" days chosen but not yet put survive the rebuild.
+    const chosen = new Map([...this.querySelectorAll(".recipe")].map((item) => [item.dataset.recipeId, item.querySelector(".recipe-put-on select")?.value ?? ""]));
     const days = weekDays(this.monday ?? mondayOf(this.today));
     const current = mondayOf(this.today) === days[0].date;
     this.weekHeading.textContent = current ? `This week · ${weekLabel(days[0].date)}` : `Week of ${weekLabel(days[0].date)}`;
@@ -183,7 +234,12 @@ class KinMeals extends HTMLElement {
     this.days.replaceChildren(...rows);
     this.renderRecipes(days);
     this.addRecipe.disabled = this.isDisabled;
+    for (const [recipeId, date] of chosen) {
+      const select = this.querySelector(`.recipe[data-recipe-id="${recipeId}"] .recipe-put-on select`);
+      if (select && date && [...select.options].some((option) => option.value === date)) select.value = date;
+    }
     if (this.planning) this.renderPlan();
+    this.restoreFocus(focused);
   }
 
   dayRow(day) {
@@ -289,7 +345,9 @@ class KinMeals extends HTMLElement {
       put.addEventListener("click", async () => {
         if (!select.value) { select.focus(); return; }
         const date = select.value;
-        if (await this.actions?.setDinner({ date, recipeId: recipe.recipeId, name: recipe.name }))
+        const current = this.dinnerOn(date);
+        if ((current?.recipeId === recipe.recipeId && current.name === recipe.name) ||
+          await this.actions?.setDinner({ date, recipeId: recipe.recipeId, name: recipe.name }))
           this.querySelector(`.meal-day[data-date="${date}"] .meal-plan`)?.focus();
       });
       putOn.append(select, put);
@@ -385,6 +443,7 @@ class KinMeals extends HTMLElement {
   }
 
   renderPlan() {
+    const focused = this.focusKey(document.activeElement);
     const { day } = this.planning;
     const dinner = this.dinnerOn(day.date);
     this.planTitle.textContent = `Dinner for ${day.longLabel}`;
@@ -401,12 +460,16 @@ class KinMeals extends HTMLElement {
       const button = document.createElement("button");
       button.type = "button";
       button.textContent = recipe.name;
+      button.dataset.recipeId = recipe.recipeId;
       if (dinner?.recipeId === recipe.recipeId) {
         button.setAttribute("aria-pressed", "true");
         button.setAttribute("aria-label", `${recipe.name} (planned)`);
       }
       button.disabled = this.isDisabled;
       button.addEventListener("click", async () => {
+        // Already planned: nothing to save, just move on to the cook.
+        const current = this.dinnerOn(day.date);
+        if (current?.recipeId === recipe.recipeId && current.name === recipe.name) { this.planCook.focus(); return; }
         if (await this.actions?.setDinner({ date: day.date, recipeId: recipe.recipeId, name: recipe.name })) this.planCook.focus();
       });
       item.append(button);
@@ -435,6 +498,7 @@ class KinMeals extends HTMLElement {
     this.planCookHint.hidden = Boolean(dinner);
     this.planClear.hidden = !dinner;
     this.planClear.disabled = this.isDisabled;
+    this.restoreFocus(focused);
   }
 
   async planSomethingElse() {
@@ -444,7 +508,9 @@ class KinMeals extends HTMLElement {
     this.planOtherError.hidden = true;
     try {
       // Checked here first so the message sits beside the field at once.
-      normalizeDinnerName(name);
+      const text = normalizeDinnerName(name);
+      const current = this.dinnerOn(date);
+      if (current && !current.recipeId && current.name === text) { this.planCook.focus(); return; }
       if (await this.actions?.setDinner({ date, recipeId: null, name })) this.planCook.focus();
     } catch (error) {
       if (!(error instanceof MealFormatError)) throw error;
@@ -590,9 +656,9 @@ class KinMeals extends HTMLElement {
         // Kept, never silently dropped: it adds as a new item now.
         const archived = document.createElement("option");
         archived.value = line.stapleId;
-        archived.textContent = "Staple archived — will be added as a new item";
+        archived.textContent = "Staple no longer listed — will be added as a new item";
         select.append(archived);
-        note.textContent = "Staple archived — will be added as a new item.";
+        note.textContent = "That Staple is no longer listed, so this is added as a new item.";
       } else if (line.stapleId && line.staple === "active") {
         const staple = active.find((item) => item.itemId === line.stapleId);
         if (staple && collapseKey(staple.text) === collapseKey(line.text)) note.textContent = `Matched to Staple “${staple.text}”.`;
@@ -628,8 +694,11 @@ class KinMeals extends HTMLElement {
       const ingredients = ingredientsFromText(this.recipeIngredients.value, previous?.ingredients ?? []);
       // An exact match to an active Staple is linked; Kin says so in the
       // Staples list, and one tap there changes it.
+      // Only lines that are new or changed: a link the person removed stays
+      // removed when the recipe is saved again.
+      const known = new Set((previous?.ingredients ?? []).map((line) => line.text));
       for (const line of ingredients) {
-        if (line.stapleId) continue;
+        if (line.stapleId || known.has(line.text)) continue;
         line.stapleId = matchingStaple(line.text, this.staples)?.itemId ?? null;
       }
       recipe = normalizeRecipe({ name: this.recipeName.value, ingredients, notes: this.recipeNotes.value });

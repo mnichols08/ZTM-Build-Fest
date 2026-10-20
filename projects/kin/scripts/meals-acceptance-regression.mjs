@@ -88,7 +88,8 @@ export async function mealsAcceptanceRegressions(client, until) {
 
   // ---- Keyboard only -------------------------------------------------------
   const key = async (keyName, code, keyCode) => {
-    await client.send("Input.dispatchKeyEvent", { type: "keyDown", key: keyName, code, windowsVirtualKeyCode: keyCode });
+    // Enter needs its text ("\r") to activate a focused button.
+    await client.send("Input.dispatchKeyEvent", { type: "keyDown", key: keyName, code, windowsVirtualKeyCode: keyCode, ...(keyName === "Enter" ? { text: "\r" } : {}) });
     await client.send("Input.dispatchKeyEvent", { type: "keyUp", key: keyName, code, windowsVirtualKeyCode: keyCode });
   };
   await page(`(() => { document.querySelector('kin-meals .meal-day[data-date="${today}"] .meal-plan').focus(); return true; })()`);
@@ -195,6 +196,45 @@ export async function mealsAcceptanceRegressions(client, until) {
   assert.ok(retried.retryShown, "Retry is offered");
   assert.deepEqual(retried.after, [1, 1, 1], "Retry adds only what's missing, nothing twice");
 
+  // ---- From the independent review ----------------------------------------
+  const review = await page(`(async () => {
+    const app = document.querySelector("kin-app");
+    const meals = app.meals;
+    const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    const waitFor = async (condition, message) => {
+      for (let i = 0; i < 900; i++) { if (!app.busy && condition()) return; await frame(); }
+      throw new Error("Timed out: " + message + " (" + app.alert.textContent + ")");
+    };
+    const pudding = () => app.mealsState.recipes.find((recipe) => recipe.name === "Meals regression pudding");
+    // A Staple link the person removed stays removed when the recipe is saved again.
+    const before = pudding();
+    await app.ctx.meals.saveRecipe({ recipeId: before.recipeId, name: before.name, notes: before.notes,
+      ingredients: before.ingredients.map((line) => ({ text: line.text, stapleId: null })) }, { quiet: true });
+    meals.querySelector('.recipe[data-recipe-id="' + before.recipeId + '"] button').click();
+    const editor = meals.querySelector(".recipe-dialog");
+    editor.querySelectorAll("textarea")[1].value = "Stir often";
+    editor.querySelector("form").requestSubmit();
+    await waitFor(() => pudding().notes === "Stir often", "the notes are saved");
+    const relinked = pudding().ingredients.some((line) => line.stapleId);
+    editor.querySelector(".meal-dialog-actions button:last-child").click();
+    // Picking the recipe already planned is not an error.
+    const day = [...meals.querySelectorAll(".meal-day")].find((row) => !row.classList.contains("is-today") && row.querySelector(".meal-dinner.is-empty"));
+    const date = day.dataset.date;
+    await app.ctx.meals.setDinner({ date, recipeId: before.recipeId, name: before.name });
+    app.ctx.status.clearAlert();
+    meals.querySelector('.meal-day[data-date="' + date + '"] .meal-plan').click();
+    const plan = meals.querySelector(".meal-plan-dialog");
+    plan.querySelector('.meal-plan-recipes button[data-recipe-id="' + before.recipeId + '"]').click();
+    await frame(); await frame();
+    const alertShown = !app.alert.hidden;
+    const cookFocused = document.activeElement === plan.querySelector("select");
+    plan.querySelector(".meal-dialog-actions button:first-child").click();
+    await waitFor(() => !app.mealsState.dinners.some((dinner) => dinner.date === date), "the test dinner is cleared");
+    return { relinked, alertShown, cookFocused };
+  })()`);
+  assert.equal(review.relinked, false, "a removed Staple link stays removed after saving the recipe again");
+  assert.ok(!review.alertShown && review.cookFocused, "picking the recipe already planned moves on to the cook without an error");
+
   // Clean up.
   await page(`(async () => {
     const app = document.querySelector("kin-app");
@@ -204,5 +244,5 @@ export async function mealsAcceptanceRegressions(client, until) {
     return true;
   })()`);
   await client.send("Emulation.clearDeviceMetricsOverride");
-  return "PASS meals acceptance: 320×568 to desktop, phone and tablet landscape, 200% zoom and the detail panel; keyboard-only planning; light, dark and forced-colour contrast; offline planning and its wording; a part-way failure and Retry without duplicates (#340)";
+  return "PASS meals acceptance: 320×568 to desktop, phone and tablet landscape, 200% zoom and the detail panel; keyboard-only planning; light, dark and forced-colour contrast; offline planning and its wording; a part-way failure and Retry without duplicates; kept Staple unlinks and re-picking a planned recipe (#340)";
 }

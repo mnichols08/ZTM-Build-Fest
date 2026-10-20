@@ -11,9 +11,9 @@
 //   batch) with the app's busy guard, Retry and truthful wording: saved on
 //   this device, waiting to sync, never "the household has it".
 import { idToHex, randomId } from "../../wasm/kin-engine.js";
-import { MealFormatError, planSummary } from "../../wasm/kin-meals.js";
+import { MealFormatError, collapseText, planSummary } from "../../wasm/kin-meals.js";
 import { syncProgress } from "./feedback.js";
-import { tonightLine } from "../../meals/meals-view.js";
+import { cookLabel, tonightLine } from "../../meals/meals-view.js";
 import { routeHash } from "../../routes.js";
 import { SAVE_ERROR } from "./constants.js";
 
@@ -98,7 +98,10 @@ export class MealsController {
 
   /** One meals command with the busy guard, status and Retry. */
   async run(command, { done, retry, quiet = false }) {
-    if (this.app.busy || !this.app.store || !this.app.engine) return false;
+    if (!this.app.store || !this.app.engine) return false;
+    // Never drop a change silently: say so, and re-render so a control that
+    // changed (the cook select) shows what is actually saved.
+    if (this.app.busy) { this.busyNotice(); return false; }
     const session = this.ctx.session.captureSession();
     this.ctx.status.setBusy(true);
     this.ctx.status.clearAlert();
@@ -128,6 +131,18 @@ export class MealsController {
     }
   }
 
+  busyNotice() {
+    this.ctx.status.setStatus("Kin is still saving. Try again in a moment.");
+    this.show();
+  }
+
+  /** Forgets this session's meals and names (on lock). */
+  reset() {
+    this.app.mealsState = null;
+    this.names = new Map();
+    this.again = false;
+  }
+
   /** Saves a recipe whole; resolves with its ID, or null. */
   async saveRecipe({ recipeId = null, name, ingredients, notes }, { quiet = false } = {}) {
     // Recipe IDs are hex throughout the meals view, like the decoded ones.
@@ -146,8 +161,12 @@ export class MealsController {
 
   setDinner({ date, recipeId = null, name }) {
     return this.run({ type: "set-dinner", date, recipeId, name }, {
-      done: `Planned “${name.trim()}” for ${this.dayName(date)}.`,
-      retry: () => this.setDinner({ date, recipeId, name }),
+      done: `Planned “${collapseText(name)}” for ${this.dayName(date)}.`,
+      // A recipe renamed meanwhile is planned under its current name.
+      retry: () => {
+        const recipe = recipeId ? this.app.mealsState?.recipes.find((entry) => entry.recipeId === recipeId) : null;
+        return this.setDinner({ date, recipeId, name: recipe?.name ?? name });
+      },
     });
   }
 
@@ -156,7 +175,7 @@ export class MealsController {
   }
 
   setCook(date, memberId) {
-    const label = memberId ? (memberId === this.people().myId ? "You're" : `${this.names.get(memberId) ?? "A household member"} is`) : null;
+    const label = memberId ? (memberId === this.people().myId ? "You're" : `${cookLabel(memberId, this.people())} is`) : null;
     return this.run({ type: "set-dinner-cook", date, memberId }, {
       done: label ? `${label} cooking on ${this.dayName(date)}.` : `No one is cooking on ${this.dayName(date)} yet.`,
       retry: () => this.setCook(date, memberId),
@@ -180,7 +199,8 @@ export class MealsController {
    * added is now already on Shopping, so nothing is added twice.
    */
   async addIngredients(source, label = "") {
-    if (this.app.busy || !this.app.store || !this.app.engine) return false;
+    if (!this.app.store || !this.app.engine) return false;
+    if (this.app.busy) { this.busyNotice(); return false; }
     const session = this.ctx.session.captureSession();
     this.ctx.status.setBusy(true);
     this.ctx.status.clearAlert();
