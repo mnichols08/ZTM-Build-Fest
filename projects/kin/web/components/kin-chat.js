@@ -2382,6 +2382,20 @@ class KinChat extends HTMLElement {
     input.click();
   }
 
+  /** Something shared from another app (#389): into the composer, not
+   * sent until the member presses Send. */
+  prefill({ text = "", files = [] } = {}) {
+    if (!this.input || this.input.disabled) return false;
+    if (text) {
+      this.input.value = this.input.value ? `${this.input.value}\n${text}` : text;
+      this.input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    if (files.length) this.addFiles([...files]);
+    this.updateSendMode?.();
+    this.input.focus();
+    return true;
+  }
+
   /** Adds photos and files to the ones to send, within the limits. */
   addFiles(incoming) {
     if (!incoming.length) return;

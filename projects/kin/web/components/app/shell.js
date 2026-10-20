@@ -223,6 +223,9 @@ export class ShellBuilder {
     this.app.append(this.app.commandPalette);
     this.app.chatShare = document.createElement("kin-chat-share");
     this.app.append(this.app.chatShare);
+    // "Add to Kin" for things shared from other apps (#389).
+    this.app.shareSheet = document.createElement("kin-share-sheet");
+    this.app.append(this.app.shareSheet);
     this.app.attachmentInput = this.ctx.attachments.buildAttachmentInput();
     this.app.append(this.app.attachmentInput);
     this.ctx.navigation.showPageFromLocation();

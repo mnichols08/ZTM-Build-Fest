@@ -11,7 +11,7 @@ async function worker({ failPath, offline = false, release = '0.38.2' } = {}) {
     async keys() { return [...stored.keys()]; }, async delete(name) { return stored.delete(name); },
   };
   const self = { registration: { active: true }, clients: { async matchAll() { return clients; }, async claim() {} }, location: { origin: 'https://kin.test', href: `https://kin.test/service-worker.js?v=${encodeURIComponent(release)}` }, addEventListener(type, callback) { listeners.set(type, callback); }, async skipWaiting() {} };
-  const context = { self, caches: cacheApi, URL, Response, Promise, fetch: async (request) => { const path = typeof request === 'string' ? request : new URL(request.url).pathname; if (offline || path === failPath) throw new Error('offline'); return new Response(`asset:${path}`); } };
+  const context = { self, caches: cacheApi, URL, Response, Promise, crypto, File, Date, fetch: async (request) => { const path = typeof request === 'string' ? request : new URL(request.url).pathname; if (offline || path === failPath) throw new Error('offline'); return new Response(`asset:${path}`); } };
   vm.runInNewContext(await readFile(new URL('./service-worker.js', import.meta.url), 'utf8'), context);
   return { listeners, stored };
 }
@@ -116,4 +116,28 @@ test('a push always shows one content-free notification and never touches caches
   assert.deepEqual(fetched, [['/manifest.webmanifest', 'include'], ['/manifest.webmanifest', 'include']]);
   let opened; listeners.get('notificationclick')({ notification: { close() {} }, waitUntil(value) { opened = value; } });
   assert.deepEqual(await opened, { url: '/' }, 'with no Kin window open, tapping opens Kin');
+});
+
+test('a share POST is answered by the worker, held in memory once, and never cached or fetched (#389)', async () => {
+  const { listeners, stored } = await worker({ failPath: '/share' });
+  const form = new FormData();
+  form.set('title', 'Pancakes');
+  form.set('text', 'Recipe https://example.test/pancakes');
+  form.append('files', new File(['x'.repeat(10)], 'photo.jpg', { type: 'image/jpeg' }));
+  form.append('files', new File([], 'empty.txt'));
+  let answer;
+  listeners.get('fetch')({ request: new Request('https://kin.test/share', { method: 'POST', body: form }), respondWith(value) { answer = value; } });
+  const response = await answer;
+  assert.equal(response.status, 303);
+  const id = /#kin-share=([a-f0-9]{32})$/.exec(response.headers.get('location'))?.[1];
+  assert.ok(id, 'the page is sent to its own address with a random id');
+  const take = () => new Promise((resolve) => {
+    listeners.get('message')({ data: { type: 'kin-share-take', id }, ports: [{ postMessage: resolve }] });
+  });
+  const shared = await take();
+  assert.equal(shared.title, 'Pancakes');
+  assert.equal(shared.text, 'Recipe https://example.test/pancakes');
+  assert.deepEqual(shared.files.map((file) => file.name), ['photo.jpg'], 'empty files are dropped');
+  assert.equal(await take(), null, 'taken once');
+  for (const entries of stored.values()) assert.ok(![...entries.keys()].some((key) => String(key).includes('share')), 'nothing shared is cached');
 });

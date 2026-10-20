@@ -33,6 +33,7 @@ import { todayActionableRegressions, todayLifecycleRegressions } from "./today-a
 import { keyboardCommandRegressions } from "./keyboard-commands-regression.mjs";
 import { bulkActionRegressions } from "./bulk-actions-regression.mjs";
 import { undoRegressions } from "./undo-regression.mjs";
+import { shareRegressions } from "./share-regression.mjs";
 import { recurringTaskRegressions } from "./recurring-tasks-regression.mjs";
 import { dailyUxHardeningRegressions } from "./daily-ux-hardening-regression.mjs";
 import {
@@ -1393,6 +1394,8 @@ try {
   console.log(await mealsAcceptanceRegressions(first, until));
   await visit(first, "today");
   console.log(await first.evaluate(`(${planningDateRegressions.toString()})()`));
+  await visit(first, "today");
+  console.log(await first.evaluate(`(${shareRegressions.toString()})()`));
   await visit(first, "today");
   console.log(await first.evaluate(`(${quickAddRegressions.toString()})()`));
   await visit(first, "today");

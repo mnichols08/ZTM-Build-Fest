@@ -210,6 +210,20 @@ The live channel has a closed seam for short-lived messages ([SYNC](SYNC.md#ephe
 - **Flooding.** A per-category rate, a payload limit, the 1 MiB socket backpressure bound (a receiver that cannot take a message misses it) and closing of abusive connections.
 - **Not claimed.** The service sees envelope metadata (who sent what category to whom, when) for the instant it relays it. A media connection's own encryption is not Kin's household end-to-end claim.
 
+## Sharing into Kin (#389)
+
+Another app's share sheet POSTs the shared title, text, link and files to
+`/share`. The service worker answers that request itself: the content stays
+in the worker's memory under a random 128-bit id for at most five minutes and
+is handed, once, to the Kin page that asks for that id. It is never written
+to the Cache API, IndexedDB or any other storage, and it reaches household
+data only when the member chooses a destination after unlock, through the
+ordinary encrypted commands. When no service worker is in control, the POST
+reaches the server, which discards the body unread and redirects to `/`.
+Limits: while waiting, the shared content is plaintext in the browser's
+memory (as it is in the sharing app); any page of Kin's origin that guesses
+or learns the id could take it first, so the id is random and taken once.
+
 ## Security principles
 
 - Assume household text and imported/persisted bytes are untrusted.

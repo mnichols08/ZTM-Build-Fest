@@ -2225,3 +2225,25 @@ tried them.
 - **Updates** has two tabs, Handoffs and Chat. `#talk`, `#handoff/talk` and
   `#updates/talk` open Chat with the list (or the Handoffs section without
   chat access); Simple view sends them to Today.
+
+# 34. Sharing into Kin and home-screen shortcuts (#389)
+
+- **Share into Kin.** The installed app is a share target: in another app's
+  share sheet, choose Kin. After unlock, **Add to Kin** shows what was shared
+  (its first line, link and file names) and offers **Add to To do**, **Add to
+  Shopping**, **Save as a note**, **Make a handoff** and, when chat is open to
+  you, **Send in Chat**. Each opens the same dialog used to turn a chat message
+  into a record (prefilled and editable; photos and PDFs offered as
+  attachments), or puts the text and files in Chat's composer. Nothing is
+  saved until you confirm; Cancel says "Nothing was added."
+- **Privacy.** The service worker answers the share itself, so the shared
+  content never reaches the server; it waits in the worker's memory under a
+  random id until the page takes it, once (five minutes at most), and in the
+  page's memory until unlock. Nothing is written to storage or the cache. A
+  share that reaches the server (no service worker yet) is discarded unread
+  and the app simply opens. Simple view doesn't take shares.
+- **Shortcuts.** A long press on the home-screen icon offers Quick add,
+  Shopping, Chat and Today. Quick add opens after unlock.
+- Support: Android and desktop Chrome/Edge support share targets for
+  installed apps; Safari on iOS doesn't offer installed web apps in the share
+  sheet yet. Shortcuts work where the platform supports manifest shortcuts.

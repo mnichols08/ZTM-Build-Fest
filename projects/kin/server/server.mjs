@@ -177,6 +177,15 @@ export function createKinServer(options = {}) {
           return;
         }
       }
+      // Sharing into Kin (#389): the service worker answers /share itself.
+      // Without one (first visit, or a browser that skipped it), the shared
+      // content is not read, kept or logged: the app just opens.
+      if (request.method === "POST" && url.pathname === "/share") {
+        request.resume();
+        response.writeHead(303, { Location: "/", "Cache-Control": "no-store" });
+        response.end();
+        return;
+      }
       serve(response, url.pathname);
     } catch (error) {
       if (request.kinPasskeyFlow)

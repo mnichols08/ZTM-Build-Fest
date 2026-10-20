@@ -2076,3 +2076,12 @@ html:has(kin-app .undo-toast:not([hidden])) { scroll-padding-bottom: calc(160px 
   #updates kin-segment-nav ul { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
   #updates kin-segment-nav li, #updates kin-segment-nav .segment-link { flex: none; white-space: nowrap; }
 }
+
+/* Add to Kin (#389): what was shared, then where it should go. */
+.share-sheet-preview { display: grid; gap: 4px; margin: 0 0 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface-secondary); }
+.share-sheet-preview p, .share-sheet-files { margin: 0; overflow-wrap: anywhere; }
+.share-sheet-text { font-weight: 600; }
+.share-sheet-link { color: var(--ink-muted); font-size: 14px; }
+.share-sheet-files { padding-inline-start: 1.2em; font-size: 14px; }
+.share-sheet-choices { display: grid; gap: 8px; margin: 12px 0; }
+.share-sheet-choices button, .share-sheet-cancel { min-height: var(--tap); justify-content: flex-start; text-align: start; }

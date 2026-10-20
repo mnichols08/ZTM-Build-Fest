@@ -146,6 +146,8 @@ export class SessionController {
     this.scheduleAutoLock();
     this.ctx.status.renderOnboarding();
     this.app.main.focus();
+    // A share or shortcut waiting for this unlock (#389).
+    void this.ctx.share.afterUnlock().catch(() => {});
     // Seal this unlock for a refresh of this tab; a lock meanwhile undoes it.
     void this.app.reloadResume?.arm(vault).then(() => this.app.reloadResume.sweep()).catch(() => {});
   }
