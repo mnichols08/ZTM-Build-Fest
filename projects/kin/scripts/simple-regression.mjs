@@ -36,14 +36,24 @@ export async function simpleRegressions(client, { until, ready }) {
     const picked = { emoji: app.itemEmojis?.get(other) ?? null, status: app.status.textContent, clear: Boolean(app.detail.querySelector(".item-picture-clear")) };
     app.ctx.detail.closeItemDetail({ restoreFocus: false });
     location.hash = "#lists/shopping";
+    // This test household doesn't sync, so it has no chat or fridge room and
+    // Simple view would offer Today alone. Check that, then stand in for
+    // open rooms so the three-destination layout can be checked too.
     app.ctx.simple.enter();
+    const alone = { nav: [...app.navLinks.values()].filter((link) => !link.hidden).map((link) => link.textContent.trim()),
+      single: app.nav.classList.contains("simple-nav-single") };
+    app.ctx.navigation.navigate("#updates/chat");
+    alone.chat = app.route.canonical;
+    app.ctx.simple.access = () => ({ chat: true, fridge: true });
+    app.ctx.simple.updateAccess();
     app.ctx.render.renderState();
-    return { me, socks, adult, picked };
+    return { me, socks, adult, picked, alone };
   })()`);
   assert.deepEqual(setup.adult, { emoji: "🧦", text: "Simple regression socks away" }, "the adult row shows the emoji beside, not instead of, the text");
   assert.equal(setup.picked.emoji, "⚽", "an adult sets a picture from item details");
   assert.match(setup.picked.status, /^Picture saved\./);
   assert.ok(setup.picked.clear, "and can remove it");
+  assert.deepEqual(setup.alone, { nav: ["Today"], single: true, chat: "today" }, "without rooms: Today alone, no navigation bar, Chat unreachable");
   await until(() => page(`document.querySelector("kin-simple")?.querySelectorAll(".simple-card").length > 0`), { attempts: 300 });
 
   const shell = await page(`(() => {
@@ -88,10 +98,15 @@ export async function simpleRegressions(client, { until, ready }) {
       if (app.route.canonical !== "today") reached.push(hash);
     }
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", ctrlKey: true, metaKey: true, bubbles: true }));
+    // Turning a chat message into a record is off too.
+    app.ctx.chatShare.open({ kind: "todo", text: "From chat" });
+    const shared = await app.ctx.chatShare.save({ kind: "todo", text: "From chat" });
+    const shareOpen = Boolean(app.chatShare?.querySelector?.("dialog[open]"));
     app.ctx.detail.openItemDetail(${JSON.stringify(setup.socks)});
-    return { reached, palette: Boolean(app.commandPalette?.isOpen), selection: app.selection };
+    return { reached, palette: Boolean(app.commandPalette?.isOpen), selection: app.selection, shareOpen, shared: shared.ok,
+      added: app.state.items.some((item) => item.text === "From chat") };
   })()`);
-  assert.deepEqual(closed, { reached: [], palette: false, selection: null });
+  assert.deepEqual(closed, { reached: [], palette: false, selection: null, shareOpen: false, shared: false, added: false });
   for (const [hash, canonical] of [["#updates/chat", "updates/chat"], ["#household/fridge", "household/fridge"], ["#today", "today"]]) {
     await page(`document.querySelector("kin-app").ctx.navigation.navigate(${JSON.stringify(hash)})`);
     assert.equal(await page(`document.querySelector("kin-app").route.canonical`), canonical);

@@ -60,6 +60,10 @@ export const authorityMethods = {
           throw new DurableStoreError("Kin household authority backup data is invalid.");
 
         const restoreOverNonActive = current.lifecycle_state !== "active";
+        // Simple view (#343) is an admin's current choice, like the chat and
+        // fridge policies: a restore keeps it, never the older backup's.
+        const currentSimpleView = new Map(this.db.prepare("SELECT id, simple_view FROM members WHERE household_id = ?")
+          .all(snapshot.householdId).map((row) => [row.id, row.simple_view]));
         this.db.prepare("DELETE FROM provisioning_grants WHERE household_id = ?").run(snapshot.householdId);
         if (!restoreOverNonActive)
           this.db.prepare("DELETE FROM devices WHERE household_id = ?").run(snapshot.householdId);
@@ -96,7 +100,7 @@ export const authorityMethods = {
              simple_view = excluded.simple_view`,
         );
         for (const row of snapshot.members)
-          insertMember.run(row.id, row.household_id, row.active, row.credential_ids, row.kind ?? "adult", row.expires_at ?? null, row.member_status ?? (row.active ? "active" : "removed"), row.household_admin ?? 0, row.kind === "limited" ? row.simple_view ?? 0 : 0);
+          insertMember.run(row.id, row.household_id, row.active, row.credential_ids, row.kind ?? "adult", row.expires_at ?? null, row.member_status ?? (row.active ? "active" : "removed"), row.household_admin ?? 0, row.kind === "limited" ? currentSimpleView.get(row.id) ?? row.simple_view ?? 0 : 0);
         const insertCredential = this.db.prepare(
           "INSERT INTO credentials(id, member_id, credential_json) VALUES (?, ?, ?)",
         );

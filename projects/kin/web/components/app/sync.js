@@ -99,9 +99,9 @@ export class SyncController {
         this.ctx.simple?.updateAccess();
       },
       // Simple view (#343, ADR 0013): the layout this member's admin chose.
-      onSimpleView: (on) => {
+      onSimpleView: (on, options) => {
         if (!(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
-        this.ctx.simple?.setSimpleView(on);
+        this.ctx.simple?.setSimpleView(on, options);
       },
       // The family fridge (#317), for Household → Fridge.
       onBoardRoom: (room) => {

@@ -42,8 +42,9 @@ export class SimpleController {
     if (cached) this.enter();
   }
 
-  /** The service's value for this member, from a sync pass. */
-  setSimpleView(on) {
+  /** The service's value for this member, from a sync pass. `cached` says
+   * whether this device saved it for the next unlock. */
+  setSimpleView(on, { cached = true } = {}) {
     if (on === this.on) return;
     if (on) {
       this.enter();
@@ -51,7 +52,12 @@ export class SimpleController {
       this.ctx.status.setStatus("Your household turned on Simple view for you.");
       return;
     }
-    // Back to the full layout: rebuild it cleanly by reloading.
+    // Back to the full layout: rebuild it cleanly by reloading — but only
+    // once the cache says so, or the next unlock would come back here.
+    if (!cached) {
+      this.ctx.status.setStatus("Your household turned off Simple view. Lock and unlock Kin to see everything.");
+      return;
+    }
     this.ctx.status.setStatus("Your household turned off Simple view. Opening the full Kin…");
     this.reload();
   }
@@ -60,12 +66,12 @@ export class SimpleController {
     location.reload();
   }
 
-  /** What this member may reach: chat and fridge unless their access is none. */
+  /** What this member may reach: Chat and the Fridge once their rooms are
+   * open, unless access is none. Without a room (offline, before sync) the
+   * page couldn't work anyway, so it isn't offered. */
   access() {
-    return {
-      chat: (this.app.chat?.room?.access ?? "write") !== "none",
-      fridge: (this.app.fridge?.room?.access ?? "write") !== "none",
-    };
+    const open = (room) => Boolean(room) && room.access !== "none";
+    return { chat: open(this.app.chat?.room), fridge: open(this.app.fridge?.room) };
   }
 
   /** Mounts the Simple view workspace: Today's cards, Chat, the Fridge. */
@@ -78,6 +84,12 @@ export class SimpleController {
     this.app.quickAdd.hidden = true;
     this.app.searchLink.hidden = true;
     this.ctx.detail.closeItemDetail?.({ restoreFocus: false });
+    // Anything open from the full layout closes (switching on mid-session).
+    this.app.commandPalette?.dismiss?.();
+    for (const dialog of this.app.querySelectorAll("dialog[open]")) dialog.close();
+    this.app.chatShare?.reset?.();
+    this.ctx.attachments?.closeViewer?.();
+    this.app.chat && (this.app.chat.simple = true);
     // Navigation: Today, Chat and Fridge only, relabelled.
     for (const [id, link] of this.app.navLinks) {
       const simple = id === "today" ? SIMPLE_ROUTES.today : id === "updates" ? SIMPLE_ROUTES.chat : id === "household" ? SIMPLE_ROUTES.fridge : null;
@@ -108,7 +120,14 @@ export class SimpleController {
     const today = page("today", "Today", this.app.simpleToday);
     const chat = page("updates", "Chat", this.app.chat);
     const fridge = page("household", "Fridge", this.app.fridge);
-    this.app.controlFieldset.replaceChildren(today, chat, fridge);
+    // The household element stays connected, hidden, so this device still
+    // learns of its own removal and locks (checkHouseholdAuthorization).
+    const background = document.createElement("div");
+    background.hidden = true;
+    background.className = "simple-background";
+    if (this.app.household) background.append(this.app.household);
+    this.app.simpleBackground = background;
+    this.app.controlFieldset.replaceChildren(today, chat, fridge, background);
     this.app.pages = new Map([["today", today], ["updates", chat], ["household", fridge]]);
     this.app.segmentNavs = new Map();
     this.app.segmentPanels = new Map();
@@ -123,6 +142,9 @@ export class SimpleController {
     this.app.navLinks.get("updates").hidden = !chat;
     this.app.navLinks.get("household").hidden = !fridge;
     this.app.nav.classList.toggle("simple-nav-single", !chat && !fridge);
+    // A page that is no longer allowed goes back to Today.
+    const route = this.app.route;
+    if (route && ((route.page === "updates" && !chat) || (route.page === "household" && !fridge))) this.ctx.navigation.navigate("#today");
   }
 
   /** The route Simple view allows for the current location. */
@@ -150,6 +172,8 @@ export class SimpleController {
       delete link.dataset.fullLabel;
     }
     this.app.simpleToday = null;
+    this.app.simpleBackground = null;
+    if (this.app.chat) this.app.chat.simple = false;
   }
 
   /** Rebuilds the cards; safe to call after every render. */

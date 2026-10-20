@@ -775,11 +775,12 @@ export class SyncCoordinator {
     const on = status?.simpleView === true;
     if (this.simpleView === on) return;
     this.simpleView = on;
+    let cached = true;
     try {
       await this.keyStore.cacheMemberView({ householdId: this.identity.householdId, memberId: this.identity.memberId, simpleView: on });
-    } catch { /* the next pass tries again */ this.simpleView = null; }
+    } catch { /* the next pass tries again */ this.simpleView = null; cached = false; }
     if (this.stopped) return;
-    try { this.onSimpleView(on); } catch { /* the view's trouble isn't sync's */ }
+    try { this.onSimpleView(on, { cached }); } catch { /* the view's trouble isn't sync's */ }
   }
 
   /** Opens the fridge once (#317); null where its storage isn't available.

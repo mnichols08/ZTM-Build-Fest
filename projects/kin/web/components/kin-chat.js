@@ -2185,7 +2185,8 @@ class KinChat extends HTMLElement {
     if (message.text !== null) actions.push("copy");
     if (message.reactions?.length) actions.push("details");
     if ((room.access ?? "write") === "write") actions.push("reply");
-    if (this.shareable(message)) actions.push("to-shopping", "to-todo", "to-handoff", "to-note");
+    // Simple view (#341) adds nothing: no turning a message into a record.
+    if (this.shareable(message) && !this.simple) actions.push("to-shopping", "to-todo", "to-handoff", "to-note");
     if ((room.access ?? "write") === "write") actions.push(this.pins.some((pin) => pin.messageId === message.messageId) ? "unpin" : "pin");
     // Read-only members (#123) can copy, hide and turn a message into a record
     // (#132), but not post, react, pin, edit or delete.

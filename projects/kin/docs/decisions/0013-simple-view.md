@@ -65,7 +65,11 @@ Simple view is **a calmer layout an admin chooses**, not a permission tier.
   database version 6). Unlock reads the cache before building the workspace,
   so an offline unlock opens the same view as last time. A change applies on
   the next status poll; turning it off on a child's device that never comes
-  online again leaves Simple view on there.
+  online again leaves Simple view on there. If the cache can't be read at
+  unlock, Kin opens the full layout (it fails open: it is a layout, not a
+  lock); the next poll applies the switch again.
+- **Chat and the Fridge** are offered once their rooms are open on the
+  device and access isn't "none"; offline before sync, Today stands alone.
 - **Shared devices:** a device belongs to one member. A family tablet
   registered to an Adult shows the Adult's Kin. A child needs their own
   device (their own passkey and pairing); the docs say so.
@@ -76,9 +80,11 @@ Simple view is **a calmer layout an admin chooses**, not a permission tier.
   Updates → Chat (when the child's chat access isn't "none") and Household →
   Fridge (when board access isn't "none") resolve; every other hash, alias,
   `/pair` and search link goes to Today.
-- **Not mounted:** in Simple view only its three pages are in the document;
-  the rest of the workspace is taken out of the document before anything
-  shows, so no link, alias or focus path reaches it. The command palette, keyboard shortcuts, Quick add,
+- **Not mounted:** in Simple view only its three pages are shown; the rest
+  of the workspace is taken out of the document before anything shows, so
+  no link, alias or focus path reaches it. The household panel alone stays,
+  hidden, so a device whose member was removed still notices and locks.
+  Turning a chat message into a record is off as well. The command palette, keyboard shortcuts, Quick add,
   Search, the compose bar, bulk selection and the detail panel and sheet
   are off. Kept: the household brand, sync status and Lock. Turning Simple
   view off reloads Kin into the full layout.

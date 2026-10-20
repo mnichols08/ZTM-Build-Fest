@@ -756,7 +756,8 @@ export async function commitRootRotationKeys({ candidateVault, rotation, check =
     const original = await snapshotStores(database, Object.keys(KEY_DEFINITIONS));
     const replacements = {}, stageKeys = [], recovered = {};
     for (const [store, rows] of Object.entries(original)) {
-      if (rows.length !== marker.stagedCounts[store]) throw new SyncKeyStoreError("The saved sync keys changed during replacement.");
+      // A store added since the rotation was prepared (member_view, v6) had none.
+      if (rows.length !== (marker.stagedCounts[store] ?? 0)) throw new SyncKeyStoreError("The saved sync keys changed during replacement.");
       replacements[store] = []; recovered[store] = [];
       for (const row of rows) {
         candidateVault.assertUnlocked(); await check();

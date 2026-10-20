@@ -74,7 +74,10 @@ export class SessionController {
       this.app.hasLocalSyncBinding = Boolean(snapshot.syncIdentity);
       this.ctx.refresh.applyCatchUpSnapshot(snapshot);
       await this.ctx.appearance.restoreCachedHouseholdDefaults(snapshot.syncIdentity, session);
-      // Simple view (#345, ADR 0013): the cached layout, before anything shows.
+      // The household and security panels go in place first, then Simple
+      // view (#345, ADR 0013) applies the cached layout before anything shows.
+      this.app.peoplePage.append(this.app.household, this.app.notifications, this.app.chatSettings);
+      this.app.privacyPage.append(this.app.security);
       await this.ctx.simple.restore(snapshot.syncIdentity, session);
       this.assertCurrentSession(session);
       this.ctx.render.renderState();
@@ -82,8 +85,6 @@ export class SessionController {
       this.app.main.hidden = false;
       this.app.nav.hidden = false;
       this.app.siteTools.hidden = false;
-      this.app.peoplePage.append(this.app.household, this.app.notifications, this.app.chatSettings);
-      this.app.privacyPage.append(this.app.security);
       this.ctx.navigation.showPageFromLocation();
       this.ctx.status.setStatus("Ready.");
       // Reminders suspended by a lock of this same vault come back with

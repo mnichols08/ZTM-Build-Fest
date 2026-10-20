@@ -48,7 +48,8 @@ export class DetailController {
       // Item picture (#347): Adults set it; on a device without sync the
       // person is the household's only member.
       emoji: this.app.itemEmojis?.get(this.app.selection.itemId) ?? null,
-      canSetPicture: (this.app.householdStatus?.memberKind ?? "adult") === "adult",
+      // Unknown kind on a synced device: not until the status says Adult.
+      canSetPicture: (this.app.householdStatus?.memberKind ?? (this.app.hasLocalSyncBinding ? null : "adult")) === "adult",
       item,
     });
   }

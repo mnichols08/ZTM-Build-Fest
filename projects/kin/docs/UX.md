@@ -1223,10 +1223,13 @@ service enforces only the switch and Chat and Fridge access.
   on its next sync, and an offline unlock keeps it. Turning it off reloads
   their Kin into the full layout. A device belongs to one member: a child
   needs their own device.
-- **What shows.** Today, Chat and the Fridge, and nothing else in the
-  document. Every other address, alias, `/pair` and search link opens Today.
-  No Quick add, Search, command palette, keyboard shortcuts, bulk selection
-  or item details; the brand, sync status and Lock stay. The navigation is a
+- **What shows.** Today, Chat and the Fridge; the rest of the workspace is
+  out of the document (the household panel stays, hidden, so a removed
+  device still locks). Every other address, alias, `/pair` and search link
+  opens Today. No Quick add, Search, command palette, keyboard shortcuts,
+  bulk selection, item details, or turning a chat message into a record;
+  the brand, sync status and Lock stay. Chat and the Fridge appear once
+  they're open on the device. The navigation is a
   bottom bar on phones and a side list wider, with Chat or the Fridge left
   out when the child has no access; with neither, there is no bar.
 - **Today.** "Tonight: Tacos" when a dinner is planned, then one large card
