@@ -35,6 +35,11 @@ class KinRoutines extends HTMLElement {
   }
 
   connectedCallback() {
+    this.compactQuery ??= globalThis.matchMedia?.("(max-width: 719px)") ?? null;
+    if (this.compactQuery && !this.onCompactChange) {
+      this.onCompactChange = () => this.render();
+      this.compactQuery.addEventListener?.("change", this.onCompactChange);
+    }
     if (this.input) return;
     // --- Routines view ---
     const routinesView = document.createElement("section");
@@ -359,7 +364,24 @@ class KinRoutines extends HTMLElement {
         actions.append(button);
       };
       if (this.mode === "normal" && record.occurrenceStatus !== "unavailable") addAction(record.occurrenceStatus === "completed" ? "Reopen" : "Complete", record.occurrenceStatus === "completed" ? "reopen-routine-occurrence" : "complete-routine-occurrence");
-      addAction("Stop repeating", "archive-routine");
+      // Delete routine (#314): archives it everywhere; past completions stay
+      // in history, and Undo on the toast brings it back. On a phone it
+      // lives in the row's ⋯ menu rather than beside Complete.
+      if (this.compactQuery?.matches) {
+        const more = document.createElement("details");
+        more.className = "row-more";
+        const summary = document.createElement("summary");
+        summary.className = "row-more-toggle";
+        summary.setAttribute("aria-label", `More for ${record.text}`);
+        summary.textContent = "⋯";
+        more.append(summary);
+        actions.append(more);
+        const before = actions.lastChild;
+        addAction("Delete routine", "archive-routine");
+        if (actions.lastChild !== before) more.append(actions.lastChild);
+      } else {
+        addAction("Delete routine", "archive-routine");
+      }
       content.append(this.createScheduleEditor(record));
       row.append(content, actions);
       this.list.append(row);

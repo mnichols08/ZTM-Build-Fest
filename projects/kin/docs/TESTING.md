@@ -146,6 +146,14 @@ outcome wording. The `command_tests.rs` test
 `item_completion_and_reopening_must_change_status` covers the Rust
 precondition and the idempotent replay of historical duplicates.
 
+`scripts/undo-regression.mjs` (#314, #315) runs inside
+`browser-regression.mjs` after the bulk suite: the toast after a change, Undo
+then Redo on it, Ctrl/Cmd+Z and Shift+Ctrl/Cmd+Z outside text fields only,
+refusal when the item changed since, an archived item and a deleted routine
+brought back by creating them again (with date, schedule and today's
+completion), Dismiss, and "Nothing to undo." `web/undo.test.mjs` covers the
+history and every reversal mapping.
+
 `scripts/bulk-actions-regression.mjs` runs inside `browser-regression.mjs`
 after the keyboard suite, through the real store and WASM. It covers:
 
@@ -194,7 +202,7 @@ after the keyboard suite, through the real store and WASM. It covers:
   completion; a stale repeat; weekend absence and Monday's new occurrence;
   reload and unlock; Schedule from Today; a partial schedule change and its
   resume without a duplicate; a stale change; 320px targets and overflow; and
-  Stop repeating.
+  Delete routine.
 
 ## Daily UX hardening coverage
 

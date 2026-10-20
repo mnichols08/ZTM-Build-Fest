@@ -30,6 +30,7 @@ import { qrRegressions, writeQrCamera } from "./qr-regression.mjs";
 import { todayActionableRegressions, todayLifecycleRegressions } from "./today-actionable-regression.mjs";
 import { keyboardCommandRegressions } from "./keyboard-commands-regression.mjs";
 import { bulkActionRegressions } from "./bulk-actions-regression.mjs";
+import { undoRegressions } from "./undo-regression.mjs";
 import { recurringTaskRegressions } from "./recurring-tasks-regression.mjs";
 import { dailyUxHardeningRegressions } from "./daily-ux-hardening-regression.mjs";
 import {
@@ -1411,6 +1412,7 @@ try {
   problems.push(...problems.splice(offlineWindowStart).filter((entry) => !offlineStatusProbe(entry)));
   if (heavy) console.log(await keyboardCommandRegressions(first, { visit: (id) => visit(first, id), ready }));
   if (heavy) console.log(await bulkActionRegressions(first, { visit: (id) => visit(first, id), ready }));
+  if (heavy) { await visit(first, "today"); console.log(await first.evaluate(`(${undoRegressions.toString()})()`)); }
   if (heavy) console.log(await recurringTaskRegressions(first, { visit: (id) => visit(first, id), ready }));
   // The hardening suite also unlocks offline; the same probe filter applies.
   const hardeningOfflineStart = problems.length;

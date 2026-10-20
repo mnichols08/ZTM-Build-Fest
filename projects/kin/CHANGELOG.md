@@ -9,6 +9,16 @@ documentation only.
 
 ### Added
 
+- **Undo and redo** (#315): after adding, completing, reopening, archiving,
+  planning or pinning an item, or adding, completing or deleting a routine,
+  a toast offers **Undo**, then **Redo**; Ctrl/Cmd+Z and Shift+Ctrl/Cmd+Z (or
+  Ctrl+Y) do the same outside text fields. Each undo appends ordinary
+  reversing changes that sync; history is never rewritten. It is refused, in
+  plain words, when the thing changed since. Kept in memory for the session;
+  locking clears it.
+- **Delete routine** (#314) replaces "Stop repeating": no confirmation, the
+  toast's Undo brings it back with its schedule, owner and today's
+  completion. On a phone it lives in the row's ⋯ menu.
 - **Simple view** (#341, [ADR 0013](docs/decisions/0013-simple-view.md)): a
   household admin turns on a calmer layout for a Limited member (People &
   devices, with their passkey). The child's Kin then shows only Today, Chat

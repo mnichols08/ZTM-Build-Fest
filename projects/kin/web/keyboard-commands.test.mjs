@@ -127,3 +127,20 @@ test("the shortcut help documents every shortcut, with both modifier conventions
   for (const command of COMMANDS.filter((entry) => entry.shortcut))
     assert.ok(SHORTCUTS.some((entry) => entry.combos.some((combo) => combo.keys.join("") === command.shortcut)), command.id);
 });
+
+test("Ctrl/Cmd+Z undoes and Shift+Ctrl/Cmd+Z or Ctrl+Y redoes (#315)", () => {
+  assert.equal(shortcutForKey(key("z", { ctrlKey: true })), "undo");
+  assert.equal(shortcutForKey(key("z", { metaKey: true }), { mac: true }), "undo");
+  assert.equal(shortcutForKey(key("Z", { ctrlKey: true, shiftKey: true })), "redo");
+  assert.equal(shortcutForKey(key("z", { metaKey: true, shiftKey: true }), { mac: true }), "redo");
+  assert.equal(shortcutForKey(key("y", { ctrlKey: true })), "redo");
+  assert.equal(shortcutForKey(key("я", { code: "KeyZ", ctrlKey: true })), "undo", "the physical Z key on another layout");
+  assert.equal(shortcutForKey(key("z", { ctrlKey: true }), { mac: true }), null, "Ctrl+Z isn't undo on a Mac");
+  assert.equal(shortcutForKey(key("y", { metaKey: true }), { mac: true }), null);
+  assert.equal(shortcutForKey(key("y", { ctrlKey: true, shiftKey: true })), null);
+  assert.equal(shortcutForKey(key("z")), null, "a plain Z types");
+  assert.equal(shortcutForKey(key("z", { ctrlKey: true, altKey: true })), null);
+  assert.equal(shortcutForKey(key("z", { ctrlKey: true, repeat: true })), null);
+  assert.ok(SHORTCUTS.some((entry) => entry.action === "Undo your last change"));
+  assert.ok(SHORTCUTS.some((entry) => entry.action === "Redo what you undid"));
+});

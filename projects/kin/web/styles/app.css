@@ -379,6 +379,24 @@ kin-segment-nav { display: block; margin: 0 0 16px; }
   transition: opacity .3s;
 }
 .status-message:empty, .status-message[data-stale] { opacity: 0; visibility: hidden; }
+/* Undo and redo (#315): the toast stays until the next action or Dismiss. The
+   status line still announces the change; it steps out of sight while the
+   toast shows the same words. */
+.status-message.status-in-toast { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; padding: 0; border: 0; }
+.undo-toast { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 14px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); color: var(--ink); box-shadow: 0 6px 18px rgba(0, 0, 0, .14); }
+.undo-toast[hidden] { display: none; }
+.undo-toast-text { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.undo-toast-action { flex: none; min-height: var(--tap); padding-inline: 14px; font-weight: 650; color: var(--accent); }
+.undo-toast-dismiss { flex: none; min-width: var(--tap); min-height: var(--tap); padding: 0; font-size: 1.25rem; line-height: 1; }
+/* A row's ⋯ menu on a phone (Delete routine, #314). */
+.row-more { position: relative; }
+.row-more > summary { display: inline-flex; align-items: center; justify-content: center; min-width: var(--tap); min-height: var(--tap); border: 1px solid var(--line-strong); border-radius: var(--r-control); cursor: pointer; list-style: none; font-size: 1.25rem; }
+.row-more > summary::-webkit-details-marker { display: none; }
+.row-more[open] > summary { border-color: var(--accent); }
+.row-more > button { position: absolute; z-index: 5; inset-inline-end: 0; top: calc(100% + 4px); white-space: nowrap; box-shadow: 0 6px 18px rgba(0, 0, 0, .14); }
+@media (forced-colors: active) {
+  .undo-toast, .row-more > summary { border: 1px solid CanvasText; }
+}
 .error-message {
   padding: 10px 14px;
   border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line));

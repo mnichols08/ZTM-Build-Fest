@@ -80,6 +80,7 @@ export class NavigationController {
     }
     if (openDialogs.length || isTypingContext(event, active)) return;
     event.preventDefault();
+    if (shortcut === "undo" || shortcut === "redo") { void this.ctx.undo.run(shortcut); return; }
     this.ctx.append.runWorkspaceCommand(shortcut, { opener });
   }
   layoutMode() {
