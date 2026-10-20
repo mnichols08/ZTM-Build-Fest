@@ -10,7 +10,7 @@
 // - Each action is one household command (or, for ingredients, a short
 //   batch) with the app's busy guard, Retry and truthful wording: saved on
 //   this device, waiting to sync, never "the household has it".
-import { randomId } from "../../wasm/kin-engine.js";
+import { idToHex, randomId } from "../../wasm/kin-engine.js";
 import { MealFormatError, planSummary } from "../../wasm/kin-meals.js";
 import { syncProgress } from "./feedback.js";
 import { tonightLine } from "../../meals/meals-view.js";
@@ -130,7 +130,8 @@ export class MealsController {
 
   /** Saves a recipe whole; resolves with its ID, or null. */
   async saveRecipe({ recipeId = null, name, ingredients, notes }, { quiet = false } = {}) {
-    const id = recipeId ?? randomId();
+    // Recipe IDs are hex throughout the meals view, like the decoded ones.
+    const id = recipeId ?? idToHex(randomId());
     const saved = await this.run(
       { type: "save-recipe", recipeId: id, name, ingredients, notes },
       { done: quiet ? "Staple link saved." : `Saved recipe “${name}”.`, retry: () => this.saveRecipe({ recipeId: id, name, ingredients, notes }, { quiet }), quiet },
