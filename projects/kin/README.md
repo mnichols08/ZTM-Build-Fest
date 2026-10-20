@@ -2,7 +2,7 @@
 
 > A private, lightweight household coordination app for the little things families need to know, remember, hand off, or discuss.
 
-**Current implementation line: `v1.2.0` — Household Chat.** Released as `kin-v1.2.0` on 2026-10-19, this minor release adds one household chat room under Updates → Chat, with read receipts, typing indicators and "online now" that members can switch off and that are never kept as history. Everyone can chat by default; household admins can restrict Limited and Temporary members. It builds on v1.1.2 and adds server schemas 12–17; see the [changelog](CHANGELOG.md) for the compatibility notes. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
+**Current implementation line: `v1.3.0` — Member Names and Clearer Setup.** Released as `kin-v1.3.0` on 2026-10-19, this minor release lets each member choose the name their household sees, makes inviting another person clearly different from adding your own device, and starts the onboarding and feedback work in #261: a first-use welcome, a clearer Today capture, and save messages that only say "sent" once the relay has accepted a change. It builds on v1.2.0 (household chat) and changes no v1.0 format or server schema; see the [changelog](CHANGELOG.md) for the compatibility notes. Kin keeps household history in a local-first, encrypted event store on each device, and syncs it between a household's devices through a relay that only ever holds encrypted data.
 
 The [v0.10 release record](docs/V0.10.0.md) describes local recovery, migration, compatibility, measurements and validation. Exports are encrypted history recovery and do not restore server membership, device trust, credentials, or sync authority. The v0.12 line adds household deletion with a 30-day cancellation period and permanent anti-resurrection tombstones; it cannot erase offline or exported copies. If every legitimate credential, trusted device, key copy, and archive secret is lost, Kin deliberately reports the encrypted history as unrecoverable rather than granting stale authority.
 
@@ -42,6 +42,9 @@ AI runtime features, gamification, surveillance, and enterprise workflows stay o
 
 ## Release history
 
+- `v1.3.0` — Member Names and Clearer Setup: members' own preferred names and
+  friendly device labels, explicit invite-a-person versus add-my-device paths,
+  and first-use and feedback improvements. Released 2026-10-19 (`kin-v1.3.0`).
 - `v1.2.0` — Household Chat: one household chat room with receipts, typing,
   "online now", replies, reactions, polls, voice messages, and encrypted content
   blobs. Released 2026-10-19 (`kin-v1.2.0`).
@@ -169,7 +172,7 @@ sensitive identity/routing metadata and encrypted envelopes; stale restores can
 roll back revocations or key epochs. See [V0.11.0](docs/V0.11.0.md) for the
 full operational and privacy boundaries.
 
-First setup generates a recovery secret that must be confirmed and stored separately. Losing all unlock paths loses access; losing the browser profile also requires an encrypted backup. Drafts are memory-only and disappear on lock/reload. Encrypted archives restore exact history into an empty installation for local use; they do not recreate server identity or device trust. The static application shell supports offline recovery unlock after its first successful cache installation.
+First setup generates a recovery secret that must be confirmed and stored separately. Losing all unlock paths loses access; losing the browser profile also requires an encrypted backup. Drafts are memory-only and disappear on lock/reload. A refresh of the same tab keeps Kin unlocked (a device setting; [ADR 0010](docs/decisions/0010-reload-resume.md)); closing the tab, Lock and automatic lock still lock it. Encrypted archives restore exact history into an empty installation for local use; they do not recreate server identity or device trust. The static application shell supports offline recovery unlock after its first successful cache installation.
 
 Sync is off until an authenticated adult enables it. The v0.11 implementation candidate persists identity, relay ciphertext, cursors and provisioning state in SQLite; sessions, incomplete pairing and passkey flows remain process-local and expire on restart. Device-token verifiers persist, but raw tokens and private keys do not. A new/replacement adult cannot receive pre-join epochs. Existing adults can pair another device after comparing fingerprints. Encryption does not protect a compromised unlocked runtime, origin, privileged extension or OS. This prototype has not received an independent security audit.
 

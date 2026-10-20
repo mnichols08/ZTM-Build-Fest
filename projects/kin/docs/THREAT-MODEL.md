@@ -1,6 +1,6 @@
 # Threat Model
 
-**Status:** Current as of v1.2.0; see [Known limitations at v1.0](#known-limitations-at-v10). Local authenticated encryption, credential/recovery root wrappers, locked startup, encrypted archives and signed transport-key migration complement encrypted sync. The service has durable identity/relay storage, backup/restore and explicit household lifecycle. Independent security audit, cross-browser certification and general rollback protection are not provided.
+**Status:** Current as of v1.3.0; see [Known limitations at v1.0](#known-limitations-at-v10). Local authenticated encryption, credential/recovery root wrappers, locked startup, encrypted archives and signed transport-key migration complement encrypted sync. The service has durable identity/relay storage, backup/restore and explicit household lifecycle. Independent security audit, cross-browser certification and general rollback protection are not provided.
 
 ## Refactor track: decrypted history in memory while unlocked
 
@@ -77,6 +77,15 @@ v0.9.3 does not provide this protection:
 its canonical events, draft text and usable sync CryptoKeys survive logout.
 The [v0.10 record](V0.10.0.md) gates this claim on complete migration, including
 outbox duplicates and legacy provisioning/decryption capabilities.
+
+**Exception, refresh resume (#351, [ADR 0010](decisions/0010-reload-resume.md)).**
+For two minutes after an unlocked tab unloads, that tab's sessionStorage holds
+the root sealed with a non-extractable key kept in IndexedDB. Someone with the
+person's browser profile in that window could use the browser to combine them
+and unlock. The owner accepted this: access to the person's own browser is the
+person's responsibility. Both halves are deleted on use, on expiry, on every
+real lock and when the device setting is off; only a `reload` of the same tab
+with a matching vault, root version and lock epoch can use them.
 
 This does not protect a compromised unlocked browser runtime, privileged malicious
 extensions, OS malware, resident-key memory forensics, a compromised origin/build,
@@ -562,6 +571,18 @@ events hold IDs and outcomes only.
 
 **Planned.** Nothing further for v1.1; comparing fingerprints by eye remains
 the defence against a malicious service working with a QR holder.
+
+### A fridge on a shared kitchen screen (#324)
+
+A tablet left on the counter showing the fridge is an unlocked Kin: anyone who
+picks it up can leave the fridge and see the household's lists, chat and
+settings. Kitchen-screen mode and full screen deliberately do not weaken this
+boundary or add a separate "kiosk" unlock: automatic lock runs as everywhere
+(drawing counts as use, so a fridge in use stays open), locking leaves full
+screen, and the rail states which applies on this device, including when
+automatic lock is off. Households that keep a shared screen should turn
+automatic lock on; Kin does not force it. A kiosk mode limited to the fridge
+would need its own credential and is out of scope.
 
 ### v1.0 was not tested across every browser and device
 

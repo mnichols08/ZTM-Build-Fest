@@ -246,14 +246,34 @@ export class SecurityViews {
     lockSelect.addEventListener("change", () => {
       this.host.services?.setAutoLockMinutes(Number(lockSelect.value));
       this.host.message.textContent = Number(lockSelect.value)
-        ? "Kin will lock after that much inactivity. Closing or reloading always locks it."
-        : "Kin locks whenever you close or reload.";
+        ? "Kin will lock after that much inactivity. Closing the tab always locks it."
+        : "Kin locks whenever you close the tab.";
     });
     const lockHint = document.createElement("p");
     lockHint.className = "security-note";
-    lockHint.textContent = "Closing or reloading always locks it. If you switch away for longer than this setting, Kin locks before you continue.";
+    lockHint.textContent = "Closing the tab always locks Kin. If you switch away for longer than this setting, Kin locks before you continue.";
     lockLabel.append(lockSelect);
-    lockSection.append(lockLabel, lockHint);
+    // #351: a refresh of this tab can keep Kin unlocked (ADR 0010).
+    const resumeRow = document.createElement("div");
+    resumeRow.className = "security-chat-option";
+    const resumeBox = document.createElement("input");
+    resumeBox.type = "checkbox";
+    resumeBox.id = "reload-resume";
+    resumeBox.checked = this.host.services?.reloadResumeEnabled?.() ?? true;
+    resumeBox.addEventListener("change", () => {
+      this.host.services?.setReloadResume?.(resumeBox.checked);
+      this.host.message.textContent = resumeBox.checked
+        ? "Refreshing this tab keeps Kin unlocked."
+        : "Refreshing locks Kin, like closing the tab.";
+    });
+    const resumeLabel = document.createElement("label");
+    resumeLabel.htmlFor = resumeBox.id;
+    resumeLabel.textContent = "Stay unlocked when I refresh this tab";
+    resumeRow.append(resumeBox, resumeLabel);
+    const resumeHint = document.createElement("p");
+    resumeHint.className = "security-note";
+    resumeHint.textContent = "Closing the tab, Lock, and automatic lock still lock Kin.";
+    lockSection.append(lockLabel, lockHint, resumeRow, resumeHint);
 
     const recoverySection = this.host.section("Recovery key");
     const recoveryStatus = document.createElement("p");

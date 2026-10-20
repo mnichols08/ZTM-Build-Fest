@@ -142,8 +142,12 @@ export class SessionController {
     this.scheduleAutoLock();
     this.ctx.status.renderOnboarding();
     this.app.main.focus();
+    // Seal this unlock for a refresh of this tab; a lock meanwhile undoes it.
+    void this.app.reloadResume?.arm(vault).then(() => this.app.reloadResume.sweep()).catch(() => {});
   }
-  lockHousehold(broadcast = true, { preserveSecurityOperation = false, endSession = false } = {}) {
+  lockHousehold(broadcast = true, { preserveSecurityOperation = false, endSession = false, keepReloadResume = false } = {}) {
+    // Every lock but the one on page unload ends refresh-resume (#351).
+    if (!keepReloadResume) void this.app.reloadResume?.disarm();
     if (broadcast) {
       // A protected read holds a native transaction while crypto runs. Notify
       // peers before the epoch write queues behind that read, so they abort it
@@ -279,11 +283,16 @@ export class SessionController {
   scheduleAutoLock() {
     clearTimeout(this.app.autoLockTimer);
     this.app.autoLockTimer = null;
+    // After a refresh the inactivity deadline carries over (#351), once.
+    const resumedDeadline = this.app.resumeAutoLockAt;
+    this.app.resumeAutoLockAt = null;
     if (!this.app.vault || this.app.vault.locked || !this.app.autoLockMinutes) {
       this.app.lastActivityAt = null;
       return;
     }
-    this.app.lastActivityAt = Date.now();
+    const period = this.app.autoLockMinutes * 60_000;
+    const delay = Number.isFinite(resumedDeadline) ? Math.max(0, Math.min(period, resumedDeadline - Date.now())) : period;
+    this.app.lastActivityAt = Date.now() - (period - delay);
     const vault = this.app.vault;
     const generation = this.app.securityGeneration;
     this.app.autoLockTimer = setTimeout(() => {
@@ -291,6 +300,6 @@ export class SessionController {
       if (vault !== this.app.vault || generation !== this.app.securityGeneration || vault.locked) return;
       this.ctx.session.lockHousehold();
       this.ctx.status.setStatus("Kin locked after inactivity. Unlock to continue.");
-    }, this.app.autoLockMinutes * 60_000);
+    }, delay);
   }
 }

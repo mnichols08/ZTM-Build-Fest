@@ -175,6 +175,8 @@ export class AppearanceController {
       else this.installIdentitySession = null;
       // Only admins can see or change the chat policy; others don't ask.
       if (!result.offline) this.app.chatPolicy?.show(result.admin ? result.chatPolicy ?? null : null);
+      // The fridge policy (#323) arrives the same way.
+      if (!result.offline) this.app.boardPolicy?.show(result.admin ? result.boardPolicy ?? null : null);
       if (draftPreserved) return;
       if (this.app.appearance?.dirty) this.ctx.appearance.setHouseholdIdentity(this.app.householdSettings?.name ?? DEFAULT_HOUSEHOLD_NAME, this.app.householdSettings);
       else {

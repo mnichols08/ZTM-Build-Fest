@@ -34,8 +34,21 @@ export async function handoffRegressions() {
     capture.input.value = text;
     capture.saveDraft();
   };
+  // The same race for the form (#327): a refresh that takes the busy guard
+  // between idle() and requestSubmit() makes the save return without saving
+  // or failing, so neither the result nor Retry appears. The draft is still in
+  // the field, so submitting again cannot save anything twice. Each submit
+  // waits for a quiet point and resubmits until the save has really started.
+  const submitStarted = async () => {
+    for (let attempt = 1; ; attempt++) {
+      await idle();
+      capture.querySelector("form").requestSubmit();
+      if (app.busy && app.status.textContent === "Saving…") return;
+      check(attempt < 5, "the Handoff form's save started");
+    }
+  };
   const submit = async () => {
-    capture.querySelector("form").requestSubmit();
+    await submitStarted();
     await idle();
   };
   const text = '<script>alert("handoff")</script> 🥛';
@@ -368,6 +381,21 @@ export async function handoffRegressions() {
     app.store.database.version === 5,
     "encrypted stores retain canonical event compatibility",
   );
+  // Reproduces the race: a save submitted while a refresh holds the guard
+  // starts once it is released, and is not lost.
+  {
+    const quiet = await count();
+    edit("Race handoff");
+    app.ctx.status.setBusy(true);
+    capture.querySelector("form").requestSubmit();
+    check((await count()) === quiet && capture.input.value === "Race handoff", "a submit during a refresh saves nothing and keeps the draft");
+    setTimeout(() => app.ctx.status.setBusy(false), 30);
+    await submit();
+    check((await count()) === quiet + 1 && app.state.handoffs.at(-1)?.text === "Race handoff", "the next quiet submit saves it once");
+    // Tidy up through the guarded path, so the next suite starts clean.
+    await (await startHandoffSave({ type: "archive-handoff", handoffId: app.state.handoffs.at(-1).handoffId })).done;
+    await idle();
+  }
   return "PASS Handoff add/acknowledge/archive, tombstones, invalid references, inert Unicode, retry draft ownership and mixed replay";
 }
 

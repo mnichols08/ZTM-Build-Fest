@@ -1,5 +1,5 @@
 // Real browser IndexedDB + Web Crypto regressions; no third-party harness.
-import { waitForOrigin } from "./cdp-page.mjs";
+import { applyRegressionDefaults, captureFailure, waitForOrigin } from "./cdp-page.mjs";
 import { eventArenaRegression, projectionOracle } from "./event-arena-regression.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -463,6 +463,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
       evaluate: async (expression) => { const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); assert.equal(result.exceptionDetails, undefined, JSON.stringify(result.exceptionDetails)); return result.result.value; },
       send,
     };
+    await applyRegressionDefaults(send);
     await waitForOrigin(client.evaluate, origin, { navigate: () => send("Page.navigate", { url: origin }) });
     return client;
   }
@@ -541,6 +542,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         if (measurement) console.log("PERFORMANCE " + JSON.stringify({ ...measurement, ...memory }));
       }
     }
+  } catch (error) {
+    // Before the browser closes: what each page showed (#328).
+    await captureFailure("security storage regression");
+    throw error;
   } finally {
     await stopBrowser();
     server.closeAllConnections();

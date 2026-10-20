@@ -49,6 +49,7 @@ import { ViewBuilder } from "./views.js";
 import { LocalReminders } from "../../reminders.js";
 import { EventStore } from "../../storage/event-store.js";
 import { readAutoLockPreference } from "./constants.js";
+import { ReloadResume } from "../../security/reload-resume.js";
 import { reconnectLostAuthorization } from "../shared/session-guard.js";
 
 export function createAppContext(app) {
@@ -129,6 +130,9 @@ export function initializeAppState(app) {
     app.autoLockMinutes = readAutoLockPreference();
     app.autoLockTimer = null;
     app.lastActivityAt = null;
+    // A refresh keeps Kin unlocked in this tab (#351, ADR 0010).
+    app.reloadResume = new ReloadResume();
+    app.resumeAutoLockAt = null;
     app.onActivity = () => { if (app.autoLockTimer) app.ctx.session.scheduleAutoLock(); };
     app.onRetryAttachments = () => { if (app.syncCoordinator) void app.syncCoordinator.syncNow(); else void app.ctx.sync.configureSyncCoordinator(); };
     app.onChangeResponsibility = (event) => app.ctx.items.handleChangeResponsibility(event);
@@ -331,7 +335,17 @@ export function initializeAppState(app) {
     app.onWithdrawInstallIdentity = (event) => app.ctx.appearance.handleInstallIdentity(event, true);
     app.systemAppearance = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : null;
     app.onSystemAppearance = () => { if (app.currentAppearance?.mode === "system") app.ctx.appearance.applyAppearance(app.currentAppearance); };
-    app.onPageHide = () => app.ctx.session.lockHousehold(false);
+    // The unloading page can't tell a refresh from a close: it leaves a
+    // one-use ticket (reload-resume.js) and locks as before. Only a refresh
+    // of this tab can use the ticket; a real lock deletes it.
+    app.onPageHide = () => {
+      const autoLockAt = app.autoLockMinutes && app.lastActivityAt !== null
+        ? app.lastActivityAt + app.autoLockMinutes * 60_000 : null;
+      app.reloadResume.write({ vault: app.vault, autoLockAt });
+      app.ctx.session.lockHousehold(false, { keepReloadResume: true });
+    };
+    // Coming back from the back/forward cache is navigating, not a refresh.
+    app.onPageShow = (event) => { if (event?.persisted) void app.reloadResume.disarm(); };
     app.updateRegistration = null;
     app.updateRequested = false;
     app.onServiceWorkerMessage = (event) => {

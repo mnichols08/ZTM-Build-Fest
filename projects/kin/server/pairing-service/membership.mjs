@@ -4,6 +4,7 @@ import {
   CHAT_ACCESS,
   canManageTrust,
   canParticipate,
+  boardPolicyOf,
   chatPolicyOf,
   isHouseholdAdmin,
   normalizeMemberKind,
@@ -227,6 +228,34 @@ export const membershipMethods = {
     });
     this.persistHousehold(household.id);
     return { ...household.chatPolicy, changed: true };
+  },
+
+  // Fridge access policy (#317, ADR 0011): admin only, fresh passkey, like
+  // the chat policy. Legacy households with no admin keep the default.
+  boardPolicyContext(sessionToken) {
+    const { member, household, device } = this.authorize(sessionToken);
+    requireHouseholdAdmin(member, "change who can use the fridge", this.now());
+    return { memberId: member.id, deviceId: device.id, householdId: household.id, credentialIds: [...member.credentials] };
+  },
+
+  setBoardPolicy(sessionToken, policy, reauthenticatedMemberId) {
+    if (!CHAT_ACCESS.includes(policy?.limited) || !CHAT_ACCESS.includes(policy?.temporary))
+      throw new PairingError("board_policy_invalid", "Choose draw, look only or no access for each group.");
+    const context = this.boardPolicyContext(sessionToken);
+    if (reauthenticatedMemberId !== context.memberId)
+      throw new PairingError("fresh_auth_required", "Authenticate with your passkey again before changing who can use the fridge.", 401);
+    const household = this.households.get(context.householdId);
+    const current = boardPolicyOf(household);
+    if (current.limited === policy.limited && current.temporary === policy.temporary)
+      return { ...current, changed: false };
+    household.boardPolicy = { limited: policy.limited, temporary: policy.temporary, revision: current.revision + 1 };
+    household.version += 1;
+    this.audit("board_policy_changed", {
+      householdId: household.id, actorId: context.memberId,
+      limited: policy.limited, temporary: policy.temporary, revision: household.boardPolicy.revision,
+    });
+    this.persistHousehold(household.id);
+    return { ...household.boardPolicy, changed: true };
   },
 
   hasUsableTrustedDevice(memberId) {

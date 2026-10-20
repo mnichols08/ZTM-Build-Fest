@@ -11,6 +11,7 @@ import "./kin-today.js";
 import "./kin-handoff-list.js";
 import "./kin-talk-list.js";
 import "./kin-chat.js";
+import "./kin-fridge.js";
 import "./kin-chat-settings.js";
 import "./kin-chat-policy.js";
 import "./kin-search.js";
@@ -91,7 +92,7 @@ const WINDOW_EVENTS = [
   ["beforeinstallprompt", "onBeforeInstallPrompt"], ["appinstalled", "onAppInstalled"],
   ["hashchange", "onHashChange"], ["popstate", "onHashChange"],
   ["offline", "onOffline"], ["online", "onOnline"],
-  ["pagehide", "onPageHide"], ["resize", "onLayoutChange"],
+  ["pagehide", "onPageHide"], ["pageshow", "onPageShow"], ["resize", "onLayoutChange"],
   ["focus", "onWindowFocus"],
 ];
 

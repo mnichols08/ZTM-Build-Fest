@@ -62,6 +62,14 @@ export class SyncController {
       if (this.ctx.session.isCurrentSession(session)) this.app.checkingAuthorization = false;
     }
   }
+  /** Names the fridge's artists with members' preferred names (#224). */
+  async labelFridge(myId) {
+    let names = new Map();
+    try { names = new Map((await this.memberNames()).map(({ memberId, name }) => [memberId, name])); } catch { /* fall back */ }
+    if (!this.app.fridge) return;
+    this.app.fridge.labelOf = (id) => (id === myId ? "you" : names.get(id) ?? "a household member");
+    this.app.fridge.render();
+  }
   async startSyncCoordinator(identity) {
     if (!this.app.vault || this.app.vault.locked || !this.app.store || !this.app.engine) return;
     const session = this.ctx.session.captureSession();
@@ -88,6 +96,15 @@ export class SyncController {
         this.app.chat.room = room;
         if (this.app.chatSettings) this.app.chatSettings.room = room;
         if (this.app.search) this.app.search.chatRoom = room;
+      },
+      // The family fridge (#317), for Household → Fridge.
+      onBoardRoom: (room) => {
+        if (!this.app.fridge) return;
+        if (room && !(this.ctx.session.isCurrentSession(session) && this.app.syncCoordinator === coordinator)) return;
+        if (!room && this.app.fridge.room !== coordinator.board && this.app.fridge.room) return;
+        this.app.fridge.memberId = identity.memberId;
+        this.app.fridge.room = room;
+        if (room) void this.labelFridge(identity.memberId);
       },
     });
     this.app.syncCoordinator = coordinator;

@@ -50,7 +50,12 @@ export class ViewBuilder {
     const today = page("today", "Today", "See what needs doing, or add something for your household to remember.");
     this.app.todayDate = document.createElement("p");
     this.app.todayDate.className = "page-lead today-date";
-    today.querySelector(".page-intro").append(this.app.todayDate);
+    // A gentle way to the family fridge (#317), beside the date.
+    const fridgeLink = document.createElement("a");
+    fridgeLink.className = "today-fridge-link";
+    fridgeLink.href = routeHash("household", "fridge");
+    fridgeLink.textContent = "Draw on the fridge";
+    today.querySelector(".page-intro").append(this.app.todayDate, fridgeLink);
     this.app.compose.setAttribute("mode", "today");
     this.app.compose.setAttribute("scope", "today");
     this.app.catchUp.setAttribute("aria-label", "Catch up since you last looked");
@@ -153,6 +158,7 @@ export class ViewBuilder {
     const hubLinks = document.createElement("ul");
     hubLinks.className = "hub-links";
     for (const [segment, description] of [
+      ["fridge", "A shared board to draw on together."],
       ["notes", "Notes, reference details, and maintenance history."],
       ["areas", "Areas, household mode, and Pulse."],
       ["people", "Members, pairing, trusted devices, and access."],
@@ -207,6 +213,14 @@ export class ViewBuilder {
       hubTools.append(disclosure);
     }
     hub.append(hubTools);
+
+    // The family fridge (#317): its board room arrives from the sync
+    // coordinator once this device's keys are ready.
+    const fridgePage = document.createElement("section");
+    fridgePage.className = "household-subpage fridge-page";
+    fridgePage.setAttribute("aria-label", "Fridge");
+    this.app.fridge = document.createElement("kin-fridge");
+    fridgePage.append(this.app.fridge);
 
     const notesPage = document.createElement("section");
     notesPage.className = "household-subpage";
@@ -276,7 +290,7 @@ export class ViewBuilder {
     privacyPage.setAttribute("aria-label", "Privacy & recovery");
     const privacyLead = document.createElement("p");
     privacyLead.className = "section-hint";
-    privacyLead.textContent = "Your household is encrypted on this device. Lock Kin whenever you step away; closing or reloading always locks it.";
+    privacyLead.textContent = "Your household is encrypted on this device. Lock Kin whenever you step away; closing the tab always locks it.";
     privacyPage.append(privacyLead);
     this.app.privacyPage = privacyPage;
     // Kept for callers that still address the former More security block.
@@ -289,10 +303,12 @@ export class ViewBuilder {
     this.app.householdDefaults = document.createElement("kin-household-defaults");
     this.app.householdDefaults.hidden = true;
     this.app.chatPolicy = document.createElement("kin-chat-policy");
-    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.appearance);
+    // Who can use the fridge (#323), beside who can chat.
+    this.app.boardPolicy = document.createElement("kin-board-policy");
+    appearancePage.append(this.app.householdDefaults, this.app.chatPolicy, this.app.boardPolicy, this.app.appearance);
 
-    household.append(hub, notesPage, areasPage, peoplePage, privacyPage, appearancePage);
-    this.app.segmentPanels.set("household", new Map([["hub", hub], ["notes", notesPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));
+    household.append(hub, fridgePage, notesPage, areasPage, peoplePage, privacyPage, appearancePage);
+    this.app.segmentPanels.set("household", new Map([["hub", hub], ["fridge", fridgePage], ["notes", notesPage], ["areas", areasPage], ["people", peoplePage], ["privacy", privacyPage], ["appearance", appearancePage]]));
 
     for (const section of [today, lists, search, routines, updates, household]) {
       this.app.pages.set(section.id, section);

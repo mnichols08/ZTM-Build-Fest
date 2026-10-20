@@ -11,6 +11,7 @@ import { builtInManifest, etagMatches, INSTALL_ICONS, publishedManifest } from "
 import { PushService } from "./push-service.mjs";
 import { ChatBlobService } from "./chat-blob-service.mjs";
 import { ChatRelayService } from "./chat-relay-service.mjs";
+import { BoardRelayService } from "./board-relay-service.mjs";
 import { EncryptedSyncService, MAX_EVENTS_PER_BATCH } from "./sync-service.mjs";
 import { isEventEnvelopeValid, isSyncId } from "./sync-contract.mjs";
 import {
@@ -93,6 +94,9 @@ export function createKinServer(options = {}) {
   // The chat relay (#111): chat events in their own encrypted stream.
   const chatRelayService = new ChatRelayService({ syncService, store });
   syncService.chatRelayService = chatRelayService;
+  // The fridge's relay (#317): board events in a third encrypted stream.
+  const boardRelayService = new BoardRelayService({ syncService, store });
+  syncService.boardRelayService = boardRelayService;
   const webauthn =
     options.webauthn ??
     new WebAuthn({
@@ -109,6 +113,7 @@ export function createKinServer(options = {}) {
     pushService,
     chatBlobService,
     chatRelayService,
+    boardRelayService,
     store,
     webauthn,
     flows: new Map(),
@@ -257,6 +262,7 @@ export function createKinServer(options = {}) {
     pushService,
     chatBlobService,
     chatRelayService,
+    boardRelayService,
     liveService,
     webauthn,
     store,
@@ -396,7 +402,8 @@ async function api(request, response, url, context) {
     chatUploadAuth !== null ||
     (request.method === "PUT" && url.pathname === "/api/household/settings");
   // Event envelopes travel as binary batches (web/sync/envelope-wire.js).
-  const envelopePush = request.method === "POST" && (url.pathname === "/api/sync/events" || url.pathname === "/api/chat/events");
+  const envelopePush = request.method === "POST" &&
+    (url.pathname === "/api/sync/events" || url.pathname === "/api/chat/events" || url.pathname === "/api/board/events");
   const body = envelopePush
     ? await readEnvelopeBatch(request, response)
     : binaryUpload
@@ -1055,6 +1062,29 @@ async function api(request, response, url, context) {
     json(response, 200, { ...blobs, ...context.chatRelayService.eventUsage(auth) });
     return;
   }
+  // The fridge (#317): the board relay stream.
+  if (url.pathname === "/api/board/events" && request.method === "POST") {
+    const auth = syncService.authorize(session);
+    json(response, 200, withTransaction(context, () => context.boardRelayService.push(auth, body)));
+    return;
+  }
+  if (url.pathname === "/api/board/status" && request.method === "GET") {
+    const auth = syncService.authorize(session);
+    json(response, 200, { ...context.boardRelayService.status(auth), ...context.boardRelayService.eventUsage(auth) });
+    return;
+  }
+  if (url.pathname === "/api/board/events" && request.method === "GET") {
+    const auth = syncService.authorize(session);
+    try {
+      binary(response, encodeEventPage(context.boardRelayService.pull(auth, url.searchParams.get("cursor") ?? "", url.searchParams.get("limit") ?? undefined)));
+    } catch (error) {
+      if (!(error instanceof EnvelopeWireError) &&
+          !(error instanceof DurableStoreError && error.code === "sync_store_invalid")) throw error;
+      console.error(JSON.stringify({ event: "board_store_invalid", householdId: auth.household.id }));
+      throw new PairingError("sync_store_invalid", "Kin's stored fridge history is invalid.", 500);
+    }
+    return;
+  }
   if (url.pathname === "/api/chat/status" && request.method === "GET") {
     json(response, 200, context.chatRelayService.status(syncService.authorize(session)));
     return;
@@ -1400,6 +1430,33 @@ async function api(request, response, url, context) {
         service.setHouseholdAdmin(session, flow.targetMemberId, flow.admin, auth.member.id),
       ),
     );
+    return;
+  }
+  // Who can use the fridge (#323): the chat policy's flow, its own purpose.
+  if (request.method === "POST" && url.pathname === "/api/household/board-policy/options") {
+    const change = service.boardPolicyContext(session);
+    if (!CHAT_ACCESS.includes(body?.limited) || !CHAT_ACCESS.includes(body?.temporary)) throw badRequest();
+    json(response, 200, issueAuthenticationFlow(
+      { purpose: "set-board-policy", limited: body?.limited, temporary: body?.temporary, memberId: change.memberId, deviceId: change.deviceId },
+      change.credentialIds,
+      context,
+    ));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/api/household/board-policy/finish") {
+    const flow = consumeFlow(body.flow, context);
+    if (flow.purpose !== "set-board-policy") throw badRequest();
+    const auth = service.authorize(session);
+    if (flow.memberId !== auth.member.id || flow.deviceId !== auth.device.id) throw badRequest();
+    const credential = service.credentials.get(body.credential?.id);
+    if (!credential || credential.memberId !== auth.member.id)
+      throw new PairingError("passkey_member_mismatch", "Use this member's passkey to continue.", 401);
+    webauthn.verifyAuthentication(body.credential, body.flow, credential);
+    const result = withTransaction(context, () =>
+      service.setBoardPolicy(session, { limited: flow.limited, temporary: flow.temporary }, auth.member.id),
+    );
+    if (result.changed) syncService.hintHousehold(auth.household.id);
+    json(response, 200, result);
     return;
   }
   if (request.method === "POST" && url.pathname === "/api/household/chat-policy/options") {

@@ -1118,6 +1118,56 @@ has its sync key.
 
 ---
 
+## 8.10 The family fridge (#317)
+
+Household → Fridge (and **Draw on the fridge** beside Today's date) opens a
+shared board, decided in [ADR 0011](decisions/0011-family-fridge.md).
+
+- **One door, every screen.** A fixed 3:4 portrait door scales to fit: on a
+  phone the width decides, on a short wide screen the height does, never past
+  720 px wide. There is no pan or zoom on the door; the page around it scrolls
+  and zooms as usual. Only the door sets `touch-action: none`.
+- **Tools** are ordinary named buttons, each at least 44 px: eight colours
+  (Black, Red, Orange, Yellow, Green, Blue, Purple, Brown), three widths
+  (Thin, Medium, Thick), Eraser, Undo and Redo. Colours are palette indices,
+  remapped for dark mode; under forced colours every stroke is drawn in the
+  system text colour.
+- **Input.** Finger, pen or mouse. While a pen is down, touches are ignored
+  (a resting palm draws nothing); a second finger turns a finger stroke into a
+  gesture and nothing is drawn. Strokes are saved on pen-up.
+- **Eraser and undo.** The eraser removes whole strokes. Undo and Redo cover
+  this device's own drawing and erasing in this visit; a stroke someone else
+  erased or restored meanwhile is left alone.
+- **What it says.** A polite line under the door summarizes the fridge ("3
+  drawings by Sam, Alex and you"), and adds "Waiting to send." while changes
+  haven't reached the household. A full fridge says so: "The fridge is full.
+  Erase something or clear it to draw more." Nothing counts, ranks or
+  notifies anyone.
+- **Magnets** (#322) are named buttons over the door: an emoji, one of twelve
+  Kin-drawn magnets or a short note, put up through a dialog (a bottom sheet on
+  phones) in one of nine named places. Arrow keys move one 1% (Shift 10%),
+  "Move to" picks a place, dragging works too, and Delete or "Take it down"
+  removes it; undo puts it back. Nothing needs dragging.
+- **Clearing** asks first, with "Keep it" focused, and anyone can bring back
+  the latest clear.
+- **Who can use it** (#323): Adults always draw; the household admin sets
+  Limited and Temporary members to Draw, Look only (the fridge shows without
+  its tools) or No access (Household → Identity & appearance → Who can use the
+  fridge, with a passkey).
+- **Kitchen-screen mode** (#324). A tablet on the counter is its own context.
+  At 960 px or wider, in landscape, with a coarse pointer (and in full screen
+  in landscape on any device), the heading, tools, summary and a lock note form
+  a rail on the left and the door takes the screen's height beside it; the
+  colours sit in a 4 × 2 grid of 44 px swatches. Portrait tablets and phones
+  keep the stacked layout. **Full screen** (where the browser allows it) shows
+  the fridge alone, and **Leave full screen** or Esc returns. Kitchen-screen
+  mode never changes automatic lock: the rail says "Kin still locks after 15
+  minutes without use, as it does everywhere. Drawing counts as use.", or, with
+  automatic lock off, that anyone at this screen can open the rest of Kin and
+  that it can be turned on in Security. Locking (by time, by Lock or from
+  another tab) leaves full screen and shows the unlock screen.
+- Drawing is a path-based gesture and has no keyboard equivalent.
+
 # 9. States every relevant screen must handle
 
 | State | User-facing behavior |

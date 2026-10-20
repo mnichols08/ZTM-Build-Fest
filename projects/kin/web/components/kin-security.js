@@ -65,6 +65,11 @@ class KinSecurity extends HTMLElement {
       if (operation !== this.operation) return;
       this.manifest = manifest;
       this.render();
+      // A refresh of an unlocked tab picks up where it was (#351).
+      const resumed = await this.services?.takeReloadResume?.(() => EventStore.securityStatus());
+      if (!resumed) return;
+      if (operation !== this.operation) { resumed.root.fill(0); return; }
+      await this.run(() => this.ctx.unlock.resumeAfterReload(resumed));
     } catch (error) {
       if (operation === this.operation) { this.render(); this.error(error); }
     }

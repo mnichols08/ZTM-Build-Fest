@@ -536,6 +536,40 @@ otherwise) returns `{ bytes, byteLimit, blobs, blobLimit, events, eventLimit }`:
 totals only. The chat access panel shows it as one line. Freeing space is
 deleting messages with attachments (their content is retired).
 
+## Board relay (#317)
+
+The fridge's events (kinds 52–58, [ADR 0011](decisions/0011-family-fridge.md))
+travel in a third stream, `server/board-relay-service.mjs`, with the chat
+relay's envelope rules through the same shared core
+(`server/event-stream.mjs`): the device's own envelopes only, under a key
+epoch it holds; a gapless per-device board sequence counted apart from the
+household's and chat's; identical-bytes idempotency; the logical-time advance
+bound on the board stream's own clock; and pages that only show epochs the
+reading device may read. Board events are sealed under the household key
+epoch (there is no board key).
+
+- **Routes.** `POST /api/board/events` takes a KSEV batch (at most 20
+  envelopes); `GET /api/board/events?cursor=&limit=` returns a KSEP page of at
+  most 200; `GET /api/board/status` returns `{ deviceSequence, latestCursor,
+  events, eventLimit }`. Every route needs a trusted device of a member who may
+  take part in the household; pushes also need household sync set up and wait
+  out a pending key rotation (409 `sync_rotation_pending`).
+- **Who can use the fridge (#323).** Adults always draw. The household admin
+  sets Limited and Temporary members to **Draw**, **Look only** or **No access**
+  with a fresh passkey (`/api/household/board-policy/options` and `/finish`,
+  schema 19). Pushes need Draw (`board_read_only`, 403); status and pulls need
+  more than No access (`board_unavailable`, 403). `GET /api/sync/status`
+  carries `board.access`, and `board.policy` for an admin.
+- **Limits.** 250,000 board events per household (`board_limit`, 413) and 240
+  per device per minute (`board_rate_limited`, 429); a retry of events already
+  held is free.
+- **Hints, not notifications.** An accepted batch sends the ordinary live
+  sync hint to the household's other devices. The fridge never sends a push.
+- **Storage.** Server schema 18 adds `board_relay_state`, `board_events` and
+  `board_device_sequences`, laid out like chat's tables
+  (`durable-store/stream-events.mjs` serves both). Household deletion purges
+  them with the rest.
+
 ## Chat relay (v1.1, #111)
 
 Chat events are canonical events in the same signed, encrypted envelopes as

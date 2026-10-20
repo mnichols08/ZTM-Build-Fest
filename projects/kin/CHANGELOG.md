@@ -5,6 +5,88 @@ development candidates that never received a release tag; their changes
 ship in v1.0.0. The project's planning releases v0.0.1–v0.0.12 are
 documentation only.
 
+## Unreleased
+
+### Added
+
+- A refresh keeps Kin unlocked in the same tab, including an accidental
+  pull-down on a phone (#351, #354). Closing the tab, Lock, automatic lock and
+  a lock from another tab still lock Kin, and the inactivity clock carries
+  over. The unloading tab leaves a one-use, two-minute ticket sealed with a
+  non-extractable key; see [ADR 0010](docs/decisions/0010-reload-resume.md).
+- Security → Automatic lock → **Stay unlocked when I refresh this tab**, on by
+  default (#355).
+- **The family fridge** (#317, [ADR 0011](docs/decisions/0011-family-fridge.md)):
+  Household → Fridge is a shared 3:4 board the household draws on with a
+  finger, pen or mouse, with an eraser and undo/redo, on phones, tablets and
+  desktop (#320, #321). Drawings live in a third encrypted log beside the
+  household history and chat (event kinds 52–58, KBRD, #319) and travel in
+  their own relay stream (server schema 18). Older devices never see them.
+  Magnets (emoji, Kin-drawn or a short note) move by keyboard, menu or drag
+  (#322); clearing asks first and anyone can bring it back (#323); the
+  household admin decides whether Limited and Temporary members draw, look
+  only or have no access (#323, server schema 19). Encrypted exports carry
+  the fridge and restore brings it back (#363). On a landscape tablet the
+  tools move to a side rail and the door takes the height, with optional full
+  screen; automatic lock is unchanged and the screen says how it locks (#324).
+
+### Changed
+
+- The page no longer triggers the browser's pull-to-refresh where the browser
+  allows turning it off (#353).
+
+## v1.3.0 — Member Names and Clearer Setup
+
+Released 2026-10-19 as `kin-v1.3.0`. This minor release completes the member
+identity and device pairing epic (#218) and ships the first slices of the
+usability epic (#261). The #261 changes are built from the epic's written
+direction; the tester sessions it calls for (#262, #269) have not run yet.
+
+### Added
+
+- Each member can choose the name their household sees ("Mikey") with **Set my
+  name** on the household panel (and in People & devices for Adults), with
+  device sync on (#224, #225). The name is a new encrypted household event,
+  `MEMBER_NAMED`, that always names its own author, so nobody can name another
+  member. It is presentation only: it never changes a member ID, role, device
+  trust or push filtering.
+- A device without a nickname shows its owner's name beside its automatic name,
+  "Mikey · Chrome on iPhone"; a nickname always wins and is never overwritten.
+- **Invite another person** (role chosen first) and **Add my device** are
+  separate, explained choices (#219, #222). Both sides of a pairing say which
+  path is in progress, and a code whose real purpose contradicts the chosen path
+  can't be activated until the person acknowledges the switch (#223).
+- A first-use "Welcome home" card, "What would you like to remember?" with a
+  line saying where an item goes, plain one-line descriptions under each
+  destination, and next-step text while a device waits for approval (#263–#266).
+
+### Changed
+
+- With sync on, a capture says "Saved here. Waiting to sync." until a sync cycle
+  leaves nothing unaccepted in this device's outbox, then "Saved and sent to
+  your household." Completing, reopening or archiving names the item and says
+  how far the change has gone. Nothing claims another member received it (#267).
+- First-run choices use plainer labels: Start a new household, Join my
+  household, Add my device, Sign in using my phone (#264, #271).
+
+### Fixed
+
+- People & devices could be replaced mid-load by a pairing poll or household
+  refresh from the previous view, losing the device list (#304, #305, #307).
+- The setup screen hides "Sign in using my phone" again while a claim is
+  pending.
+- A name that would pass for "You" can't be saved and isn't shown for others.
+
+### Compatibility
+
+- Adds event kind 51 `MEMBER_NAMED` (schema 1, replay protocol still 24), the
+  `kin_member_names` export with its KMNM v1 result, and KCMD action 51, listed
+  in [V1.0-COMPATIBILITY](docs/V1.0-COMPATIBILITY.md) under v1.3.0. No server,
+  route, schema or storage change; v1.0–v1.2 formats are unchanged.
+- A device on an earlier release that receives a name pauses sync with an
+  "unsupported" error and keeps its data until it updates. Nothing is written
+  until a member sets a name.
+
 ## v1.2.0 — Household Chat
 
 Released 2026-10-19 as `kin-v1.2.0`. This minor release adds one household chat

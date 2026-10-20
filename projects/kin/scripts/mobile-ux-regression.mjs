@@ -169,7 +169,9 @@ export async function mobileUxRegressions(recovery) {
     app.household.textContent.includes("join theirs instead"),
     "Create explains that it starts a new household and warns joiners");
   check(!app.household.querySelector('input[name="deviceLabel"]') &&
-    / on Windows”/.test(app.household.querySelector("p.device-name")?.textContent ?? "") &&
+    // The name follows this machine's platform (Windows on the Edge job,
+    // Linux on the Chrome job; #329).
+    (app.household.querySelector("p.device-name")?.textContent ?? "").includes(` on ${/Windows/.test(navigator.userAgent) ? "Windows" : /Mac OS X/.test(navigator.userAgent) ? "Mac" : "Linux"}”`) &&
     app.household.querySelector("p.device-name").textContent.includes("nickname later"),
     "Create names the device automatically and asks nobody to type a name (#71)");
   app.household.startIntent(null);

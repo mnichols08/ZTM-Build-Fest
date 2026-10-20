@@ -105,6 +105,8 @@ pub struct Replay {
     /// Household chat (replay/chat.rs), shared with finalized states until
     /// it changes.
     pub(super) chat: Arc<crate::chat::ChatState>,
+    /// The fridge (board.rs), shared with finalized states until it changes.
+    pub(super) board: Arc<crate::board::BoardState>,
     /// Canonical bytes per applied event: an exact duplicate is skipped, a conflicting one fails. Shared, so cloning a Replay does not copy them.
     pub(super) event_bytes: BTreeMap<EventId, Arc<[u8]>>,
     /// Logical time of the last applied event; replay order never goes back.
@@ -287,6 +289,13 @@ impl Replay {
             | K::ChatPinSet { .. }
             | K::ChatPollVote { .. }
             | K::ChatPollClosed { .. } => chat::apply(self, event)?,
+            K::BoardStrokeAdded { .. }
+            | K::BoardStrokeHidden { .. }
+            | K::BoardMagnetPlaced { .. }
+            | K::BoardMagnetMoved { .. }
+            | K::BoardMagnetHidden { .. }
+            | K::BoardCleared { .. }
+            | K::BoardClearUndone { .. } => crate::board::apply(&mut self.board, event)?,
         }
         self.last_logical_time = event.logical_time;
         self.event_bytes
@@ -298,6 +307,11 @@ impl Replay {
     /// household (searching needs only this).
     pub fn chat(&self) -> &crate::chat::ChatState {
         &self.chat
+    }
+
+    /// The fridge as replayed so far (board.rs).
+    pub fn board(&self) -> &crate::board::BoardState {
+        &self.board
     }
 
     /// The household state at `as_of` (UTC milliseconds) on `civil_date`.
@@ -379,6 +393,7 @@ impl Replay {
                 })
                 .collect(),
             chat: Arc::clone(&self.chat),
+            board: Arc::clone(&self.board),
         })
     }
 }

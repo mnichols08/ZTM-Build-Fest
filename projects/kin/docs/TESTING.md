@@ -339,8 +339,11 @@ controls, and a 320px Today layout check asserts no overflow, 48px targets,
 fixed bottom navigation, and collapsed details.
 The same mobile suite checks that time spent with the page hidden counts toward
 the configured inactivity limit and that an expired limit locks before the
-person can continue; pointer and scroll activity reset the deadline. Closing or
-reloading always locks immediately. First-run
+person can continue; pointer and scroll activity reset the deadline. Closing the
+tab always locks immediately; a refresh of the same tab stays unlocked unless
+the person turned that off ([ADR 0010](decisions/0010-reload-resume.md)), and
+the main browser regression checks refresh, Lock, navigation and the setting.
+Regression tabs start with refresh-resume off (`scripts/cdp-page.mjs`). First-run
 copy explains that passkey-first describes everyday unlock; initial encryption
 setup still starts with the recovery key.
 
@@ -352,7 +355,7 @@ The gate requires Node `>=24.16.0`, the active pinned Rust toolchain from
 `rust-toolchain.toml`, Cargo, Git, Python `>=3.11` for the existing version
 check, and the `wasm32-unknown-unknown` target. It runs formatting,
 warnings-denied Clippy, version checks, Kin-only `git diff --check`, every
-`*.test.mjs` under `server/` and `web/`, all Rust tests,
+`*.test.mjs` under `server/`, `web/` and `scripts/`, all Rust tests,
 the release WASM build, and a hash comparison against the committed
 `web/wasm/kin_engine.wasm` when that artifact is tracked. This repository
 ignores the generated browser WASM, so that comparison is reported `NOT RUN`
@@ -362,24 +365,144 @@ The Node suite sets the existing documented `NODE_NO_WARNINGS=1` setting to
 keep subprocess SQLite experimental warnings from corrupting exact CLI output
 assertions.
 
-Run the five existing browser suites with `npm run verify:browser`. Configure
-the browser by setting `KIN_BROWSER` to a Chromium-family executable, or run
-`node scripts/verify.mjs --browser "path/to/chromium"`. A missing executable
-fails the required browser mode. Prepare the ignored browser WASM with
-`./build-wasm.ps1` on Windows or `sh ./build-wasm.sh` on POSIX before browser
-mode. The normal verification command reports the browser stage as `NOT RUN`;
-it is not a pass. The browser suites require a
-CDP-capable browser; the existing storage and UI runners use PowerShell for
-Windows process cleanup, so cross-platform support for those suites is not
-claimed.
+Run every gate including the browser suites with `npm run verify:browser`
+([below](#run-the-browser-gates-locally)). The normal verification command
+reports the browser stage as `NOT RUN`; it is not a pass. The suites drive any
+Chromium-family browser over the DevTools protocol; CI runs them on Windows
+Edge and Linux Chrome.
 
 The default mandatory local gate is `verify`; browser regressions are an
 explicit second command. `node --test scripts/verify.test.mjs` runs focused
-tests for the verification runner itself. The active root workflow is
+tests for the verification runner itself (they are also part of the gate). The active root workflow is
 `.github/workflows/kin-verification.yml`; a synchronized project-local reference
 is retained at `docs/ci/kin-verification.workflow.yml`. Pull requests that
-change Kin or its workflow run the complete Windows Edge gate, and pushes to
-`kin-development` run the same gate.
+change Kin or its workflow, and pushes to `kin-development`, run three jobs
+(#329):
+
+- `verify` (Windows): stages A–D (environment, static checks, every Node and
+  Rust test, the release WASM build).
+- `verify-linux` (Linux): the same stages, and publishes the engine it built.
+- `browser`: each browser suite in its own job, on Windows Edge and on Linux
+  Chrome, against that published engine
+  after checking its SHA-256. Each runs
+  `node scripts/verify.mjs --browser-only --suite <suite>`, with the retry and
+  FLAKY reporting below. The longest suite, `browser-regression`, runs as
+  two jobs: `KIN_REGRESSION_PART=1` runs every single-tab check, and `=2`
+  runs the quick in-page single-tab checks (the two-tab checks build on the
+  handoffs, topics and routines they leave) and then the checks with a second
+  tab, skipping the slow browser-driven sections. Each does the shared setup
+  and the final console, request and storage checks. Unset, it runs
+  everything once. In October 2026
+  the Edge run of the whole suite took 326 s; the next longest job took 139 s.
+
+Every one of them must pass; a suite that fails on either browser fails the
+run.
+`scripts/ci-workflow.test.mjs` fails if the two copies drift apart or an
+action is not pinned to a full commit.
+
+**Reused work and the published engine (#330).** Every run's Linux job
+publishes the engine it built as the `kin-engine-wasm` workflow artifact
+(`kin_engine.wasm` and its `kin_engine.wasm.sha256`, kept 30 days), so a
+machine without the `wasm32` target can run the browser gates against the same
+engine ([below](#run-the-browser-gates-locally)); the `browser` jobs use it
+too, so no browser job installs Rust. Measured in October
+2026, the toolchain install (10–12 s), `npm ci` (0–2 s; Kin has no npm
+dependencies) and the WASM build (7–9 s) are a small share of a run; the
+browser step (about 360 s on Windows) is the rest. A Cargo `target/` cache is
+deliberately not kept: Cargo rebuilds a path crate whose files have new
+modification times, which every checkout gives them, and Kin has no other
+crates to reuse.
+
+## Flaky browser suites
+
+A browser suite that fails is run once more (`scripts/verify.mjs`, #328). If
+the retry passes the suite is **FLAKY**: it does not fail the gate, but the
+report never shows it as PASS. The summary's `Flaky:` line names it, and in
+GitHub Actions it also appears as a warning annotation and in the job summary,
+with the first assertion or error that failed. If the retry fails too, the
+suite FAILs with the second failure (the first is kept as `firstAttempt`).
+A suite is never run a third time.
+
+With `KIN_DIAGNOSTICS_DIR` set (CI sets it), each failed attempt leaves
+`<suite>-attempt<N>.log` (its full output) and, under `attempt<N>/`, a
+screenshot and the address, title and text of each page the suite had open
+when it failed (`captureFailure` in `scripts/cdp-page.mjs`). CI uploads the
+folder as the `kin-browser-diagnostics` artifact.
+
+A flake is a bug to fix, not noise: fix the cause rather than lengthening a
+wait, and never delete or weaken a test to make it pass.
+
+### Triage a flake
+
+1. **Read it.** The job summary's "Flaky browser suites" table (or the
+   warning annotation) names the suite and its first failing assertion or
+   error. Open the job's `kin-browser-diagnostics-<browser>-<suite>` artifact:
+   `<suite>-attempt1.log` is the failed attempt's full output, and
+   `attempt1/` holds a screenshot and the address and text of each page the
+   suite had open.
+2. **Reproduce it.** Run that suite alone, several times, against the same
+   engine: `node scripts/verify.mjs --browser-only --suite <suite>` (fetch the
+   commit's engine with `node scripts/fetch-wasm.mjs` if you can't build it).
+   A flake that never reproduces locally is usually a wait on something
+   asynchronous (an animation frame, a media-query `change`, a second tab
+   starting); look for the step just before the failing assertion.
+3. **File it.** Add a comment to the open flake-tracking issue (#327 while the
+   test and CI reliability epic, #326, is open; afterwards a new issue labelled
+   for test health), with the run link, suite, browser, the first failing line
+   and what the diagnostics showed.
+4. **Fix the cause** rather than lengthening a wait or retrying more, and say
+   in the fix which race it closes. Never delete or weaken a test to go green.
+
+### Test health over time
+
+`node scripts/test-health.mjs` (needs `GITHUB_TOKEN` or `gh auth login`)
+reads the last 20 completed `kin-development` runs of Kin verification and
+prints, per job, how many passed first time, passed only on retry (FLAKY) and
+failed, worst first, with the run links. Options: `--runs N` (1–100),
+`--branch NAME`, `--repo OWNER/NAME`. It reads the latest attempt of each
+run, so a run someone re-ran by hand before #328 counts as its final result;
+retries since #328 happen inside the job and are counted as FLAKY. The
+epic's target is 20 consecutive runs with nothing flaky or failed.
+
+The gate runs every `*.test.mjs` under `server/`, `web/` and `scripts/`, so
+the runner's own tests, the documentation checks and the v1.0 compatibility
+check are part of it (before #328 the `scripts/` tests ran only by hand).
+
+## Run the browser gates locally
+
+One command, on Windows, macOS or Linux (#331):
+
+```sh
+npm run verify:browser
+```
+
+- **Browser.** `KIN_BROWSER` if set; otherwise the first installed Edge,
+  Chrome or Chromium in the usual places (`scripts/find-browser.mjs`), named
+  in the output. With none, the run fails saying what to install.
+- **Engine.** If `web/wasm/kin_engine.wasm` is missing, it is built first
+  (as `build-wasm.sh` does) and the report says so; the engine's Node tests and
+  the browser suites both load it. Stage D then builds afresh and compares.
+- **Missing prerequisites** fail stage A with the exact fix, for example
+  `rustup target add wasm32-unknown-unknown`.
+
+Where the `wasm32` target can't be installed, fetch the engine CI built for
+the same commit instead:
+
+```sh
+node scripts/fetch-wasm.mjs            # HEAD; or --commit <sha>
+```
+
+To run one suite, or only the browser suites against the engine already in
+place: `node scripts/verify.mjs --browser-only --suite passkey-regression`
+(`--suite` repeats; `--browser [EXECUTABLE]` or `KIN_BROWSER` names the
+browser).
+
+It needs a GitHub token (`GITHUB_TOKEN`, or `gh auth login`), finds that
+commit's `kin-engine-wasm` artifact, checks the engine against the SHA-256 CI
+recorded with it, and only then installs it. The commit must have been pushed
+and verified within the last 30 days. Then run just the browser suites
+against it (stages A–D need the `wasm32` target):
+`node scripts/verify.mjs --browser-only`.
 
 Verification is fail-fast. When a mandatory command fails, later commands in
 that stage and dependent stages are reported `NOT RUN` with the reason; they
@@ -749,6 +872,35 @@ The following platforms/assistive technologies are not certified by the Windows/
 - [x] Standalone Chrome desktop (headless): startup, add/complete/reload, storage failure, CSP console, 320px reflow.
 - [ ] NVDA with Firefox or Chrome: labels, status/error announcements, completion, and focus restoration.
 - [ ] VoiceOver with Safari: labels, status/error announcements, completion, and focus restoration.
+
+### The family fridge (#317, #325)
+
+`scripts/fridge-regression.mjs` (run from the browser regression) covers, in
+headless Chromium-family browsers through the real engine: the 3:4 door at
+320×568, phone portrait and landscape, 768×1024, 820×1180, 1024×768 and
+desktop, and desktop at 200% zoom (no horizontal scroll, every visible control
+at least 44 px); kitchen-screen mode at 1024×768 and 1180×820 with a coarse
+pointer, full screen and leaving it on lock (#324); finger, pen and mouse
+drawing, second-finger cancel and palm rejection; the eraser, undo and redo;
+magnets by dialog, keyboard, menu and drag; clearing and bringing it back;
+dark mode, forced colours and reduced motion; and the reopened log. Export
+and restore of the fridge are covered in `web/security/archive-stream.test.mjs`
+and `web/board/board-room.test.mjs`.
+
+Emulated touch and pen are not real hardware. Before calling the fridge
+verified on a release, check by hand:
+
+- [ ] iPhone (Safari): draw with a finger, a second finger cancels, the page
+  around the door still scrolls, magnets by drag and by menu, VoiceOver reads
+  the summary and each magnet.
+- [ ] Android phone (Chrome): the same, plus TalkBack.
+- [ ] iPad with Apple Pencil: palm resting on the screen while drawing leaves
+  no marks; landscape shows the side rail; full screen and leaving it; locks
+  after the chosen time while left on the fridge.
+- [ ] iPad with a hardware keyboard: every tool and magnet by keyboard (arrows,
+  Shift+arrows, Enter, Delete), focus visible throughout.
+- [ ] Desktop (Firefox, Safari, Chrome or Edge): mouse drawing, the eraser,
+  forced colours (Windows contrast themes), 200% browser zoom.
 
 Do not introduce an external test framework just for convenience. Record tested browser/runtime versions and manual steps in the release notes when implementation begins.
 

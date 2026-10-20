@@ -21,6 +21,7 @@ import { idToHex } from "../wasm/kin-engine.js";
 import { reconcileAttachments } from "../attachments/attachment-lifecycle.js";
 import { decryptHouseholdSettings, encryptHouseholdSettings } from "../appearance/household.js";
 import { openBrowserChatRoom } from "../chat/chat-room.js";
+import { openBrowserBoardRoom } from "../board/board-room.js";
 
 export function activeResponsibilityMemberIds(devices, now = Date.now()) {
   return [...new Set(devices
@@ -146,6 +147,9 @@ export const MIN_HINT_GAP_MS = 1_000;
 const CHAT_PASS_REQUESTS = 60;
 // And what a household pass needs, kept free for the next one.
 const HOUSEHOLD_PASS_RESERVE = 30;
+// Requests a fridge pass may make at most (#317): status, 3 push batches and
+// 5 pulls.
+const BOARD_PASS_REQUESTS = 10;
 // Sync errors that mean this session can't hold a live channel.
 const ACCESS_ERRORS = new Set(["authentication_required", "device_not_trusted", "membership_removed"]);
 // Errors a chat pass leaves to the household sync's own handling: the
@@ -159,7 +163,7 @@ function browserLiveChannel(options) {
 }
 
 export class SyncCoordinator {
-  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {} }) {
+  constructor({ store, engine, identity, onState = () => {}, now = () => Date.now(), liveChannel = browserLiveChannel, chatRoom = openBrowserChatRoom, onChatRoom = () => {}, boardRoom = openBrowserBoardRoom, onBoardRoom = () => {} }) {
     this.store = store;
     this.engine = engine;
     this.identity = identity;
@@ -196,6 +200,11 @@ export class SyncCoordinator {
     this.chatOpenError = null;
     // Told the chat room once it opens, and null when it closes (the view).
     this.onChatRoom = onChatRoom;
+    // The fridge (#317), opened like chat and synced after it.
+    this.openBoardRoom = boardRoom;
+    this.board = null;
+    this.boardOpening = null;
+    this.onBoardRoom = onBoardRoom;
   }
 
   async start() {
@@ -224,6 +233,7 @@ export class SyncCoordinator {
     // chat log mustn't hold up household sync), so messages kept on this
     // device show, and can be written, while offline.
     void this.openChat().catch(() => {});
+    void this.openBoard().catch(() => {});
     await this.syncNow();
     if (this.stopped) return;
     if (!this.terminal) {
@@ -637,6 +647,7 @@ export class SyncCoordinator {
         await this.store.markSyncInitialized();
       this.catchUp = null;
       chatMore = (await this.syncChat(context)).hasMore;
+      chatMore = (await this.syncBoard(context)).hasMore || chatMore;
     } else if (!lastPageAdvanced) {
       this.catchUp = null;
     }
@@ -728,6 +739,48 @@ export class SyncCoordinator {
       // waits for a later pass rather than leave the next household pass
       // short of requests.
       if (this.requestBudgetDelay(CHAT_PASS_REQUESTS + HOUSEHOLD_PASS_RESERVE) > 0) return { hasMore: false };
+      const result = await room.sync({ status, devices, deviceKeys: this.deviceKeys });
+      room.reportSync(null);
+      return result;
+    } catch (error) {
+      if (CHAT_PASS_STOPS.has(error.code)) throw error;
+      room?.reportSync(error);
+      return { hasMore: false };
+    }
+  }
+
+  /** Opens the fridge once (#317); null where its storage isn't available.
+   * A failure leaves it closed for the next pass to retry. */
+  async openBoard() {
+    if (this.board || !this.openBoardRoom || this.stopped) return this.board;
+    this.boardOpening ??= Promise.resolve().then(() => this.openBoardRoom({
+      identity: this.identity,
+      keyStore: this.keyStore,
+      deviceKeys: this.deviceKeys,
+      engine: this.engine,
+      request: (path, options) => this.request(path, options),
+      // A change made here goes out at once, like a hint.
+      onLocalChange: () => this.hinted(),
+    })).then((room) => {
+      if (this.stopped) { room?.close(); return null; }
+      if (!room) this.openBoardRoom = null;
+      this.board = room;
+      if (room) {
+        try { this.onBoardRoom(room); } catch { /* the view's trouble isn't sync's */ }
+      }
+      return room;
+    }).finally(() => { this.boardOpening = null; });
+    return this.boardOpening;
+  }
+
+  /** One fridge pass after the chat pass. Its trouble pauses the fridge,
+   * not household sync, unless the session or household itself is gone. */
+  async syncBoard({ status, devices }) {
+    let room = null;
+    try {
+      room = await this.openBoard();
+      if (!room || this.stopped) return { hasMore: false };
+      if (this.requestBudgetDelay(BOARD_PASS_REQUESTS + HOUSEHOLD_PASS_RESERVE) > 0) return { hasMore: false };
       const result = await room.sync({ status, devices, deviceKeys: this.deviceKeys });
       room.reportSync(null);
       return result;
@@ -1376,12 +1429,12 @@ export class SyncCoordinator {
       const value = await this.loadCachedHouseholdSettings();
       return { admin: false, adminRecorded: false, value, offline: true };
     }
-    const chatPolicy = response.chatPolicy ?? null;
-    if (!response.settings) return { admin: response.admin, adminRecorded: response.adminRecorded, chatPolicy, value: null };
+    const chatPolicy = response.chatPolicy ?? null, boardPolicy = response.boardPolicy ?? null;
+    if (!response.settings) return { admin: response.admin, adminRecorded: response.adminRecorded, chatPolicy, boardPolicy, value: null };
     const candidate = { householdId: this.identity.householdId, ...response.settings };
     const value = await this.decryptCachedHouseholdSettings(candidate);
     const cached = await this.keyStore.cacheHouseholdSettings(candidate);
-    return { admin: response.admin, adminRecorded: response.adminRecorded, chatPolicy,
+    return { admin: response.admin, adminRecorded: response.adminRecorded, chatPolicy, boardPolicy,
       value: cached.revision === candidate.revision ? value : await this.decryptCachedHouseholdSettings(cached) };
   }
 
@@ -1449,6 +1502,11 @@ export class SyncCoordinator {
       try { this.onChatRoom(null); } catch { /* the view's trouble isn't sync's */ }
     }
     this.chat = null;
+    if (this.board) {
+      this.board.close();
+      try { this.onBoardRoom(null); } catch { /* the view's trouble isn't sync's */ }
+    }
+    this.board = null;
     this.keyStore?.close();
     this.keyStore = null;
     this.deviceKeys = null;

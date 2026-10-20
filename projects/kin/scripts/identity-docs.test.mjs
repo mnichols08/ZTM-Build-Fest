@@ -7,7 +7,8 @@ import { PROJECT_ROOT } from "./verify.mjs";
 const docs = join(PROJECT_ROOT, "docs");
 
 async function readDoc(name) {
-  return readFile(join(docs, name), "utf8");
+  // A Windows checkout may give the docs CRLF line endings; parse them as LF.
+  return (await readFile(join(docs, name), "utf8")).replace(/\r\n/g, "\n");
 }
 
 test("identity choices keep separate member and device outcomes", async () => {
