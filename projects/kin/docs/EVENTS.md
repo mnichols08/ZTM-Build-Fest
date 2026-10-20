@@ -345,7 +345,7 @@ and keep their data until they update.
 ## v1.1.0 Household chat
 
 `CHAT_MESSAGE_POSTED` (44), `CHAT_MESSAGE_EDITED` (45) and
-`CHAT_MESSAGE_DELETED` (46), `CHAT_REACTION_SET` (47), `CHAT_PIN_SET` (48), `CHAT_POLL_VOTE` (49) and `CHAT_POLL_CLOSED` (50) are schema 1 and leave replay protocol 24
+`CHAT_MESSAGE_DELETED` (46), `CHAT_REACTION_SET` (47), `CHAT_PIN_SET` (48), `CHAT_POLL_VOTE` (49), `CHAT_POLL_CLOSED` (50) and `CHAT_TOPIC_SET` (65) are schema 1 and leave replay protocol 24
 unchanged ([ABI](ABI.md) has the payloads; [ADR 0008](decisions/0008-household-chat.md)
 the product decisions).
 
@@ -432,6 +432,25 @@ the product decisions).
   (50) carries the message ID and 4 reserved bytes; only the poll's author
   closes it, and the first close stands. Deleting the poll for everyone drops
   its votes.
+- **Talk later (#312, [ADR 0014](decisions/0014-talk-later.md)).**
+  `CHAT_TOPIC_SET` (65) sets where one message stands on the "To talk
+  about" list: payload is the message ID, `state` u8 (0 cleared, 1 open, 2
+  resolved) and 3 reserved zero bytes (20 bytes). It is a chat event, so it
+  lives only in the chat log, under the chat key, and a member without chat
+  access never receives it. Replay keeps topics in the order first listed,
+  with who flagged each (the first actor since it was last cleared) and who
+  last changed it: the latest event in replay order wins whatever came
+  before, so an open or resolved event on a message with no topic lists it,
+  the same state again changes nothing, and cleared drops the topic. A topic
+  on a message the log lacks or that its author deleted changes nothing, and
+  the author's deletion drops the topic; an admin's removal is only known to
+  the service, so a page leaves the topic out while a named admin has removed
+  its message. At most 200 open or resolved topics are kept (`MAX_TOPICS`);
+  a new one past that changes nothing. Commands are stricter: open needs a
+  message that shows and no topic or a resolved one, and room under the
+  limit; resolved needs an open topic and a message that shows; cleared
+  needs a topic on a message not deleted. A command that would change
+  nothing is refused. Any member who can post may set one, as with a pin.
 - **Pins (#131).** `CHAT_PIN_SET` (48) pins or unpins one message: payload is
   the message ID, `on` u8 and 3 reserved zero bytes (20 bytes). Replay keeps
   pins in the order applied, with who pinned each: a pin of an unknown

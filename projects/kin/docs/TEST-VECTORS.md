@@ -257,6 +257,44 @@ author's) and nothing is retired. Into an earlier-dated edit of its own
 attachment: the blob is a candidate, but member 1's message still shows it,
 so it is not retired.
 
+## Talk later topics (#312)
+
+These vectors are written out by hand in `rust/src/chat_topic_tests.rs`,
+reusing the chat records above.
+
+**042 — Topic payload.** Message 1 with state 0, 1 and 2 round-trips as kind
+65: the message ID, the state and three zero bytes (20 bytes). A trailing or
+missing byte, state 3 or 0xFF, a non-zero reserved byte and a zero message ID
+fail with code 2; so do KCMD action 65 with option 3, a zero entity ID, a
+payload or a date. The household history refuses a topic record.
+
+**043 — Transitions.** Against messages 1–3: resolving or clearing message 1
+with no topic fails (code 4); member 2 opens it; opening it again fails;
+member 1 resolves it; resolving again fails; it reopens, resolves and clears;
+clearing again fails. Message 2 clears from open. Message 99 (unknown) fails.
+Message 3, once its author deletes it, fails for every state and its open
+topic is gone. On a message a named admin removed, open and resolve fail and
+clear succeeds. With 200 topics listed, a 201st open fails until one is
+cleared; resolving one at the limit succeeds.
+
+**044 — Tolerant replay.** Latest in log order wins: opened by member 2 then
+resolved by member 1 lists message 1 resolved, flagged by member 2, changed by
+member 1, in any arrival order. A resolve with no topic lists it resolved; the
+same state again changes nothing; a topic on message 9 (unknown), or logged
+before its message's post, changes nothing. Cleared then opened again starts
+the record over at the end of the list. The author's deletion drops the topic
+and a later flag on it changes nothing; an admin's removal keeps the record
+but a page naming that admin leaves it out. Replay keeps 200 topics and
+ignores the 201st.
+
+**045 — KCHP topics section.** Messages 1–3, a pin on 1, member 2 opens 1,
+member 1 opens 2 and resolves 1, member 2 opens 3, member 1 deletes 3. A page
+asking for texts, reactions, pins, polls and topics equals the page without
+topics followed by: count 2; message 1, `02 00 00 00`, member 2, then its
+quote (live text by member 1, index 0, first line "Holiday plans"); message
+2, `01 00 00 00`, member 1, then its quote (index 1, no text held). Flag bit 6
+is refused.
+
 ## Push payload (RFC 8291)
 
 **029 — RFC 8291 Appendix A.** Plaintext "When I grow up, I want to be a

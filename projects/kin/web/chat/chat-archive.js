@@ -30,7 +30,7 @@ import { ChatRecords } from "./chat-records.js";
 import { VaultError } from "../security/local-vault.js";
 import { projectionContext } from "../browser-time.js";
 
-export const CHAT_EVENT_KINDS = new Set(["CHAT_MESSAGE_POSTED", "CHAT_MESSAGE_EDITED", "CHAT_MESSAGE_DELETED", "CHAT_REACTION_SET", "CHAT_PIN_SET", "CHAT_POLL_VOTE", "CHAT_POLL_CLOSED"]);
+export const CHAT_EVENT_KINDS = new Set(["CHAT_MESSAGE_POSTED", "CHAT_MESSAGE_EDITED", "CHAT_MESSAGE_DELETED", "CHAT_REACTION_SET", "CHAT_PIN_SET", "CHAT_POLL_VOTE", "CHAT_POLL_CLOSED", "CHAT_TOPIC_SET"]);
 export const MAX_ARCHIVE_CHAT_EVENTS = 250_000;
 export const MAX_ARCHIVE_CHAT_BLOBS = 20_000;
 export const MAX_ARCHIVE_CHAT_HIDDEN = 10_000;

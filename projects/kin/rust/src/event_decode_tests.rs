@@ -90,9 +90,9 @@ fn schemas_and_kinds_outside_protocol_24_are_unsupported() {
             "kind {kind} schema 2"
         );
     }
-    // 52–58 are the fridge (#317), 59–63 meals (#333), 64 item emoji (#344); 65 is the first
-    // unassigned kind.
-    for kind in [0u16, 65, 99, u16::MAX] {
+    // 52–58 are the fridge (#317), 59–63 meals (#333), 64 item emoji (#344),
+    // 65 chat topics (#312); 66 is the first unassigned kind.
+    for kind in [0u16, 66, 99, u16::MAX] {
         assert_eq!(
             decode_event(&reference_record(kind, 1, 0x11)),
             Err(KinError::UnsupportedVersion)

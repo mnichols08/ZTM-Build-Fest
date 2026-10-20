@@ -26,7 +26,7 @@ const WASM = new URL("../wasm/kin_engine.wasm", import.meta.url);
 
 const encoder = new TextEncoder(), decoder = new TextDecoder();
 const bytesOf = (hex) => Uint8Array.from(hex.match(/../g), (pair) => Number.parseInt(pair, 16));
-const KINDS = { "post-chat-message": "CHAT_MESSAGE_POSTED", "edit-chat-message": "CHAT_MESSAGE_EDITED", "delete-chat-message": "CHAT_MESSAGE_DELETED", "react-chat-message": "CHAT_REACTION_SET", "pin-chat-message": "CHAT_PIN_SET", "vote-chat-poll": "CHAT_POLL_VOTE", "close-chat-poll": "CHAT_POLL_CLOSED" };
+const KINDS = { "post-chat-message": "CHAT_MESSAGE_POSTED", "edit-chat-message": "CHAT_MESSAGE_EDITED", "delete-chat-message": "CHAT_MESSAGE_DELETED", "react-chat-message": "CHAT_REACTION_SET", "pin-chat-message": "CHAT_PIN_SET", "vote-chat-poll": "CHAT_POLL_VOTE", "close-chat-poll": "CHAT_POLL_CLOSED", "set-chat-topic": "CHAT_TOPIC_SET" };
 
 /** The engine calls the room makes, over JSON "canonical events". */
 function fakeEngine() {
@@ -87,10 +87,18 @@ function fakeEngine() {
     },
     chatPage(source, options) {
       this.calls.page += 1;
-      const messages = new Map(), retired = [], pinned = [];
+      const messages = new Map(), retired = [], pinned = [], topics = [];
+      let clock = 0;
       for (const { command, actorId, deviceId, timestamp } of events(source)) {
         const message = messages.get(command.messageId);
-        if (command.type === "pin-chat-message") {
+        if (command.type === "set-chat-topic") {
+          // Latest wins; a deleted or unknown message changes nothing (#312).
+          if (!message || message.status === "deleted") continue;
+          const at = topics.findIndex((topic) => topic.messageId === command.messageId);
+          if (command.state === "cleared") { if (at >= 0) topics.splice(at, 1); }
+          else if (at >= 0) Object.assign(topics[at], { state: command.state, changed: ++clock });
+          else topics.push({ messageId: command.messageId, state: command.state, flaggedBy: actorId, changed: ++clock });
+        } else if (command.type === "pin-chat-message") {
           const at = pinned.findIndex((pin) => pin.messageId === command.messageId);
           if (command.on && message && at < 0) pinned.push({ messageId: command.messageId, pinnedBy: actorId });
           else if (!command.on && at >= 0) pinned.splice(at, 1);
@@ -124,6 +132,7 @@ function fakeEngine() {
             if (!command.byAdmin) {
               pinned.splice(0, pinned.length, ...pinned.filter((pin) => pin.messageId !== command.messageId));
               message.poll = null;
+              topics.splice(0, topics.length, ...topics.filter((topic) => topic.messageId !== command.messageId));
             }
           }
         }
@@ -159,7 +168,16 @@ function fakeEngine() {
           };
         })
         : [];
-      return { total: list.length, start: 0, messages: list, retired: options.includeRetired ? retired.filter((ref) => !shown.has(ref)) : [], pins };
+      const topicList = options.includeTopics
+        ? topics.filter((topic) => ["live", "edited"].includes(messages.get(topic.messageId).status)).sort((x, y) => y.changed - x.changed).map((topic) => {
+          const original = messages.get(topic.messageId);
+          return {
+            messageId: topic.messageId, state: topic.state, flaggedBy: topic.flaggedBy,
+            quote: { messageId: original.messageId, state: original.status, contentKind: original.contentKind, authorId: original.authorId, index: order.indexOf(original.messageId), blobRef: original.blobRef, blobKey: original.blobKey, text: options.includeText !== false ? this.texts.get(original.blobRef) ?? null : null },
+          };
+        })
+        : [];
+      return { total: list.length, start: 0, messages: list, retired: options.includeRetired ? retired.filter((ref) => !shown.has(ref)) : [], pins, topics: topicList };
     },
   };
 }
@@ -1457,6 +1475,44 @@ test("members pin messages up to the limit, anyone unpins, and deleting for ever
   assert.equal(pins().some((pin) => pin.messageId === sent[1].messageId), false);
   assert.equal(c.room.page({ includePins: true }).pins.length, 9, "and it syncs");
   assert.equal(a.room.page().total, before + 0, "no new messages");
+});
+
+test("members put messages on the To talk about list, resolve and clear them, and read-only members can't (#312)", { timeout: 60_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs, householdAdmin: true });
+  const laptop = await device(s.partner, { householdId: s.householdId, epochs });
+  const devices = [phone.entry, laptop.entry];
+  const a = await openRoom(phone, s), c = await openRoom(laptop, s);
+  const syncAll = async () => { for (const { room } of [a, c, a, c]) await room.sync({ status: STATUS, devices }); };
+  await syncAll();
+  const holiday = await a.room.send("Holiday plans");
+  const bins = await a.room.send("Who does the bins?");
+  await syncAll();
+  const byId = (room, id) => room.page().messages.find((message) => message.messageId === id);
+  const topics = ({ room }) => room.page({ includeTopics: true }).topics.map((topic) => [topic.messageId, topic.state, topic.flaggedBy]);
+  await c.room.setTopic(byId(c.room, holiday.messageId), "open");
+  await syncAll();
+  await a.room.setTopic(byId(a.room, bins.messageId), "open");
+  await syncAll();
+  assert.deepEqual(topics(a), [[bins.messageId, "open", s.admin.memberId], [holiday.messageId, "open", s.partner.memberId]]);
+  const { quote } = a.room.page({ includeTopics: true }).topics[1];
+  assert.deepEqual([quote.messageId, quote.state, quote.authorId], [holiday.messageId, "live", s.admin.memberId]);
+  assert.deepEqual(a.room.page().topics, [], "only when asked for");
+  // Resolved by someone else, it keeps who flagged it and moves to the top.
+  await a.room.setTopic(byId(a.room, holiday.messageId), "resolved");
+  await syncAll();
+  assert.deepEqual(topics(c)[0], [holiday.messageId, "resolved", s.partner.memberId]);
+  await c.room.setTopic(byId(c.room, bins.messageId), "cleared");
+  // Deleting a message for everyone drops its topic.
+  await a.room.remove(byId(a.room, holiday.messageId));
+  await syncAll();
+  assert.deepEqual(topics(c), []);
+  // A member who can only read may not set one, and nothing is sent.
+  const executed = c.engine.calls.execute;
+  c.room.access = "read";
+  await assert.rejects(() => c.room.setTopic(byId(c.room, bins.messageId), "open"), (error) => error.code === "chat_read_only");
+  assert.equal(c.engine.calls.execute, executed);
 });
 
 test("members ask a poll, vote and change their vote, the author closes it, and deleting it deletes everything (#135)", { timeout: 60_000 }, async (t) => {

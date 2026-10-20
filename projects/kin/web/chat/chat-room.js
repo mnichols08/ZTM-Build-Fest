@@ -1123,6 +1123,18 @@ export class ChatRoom {
     return this.author({ type: "pin-chat-message", messageId: message.messageId, on }, { track: false });
   }
 
+  /**
+   * Sets where `message` stands on the "To talk about" list (#312, ADR
+   * 0014): "open" (Talk later, Reopen), "resolved" or "cleared" (Remove from
+   * list). Anyone who can post may, as with a pin. The engine refuses a
+   * change that changes nothing and a topic past `MAX_CHAT_TOPICS`; read the
+   * list with `page({ includeTopics: true }).topics`.
+   */
+  async setTopic(message, state) {
+    this.assertCanPost();
+    return this.author({ type: "set-chat-topic", messageId: message.messageId, state }, { track: false });
+  }
+
   async author(command, { blobRef = null, retireRef = null, retireParts = [], track = true }) {
     this.assertOpen();
     if (retireRef !== null && !REF.test(retireRef)) retireRef = null;
