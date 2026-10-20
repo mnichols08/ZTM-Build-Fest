@@ -541,6 +541,42 @@ async function pageRestoreClock() {
   delete window.__kinOriginalDateNow;
 }
 
+// The fridge through the real wiring (#372): sync opens the board room and
+// hands it to Household → Fridge; nothing is attached by hand. Returns where
+// the door is and what the page says, so a failure explains itself.
+async function pageOpenFridge() {
+  const app = document.querySelector("kin-app");
+  location.hash = "#household/fridge";
+  const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  for (let i = 0; i < 600 && !app.fridge?.room; i++) await frame();
+  await frame(); await frame();
+  const fridge = app.fridge;
+  const door = fridge?.querySelector(".fridge-door");
+  const rect = door?.getBoundingClientRect();
+  return {
+    room: Boolean(fridge?.room), access: fridge?.room?.access ?? null, coordinatorBoard: Boolean(app.syncCoordinator?.board),
+    summary: fridge?.querySelector(".fridge-summary")?.textContent ?? null,
+    status: fridge?.querySelector(".fridge-status")?.textContent ?? null,
+    door: rect ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height } : null,
+    canvas: door ? [...door.querySelectorAll("canvas")].map((canvas) => [canvas.width, canvas.height]) : null,
+    hit: rect ? document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)?.className ?? null : null,
+  };
+}
+
+async function pageFridgeAfterDrawing() {
+  const app = document.querySelector("kin-app");
+  const fridge = app.fridge;
+  const count = () => { try { return fridge.room?.board().strokes.length ?? -1; } catch { return -2; } };
+  for (let i = 0; i < 300 && count() < 1 && !fridge.querySelector(".fridge-status")?.textContent; i++)
+    await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+  return {
+    strokes: count(),
+    summary: fridge.querySelector(".fridge-summary")?.textContent ?? null,
+    status: fridge.querySelector(".fridge-status")?.textContent ?? null,
+    waiting: fridge.room?.waiting ?? null,
+  };
+}
+
 async function pageEnableSync() {
   const app = document.querySelector("kin-app");
   await app.household.enableSync();
@@ -1206,6 +1242,20 @@ export async function householdAuthorityDrill({ executable, origin, service, syn
     check(result.last?.state !== "paused", "Adult A completes the first relay sync: " + JSON.stringify(result.last));
     const aRelay = relaySession(aBoot.identity.memberId, aBoot.identity.deviceId);
     check(relayEvents(aRelay).length === 2, "relay holds A1 and A's device name (#71) as two opaque envelopes");
+    // Draw on the fridge with the real mouse, through the real wiring (#372).
+    const fridge = await a.callStable(pageOpenFridge);
+    check(fridge.room && fridge.access === "write" && fridge.door?.width > 100,
+      "sync opens the fridge for Adult A: " + JSON.stringify(fridge));
+    const point = (fx, fy) => ({ x: Math.round(fridge.door.left + fridge.door.width * fx), y: Math.round(fridge.door.top + fridge.door.height * fy) });
+    const start = point(0.3, 0.3);
+    await a.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...start });
+    await a.send("Input.dispatchMouseEvent", { type: "mousePressed", ...start, button: "left", buttons: 1, clickCount: 1 });
+    for (let step = 1; step <= 8; step += 1)
+      await a.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...point(0.3 + step * 0.04, 0.3 + step * 0.03), button: "left", buttons: 1 });
+    await a.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...point(0.62, 0.54), button: "left", buttons: 0, clickCount: 1 });
+    const drawn = await a.callStable(pageFridgeAfterDrawing);
+    check(drawn.strokes >= 1, "a mouse stroke on the synced fridge is saved: " + JSON.stringify({ ...fridge, ...drawn }));
+    await a.call(() => { location.hash = "#today"; });
     pass(`${checks} household creation assertions (profile A)`);
 
     // ---- Profile B: second Adult -----------------------------------------
