@@ -92,7 +92,7 @@ function token(env) {
 
 async function github(path, { auth, binary = false }) {
   const response = await fetch(`https://api.github.com${path}`, {
-    headers: { Accept: binary ? "application/octet-stream" : "application/vnd.github+json", Authorization: `Bearer ${auth}`, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "kin-fetch-wasm" },
+    headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${auth}`, "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "kin-fetch-wasm" },
     redirect: "follow",
   });
   if (!response.ok) throw new FetchWasmError(`GitHub answered ${response.status} for ${path.split("?")[0]}.`);
