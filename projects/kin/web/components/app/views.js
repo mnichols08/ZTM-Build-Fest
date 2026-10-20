@@ -91,7 +91,16 @@ export class ViewBuilder {
     const calendarExportNote = document.createElement("p");
     calendarExportNote.className = "section-hint";
     calendarExportNote.textContent = "Exports every open item that has a planned date, from all lists. The downloaded .ics file is not encrypted and contains the item text.";
-    listActions.append(listActionsSummary, this.app.calendarExportButton, calendarExportNote);
+    // Bring a list into Kin (#452): paste a list or choose a CSV/text file.
+    const importButton = document.createElement("button");
+    importButton.type = "button";
+    importButton.className = "import-list-button";
+    importButton.textContent = "Import a list…";
+    importButton.addEventListener("click", () => this.ctx.importList.open({ opener: importButton }));
+    const importNote = document.createElement("p");
+    importNote.className = "section-hint";
+    importNote.textContent = "Paste a list or choose a CSV or text file from another app. It is read on this device; you choose what to add.";
+    listActions.append(listActionsSummary, this.app.calendarExportButton, calendarExportNote, importButton, importNote);
     lists.append(listActions);
     this.app.needs.display = "need";
     this.app.shopping.display = "shopping";

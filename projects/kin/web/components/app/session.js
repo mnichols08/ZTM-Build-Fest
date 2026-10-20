@@ -196,6 +196,8 @@ export class SessionController {
     this.ctx.bulk.clearBulkOutcome();
     this.ctx.undo.clear();
     this.app.shoppingMode?.close();
+    this.app.importer?.close();
+    this.app.pendingImport = null;
     this.app.shoppingSections = null;
     this.app.pendingCapture = null;
     this.app.pendingShares?.clear();
