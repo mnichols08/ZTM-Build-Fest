@@ -2364,7 +2364,7 @@ try {
       await first.evaluate(`(()=>{
       const app=document.querySelector('kin-app'),capture=app.talks;
       capture.input.focus();
-      return capture.querySelector('h2').textContent==='Talk' &&
+      return capture.querySelector('h2').textContent==='Other topics' &&
         capture.input.labels[0].textContent==='What should we talk about?' &&
         capture.querySelectorAll('ul > li').length>0 &&
         [...capture.querySelectorAll('h3')].every(heading=>['Open','Resolved'].includes(heading.textContent)) &&
