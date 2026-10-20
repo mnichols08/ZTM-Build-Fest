@@ -13,7 +13,10 @@ export async function mealsRegressions() {
       if (!app.busy && condition()) return;
       await frame();
     }
-    throw new Error(`Timed out: ${message}`);
+    // Say what the person would see, so a CI failure explains itself.
+    const shown = [...document.querySelectorAll('[role="alert"]:not([hidden]), [role="status"]')]
+      .map((node) => node.textContent.trim()).filter(Boolean).join(" | ");
+    throw new Error(`Timed out: ${message} (showing: ${shown || "nothing"}; recipes: ${app.mealsState?.recipes.map((recipe) => recipe.name).join(", ") ?? "none"})`);
   };
   const idle = () => waitFor(() => !app.busy && !app.ctx.meals.loading, "meals work returns idle");
   const pad = (value) => String(value).padStart(2, "0");
