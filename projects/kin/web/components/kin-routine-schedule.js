@@ -101,7 +101,7 @@ class KinRoutineSchedule extends HTMLElement {
     this.save.disabled = this.isDisabled || !changed;
     this.scope.textContent = changed
       ? `${REPEAT_HINTS[this.select.value]} The new schedule starts today. Past completions stay with the current schedule, and ${record.occurrenceStatus === "completed" ? "this period's done mark" : "the open occurrence"} does not carry over.`
-      : "Choose a different schedule to change it, or use Stop repeating to end it. Past completions are always kept.";
+      : "Choose a different schedule to change it, or use Delete routine to end it. Past completions are always kept.";
   }
 }
 
