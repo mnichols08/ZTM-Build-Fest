@@ -9,6 +9,11 @@ documentation only.
 
 ### Added
 
+- **Store sections** (#411, [ADR 0015](docs/decisions/0015-store-sections.md)):
+  name the parts of the shop in the order you walk it, give items a section,
+  and shopping mode groups the list that way (Other last). Staples keep
+  their section when replenished. Event kinds 66 and 67; older devices pause
+  sync until updated.
 - **Shopping mode** (#403): Start shopping opens the list for the shop —
   big checkboxes, ticked items into "In the basket" (Undo applies), and the
   screen kept on while you shop where the browser allows.
