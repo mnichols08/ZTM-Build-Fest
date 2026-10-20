@@ -95,3 +95,11 @@ test("Simple view allows only Today, Chat and the Fridge, and sends everything e
   assert.equal(resolveSimpleRoute({ hash: "#updates/chat" }, { chat: false, fridge: true }).canonical, "today", "no chat access");
   assert.equal(resolveSimpleRoute({ hash: "#household/fridge" }, { chat: true, fridge: false }).canonical, "today", "no fridge access");
 });
+
+test("This week is its own page, reached from Today, which stays marked (#416)", () => {
+  const route = resolveRoute({ hash: "#week" });
+  assert.equal(route.canonical, "week");
+  assert.equal(route.title, "This week");
+  assert.equal(route.destination, "today");
+  assert.equal(resolveSimpleRoute({ hash: "#week" }, { chat: true, fridge: true }).canonical, "today", "Simple view has no week page");
+});

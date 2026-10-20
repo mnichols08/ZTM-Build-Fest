@@ -55,6 +55,7 @@ export class NavigationController {
       for (const [segment, panel] of panels) panel.hidden = segment !== route.segment;
     }
     if (route.page === "routines") this.app.routines.view = route.segment;
+    if (route.page === "week") void this.ctx.week?.refresh();
     // Details stay open only within the page that opened them.
     if (this.app.selection && this.app.selection.page !== route.page) this.ctx.detail.closeItemDetail({ restoreFocus: false });
     this.ctx.detail.mountDetail();

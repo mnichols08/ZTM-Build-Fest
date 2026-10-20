@@ -9,6 +9,9 @@ documentation only.
 
 ### Added
 
+- **This week** (#416): from Today, the next seven days in one list —
+  planned items, routines, dinners and maintenance due — with complete,
+  Undo and Move to… another day.
 - **Shopping mode** (#403): Start shopping opens the list for the shop —
   big checkboxes, ticked items into "In the basket" (Undo applies), and the
   screen kept on while you shop where the browser allows.

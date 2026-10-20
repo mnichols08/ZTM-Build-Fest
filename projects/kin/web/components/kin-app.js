@@ -6,6 +6,7 @@ import "./kin-quick-add.js";
 import "./kin-chat-share.js";
 import "./kin-share-sheet.js";
 import "./kin-shopping-mode.js";
+import "./kin-week.js";
 import "./kin-command-palette.js";
 import "./kin-item.js";
 import "./kin-item-detail.js";

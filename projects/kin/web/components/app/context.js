@@ -31,6 +31,7 @@ import { AppearanceController } from "./appearance.js";
 import { MealsController } from "./meals.js";
 import { SimpleController } from "./simple.js";
 import { ShareController } from "./share.js";
+import { WeekController } from "./week.js";
 import { AppendCommands } from "./commands/append.js";
 import { AttachmentController } from "./attachments.js";
 import { ChatShareController } from "./chat-share.js";
@@ -73,6 +74,7 @@ export function createAppContext(app) {
   ctx.attachments = new AttachmentController(ctx);
   ctx.chatShare = new ChatShareController(ctx);
   ctx.share = new ShareController(ctx);
+  ctx.week = new WeekController(ctx);
   ctx.navigation = new NavigationController(ctx);
   ctx.detail = new DetailController(ctx);
   ctx.appearance = new AppearanceController(ctx);

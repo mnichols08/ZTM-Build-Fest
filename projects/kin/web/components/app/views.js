@@ -55,7 +55,12 @@ export class ViewBuilder {
     fridgeLink.className = "today-fridge-link";
     fridgeLink.href = routeHash("household", "fridge");
     fridgeLink.textContent = "Draw on the fridge";
-    today.querySelector(".page-intro").append(this.app.todayDate, fridgeLink);
+    // This week (#416): the next seven days in one list.
+    const weekLink = document.createElement("a");
+    weekLink.className = "today-week-link";
+    weekLink.href = "#week";
+    weekLink.textContent = "This week";
+    today.querySelector(".page-intro").append(this.app.todayDate, weekLink, fridgeLink);
     this.app.compose.setAttribute("mode", "today");
     this.app.compose.setAttribute("scope", "today");
     this.app.catchUp.setAttribute("aria-label", "Catch up since you last looked");
@@ -104,6 +109,9 @@ export class ViewBuilder {
 
     const search = page("search", "Search");
     search.append(this.app.search);
+    const week = page("week", "This week", "The next seven days: planned items, routines, dinners and maintenance due. Move an item to another day from here.");
+    this.app.week = document.createElement("kin-week");
+    week.append(this.app.week);
 
     const routines = page("routines", "Routines", DESTINATION_DESCRIPTIONS.routines);
     const routinesNav = segmentNav("routines", "Routines");
