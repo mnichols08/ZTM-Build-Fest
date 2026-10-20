@@ -2573,6 +2573,9 @@ class KinChat extends HTMLElement {
     if (this.scroller.scrollTop < EDGE && this.start > 0) void this.loadOlder();
     else if (this.wasAtBottom && !this.following) void this.loadNewer();
     if (this.following && this.wasAtBottom) this.jump.hidden = true;
+    // Jump to latest (#310) also shows once you scroll up more than half a
+    // screen from the newest message.
+    else if (this.scroller.scrollHeight - this.scroller.scrollTop - this.scroller.clientHeight > this.scroller.clientHeight / 2) this.jump.hidden = false;
   }
 
   /** Brings older messages into the window, trimming the newest past the
