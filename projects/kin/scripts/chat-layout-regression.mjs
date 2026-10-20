@@ -34,6 +34,14 @@ export async function chatLayoutRegressions(client, { until }) {
     };
   })()`);
 
+  // Opening Chat lands on the newest message, without help (#310).
+  await page(`(() => { document.querySelector("kin-app").ctx.navigation.navigate("#updates/handoffs"); return true; })()`);
+  await frames();
+  await page(`(() => { document.querySelector("kin-app").ctx.navigation.navigate("#updates/chat"); return true; })()`);
+  await frames();
+  const opened = await measure();
+  assert.ok(opened.atLatest, `opening Chat shows the newest message ${JSON.stringify(opened)}`);
+
   for (const [label, metrics] of [
     ["phone", { width: 320, height: 568, deviceScaleFactor: 2, mobile: true }],
     ["phone landscape", { width: 568, height: 320, deviceScaleFactor: 2, mobile: true }],
@@ -107,7 +115,7 @@ export async function chatLayoutRegressions(client, { until }) {
   const composing = await page(`document.documentElement.hasAttribute("data-chat-composing")`);
   assert.ok(composing, "focusing the message box marks the page as composing");
   assert.ok(typing.composerBottom <= typing.visible + 1, `keyboard open: the composer stays above it (${typing.composerBottom} of ${typing.visible})`);
-  assert.ok(typing.list >= typing.visible * 0.25, `keyboard open: the list keeps room (${typing.list} of ${typing.visible})`);
+  assert.ok(typing.list >= typing.visible * 0.4, `keyboard open: the list keeps at least 40% of the screen (${typing.list} of ${typing.visible})`);
   await page(`(() => { document.activeElement?.blur(); return true; })()`);
   await client.send("Emulation.setEmulatedMedia", { features: [] }).catch(() => {});
   await client.send("Emulation.setTouchEmulationEnabled", { enabled: false });
