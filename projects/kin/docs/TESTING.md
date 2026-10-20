@@ -387,11 +387,15 @@ change Kin or its workflow, and pushes to `kin-development`, run three jobs
 - `verify` (Windows): stages A–D (environment, static checks, every Node and
   Rust test, the release WASM build).
 - `verify-linux` (Linux): the same stages, and publishes the engine it built.
-- `browser`: each of the five browser suites in its own job, on Windows Edge
-  and on Linux Chrome (ten jobs in parallel), against that published engine
+- `browser`: each browser suite in its own job, on Windows Edge and on Linux
+  Chrome, against that published engine
   after checking its SHA-256. Each runs
   `node scripts/verify.mjs --browser-only --suite <suite>`, with the retry and
-  FLAKY reporting below.
+  FLAKY reporting below. The longest suite, `browser-regression`, runs as
+  two jobs: `KIN_REGRESSION_PART=1` (the single-tab checks) and `=2` (the
+  checks with a second tab); each does the shared setup and the final
+  console, request and storage checks. Unset, it runs both. In October 2026
+  the Edge run of the whole suite took 326 s; the next longest job took 139 s.
 
 Every one of them must pass; a suite that fails on either browser fails the
 run.
