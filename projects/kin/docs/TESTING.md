@@ -466,6 +466,9 @@ wait, and never delete or weaken a test to make it pass.
    test and CI reliability epic, #326, is open; afterwards a new issue labelled
    for test health), with the run link, suite, browser, the first failing line
    and what the diagnostics showed.
+   "Browser did not start" now says which it was (`scripts/browser-launch.mjs`,
+   #327): the browser exited first (with its exit code and the end of its own
+   error output) or didn't write its DevTools port within 45 s.
 4. **Fix the cause** rather than lengthening a wait or retrying more, and say
    in the fix which race it closes. Never delete or weaken a test to go green.
 

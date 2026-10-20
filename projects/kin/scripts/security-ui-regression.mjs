@@ -1,4 +1,5 @@
 // Real browser IndexedDB + Web Crypto regressions; no third-party harness.
+import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
 import { applyRegressionDefaults, captureFailure, waitForOrigin } from "./cdp-page.mjs";
 import assert from "node:assert/strict";
 import { householdLifecycleChecks } from "./security-household-regression.mjs";
@@ -948,21 +949,11 @@ if (
       `--user-data-dir=${profile}`,
       "about:blank",
     ],
-    { windowsHide: true, stdio: "ignore" },
+    BROWSER_STDIO,
   );
   let socket;
   try {
-    let port;
-    for (let attempt = 0; attempt < 200 && !port; attempt += 1) {
-      try {
-        port = (
-          await readFile(join(profile, "DevToolsActivePort"), "utf8")
-        ).split("\n")[0];
-      } catch {
-        await delay(50);
-      }
-    }
-    assert.ok(port, "Browser did not start");
+    const port = await waitForDevTools(browser, profile);
     const target = await fetch(
       `http://127.0.0.1:${port}/json/new?${encodeURIComponent(origin)}`,
       { method: "PUT" },

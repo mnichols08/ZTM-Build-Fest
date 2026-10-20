@@ -1,4 +1,5 @@
 // Real browser IndexedDB + Web Crypto regressions; no third-party harness.
+import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
 import { applyRegressionDefaults, captureFailure, waitForOrigin } from "./cdp-page.mjs";
 import { eventArenaRegression, projectionOracle } from "./event-arena-regression.mjs";
 import assert from "node:assert/strict";
@@ -447,10 +448,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   async function connectBrowser() {
     await rm(join(profile, "DevToolsActivePort"), { force: true });
     const timing = process.argv.includes("--performance") || process.argv.includes("--performance-only");
-    browser = spawn(executable, [...(timing ? ["--js-flags=--expose-gc"] : []), "--headless=new", "--disable-gpu", "--disable-extensions", "--no-first-run", "--no-default-browser-check", "--edge-skip-compat-layer-relaunch", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], { windowsHide: true, stdio: "ignore" });
-    let port;
-    for (let attempt = 0; attempt < 200 && !port; attempt += 1) { try { port = (await readFile(join(profile, "DevToolsActivePort"), "utf8")).split("\n")[0]; } catch { await delay(50); } }
-    assert.ok(port, "Browser did not start");
+    browser = spawn(executable, [...(timing ? ["--js-flags=--expose-gc"] : []), "--headless=new", "--disable-gpu", "--disable-extensions", "--no-first-run", "--no-default-browser-check", "--edge-skip-compat-layer-relaunch", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], BROWSER_STDIO);
+    const port = await waitForDevTools(browser, profile);
     const target = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(origin)}`, { method: "PUT" }).then((response) => response.json());
     socket = new WebSocket(target.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });

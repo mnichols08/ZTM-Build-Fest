@@ -10,6 +10,7 @@
 // ceremony, and separate profiles on one machine are not separate devices.
 //
 // Usage: node scripts/household-authority-regression.mjs <browser executable>
+import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
 import { applyRegressionDefaults, captureFailure, waitForOrigin } from "./cdp-page.mjs";
 import { setViewport } from "./cdp-viewport.mjs";
 import assert from "node:assert/strict";
@@ -1046,18 +1047,9 @@ async function launchProfile(executable, label, origin) {
       `--user-data-dir=${profile}`,
       "about:blank",
     ],
-    { windowsHide: true, stdio: "ignore" },
+    BROWSER_STDIO,
   );
-  browser.on("error", (error) => console.error(`Browser ${label} failed to launch`, error));
-  let port;
-  for (let attempt = 0; attempt < 200 && !port; attempt += 1) {
-    try {
-      port = (await readFile(join(profile, "DevToolsActivePort"), "utf8")).split("\n")[0];
-    } catch {
-      await delay(50);
-    }
-  }
-  assert.ok(port, `Browser ${label} did not start`);
+  const port = await waitForDevTools(browser, profile, { label: `Browser ${label}` });
   const target = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(origin)}`, { method: "PUT" })
     .then((response) => response.json());
   const socket = new WebSocket(target.webSocketDebuggerUrl);

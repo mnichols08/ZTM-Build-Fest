@@ -1,5 +1,6 @@
 // Node 22+ and a Chromium-family executable; no npm packages required.
 // Uses a fresh temporary profile and loopback server, never an existing Kin DB.
+import { BROWSER_STDIO, waitForDevTools } from "./browser-launch.mjs";
 import { setViewport } from "./cdp-viewport.mjs";
 import { applyRegressionDefaults, captureFailure } from "./cdp-page.mjs";
 import {
@@ -116,7 +117,7 @@ const browser = spawn(
     `--user-data-dir=${profile}`,
     "about:blank",
   ],
-  { windowsHide: true, stdio: "ignore" },
+  BROWSER_STDIO,
 );
 let launchError;
 browser.on("error", (error) => {
@@ -1162,15 +1163,7 @@ async function regressions() {
 }
 
 try {
-  const port = await until(async () => {
-    try {
-      return (
-        await readFile(join(profile, "DevToolsActivePort"), "utf8")
-      ).split("\n")[0];
-    } catch {
-      return false;
-    }
-  });
+  const port = await waitForDevTools(browser, profile);
   const endpoint = `http://127.0.0.1:${port}`;
   const version = await (await fetch(`${endpoint}/json/version`)).json();
   console.log(
