@@ -584,6 +584,20 @@ automatic lock is off. Households that keep a shared screen should turn
 automatic lock on; Kin does not force it. A kiosk mode limited to the fridge
 would need its own credential and is out of scope.
 
+### Simple view is a layout, not a lock (#341)
+
+An admin can turn on Simple view for a Limited member
+([ADR 0013](decisions/0013-simple-view.md)). The service enforces who changes
+that switch, and Chat and Fridge access; it can't enforce anything else,
+because household events are end-to-end encrypted and it can't tell a
+child's "done" from any other change. A child's device holds the household
+key, so with other software it could write any household event, and the
+service would accept it. Simple view hides the rest of Kin; it doesn't
+prevent it. The flag is cached on the child's device so an offline unlock
+keeps Simple view; turning it off reaches that device only when it next
+connects. A device belongs to one member, so a tablet registered to an Adult
+shows the Adult's Kin; a child needs their own device.
+
 ### v1.0 was not tested across every browser and device
 
 **What it is.** v1.0 shipped on the owner's decision with limited real-world
