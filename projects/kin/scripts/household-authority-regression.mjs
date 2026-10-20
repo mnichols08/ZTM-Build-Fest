@@ -620,7 +620,12 @@ async function pageWaitSimple(want) {
     await new Promise((r) => requestAnimationFrame(() => r()));
     if (i % 40 === 39) await app?.syncCoordinator?.syncNow?.();
   }
-  return pageSimpleState();
+  // Page functions run alone in the page: no calling pageSimpleState here.
+  return {
+    simple: app?.simpleView === true, flag: document.documentElement.dataset.kinSimple ?? null,
+    lists: Boolean(document.getElementById("lists")), unlocked: Boolean(app?.store), hash: location.hash,
+    nav: app?.navLinks ? [...app.navLinks.values()].filter((link) => !link.hidden).map((link) => link.textContent.trim()) : [],
+  };
 }
 
 async function pageLockNow() {
