@@ -1248,6 +1248,15 @@ export class EventStore {
   }
 
   /** Item emoji (#344): a Map itemId -> emoji. */
+  /** The seven days from `startCivilDate` (#417): items, routines, dinners
+   * and maintenance by day, from Rust. */
+  async week(startCivilDate) {
+    if (!this.engine) throw new EventStoreError("Kin could not read the week.");
+    const { events, syncIdentity } = await this.recentHistory();
+    const { asOf, civilDate } = projectionContext();
+    return this.engine.week(startCivilDate, events, asOf, civilDate, syncIdentity);
+  }
+
   async itemEmojis() {
     if (!this.engine) throw new EventStoreError("Kin could not read item pictures.");
     const { events, syncIdentity } = await this.recentHistory();

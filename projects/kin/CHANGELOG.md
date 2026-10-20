@@ -9,6 +9,9 @@ documentation only.
 
 ### Added
 
+- **This week** (#416): from Today, the next seven days in one list —
+  planned items, routines, dinners and maintenance due — with complete,
+  Undo and Move to… another day.
 - **Bring a list into Kin** (#452): paste several lines into a capture field,
   or import a CSV or text file from another app, preview the rows (repeats
   and existing items left out) and add them to To do or Shopping, with dates

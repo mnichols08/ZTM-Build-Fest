@@ -18,6 +18,7 @@ kin_meals(ptr, len)                  replay the history: KINE context -> KMLS (#
 kin_meal_shopping_plan(ptr, len)     KMPQ + KINE context -> KMSP (#333)
 kin_item_emojis(ptr, len)            replay the history: KINE context -> KIEM (#344)
 kin_my_things(ptr, len)              KMTQ + KINE context -> KMTD (#344)
+kin_week(ptr, len)                   KWKQ + KINE context -> KWKD (#417)
 kin_shopping_sections(ptr, len)      replay the history: KINE context -> KSHS (#411)
 kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
 kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
@@ -567,6 +568,42 @@ tuned for printed codes under heavy blur.
   first (undated last), then by text; routines are assigned to the member
   with an occurrence open that day, by text, and none while the household
   mode pauses routines ([ADR 0013](decisions/0013-simple-view.md)).
+- **KWKQ v1 / KWKD v1** (the household's week, `kin_week`, #417,
+  `rust/src/week.rs`): the 16-byte query `"KWKQ"`, version 1, reserved u16,
+  start date u32 (YYYYMMDD; a valid date with six more days before
+  9999-12-31, else code 2), reserved u32, then a record-less KINE context.
+  The result `"KWKD"`, version 1, reserved u16, start date u32, day count u8
+  (always 7), flags u8 (bit 0: the household mode pauses routines), reserved
+  u16; then for each of the seven consecutive days from the start: date
+  u32, item count u16, routine count u16, meal count u8 (0 or 1),
+  maintenance count u8, omitted u16 (entries dropped by the caps, saturating),
+  then that day's entries in that order:
+  - item, 36 bytes: item ID [16], classification u8 (0 Today, 1 Need,
+    2 Shopping, 3 Staple), flags u8 (bit 0 owner), reserved u16, owner member
+    ID [16] (zero when none). Active items whose planning date is that day.
+    Overdue items (planned before the start) are **not** included: Today
+    shows those. Undated, completed and archived items are left out.
+  - routine, 40 bytes: routine ID [16], occurrence key u32, cadence u8 (as
+    KINS), flags u8 (bit 0 owner, bit 1 current, bit 2 done), reserved u16,
+    owner member ID [16] (zero when none). Each occurrence appears once, on
+    the day it opens by the routine's cadence (`Cadence::current_key` and
+    `next_start`); one already open on the start date appears on the start
+    date. Weekdays routines have none on Saturday and Sunday. Archived
+    routines have none, and none at all while the household mode isn't
+    Normal (flag bit 0). "Current" is the occurrence open on the context's
+    civil date; "done" is reported only for it (never without current).
+  - meal: flags u8 (bit 0 recipe, bit 1 cook), 3 reserved, recipe ID [16]
+    (zero when none), cook member ID [16] (zero when none), name as shown
+    (u16 + UTF-8), as a KMLS dinner without its date.
+  - maintenance, 36 bytes: maintenance ID [16], reference record ID [16],
+    performed date u32. Entries not archived, on a reference record that
+    isn't archived, whose next date is that day.
+  Items, routines and maintenance sort by text (summary), then ID. Caps per
+  day: 64 items, 64 routine occurrences, 32 maintenance entries (one dinner
+  per date by the meals model); the rest of that kind are dropped and
+  counted in `omitted`. The household mode is the history's at the context's
+  as-of and applies to the whole week. Texts other than a dinner's name come
+  from KINS by ID. Output is deterministic for a log, context and start.
 - **KMNM v1** (preferred member names, `kin_member_names`, #224): `"KMNM"`,
   version 1, reserved u16, member count u32, then per member in member-ID
   order: member ID (16 bytes, after identity bindings), name length u16
