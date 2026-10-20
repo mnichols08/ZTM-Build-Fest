@@ -18,7 +18,8 @@ import {
 
 // The WASM comparison reads two build outputs; these tests stand in for them
 // (identical bytes) so they don't depend on a build having run first.
-const runVerification = (options) => runRealVerification({ readBytes: async () => Buffer.from("engine"), engineReady: async () => true, ...options });
+// No installed browser is looked for unless a test supplies one.
+const runVerification = (options) => runRealVerification({ readBytes: async () => Buffer.from("engine"), engineReady: async () => true, locateBrowser: async () => null, ...options });
 
 test("a failing child command returns its exit status", async () => {
   const result = await runCommand(process.execPath, ["-e", "process.exit(17)"], { capture: true });
@@ -133,6 +134,7 @@ test("missing required browser is a failure and optional browser stage is NOT RU
   });
   const browserStage = result.stages.find(({ name }) => name.startsWith("E —"));
   assert.equal(browserStage.status, "FAIL");
+  assert.match(browserStage.results[0].label, /no Chromium-based browser found\. Install/);
   assert.equal(result.code, 1);
 
   const missingExecutable = await runVerification({
@@ -439,4 +441,53 @@ test("--browser-only without an engine fails with how to get one (#329)", async 
   assert.equal(result.code, 1);
   assert.equal(calls.length, 0);
   assert.match(result.stages[0].results[0].label, /kin_engine\.wasm is missing.*fetch-wasm/);
+});
+
+test("with no browser named, an installed one is found and used (#331)", async () => {
+  const { execute, calls } = scriptedExecute(() => ({ code: 0, stdout: "", stderr: "" }));
+  const messages = [];
+  const seen = [];
+  const result = await runVerification({
+    browser: true, browserOnly: true, suites: ["passkey-regression"], env: { ...process.env, KIN_BROWSER: "" },
+    execute: async (command, args, options) => { if (args[0]?.endsWith("regression.mjs")) seen.push(args[1]); return execute(command, args, options); },
+    locateBrowser: async () => ({ executable: process.execPath, source: "found" }),
+    nodeVersion: "24.16.0", output: (line) => messages.push(line),
+  });
+  assert.equal(result.code, 0);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(seen, [process.execPath], "the found browser is the one the suite drives");
+  assert.ok(messages.some((line) => line.startsWith(`Using ${process.execPath}`)));
+});
+
+test("a missing browser engine is built and installed before the tests that load it (#331)", async () => {
+  const { execute } = scriptedExecute(() => ({ code: 0, stdout: "", stderr: "" }));
+  const builds = [];
+  const installed = [];
+  const result = await runVerification({
+    execute: async (command, args, options) => { if (command === "cargo" && args[0] === "build") builds.push(args.join(" ")); return execute(command, args, options); },
+    engineReady: async () => false,
+    installEngine: async (from, to) => { installed.push([from, to]); },
+    nodeVersion: "24.16.0", output: () => {},
+  });
+  const environment = result.stages.find(({ name }) => name.startsWith("A —"));
+  const engine = environment.results.find(({ label }) => label.startsWith("Browser engine"));
+  assert.equal(engine.status, "PASS");
+  assert.equal(engine.artifact, "built for this run (it was missing)");
+  assert.equal(installed.length, 1);
+  assert.match(installed[0][0], /kin\.wasm$/);
+  assert.match(installed[0][1], /kin_engine\.wasm$/);
+  assert.ok(builds[0].includes("--target wasm32-unknown-unknown --release"));
+  assert.ok(result.stages.find(({ name }) => name.startsWith("C —")).status === "PASS", "then the tests run");
+});
+
+test("a failed engine build stops the run before the tests (#331)", async () => {
+  const { execute } = scriptedExecute(() => ({ code: 0, stdout: "", stderr: "" }));
+  const result = await runVerification({
+    execute: async (command, args, options) => command === "cargo" && args[0] === "build" ? { code: 101, stdout: "", stderr: "error: linking failed" } : execute(command, args, options),
+    engineReady: async () => false, installEngine: async () => { throw new Error("must not install"); },
+    nodeVersion: "24.16.0", output: () => {},
+  });
+  assert.equal(result.code, 1);
+  assert.equal(result.stages.find(({ name }) => name.startsWith("A —")).status, "FAIL");
+  assert.equal(result.stages.find(({ name }) => name.startsWith("C —")).status, "NOT RUN");
 });

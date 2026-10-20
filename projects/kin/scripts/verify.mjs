@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, appendFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile, copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { browserInstallHint, findBrowser } from "./find-browser.mjs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -205,7 +206,8 @@ export function firstFailingLine(text = "") {
 /** Escapes a GitHub Actions workflow-command value. */
 const actionsValue = (value) => String(value).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
 
-export async function runVerification({ browser = false, browserExecutable, env = process.env, execute = runCommand, output = console.log, nodeVersion = process.versions.node, readBytes = readFile, browserOnly = false, suites = null, engineReady = () => access(join(PROJECT_ROOT, "web", "wasm", "kin_engine.wasm")).then(() => true, () => false) } = {}) {
+export async function runVerification({ browser = false, browserExecutable, env = process.env, execute = runCommand, output = console.log, nodeVersion = process.versions.node, readBytes = readFile, browserOnly = false, suites = null, engineReady = () => access(join(PROJECT_ROOT, "web", "wasm", "kin_engine.wasm")).then(() => true, () => false),
+  installEngine = (from, to) => copyFile(from, to), locateBrowser = findBrowser } = {}) {
   const started = Date.now();
   const stages = [];
   let interrupted = false;
@@ -281,6 +283,25 @@ export async function runVerification({ browser = false, browserExecutable, env 
     interrupted = environmentChecks.some(({ interrupted: wasInterrupted }) => wasInterrupted === true);
     environmentPassed = environmentChecks.every(({ status }) => status === "PASS");
     if (!environmentPassed) firstFailure = environmentChecks.find(({ status }) => status === "FAIL");
+    // The engine tests in stage C and the browser suites load the browser
+    // engine. A fresh checkout has none: build it now (as build-wasm does)
+    // rather than fail later (#331).
+    if (environmentPassed && !(await engineReady())) {
+      const engine = await commandResult("Browser engine (web/wasm/kin_engine.wasm)", "cargo", ["build", "--manifest-path", join(PROJECT_ROOT, "Cargo.toml"), "--target", "wasm32-unknown-unknown", "--release"]);
+      if (engine.status === "PASS") {
+        try {
+          await mkdir(join(PROJECT_ROOT, "web", "wasm"), { recursive: true });
+          await installEngine(join(PROJECT_ROOT, "target", "wasm32-unknown-unknown", "release", "kin.wasm"), join(PROJECT_ROOT, "web", "wasm", "kin_engine.wasm"));
+          engine.artifact = "built for this run (it was missing)";
+        } catch (error) {
+          engine.status = "FAIL";
+          engine.error = `could not install the built engine: ${error.message}`;
+          firstFailure ??= engine;
+        }
+      }
+      environmentChecks.push(engine);
+      environmentPassed = engine.status === "PASS";
+    }
     stage("A — Environment", environmentChecks);
     const skipStage = (name, reason, labels = [name]) => stage(name, labels.map((label) => ({ label: `${label}: ${reason}`, status: "NOT RUN" })));
 
@@ -338,7 +359,7 @@ export async function runVerification({ browser = false, browserExecutable, env 
               else wasm.artifact = `matches generated browser WASM (${hash(browserBytes)})`;
             } catch (error) {
               wasm.status = "FAIL";
-              wasm.artifact = `browser WASM is missing; run build-wasm.ps1 or build-wasm.sh before browser verification (${error.message})`;
+              wasm.artifact = `browser WASM is missing; run build-wasm.ps1 or build-wasm.sh (or node scripts/fetch-wasm.mjs) before browser verification (${error.message})`;
             }
             wasm.artifactComparison = "local browser asset compared to this build; no committed expected artifact exists";
           } else {
@@ -363,7 +384,10 @@ export async function runVerification({ browser = false, browserExecutable, env 
     }
   }
 
-  const executable = browserExecutable ?? env.KIN_BROWSER;
+  // No browser named: use an installed Edge, Chrome or Chromium (#331).
+  const located = browser && !browserExecutable && !env.KIN_BROWSER ? await locateBrowser({ env }) : null;
+  const executable = browserExecutable || env.KIN_BROWSER || located?.executable;
+  if (located) output(`Using ${located.executable} (set KIN_BROWSER to choose another browser)`);
   const engineMissing = browserOnly && !(await engineReady());
   if (engineMissing) {
     stage("E — Browser verification", runners.map(([label]) => ({ label: `${label}: web/wasm/kin_engine.wasm is missing; build it (build-wasm.sh / build-wasm.ps1) or fetch this commit's (node scripts/fetch-wasm.mjs)`, status: "FAIL", code: 1 })));
@@ -375,7 +399,7 @@ export async function runVerification({ browser = false, browserExecutable, env 
     const reason = firstFailure ? `blocked by failure in ${firstFailure.label}` : "blocked because an earlier required stage did not pass";
     stage("E — Browser verification", runners.map(([label]) => ({ label: `${label}: ${reason}`, status: "NOT RUN" })));
   } else if (browser && !executable) {
-    stage("E — Browser verification", runners.map(([label]) => ({ label: `${label}: set KIN_BROWSER or pass an executable path`, status: "FAIL", code: 1 })));
+    stage("E — Browser verification", runners.map(([label]) => ({ label: `${label}: no Chromium-based browser found. ${browserInstallHint()}`, status: "FAIL", code: 1 })));
   } else if (browser && !(await access(executable).then(() => true, () => false))) {
     stage("E — Browser verification", runners.map(([label]) => ({ label: `${label}: browser executable is not accessible at ${executable}`, status: "FAIL", code: 1 })));
   } else if (browser) {
@@ -398,7 +422,7 @@ export async function runVerification({ browser = false, browserExecutable, env 
       if (result.status !== "PASS" || item.results.length > 1 || result.artifactComparison) output(`  ${result.status.padEnd(7)} ${result.label}${result.status === "FLAKY" ? ` — failed once, passed on retry: ${result.firstAttempt}` : ""}${result.testCount ? ` (${result.testCount} tests)` : result.assertionCount ? ` (${result.assertionCount} assertions)` : ""}${result.code !== undefined ? ` (exit ${result.code}${result.signal ? `, signal ${result.signal}` : ""})` : ""}${result.error ? `: ${result.error}` : ""}${result.artifact ? ` — ${result.artifact}` : ""}${result.artifactComparison ? `; ${result.artifactComparison}` : ""}`);
     }
   }
-  output(`Runtime: Node ${nodeVersion}; browser ${browser ? browserExecutable ?? env.KIN_BROWSER ?? "missing" : "NOT RUN"}`);
+  output(`Runtime: Node ${nodeVersion}; browser ${browser ? executable ?? "missing" : "NOT RUN"}`);
   output(`Elapsed: ${((Date.now() - started) / 1000).toFixed(1)}s`);
   if (firstFailure) output(`First failure: ${firstFailure.label}${firstFailure.signal ? ` (signal ${firstFailure.signal})` : firstFailure.code !== undefined ? ` (exit ${firstFailure.code})` : ""}${firstFailure.error ? ` — ${firstFailure.error}` : ""}`);
   if (interrupted) output("Verification interrupted; remaining checks are NOT RUN.");

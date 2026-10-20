@@ -355,7 +355,7 @@ The gate requires Node `>=24.16.0`, the active pinned Rust toolchain from
 `rust-toolchain.toml`, Cargo, Git, Python `>=3.11` for the existing version
 check, and the `wasm32-unknown-unknown` target. It runs formatting,
 warnings-denied Clippy, version checks, Kin-only `git diff --check`, every
-`*.test.mjs` under `server/` and `web/`, all Rust tests,
+`*.test.mjs` under `server/`, `web/` and `scripts/`, all Rust tests,
 the release WASM build, and a hash comparison against the committed
 `web/wasm/kin_engine.wasm` when that artifact is tracked. This repository
 ignores the generated browser WASM, so that comparison is reported `NOT RUN`
@@ -365,16 +365,11 @@ The Node suite sets the existing documented `NODE_NO_WARNINGS=1` setting to
 keep subprocess SQLite experimental warnings from corrupting exact CLI output
 assertions.
 
-Run the five existing browser suites with `npm run verify:browser`. Configure
-the browser by setting `KIN_BROWSER` to a Chromium-family executable, or run
-`node scripts/verify.mjs --browser "path/to/chromium"`. A missing executable
-fails the required browser mode. Prepare the ignored browser WASM with
-`./build-wasm.ps1` on Windows or `sh ./build-wasm.sh` on POSIX before browser
-mode. The normal verification command reports the browser stage as `NOT RUN`;
-it is not a pass. The browser suites require a
-CDP-capable browser; the existing storage and UI runners use PowerShell for
-Windows process cleanup, so cross-platform support for those suites is not
-claimed.
+Run every gate including the browser suites with `npm run verify:browser`
+([below](#run-the-browser-gates-locally)). The normal verification command
+reports the browser stage as `NOT RUN`; it is not a pass. The suites drive any
+Chromium-family browser over the DevTools protocol; CI runs them on Windows
+Edge and Linux Chrome.
 
 The default mandatory local gate is `verify`; browser regressions are an
 explicit second command. `node --test scripts/verify.test.mjs` runs focused
@@ -443,11 +438,23 @@ check are part of it (before #328 the `scripts/` tests ran only by hand).
 
 ## Run the browser gates locally
 
-`npm run verify:browser` runs every gate with the browser suites. The browser
-suites need the engine at `web/wasm/kin_engine.wasm`: build it with
-`./build-wasm.sh` (or `.\build-wasm.ps1`), which needs the Rust target
-`wasm32-unknown-unknown` (`rustup target add wasm32-unknown-unknown`). Where
-that target can't be installed, fetch the engine CI built for the same commit:
+One command, on Windows, macOS or Linux (#331):
+
+```sh
+npm run verify:browser
+```
+
+- **Browser.** `KIN_BROWSER` if set; otherwise the first installed Edge,
+  Chrome or Chromium in the usual places (`scripts/find-browser.mjs`), named
+  in the output. With none, the run fails saying what to install.
+- **Engine.** If `web/wasm/kin_engine.wasm` is missing, it is built first
+  (as `build-wasm.sh` does) and the report says so; the engine's Node tests and
+  the browser suites both load it. Stage D then builds afresh and compares.
+- **Missing prerequisites** fail stage A with the exact fix, for example
+  `rustup target add wasm32-unknown-unknown`.
+
+Where the `wasm32` target can't be installed, fetch the engine CI built for
+the same commit instead:
 
 ```sh
 node scripts/fetch-wasm.mjs            # HEAD; or --commit <sha>
@@ -461,7 +468,9 @@ browser).
 It needs a GitHub token (`GITHUB_TOKEN`, or `gh auth login`), finds that
 commit's `kin-engine-wasm` artifact, checks the engine against the SHA-256 CI
 recorded with it, and only then installs it. The commit must have been pushed
-and verified within the last 30 days.
+and verified within the last 30 days. Then run just the browser suites
+against it (stages A–D need the `wasm32` target):
+`node scripts/verify.mjs --browser-only`.
 
 Verification is fail-fast. When a mandatory command fails, later commands in
 that stage and dependent stages are reported `NOT RUN` with the reason; they
