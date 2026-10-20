@@ -99,8 +99,12 @@ export class KinChatPolicy extends HTMLElement {
   /** Reads the policy; the service sends it to admins only. */
   async load() {
     if (this.busy) return;
+    // A show() meanwhile (a demotion, a lock, another household) is newer
+    // than this answer: keep it (#327).
+    const generation = this.generation ?? 0;
     try {
       const status = await json("/api/sync/status");
+      if ((this.generation ?? 0) !== generation) return;
       const policy = status[this.config.statusKey]?.policy ?? null;
       this.show(policy);
       if (policy && this.config.usage) await this.loadUsage();
@@ -124,6 +128,7 @@ export class KinChatPolicy extends HTMLElement {
   }
 
   show(policy) {
+    this.generation = (this.generation ?? 0) + 1;
     this.saved = policy;
     this.hidden = !policy;
     if (!policy) return;
@@ -149,13 +154,17 @@ export class KinChatPolicy extends HTMLElement {
     this.busy = true;
     this.apply();
     this.feedback.textContent = "Confirm the change with your passkey.";
+    const generation = this.generation ?? 0;
     try {
       const started = await json(`${this.config.path}/options`, { method: "POST", body: JSON.stringify(change) });
       const credential = await navigator.credentials.get({ publicKey: authenticationOptions(started.publicKey) });
       await json(`${this.config.path}/finish`, { method: "POST", body: JSON.stringify({ flow: started.flow, credential: credentialJson(credential) }) });
+      // Saved; but if the panel was hidden or replaced meanwhile, don't bring it back.
+      if ((this.generation ?? 0) !== generation) return;
       this.saved = change;
       this.feedback.textContent = this.config.saved;
     } catch (error) {
+      if ((this.generation ?? 0) !== generation) return;
       this.feedback.textContent = error?.name === "NotAllowedError" ? "Canceled. Nothing changed." : (error?.message || "Kin couldn't save that.");
       this.busy = false;
       await this.load();

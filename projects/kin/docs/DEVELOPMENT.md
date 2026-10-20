@@ -115,6 +115,16 @@ from its allowlist. `server/permissions.mjs` builds the flags.
 
 Node.js 24.16.0 is the supported runtime floor: earlier Node 24 releases (and Node 22) can corrupt `node:sqlite` TEXT values that contain NUL characters. CI runs Node 24.22.0 on Windows and Linux. Other operating-system and runtime/architecture combinations remain unverified.
 
+## Checking your change
+
+`npm run verify` runs the full gate (static checks, every Node and Rust test,
+the WASM build); `npm run verify:browser` adds the browser suites, finding an
+installed Edge, Chrome or Chromium and building the browser engine if it is
+missing. Without the `wasm32` target, `node scripts/fetch-wasm.mjs` installs
+the engine CI built for your pushed commit, and
+`node scripts/verify.mjs --browser-only` runs the browser suites against it.
+Details: [TESTING](TESTING.md#run-the-browser-gates-locally).
+
 ## Browser capabilities
 
 The application requires WebAssembly, ES modules, Custom Elements, IndexedDB, Web Locks, `BroadcastChannel`, `CustomEvent`, text encoders/decoders and Web Crypto. WebAuthn is used for server identity and pairing. Credential-bound local unlock additionally requires actual PRF output; the independently held recovery key remains the explicit fallback and works offline. Web Locks are required for safe v0.9.3 migration. The service worker caches only an allowlisted static shell. Browser validation is recorded per release and does not certify the full support target.

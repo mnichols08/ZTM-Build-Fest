@@ -85,7 +85,8 @@ export class HouseholdApi {
       this.notifyStatus();
       return { loaded: true, identity: this.host.identity };
     } catch (error) {
-      this.host.renderError(error);
+      // Only the view that asked reports the failure (#327).
+      if (this.host.viewGeneration === generation) this.host.renderError(error);
       return { loaded: false, identity: this.host.identity };
     }
   }

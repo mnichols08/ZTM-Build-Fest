@@ -108,8 +108,13 @@ class KinChat extends HTMLElement {
 
   /** Forgets everything about the room on screen. */
   resetView() {
-    // Locking or changing room ends any recording and drops the draft.
+    // Locking or changing room ends any recording and drops the draft, and
+    // closes an open photo, whose decrypted copy must not outlive the lock.
     this.voice?.dispose();
+    if (this.viewer && (this.viewer.open || this.viewer.hasAttribute?.("open"))) {
+      if (typeof this.viewer.close === "function" && this.viewer.open) this.viewer.close();
+      this.closeViewer();
+    }
     this.disposePlayers();
     this.start = 0;
     this.end = 0;
@@ -410,6 +415,7 @@ class KinChat extends HTMLElement {
         if (!room) throw new Error("locked");
         const peaks = await voicePeaks(blob, room.engine);
         await room.sendVoice({ recording: blob, durationMs, peaks, replyTo: this.replyingTo?.messageId ?? null });
+        if (room !== this.chatRoom) return;
         this.stopReplying();
         await this.queueRender("reset");
       },
@@ -1976,6 +1982,8 @@ class KinChat extends HTMLElement {
     if (!room) return;
     try {
       const blob = await room.attachmentFile(message, index);
+      // Locked, or another room, while it decrypted: don't show it (#327).
+      if (room !== this.chatRoom) return;
       const url = this.urls.create(blob);
       const file = this.attachments.get(message.messageId)?.files[index];
       if (this.viewerUrl) this.urls.revoke(this.viewerUrl);
@@ -2026,6 +2034,8 @@ class KinChat extends HTMLElement {
     if (!room) return;
     try {
       const blob = await room.attachmentFile(message, index);
+      // Locked, or another room, while it decrypted: don't save it (#327).
+      if (room !== this.chatRoom) return;
       const name = this.attachments.get(message.messageId)?.files[index]?.name ?? "Attachment";
       const url = this.urls.create(blob);
       const link = document.createElement("a");
@@ -2403,6 +2413,9 @@ class KinChat extends HTMLElement {
         });
       }
       else await room.send(text, { replyTo: this.replyingTo?.messageId ?? null, mentions });
+      // Locked or moved to another room meanwhile: its composer is someone
+      // else's now; leave it alone (#327).
+      if (room !== this.chatRoom) return;
       if (editing) {
         // Back to whatever draft was there before editing.
         this.stopEditing({ restoreDraft: this.input.value === text });
@@ -2418,6 +2431,7 @@ class KinChat extends HTMLElement {
         await this.queueRender("reset");
       }
     } catch (error) {
+      if (room !== this.chatRoom) return;
       const plain = error?.code === "chat_text_invalid" || error?.code === "chat_attachment_invalid";
       if (withFiles && error?.code === "chat_attachment_cancelled") {
         this.message.textContent = "Sending was cancelled. Your files are still here.";

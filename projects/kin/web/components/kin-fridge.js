@@ -137,6 +137,11 @@ class KinFridge extends HTMLElement {
     this.undoStack = [];
     this.redoStack = [];
     this.cancelStroke();
+    // A keyboard or drag move still settling belonged to the old room.
+    for (const timer of this.moveTimers.values()) clearTimeout(timer);
+    this.moveTimers.clear();
+    this.movingMagnets.clear();
+    this.moveFrom.clear();
     // Locking (no room) leaves full screen: a shared screen goes back to
     // the unlock screen, not a fridge that can't be used (#324).
     if (!value) this.leaveFullscreen();
@@ -439,6 +444,9 @@ class KinFridge extends HTMLElement {
   }
 
   async pointerUp(event) {
+    // The room this operation started on: a lock or a new room meanwhile
+    // stops it rather than writing into the next one (#327).
+    const room = this.room;
     const stroke = this.stroke;
     if (event.pointerType === "pen") this.penDown = false;
     if (!stroke || stroke.pointerId !== event.pointerId) return;
@@ -451,14 +459,14 @@ class KinFridge extends HTMLElement {
     try {
       for (const piece of splitStroke(points)) {
         const strokeId = newBoardId();
-        await this.room.change({ type: "add-stroke", strokeId, colour: this.colour, width: this.width, points: piece });
+        await this.changeIn(room, { type: "add-stroke", strokeId, colour: this.colour, width: this.width, points: piece });
         ids.push(strokeId);
       }
       this.showStatus("");
     } catch (error) {
       this.showStatus(changeProblem(error, this.state));
     }
-    if (ids.length) this.remember({ kind: "draw", ids });
+    if (ids.length) this.remember(room, { kind: "draw", ids });
   }
 
   pointerCancel(event) {
@@ -488,12 +496,15 @@ class KinFridge extends HTMLElement {
   }
 
   async eraseAt([x, y]) {
+    // The room this operation started on: a lock or a new room meanwhile
+    // stops it rather than writing into the next one (#327).
+    const room = this.room;
     const hit = strokeAt(this.state?.strokes ?? [], x, y);
     if (!hit || this.stroke?.erased?.has(hit.id)) return;
     this.stroke?.erased?.add(hit.id);
     try {
-      await this.room.change({ type: "hide-stroke", strokeId: hit.id, hidden: true });
-      this.remember({ kind: "erase", ids: [hit.id] });
+      await this.changeIn(room, { type: "hide-stroke", strokeId: hit.id, hidden: true });
+      this.remember(room, { kind: "erase", ids: [hit.id] });
       this.showStatus("");
     } catch (error) {
       this.showStatus(changeProblem(error, this.state));
@@ -579,6 +590,9 @@ class KinFridge extends HTMLElement {
   }
 
   async saveMove(magnetId) {
+    // The room this operation started on: a lock or a new room meanwhile
+    // stops it rather than writing into the next one (#327).
+    const room = this.room;
     clearTimeout(this.moveTimers.get(magnetId));
     this.moveTimers.delete(magnetId);
     const to = this.movingMagnets.get(magnetId);
@@ -587,8 +601,8 @@ class KinFridge extends HTMLElement {
     if (!to || !this.room) { this.movingMagnets.delete(magnetId); return; }
     try {
       if (!from || from[0] !== to[0] || from[1] !== to[1]) {
-        await this.room.change({ type: "move-magnet", magnetId, x: to[0], y: to[1] });
-        this.remember({ kind: "move", id: magnetId, from, to });
+        await this.changeIn(room, { type: "move-magnet", magnetId, x: to[0], y: to[1] });
+        this.remember(room, { kind: "move", id: magnetId, from, to });
       }
       this.showStatus("");
     } catch (error) {
@@ -701,9 +715,12 @@ class KinFridge extends HTMLElement {
   }
 
   async removeMagnet(magnet) {
+    // The room this operation started on: a lock or a new room meanwhile
+    // stops it rather than writing into the next one (#327).
+    const room = this.room;
     try {
-      await this.room.change({ type: "hide-magnet", magnetId: magnet.id, hidden: true });
-      this.remember({ kind: "remove", id: magnet.id });
+      await this.changeIn(room, { type: "hide-magnet", magnetId: magnet.id, hidden: true });
+      this.remember(room, { kind: "remove", id: magnet.id });
       this.showStatus("Magnet taken down. Undo puts it back.");
       this.undoButton.focus();
     } catch (error) {
@@ -845,6 +862,9 @@ class KinFridge extends HTMLElement {
   }
 
   async placeMagnet() {
+    // The room this operation started on: a lock or a new room meanwhile
+    // stops it rather than writing into the next one (#327).
+    const room = this.room;
     let content;
     if (this.magnetKind === "emoji") {
       const emoji = this.emojiInput.value.trim();
@@ -860,14 +880,14 @@ class KinFridge extends HTMLElement {
     const [x, y] = regionPoint(this.whereSelect.value);
     const magnetId = newBoardId();
     try {
-      await this.room.change({ type: "place-magnet", magnetId, x, y, content });
+      await this.changeIn(room, { type: "place-magnet", magnetId, x, y, content });
     } catch (error) {
       this.magnetError.textContent = error?.code === 2 && content.kind === "emoji"
         ? "That isn't a single emoji. Choose one from the picker."
         : changeProblem(error, this.state);
       return;
     }
-    this.remember({ kind: "place", id: magnetId });
+    this.remember(room, { kind: "place", id: magnetId });
     this.focusAfterDialog = magnetId;
     this.magnetDialog.close();
     this.showStatus("Magnet put up.");
@@ -909,10 +929,13 @@ class KinFridge extends HTMLElement {
   }
 
   async clearFridge() {
+    // The room this operation started on: a lock or a new room meanwhile
+    // stops it rather than writing into the next one (#327).
+    const room = this.room;
     const clearId = newBoardId();
     try {
-      await this.room.change({ type: "clear-board", clearId });
-      this.remember({ kind: "clear", id: clearId });
+      await this.changeIn(room, { type: "clear-board", clearId });
+      this.remember(room, { kind: "clear", id: clearId });
       this.showStatus("Fridge cleared. Undo brings it all back.");
     } catch (error) {
       this.showStatus(changeProblem(error, this.state));
@@ -922,11 +945,14 @@ class KinFridge extends HTMLElement {
 
   /** Anyone can bring back the most recent clear, theirs or someone else's. */
   async undoClear() {
+    // The room this operation started on: a lock or a new room meanwhile
+    // stops it rather than writing into the next one (#327).
+    const room = this.room;
     const clearId = this.state?.openClear;
     if (!clearId) return;
     try {
       if (this.room.board().openClear !== clearId) { this.showStatus("Someone changed the fridge meanwhile. Nothing was brought back."); return; }
-      await this.room.change({ type: "undo-clear", clearId });
+      await this.changeIn(room, { type: "undo-clear", clearId });
       this.showStatus("The fridge is back as it was.");
     } catch (error) {
       this.showStatus(changeProblem(error, this.state));
@@ -935,7 +961,20 @@ class KinFridge extends HTMLElement {
 
   // ---- Undo and redo (this device's own changes in this visit) -------------
 
-  remember(entry) {
+  /** One board change, only while `room` is still this fridge's room. */
+  changeIn(room, command) {
+    if (!room || room !== this.room) {
+      const error = new Error("Unlock Kin to draw on the fridge.");
+      error.code = "board_locked";
+      return Promise.reject(error);
+    }
+    return room.change(command);
+  }
+
+  remember(room, entry) {
+    // An operation from a room that has since gone (lock, or another
+    // household) mustn't land in the new room's undo history.
+    if (room !== this.room) return;
     this.undoStack.push(entry);
     if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
     this.redoStack = [];
@@ -945,6 +984,9 @@ class KinFridge extends HTMLElement {
   /** Applies an entry backwards (undo) or forwards (redo). Something
    * someone else changed meanwhile is left as it is. */
   async apply(entry, backwards) {
+    // The room this operation started on: a lock or a new room meanwhile
+    // stops it rather than writing into the next one (#327).
+    const room = this.room;
     const board = this.room.board();
     if (entry.kind === "draw" || entry.kind === "erase") {
       const hidden = entry.kind === "draw" ? backwards : !backwards;
@@ -952,7 +994,7 @@ class KinFridge extends HTMLElement {
       let changed = false;
       for (const strokeId of entry.ids) {
         if (visible.has(strokeId) !== hidden) continue;
-        await this.room.change({ type: "hide-stroke", strokeId, hidden });
+        await this.changeIn(room, { type: "hide-stroke", strokeId, hidden });
         changed = true;
       }
       return changed;
@@ -961,24 +1003,24 @@ class KinFridge extends HTMLElement {
       const hidden = entry.kind === "place" ? backwards : !backwards;
       const shown = (board.magnets ?? []).some((magnet) => magnet.id === entry.id);
       if (shown !== hidden) return false;
-      await this.room.change({ type: "hide-magnet", magnetId: entry.id, hidden });
+      await this.changeIn(room, { type: "hide-magnet", magnetId: entry.id, hidden });
       return true;
     }
     if (entry.kind === "move") {
       const magnet = (board.magnets ?? []).find((candidate) => candidate.id === entry.id);
       const [x, y] = backwards ? entry.from : entry.to;
       if (!magnet || (magnet.x === x && magnet.y === y)) return false;
-      await this.room.change({ type: "move-magnet", magnetId: entry.id, x, y });
+      await this.changeIn(room, { type: "move-magnet", magnetId: entry.id, x, y });
       return true;
     }
     if (entry.kind === "clear") {
       if (backwards) {
         if (board.openClear !== entry.id) return false;
-        await this.room.change({ type: "undo-clear", clearId: entry.id });
+        await this.changeIn(room, { type: "undo-clear", clearId: entry.id });
         return true;
       }
       entry.id = newBoardId();
-      await this.room.change({ type: "clear-board", clearId: entry.id });
+      await this.changeIn(room, { type: "clear-board", clearId: entry.id });
       return true;
     }
     return false;
@@ -988,7 +1030,9 @@ class KinFridge extends HTMLElement {
     const entry = this.undoStack.pop();
     if (!entry || !this.room) return;
     try {
+      const room = this.room;
       const changed = await this.apply(entry, true);
+      if (room !== this.room) return;
       this.redoStack.push(entry);
       this.showStatus(changed ? UNDONE[entry.kind] ?? "Undone." : "Someone changed that meanwhile, so there was nothing to undo.");
     } catch (error) {
@@ -1001,7 +1045,9 @@ class KinFridge extends HTMLElement {
     const entry = this.redoStack.pop();
     if (!entry || !this.room) return;
     try {
+      const room = this.room;
       const changed = await this.apply(entry, false);
+      if (room !== this.room) return;
       this.undoStack.push(entry);
       this.showStatus(changed ? REDONE[entry.kind] ?? "Redone." : "Someone changed that meanwhile, so there was nothing to redo.");
     } catch (error) {

@@ -12,6 +12,16 @@ export async function chatRegressions() {
   const settle = async () => {
     for (let i = 0; i < 6; i += 1) await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
   };
+  // Waits for a state rather than a fixed time (#327): true as soon as
+  // `ready()` holds, false once `ms` have passed without it.
+  const waitFor = async (ready, ms = 5000) => {
+    const deadline = performance.now() + ms;
+    while (!ready()) {
+      if (performance.now() > deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return true;
+  };
   const app = document.querySelector("kin-app");
   let chat = app?.chat;
   if (!chat) {
@@ -755,19 +765,20 @@ export async function chatRegressions() {
       voiceButton.click();
       await settle();
       check(!panel.hidden && voiceButton.disabled && panel.querySelector(".chat-voice-clock") && document.activeElement === panel.querySelector(".chat-voice-stop"), "recording shows a clock and Stop, focused");
-      await new Promise((resolve) => setTimeout(resolve, 1100));
+      await waitFor(() => panel.querySelector(".chat-voice-clock").textContent === "0:01", 4000);
       check(panel.querySelector(".chat-voice-clock").textContent === "0:01", `the clock runs (${panel.querySelector(".chat-voice-clock").textContent})`);
       panel.querySelector(".chat-voice-stop").click();
       await settle();
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await waitFor(() => panel.querySelector("audio")?.src.startsWith("blob:"));
       check(track.stopped, "the microphone is released the moment recording stops");
       check(panel.querySelector("audio")?.src.startsWith("blob:") && panel.querySelector(".chat-voice-send"), "the recording can be played back, then sent");
       panel.querySelector(".chat-voice-send").click();
-      await settle();
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Decoding the recording for its waveform takes as long as it takes on
+      // a busy runner; wait for the hand-off itself, not 100 ms (#327).
+      await waitFor(() => calls.voice.length === 1 && panel.hidden);
       await settle();
       check(calls.voice.length === 1 && calls.voice[0].type === "audio/webm" && calls.voice[0].size === 200 && calls.voice[0].peaks === 64 && panel.hidden, "sending hands the recording and 64 peaks to the room");
-      await new Promise((resolve) => setTimeout(resolve, 60));
+      await waitFor(() => rows().at(-1)?.querySelector(".chat-voice"));
       await settle();
       const voiceRow = rows().at(-1);
       const player = voiceRow.querySelector(".chat-voice");

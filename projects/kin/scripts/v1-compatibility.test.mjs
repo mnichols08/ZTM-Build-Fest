@@ -6,7 +6,8 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 
 const root = new URL("../", import.meta.url);
-const read = (path) => readFile(new URL(path, root), "utf8");
+// A Windows checkout may give the docs CRLF line endings; parse them as LF.
+const read = async (path) => (await readFile(new URL(path, root), "utf8")).replace(/\r\n/g, "\n");
 
 // Where each frozen version lives in the code, and how to read it.
 const SOURCES = {

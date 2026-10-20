@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, readdir, readFile } from "node:fs/promises";
+import { access, appendFile, copyFile, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { browserInstallHint, findBrowser } from "./find-browser.mjs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -97,7 +98,10 @@ export function runCommand(command, args, { cwd = PROJECT_ROOT, env = process.en
 export async function collectNodeTests(root = PROJECT_ROOT) {
   const files = [];
   async function visit(directory) {
-    const entries = await readdir(directory, { withFileTypes: true });
+    const entries = await readdir(directory, { withFileTypes: true }).catch((error) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    });
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       const fullPath = join(directory, entry.name);
@@ -105,7 +109,9 @@ export async function collectNodeTests(root = PROJECT_ROOT) {
       else if (entry.isFile() && entry.name.endsWith(".test.mjs")) files.push(fullPath);
     }
   }
-  for (const directory of ["server", "web"]) await visit(join(root, directory));
+  // scripts/ holds the runner's own tests and the documentation and
+  // compatibility checks; they are part of the gate too (#328).
+  for (const directory of ["server", "web", "scripts"]) await visit(join(root, directory));
   return files;
 }
 
@@ -184,10 +190,24 @@ async function checkEnvironment({ execute, env, nodeVersion }) {
 function statusOf(results) {
   if (results.some((result) => result.status === "FAIL")) return "FAIL";
   if (results.some((result) => result.status === "NOT RUN")) return "NOT RUN";
+  // Passed only on its retry (#328): not a failure, never shown as PASS.
+  if (results.some((result) => result.status === "FLAKY")) return "FLAKY";
   return "PASS";
 }
 
-export async function runVerification({ browser = false, browserExecutable, env = process.env, execute = runCommand, output = console.log, nodeVersion = process.versions.node } = {}) {
+/** The first line of a failed run that says what failed: an assertion, an
+ * error, or a "Timed out" line; otherwise its last non-empty line. */
+export function firstFailingLine(text = "") {
+  const lines = String(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const named = lines.find((line) => /^(AssertionError|Error|TypeError|RangeError)\b|Timed out|^not ok\b|✖/.test(line));
+  return (named ?? lines.at(-1) ?? "no output").slice(0, 300);
+}
+
+/** Escapes a GitHub Actions workflow-command value. */
+const actionsValue = (value) => String(value).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+
+export async function runVerification({ browser = false, browserExecutable, env = process.env, execute = runCommand, output = console.log, nodeVersion = process.versions.node, readBytes = readFile, browserOnly = false, suites = null, engineReady = () => access(join(PROJECT_ROOT, "web", "wasm", "kin_engine.wasm")).then(() => true, () => false),
+  installEngine = (from, to) => copyFile(from, to), locateBrowser = findBrowser } = {}) {
   const started = Date.now();
   const stages = [];
   let interrupted = false;
@@ -210,143 +230,255 @@ export async function runVerification({ browser = false, browserExecutable, env 
     return check;
   };
 
-  const environmentChecks = await checkEnvironment({ execute, env, nodeVersion });
-  interrupted = environmentChecks.some(({ interrupted: wasInterrupted }) => wasInterrupted === true);
-  const environmentPassed = environmentChecks.every(({ status }) => status === "PASS");
-  if (!environmentPassed) firstFailure = environmentChecks.find(({ status }) => status === "FAIL");
-  stage("A — Environment", environmentChecks);
-  const skipStage = (name, reason, labels = [name]) => stage(name, labels.map((label) => ({ label: `${label}: ${reason}`, status: "NOT RUN" })));
-
-  if (!environmentPassed) {
-    const reason = `blocked by environment failure: ${firstFailure.label}`;
-    skipStage("B — Static verification", reason, ["Rust format", "Clippy", "Version consistency", "Kin diff whitespace"]);
-    skipStage("C — Unit and integration tests", reason, ["Complete Node server and web suites", "Rust unit tests"]);
-    skipStage("D — WASM", reason, ["Release wasm32 build"]);
-  } else {
-    const python = choosePython(env);
-    const staticResults = [];
-    const staticCommands = [
-      ["Rust format", "cargo", ["fmt", "--manifest-path", join(PROJECT_ROOT, "Cargo.toml"), "--", "--check"]],
-      ["Clippy", "cargo", ["clippy", "--manifest-path", join(PROJECT_ROOT, "Cargo.toml"), "--all-targets", "--", "-D", "warnings"]],
-      ["Version consistency", python, [join(PROJECT_ROOT, "scripts", "check_version.py")]],
-      ["Kin diff whitespace", "git", ["diff", "--check", "--", "."]],
-    ];
-    for (let index = 0; index < staticCommands.length; index += 1) {
-      const [label, command, args, options] = staticCommands[index];
-      const check = await commandResult(label, command, args, options);
-      staticResults.push(check);
-      if (check.status === "FAIL") {
-        staticResults.push(...staticCommands.slice(index + 1).map(([skipped]) => ({ label: `${skipped}: skipped after failure in ${check.label}`, status: "NOT RUN" })));
-        break;
+  // A browser suite that fails is run once more (#328). Passing then makes
+  // it FLAKY: reported, annotated in CI, but not a failure. Each attempt's
+  // output, and the suite's own screenshots, go to KIN_DIAGNOSTICS_DIR.
+  const diagnostics = env.KIN_DIAGNOSTICS_DIR ?? null;
+  const flaky = [];
+  const saveAttempt = async (label, attempt, result) => {
+    if (!diagnostics) return;
+    try {
+      await mkdir(diagnostics, { recursive: true });
+      const slug = label.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      await writeFile(join(diagnostics, `${slug}-attempt${attempt}.log`), `${result.stdout ?? ""}\n--- stderr ---\n${result.stderr ?? ""}`);
+    } catch { /* diagnostics never change the outcome */ }
+  };
+  const browserSuite = async (label, script, executable) => {
+    const run = async (attempt) => {
+      output(`$ node scripts/${script}${attempt > 1 ? " (retry)" : ""}`);
+      const result = await execute(process.execPath, [join(PROJECT_ROOT, "scripts", script), executable], {
+        cwd: PROJECT_ROOT, env: diagnostics ? { ...env, KIN_DIAGNOSTICS_DIR: join(diagnostics, `attempt${attempt}`) } : env,
+      });
+      if (result.interrupted) interrupted = true;
+      if (result.code !== 0) await saveAttempt(label, attempt, result);
+      return result;
+    };
+    const first = await run(1);
+    const failing = (result) => firstFailingLine(`${result.stderr ?? ""}\n${result.stdout ?? ""}`);
+    let result = first, status = first.code === 0 ? "PASS" : "FAIL", firstAttempt = null;
+    if (status === "FAIL" && !first.interrupted) {
+      firstAttempt = failing(first);
+      output(`RETRY   ${label}: first attempt failed (${firstAttempt}); running it once more`);
+      result = await run(2);
+      if (result.code === 0) {
+        status = "FLAKY";
+        flaky.push({ label, failure: firstAttempt });
       }
     }
-    stage("B — Static verification", staticResults);
+    const check = { label, status, code: result.code, signal: result.signal, error: status === "FAIL" ? failing(result) : undefined, firstAttempt };
+    if (status === "FAIL" && !firstFailure) firstFailure = check;
+    return check;
+  };
 
-    if (staticResults.some(({ status }) => status === "FAIL")) {
-      const reason = `blocked by failure in ${firstFailure.label}`;
+  // The suites this run covers: all of them, or those named with --suite
+  // (#329: CI runs one suite per job).
+  const runners = suites?.length
+    ? BROWSER_RUNNERS.filter(([label, script]) => suites.some((name) => [label, script, script.replace(/\.mjs$/, "")].includes(name)))
+    : BROWSER_RUNNERS;
+  // --browser-only runs just stage E against an engine already in place
+  // (built, or fetched for this commit); stages A–D run in their own job.
+  let environmentPassed = true;
+  if (!browserOnly) {
+    const environmentChecks = await checkEnvironment({ execute, env, nodeVersion });
+    interrupted = environmentChecks.some(({ interrupted: wasInterrupted }) => wasInterrupted === true);
+    environmentPassed = environmentChecks.every(({ status }) => status === "PASS");
+    if (!environmentPassed) firstFailure = environmentChecks.find(({ status }) => status === "FAIL");
+    // The engine tests in stage C and the browser suites load the browser
+    // engine. A fresh checkout has none: build it now (as build-wasm does)
+    // rather than fail later (#331).
+    if (environmentPassed && !(await engineReady())) {
+      const engine = await commandResult("Browser engine (web/wasm/kin_engine.wasm)", "cargo", ["build", "--manifest-path", join(PROJECT_ROOT, "Cargo.toml"), "--target", "wasm32-unknown-unknown", "--release"]);
+      if (engine.status === "PASS") {
+        try {
+          await mkdir(join(PROJECT_ROOT, "web", "wasm"), { recursive: true });
+          await installEngine(join(PROJECT_ROOT, "target", "wasm32-unknown-unknown", "release", "kin.wasm"), join(PROJECT_ROOT, "web", "wasm", "kin_engine.wasm"));
+          engine.artifact = "built for this run (it was missing)";
+        } catch (error) {
+          engine.status = "FAIL";
+          engine.error = `could not install the built engine: ${error.message}`;
+          firstFailure ??= engine;
+        }
+      }
+      environmentChecks.push(engine);
+      environmentPassed = engine.status === "PASS";
+    }
+    stage("A — Environment", environmentChecks);
+    const skipStage = (name, reason, labels = [name]) => stage(name, labels.map((label) => ({ label: `${label}: ${reason}`, status: "NOT RUN" })));
+
+    if (!environmentPassed) {
+      const reason = `blocked by environment failure: ${firstFailure.label}`;
+      skipStage("B — Static verification", reason, ["Rust format", "Clippy", "Version consistency", "Kin diff whitespace"]);
       skipStage("C — Unit and integration tests", reason, ["Complete Node server and web suites", "Rust unit tests"]);
       skipStage("D — WASM", reason, ["Release wasm32 build"]);
     } else {
-      const testFiles = await collectNodeTests();
-      const testResults = [];
-      const nodeTest = await commandResult(`Complete Node server and web suites (${testFiles.length} files)`, process.execPath, ["--test", `--test-timeout=${NODE_TEST_TIMEOUT_MS}`, ...testFiles], { env: { ...env, NODE_NO_WARNINGS: "1" } });
-      testResults.push(nodeTest);
-      if (nodeTest.status === "FAIL") testResults.push({ label: `Rust unit tests: skipped after failure in ${nodeTest.label}`, status: "NOT RUN" });
-      else testResults.push(await commandResult("Rust unit tests", "cargo", ["test", "--manifest-path", join(PROJECT_ROOT, "Cargo.toml")]));
-      stage("C — Unit and integration tests", testResults);
-
-      if (testResults.some(({ status }) => status === "FAIL")) skipStage("D — WASM", `blocked by failure in ${firstFailure.label}`, ["Release wasm32 build"]);
-      else {
-    const wasm = await commandResult("Release wasm32 build", "cargo", ["build", "--manifest-path", join(PROJECT_ROOT, "Cargo.toml"), "--target", "wasm32-unknown-unknown", "--release"]);
-    if (wasm.status === "PASS") {
-      const built = join(PROJECT_ROOT, "target", "wasm32-unknown-unknown", "release", "kin.wasm");
-      const committed = join(PROJECT_ROOT, "web", "wasm", "kin_engine.wasm");
-      const tracked = await execute("git", ["ls-files", "--error-unmatch", "--", "web/wasm/kin_engine.wasm"], { cwd: PROJECT_ROOT, env, capture: true });
-      if (tracked.code !== 0) {
-        if (browser) {
-          try {
-            const [builtBytes, browserBytes] = await Promise.all([readFile(built), readFile(committed)]);
-            const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-            if (hash(builtBytes) !== hash(browserBytes)) wasm.status = "FAIL", wasm.artifact = `browser WASM is stale (built ${hash(builtBytes)}, web asset ${hash(browserBytes)}); runner did not replace it`;
-            else wasm.artifact = `matches generated browser WASM (${hash(browserBytes)})`;
-          } catch (error) {
-            wasm.status = "FAIL";
-            wasm.artifact = `browser WASM is missing; run build-wasm.ps1 or build-wasm.sh before browser verification (${error.message})`;
-          }
-          wasm.artifactComparison = "local browser asset compared to this build; no committed expected artifact exists";
-        } else {
-          wasm.artifactComparison = "NOT RUN — generated WASM is ignored/untracked; no committed expected artifact exists";
-        }
-      } else {
-        try {
-          const [builtBytes, committedBytes] = await Promise.all([readFile(built), readFile(committed)]);
-          const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-          if (hash(builtBytes) !== hash(committedBytes)) wasm.status = "FAIL", wasm.artifact = `stale committed WASM (built ${hash(builtBytes)}, committed ${hash(committedBytes)}); runner did not replace it`;
-          else wasm.artifact = `matches committed WASM (${hash(committedBytes)})`;
-        } catch (error) {
-          wasm.status = "FAIL";
-          wasm.artifact = `could not compare build artifact: ${error.message}`;
+      const python = choosePython(env);
+      const staticResults = [];
+      const staticCommands = [
+        ["Rust format", "cargo", ["fmt", "--manifest-path", join(PROJECT_ROOT, "Cargo.toml"), "--", "--check"]],
+        ["Clippy", "cargo", ["clippy", "--manifest-path", join(PROJECT_ROOT, "Cargo.toml"), "--all-targets", "--", "-D", "warnings"]],
+        ["Version consistency", python, [join(PROJECT_ROOT, "scripts", "check_version.py")]],
+        ["Kin diff whitespace", "git", ["diff", "--check", "--", "."]],
+      ];
+      for (let index = 0; index < staticCommands.length; index += 1) {
+        const [label, command, args, options] = staticCommands[index];
+        const check = await commandResult(label, command, args, options);
+        staticResults.push(check);
+        if (check.status === "FAIL") {
+          staticResults.push(...staticCommands.slice(index + 1).map(([skipped]) => ({ label: `${skipped}: skipped after failure in ${check.label}`, status: "NOT RUN" })));
+          break;
         }
       }
-    }
-    if (wasm.status === "FAIL" && !firstFailure) firstFailure = wasm;
-    stage("D — WASM", [wasm]);
+      stage("B — Static verification", staticResults);
+
+      if (staticResults.some(({ status }) => status === "FAIL")) {
+        const reason = `blocked by failure in ${firstFailure.label}`;
+        skipStage("C — Unit and integration tests", reason, ["Complete Node server and web suites", "Rust unit tests"]);
+        skipStage("D — WASM", reason, ["Release wasm32 build"]);
+      } else {
+        const testFiles = await collectNodeTests();
+        const testResults = [];
+        const nodeTest = await commandResult(`Complete Node server and web suites (${testFiles.length} files)`, process.execPath, ["--test", `--test-timeout=${NODE_TEST_TIMEOUT_MS}`, ...testFiles], { env: { ...env, NODE_NO_WARNINGS: "1" } });
+        testResults.push(nodeTest);
+        if (nodeTest.status === "FAIL") testResults.push({ label: `Rust unit tests: skipped after failure in ${nodeTest.label}`, status: "NOT RUN" });
+        else testResults.push(await commandResult("Rust unit tests", "cargo", ["test", "--manifest-path", join(PROJECT_ROOT, "Cargo.toml")]));
+        stage("C — Unit and integration tests", testResults);
+
+        if (testResults.some(({ status }) => status === "FAIL")) skipStage("D — WASM", `blocked by failure in ${firstFailure.label}`, ["Release wasm32 build"]);
+        else {
+      const wasm = await commandResult("Release wasm32 build", "cargo", ["build", "--manifest-path", join(PROJECT_ROOT, "Cargo.toml"), "--target", "wasm32-unknown-unknown", "--release"]);
+      if (wasm.status === "PASS") {
+        const built = join(PROJECT_ROOT, "target", "wasm32-unknown-unknown", "release", "kin.wasm");
+        const committed = join(PROJECT_ROOT, "web", "wasm", "kin_engine.wasm");
+        const tracked = await execute("git", ["ls-files", "--error-unmatch", "--", "web/wasm/kin_engine.wasm"], { cwd: PROJECT_ROOT, env, capture: true });
+        if (tracked.code !== 0) {
+          if (browser) {
+            try {
+              const [builtBytes, browserBytes] = await Promise.all([readBytes(built), readBytes(committed)]);
+              const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+              if (hash(builtBytes) !== hash(browserBytes)) wasm.status = "FAIL", wasm.artifact = `browser WASM is stale (built ${hash(builtBytes)}, web asset ${hash(browserBytes)}); runner did not replace it`;
+              else wasm.artifact = `matches generated browser WASM (${hash(browserBytes)})`;
+            } catch (error) {
+              wasm.status = "FAIL";
+              wasm.artifact = `browser WASM is missing; run build-wasm.ps1 or build-wasm.sh (or node scripts/fetch-wasm.mjs) before browser verification (${error.message})`;
+            }
+            wasm.artifactComparison = "local browser asset compared to this build; no committed expected artifact exists";
+          } else {
+            wasm.artifactComparison = "NOT RUN — generated WASM is ignored/untracked; no committed expected artifact exists";
+          }
+        } else {
+          try {
+            const [builtBytes, committedBytes] = await Promise.all([readBytes(built), readBytes(committed)]);
+            const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+            if (hash(builtBytes) !== hash(committedBytes)) wasm.status = "FAIL", wasm.artifact = `stale committed WASM (built ${hash(builtBytes)}, committed ${hash(committedBytes)}); runner did not replace it`;
+            else wasm.artifact = `matches committed WASM (${hash(committedBytes)})`;
+          } catch (error) {
+            wasm.status = "FAIL";
+            wasm.artifact = `could not compare build artifact: ${error.message}`;
+          }
+        }
+      }
+      if (wasm.status === "FAIL" && !firstFailure) firstFailure = wasm;
+      stage("D — WASM", [wasm]);
+        }
       }
     }
   }
 
-  const executable = browserExecutable ?? env.KIN_BROWSER;
-  if (browser && !environmentPassed) {
+  // No browser named: use an installed Edge, Chrome or Chromium (#331).
+  const located = browser && !browserExecutable && !env.KIN_BROWSER ? await locateBrowser({ env }) : null;
+  const executable = browserExecutable || env.KIN_BROWSER || located?.executable;
+  if (located) output(`Using ${located.executable} (set KIN_BROWSER to choose another browser)`);
+  const engineMissing = browserOnly && !(await engineReady());
+  if (engineMissing) {
+    stage("E — Browser verification", runners.map(([label]) => ({ label: `${label}: web/wasm/kin_engine.wasm is missing; build it (build-wasm.sh / build-wasm.ps1) or fetch this commit's (node scripts/fetch-wasm.mjs)`, status: "FAIL", code: 1 })));
+    firstFailure ??= stages.at(-1).results[0];
+  } else if (browser && !environmentPassed) {
     const reason = `blocked by environment failure: ${firstFailure.label}`;
-    stage("E — Browser verification", BROWSER_RUNNERS.map(([label]) => ({ label: `${label}: ${reason}`, status: "NOT RUN" })));
+    stage("E — Browser verification", runners.map(([label]) => ({ label: `${label}: ${reason}`, status: "NOT RUN" })));
   } else if (browser && stages.some((item) => ["B — Static verification", "C — Unit and integration tests", "D — WASM"].includes(item.name) && item.status !== "PASS")) {
     const reason = firstFailure ? `blocked by failure in ${firstFailure.label}` : "blocked because an earlier required stage did not pass";
-    stage("E — Browser verification", BROWSER_RUNNERS.map(([label]) => ({ label: `${label}: ${reason}`, status: "NOT RUN" })));
+    stage("E — Browser verification", runners.map(([label]) => ({ label: `${label}: ${reason}`, status: "NOT RUN" })));
   } else if (browser && !executable) {
-    stage("E — Browser verification", BROWSER_RUNNERS.map(([label]) => ({ label: `${label}: set KIN_BROWSER or pass an executable path`, status: "FAIL", code: 1 })));
+    stage("E — Browser verification", runners.map(([label]) => ({ label: `${label}: no Chromium-based browser found. ${browserInstallHint()}`, status: "FAIL", code: 1 })));
   } else if (browser && !(await access(executable).then(() => true, () => false))) {
-    stage("E — Browser verification", BROWSER_RUNNERS.map(([label]) => ({ label: `${label}: browser executable is not accessible at ${executable}`, status: "FAIL", code: 1 })));
+    stage("E — Browser verification", runners.map(([label]) => ({ label: `${label}: browser executable is not accessible at ${executable}`, status: "FAIL", code: 1 })));
   } else if (browser) {
     const results = [];
-    for (const [label, script] of BROWSER_RUNNERS) {
-      const check = await commandResult(label, process.execPath, [join(PROJECT_ROOT, "scripts", script), executable]);
+    for (const [label, script] of runners) {
+      const check = await browserSuite(label, script, executable);
       results.push(check);
       if (check.status === "FAIL") {
-        results.push(...BROWSER_RUNNERS.slice(results.length).map(([remaining]) => ({ label: `${remaining}: skipped after failure in ${check.label}`, status: "NOT RUN" })));
+        results.push(...runners.slice(results.length).map(([remaining]) => ({ label: `${remaining}: skipped after failure in ${check.label}`, status: "NOT RUN" })));
         break;
       }
     }
     stage("E — Browser verification", results);
-  } else stage("E — Browser verification", BROWSER_RUNNERS.map(([label]) => ({ label: `${label}: browser mode not requested; run verify:browser`, status: "NOT RUN" })));
+  } else stage("E — Browser verification", runners.map(([label]) => ({ label: `${label}: browser mode not requested; run verify:browser`, status: "NOT RUN" })));
 
   output("\nKin verification report");
   for (const item of stages) {
     output(`${item.status.padEnd(7)} ${item.name}`);
     for (const result of item.results) {
-      if (result.status !== "PASS" || item.results.length > 1 || result.artifactComparison) output(`  ${result.status.padEnd(7)} ${result.label}${result.testCount ? ` (${result.testCount} tests)` : result.assertionCount ? ` (${result.assertionCount} assertions)` : ""}${result.code !== undefined ? ` (exit ${result.code}${result.signal ? `, signal ${result.signal}` : ""})` : ""}${result.error ? `: ${result.error}` : ""}${result.artifact ? ` — ${result.artifact}` : ""}${result.artifactComparison ? `; ${result.artifactComparison}` : ""}`);
+      if (result.status !== "PASS" || item.results.length > 1 || result.artifactComparison) output(`  ${result.status.padEnd(7)} ${result.label}${result.status === "FLAKY" ? ` — failed once, passed on retry: ${result.firstAttempt}` : ""}${result.testCount ? ` (${result.testCount} tests)` : result.assertionCount ? ` (${result.assertionCount} assertions)` : ""}${result.code !== undefined ? ` (exit ${result.code}${result.signal ? `, signal ${result.signal}` : ""})` : ""}${result.error ? `: ${result.error}` : ""}${result.artifact ? ` — ${result.artifact}` : ""}${result.artifactComparison ? `; ${result.artifactComparison}` : ""}`);
     }
   }
-  output(`Runtime: Node ${nodeVersion}; browser ${browser ? browserExecutable ?? env.KIN_BROWSER ?? "missing" : "NOT RUN"}`);
+  output(`Runtime: Node ${nodeVersion}; browser ${browser ? executable ?? "missing" : "NOT RUN"}`);
   output(`Elapsed: ${((Date.now() - started) / 1000).toFixed(1)}s`);
   if (firstFailure) output(`First failure: ${firstFailure.label}${firstFailure.signal ? ` (signal ${firstFailure.signal})` : firstFailure.code !== undefined ? ` (exit ${firstFailure.code})` : ""}${firstFailure.error ? ` — ${firstFailure.error}` : ""}`);
   if (interrupted) output("Verification interrupted; remaining checks are NOT RUN.");
+  if (flaky.length) {
+    output(`Flaky: ${flaky.map(({ label }) => label).join(", ")} (passed on retry; see docs/TESTING.md, "Flaky browser suites")`);
+    if (env.GITHUB_ACTIONS === "true") {
+      for (const { label, failure } of flaky) output(`::warning title=Flaky browser suite: ${actionsValue(label)}::${actionsValue(`Failed once, then passed on retry. First failure: ${failure}`)}`);
+      if (env.GITHUB_STEP_SUMMARY) {
+        const rows = flaky.map(({ label, failure }) => `| ${label} | ${failure.replace(/\|/g, "\\|")} |`).join("\n");
+        await appendFile(env.GITHUB_STEP_SUMMARY, `### Flaky browser suites\n\nThese failed once and passed on retry; the build is not failed for them. Diagnostics are in the \`kin-browser-diagnostics\` artifact.\n\n| Suite | First failure |\n| --- | --- |\n${rows}\n`).catch(() => {});
+      }
+    }
+  }
   const failed = stages.some(({ status }) => status === "FAIL");
-  const notRunMandatory = stages.slice(0, 4).some(({ status }) => status === "NOT RUN");
+  const notRunMandatory = !browserOnly && stages.slice(0, 4).some(({ status }) => status === "NOT RUN");
   const code = failed || notRunMandatory || interrupted ? 1 : 0;
   output(`Verification exit status: ${code}`);
-  return { code, stages, elapsedMs: Date.now() - started, interrupted, firstFailure };
+  return { code, stages, elapsedMs: Date.now() - started, interrupted, firstFailure, flaky };
+}
+
+export const USAGE = "Usage: node scripts/verify.mjs [--browser [EXECUTABLE]] [--browser-only] [--suite NAME ...]";
+
+/** Reads the command line: `--browser [EXECUTABLE]`, `--browser-only` (just
+ * the browser suites, against an engine already in place; implies
+ * --browser) and `--suite NAME` (repeatable: a suite's label or script name).
+ * Returns the options, or { error }. */
+export function parseArguments(args) {
+  const options = { browser: false, browserExecutable: undefined, browserOnly: false, suites: [] };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    const next = args[index + 1];
+    if (arg === "--browser") {
+      options.browser = true;
+      if (next !== undefined && !next.startsWith("--")) { options.browserExecutable = next; index += 1; }
+    } else if (arg === "--browser-only") {
+      options.browser = true;
+      options.browserOnly = true;
+    } else if (arg === "--suite") {
+      if (next === undefined || next.startsWith("--")) return { error: "--suite needs a suite name" };
+      const known = BROWSER_RUNNERS.some(([label, script]) => [label, script, script.replace(/\.mjs$/, "")].includes(next));
+      if (!known) return { error: `Unknown suite "${next}". Suites: ${BROWSER_RUNNERS.map(([, script]) => script.replace(/\.mjs$/, "")).join(", ")}` };
+      options.suites.push(next);
+      index += 1;
+    } else return { error: `Unknown argument ${arg}` };
+  }
+  if (options.suites.length && !options.browser) return { error: "--suite needs --browser or --browser-only" };
+  return options;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const args = process.argv.slice(2);
-  const browserIndex = args.indexOf("--browser");
-  const invalidArgs = args.filter((arg, index) => arg !== "--browser" && !(browserIndex >= 0 && index === browserIndex + 1));
-  if (invalidArgs.length || (browserIndex >= 0 && args[browserIndex + 1]?.startsWith("--"))) {
-    console.error("Usage: node scripts/verify.mjs [--browser [EXECUTABLE]]");
+  const options = parseArguments(process.argv.slice(2));
+  if (options.error) {
+    console.error(`${options.error}\n${USAGE}`);
     process.exitCode = 2;
   } else {
-    const browserExecutable = browserIndex >= 0 ? args[browserIndex + 1] : undefined;
-    const result = await runVerification({ browser: browserIndex >= 0, browserExecutable });
+    const result = await runVerification(options);
     process.exitCode = result.code;
   }
 }
