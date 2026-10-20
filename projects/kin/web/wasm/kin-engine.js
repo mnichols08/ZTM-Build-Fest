@@ -19,6 +19,7 @@ import { decodeAttachmentBindings, decodeProjection } from "./projection-decode.
 import { HistoryMirror } from "./history-mirror.js";
 import { BOARD_COMMANDS, BOARD_EVENT_KINDS, MAX_BOARD_EVENT_COUNT, BoardFormatError, decodeBoard, encodeBoardIntent } from "./kin-board.js";
 import { MEAL_COMMANDS, MEAL_EVENT_KINDS, MealFormatError, decodeMeals, decodePlan, encodeMealIntent, encodePlanQuery } from "./kin-meals.js";
+import { SIMPLE_COMMANDS, SIMPLE_EVENT_KINDS, SimpleFormatError, decodeItemEmojis, decodeMyThings, encodeItemEmojiIntent, encodeMyThingsQuery } from "./kin-simple.js";
 
 export { idToHex, KinEngineError };
 
@@ -92,6 +93,8 @@ export function createEngine(instanceExports) {
     "kin_member_names",
     "kin_meals",
     "kin_meal_shopping_plan",
+    "kin_item_emojis",
+    "kin_my_things",
     "kin_event_metadata",
     "kin_event_metadata_batch",
     "kin_audio_peaks",
@@ -293,6 +296,16 @@ export function createEngine(instanceExports) {
       safeDecode(() => decodeMeals(
         replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_meals"),
       )),
+    // Item emoji (#344): a Map itemId -> emoji for items that exist and
+    // aren't archived.
+    itemEmojis: (records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeItemEmojis(
+        replayBytes(exports, mirror, records, asOf, null, civilDate, syncIdentity, "kin_item_emojis"),
+      )),
+    // A member's things on `civilDate` (#344, ADR 0013): [{ kind: "item",
+    // itemId } | { kind: "routine", routineId, occurrenceKey, done }].
+    myThings: (memberId, records, asOf, civilDate, syncIdentity = null) =>
+      safeDecode(() => decodeMyThings(queryBytes(exports, mirror, "kin_my_things", encodeMyThingsQuery(memberId), records, asOf, civilDate, syncIdentity))),
     // What adding a recipe's ({ recipeId }) or a date's dinner's ({ date })
     // ingredients to Shopping would do now: [{ outcome, text, stapleId }].
     mealShoppingPlan: (source, records, asOf, civilDate, syncIdentity = null) =>
@@ -985,6 +998,8 @@ const COMMAND_TYPES = [
   ...BOARD_COMMANDS,
   // Meals (#333): KCMD actions 59–63, encoded by kin-meals.js.
   ...MEAL_COMMANDS,
+  // Simple view (#344): KCMD action 64, encoded by kin-simple.js.
+  ...SIMPLE_COMMANDS,
 ];
 const EVENT_KINDS = [
   null,
@@ -1041,6 +1056,7 @@ const EVENT_KINDS = [
   "MEMBER_NAMED",
   ...BOARD_EVENT_KINDS,
   ...MEAL_EVENT_KINDS,
+  ...SIMPLE_EVENT_KINDS,
 ];
 
 // The command field that names each event's own entity (packet offset 92).
@@ -1120,6 +1136,14 @@ function encodeIntentPacket(command, identity) {
     try { return encodeMealIntent(command, identity); }
     catch (error) {
       if (error instanceof MealFormatError) throw new KinEngineError(2, error.message);
+      throw error;
+    }
+  }
+  // An item's emoji (64) carries its canonical payload (kin-simple.js).
+  if (kind === 64) {
+    try { return encodeItemEmojiIntent(command, identity); }
+    catch (error) {
+      if (error instanceof SimpleFormatError) throw new KinEngineError(2, error.message);
       throw error;
     }
   }
@@ -1678,6 +1702,21 @@ function mealPlanBytes(exports, mirror, source, records, asOf, civilDate, syncId
   const release = mirror.hold(records);
   try {
     return callCore(exports, "kin_meal_shopping_plan", request);
+  } finally {
+    release();
+  }
+}
+
+// A query export (`operation`) given `query` then the record-less KINE
+// context, against the instance's history brought up to date with `records`.
+function queryBytes(exports, mirror, operation, query, records, asOf, civilDate, syncIdentity) {
+  if (!exports) throw new KinEngineError(6, "Unlock Kin before using its household engine.");
+  if (records.length > MAX_EVENT_COUNT) throw new KinEngineError(5, USER_MESSAGES.get(5));
+  const request = encodeRequest([], asOf, null, civilDate, syncIdentity, query.length);
+  request.set(query, 0);
+  const release = mirror.hold(records);
+  try {
+    return callCore(exports, operation, request);
   } finally {
     release();
   }

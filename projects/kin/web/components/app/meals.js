@@ -56,7 +56,17 @@ export class MealsController {
       meals = await session.store.meals();
       // Preferred names (#224) only where the device syncs; labels fall back.
       if (this.app.syncCoordinator) {
-        try { this.names = new Map((await this.ctx.sync.memberNames()).map(({ memberId, name }) => [memberId, name])); } catch { /* keep the last names */ }
+        try {
+          const names = new Map((await this.ctx.sync.memberNames()).map(({ memberId, name }) => [memberId, name]));
+          // One shared map (#344): assignee labels use it too. A new object
+          // only when a name changed, so views keyed on it skip re-rendering.
+          const same = names.size === this.names.size && [...names].every(([id, name]) => this.names.get(id) === name);
+          if (!same) {
+            this.names = names;
+            this.app.memberNameMap = names;
+            this.ctx.render.renderState();
+          }
+        } catch { /* keep the last names */ }
       }
     } catch {
       return;
@@ -139,6 +149,7 @@ export class MealsController {
   /** Forgets this session's meals and names (on lock). */
   reset() {
     this.app.mealsState = null;
+    this.app.memberNameMap = null;
     this.names = new Map();
     this.again = false;
   }

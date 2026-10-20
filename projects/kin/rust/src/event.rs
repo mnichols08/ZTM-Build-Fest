@@ -424,6 +424,11 @@ pub enum EventKind {
     BoardClearUndone {
         clear_id: BoardId,
     },
+    /// Simple view (#344, simple.rs): an item's picture emoji; `None` clears.
+    ItemEmojiSet {
+        item_id: ItemId,
+        emoji: Option<String>,
+    },
 }
 
 impl EventKind {

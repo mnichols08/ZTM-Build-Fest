@@ -324,6 +324,24 @@ Nothing here is counted or compared: who cooked is never totalled. Meals are
 not part of the KINS projection; hosts read them through `kin_meals` and plan
 Shopping additions through `kin_meal_shopping_plan`.
 
+## Item pictures (Simple view)
+
+Kind 64 (#344, [ADR 0013](decisions/0013-simple-view.md)) is a schema 1 event
+in the household history:
+
+| Kind | Name | Meaning |
+|---|---|---|
+| 64 | `ITEM_EMOJI_SET` | An item's picture emoji (one grapheme, validated as a chat reaction), or none to clear it |
+
+Replay (rust/src/simple.rs) never fails on a decoded emoji event: the latest
+one for an item wins, and an emoji for an item the history lacks, or one that
+is archived, is kept but never reported. Commands are stricter: the item
+exists and isn't archived, and the change changes something. The emoji sits
+beside an item's text and never replaces it. Hosts read emoji through
+`kin_item_emojis` and a member's things today through `kin_my_things`; neither
+is part of the KINS projection. Older devices pause sync with "unsupported"
+and keep their data until they update.
+
 ## v1.1.0 Household chat
 
 `CHAT_MESSAGE_POSTED` (44), `CHAT_MESSAGE_EDITED` (45) and

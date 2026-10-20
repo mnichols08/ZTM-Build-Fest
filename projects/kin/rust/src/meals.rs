@@ -129,7 +129,7 @@ pub fn normalize_recipe(
     Ok((name, lines, normalize_notes(notes)?))
 }
 
-fn push_text(out: &mut Vec<u8>, text: &str) {
+pub(crate) fn push_text(out: &mut Vec<u8>, text: &str) {
     out.extend_from_slice(&(text.len() as u16).to_le_bytes());
     out.extend_from_slice(text.as_bytes());
 }
@@ -214,7 +214,7 @@ pub fn encode_payload(kind: &EventKind) -> Result<Vec<u8>, KinError> {
 }
 
 /// Reads a length-prefixed UTF-8 string at `at`, advancing it.
-fn read_text(payload: &[u8], at: &mut usize) -> Result<String, KinError> {
+pub(crate) fn read_text(payload: &[u8], at: &mut usize) -> Result<String, KinError> {
     let length = usize::from(read_u16(payload, *at)?);
     let start = *at + 2;
     let end = start

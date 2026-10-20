@@ -167,7 +167,7 @@ export class ItemDetailSections {
   createResponsibility(record) {
     const group = this.group("Responsibility");
     const responsibility = document.createElement("kin-responsibility");
-    responsibility.record = { targetKind: "item", targetId: record.itemId, text: record.text, ownerId: this.host.ownerContext.responsibilities?.find((entry) => entry.targetKind === "item" && entry.targetId === record.itemId)?.memberId ?? null, memberId: this.host.ownerContext.memberId ?? null, memberIds: this.host.ownerContext.memberIds ?? [] };
+    responsibility.record = { targetKind: "item", targetId: record.itemId, text: record.text, ownerId: this.host.ownerContext.responsibilities?.find((entry) => entry.targetKind === "item" && entry.targetId === record.itemId)?.memberId ?? null, memberId: this.host.ownerContext.memberId ?? null, memberIds: this.host.ownerContext.memberIds ?? [], names: this.host.ownerContext.names ?? null };
     group.append(responsibility);
     return group;
   }

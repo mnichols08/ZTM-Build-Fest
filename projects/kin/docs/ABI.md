@@ -16,6 +16,8 @@ kin_device_names(ptr, len)           replay the history: KINE context -> KDEV (v
 kin_member_names(ptr, len)           replay the history: KINE context -> KMNM (v1.3)
 kin_meals(ptr, len)                  replay the history: KINE context -> KMLS (#333)
 kin_meal_shopping_plan(ptr, len)     KMPQ + KINE context -> KMSP (#333)
+kin_item_emojis(ptr, len)            replay the history: KINE context -> KIEM (#344)
+kin_my_things(ptr, len)              KMTQ + KINE context -> KMTD (#344)
 kin_chat_history_reset() -> status   empty the chat log (the text arena stays)
 kin_chat_history_append(ptr, len)    append a chat record batch to the chat log
 kin_chat_history_truncate(count) -> status   keep the chat log's first `count`
@@ -249,6 +251,7 @@ N  payload
 | 61 | DINNER_SET (#333) | civil date u32 (YYYYMMDD), recipe flag u8 (0 or 1) + 3 reserved, recipe ID [16] when flagged, name (u16 + UTF-8) |
 | 62 | DINNER_CLEARED (#333) | civil date u32 |
 | 63 | DINNER_COOK_SET (#333) | civil date u32, member flag u8 (0 or 1) + 3 reserved, member ID [16] when flagged (absent: "No one yet") |
+| 64 | ITEM_EMOJI_SET (#344) | item ID [16], emoji flag u8 (0 or 1) + 3 reserved, emoji (u16 + UTF-8, one grapheme, at most 32 bytes) when flagged (absent: cleared) |
 
 Fixed-length payloads must have exactly their length. Text, title and bound
 details beyond the byte layout (trimming, scalar counts, controls, per-entity
@@ -524,6 +527,25 @@ tuned for printed codes under heavy blur.
   lowercased) count once; "already on Shopping" compares against active
   Shopping items the same way. A one-off dinner or an unknown or archived
   recipe fails with code 4.
+- **Item pictures (kind 64, #344).** The payload is strict like meals: a
+  non-zero item ID, a 0/1 flag word with zero reserved bytes, and one emoji
+  as `chat::check_emoji` accepts it; it re-encodes to the same bytes. KCMD
+  action 64 (`set-item-emoji`) carries the exact payload as its text with a
+  zero entity ID and no option, date or expiry; Rust checks it against the
+  current items (`PicturesState::check_command`).
+- **KIEM v1** (item emoji, `kin_item_emojis`): `"KIEM"`, version 1, reserved
+  u16, count u32, then for each item that exists and isn't archived, in item
+  ID order: item ID [16], emoji (u16 + UTF-8).
+- **KMTQ v1 / KMTD v1** (a member's things today, `kin_my_things`): the
+  24-byte query `"KMTQ"`, version 1, reserved u16, member ID [16] (non-zero),
+  then a record-less KINE context. The result `"KMTD"`, version 1, reserved
+  u16, count u32, then 28 bytes per thing: kind u8 (1 item, 2 routine), done
+  u8 (0 or 1; 0 for an item), reserved u16, ID [16], occurrence date u32
+  (YYYYMMDD; 0 for an item). Items are active, non-Staple, assigned to the
+  member and planned for the context's date or earlier, or undated, soonest
+  first (undated last), then by text; routines are assigned to the member
+  with an occurrence open that day, by text, and none while the household
+  mode pauses routines ([ADR 0013](decisions/0013-simple-view.md)).
 - **KMNM v1** (preferred member names, `kin_member_names`, #224): `"KMNM"`,
   version 1, reserved u16, member count u32, then per member in member-ID
   order: member ID (16 bytes, after identity bindings), name length u16

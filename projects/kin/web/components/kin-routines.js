@@ -180,7 +180,7 @@ class KinRoutines extends HTMLElement {
   set responsibilityContext(value) {
     if (value === this.ownerContext) return;
     this.ownerContext = value;
-    this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.memberIds = value?.memberIds ?? [];
+    this.responsibilities = value?.responsibilities ?? []; this.memberId = value?.memberId ?? null; this.memberIds = value?.memberIds ?? []; this.memberNames = value?.names ?? null;
     this.render();
   }
   set playbooks(value) {
@@ -334,7 +334,7 @@ class KinRoutines extends HTMLElement {
           : record.occurrenceStatus === "completed" ? `Done ${period.toLowerCase()}` : `Open ${period.toLowerCase()}`, next].filter(Boolean).join(" · ");
       content.append(text, status);
       const responsibility = document.createElement("kin-responsibility");
-      responsibility.record = { targetKind: "routine", targetId: record.routineId, text: record.text, ownerId: this.responsibilities?.find((entry) => entry.targetKind === "routine" && entry.targetId === record.routineId)?.memberId ?? null, memberId: this.memberId, memberIds: this.memberIds };
+      responsibility.record = { targetKind: "routine", targetId: record.routineId, text: record.text, ownerId: this.responsibilities?.find((entry) => entry.targetKind === "routine" && entry.targetId === record.routineId)?.memberId ?? null, memberId: this.memberId, memberIds: this.memberIds, names: this.memberNames };
       content.append(responsibility);
       const reminderId = `routine:${record.routineId}`;
       const reminder = this.reminderControls.get(reminderId) ?? document.createElement("kin-reminder");

@@ -17,6 +17,7 @@ pub mod recurrence;
 pub mod replay;
 pub mod request;
 pub mod sections;
+pub mod simple;
 pub mod state;
 pub mod state_encode;
 pub mod wire;
@@ -73,6 +74,8 @@ mod chat_tests;
 mod board_tests;
 #[cfg(test)]
 mod meals_tests;
+#[cfg(test)]
+mod simple_tests;
 
 #[cfg(test)]
 mod recurring_task_tests;

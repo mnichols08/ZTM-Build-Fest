@@ -434,6 +434,9 @@ pub struct HouseholdState {
     /// Meals (meals.rs, #333). Not part of the KINS projection; hosts read
     /// them through `kin_meals`. Shared with the replay, not copied.
     pub meals: std::sync::Arc<crate::meals::MealsState>,
+    /// Item emoji (simple.rs, #344). Hosts read them through
+    /// `kin_item_emojis`. Shared with the replay, not copied.
+    pub pictures: std::sync::Arc<crate::simple::PicturesState>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
