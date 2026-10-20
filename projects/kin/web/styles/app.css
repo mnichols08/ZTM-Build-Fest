@@ -2031,7 +2031,8 @@ kin-app[data-route="updates/chat"] .app-feedback { bottom: calc(var(--chat-compo
 
 /* To talk about (#312, ADR 0014): a side column at 1180px and wider (the
    detail panel's width); elsewhere a panel the chat toolbar opens. */
-.chat-tools { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.chat-tools { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; min-width: 0; }
+.chat-topics-toggle { white-space: nowrap; }
 .chat-topics { display: grid; align-content: start; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-row); background: var(--surface); overflow: auto; overscroll-behavior: contain; }
 .chat-topics[hidden] { display: none; }
 .chat-topics h3 { margin: 0; font-size: 16px; }
