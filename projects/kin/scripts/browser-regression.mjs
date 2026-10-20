@@ -1179,22 +1179,35 @@ try {
       await client.send(`${domain}.enable`);
     await applyRegressionDefaults((method, params) => client.send(method, params));
     await client.send("Page.navigate", { url: origin });
+    // A new tab on the Windows runner sometimes never runs Kin's modules
+    // (kin-app stays undefined, no error; #327). Load it once more then.
+    const defined = () => client.evaluate('Boolean(customElements.get("kin-app"))').catch(() => false);
+    for (let attempt = 0; attempt < 150 && !(await defined()); attempt += 1) await delay(100);
+    if (!(await defined())) {
+      console.log(`NOTE new tab had not defined kin-app after 15 s (${JSON.stringify(await tabFacts(client))}); loading it again (#327)`);
+      await client.send("Page.reload", { ignoreCache: true });
+    }
     await ready(client);
     return client;
+  }
+  // What a tab was doing, so a slow start can be told from a stuck one (#327).
+  function tabFacts(client) {
+    return client.evaluate(`({
+      href: location.href, readyState: document.readyState, app: Boolean(document.querySelector("kin-app")),
+      defined: Boolean(customElements.get("kin-app")), controlled: Boolean(navigator.serviceWorker?.controller),
+      worker: navigator.serviceWorker?.controller?.state ?? null,
+      modules: performance.getEntriesByType("resource").filter((entry) => entry.name.endsWith(".js")).length,
+      security: Boolean(document.querySelector("kin-app")?.security), phase: document.querySelector("kin-app")?.security?.phase ?? null,
+      starting: Boolean(document.querySelector("kin-app")?.starting), busy: document.querySelector("kin-app")?.busy ?? null,
+      status: document.querySelector("kin-app")?.status?.textContent ?? null, body: document.body?.innerText?.slice(0, 200) ?? null,
+    })`).catch((reason) => ({ unreadable: String(reason?.message ?? reason) }));
   }
   async function ready(client) {
     // 30 s: a new tab's first start can exceed 10 s on the Windows runner (#164).
     try {
       await until(() => client.evaluate('Boolean(document.querySelector("kin-app")?.security?.heading)'), { attempts: 600 });
     } catch (error) {
-      // Say what the tab was doing, so a slow start can be told from a stuck
-      // one (#327): where it is, how far it loaded, and recent page errors.
-      const state = await client.evaluate(`({
-        href: location.href, readyState: document.readyState, app: Boolean(document.querySelector("kin-app")),
-        security: Boolean(document.querySelector("kin-app")?.security), phase: document.querySelector("kin-app")?.security?.phase ?? null,
-        starting: Boolean(document.querySelector("kin-app")?.starting), busy: document.querySelector("kin-app")?.busy ?? null,
-        status: document.querySelector("kin-app")?.status?.textContent ?? null, body: document.body?.innerText?.slice(0, 200) ?? null,
-      })`).catch((reason) => ({ unreadable: String(reason?.message ?? reason) }));
+      const state = await tabFacts(client);
       error.message += ` — tab state ${JSON.stringify(state)}; recent problems ${JSON.stringify(problems.slice(-5)).slice(0, 2000)}`;
       throw error;
     }

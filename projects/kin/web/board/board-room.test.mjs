@@ -12,6 +12,7 @@ import { fakeIndexedDB, fakeKeyRange } from "../chat/fake-indexeddb.test-support
 import { BOARD_COMMANDS, BOARD_EVENT_KINDS } from "../wasm/kin-board.js";
 import { BoardLogStore, boardLogDatabaseName } from "./board-log-store.js";
 import { BoardRoom, newBoardId } from "./board-room.js";
+import { appendBoardEvents, importBoardSection, openBoardSection, validateBoardSection } from "./board-archive.js";
 
 const encoder = new TextEncoder(), decoder = new TextDecoder();
 const bytesOf = (hex) => Uint8Array.from(hex.match(/../g), (pair) => Number.parseInt(pair, 16));
@@ -240,4 +241,96 @@ test("look only keeps the fridge readable without drawing; no access stops it (#
   await b.room.sync({ status: { ...STATUS, board: { access: "write" } }, devices });
   await b.room.change(stroke());
   assert.equal(b.room.board().strokes.length, 2, "drawing again once allowed");
+});
+
+test("a fridge restored from an export reads back sealed by the vault, then the relay's copy takes over (#363)", { timeout: 30_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs });
+  const devices = [phone.entry];
+  const a = await openRoom(phone, s);
+  const first = stroke(), second = stroke();
+  await a.room.change(first);
+  await a.room.change(second);
+  await a.room.sync({ status: STATUS, devices });
+  const plan = await a.room.exportPlan();
+  assert.equal(plan.view.length, 2);
+
+  // The section as an archive read hands it over.
+  const section = openBoardSection();
+  appendBoardEvents(section, [1, 2], [plan.view.record(0), plan.view.record(1)]);
+  assert.throws(() => validateBoardSection(section, { engine: fakeEngine(), eventCount: 2, householdId: "ab".repeat(16) }), /damaged/);
+  assert.deepEqual(validateBoardSection(section, { engine: fakeEngine(), eventCount: 2, householdId: s.householdId }), { eventCount: 2 });
+  assert.equal(section.eventIds.length, 2, "a refused check leaves nothing half-done");
+
+  // A fresh device of the same member: no log yet, a vault that seals.
+  const sealed = new Map();
+  const vault = {
+    assertUnlocked() {},
+    async seal(bytes, { store, id }) { assert.equal(store, "board-import"); const copy = bytes.slice(); sealed.set(id, copy); return { id, length: copy.length }; },
+    async open(value, { store, id }) { assert.equal(store, "board-import"); assert.equal(value.id, id); return sealed.get(id).slice(); },
+  };
+  const fresh = { ...phone, indexedDB: fakeIndexedDB(), keyStore: { ...phone.keyStore, vault } };
+  assert.deepEqual(await importBoardSection(section, { householdId: s.householdId, vault, indexedDB: fresh.indexedDB, keyRange: fakeKeyRange }), { events: 2 });
+  assert.deepEqual(await importBoardSection(section, { householdId: s.householdId, vault, indexedDB: fresh.indexedDB, keyRange: fakeKeyRange }), { events: 0 }, "restoring twice adds nothing");
+  const b = await openRoom(fresh, s);
+  assert.deepEqual(b.room.board().strokes.map((entry) => entry.id), [first.strokeId, second.strokeId], "readable before any sync");
+
+  // The relay's signed copies replace the imported rows, without duplicates.
+  await b.room.sync({ status: STATUS, devices });
+  assert.equal(b.room.records.length, 2);
+  const store = await BoardLogStore.open(s.householdId, { indexedDB: fresh.indexedDB, keyRange: fakeKeyRange });
+  const rows = await store.eventsFrom(1);
+  store.close();
+  assert.equal(rows.length, 2);
+  assert.ok(rows.every((row) => row.envelope && !row.imported), "each row now holds the relay's envelope");
+});
+
+test("the relay's copy of a restored event is authenticated and must match it (#363)", { timeout: 30_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const phone = await device(s.admin, { householdId: s.householdId, epochs });
+  const devices = [phone.entry];
+  const a = await openRoom(phone, s);
+  const original = stroke();
+  await a.room.change(original);
+  const plan = await a.room.exportPlan();
+  const eventId = [...a.room.indexById.keys()][0];
+  // The export holds a different event under the same ID than the one the
+  // relay will serve (a relay or writer substituting content).
+  const forged = JSON.parse(new TextDecoder().decode(plan.view.record(0)));
+  forged.command = { ...forged.command, points: [[900, 900], [950, 950]] };
+  const section = openBoardSection();
+  appendBoardEvents(section, [1], [new TextEncoder().encode(JSON.stringify(forged))]);
+  validateBoardSection(section, { engine: fakeEngine(), eventCount: 1, householdId: s.householdId });
+  assert.deepEqual(section.eventIds, [eventId]);
+  await a.room.sync({ status: STATUS, devices });
+
+  const sealed = new Map();
+  const vault = {
+    assertUnlocked() {},
+    async seal(bytes, { id }) { sealed.set(id, bytes.slice()); return { id }; },
+    async open(value, { id }) { return sealed.get(id).slice(); },
+  };
+  const fresh = { ...phone, indexedDB: fakeIndexedDB(), keyStore: { ...phone.keyStore, vault } };
+  await importBoardSection(section, { householdId: s.householdId, vault, indexedDB: fresh.indexedDB, keyRange: fakeKeyRange });
+  const b = await openRoom(fresh, s);
+  await b.room.sync({ status: STATUS, devices });
+  assert.deepEqual(b.room.refused.map((entry) => [entry.eventId, entry.code]), [[eventId, "board_event_refused"]], "the mismatch is refused");
+  const store = await BoardLogStore.open(s.householdId, { indexedDB: fresh.indexedDB, keyRange: fakeKeyRange });
+  const rows = await store.eventsFrom(1);
+  store.close();
+  assert.ok(rows[0].imported && !rows[0].envelope, "the restored copy is kept, not overwritten");
+});
+
+test("the member's fridge access is remembered for the next unlock (#323)", { timeout: 30_000 }, async (t) => {
+  const s = await service(t);
+  const epochs = new Map([[1, await generateHouseholdKey()]]);
+  const tablet = await device(s.partner, { householdId: s.householdId, epochs });
+  const b = await openRoom(tablet, s);
+  await b.room.sync({ status: { ...STATUS, board: { access: "read" } }, devices: [tablet.entry] });
+  b.room.close();
+  const again = await openRoom(tablet, s);
+  assert.equal(again.room.access, "read", "starts look only, before any sync");
+  await assert.rejects(again.room.change(stroke()), (error) => error.code === "board_read_only");
 });

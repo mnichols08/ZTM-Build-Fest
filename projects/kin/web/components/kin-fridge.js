@@ -20,9 +20,14 @@
 //   takes focus, moves with the arrow keys (1%, Shift 10%) or "Move to" one
 //   of nine regions, and can be dragged. Nothing needs dragging.
 // - Clearing (#323) asks first and can be undone by anyone.
+// - Kitchen-screen mode (#324): on a wide landscape touch screen (or in full
+//   screen in landscape) the tools move to a side rail and the door takes the
+//   height. Full screen shows the fridge alone. Neither changes automatic
+//   lock; a note says how this screen locks, and locking leaves full screen.
 import { MAX_VISIBLE_MAGNETS, MAX_VISIBLE_STROKES, BOARD_WIDTH, BOARD_HEIGHT, boardPoints, normalizeNote, simplifyStroke, splitStroke } from "../wasm/kin-board.js";
 import { newBoardId } from "../board/board-room.js";
-import { ERASE_REACH, FRIDGE_COLOURS, FRIDGE_WIDTHS, fridgeSummary, pathPoints, strokeAt } from "../board/fridge-view.js";
+import { ERASE_REACH, FRIDGE_COLOURS, FRIDGE_WIDTHS, KITCHEN_QUERY, fridgeSummary, kitchenScreenNote, pathPoints, strokeAt } from "../board/fridge-view.js";
+import { readAutoLockPreference } from "./app/constants.js";
 import { KIN_MAGNETS, MAGNET_REGIONS, magnetName, magnetPosition, magnetTilt, nudge, regionPoint } from "../board/fridge-magnets.js";
 import "./kin-emoji-picker.js";
 
@@ -66,17 +71,57 @@ class KinFridge extends HTMLElement {
     // Where each moving magnet started, for undo.
     this.moveFrom = new Map();
     this.drag = null;
+    this.onLayout = () => this.updateLayout();
   }
 
   connectedCallback() {
     if (!this.firstElementChild) this.build();
     this.resizeObserver ??= typeof ResizeObserver === "function" ? new ResizeObserver(this.onResize) : null;
     this.resizeObserver?.observe(this.door);
-    this.resize();
+    this.kitchenMedia ??= globalThis.matchMedia?.(KITCHEN_QUERY) ?? null;
+    this.landscapeMedia ??= globalThis.matchMedia?.("(orientation: landscape)") ?? null;
+    this.kitchenMedia?.addEventListener?.("change", this.onLayout);
+    this.landscapeMedia?.addEventListener?.("change", this.onLayout);
+    document.addEventListener("fullscreenchange", this.onLayout);
+    this.updateLayout();
   }
 
   disconnectedCallback() {
     this.resizeObserver?.disconnect();
+    this.kitchenMedia?.removeEventListener?.("change", this.onLayout);
+    this.landscapeMedia?.removeEventListener?.("change", this.onLayout);
+    document.removeEventListener("fullscreenchange", this.onLayout);
+    this.leaveFullscreen();
+  }
+
+  get fullscreen() {
+    return document.fullscreenElement === this;
+  }
+
+  /** The side-rail layout and the lock note (#324). */
+  updateLayout() {
+    if (!this.door) return;
+    const fullscreen = this.fullscreen;
+    const rail = Boolean(this.kitchenMedia?.matches) || (fullscreen && Boolean(this.landscapeMedia?.matches));
+    if (rail) this.dataset.layout = "rail";
+    else delete this.dataset.layout;
+    this.fullscreenButton.textContent = fullscreen ? "Leave full screen" : "Full screen";
+    this.kitchenNote.hidden = !(rail || fullscreen) || !this.room;
+    if (!this.kitchenNote.hidden) this.kitchenNote.textContent = kitchenScreenNote(readAutoLockPreference());
+    this.resize();
+  }
+
+  async toggleFullscreen() {
+    try {
+      if (this.fullscreen) await document.exitFullscreen();
+      else await this.requestFullscreen({ navigationUI: "hide" });
+    } catch {
+      this.showStatus("This browser didn't allow full screen.");
+    }
+  }
+
+  leaveFullscreen() {
+    if (this.fullscreen) document.exitFullscreen?.().catch(() => {});
   }
 
   get room() {
@@ -92,9 +137,13 @@ class KinFridge extends HTMLElement {
     this.undoStack = [];
     this.redoStack = [];
     this.cancelStroke();
+    // Locking (no room) leaves full screen: a shared screen goes back to
+    // the unlock screen, not a fridge that can't be used (#324).
+    if (!value) this.leaveFullscreen();
     if (value) this.unsubscribe = value.subscribe(() => this.render());
     if (!this.firstElementChild) this.build();
     this.render();
+    this.updateLayout();
   }
 
   build() {
@@ -172,6 +221,12 @@ class KinFridge extends HTMLElement {
     this.restoreButton.textContent = "Bring back what was cleared";
     this.restoreButton.hidden = true;
     this.restoreButton.addEventListener("click", () => void this.undoClear());
+    this.fullscreenButton = document.createElement("button");
+    this.fullscreenButton.type = "button";
+    this.fullscreenButton.className = "fridge-fullscreen";
+    this.fullscreenButton.textContent = "Full screen";
+    this.fullscreenButton.hidden = !(document.fullscreenEnabled && typeof this.requestFullscreen === "function");
+    this.fullscreenButton.addEventListener("click", () => void this.toggleFullscreen());
     this.tools.append(colours, widths, this.eraserButton, history, this.magnetButton, this.clearButton, this.restoreButton);
 
     this.door = document.createElement("div");
@@ -199,18 +254,21 @@ class KinFridge extends HTMLElement {
     this.status.className = "fridge-status";
     this.status.setAttribute("role", "status");
     this.status.hidden = true;
+    this.kitchenNote = document.createElement("p");
+    this.kitchenNote.className = "fridge-kitchen-note";
+    this.kitchenNote.hidden = true;
 
     const board = document.createElement("div");
     board.className = "fridge-board";
     board.append(this.door);
-    this.append(heading, lead, this.tools, board, this.summary, this.status, this.buildMagnetDialog(), this.buildClearDialog());
+    this.append(heading, lead, this.tools, this.fullscreenButton, board, this.summary, this.status, this.kitchenNote, this.buildMagnetDialog(), this.buildClearDialog());
     this.updateTools();
   }
 
   updateTools() {
     if (!this.tools) return;
     // Look only (#323): the fridge shows, its tools don't.
-    const drawing = this.room?.access !== "read";
+    const drawing = !this.room || this.room.access === "write";
     this.tools.hidden = !drawing;
     this.colourButtons.forEach((button, index) => button.setAttribute("aria-pressed", String(this.tool === "pen" && index === this.colour)));
     this.widthButtons.forEach((button, index) => button.setAttribute("aria-pressed", String(index === this.width)));
@@ -261,8 +319,11 @@ class KinFridge extends HTMLElement {
     let summary = fridgeSummary(this.state, this.labelOf);
     if (room.access === "read") summary += " Your household has set the fridge to look only for you.";
     if (room.waiting) summary += " Waiting to send.";
-    if (room.syncError) summary += " The fridge will sync again shortly.";
-    this.summary.textContent = summary;
+    // A household service from before the fridge has no board routes (404).
+    if (room.syncError?.code === "not_found") summary += " The fridge needs an updated household service to reach the rest of the household; drawings stay on this device until then.";
+    else if (room.syncError) summary += " The fridge will sync again shortly.";
+    // A polite live region: only a real change is announced again.
+    if (this.summary.textContent !== summary) this.summary.textContent = summary;
     this.drawInk();
     this.renderMagnets();
     this.updateTools();
@@ -594,8 +655,14 @@ class KinFridge extends HTMLElement {
       option.textContent = region.label;
       select.append(option);
     }
-    select.addEventListener("change", () => {
-      if (!select.value) return;
+    // Choosing a place doesn't move the magnet by itself (arrow keys on a
+    // closed select fire "change"); the Move button does (WCAG 3.2.2).
+    const move = document.createElement("button");
+    move.type = "button";
+    move.className = "fridge-magnet-move";
+    move.textContent = "Move";
+    move.addEventListener("click", () => {
+      if (!select.value) { select.focus(); return; }
       const to = regionPoint(select.value);
       this.closeMagnetMenu({ focus: false });
       this.movingMagnets.set(magnet.id, to);
@@ -611,7 +678,7 @@ class KinFridge extends HTMLElement {
     close.type = "button";
     close.textContent = "Done";
     close.addEventListener("click", () => this.closeMagnetMenu());
-    menu.append(label, remove, close);
+    menu.append(label, move, remove, close);
     menu.addEventListener("keydown", (event) => {
       if (event.key === "Escape") { event.preventDefault(); this.closeMagnetMenu(); }
     });
@@ -858,6 +925,7 @@ class KinFridge extends HTMLElement {
     const clearId = this.state?.openClear;
     if (!clearId) return;
     try {
+      if (this.room.board().openClear !== clearId) { this.showStatus("Someone changed the fridge meanwhile. Nothing was brought back."); return; }
       await this.room.change({ type: "undo-clear", clearId });
       this.showStatus("The fridge is back as it was.");
     } catch (error) {
@@ -881,40 +949,48 @@ class KinFridge extends HTMLElement {
     if (entry.kind === "draw" || entry.kind === "erase") {
       const hidden = entry.kind === "draw" ? backwards : !backwards;
       const visible = new Set((board.strokes ?? []).map((stroke) => stroke.id));
+      let changed = false;
       for (const strokeId of entry.ids) {
         if (visible.has(strokeId) !== hidden) continue;
         await this.room.change({ type: "hide-stroke", strokeId, hidden });
+        changed = true;
       }
-      return;
+      return changed;
     }
     if (entry.kind === "place" || entry.kind === "remove") {
       const hidden = entry.kind === "place" ? backwards : !backwards;
       const shown = (board.magnets ?? []).some((magnet) => magnet.id === entry.id);
-      if (shown === hidden) await this.room.change({ type: "hide-magnet", magnetId: entry.id, hidden });
-      return;
+      if (shown !== hidden) return false;
+      await this.room.change({ type: "hide-magnet", magnetId: entry.id, hidden });
+      return true;
     }
     if (entry.kind === "move") {
       const magnet = (board.magnets ?? []).find((candidate) => candidate.id === entry.id);
       const [x, y] = backwards ? entry.from : entry.to;
-      if (magnet && (magnet.x !== x || magnet.y !== y)) await this.room.change({ type: "move-magnet", magnetId: entry.id, x, y });
-      return;
+      if (!magnet || (magnet.x === x && magnet.y === y)) return false;
+      await this.room.change({ type: "move-magnet", magnetId: entry.id, x, y });
+      return true;
     }
     if (entry.kind === "clear") {
-      if (backwards && board.openClear === entry.id) await this.room.change({ type: "undo-clear", clearId: entry.id });
-      else if (!backwards) {
-        entry.id = newBoardId();
-        await this.room.change({ type: "clear-board", clearId: entry.id });
+      if (backwards) {
+        if (board.openClear !== entry.id) return false;
+        await this.room.change({ type: "undo-clear", clearId: entry.id });
+        return true;
       }
+      entry.id = newBoardId();
+      await this.room.change({ type: "clear-board", clearId: entry.id });
+      return true;
     }
+    return false;
   }
 
   async undo() {
     const entry = this.undoStack.pop();
     if (!entry || !this.room) return;
     try {
-      await this.apply(entry, true);
+      const changed = await this.apply(entry, true);
       this.redoStack.push(entry);
-      this.showStatus(UNDONE[entry.kind] ?? "Undone.");
+      this.showStatus(changed ? UNDONE[entry.kind] ?? "Undone." : "Someone changed that meanwhile, so there was nothing to undo.");
     } catch (error) {
       this.showStatus(changeProblem(error, this.state));
     }
@@ -925,9 +1001,9 @@ class KinFridge extends HTMLElement {
     const entry = this.redoStack.pop();
     if (!entry || !this.room) return;
     try {
-      await this.apply(entry, false);
+      const changed = await this.apply(entry, false);
       this.undoStack.push(entry);
-      this.showStatus(REDONE[entry.kind] ?? "Redone.");
+      this.showStatus(changed ? REDONE[entry.kind] ?? "Redone." : "Someone changed that meanwhile, so there was nothing to redo.");
     } catch (error) {
       this.showStatus(changeProblem(error, this.state));
     }

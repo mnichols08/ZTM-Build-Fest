@@ -8,13 +8,18 @@
 // envelope is authenticated once, when it arrives.
 //
 //   events  { order, eventId, envelope }   every board event, in the order
-//                                          this device stored it
+//                                          this device stored it; one read
+//                                          from an archive (#363) has
+//                                          `imported` (the canonical event
+//                                          sealed by the local vault) in
+//                                          place of `envelope`
 //   ids     { eventId, order }             one row per event, so two tabs
 //                                          storing the same event keep one
 //   outbox  { deviceSequence, eventId }    this device's events the relay
 //                                          hasn't accepted yet
 //   meta    { key: "state", nextOrder, cursor, deviceSequence, provisional,
-//             refused }
+//             refused, access }   `access` is the last fridge access the
+//                                 service gave this member (#323)
 //
 // `cursor` is the relay position read up to; `deviceSequence` the last board
 // sequence this device used. It starts provisional (an offline first stroke)
@@ -137,13 +142,46 @@ export class BoardLogStore {
       if (refused.length) state.refused = [...(state.refused ?? []), ...refused].slice(-MAX_REFUSED);
       let added = 0;
       for (const envelope of envelopes) {
-        if (await settle(ids.get(envelope.eventId))) continue;
+        const known = await settle(ids.get(envelope.eventId));
+        if (known) {
+          // The relay's signed copy of an event read from an export takes
+          // its place, so it is authenticated and readable by keys.
+          const row = await settle(events.get(known.order));
+          if (row?.imported) events.put({ order: known.order, eventId: envelope.eventId, envelope });
+          continue;
+        }
         const order = state.nextOrder++;
         events.put({ order, eventId: envelope.eventId, envelope });
         ids.put({ eventId: envelope.eventId, order });
         added += 1;
       }
       state.cursor = cursor;
+      await settle(meta.put(state));
+      return added;
+    });
+  }
+
+  /** Stores events read from an archive (#363): `entries` are
+   * `{ eventId, sealed }`, the canonical event sealed by the local vault. An
+   * event already stored from the relay is kept; one an earlier import stored
+   * is replaced (so a restore after the vault's root changed puts it right).
+   * Resolves with how many rows are new. */
+  importEvents(entries) {
+    return transact(this.db, [EVENTS, IDS, META], "readwrite", async ({ events, ids, meta }) => {
+      const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
+      let added = 0;
+      for (const { eventId, sealed } of entries) {
+        const known = await settle(ids.get(eventId));
+        if (known) {
+          const row = await settle(events.get(known.order));
+          if (row?.imported) events.put({ order: known.order, eventId, imported: sealed });
+          continue;
+        }
+        const order = state.nextOrder++;
+        events.put({ order, eventId, imported: sealed });
+        ids.put({ eventId, order });
+        added += 1;
+      }
       await settle(meta.put(state));
       return added;
     });
@@ -187,6 +225,16 @@ export class BoardLogStore {
       }
       state.deviceSequence = deviceSequence;
       state.provisional = provisional;
+      await settle(meta.put(state));
+    });
+  }
+
+  /** Remembers this member's fridge access, so the next unlock starts from
+   * it rather than from "write" before the first sync (#323). */
+  setAccess(access) {
+    return transact(this.db, [META], "readwrite", async ({ meta }) => {
+      const state = (await settle(meta.get(STATE_KEY))) ?? freshState();
+      state.access = access;
       await settle(meta.put(state));
     });
   }

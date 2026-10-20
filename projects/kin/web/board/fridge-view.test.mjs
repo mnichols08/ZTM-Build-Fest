@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ERASE_REACH, FRIDGE_COLOURS, FRIDGE_WIDTHS, fridgeSummary, pathPoints, strokeAt } from "./fridge-view.js";
+import { ERASE_REACH, FRIDGE_COLOURS, FRIDGE_WIDTHS, KITCHEN_QUERY, fridgeSummary, kitchenScreenNote, pathPoints, strokeAt } from "./fridge-view.js";
 import { PALETTE_COLOURS, PEN_WIDTHS } from "../wasm/kin-board.js";
 
 const stroke = (id, author, points, width = 1) => ({ id, author, colour: 0, width, points: Uint16Array.from(points) });
@@ -45,4 +45,14 @@ test("a swipe is checked along its whole path, so it can't skip a thin line", ()
   const hits = pathPoints([400, 300], [400, 700], ERASE_REACH / 2).map(([x, y]) => strokeAt(line, x, y)?.id).filter(Boolean);
   assert.ok(hits.includes("line"));
   assert.deepEqual(pathPoints([5, 5], [5, 5], 24), [[5, 5]]);
+});
+
+test("kitchen-screen mode says how a shared screen locks (#324)", () => {
+  assert.match(KITCHEN_QUERY, /min-width: 960px/);
+  assert.match(KITCHEN_QUERY, /orientation: landscape/);
+  assert.match(KITCHEN_QUERY, /pointer: coarse/);
+  assert.equal(kitchenScreenNote(5), "Kin still locks after 5 minutes without use, as it does everywhere. Drawing counts as use.");
+  assert.match(kitchenScreenNote(60), /after an hour/);
+  assert.match(kitchenScreenNote(0), /Automatic lock is off/);
+  assert.match(kitchenScreenNote(0), /Security/);
 });

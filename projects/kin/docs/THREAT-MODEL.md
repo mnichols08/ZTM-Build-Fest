@@ -572,6 +572,18 @@ events hold IDs and outcomes only.
 **Planned.** Nothing further for v1.1; comparing fingerprints by eye remains
 the defence against a malicious service working with a QR holder.
 
+### A fridge on a shared kitchen screen (#324)
+
+A tablet left on the counter showing the fridge is an unlocked Kin: anyone who
+picks it up can leave the fridge and see the household's lists, chat and
+settings. Kitchen-screen mode and full screen deliberately do not weaken this
+boundary or add a separate "kiosk" unlock: automatic lock runs as everywhere
+(drawing counts as use, so a fridge in use stays open), locking leaves full
+screen, and the rail states which applies on this device, including when
+automatic lock is off. Households that keep a shared screen should turn
+automatic lock on; Kin does not force it. A kiosk mode limited to the fridge
+would need its own credential and is out of scope.
+
 ### v1.0 was not tested across every browser and device
 
 **What it is.** v1.0 shipped on the owner's decision with limited real-world

@@ -58,6 +58,67 @@ export async function fridgeRegressions(client, until) {
     assert.deepEqual(layout.small, [], `${label}: every visible tool is at least 44px tall`);
   }
 
+  // ---- Kitchen-screen mode (#324) ------------------------------------------
+  const kitchen = () => page(`(() => {
+    const fridge = document.querySelector("kin-fridge");
+    const door = fridge.querySelector(".fridge-door").getBoundingClientRect();
+    const tools = fridge.querySelector(".fridge-tools").getBoundingClientRect();
+    const note = fridge.querySelector(".fridge-kitchen-note");
+    return { rail: fridge.dataset.layout === "rail", doorLeft: door.left, doorTop: door.top, doorHeight: door.height, doorBottom: door.bottom,
+      ratio: door.width / door.height, toolsRight: tools.right, toolsTop: tools.top,
+      note: note.hidden ? "" : note.textContent, innerHeight, innerWidth, scrollWidth: document.documentElement.scrollWidth,
+      fullscreen: document.fullscreenElement === fridge, status: fridge.querySelector(".fridge-status").textContent };
+  })()`);
+  for (const [label, metrics] of [
+    ["tablet landscape", { width: 1024, height: 768, deviceScaleFactor: 2, mobile: true }],
+    ["large tablet landscape", { width: 1180, height: 820, deviceScaleFactor: 2, mobile: true }],
+  ]) {
+    await setViewport(client, metrics);
+    await page(`document.querySelector("kin-fridge").scrollIntoView({ block: "start" })`);
+    const view = await kitchen();
+    assert.ok(view.rail, `${label}: a coarse-pointer landscape screen gets the side rail`);
+    assert.ok(view.toolsRight <= view.doorLeft, `${label}: the tools sit beside the door, not above it`);
+    assert.ok(Math.abs(view.ratio - 0.75) < 0.01, `${label}: the door keeps its 3:4 shape`);
+    // Beside the app's navigation the door can be width-bound; it still
+    // takes most of the height, far more than the stacked layout gives.
+    assert.ok(view.doorHeight >= view.innerHeight * 0.75, `${label}: the door takes the height (${view.doorHeight} of ${view.innerHeight})`);
+    assert.ok(view.scrollWidth <= view.innerWidth, `${label}: no horizontal scroll`);
+    assert.match(view.note, /lock/i, `${label}: the screen says how it locks`);
+  }
+  await setViewport(client, { width: 768, height: 1024, deviceScaleFactor: 2, mobile: true });
+  assert.equal((await kitchen()).rail, false, "a portrait tablet keeps the stacked layout");
+
+  // Full screen shows the fridge alone; locking leaves it. The page's
+  // full-screen API is stood in for: a real full-screen window outlives this
+  // check and can stall tabs the regression opens later (#327).
+  await setViewport(client, { width: 1024, height: 768, deviceScaleFactor: 2, mobile: true });
+  const full = await page(`(async () => {
+    const fridge = document.querySelector("kin-fridge");
+    let element = null;
+    const change = () => document.dispatchEvent(new Event("fullscreenchange"));
+    Object.defineProperty(document, "fullscreenElement", { configurable: true, get: () => element });
+    fridge.requestFullscreen = async () => { element = fridge; change(); };
+    const exit = document.exitFullscreen;
+    document.exitFullscreen = async () => { element = null; change(); };
+    fridge.querySelector(".fridge-fullscreen").click();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const inside = { fullscreen: document.fullscreenElement === fridge, label: fridge.querySelector(".fridge-fullscreen").textContent,
+      rail: fridge.dataset.layout === "rail", note: fridge.querySelector(".fridge-kitchen-note").hidden ? "" : fridge.querySelector(".fridge-kitchen-note").textContent };
+    const app = document.querySelector("kin-app");
+    app.fridge.room = null;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const afterLock = document.fullscreenElement === fridge;
+    app.fridge.room = window.__fridgeRoom;
+    delete fridge.requestFullscreen;
+    document.exitFullscreen = exit;
+    delete document.fullscreenElement;
+    return { ...inside, afterLock, label2: fridge.querySelector(".fridge-fullscreen").textContent };
+  })()`);
+  assert.deepEqual([full.fullscreen, full.label, full.rail], [true, "Leave full screen", true], "full screen in landscape uses the rail");
+  assert.match(full.note, /lock/i, "full screen says how it locks");
+  assert.equal(full.afterLock, false, "locking leaves full screen");
+  assert.equal(full.label2, "Full screen");
+
   // ---- Drawing with a finger (phone) -------------------------------------
   await setViewport(client, { width: 375, height: 812, deviceScaleFactor: 2, mobile: true });
   await page(`document.querySelector("kin-fridge .fridge-door").scrollIntoView({ block: "center" })`);
@@ -182,6 +243,8 @@ export async function fridgeRegressions(client, until) {
   await key("Enter");
   await until(() => page(`Boolean(document.querySelector("kin-fridge .fridge-magnet-menu select"))`));
   await page(`(() => { const select = document.querySelector("kin-fridge .fridge-magnet-menu select"); select.value = "bottom-left"; select.dispatchEvent(new Event("change")); return true; })()`);
+  assert.equal(await page(`Boolean(document.querySelector("kin-fridge .fridge-magnet-menu"))`), true, "choosing a place alone doesn't move the magnet");
+  await page(`document.querySelector("kin-fridge .fridge-magnet-move").click(), true`);
   await until(async () => (await magnets())[0].y > 4000);
   assert.ok((await magnets())[0].x < 1000, "moved to the bottom left");
   // A Kin-drawn magnet in the middle, then dragged with a mouse.
@@ -237,6 +300,76 @@ export async function fridgeRegressions(client, until) {
   assert.equal(reopened.after, reopened.before, "the reopened fridge matches");
   assert.equal(reopened.waiting, true, "unsent changes are still waiting");
 
+  // ---- Acceptance (#325): more screens, 200% zoom, dark and forced colours --
+  await page(`(async () => {
+    const { newBoardId } = await import("/board/board-room.js");
+    await window.__fridgeRoom.change({ type: "add-stroke", strokeId: newBoardId(), colour: 5, width: 2, points: [[400, 400], [1600, 1400], [2600, 900]] });
+    return true;
+  })()`);
+  for (const [label, metrics] of [
+    ["320×568", { width: 320, height: 568, deviceScaleFactor: 2, mobile: true }],
+    ["phone landscape", { width: 844, height: 390, deviceScaleFactor: 3, mobile: true }],
+    ["820×1180", { width: 820, height: 1180, deviceScaleFactor: 2, mobile: true }],
+    ["1024×768", { width: 1024, height: 768, deviceScaleFactor: 2, mobile: true }],
+    // 200% browser zoom on a 1280×800 desktop: half the CSS pixels.
+    ["desktop at 200%", { width: 640, height: 400, deviceScaleFactor: 2, mobile: false }],
+  ]) {
+    await setViewport(client, metrics);
+    // Let the new size lay out before measuring.
+    await page(`new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true))))`);
+    await page(`document.querySelector("kin-fridge .fridge-door").scrollIntoView({ block: "center" })`);
+    const rect = await door();
+    const layout = await page(`({ scrollWidth: document.documentElement.scrollWidth, innerWidth, small: [...document.querySelectorAll("kin-fridge .fridge-tools button, kin-fridge > .fridge-fullscreen")].filter((b) => !b.hidden && b.getClientRects().length && b.getBoundingClientRect().height < 44).map((b) => b.textContent || b.getAttribute("aria-label")) })`);
+    assert.ok(Math.abs(rect.width / rect.height - 0.75) < 0.01, `${label}: the door keeps its 3:4 shape (${rect.width}×${rect.height})`);
+    assert.ok(rect.width >= 240 && rect.right <= layout.innerWidth, `${label}: the door fits the screen (${JSON.stringify(rect)} in ${layout.innerWidth})`);
+    assert.ok(layout.scrollWidth <= layout.innerWidth, `${label}: no horizontal scroll`);
+    assert.deepEqual(layout.small, [], `${label}: every visible control is at least 44px tall`);
+  }
+  const inkCheck = () => page(`(async () => {
+    // Two frames, so a changed appearance has been styled and painted.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const fridge = document.querySelector("kin-fridge");
+    fridge.drawInk();
+    const canvas = fridge.querySelector(".fridge-ink");
+    const data = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data;
+    let inked = 0;
+    for (let i = 3; i < data.length; i += 4) if (data[i]) inked += 1;
+    // Reduced motion shortens every animation and transition to 0.01 ms
+    // (app.css); count only motion that lasts long enough to be seen.
+    const moving = document.getAnimations().filter((animation) => fridge.contains(animation.effect?.target ?? null) &&
+      (animation.effect?.getComputedTiming?.().activeDuration ?? 0) > 1).length;
+    return { inked, palette: fridge.palette(), door: getComputedStyle(fridge.querySelector(".fridge-door")).getPropertyValue("--fridge-door").trim(), moving };
+  })()`);
+  await setViewport(client, { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+  const light = await inkCheck();
+  // Kin's own dark appearance (the page may have pinned light), then back.
+  const appearance = await page(`document.documentElement.dataset.kinAppearance ?? null`);
+  await page(`(document.documentElement.dataset.kinAppearance = "dark", true)`);
+  const dark = await inkCheck();
+  const darkFacts = await page(`(() => {
+    const fridges = document.querySelectorAll("kin-fridge");
+    const fridge = fridges[0];
+    let rule = "none";
+    for (const sheet of document.styleSheets) {
+      try { for (const entry of sheet.cssRules) if (entry.selectorText === ':root[data-kin-appearance="dark"] kin-fridge') rule = sheet.href ?? "inline"; } catch { rule = "unreadable"; }
+    }
+    return { attribute: document.documentElement.getAttribute("data-kin-appearance"), fridges: fridges.length,
+      matches: fridge.matches(':root[data-kin-appearance="dark"] kin-fridge'), door: getComputedStyle(fridge).getPropertyValue("--fridge-door"),
+      rule, sheets: [...document.styleSheets].map((sheet) => sheet.href ?? "inline").join(" "), adopted: document.adoptedStyleSheets.length };
+  })()`);
+  await page(`(${JSON.stringify(appearance)} === null ? delete document.documentElement.dataset.kinAppearance : document.documentElement.dataset.kinAppearance = ${JSON.stringify(appearance)}, true)`);
+  // The door's own colour variable (its background is var(--fridge-door));
+  // headless Edge has reported a stale computed background here.
+  assert.notEqual(dark.door, light.door, `dark mode darkens the door (${JSON.stringify(darkFacts)}; was ${JSON.stringify(appearance)})`);
+  assert.notDeepEqual(dark.palette, light.palette, "dark mode remaps the ink colours");
+  assert.ok(dark.inked > 0, "drawings stay visible in dark mode");
+  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "active" }, { name: "prefers-reduced-motion", value: "reduce" }] });
+  const forced = await inkCheck();
+  assert.ok(forced.palette.every((colour) => colour === "CanvasText"), "forced colours draw every ink in the system text colour");
+  assert.ok(forced.inked > 0, "drawings stay visible in forced colours");
+  assert.equal(forced.moving, 0, "nothing on the fridge moves with reduced motion");
+  await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "none" }, { name: "prefers-reduced-motion", value: "no-preference" }, { name: "prefers-color-scheme", value: "light" }] });
+
   // Clean up: no room, no fridge database left behind for later checks.
   await page(`(async () => {
     const app = document.querySelector("kin-app");
@@ -251,5 +384,5 @@ export async function fridgeRegressions(client, until) {
   })()`);
   await client.send("Emulation.setTouchEmulationEnabled", { enabled: false });
   await client.send("Emulation.clearDeviceMetricsOverride");
-  return "PASS fridge: 3:4 door fits phone, tablet and desktop; finger, pen and mouse drawing; second-finger cancel; palm rejection; eraser, undo and redo; magnets by dialog, keyboard, menu and drag; clear and bring back, through the real engine (#317)";
+  return "PASS fridge: 3:4 door fits phone, tablet and desktop; finger, pen and mouse drawing; second-finger cancel; palm rejection; eraser, undo and redo; magnets by dialog, keyboard, menu and drag; clear and bring back; kitchen-screen rail, full screen and its lock note; 320×568 to desktop, 200% zoom, dark mode, forced colours and reduced motion, through the real engine (#317, #324, #325)";
 }

@@ -11,6 +11,7 @@ import { LocalVault, serializeProtectedValue } from "./local-vault.js";
 import { appendChatBlob, appendChatEvents, blobSegment, blobSegmentLength, chatEventsView, chatNotes, openChatSection } from "../chat/chat-archive.js";
 import { sealChatBlob } from "../chat/chat-blob-crypto.js";
 import { ChatRecords } from "../chat/chat-records.js";
+import { appendBoardEvents, boardEventsView, openBoardSection, validateBoardSection } from "../board/board-archive.js";
 
 const wasm = await readFile(new URL("../wasm/kin_engine.wasm", import.meta.url));
 const { instance } = await WebAssembly.instantiate(wasm, {});
@@ -194,4 +195,55 @@ test("the household chat rides after the history, in the real container (#136)",
     bytes, offset: 16 + metadataLength, length: ciphertextLength, key, noncePrefix: PREFIX, vaultId: VAULT_ID,
     attachmentCount: 1, eventCount: 3, onContext() {}, onAttachment() {}, onEvents() {}, check: async () => {},
   }), /damaged/);
+});
+
+// ---- The family fridge (#363) -------------------------------------------------
+
+/** Board events made by the real engine: three strokes and a magnet. */
+function boardRecords(count = 3) {
+  const records = new ChatRecords();
+  const hex = (byte, n) => byte.toString(16).padStart(2, "0").repeat(12) + n.toString(16).padStart(8, "0");
+  const identity = (n) => ({ eventId: hex(0x51, n), householdId: "aa".repeat(16), actorId: "bb".repeat(16), deviceId: "cc".repeat(16), timestamp: 1_791_475_200_000 + n, logicalTime: n });
+  for (let n = 1; n <= count; n += 1) {
+    const command = n === count
+      ? { type: "place-magnet", magnetId: hex(0x61, n), x: 100, y: 200, content: { kind: "note", text: "Milk please" } }
+      : { type: "add-stroke", strokeId: hex(0x71, n), colour: n % 8, width: 1, points: [[n, n], [n + 40, n + 20]] };
+    const { encodedEvent } = engine.executeBoardCommand(command, identity(n), records.view(), 1_791_475_300_000, 20261019);
+    records.append(encodedEvent);
+  }
+  return records;
+}
+
+test("a fridge section rides last and round-trips exactly", async () => {
+  const arena = arenaWith(3);
+  const board = boardRecords(CHUNK_EVENTS + 2);
+  const view = boardEventsView(board.view());
+  const bytes = await write(arena.view(), { board: { view } });
+  assert.equal(frames(bytes).list.length, segmentCount(attachments.length, 3, null, view.length));
+  const { metadataLength, ciphertextLength } = engine.archiveLayout(bytes);
+  const section = openBoardSection();
+  const household = [];
+  await readArchive({
+    bytes, offset: 16 + metadataLength, length: ciphertextLength, key, noncePrefix: PREFIX, vaultId: VAULT_ID,
+    attachmentCount: attachments.length, eventCount: 3, boardEventCount: view.length,
+    onContext: () => {}, onAttachment: () => {},
+    onEvents: (_, records) => household.push(...records.map((record) => record.slice())),
+    onBoardEvents: (sequences, records) => appendBoardEvents(section, sequences, records),
+    check: async () => {},
+  });
+  assert.equal(household.length, 3);
+  assert.equal(section.records.length, view.length);
+  for (let index = 0; index < view.length; index += 1) assert.deepEqual(section.records.view().record(index), view.record(index));
+  // The engine replays it, and it names this household's board kinds only.
+  assert.deepEqual(validateBoardSection(section, { engine, eventCount: view.length, householdId: "aa".repeat(16) }), { eventCount: view.length });
+  assert.throws(() => validateBoardSection(section, { engine, eventCount: view.length, householdId: "ab".repeat(16) }), /damaged/);
+  assert.throws(() => validateBoardSection(section, { engine, eventCount: view.length + 1, householdId: "aa".repeat(16) }), /damaged/);
+  // A household event in the board section is refused.
+  const mixed = openBoardSection();
+  appendBoardEvents(mixed, [1, 2], [section.records.view().record(0), arena.view().record(0)]);
+  assert.throws(() => validateBoardSection(mixed, { engine, eventCount: 2, householdId: "aa".repeat(16) }), /damaged/);
+  // A reader that doesn't expect the fridge refuses the extra segments.
+  await assert.rejects(read(bytes, { eventCount: 3 }), /damaged or incomplete/);
+  // Sequences must count up from 1.
+  assert.throws(() => appendBoardEvents(openBoardSection(), [2], [section.records.view().record(0)]), /damaged/);
 });

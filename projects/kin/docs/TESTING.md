@@ -753,6 +753,35 @@ The following platforms/assistive technologies are not certified by the Windows/
 - [ ] NVDA with Firefox or Chrome: labels, status/error announcements, completion, and focus restoration.
 - [ ] VoiceOver with Safari: labels, status/error announcements, completion, and focus restoration.
 
+### The family fridge (#317, #325)
+
+`scripts/fridge-regression.mjs` (run from the browser regression) covers, in
+headless Chromium-family browsers through the real engine: the 3:4 door at
+320×568, phone portrait and landscape, 768×1024, 820×1180, 1024×768 and
+desktop, and desktop at 200% zoom (no horizontal scroll, every visible control
+at least 44 px); kitchen-screen mode at 1024×768 and 1180×820 with a coarse
+pointer, full screen and leaving it on lock (#324); finger, pen and mouse
+drawing, second-finger cancel and palm rejection; the eraser, undo and redo;
+magnets by dialog, keyboard, menu and drag; clearing and bringing it back;
+dark mode, forced colours and reduced motion; and the reopened log. Export
+and restore of the fridge are covered in `web/security/archive-stream.test.mjs`
+and `web/board/board-room.test.mjs`.
+
+Emulated touch and pen are not real hardware. Before calling the fridge
+verified on a release, check by hand:
+
+- [ ] iPhone (Safari): draw with a finger, a second finger cancels, the page
+  around the door still scrolls, magnets by drag and by menu, VoiceOver reads
+  the summary and each magnet.
+- [ ] Android phone (Chrome): the same, plus TalkBack.
+- [ ] iPad with Apple Pencil: palm resting on the screen while drawing leaves
+  no marks; landscape shows the side rail; full screen and leaving it; locks
+  after the chosen time while left on the fridge.
+- [ ] iPad with a hardware keyboard: every tool and magnet by keyboard (arrows,
+  Shift+arrows, Enter, Delete), focus visible throughout.
+- [ ] Desktop (Firefox, Safari, Chrome or Edge): mouse drawing, the eraser,
+  forced colours (Windows contrast themes), 200% browser zoom.
+
 Do not introduce an external test framework just for convenience. Record tested browser/runtime versions and manual steps in the release notes when implementation begins.
 
 ## Handoff

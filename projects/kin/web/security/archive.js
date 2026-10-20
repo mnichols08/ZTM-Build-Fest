@@ -17,6 +17,7 @@ import {
   appendChatBlob, appendChatEvents, blobSegment, blobSegmentLength, chatBlobBudget, chatEventsView, chooseChatBlobs,
   discardChatSection, importChatSection, MAX_ARCHIVE_CHAT_BLOBS, MAX_ARCHIVE_CHAT_EVENTS, openChatSection, validateChatSection,
 } from "../chat/chat-archive.js";
+import { appendBoardEvents, boardEventsView, discardBoardSection, importBoardSection, MAX_ARCHIVE_BOARD_EVENTS, openBoardSection, validateBoardSection } from "../board/board-archive.js";
 
 const KIN_VERSION = "1.3.0";
 const PACKAGE_FORMAT = 3;
@@ -28,6 +29,8 @@ const stagedArchives = new WeakMap();
 // The chat section of an archive's parts (#136), kept apart: the parts are
 // checked against the household store's exact field list.
 const chatSections = new WeakMap();
+// The fridge section (#363), kept apart the same way.
+const boardSections = new WeakMap();
 
 /**
  * The household as a package-format-3 archive. `onProgress({ done, total })`
@@ -37,9 +40,11 @@ const chatSections = new WeakMap();
  * `chat` (a ChatRoom.chatExportPlan(), #136) adds the household chat: its
  * events, and as many of its blobs as fit under the archive size limit,
  * newest first. `report`, if given, is filled with what went in:
- * `{ chatEvents, chatBlobs, chatBlobsSkipped }`.
+ * `{ chatEvents, chatBlobs, chatBlobsSkipped, boardEvents }`.
+ *
+ * `board` (a BoardRoom.exportPlan(), #363) adds the family fridge's events.
  */
-export async function exportHouseholdArchive({ store, engine, vault, portableMembership, chat = null, report = null, onProgress }) {
+export async function exportHouseholdArchive({ store, engine, vault, portableMembership, chat = null, board = null, report = null, onProgress }) {
   await assertCurrentProtection(vault);
   const parts = await store.archiveParts({ portableMembership });
   const context = parts.local_context[0];
@@ -71,7 +76,14 @@ export async function exportHouseholdArchive({ store, engine, vault, portableMem
     const choice = chooseChatBlobs(chat.blobs, chatBlobBudget(MAX_ARCHIVE_BYTES, householdBytes + chatEventBytes));
     included = { choice, view };
   }
-  if (report) Object.assign(report, { chatEvents: included ? included.view.length : 0, chatBlobs: included?.choice.chosen.length ?? 0, chatBlobsSkipped: included?.choice.skipped ?? 0 });
+  let boardView = null;
+  if (board?.view?.length > 0) {
+    if (!/^[a-f0-9]{32}$/.test(context?.sync_household_id ?? ""))
+      throw new VaultError("Connect to your household before exporting its fridge.");
+    boardView = boardEventsView(board.view);
+    if (boardView.length > MAX_ARCHIVE_BOARD_EVENTS) throw new VaultError("This household's fridge is too large to export.");
+  }
+  if (report) Object.assign(report, { chatEvents: included ? included.view.length : 0, chatBlobs: included?.choice.chosen.length ?? 0, chatBlobsSkipped: included?.choice.skipped ?? 0, boardEvents: boardView?.length ?? 0 });
   const packageManifest = {
     packageFormatVersion: PACKAGE_FORMAT,
     kinVersion: KIN_VERSION,
@@ -81,6 +93,7 @@ export async function exportHouseholdArchive({ store, engine, vault, portableMem
     attachmentBytes: household.attachmentBytes,
     integrityVersion: 1,
     ...(included ? { chatEventCount: included.view.length, chatBlobCount: included.choice.chosen.length, chatBlobBytes: included.choice.chosen.reduce((total, blob) => total + blob.size, 0) } : {}),
+    ...(boardView ? { boardEventCount: boardView.length } : {}),
   };
   // The key is bound to this metadata; the framed metadata adds how to
   // derive it again (salt) and the segments' nonce prefix.
@@ -97,6 +110,7 @@ export async function exportHouseholdArchive({ store, engine, vault, portableMem
     engine, metadata, key, noncePrefix, vaultId: vault.vaultId,
     context, attachments: parts.attachments, view: parts.history,
     chat: included && { notes: chat.notes, view: included.view, blobs: included.choice.chosen, loadBlob: chat.loadBlob, blobSegmentLength, blobSegment },
+    board: boardView && { view: boardView },
     check: () => assertCurrentProtection(vault), onProgress,
   });
 }
@@ -149,6 +163,14 @@ export async function validateHouseholdArchive({ bytes, recoverySecret, engine, 
       if (chatSummary.blobBytes !== packageManifest.chatBlobBytes) throw new VaultError("This file is damaged or incomplete.");
     }
 
+    let boardSummary = null;
+    const boardSection = boardSections.get(parts);
+    if (boardSection) {
+      const context = parts.local_context[0];
+      if (!/^[a-f0-9]{32}$/.test(context?.sync_household_id ?? "")) throw new VaultError("This file is damaged or incomplete.");
+      boardSummary = validateBoardSection(boardSection, { engine, eventCount: packageManifest.boardEventCount, householdId: context.sync_household_id });
+    }
+
     parts.attachments = await rewrapLocalAttachments(parts.attachments, sourceVault, vault);
     // Same history and context: the bindings found above save a replay.
     const summary = await EventStore.validateArchiveParts({ parts, engine, vault, bindings: sourceSummary.bindings });
@@ -163,6 +185,8 @@ export async function validateHouseholdArchive({ bytes, recoverySecret, engine, 
       summary,
       chatSummary,
       chatSection,
+      boardSummary,
+      boardSection,
       packageFormatVersion: archiveVersion,
     });
     return Object.freeze({
@@ -172,6 +196,7 @@ export async function validateHouseholdArchive({ bytes, recoverySecret, engine, 
       attachmentBytes: summary.attachmentBytes,
       chatEventCount: chatSummary?.eventCount ?? 0,
       chatBlobCount: chatSummary?.blobCount ?? 0,
+      boardEventCount: boardSummary?.eventCount ?? 0,
       packageFormatVersion: archiveVersion,
     });
   } catch (error) {
@@ -261,6 +286,9 @@ async function openStreamPackage({ header, authenticatedMetadata, packageManifes
   const withChat = packageManifest.chatEventCount !== undefined;
   const chatSection = withChat ? openChatSection() : null;
   if (chatSection) chatSections.set(parts, chatSection);
+  const boardEventCount = packageManifest.boardEventCount ?? 0;
+  const boardSection = boardEventCount ? openBoardSection() : null;
+  if (boardSection) boardSections.set(parts, boardSection);
   try {
     await readArchive({
       bytes, offset, length, key, noncePrefix, vaultId: protection.vaultId,
@@ -269,6 +297,8 @@ async function openStreamPackage({ header, authenticatedMetadata, packageManifes
       onChatNotes: (value) => { chatSection.notes = value; },
       onChatEvents: (sequences, records) => appendChatEvents(chatSection, sequences, records),
       onChatBlob: (bytes) => appendChatBlob(chatSection, bytes),
+      boardEventCount,
+      onBoardEvents: (sequences, records) => appendBoardEvents(boardSection, sequences, records),
       onContext: (row) => parts.local_context.push(row),
       onAttachment: (row) => parts.attachments.push(row),
       onEvents: (sequences, records, remaining) => {
@@ -322,24 +352,28 @@ export async function restoreValidatedHouseholdArchive({ stage, engine, vault, s
   try {
     if (store && await store.containsSameHouseholdArchive(staged.parts, { engine, vault })) {
       const eventCount = staged.parts.history.length;
-      // The chat is put right too, if it needs it (idempotent).
+      // The chat and fridge are put right too, if they need it (idempotent).
       const chat = await restoreChat(staged, vault);
+      const board = await restoreBoard(staged, vault);
       discardValidatedHouseholdArchive(stage);
-      return { eventCount, alreadyPresent: true, chat };
+      return { eventCount, alreadyPresent: true, chat, board };
     }
     const result = await EventStore.restoreArchive({ vault, engine, parts: staged.parts, bindings: staged.summary.bindings, onProgress });
     // The household is restored; its chat is written next. The chat log and
     // blob store are separate databases, so this is a second step: a failure
     // here leaves the household restored and says so (restoring the same
     // export again completes the chat).
-    let chat = null;
-    try { chat = await restoreChat(staged, vault); } catch (error) {
+    let chat = null, board = null;
+    try {
+      chat = await restoreChat(staged, vault);
+      board = await restoreBoard(staged, vault);
+    } catch (error) {
       error.householdRestored = true;
       discardValidatedHouseholdArchive(stage);
       throw error;
     }
     discardValidatedHouseholdArchive(stage);
-    return { ...result, chat };
+    return { ...result, chat, board };
   } catch (error) {
     await assertCurrentProtection(vault);
     throw error;
@@ -352,6 +386,12 @@ async function restoreChat(staged, vault) {
   return importChatSection(staged.chatSection, { householdId, vault, hidden: staged.chatSummary.hidden });
 }
 
+async function restoreBoard(staged, vault) {
+  if (!staged.boardSection || !staged.boardSummary) return null;
+  const householdId = staged.parts.local_context[0].sync_household_id;
+  return importBoardSection(staged.boardSection, { householdId, vault });
+}
+
 export function discardValidatedHouseholdArchive(stage) {
   const staged = stagedArchives.get(stage);
   if (!staged) return;
@@ -362,6 +402,7 @@ export function discardValidatedHouseholdArchive(stage) {
 function discardParts(parts) {
   parts.arena?.wipe();
   discardChatSection(chatSections.get(parts));
+  discardBoardSection(boardSections.get(parts));
   zeroByteValues({ context: parts.local_context, attachments: parts.attachments }, new Set());
 }
 
@@ -379,6 +420,7 @@ function validatePackageManifest(value, packageFormatVersion) {
     "packageFormatVersion", "kinVersion", "exportedAt", "eventCount",
     "attachmentCount", "attachmentBytes", "integrityVersion",
     ...(value && typeof value === "object" && "chatEventCount" in value ? ["chatEventCount", "chatBlobCount", "chatBlobBytes"] : []),
+    ...(value && typeof value === "object" && "boardEventCount" in value ? ["boardEventCount"] : []),
   ]) || value.packageFormatVersion !== packageFormatVersion || value.integrityVersion !== 1 ||
       typeof value.kinVersion !== "string" || !/^\d+\.\d+\.\d+$/.test(value.kinVersion) ||
       !exportedAtIsCanonical ||
@@ -393,7 +435,10 @@ function validatePackageManifest(value, packageFormatVersion) {
       ("chatEventCount" in value && (packageFormatVersion !== 3 ||
         !Number.isSafeInteger(value.chatEventCount) || value.chatEventCount < 1 || value.chatEventCount > MAX_ARCHIVE_CHAT_EVENTS ||
         !Number.isSafeInteger(value.chatBlobCount) || value.chatBlobCount < 0 || value.chatBlobCount > MAX_ARCHIVE_CHAT_BLOBS ||
-        !Number.isSafeInteger(value.chatBlobBytes) || value.chatBlobBytes < 0 || value.chatBlobBytes > MAX_ARCHIVE_BYTES)))
+        !Number.isSafeInteger(value.chatBlobBytes) || value.chatBlobBytes < 0 || value.chatBlobBytes > MAX_ARCHIVE_BYTES)) ||
+      // The family fridge (#363): version 3 only, at least one event.
+      ("boardEventCount" in value && (packageFormatVersion !== 3 ||
+        !Number.isSafeInteger(value.boardEventCount) || value.boardEventCount < 1 || value.boardEventCount > MAX_ARCHIVE_BOARD_EVENTS)))
     throw new VaultError("This Kin export manifest is damaged or unsupported.");
   return value;
 }

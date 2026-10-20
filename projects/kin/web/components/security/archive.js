@@ -29,11 +29,14 @@ export class SecurityArchive {
     const option = this.host.chatOption;
     let chat = null;
     if (option?.isConnected && option.checked) chat = await app.chat.room.chatExportPlan().catch(() => null);
+    // The fridge always goes in when there is one (#363); it is small.
+    const boardRoom = app.syncCoordinator?.board ?? app.fridge?.room ?? null;
+    const board = await boardRoom?.exportPlan?.().catch(() => null) ?? null;
     this.host.assertCurrentOperation(operation);
     const report = {};
     let bytes;
     try {
-      bytes = await exportHouseholdArchive({ store: app.store, engine: app.engine, vault: getActiveVault(), portableMembership, chat, report, onProgress: progress.update });
+      bytes = await exportHouseholdArchive({ store: app.store, engine: app.engine, vault: getActiveVault(), portableMembership, chat, board, report, onProgress: progress.update });
     } finally { progress.remove(); }
     this.host.assertCurrentOperation(operation);
     // The name and message come from the export's own header, so they name
@@ -47,7 +50,8 @@ export class SecurityArchive {
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     const left = report.chatBlobsSkipped ? ` ${report.chatBlobsSkipped.toLocaleString()} older chat photos and files didn't fit and were left out; they stay in Kin and in your household's chat.` : "";
-    this.host.message.textContent = `Kin export prepared${report.chatEvents ? " with your household chat" : ""}. It opens with recovery key ${joinLabels(labels)}. ${EXPORT_STORAGE_RULE}${left}`;
+    const extras = [report.chatEvents ? "your household chat" : null, report.boardEvents ? "the fridge" : null].filter(Boolean);
+    this.host.message.textContent = `Kin export prepared${extras.length ? ` with ${extras.join(" and ")}` : ""}. It opens with recovery key ${joinLabels(labels)}. ${EXPORT_STORAGE_RULE}${left}`;
   }
 
   // A progress bar after the status message while an archive operation runs.

@@ -63,3 +63,16 @@ export function pathPoints(from, to, step) {
     return [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t];
   });
 }
+
+/** When the fridge takes the kitchen-screen layout (#324): a wide landscape
+ * touch screen, such as a tablet on the kitchen counter. */
+export const KITCHEN_QUERY = "(min-width: 960px) and (orientation: landscape) and (pointer: coarse)";
+
+/** What a shared screen should know about locking (#324). Kitchen-screen
+ * mode and full screen never change automatic lock: Kin locks after the
+ * chosen time without use, and drawing counts as use. */
+export function kitchenScreenNote(autoLockMinutes) {
+  if (!autoLockMinutes) return "Automatic lock is off, so anyone at this screen can open the rest of Kin. If this screen is shared, turn it on in Security.";
+  const period = autoLockMinutes === 60 ? "an hour" : `${autoLockMinutes} minutes`;
+  return `Kin still locks after ${period} without use, as it does everywhere. Drawing counts as use.`;
+}

@@ -1154,6 +1154,18 @@ shared board, decided in [ADR 0011](decisions/0011-family-fridge.md).
   Limited and Temporary members to Draw, Look only (the fridge shows without
   its tools) or No access (Household → Identity & appearance → Who can use the
   fridge, with a passkey).
+- **Kitchen-screen mode** (#324). A tablet on the counter is its own context.
+  At 960 px or wider, in landscape, with a coarse pointer (and in full screen
+  in landscape on any device), the heading, tools, summary and a lock note form
+  a rail on the left and the door takes the screen's height beside it; the
+  colours sit in a 4 × 2 grid of 44 px swatches. Portrait tablets and phones
+  keep the stacked layout. **Full screen** (where the browser allows it) shows
+  the fridge alone, and **Leave full screen** or Esc returns. Kitchen-screen
+  mode never changes automatic lock: the rail says "Kin still locks after 15
+  minutes without use, as it does everywhere. Drawing counts as use.", or, with
+  automatic lock off, that anyone at this screen can open the rest of Kin and
+  that it can be turned on in Security. Locking (by time, by Lock or from
+  another tab) leaves full screen and shows the unlock screen.
 - Drawing is a path-based gesture and has no keyboard equivalent.
 
 # 9. States every relevant screen must handle

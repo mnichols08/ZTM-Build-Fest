@@ -1685,6 +1685,46 @@ kin-fridge {
   .fridge-colour[aria-pressed="true"], .fridge-width[aria-pressed="true"], .fridge-eraser[aria-pressed="true"] { outline: 3px solid Highlight; }
   .fridge-door { border-color: CanvasText; box-shadow: none; }
 }
+/* Kitchen-screen mode (#324): a wide landscape touch screen, or full screen
+   in landscape. The heading and tools form a rail on the left and the door
+   takes the height beside it: designed for a tablet on the counter, not a
+   stretched phone. */
+.fridge-fullscreen { justify-self: start; }
+.fridge-kitchen-note { margin: 0; color: var(--ink-muted); font-size: 14px; }
+.fridge-kitchen-note[hidden], .fridge-fullscreen[hidden] { display: none; }
+kin-fridge { display: grid; gap: 12px; }
+kin-fridge[data-layout="rail"] {
+  grid-template-columns: minmax(188px, 212px) minmax(0, 1fr);
+  /* Seven rail rows (heading, lead, tools, full screen, summary, status,
+     note) and a flexible last one, so the door's height never spreads the
+     rail apart. */
+  grid-template-rows: repeat(7, auto) 1fr;
+  gap: 0 20px;
+  align-items: start;
+}
+kin-fridge[data-layout="rail"] > * { grid-column: 1; margin-block-end: 12px; }
+kin-fridge[data-layout="rail"] > .fridge-board { grid-column: 2; grid-row: 1 / -1; justify-items: start; margin: 0; }
+kin-fridge[data-layout="rail"] .fridge-tools { flex-direction: column; align-items: stretch; flex-wrap: nowrap; }
+kin-fridge[data-layout="rail"] .fridge-colours { display: grid; grid-template-columns: repeat(4, 44px); gap: 8px; }
+kin-fridge[data-layout="rail"] .fridge-colour { inline-size: 44px; min-height: 44px; }
+kin-fridge[data-layout="rail"] .fridge-widths, kin-fridge[data-layout="rail"] .fridge-history { flex-wrap: nowrap; }
+kin-fridge[data-layout="rail"] .fridge-history button { flex: 1 1 0; }
+kin-fridge[data-layout="rail"] .fridge-tools > button, kin-fridge[data-layout="rail"] > .fridge-fullscreen { inline-size: 100%; }
+kin-fridge[data-layout="rail"] .fridge-door {
+  inline-size: min(100%, calc((100dvh - var(--header-height, 68px) - 56px) * 0.75));
+}
+kin-fridge:fullscreen {
+  box-sizing: border-box;
+  inline-size: 100%;
+  block-size: 100%;
+  padding: 16px;
+  overflow: auto;
+  background: var(--bg, Canvas);
+  color: var(--ink, CanvasText);
+}
+kin-fridge:fullscreen::backdrop { background: var(--bg, Canvas); }
+kin-fridge:fullscreen .fridge-door { inline-size: min(100%, calc((100dvh - 32px) * 0.75)); }
+kin-fridge:fullscreen:not([data-layout="rail"]) .fridge-door { inline-size: min(100%, calc((100dvh - 350px) * 0.75)); }
 .today-fridge-link { display: inline-flex; align-items: center; min-height: var(--tap); font-size: 15px; }
 /* Fridge magnets (#322): buttons over the door. The layer lets drawing
    through; each magnet takes its own pointer. */
