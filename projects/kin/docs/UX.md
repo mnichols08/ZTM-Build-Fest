@@ -2324,3 +2324,27 @@ tried them.
   previewing it sees a note that it is a layout, not a lock: while a
   Temporary member's access lasts, their device can read the household.
 - **Empty.** "The family hasn't added anything here yet."
+
+# 39. Taking turns on routines (#428, [ADR 0016](decisions/0016-routine-rotations.md))
+
+- **Start.** Each routine under Routines has **Take turns…** when the
+  household has two or more people. It opens a list of the household's
+  members: tick them in the order they take turns (2–12); "Turn order" shows
+  the order, each with ↑ to move earlier. **Start taking turns** saves; the
+  first person takes the next turn.
+- **Whose turn.** A rotating routine shows "Your turn · Sam next" (or
+  "Sam's turn · You next") and "Taking turns: You → Sam → Jo" in place of the
+  owner buttons: whoever's turn it is owns the routine, so This week, Simple
+  view and "my things" follow it. Today's routine rows add "Your turn" or
+  "Sam's turn" to their line.
+- **Passing on.** The turn passes when the routine is done for its period
+  (the owner's decision, "when it's done"), not by the calendar; Undo gives
+  it back. **Skip to next** gives it to the next person; **Give this turn
+  to…** (with three or more) to anyone listed. **Change who takes turns**
+  reopens the list starting from whose turn it is; **Stop taking turns**
+  leaves the last person as the ordinary owner.
+- **People leaving.** Someone removed, or whose access ended, is passed
+  over; if it was their turn, the next person's turn is recorded so every
+  device agrees. With fewer than two people left, the routine says taking
+  turns is paused.
+- **No scores.** Kin never counts turns per person or shows who did more.

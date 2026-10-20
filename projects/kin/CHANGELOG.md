@@ -9,6 +9,10 @@ documentation only.
 
 ### Added
 
+- **Taking turns on routines** (#428, [ADR 0016](docs/decisions/0016-routine-rotations.md)):
+  people take turns at a routine in an order you choose; the turn passes when
+  it's done, with Skip to next and Give this turn to…, and Today shows whose
+  turn it is. No scores.
 - **For the sitter** (#441, [ADR 0017](docs/decisions/0017-sitter-page.md)):
   an Adult picks notes, contacts and routines for a babysitter, carer or guest;
   a Temporary member lands on **For you**, which shows them live, with phone

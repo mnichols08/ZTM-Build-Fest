@@ -65,7 +65,7 @@ const ELEMENT_EVENTS = [
   ["kin:view-attachment", "onViewAttachment"], ["kin:remove-attachment", "onRemoveAttachment"],
   ["kin:household-status", "onHouseholdStatus"], ["kin:security-changed", "onSecurityChanged"],
   ["kin:retry-attachments", "onRetryAttachments"], ["kin:change-responsibility", "onChangeResponsibility"], ["kin:simple-done", "onSimpleDone"], ["kin:set-item-emoji", "onSetItemEmoji"],
-  ["kin:replenish-staple", "onReplenishStaple"], ["kin:complete-item", "onCompleteItem"], ["kin:start-shopping", "onStartShopping"], ["kin:save-sitter-page", "onSaveSitterPage"], ["kin:set-item-section", "onSetItemSection"], ["kin:save-shopping-sections", "onSaveShoppingSections"], ["kin:import-list", "onImportList"],
+  ["kin:replenish-staple", "onReplenishStaple"], ["kin:complete-item", "onCompleteItem"], ["kin:start-shopping", "onStartShopping"], ["kin:save-sitter-page", "onSaveSitterPage"], ["kin:set-routine-rotation", "onSetRoutineRotation"], ["kin:set-routine-turn", "onSetRoutineTurn"], ["kin:set-item-section", "onSetItemSection"], ["kin:save-shopping-sections", "onSaveShoppingSections"], ["kin:import-list", "onImportList"],
   ["kin:reopen-item", "onReopenItem"], ["kin:archive-item", "onArchiveItem"],
   ["kin:add-item-step", "onAddItemStep"], ["kin:complete-item-step", "onCompleteItemStep"],
   ["kin:reopen-item-step", "onReopenItemStep"], ["kin:archive-item-step", "onArchiveItemStep"],

@@ -2185,3 +2185,18 @@ kin-sitter-page { display: grid; gap: 12px; }
 .sitter-preview-note { margin: 0; }
 @media (max-width: 420px) { .sitter-fields { grid-template-columns: minmax(0, 1fr); } .sitter-fields dt { margin-top: 6px; } }
 @media (forced-colors: active) { .sitter-card { border: 1px solid CanvasText; } }
+
+/* Taking turns on routines (#433, #437). */
+kin-rotation { display: grid; gap: 6px; margin-top: 6px; }
+.rotation-turn { margin: 0; font-weight: 650; }
+.rotation-order { margin: 0; overflow-wrap: anywhere; }
+.rotation-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.rotation-actions button, .rotation-actions select, kin-rotation > button { min-height: var(--tap); }
+kin-rotation > button { justify-self: start; }
+.rotation-editor { display: grid; gap: 2px; margin: 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--r-row); }
+.rotation-editor label { display: flex; align-items: center; gap: 8px; min-height: var(--tap); }
+.rotation-editor input { width: 20px; height: 20px; }
+.rotation-draft { display: grid; gap: 4px; margin: 0; padding-left: 1.4em; }
+.rotation-draft li { display: list-item; }
+.rotation-draft li span { margin-right: 8px; }
+.rotation-draft button { min-width: var(--tap); min-height: var(--tap); }
