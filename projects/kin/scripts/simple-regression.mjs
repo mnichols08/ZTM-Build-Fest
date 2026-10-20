@@ -41,7 +41,10 @@ export async function simpleRegressions(client, { until, ready }) {
         emoji: card.querySelector(".simple-emoji")?.textContent ?? null,
         button: card.querySelector("button").getAttribute("aria-label"),
       })),
-      counts: /\\d/.test(document.querySelector("kin-simple").textContent.replace(/Simple regression/g, "")),
+      // Everything but the things' own words and tonight's dinner: no numbers.
+      counts: (() => { const copy = document.querySelector("kin-simple").cloneNode(true);
+        copy.querySelectorAll(".simple-text, .simple-tonight").forEach((node) => node.remove());
+        return /\\d/.test(copy.textContent); })(),
     };
   })()`);
   assert.equal(shell.flag, "on");
@@ -50,8 +53,10 @@ export async function simpleRegressions(client, { until, ready }) {
   assert.deepEqual(shell.nav, [["Today", "#today"], ["Chat", "#updates/chat"], ["Fridge", "#household/fridge"]]);
   assert.ok(!shell.quickAdd && !shell.search && shell.lock, "Quick add and Search are off; Lock stays");
   assert.equal(shell.hash, "#today", "a hidden page's address goes to Today");
-  assert.deepEqual(shell.cards, [{ text: "Simple regression socks away", emoji: "🧦", button: "Done: Simple regression socks away" }],
-    "only my own thing, with its picture");
+  // Earlier suites leave other things assigned to this member; check ours.
+  assert.deepEqual(shell.cards.find((card) => card.text === "Simple regression socks away"),
+    { text: "Simple regression socks away", emoji: "🧦", button: "Done: Simple regression socks away" }, "my thing, with its picture: " + JSON.stringify(shell.cards));
+  assert.ok(!shell.cards.some((card) => card.text === "Simple regression not mine"), "not someone else's");
   assert.equal(shell.counts, false, "no counts or totals");
 
   // Every other route, the palette and item details stay closed.
@@ -73,12 +78,13 @@ export async function simpleRegressions(client, { until, ready }) {
   }
 
   // Done, then Undo in the same place; the status says so politely.
-  await page(`document.querySelector("kin-simple .simple-done").click()`);
+  const card = `[...document.querySelectorAll("kin-simple .simple-card")].find((node) => node.querySelector(".simple-text").textContent === "Simple regression socks away")`;
+  await page(`${card}.querySelector(".simple-done").click()`);
   await until(() => page(`(() => { const app = document.querySelector("kin-app");
-    return !app.busy && document.querySelector("kin-simple .simple-undo") !== null && /^Marked “Simple regression socks away” done\\./.test(app.status.textContent); })()`), { attempts: 300 });
+    return !app.busy && ${card}?.querySelector(".simple-undo") && /^Marked “Simple regression socks away” done\\./.test(app.status.textContent); })()`), { attempts: 300 });
   const done = await page(`(() => {
     const app = document.querySelector("kin-app");
-    const undo = document.querySelector("kin-simple .simple-undo");
+    const undo = ${card}.querySelector(".simple-undo");
     return { label: undo.getAttribute("aria-label"), focused: document.activeElement === undo, height: undo.getBoundingClientRect().height,
       completed: app.state.items.find((item) => item.text === "Simple regression socks away").status };
   })()`);
@@ -86,9 +92,9 @@ export async function simpleRegressions(client, { until, ready }) {
   assert.equal(done.completed, "completed");
   assert.ok(done.focused, "focus stays on the card's button");
   assert.ok(done.height >= 56, `the button is at least 56px tall (${done.height})`);
-  await page(`document.querySelector("kin-simple .simple-undo").click()`);
+  await page(`${card}.querySelector(".simple-undo").click()`);
   await until(() => page(`(() => { const app = document.querySelector("kin-app");
-    return !app.busy && document.querySelector("kin-simple .simple-done") !== null && /not done/.test(app.status.textContent); })()`), { attempts: 300 });
+    return !app.busy && ${card}?.querySelector(".simple-done") && /not done/.test(app.status.textContent); })()`), { attempts: 300 });
 
   // Layout: one column on a phone, a grid on a tablet; nothing scrolls sideways.
   for (const [label, metrics, columns] of [
