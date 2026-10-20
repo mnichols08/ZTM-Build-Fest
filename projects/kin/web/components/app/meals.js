@@ -114,8 +114,10 @@ export class MealsController {
     } catch (error) {
       if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return false;
       this.ctx.status.setStatus("");
-      // The view shows a format problem beside the field it came from.
-      if (error instanceof MealFormatError) throw error;
+      // The view shows a format problem beside the field it came from; the
+      // store wraps it, so look through to the cause.
+      const format = error instanceof MealFormatError ? error : error.cause instanceof MealFormatError ? error.cause : null;
+      if (format) throw format;
       this.ctx.status.showAlert(error.userMessage ?? SAVE_ERROR, retry);
       return false;
     } finally {
