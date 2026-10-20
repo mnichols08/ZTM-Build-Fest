@@ -10,6 +10,7 @@ import {
 } from "./pulse-regression.mjs";
 import { talkRegressions, talkPeerRegressions } from "./talk-regression.mjs";
 import { chatRegressions } from "./chat-regression.mjs";
+import { chatLayoutRegressions } from "./chat-layout-regression.mjs";
 import assert from "node:assert/strict";
 import {
   routineRegressions,
@@ -1376,7 +1377,8 @@ try {
     return location.hash==='#updates/chat' && links[2]?.getAttribute('aria-current')==='true' && !document.querySelector('#chat-panel').hidden &&
       document.querySelector('#talk-panel').hidden && Boolean(document.querySelector('kin-chat .chat-scroll'));
   })()`), true, "Updates → Chat is the third segment");
-  console.log(await first.evaluate(`(${chatRegressions.toString()})()`));
+  console.log(await first.evaluate(`(${chatRegressions.toString()})({ keepRoom: true })`));
+  console.log(await chatLayoutRegressions(first, { until }));
   await visit(first, "household/areas");
   console.log(await first.evaluate(`(${pulseRegressions.toString()})()`));
   console.log(

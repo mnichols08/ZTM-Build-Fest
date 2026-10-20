@@ -5,7 +5,7 @@
 //
 // Serialized into the isolated browser: everything it uses is defined
 // inside the function.
-export async function chatRegressions() {
+export async function chatRegressions({ keepRoom = false } = {}) {
   const check = (value, message) => {
     if (!value) throw new Error(`chat: ${message}`);
   };
@@ -1384,8 +1384,14 @@ export async function chatRegressions() {
     }
   }
 
-  chat.room = null;
-  await settle();
-  if (!app) chat.remove();
+  // The layout checks (chat-layout-regression.mjs) reuse this room, then
+  // call window.__chatCleanup.
+  const cleanup = async () => {
+    chat.room = null;
+    await settle();
+    if (!app) chat.remove();
+  };
+  if (keepRoom && app) window.__chatCleanup = cleanup;
+  else await cleanup();
   return "chat regressions passed";
 }
