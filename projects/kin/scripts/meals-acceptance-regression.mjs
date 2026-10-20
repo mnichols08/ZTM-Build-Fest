@@ -114,8 +114,16 @@ export async function mealsAcceptanceRegressions(client, until) {
       return node ? Math.round(ratio(getComputedStyle(node).color, background) * 10) / 10 : null;
     }).filter(Boolean) };
   })()`);
-  const appearance = (value) => page(`(() => { ${value ? `document.documentElement.setAttribute("data-kin-appearance", "${value}")` : `document.documentElement.removeAttribute("data-kin-appearance")`}; return true; })()`);
-  const previous = await page(`document.documentElement.getAttribute("data-kin-appearance")`);
+  // Light and dark through the app's own appearance setting (its palette is
+  // an adopted style sheet; the attribute alone doesn't change tokens).
+  const appearance = (mode) => page(`(() => {
+    const app = document.querySelector("kin-app");
+    if (!app.currentAppearance) app.ctx.appearance.applyEffectiveAppearance();
+    window.__mealsAppearance ??= structuredClone(app.currentAppearance);
+    app.ctx.appearance.applyAppearance(${mode ? `{ ...window.__mealsAppearance, mode: "${mode}" }` : "window.__mealsAppearance"});
+    if (!mode) delete window.__mealsAppearance;
+    return document.documentElement.dataset.kinAppearance ?? null;
+  })()`);
   await appearance("light");
   await settle();
   const light = await contrast();
@@ -125,7 +133,7 @@ export async function mealsAcceptanceRegressions(client, until) {
   assert.notEqual(dark.background, light.background, "dark mode changes the day rows");
   for (const [mode, result] of [["light", light], ["dark", dark]])
     assert.ok(result.ratios.every((value) => value >= 4.5), `${mode}: day text has at least 4.5:1 contrast (${result.ratios.join(", ")})`);
-  await appearance(previous);
+  await appearance(null);
   await client.send("Emulation.setEmulatedMedia", { features: [{ name: "forced-colors", value: "active" }] });
   await settle();
   const forced = await page(`(() => {
