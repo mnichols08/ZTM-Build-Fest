@@ -20,8 +20,8 @@ pub mod sections;
 pub mod simple;
 pub mod state;
 pub mod state_encode;
-pub mod week;
 pub mod store_sections;
+pub mod week;
 pub mod wire;
 
 #[cfg(test)]
