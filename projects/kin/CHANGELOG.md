@@ -9,6 +9,10 @@ documentation only.
 
 ### Added
 
+- **Bring a list into Kin** (#452): paste several lines into a capture field,
+  or import a CSV or text file from another app, preview the rows (repeats
+  and existing items left out) and add them to To do or Shopping, with dates
+  and done states where the file has them.
 - **Shopping mode** (#403): Start shopping opens the list for the shop —
   big checkboxes, ticked items into "In the basket" (Undo applies), and the
   screen kept on while you shop where the browser allows.

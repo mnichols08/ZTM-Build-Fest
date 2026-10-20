@@ -229,6 +229,9 @@ export class ShellBuilder {
     // Shopping mode (#403): the Shopping list for use in the shop.
     this.app.shoppingMode = document.createElement("kin-shopping-mode");
     this.app.append(this.app.shoppingMode);
+    // Bring a list into Kin (#452).
+    this.app.importer = document.createElement("kin-import");
+    this.app.append(this.app.importer);
     this.app.attachmentInput = this.ctx.attachments.buildAttachmentInput();
     this.app.append(this.app.attachmentInput);
     this.ctx.navigation.showPageFromLocation();
