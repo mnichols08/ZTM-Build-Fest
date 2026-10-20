@@ -31,6 +31,8 @@ class KinItem extends HTMLElement {
   set item(value) { this.record = value; this.render(); }
   set areaOptions(value) { this.areas = Array.isArray(value) ? value : []; this.render(); }
   set pinned(value) { this.isPinned = Boolean(value); this.render(); }
+  /** The item's picture emoji (#347), shown small beside the text. */
+  set emoji(value) { const next = value || null; if (next === this.emojiValue) return; this.emojiValue = next; this.render(); }
   set selected(value) { this.isSelected = Boolean(value); this.render(); }
   set attachments(value) { this.attachmentRecords = Array.isArray(value) ? value : []; this.render(); }
   set previews(provider) { this.previewProvider = typeof provider === "function" ? provider : null; this.render(); }
@@ -125,6 +127,14 @@ class KinItem extends HTMLElement {
     text.className = "item-text";
     text.textContent = record.text;
     text.dataset.itemId = record.itemId;
+    if (this.emojiValue) {
+      // Beside the text, never instead of it; the text stays the name.
+      const emoji = document.createElement("span");
+      emoji.className = "item-emoji";
+      emoji.setAttribute("aria-hidden", "true");
+      emoji.textContent = this.emojiValue;
+      open.append(emoji);
+    }
     open.append(text);
     body.append(open);
     const meta = this.createMetaLine();

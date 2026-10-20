@@ -19,11 +19,31 @@ export async function simpleRegressions(client, { until, ready }) {
     await app.ctx.append.appendCommand({ type: "change-responsibility", targetKind: "item", id: socks, memberId: me });
     await app.ctx.append.appendCommand({ type: "set-item-emoji", itemId: socks, emoji: "🧦" });
     app.ctx.render.renderState();
+    await app.ctx.simple.refreshPictures();
+    // The adult view: the picture sits beside the words, and details set it.
+    const frame = () => new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    app.ctx.navigation.navigate("#lists/todo");
+    for (let i = 0; i < 300 && !app.needs.querySelector('kin-item .item-emoji'); i++) await frame();
+    const row = [...app.needs.querySelectorAll("kin-item")].find((node) => node.record?.itemId === socks);
+    const adult = { emoji: row?.querySelector(".item-emoji")?.textContent ?? null, text: row?.querySelector(".item-text")?.textContent ?? null };
+    app.ctx.detail.openItemDetail(other);
+    for (let i = 0; i < 300 && !app.detail.querySelector(".item-picture-input"); i++) await frame();
+    const input = app.detail.querySelector(".item-picture-input");
+    input.value = "⚽";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    app.detail.querySelector(".item-picture-save").click();
+    for (let i = 0; i < 600 && app.itemEmojis?.get(other) !== "⚽"; i++) await frame();
+    const picked = { emoji: app.itemEmojis?.get(other) ?? null, status: app.status.textContent, clear: Boolean(app.detail.querySelector(".item-picture-clear")) };
+    app.ctx.detail.closeItemDetail({ restoreFocus: false });
     location.hash = "#lists/shopping";
     app.ctx.simple.enter();
     app.ctx.render.renderState();
-    return { me, socks };
+    return { me, socks, adult, picked };
   })()`);
+  assert.deepEqual(setup.adult, { emoji: "🧦", text: "Simple regression socks away" }, "the adult row shows the emoji beside, not instead of, the text");
+  assert.equal(setup.picked.emoji, "⚽", "an adult sets a picture from item details");
+  assert.match(setup.picked.status, /^Picture saved\./);
+  assert.ok(setup.picked.clear, "and can remove it");
   await until(() => page(`document.querySelector("kin-simple")?.querySelectorAll(".simple-card").length > 0`), { attempts: 300 });
 
   const shell = await page(`(() => {
@@ -122,5 +142,5 @@ export async function simpleRegressions(client, { until, ready }) {
   await ready(client);
   const full = await page(`(() => ({ flag: document.documentElement.dataset.kinSimple ?? null, lists: Boolean(document.getElementById("lists")) }))()`);
   assert.deepEqual(full, { flag: null, lists: true });
-  return "PASS Simple view: only Today, Chat and the Fridge; no palette, details, Quick add or Search; my things with pictures; Done and Undo in place; phone, tablet and desktop (#345, #346)";
+  return "PASS Simple view and item pictures: an adult sets a picture beside the words; only Today, Chat and the Fridge; no palette, details, Quick add or Search; my things with pictures; Done and Undo in place; phone, tablet and desktop (#345, #346, #347)";
 }

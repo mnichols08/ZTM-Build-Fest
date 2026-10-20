@@ -1914,3 +1914,8 @@ kin-simple { display: block; }
   .simple-card.is-done { border-style: dashed; }
   .simple-done { border: 2px solid ButtonText; }
 }
+
+/* Item picture (#347): small beside the text in lists, never instead of it. */
+.item-emoji { margin-inline-end: 0.35em; font-size: 1.15em; line-height: 1; }
+.item-picture-label { display: inline-flex; align-items: center; gap: 6px; min-height: var(--tap); }
+.item-picture-input { inline-size: 4.5rem; min-height: var(--tap); font-size: 1.5rem; text-align: center; }

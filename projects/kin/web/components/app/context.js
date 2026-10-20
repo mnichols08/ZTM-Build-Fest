@@ -142,6 +142,8 @@ export function initializeAppState(app) {
     app.onChangeResponsibility = (event) => app.ctx.items.handleChangeResponsibility(event);
     // Simple view (#346): Done and Undo on a card.
     app.onSimpleDone = (event) => void app.ctx.simple.markDone(event.detail);
+    // Item picture (#347), from the item details.
+    app.onSetItemEmoji = (event) => void app.ctx.simple.setItemEmoji(event.detail);
     app.onReplenishStaple = (event) => app.ctx.items.handleReplenishStaple(event);
     app.syncState = null;
     // Follows the browser's own offline/online events, like the state notice.

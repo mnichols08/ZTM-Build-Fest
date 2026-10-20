@@ -133,6 +133,7 @@ export class SimpleController {
   /** On lock: forget this session's Simple view and put the shell back. */
   reset() {
     this.doneThisSession = new Map();
+    this.app.itemEmojis = null;
     this.again = false;
     if (!this.on) return;
     this.app.simpleView = false;
@@ -185,6 +186,61 @@ export class SimpleController {
     const dinner = today ? this.app.mealsState?.dinners.find((entry) => entry.date === today) ?? null : null;
     this.app.simpleToday.tonight = tonightLine(dinner, this.ctx.meals?.people?.() ?? {});
     this.updateAccess();
+  }
+
+  /** Every item's picture emoji (#347), for rows and details; one shared
+   * Map, replaced only when an emoji changed. Calls coalesce. */
+  refreshPictures() {
+    if (this.loadingPictures) { this.picturesAgain = true; return this.loadingPictures; }
+    this.loadingPictures = this.loadPictures().finally(() => {
+      this.loadingPictures = null;
+      if (this.picturesAgain) { this.picturesAgain = false; void this.refreshPictures(); }
+    });
+    return this.loadingPictures;
+  }
+
+  async loadPictures() {
+    const session = this.ctx.session.captureSession();
+    if (!session.store) return;
+    let emojis;
+    try { emojis = await session.store.itemEmojis(); } catch { return; }
+    if (!this.ctx.session.isCurrentSession(session)) return;
+    const previous = this.app.itemEmojis;
+    if (previous && previous.size === emojis.size && [...emojis].every(([id, emoji]) => previous.get(id) === emoji)) return;
+    this.app.itemEmojis = emojis;
+    for (const list of [this.app.today, this.app.needs, this.app.shopping, this.app.staples]) if (list) list.emojis = emojis;
+    if (this.app.selection) this.ctx.detail.feedDetail();
+  }
+
+  /** Sets or clears an item's picture emoji (#347). */
+  async setItemEmoji({ itemId, emoji = null }) {
+    if (!this.app.store || !this.app.engine) return false;
+    if (this.app.busy) { this.ctx.status.setStatus("Kin is still saving. Try again in a moment."); return false; }
+    const session = this.ctx.session.captureSession();
+    this.ctx.status.setBusy(true);
+    this.ctx.status.clearAlert();
+    try {
+      await this.ctx.append.appendCommand({ type: "set-item-emoji", itemId, emoji });
+      this.ctx.session.assertCurrentSession(session);
+      this.ctx.render.renderState();
+      await this.refreshPictures();
+      const progress = syncProgress({ syncing: Boolean(this.app.syncCoordinator), offline: navigator.onLine === false });
+      this.ctx.status.setStatus(`${emoji ? "Picture saved." : "Picture removed."}${progress}`);
+      this.ctx.peers.broadcastEventChange();
+      return true;
+    } catch (error) {
+      if (error.code === "locked" || !this.ctx.session.isCurrentSession(session)) return false;
+      this.ctx.status.setStatus("");
+      // Rust refuses anything but one emoji, and an unchanged picture.
+      this.ctx.status.showAlert(error.code === 4 || error.code === 2 ? (emoji ? "Choose one emoji for the picture." : "This item has no picture.") : (error.userMessage ?? SAVE_ERROR),
+        error.code === 4 || error.code === 2 ? null : () => this.setItemEmoji({ itemId, emoji }));
+      return false;
+    } finally {
+      if (this.ctx.session.isCurrentSession(session)) {
+        this.ctx.status.setBusy(false);
+        this.ctx.peers.flushPeerRefresh();
+      }
+    }
   }
 
   /** Done (or Undo) for one card, through the ordinary commands. */

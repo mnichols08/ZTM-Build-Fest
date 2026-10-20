@@ -45,6 +45,10 @@ export class DetailController {
       attachments: this.app.attachmentRows,
       responsibilityContext: this.responsibilityContext(),
       reminder: this.app.localReminders.entries.get(`item:${this.app.selection.itemId}`) ?? null,
+      // Item picture (#347): Adults set it; on a device without sync the
+      // person is the household's only member.
+      emoji: this.app.itemEmojis?.get(this.app.selection.itemId) ?? null,
+      canSetPicture: (this.app.householdStatus?.memberKind ?? "adult") === "adult",
       item,
     });
   }
